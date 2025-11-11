@@ -1,51 +1,41 @@
-# ---------- BUILDER ----------
-    FROM node:18-alpine AS builder
-    WORKDIR /app
-    
-    # Habilitar pnpm
-    RUN corepack enable && corepack prepare pnpm@latest --activate
-    
-    # Copiar archivos de workspace si existen (importante en monorepos)
-    # Ajusta si no tienes pnpm-workspace.yaml
-    COPY pnpm-workspace.yaml ./
-    COPY package.json pnpm-lock.yaml ./
-    
-    # Instalar dev deps (necesarios para prisma generate y build)
-    RUN pnpm install --frozen-lockfile
-    
-    # Copiar prisma/schema y código fuente
-    COPY prisma ./prisma
-    COPY tsconfig*.json ./
-    COPY src ./src
-    
-    # Generar cliente prisma con la configuración local (builder tiene el CLI)
-    RUN pnpm exec prisma generate
-    
-    # Compilar la aplicación
-    RUN pnpm run build
-    
-    
-    # ---------- RUNTIME ----------
-    FROM node:18-alpine AS runner
-    WORKDIR /app
-    
-    RUN corepack enable && corepack prepare pnpm@latest --activate
-    
-    # instalar sólo prod deps
-    COPY package.json pnpm-lock.yaml ./
-    RUN pnpm install --prod --frozen-lockfile
-    
-    # copiar build
-    COPY --from=builder /app/dist ./dist
-    
-    # copiar el paquete @prisma generado desde el builder (sobrescribe el instalado si existe)
-    COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-    
-    # opcional: copiar carpeta prisma si la usas en runtime (migrations, schema para introspecciones)
-    COPY prisma ./prisma
-    
-    EXPOSE 3001
-    ENV NODE_ENV=production
-    
-CMD ["node", "dist/src/main.js"]
-    
+## ---------- BUILDER ----------
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+# Pin pnpm para builds reproducibles
+RUN corepack enable && corepack prepare pnpm@9.12.2 --activate
+
+# Copiar manifiestos y prisma antes de instalar (postinstall prisma necesita schema)
+COPY package.json pnpm-lock.yaml* ./
+COPY prisma ./prisma
+
+# Instalar dependencias (no usar frozen para evitar fallas por lockfile desfasado en CI)
+RUN pnpm install --no-frozen-lockfile
+
+# Copiar código y configs
+COPY tsconfig*.json ./
+COPY src ./src
+
+# Generar Prisma Client y compilar
+RUN pnpm exec prisma generate
+RUN pnpm run build
+
+## ---------- RUNTIME ----------
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+# Usuario no root
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
+# Reutilizar node_modules y artefactos del builder
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/prisma ./prisma
+COPY package.json ./package.json
+
+USER appuser
+EXPOSE 4000
+
+# Migraciones seguras (no borran BD) y levantar app
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]
