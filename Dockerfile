@@ -38,4 +38,4 @@ USER appuser
 EXPOSE 4000
 
 # Migraciones seguras (no borran BD) y levantar app
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/main.js"]
