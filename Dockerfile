@@ -1,7 +1,6 @@
 ## ---------- SINGLE STAGE ----------
 FROM node:20-alpine
 WORKDIR /app
-ENV NODE_ENV=production
 
 # Instalar pnpm
 RUN corepack enable && corepack prepare pnpm@9.12.2 --activate
@@ -10,15 +9,18 @@ RUN corepack enable && corepack prepare pnpm@9.12.2 --activate
 COPY package.json pnpm-lock.yaml* ./
 COPY prisma ./prisma
 
-# Instalar dependencias (incluye postinstall que genera Prisma Client)
+# Instalar TODAS las dependencias (incluye devDependencies para build)
 RUN pnpm install --no-frozen-lockfile
 
 # Copiar código fuente
 COPY tsconfig*.json ./
 COPY src ./src
 
-# Build de la aplicación
-RUN pnpm run build
+# Build de la aplicación (usar pnpm exec para asegurar que nest esté disponible)
+RUN pnpm exec nest build
+
+# Ahora configurar para producción
+ENV NODE_ENV=production
 
 # Usuario no root
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
