@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Rol, EstadoType, TipoEmpresa } from '@prisma/client';
 import bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
@@ -26,11 +26,11 @@ async function createUsers() {
         ruc: '20123456789',
         razonSocial: 'EMPRESA FORMAL DEMO SAC',
         direccion: 'AV. EJEMPLO 123, LIMA, LIMA',
-        tipoEmpresa: 'FORMAL',
+        tipoEmpresa: TipoEmpresa.FORMAL,
         fechaActivacion: new Date(),
         fechaExpiracion: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
         planId: plan.id,
-        estado: 'ACTIVO',
+        estado: EstadoType.ACTIVO,
         nombreComercial: 'EMPRESA DEMO'
       }
     });
@@ -41,11 +41,11 @@ async function createUsers() {
         ruc: '10123456789',
         razonSocial: 'JUAN PEREZ MARTINEZ',
         direccion: 'JR. EJEMPLO 456, LIMA, LIMA',
-        tipoEmpresa: 'INFORMAL',
+        tipoEmpresa: TipoEmpresa.INFORMAL,
         fechaActivacion: new Date(),
         fechaExpiracion: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
         planId: plan.id,
-        estado: 'ACTIVO',
+        estado: EstadoType.ACTIVO,
         nombreComercial: 'JUAN PEREZ'
       }
     });
@@ -58,9 +58,9 @@ async function createUsers() {
         celular: '999999999',
         email: 'admin@nephi.com',
         password: await bcrypt.hash('admin123', 12),
-        rol: 'ADMIN_SISTEMA',
+        rol: Rol.ADMIN_SISTEMA,
         empresaId: null,
-        estado: 'ACTIVO'
+        estado: EstadoType.ACTIVO
       },
       {
         nombre: 'Diego Ortega',
@@ -68,9 +68,9 @@ async function createUsers() {
         celular: '987654321',
         email: 'diego.ortega.dev@gmail.com',
         password: await bcrypt.hash('empresa123', 12),
-        rol: 'ADMIN_EMPRESA',
+        rol: Rol.ADMIN_EMPRESA,
         empresaId: empresaFormal.id,
-        estado: 'ACTIVO'
+        estado: EstadoType.ACTIVO
       },
       {
         nombre: 'Juan Perez',
@@ -78,9 +78,9 @@ async function createUsers() {
         celular: '966777888',
         email: 'juan.perez@example.com',
         password: await bcrypt.hash('informal123', 12),
-        rol: 'ADMIN_EMPRESA',
+        rol: Rol.ADMIN_EMPRESA,
         empresaId: empresaInformal.id,
-        estado: 'ACTIVO'
+        estado: EstadoType.ACTIVO
       }
     ];
 

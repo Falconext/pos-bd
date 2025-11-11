@@ -54,7 +54,7 @@ export class ClienteService {
         telefono: data.telefono,
         empresaId: data.empresaId,
         tipoDocumentoId: tipoDocumento.id,
-        persona: data.persona || PersonaType.CLIENTE,
+        persona: (data.persona as PersonaType) || PersonaType.CLIENTE,
         departamento: data.departamento,
         provincia: data.provincia,
         distrito: data.distrito,
@@ -146,7 +146,7 @@ export class ClienteService {
         departamento: data.departamento,
         provincia: data.provincia,
         distrito: data.distrito,
-        persona: data.persona,
+        persona: data.persona as PersonaType,
       },
     });
   }
