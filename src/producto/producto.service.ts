@@ -5,7 +5,7 @@ import {
   Inject,
   forwardRef,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, EstadoType } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { PrismaService } from '../prisma/prisma.service';
 import { KardexService } from '../kardex/kardex.service';
@@ -132,7 +132,7 @@ export class ProductoService {
 
     const where: any = {
       empresaId,
-      estado: { in: ['ACTIVO', 'INACTIVO'] },
+      estado: { in: [EstadoType.ACTIVO, EstadoType.INACTIVO] },
       OR: search
         ? [
             { descripcion: { contains: search, mode: 'insensitive' } },
@@ -280,7 +280,7 @@ export class ProductoService {
     });
   }
 
-  async cambiarEstado(id: number, empresaId: number, estado: string) {
+  async cambiarEstado(id: number, empresaId: number, estado: EstadoType) {
     const producto = await this.prisma.producto.findFirst({
       where: { id, empresaId },
     });
@@ -295,7 +295,7 @@ export class ProductoService {
   async exportar(empresaId: number, search?: string): Promise<Buffer> {
     const where: any = {
       empresaId,
-      estado: { in: ['ACTIVO', 'INACTIVO'] },
+      estado: { in: [EstadoType.ACTIVO, EstadoType.INACTIVO] },
       OR: search
         ? [
             { descripcion: { contains: search, mode: 'insensitive' } },

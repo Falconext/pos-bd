@@ -5,7 +5,7 @@ import {
   Inject,
   forwardRef,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, EstadoSunat } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { KardexService } from '../kardex/kardex.service';
 import { InventarioNotificacionesService } from '../notificaciones/inventario-notificaciones.service';
@@ -244,7 +244,7 @@ export class ComprobanteService {
     return this.prisma.comprobante.update({
       where: { id: comprobanteId },
       data: {
-        estadoEnvioSunat: 'ANULADO' as string,
+        estadoEnvioSunat: EstadoSunat.ANULADO,
         ...(isInformal ? { estadoPago: 'ANULADO' as any, saldo: 0 } : {}),
       },
     });
@@ -1034,7 +1034,7 @@ export class ComprobanteService {
         totalImpuestos: totalIGV,
         subTotal,
         mtoImpVenta,
-        estadoEnvioSunat: 'PENDIENTE' as string,
+        estadoEnvioSunat: EstadoSunat.PENDIENTE,
         detalles: {
           create: detalleFinal,
         },
@@ -1324,7 +1324,7 @@ export class ComprobanteService {
         formaPagoTipo: 'CREDITO',
         formaPagoMoneda: 'PEN',
         tipoMoneda: 'PEN',
-        estadoEnvioSunat: 'NO_APLICA' as string,
+        estadoEnvioSunat: EstadoSunat.NO_APLICA,
         estadoPago: estadoPagoInicial,
         saldo: Math.max(0, saldo),
         estadoOT: estadoOT || 'PENDIENTE',

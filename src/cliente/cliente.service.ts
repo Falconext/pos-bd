@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, PersonaType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import axios from 'axios';
 import * as XLSX from 'xlsx';
@@ -54,7 +54,7 @@ export class ClienteService {
         telefono: data.telefono,
         empresaId: data.empresaId,
         tipoDocumentoId: tipoDocumento.id,
-        persona: data.persona || 'CLIENTE',
+        persona: data.persona || PersonaType.CLIENTE,
         departamento: data.departamento,
         provincia: data.provincia,
         distrito: data.distrito,
