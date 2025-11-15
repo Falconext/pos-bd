@@ -112,6 +112,12 @@ export class CrearComprobanteDto {
   adelanto?: number;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  vuelto?: number;
+
+  @IsOptional()
   @IsDateString()
   fechaRecojo?: string;
 

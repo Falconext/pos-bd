@@ -219,6 +219,7 @@ model Comprobante {
   descuentoOT        Float?               @default(0)
   descuentoPorcOT    Float?               @default(0)
   estadoOT           String?
+  vuelto             Float?               @default(0)
   usuarioId          Int?
   s3PdfUrl           String?
   s3XmlUrl           String?

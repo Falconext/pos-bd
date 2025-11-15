@@ -16,7 +16,7 @@ export class ExtensionesController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get('unidad-medida')
-  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
   async listarUnidadMedida() {
     const data = await this.prisma.unidadMedida.findMany({
       select: { id: true, codigo: true, nombre: true },
@@ -26,7 +26,7 @@ export class ExtensionesController {
   }
 
   @Get('ubigeos')
-  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
   async listarUbigeos() {
     const data = await this.prisma.ubigeo.findMany({
       select: {
@@ -45,7 +45,7 @@ export class ExtensionesController {
   }
 
   @Get('motivos-nota')
-  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
   async listarMotivosNota(@Query('tipo') tipo?: 'CREDITO' | 'DEBITO') {
     if (tipo && tipo !== 'CREDITO' && tipo !== 'DEBITO') {
       throw new BadRequestException('tipo inválido, debe ser CREDITO o DEBITO');
@@ -60,7 +60,7 @@ export class ExtensionesController {
   }
 
   @Get('currencies')
-  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
   async listarMonedas() {
     // Intenta obtener monedas distintas desde comprobantes; fallback a estático
     const rows = await this.prisma.comprobante.findMany({
@@ -80,7 +80,7 @@ export class ExtensionesController {
   }
 
   @Get('document-types')
-  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
   async listarTiposDocumento() {
     const documentTypes = await this.prisma.tipoDocumento.findMany({
       orderBy: { codigo: 'asc' },
@@ -90,7 +90,7 @@ export class ExtensionesController {
   }
 
   @Get('planes')
-  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
   async listarPlanes() {
     const planes = await this.prisma.plan.findMany({
       orderBy: { id: 'asc' },

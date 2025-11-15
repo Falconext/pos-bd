@@ -9,6 +9,9 @@ import { Prisma, EstadoSunat } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { KardexService } from '../kardex/kardex.service';
 import { InventarioNotificacionesService } from '../notificaciones/inventario-notificaciones.service';
+import { S3Service } from '../s3/s3.service';
+import { PdfGeneratorService } from './pdf-generator.service';
+import { numeroALetras } from './utils/numero-a-letras';
 
 @Injectable()
 export class ComprobanteService {
@@ -17,6 +20,8 @@ export class ComprobanteService {
     @Inject(forwardRef(() => KardexService))
     private readonly kardexService: KardexService,
     private readonly inventarioNotificaciones: InventarioNotificacionesService,
+    private readonly s3Service: S3Service,
+    private readonly pdfGenerator: PdfGeneratorService,
   ) {}
 
   async listarTipoOperacion() {
@@ -214,7 +219,16 @@ export class ComprobanteService {
   async obtenerPorId(empresaId: number, id: number) {
     const comp = await this.prisma.comprobante.findFirst({
       where: { empresaId, id },
-      include: { cliente: true, detalles: { include: { producto: true } } },
+      include: {
+        cliente: true,
+        detalles: { include: { producto: true } },
+        usuario: {
+          select: {
+            id: true,
+            nombre: true,
+          },
+        },
+      },
     });
     if (!comp) throw new NotFoundException('Comprobante no encontrado');
     return comp;
@@ -566,6 +580,7 @@ export class ComprobanteService {
       tipoOperacionId,
       motivoId,
       montoDescuentoGlobal,
+      vuelto,
     } = input;
 
     // Si es nota de crédito, usar lógica especializada
@@ -651,6 +666,7 @@ export class ComprobanteService {
       totalImpuestos: totalIGV,
       subTotal,
       mtoImpVenta,
+      vuelto: vuelto != null ? Number(vuelto) : 0,
       estadoEnvioSunat: 'PENDIENTE' as string,
       ...(formalTipo === '08'
         ? {
@@ -1075,6 +1091,7 @@ export class ComprobanteService {
       tipoOperacionId,
       adelanto,
       fechaRecojo,
+      vuelto,
     } = input;
     // Resolver cliente
     let finalClienteId: number | null = clienteId ?? null;
@@ -1200,6 +1217,7 @@ export class ComprobanteService {
       adelanto: tipoDoc === 'NP' && adelanto ? Number(adelanto) : undefined,
       fechaRecojo:
         tipoDoc === 'NP' && fechaRecojo ? new Date(fechaRecojo) : undefined,
+      vuelto: vuelto != null ? Number(vuelto) : 0,
       detalles: { create: detalleFinal },
       leyendas: { create: [{ code: '1000', value: leyenda }] },
     };
@@ -1230,7 +1248,106 @@ export class ComprobanteService {
       comprobanteId: comp.id,
       concepto: `Venta ${tipoDoc} ${comp.serie}-${comp.correlativo}`,
     });
-    
+
+    // Generar y subir PDF a S3 para comprobantes informales
+    try {
+      if (this.s3Service && this.s3Service.isEnabled()) {
+        const full = await this.prisma.comprobante.findUnique({
+          where: { id: comp.id },
+          include: {
+            cliente: { include: { tipoDocumento: true } },
+            empresa: { include: { ubicacion: true, rubro: true } },
+            detalles: true,
+          },
+        });
+        if (full) {
+          const tipoDocMap: Record<string, string> = {
+            TICKET: 'TICKET',
+            NV: 'NOTA DE VENTA',
+            RH: 'RECIBO POR HONORARIOS',
+            CP: 'COMPROBANTE DE PAGO',
+            NP: 'NOTA DE PEDIDO',
+            OT: 'ORDEN DE TRABAJO',
+          };
+
+          const fecha = new Date(full.fechaEmision as any);
+          const pagosAlContado = ['EFECTIVO', 'YAPE', 'PLIN'];
+          const formaPago = pagosAlContado.includes((full.medioPago || '').toUpperCase()) ? 'CONTADO' : 'CRÉDITO';
+
+          // Detectar MIME del logo y construir data URL si existe
+          const detectMime = (b64?: string) => {
+            if (!b64) return undefined;
+            if (b64.startsWith('data:')) return undefined;
+            if (b64.startsWith('/9j/')) return 'image/jpeg';
+            if (b64.startsWith('iVBOR')) return 'image/png';
+            return 'image/png';
+          };
+
+          const rawLogo = (full.empresa as any).logo || null;
+          const mime = detectMime(rawLogo || undefined);
+          const logoDataUrl = rawLogo
+            ? (rawLogo.startsWith('data:') ? rawLogo : `data:${mime};base64,${rawLogo}`)
+            : undefined;
+
+          const productos = full.detalles.map((d: any) => ({
+            cantidad: d.cantidad,
+            unidadMedida: d.unidad || 'NIU',
+            descripcion: (d.descripcion || '').toUpperCase(),
+            precioUnitario: Number(d.mtoPrecioUnitario || 0).toFixed(2),
+            total: Number((d.mtoPrecioUnitario || 0) * d.cantidad).toFixed(2),
+          }));
+
+          const pdfData = {
+            nombreComercial: (full.empresa as any).nombreComercial ? (full.empresa as any).nombreComercial.toUpperCase() : full.empresa.razonSocial.toUpperCase(),
+            razonSocial: full.empresa.razonSocial.toUpperCase(),
+            ruc: full.empresa.ruc,
+            direccion: (full.empresa.direccion || '').toUpperCase(),
+            rubro: full.empresa.rubro?.nombre?.toUpperCase() || undefined,
+            celular: '',
+            email: '',
+            logo: logoDataUrl,
+            tipoDocumento: tipoDocMap[full.tipoDoc] || 'COMPROBANTE',
+            serie: full.serie,
+            correlativo: String(full.correlativo).padStart(8, '0'),
+            fecha: fecha.toLocaleDateString('es-PE'),
+            hora: fecha.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }),
+            clienteNombre: (full.cliente?.nombre || 'CLIENTES VARIOS').toUpperCase(),
+            clienteTipoDoc: full.cliente?.tipoDocumento?.codigo === '6' ? 'RUC' : 'DNI',
+            clienteNumDoc: full.cliente?.nroDoc || '',
+            clienteDireccion: (full.cliente?.direccion || '-').toUpperCase(),
+            productos,
+            mtoOperGravadas: Number(full.mtoOperGravadas || 0).toFixed(2),
+            mtoIGV: Number(full.mtoIGV || 0).toFixed(2),
+            mtoOperInafectas: full.mtoOperInafectas && full.mtoOperInafectas > 0 ? Number(full.mtoOperInafectas).toFixed(2) : undefined,
+            mtoImpVenta: Number(full.mtoImpVenta || 0).toFixed(2),
+            totalEnLetras: numeroALetras(Number(full.mtoImpVenta || 0)).toUpperCase(),
+            formaPago,
+            medioPago: (full.medioPago || 'EFECTIVO').toUpperCase(),
+            observaciones: full.observaciones ? full.observaciones.toUpperCase() : undefined,
+            qrCode: undefined,
+          };
+
+          const pdfBuffer = await this.pdfGenerator.generarPDFComprobante(pdfData);
+          const key = this.s3Service.generateComprobanteKey(
+            full.empresaId,
+            full.tipoDoc,
+            full.serie,
+            full.correlativo,
+            'pdf',
+          );
+          const s3PdfUrl = await this.s3Service.uploadPDF(pdfBuffer, key);
+
+          await this.prisma.comprobante.update({
+            where: { id: full.id },
+            data: { s3PdfUrl },
+          });
+        }
+      }
+    } catch (e) {
+      // Log y continuar sin fallar la creación del comprobante
+      console.error('Error generando/subiendo PDF informal a S3:', (e as any)?.message || e);
+    }
+
     return comp;
   }
 
