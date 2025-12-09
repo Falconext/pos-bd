@@ -20,27 +20,37 @@ export class DisenoRubroService {
         });
     }
 
-    async crearOActualizar(rubroId: number, data: {
-        colorPrimario?: string;
-        colorSecundario?: string;
-        colorAccento?: string;
-        tipografia?: string;
-        espaciado?: string;
-        bordeRadius?: string;
-        estiloBoton?: string;
-        plantillaId?: string;
-        vistaProductos?: string;
-        tiempoEntregaMin?: number;
-        tiempoEntregaMax?: number;
-    }) {
+    async crearOActualizar(rubroId: number, data: Record<string, any>) {
         // Verificar que el rubro existe
         const rubro = await this.prisma.rubro.findUnique({ where: { id: rubroId } });
         if (!rubro) throw new NotFoundException('Rubro no encontrado');
 
+        // Filtrar solo los campos válidos para DisenoRubro (excluir id, rubroId, creadoEn, actualizadoEn, rubro)
+        const camposValidos = [
+            'colorPrimario',
+            'colorSecundario',
+            'colorAccento',
+            'tipografia',
+            'espaciado',
+            'bordeRadius',
+            'estiloBoton',
+            'plantillaId',
+            'vistaProductos',
+            'tiempoEntregaMin',
+            'tiempoEntregaMax',
+        ];
+
+        const dataFiltrada: Record<string, any> = {};
+        for (const campo of camposValidos) {
+            if (data[campo] !== undefined) {
+                dataFiltrada[campo] = data[campo];
+            }
+        }
+
         return this.prisma.disenoRubro.upsert({
             where: { rubroId },
-            update: data,
-            create: { rubroId, ...data },
+            update: dataFiltrada,
+            create: { rubroId, ...dataFiltrada },
             include: { rubro: true },
         });
     }

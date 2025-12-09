@@ -137,9 +137,14 @@ export class ProductoService {
     } = params;
     const skip = (page - 1) * limit;
 
+    // Códigos de productos del sistema que no deben mostrarse a los usuarios
+    const productosDelSistema = ['PLD', 'IPM', 'DGD'];
+
     const where: any = {
       empresaId,
       estado: { in: [EstadoType.ACTIVO, EstadoType.INACTIVO] },
+      // Excluir productos del sistema (PENALIDAD, INTERES POR MORA, DESCUENTO GLOBAL)
+      codigo: { notIn: productosDelSistema },
       marcaId: marcaId ? Number(marcaId) : undefined,
       OR: search
         ? [
@@ -333,11 +338,15 @@ export class ProductoService {
     const ct = file.mimetype || 'image/jpeg';
     if (!/^image\//i.test(ct)) throw new ForbiddenException('El archivo debe ser una imagen');
 
-    const key = this.s3.generateProductoImageKey(empresaId, productoId, ct, false);
-    const url = await this.s3.uploadImage(file.buffer, key, ct);
+    const s3Key = this.s3.generateProductoImageKey(empresaId, productoId, ct, false);
+    const url = await this.s3.uploadImage(file.buffer, s3Key, ct);
 
     await this.prisma.producto.update({ where: { id: productoId }, data: { imagenUrl: url } });
-    return { url };
+    // Devolver también URL firmada para previsualización inmediata en admin
+    const idx = url.indexOf('amazonaws.com/');
+    const objKey = idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
+    const signedUrl = objKey ? await this.s3.getSignedGetUrl(objKey, 600) : url;
+    return { url, signedUrl };
   }
 
   async subirImagenExtra(
@@ -357,7 +366,10 @@ export class ProductoService {
     const actuales: string[] = Array.isArray((producto as any).imagenesExtra) ? (producto as any).imagenesExtra : [];
     const nuevas = [...actuales, url];
     await this.prisma.producto.update({ where: { id: productoId }, data: { imagenesExtra: nuevas as any } });
-    return { url };
+    const idx = url.indexOf('amazonaws.com/');
+    const objKey = idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
+    const signedUrl = objKey ? await this.s3.getSignedGetUrl(objKey, 600) : url;
+    return { url, signedUrl };
   }
 
   async cambiarEstado(id: number, empresaId: number, estado: EstadoType) {

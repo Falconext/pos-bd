@@ -25,13 +25,13 @@ export class AuthService {
     private readonly config: ConfigService,
   ) {
     const accessEnv = this.config.get<string>('JWT_ACCESS_EXPIRES_IN') ?? '86400';
-    const refreshEnv = this.config.get<string>('JWT_REFRESH_EXPIRES_IN') ?? '86400';
+    const refreshEnv = this.config.get<string>('JWT_REFRESH_EXPIRES_IN') ?? '604800';
     const nodeEnv = this.config.get<string>('NODE_ENV') || process.env.NODE_ENV || 'development';
     const isProduction = nodeEnv === 'production';
 
-    // For testing: use 60s expiry in non-production
-    this.accessExpiresInSec = isProduction ? (Number(accessEnv) || 86400) : 60;
-    this.refreshExpiresInSec = isProduction ? (Number(refreshEnv) || 86400) : 60;
+    // Access token: 1 día (86400s); Refresh token: 7 días (604800s)
+    this.accessExpiresInSec = isProduction ? (Number(accessEnv) || 86400) : 86400;
+    this.refreshExpiresInSec = isProduction ? (Number(refreshEnv) || 604800) : 604800;
   }
 
   async login({ email, password }: LoginPayload) {

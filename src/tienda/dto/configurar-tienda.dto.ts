@@ -1,4 +1,5 @@
-import { IsString, IsOptional, IsBoolean, IsUrl, Matches } from 'class-validator';
+import { IsString, IsOptional, IsBoolean, IsUrl, Matches, IsInt, Min, IsNumber } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class ConfigurarTiendaDto {
   @IsString()
@@ -64,4 +65,29 @@ export class ConfigurarTiendaDto {
   @IsBoolean()
   @IsOptional()
   aceptaEfectivo?: boolean;
+
+  // === Campos de envío/recojo (permitir guardar desde este endpoint) ===
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  costoEnvioFijo?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  aceptaRecojo?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  aceptaEnvio?: boolean;
+
+  @IsOptional()
+  @IsString()
+  direccionRecojo?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  tiempoPreparacionMin?: number;
 }

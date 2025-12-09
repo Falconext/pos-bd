@@ -69,6 +69,12 @@ export class TiendaService {
         plinQrUrl: true,
         plinNumero: true,
         aceptaEfectivo: true,
+        // Devolver también campos de envío/recojo para que el frontend los persista
+        costoEnvioFijo: true,
+        aceptaRecojo: true,
+        aceptaEnvio: true,
+        direccionRecojo: true,
+        tiempoPreparacionMin: true,
       },
     });
   }
@@ -92,6 +98,12 @@ export class TiendaService {
         plinQrUrl: true,
         plinNumero: true,
         aceptaEfectivo: true,
+        // Campos de envío/recojo
+        costoEnvioFijo: true,
+        aceptaRecojo: true,
+        aceptaEnvio: true,
+        direccionRecojo: true,
+        tiempoPreparacionMin: true,
         plan: {
           select: {
             tieneTienda: true,
@@ -172,6 +184,12 @@ export class TiendaService {
         horarioAtencion: true,
         colorPrimario: true,
         colorSecundario: true,
+        // Campos de envío/recojo visibles en tienda pública
+        costoEnvioFijo: true,
+        aceptaRecojo: true,
+        aceptaEnvio: true,
+        direccionRecojo: true,
+        tiempoPreparacionMin: true,
         direccion: true,
         distrito: true,
         provincia: true,
@@ -773,6 +791,129 @@ export class TiendaService {
       },
     });
   }
+
+  // ==================== COMBOS ====================
+
+  async obtenerCombosTienda(slug: string) {
+    const tienda = await this.obtenerTiendaPorSlug(slug);
+
+    const combos = await this.prisma.combo.findMany({
+      where: {
+        empresaId: tienda.id,
+        activo: true,
+        OR: [
+          { fechaInicio: null },
+          { fechaInicio: { lte: new Date() } }
+        ],
+        AND: [
+          {
+            OR: [
+              { fechaFin: null },
+              { fechaFin: { gte: new Date() } }
+            ]
+          }
+        ]
+      },
+      include: {
+        items: {
+          include: {
+            producto: {
+              select: {
+                id: true,
+                descripcion: true,
+                imagenUrl: true,
+                precioUnitario: true,
+                stock: true,
+                categoria: {
+                  select: {
+                    id: true,
+                    nombre: true
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      orderBy: { creadoEn: 'desc' }
+    });
+
+    return { code: 1, data: combos };
+  }
+
+  async obtenerComboDetalle(slug: string, comboId: number) {
+    const tienda = await this.obtenerTiendaPorSlug(slug);
+
+    const combo = await this.prisma.combo.findFirst({
+      where: {
+        id: comboId,
+        empresaId: tienda.id
+      },
+      include: {
+        items: {
+          include: {
+            producto: {
+              select: {
+                id: true,
+                descripcion: true,
+                imagenUrl: true,
+                precioUnitario: true,
+                stock: true,
+                categoria: {
+                  select: {
+                    id: true,
+                    nombre: true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!combo) {
+      throw new NotFoundException('Combo no encontrado');
+    }
+
+    return { code: 1, data: combo };
+  }
+
+  async verificarStockCombo(slug: string, comboId: number) {
+    const tienda = await this.obtenerTiendaPorSlug(slug);
+
+    const combo = await this.prisma.combo.findFirst({
+      where: {
+        id: comboId,
+        empresaId: tienda.id
+      },
+      include: {
+        items: {
+          include: { producto: true }
+        }
+      }
+    });
+
+    if (!combo) {
+      throw new NotFoundException('Combo no encontrado');
+    }
+
+    // Calcular stock disponible
+    const stockDisponible = combo.items.reduce((min, item) => {
+      const stockProducto = Math.floor(item.producto.stock / item.cantidad);
+      return Math.min(min, stockProducto);
+    }, Infinity);
+
+    return {
+      code: 1,
+      data: {
+        comboId,
+        stockDisponible: stockDisponible === Infinity ? 0 : stockDisponible
+      }
+    };
+  }
+
+  // ==================== PEDIDOS ====================
 
   async obtenerPedidoPorCodigo(codigoSeguimiento: string) {
     const pedido = await this.prisma.pedidoTienda.findUnique({

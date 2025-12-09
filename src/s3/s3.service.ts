@@ -170,16 +170,26 @@ export class S3Service {
   /**
    * URL firmada para descargar/visualizar (GET) un objeto
    */
-  async getSignedGetUrl(key: string, expiresIn: number = 300): Promise<string> {
+  async getSignedGetUrl(key: string, expiresIn: number = 1800): Promise<string> {
     if (!this.isEnabled()) {
       throw new Error('S3 no está configurado');
     }
     try {
+      // Inferir content-type desde la extensión del key y forzar inline
+      const lower = key.toLowerCase();
+      let responseContentType = undefined as string | undefined;
+      if (lower.endsWith('.webp')) responseContentType = 'image/webp';
+      else if (lower.endsWith('.png')) responseContentType = 'image/png';
+      else if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) responseContentType = 'image/jpeg';
+
       const command = new GetObjectCommand({
         Bucket: this.bucketName,
         Key: key,
-      });
-      const url = await getSignedUrl(this.s3Client, command, { expiresIn });
+        ResponseContentType: responseContentType,
+        ResponseContentDisposition: 'inline',
+      } as any);
+
+      const url = await getSignedUrl(this.s3Client, command as any, { expiresIn });
       return url;
     } catch (error) {
       this.logger.error(`❌ Error generando URL firmada (GET): ${error.message}`, error.stack);

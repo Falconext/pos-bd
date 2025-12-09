@@ -26,6 +26,8 @@ import { TiendaModule } from './tienda/tienda.module';
 import { PreferenciasModule } from './preferencias/preferencias.module';
 import { MarcaModule } from './marca/marca.module';
 import { DisenoRubroModule } from './diseno-rubro/diseno-rubro.module';
+import { CombosModule } from './combos/combos.module';
+import { ModificadoresModule } from './modificadores/modificadores.module';
 
 @Module({
   imports: [
@@ -54,6 +56,8 @@ import { DisenoRubroModule } from './diseno-rubro/diseno-rubro.module';
     PreferenciasModule,
     MarcaModule,
     DisenoRubroModule,
+    CombosModule,
+    ModificadoresModule,
   ],
   controllers: [AppController],
   providers: [AppService],

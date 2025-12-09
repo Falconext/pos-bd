@@ -104,7 +104,9 @@ model Empresa {
   whatsappEnvios    WhatsAppEnvio[]
   pedidosTienda     PedidoTienda[]     // Nueva relación
   banners           Banner[]
+  combos            Combo[]            // Combos de productos
   preferenciasTabla PreferenciaTabla[]
+  gruposModificadores GrupoModificador[] // Grupos de modificadores para productos
 
   @@index([providerToken])
   @@index([slugTienda])
@@ -195,6 +197,8 @@ model Producto {
   unidadMedida        UnidadMedida         @relation(fields: [unidadMedidaId], references: [id])
   itemsPedido         ItemPedidoTienda[]
   galeria             GaleriaProducto[]    // Galería de imágenes (feature premium)
+  comboItems          ComboItem[]          // Productos incluidos en combos
+  gruposModificadores ProductoGrupoModificador[] // Grupos de modificadores asignados
 
   @@unique([empresaId, codigo])
   @@index([empresaId, publicarEnTienda])
@@ -462,9 +466,73 @@ model ItemPedidoTienda {
   pedido       PedidoTienda @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
   producto     Producto     @relation(fields: [productoId], references: [id])
 
+  // Campos para combos
+  comboId      Int?
+  combo        Combo?       @relation(fields: [comboId], references: [id])
+  esCombo      Boolean      @default(false)
+  comboSnapshot Json?       // Snapshot de items del combo al momento del pedido
+
   @@index([pedidoId])
   @@index([productoId])
+  @@index([comboId])
 }
+
+// ========================================
+// SISTEMA DE COMBOS DE PRODUCTOS
+// ========================================
+
+model Combo {
+  id                  Int              @id @default(autoincrement())
+  empresaId           Int
+  empresa             Empresa          @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  
+  // Información básica
+  nombre              String           @db.VarChar(200)
+  descripcion         String?          @db.Text
+  imagenUrl           String?          @db.VarChar(500)
+  
+  // Precios
+  precioRegular       Decimal          @db.Decimal(10, 2) // Suma de precios individuales
+  precioCombo         Decimal          @db.Decimal(10, 2) // Precio con descuento
+  descuentoPorcentaje Decimal?         @db.Decimal(5, 2)  // % de ahorro
+  
+  // Estado y disponibilidad
+  activo              Boolean          @default(true)
+  stock               Int?             // Stock del combo (opcional, se calcula del mínimo de productos)
+  
+  // Vigencia
+  fechaInicio         DateTime?
+  fechaFin            DateTime?
+  
+  // Relaciones
+  items               ComboItem[]
+  pedidoItems         ItemPedidoTienda[]
+  
+  // Auditoría
+  creadoEn            DateTime         @default(now())
+  actualizadoEn       DateTime         @updatedAt
+  
+  @@index([empresaId, activo])
+  @@map("combos")
+}
+
+model ComboItem {
+  id                  Int              @id @default(autoincrement())
+  comboId             Int
+  combo               Combo            @relation(fields: [comboId], references: [id], onDelete: Cascade)
+  
+  productoId          Int
+  producto            Producto         @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  
+  cantidad            Int              @default(1) // Cantidad de este producto en el combo
+  
+  @@unique([comboId, productoId])
+  @@map("combo_items")
+}
+
+// ========================================
+// ENUMS
+// ========================================
 
 enum EstadoPedidoTienda {
   PENDIENTE       // Pedido recibido, esperando confirmación de pago
@@ -689,4 +757,79 @@ enum EstadoWhatsApp {
   ENTREGADO
   LEIDO
   FALLIDO
+}
+
+// ========================================
+// SISTEMA DE MODIFICADORES/PERSONALIZACION DE PRODUCTOS
+// Para restaurantes: cremas, acompañamientos, extras, etc.
+// ========================================
+
+// Grupo de modificadores (ej: "Cremas", "Acompañamiento", "Extras")
+model GrupoModificador {
+  id              Int       @id @default(autoincrement())
+  empresaId       Int
+  empresa         Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  
+  nombre          String    @db.VarChar(100)  // "Elige tus cremas", "Acompañamiento"
+  descripcion     String?   @db.VarChar(255)
+  
+  // Reglas de selección
+  esObligatorio   Boolean   @default(false)   // Si debe elegir al menos una opción
+  seleccionMin    Int       @default(0)       // Mínimo de opciones a elegir
+  seleccionMax    Int       @default(1)       // Máximo de opciones (1 = radio, >1 = checkbox)
+  
+  // Orden de visualización
+  orden           Int       @default(0)
+  activo          Boolean   @default(true)
+  
+  // Relaciones
+  opciones        OpcionModificador[]
+  productos       ProductoGrupoModificador[]
+  
+  creadoEn        DateTime  @default(now())
+  actualizadoEn   DateTime  @updatedAt
+  
+  @@index([empresaId, activo])
+  @@map("grupos_modificadores")
+}
+
+// Opciones dentro de un grupo (ej: "Mayonesa", "Ketchup", "Con papas fritas")
+model OpcionModificador {
+  id              Int       @id @default(autoincrement())
+  grupoId         Int
+  grupo           GrupoModificador @relation(fields: [grupoId], references: [id], onDelete: Cascade)
+  
+  nombre          String    @db.VarChar(100)  // "Mayonesa", "Con papas fritas"
+  descripcion     String?   @db.VarChar(255)
+  
+  // Precio adicional (0 = gratis)
+  precioExtra     Decimal   @default(0) @db.Decimal(10, 2)
+  
+  // Estado
+  orden           Int       @default(0)
+  activo          Boolean   @default(true)
+  esDefault       Boolean   @default(false)   // Si viene seleccionado por defecto
+  
+  creadoEn        DateTime  @default(now())
+  actualizadoEn   DateTime  @updatedAt
+  
+  @@index([grupoId, activo])
+  @@map("opciones_modificadores")
+}
+
+// Relación muchos a muchos: qué grupos de modificadores aplican a qué productos
+model ProductoGrupoModificador {
+  id              Int       @id @default(autoincrement())
+  productoId      Int
+  producto        Producto  @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  grupoId         Int
+  grupo           GrupoModificador @relation(fields: [grupoId], references: [id], onDelete: Cascade)
+  
+  // Permite override de reglas por producto si es necesario
+  ordenOverride   Int?      // Si se quiere un orden diferente para este producto
+  
+  @@unique([productoId, grupoId])
+  @@index([productoId])
+  @@index([grupoId])
+  @@map("producto_grupo_modificadores")
 }

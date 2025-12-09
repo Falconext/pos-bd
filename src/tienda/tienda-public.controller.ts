@@ -1,10 +1,14 @@
 import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
 import { TiendaService } from './tienda.service';
 import { CrearPedidoDto } from './dto/crear-pedido.dto';
+import { ModificadoresService } from '../modificadores/modificadores.service';
 
 @Controller('public/store')
 export class TiendaPublicController {
-  constructor(private readonly tiendaService: TiendaService) { }
+  constructor(
+    private readonly tiendaService: TiendaService,
+    private readonly modificadoresService: ModificadoresService,
+  ) { }
 
   @Get(':slug')
   async obtenerTienda(@Param('slug') slug: string) {
@@ -43,6 +47,42 @@ export class TiendaPublicController {
   async rastrearPedido(@Param('codigo') codigo: string) {
     return this.tiendaService.obtenerPedidoPorCodigo(codigo);
   }
+
+  // ==================== COMBOS ====================
+
+  @Get(':slug/combos')
+  async obtenerCombos(@Param('slug') slug: string) {
+    return this.tiendaService.obtenerCombosTienda(slug);
+  }
+
+  @Get(':slug/combos/:id')
+  async obtenerComboDetalle(
+    @Param('slug') slug: string,
+    @Param('id') id: string,
+  ) {
+    return this.tiendaService.obtenerComboDetalle(slug, +id);
+  }
+
+  @Get(':slug/combos/:id/stock')
+  async verificarStockCombo(
+    @Param('slug') slug: string,
+    @Param('id') id: string,
+  ) {
+    return this.tiendaService.verificarStockCombo(slug, +id);
+  }
+
+  // ==================== MODIFICADORES ====================
+
+  @Get(':slug/products/:id/modifiers')
+  async obtenerModificadoresProducto(
+    @Param('slug') slug: string,
+    @Param('id') id: string,
+  ) {
+    // slug se usa para validar que el producto pertenece a esa tienda
+    return this.modificadoresService.obtenerModificadoresProductoPublico(+id);
+  }
+
+  // ==================== PEDIDOS ====================
 
   @Post(':slug/orders')
   async crearPedido(
