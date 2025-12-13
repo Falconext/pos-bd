@@ -296,8 +296,18 @@ export class ProductoService {
       where: { id: data.id },
       data: {
         descripcion: data.descripcion,
-        categoriaId: data.categoriaId,
-        marcaId: data.marcaId != null ? data.marcaId : undefined,
+        categoriaId:
+          data.categoriaId === null
+            ? null
+            : data.categoriaId !== undefined && Number(data.categoriaId) > 0
+              ? Number(data.categoriaId)
+              : undefined,
+        marcaId:
+          data.marcaId === null
+            ? null
+            : data.marcaId !== undefined && Number(data.marcaId) > 0
+              ? Number(data.marcaId)
+              : undefined,
         unidadMedidaId: data.unidadMedidaId,
         tipoAfectacionIGV: data.tipoAfectacionIGV,
         valorUnitario:
