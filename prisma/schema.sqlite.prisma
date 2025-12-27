@@ -1,0 +1,811 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./nephi_pos.db"
+}
+
+model Plan {
+  id              Int       @id @default(autoincrement())
+  nombre          String    @unique
+  descripcion     String?
+  limiteUsuarios  Int?
+  costo           Decimal   @default(0)
+  esPrueba        Boolean   @default(false)
+  duracionDias    Int       @default(30)
+  tipoFacturacion String    @default("MENSUAL")
+  tieneTienda     Boolean   @default(false) 
+  tieneBanners       Boolean @default(false) 
+  tieneGaleria       Boolean @default(false) 
+  tieneCulqi         Boolean @default(false) 
+  tieneDeliveryGPS   Boolean @default(false) 
+  maxBanners         Int?    @default(3)     
+  maxImagenesProducto Int?   @default(1)     
+  empresas        Empresa[]
+}
+
+model Ubigeo {
+  codigo       String    @id
+  departamento String
+  provincia    String
+  distrito     String
+  empresas     Empresa[]
+}
+
+model Rubro {
+  id       Int       @id @default(autoincrement())
+  nombre   String    @unique
+  empresas Empresa[]
+  disenos  DisenoRubro[]
+  plantillas ProductoPlantilla[]
+}
+
+model Empresa {
+  id                Int                @id @default(autoincrement())
+  ruc               String             @unique
+  razonSocial       String
+  direccion         String
+  logo              String?
+  fechaActivacion   DateTime
+  fechaExpiracion   DateTime
+  planId            Int
+  estado            EstadoType         @default(ACTIVO)
+  departamento      String?
+  distrito          String?
+  provincia         String?
+  ubigeo            String?
+  providerToken     String?
+  tokenCreatedAt    DateTime?
+  tokenUpdatedAt    DateTime?
+  empresaUbigeo     String?
+  nombreComercial   String?
+  rubroId           Int?
+  providerId        String?
+  tipoEmpresa       TipoEmpresa        @default(FORMAL)
+  slugTienda        String?            @unique 
+  descripcionTienda String?            
+  whatsappTienda    String?            
+  facebookUrl       String?            
+  instagramUrl      String?            
+  tiktokUrl         String?            
+  horarioAtencion   String?            
+  colorPrimario     String?            @default("#000000") 
+  colorSecundario   String?            @default("#ffffff") 
+  yapeQrUrl         String?            
+  yapeNumero        String?            
+  plinQrUrl         String?            
+  plinNumero        String?            
+  aceptaEfectivo    Boolean            @default(true) 
+  costoEnvioFijo    Decimal?           @default(0) 
+  aceptaRecojo      Boolean            @default(true) 
+  aceptaEnvio       Boolean            @default(true) 
+  direccionRecojo   String?            
+  tiempoPreparacionMin Int?            @default(30) 
+  disenoOverride    String?            // Json as String for SQLite
+  categorias        Categoria[]
+  clientes          Cliente[]
+  comprobantes      Comprobante[]
+  ubicacion         Ubigeo?            @relation(fields: [empresaUbigeo], references: [codigo])
+  plan              Plan               @relation(fields: [planId], references: [id])
+  rubro             Rubro?             @relation(fields: [rubroId], references: [id])
+  movimientosCaja   MovimientoCaja[]
+  movimientosKardex MovimientoKardex[]
+  pagos             Pago[]
+  productos         Producto[]
+  usuarios          Usuario[]
+  marcas            Marca[]
+  Notificacion      Notificacion[]
+  whatsappEnvios    WhatsAppEnvio[]
+  pedidosTienda     PedidoTienda[]     
+  banners           Banner[]
+  combos            Combo[]            
+  preferenciasTabla PreferenciaTabla[]
+  gruposModificadores GrupoModificador[] 
+
+  @@index([providerToken])
+  @@index([slugTienda])
+}
+
+model Usuario {
+  id                Int                @id @default(autoincrement())
+  nombre            String
+  dni               String
+  celular           String
+  email             String             @unique
+  password          String
+  rol               Rol
+  empresaId         Int?
+  estado            EstadoType         @default(ACTIVO)
+  telefono          String?
+  permisos          String?
+  comprobantes      Comprobante[]
+  movimientosCaja   MovimientoCaja[]
+  movimientosKardex MovimientoKardex[]
+  pagos             Pago[]
+  refreshTokens     RefreshToken[]
+  empresa           Empresa?           @relation(fields: [empresaId], references: [id])
+  Notificacion      Notificacion[]
+  whatsappEnvios    WhatsAppEnvio[]
+  historialEstadosPedido HistorialEstadoPedido[]
+  preferenciasTabla PreferenciaTabla[]
+}
+
+model Categoria {
+  id        Int        @id @default(autoincrement())
+  nombre    String
+  empresaId Int?
+  empresa   Empresa?   @relation(fields: [empresaId], references: [id])
+  productos Producto[]
+}
+
+model UnidadMedida {
+  id        Int        @id @default(autoincrement())
+  codigo    String     @unique
+  nombre    String
+  productos Producto[]
+}
+
+model Marca {
+  id        Int        @id @default(autoincrement())
+  nombre    String
+  empresaId Int?
+  empresa   Empresa?   @relation(fields: [empresaId], references: [id])
+  productos Producto[]
+
+  @@unique([empresaId, nombre])
+}
+
+model Producto {
+  id                  Int                  @id @default(autoincrement())
+  codigo              String
+  descripcion         String
+  categoriaId         Int?
+  marcaId             Int?
+  unidadMedidaId      Int
+  tipoAfectacionIGV   String
+  precioUnitario      Decimal
+  valorUnitario       Decimal
+  igvPorcentaje       Decimal              @default(18.00)
+  stock               Int
+  estado              EstadoType           @default(ACTIVO)
+  creadoEn            DateTime             @default(now())
+  empresaId           Int?
+  costoPromedio       Decimal?             @default(0)
+  stockMaximo         Int?
+  stockMinimo         Int?                 @default(0)
+  publicarEnTienda    Boolean              @default(false) 
+  imagenUrl           String?              
+  imagenesExtra       String?              
+  descripcionLarga    String?              
+  destacado           Boolean              @default(false) 
+  ratingAvg           Decimal?             @default(0) 
+  ratingCount         Int?                 @default(0) 
+  detalleComprobantes DetalleComprobante[]
+  movimientosKardex   MovimientoKardex[]
+  categoria           Categoria?           @relation(fields: [categoriaId], references: [id])
+  marca               Marca?               @relation(fields: [marcaId], references: [id])
+  empresa             Empresa?             @relation(fields: [empresaId], references: [id])
+  unidadMedida        UnidadMedida         @relation(fields: [unidadMedidaId], references: [id])
+  itemsPedido         ItemPedidoTienda[]
+  galeria             GaleriaProducto[]    
+  comboItems          ComboItem[]          
+  gruposModificadores ProductoGrupoModificador[] 
+
+  @@unique([empresaId, codigo])
+  @@index([empresaId, publicarEnTienda])
+  @@index([marcaId])
+}
+
+model TipoDocumento {
+  id          Int       @id @default(autoincrement())
+  codigo      String    @unique
+  descripcion String
+  clientes    Cliente[]
+}
+
+model Cliente {
+  id              Int            @id @default(autoincrement())
+  nombre          String
+  nroDoc          String
+  direccion       String?
+  email           String?
+  telefono        String?
+  empresaId       Int?
+  estado          EstadoType     @default(ACTIVO)
+  tipoDocumentoId Int?
+  departamento    String?
+  distrito        String?
+  provincia       String?
+  ubigeo          String?
+  persona         PersonaType    @default(CLIENTE)
+  empresa         Empresa?       @relation(fields: [empresaId], references: [id])
+  tipoDocumento   TipoDocumento? @relation(fields: [tipoDocumentoId], references: [id])
+  comprobantes    Comprobante[]
+}
+
+model TipoOperacion {
+  id           Int           @id @default(autoincrement())
+  codigo       String        @unique
+  descripcion  String
+  comprobantes Comprobante[]
+}
+
+model MotivoNota {
+  id           Int           @id @default(autoincrement())
+  tipo         TipoNota
+  codigo       String
+  descripcion  String
+  comprobantes Comprobante[] @relation("ComprobanteMotivo")
+
+  @@unique([tipo, codigo])
+}
+
+model Comprobante {
+  id                 Int                  @id @default(autoincrement())
+  ublVersion         String               @default("2.1")
+  tipoDoc            String
+  serie              String
+  correlativo        Int
+  fechaEmision       DateTime             
+  formaPagoTipo      String
+  formaPagoMoneda    String
+  tipoMoneda         String
+  observaciones      String?
+  mtoOperGravadas    Float
+  mtoIGV             Float
+  valorVenta         Float
+  totalImpuestos     Float
+  subTotal           Float
+  mtoImpVenta        Float
+  estadoEnvioSunat   EstadoSunat          @default(PENDIENTE)
+  medioPago          String?
+  clienteId          Int
+  empresaId          Int
+  tipDocAfectado     String?
+  numDocAfectado     String?
+  creadoEn           DateTime             @default(now())
+  tipoOperacionId    Int?
+  motivoId           Int?
+  mtoOperInafectas   Float                @default(0)
+  mtoDescuentoGlobal Float                @default(0)
+  sunatCdrResponse   String? 
+  sunatCdrZip        String?
+  sunatErrorMsg      String?
+  sunatXml           String?
+  documentoId        String?
+  adelanto           Float?
+  fechaRecojo        DateTime?
+  saldo              Float?               @default(0)
+  estadoPago         EstadoPago?          @default(PENDIENTE_PAGO)
+  descuentoOT        Float?               @default(0)
+  descuentoPorcOT    Float?               @default(0)
+  estadoOT           String?
+  vuelto             Float?               @default(0)
+  usuarioId          Int?
+  s3PdfUrl           String?
+  s3XmlUrl           String?
+  s3CdrUrl           String?
+  cliente            Cliente              @relation(fields: [clienteId], references: [id])
+  empresa            Empresa              @relation(fields: [empresaId], references: [id])
+  motivo             MotivoNota?          @relation("ComprobanteMotivo", fields: [motivoId], references: [id])
+  tipoOperacion      TipoOperacion?       @relation(fields: [tipoOperacionId], references: [id])
+  usuario            Usuario?             @relation(fields: [usuarioId], references: [id])
+  detalles           DetalleComprobante[]
+  leyendas           Leyenda[]
+  movimientosKardex  MovimientoKardex[]
+  pagos              Pago[]
+  whatsappEnvios     WhatsAppEnvio[]
+}
+
+model DetalleComprobante {
+  id                Int         @id @default(autoincrement())
+  comprobanteId     Int
+  productoId        Int?
+  unidad            String
+  descripcion       String
+  cantidad          Float
+  mtoValorUnitario  Float
+  mtoValorVenta     Float
+  mtoBaseIgv        Float
+  porcentajeIgv     Float
+  igv               Float
+  tipAfeIgv         Int
+  totalImpuestos    Float
+  mtoPrecioUnitario Float
+  comprobante       Comprobante @relation(fields: [comprobanteId], references: [id])
+  producto          Producto?   @relation(fields: [productoId], references: [id])
+}
+
+model Leyenda {
+  id            Int         @id @default(autoincrement())
+  comprobanteId Int
+  code          String
+  value         String
+  comprobante   Comprobante @relation(fields: [comprobanteId], references: [id])
+}
+
+model Pago {
+  id            Int         @id @default(autoincrement())
+  comprobanteId Int
+  fecha         DateTime    @default(now())
+  monto         Float
+  medioPago     String
+  observacion   String?
+  referencia    String?
+  creadoEn      DateTime    @default(now())
+  empresaId     Int?
+  usuarioId     Int?
+  comprobante   Comprobante @relation(fields: [comprobanteId], references: [id], onDelete: Cascade)
+  empresa       Empresa?    @relation(fields: [empresaId], references: [id])
+  usuario       Usuario?    @relation(fields: [usuarioId], references: [id])
+
+  @@index([comprobanteId])
+  @@index([usuarioId])
+  @@index([empresaId])
+}
+
+model MovimientoKardex {
+  id               Int            @id @default(autoincrement())
+  productoId       Int
+  empresaId        Int
+  tipoMovimiento   TipoMovimiento
+  concepto         String
+  comprobanteId    Int?
+  cantidad         Int
+  stockAnterior    Int
+  stockActual      Int
+  costoUnitario    Decimal?
+  valorTotal       Decimal?
+  fecha            DateTime       @default(now())
+  usuarioId        Int?
+  observacion      String?
+  lote             String?
+  fechaVencimiento DateTime?
+  comprobante      Comprobante?   @relation(fields: [comprobanteId], references: [id])
+  empresa          Empresa        @relation(fields: [empresaId], references: [id])
+  producto         Producto       @relation(fields: [productoId], references: [id])
+  usuario          Usuario?       @relation(fields: [usuarioId], references: [id])
+
+  @@index([productoId, fecha])
+  @@index([empresaId, fecha])
+  @@index([tipoMovimiento])
+}
+
+model RefreshToken {
+  id        Int      @id @default(autoincrement())
+  token     String   @unique
+  usuarioId Int
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  usuario   Usuario  @relation(fields: [usuarioId], references: [id])
+}
+
+model MovimientoCaja {
+  id                 Int        @id @default(autoincrement())
+  usuarioId          Int
+  empresaId          Int
+  tipoMovimiento     TipoCaja
+  fecha              DateTime   @default(now())
+  montoInicial       Decimal?
+  montoFinal         Decimal?
+  montoEfectivo      Decimal?   @default(0)
+  montoYape          Decimal?   @default(0)
+  montoPlin          Decimal?   @default(0)
+  montoTransferencia Decimal?   @default(0)
+  montoTarjeta       Decimal?   @default(0)
+  observaciones      String?
+  estado             EstadoType @default(ACTIVO)
+  fechaCierre        DateTime?
+  totalVentas        Decimal?   @default(0)
+  totalIngresos      Decimal?   @default(0)
+  diferencia         Decimal?   @default(0)
+  turno              String?
+  empresa            Empresa    @relation(fields: [empresaId], references: [id])
+  usuario            Usuario    @relation(fields: [usuarioId], references: [id])
+
+  @@index([usuarioId, fecha])
+  @@index([empresaId, fecha])
+  @@index([tipoMovimiento])
+}
+
+model PedidoTienda {
+  id                Int                @id @default(autoincrement())
+  empresaId         Int
+  clienteNombre     String
+  clienteTelefono   String
+  clienteEmail      String?
+  clienteDireccion  String?
+  clienteReferencia String?            
+  tipoEntrega       TipoEntrega        @default(RECOJO) 
+  costoEnvio        Decimal            @default(0) 
+  codigoSeguimiento String             @unique 
+  notasInternas     String?            
+  subtotal          Decimal
+  igv               Decimal            @default(0)
+  total             Decimal
+  estado            EstadoPedidoTienda @default(PENDIENTE)
+  medioPago         MedioPagoTienda    @default(YAPE)
+  observaciones     String?            
+  referenciaTransf  String?            
+  creadoEn          DateTime           @default(now())
+  actualizadoEn     DateTime           @updatedAt
+  fechaConfirmacion DateTime?          
+  usuarioConfirma   Int?               
+  comprobanteId     Int?               
+  empresa           Empresa            @relation(fields: [empresaId], references: [id])
+  items             ItemPedidoTienda[]
+  historialEstados  HistorialEstadoPedido[]
+
+  @@index([empresaId, estado])
+  @@index([creadoEn])
+  @@index([codigoSeguimiento])
+}
+
+model ItemPedidoTienda {
+  id           Int          @id @default(autoincrement())
+  pedidoId     Int
+  productoId   Int
+  cantidad     Int
+  precioUnit   Decimal      
+  subtotal     Decimal      
+  observacion  String?      
+  pedido       PedidoTienda @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  producto     Producto     @relation(fields: [productoId], references: [id])
+  comboId      Int?
+  combo        Combo?       @relation(fields: [comboId], references: [id])
+  esCombo      Boolean      @default(false)
+  comboSnapshot String?       // Json as String
+  
+  @@index([pedidoId])
+  @@index([productoId])
+  @@index([comboId])
+}
+
+model Combo {
+  id                  Int              @id @default(autoincrement())
+  empresaId           Int
+  empresa             Empresa          @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  
+  nombre              String           
+  descripcion         String?          
+  imagenUrl           String?          
+  
+  precioRegular       Decimal          
+  precioCombo         Decimal          
+  descuentoPorcentaje Decimal?         
+  
+  activo              Boolean          @default(true)
+  stock               Int?             
+  
+  fechaInicio         DateTime?
+  fechaFin            DateTime?
+  
+  items               ComboItem[]
+  pedidoItems         ItemPedidoTienda[]
+  
+  creadoEn            DateTime         @default(now())
+  actualizadoEn       DateTime         @updatedAt
+  
+  @@index([empresaId, activo])
+  @@map("combos")
+}
+
+model ComboItem {
+  id                  Int              @id @default(autoincrement())
+  comboId             Int
+  combo               Combo            @relation(fields: [comboId], references: [id], onDelete: Cascade)
+  
+  productoId          Int
+  producto            Producto         @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  
+  cantidad            Int              @default(1) 
+  
+  @@unique([comboId, productoId])
+  @@map("combo_items")
+}
+
+enum EstadoPedidoTienda {
+  PENDIENTE       
+  CONFIRMADO      
+  EN_PREPARACION  
+  LISTO           
+  ENTREGADO       
+  CANCELADO       
+}
+
+enum MedioPagoTienda {
+  YAPE
+  PLIN
+  EFECTIVO
+  TRANSFERENCIA
+  TARJETA
+}
+
+enum TipoEntrega {
+  RECOJO
+  ENVIO
+}
+
+enum EstadoType {
+  ACTIVO
+  INACTIVO
+  PLACEHOLDER
+}
+
+enum TipoNota {
+  CREDITO
+  DEBITO
+}
+
+enum Rol {
+  ADMIN_SISTEMA
+  ADMIN_EMPRESA
+  USUARIO_EMPRESA
+}
+
+enum PersonaType {
+  CLIENTE
+  CLIENTE_PROVEEDOR
+  PROVEEDOR
+}
+
+enum EstadoSunat {
+  PENDIENTE
+  ENVIADO
+  EMITIDO
+  RECHAZADO
+  ANULADO
+  REGISTRADO
+  NO_APLICA
+}
+
+enum EstadoPago {
+  PENDIENTE_PAGO
+  COMPLETADO
+  ANULADO
+  PAGO_PARCIAL
+}
+
+enum TipoEmpresa {
+  FORMAL
+  INFORMAL
+}
+
+enum TipoMovimiento {
+  INGRESO
+  SALIDA
+  AJUSTE
+  TRANSFERENCIA
+}
+
+enum MetodoCosteo {
+  FIFO
+  LIFO
+  PROMEDIO_PONDERADO
+}
+
+enum TipoCaja {
+  APERTURA
+  CIERRE
+  INGRESO
+  EGRESO
+}
+
+model HistorialEstadoPedido {
+  id        Int                @id @default(autoincrement())
+  pedidoId  Int
+  estadoAnterior EstadoPedidoTienda?
+  estadoNuevo    EstadoPedidoTienda
+  usuarioId Int?
+  notas     String?
+  creadoEn  DateTime           @default(now())
+
+  pedido    PedidoTienda       @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  usuario   Usuario?           @relation(fields: [usuarioId], references: [id])
+
+  @@index([pedidoId])
+  @@index([creadoEn])
+}
+
+model Notificacion {
+  id        Int      @id @default(autoincrement())
+  usuarioId Int
+  empresaId Int?
+  tipo      String 
+  titulo    String
+  mensaje   String
+  leida     Boolean  @default(false)
+  creadoEn  DateTime @default(now())
+
+  usuario Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  empresa Empresa? @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId, leida])
+  @@index([empresaId])
+}
+
+model WhatsAppEnvio {
+  id             Int      @id @default(autoincrement())
+  comprobanteId  Int
+  empresaId      Int
+  usuarioId      Int
+  numeroDestino  String
+  estado         EstadoWhatsApp @default(PENDIENTE)
+  mensajeId      String?  
+  error          String?
+  costoUSD       Decimal  @default(0) 
+  incluyeXML     Boolean  @default(false)
+  creadoEn       DateTime @default(now())
+  actualizadoEn  DateTime @updatedAt
+
+  comprobante Comprobante @relation(fields: [comprobanteId], references: [id], onDelete: Cascade)
+  empresa     Empresa     @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  usuario     Usuario     @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([comprobanteId])
+  @@index([empresaId])
+  @@index([estado])
+  @@index([creadoEn])
+}
+
+model DisenoRubro {
+  id              Int      @id @default(autoincrement())
+  rubroId         Int      @unique
+  colorPrimario   String   @default("#6A6CFF")
+  colorSecundario String   @default("#ffffff")
+  colorAccento    String   @default("#FF6B6B")
+  tipografia      String   @default("Inter")
+  espaciado       String   @default("normal")    
+  bordeRadius     String   @default("medium")    
+  estiloBoton     String   @default("rounded")   
+  plantillaId     String   @default("moderna")   
+  vistaProductos  String   @default("cards")     
+  tiempoEntregaMin Int?     @default(15)         
+  tiempoEntregaMax Int?     @default(25)         
+  creadoEn        DateTime @default(now())
+  actualizadoEn   DateTime @updatedAt
+
+  rubro Rubro @relation(fields: [rubroId], references: [id], onDelete: Cascade)
+
+  @@index([rubroId])
+}
+
+model Banner {
+  id         Int      @id @default(autoincrement())
+  empresaId  Int
+  titulo     String?
+  subtitulo  String?
+  imagenUrl  String
+  linkUrl    String?
+  orden      Int      @default(0)
+  activo     Boolean  @default(true)
+  creadoEn   DateTime @default(now())
+  
+  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  
+  @@index([empresaId, activo, orden])
+}
+
+model GaleriaProducto {
+  id          Int      @id @default(autoincrement())
+  productoId  Int
+  imagenUrl   String
+  orden       Int      @default(0)
+  esPrincipal Boolean  @default(false)
+  creadoEn    DateTime @default(now())
+  
+  producto Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  
+  @@index([productoId])
+  @@index([productoId, esPrincipal])
+}
+
+model PreferenciaTabla {
+  id             Int       @id @default(autoincrement())
+  usuarioId      Int
+  empresaId      Int?
+  tabla          String
+  visibleColumns String    // Json as String
+  creadoEn       DateTime  @default(now())
+  actualizadoEn  DateTime  @updatedAt
+
+  usuario Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  empresa Empresa? @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  @@unique([usuarioId, empresaId, tabla])
+  @@index([usuarioId, empresaId, tabla])
+}
+
+enum EstadoWhatsApp {
+  PENDIENTE
+  ENVIADO
+  ENTREGADO
+  LEIDO
+  FALLIDO
+}
+
+model GrupoModificador {
+  id              Int       @id @default(autoincrement())
+  empresaId       Int
+  empresa         Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  
+  nombre          String    // VarChar removed
+  descripcion     String?   
+  
+  esObligatorio   Boolean   @default(false)   
+  seleccionMin    Int       @default(0)       
+  seleccionMax    Int       @default(1)       
+  
+  orden           Int       @default(0)
+  activo          Boolean   @default(true)
+  
+  opciones        OpcionModificador[]
+  productos       ProductoGrupoModificador[]
+  
+  creadoEn        DateTime  @default(now())
+  actualizadoEn   DateTime  @updatedAt
+  
+  @@index([empresaId, activo])
+  @@map("grupos_modificadores")
+}
+
+model OpcionModificador {
+  id              Int       @id @default(autoincrement())
+  grupoId         Int
+  grupo           GrupoModificador @relation(fields: [grupoId], references: [id], onDelete: Cascade)
+  
+  nombre          String    
+  descripcion     String?   
+  precioExtra     Decimal   @default(0) 
+  
+  orden           Int       @default(0)
+  activo          Boolean   @default(true)
+  esDefault       Boolean   @default(false)
+  
+  creadoEn        DateTime  @default(now())
+  actualizadoEn   DateTime  @default(now()) @updatedAt
+  
+  @@index([grupoId])
+  @@index([grupoId, activo])
+  @@map("opciones_modificadores")
+}
+
+model ProductoGrupoModificador {
+  id              Int      @id @default(autoincrement())
+  productoId      Int
+  producto        Producto  @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  grupoId         Int
+  grupo           GrupoModificador @relation(fields: [grupoId], references: [id], onDelete: Cascade)
+  
+  ordenOverride   Int?
+  
+  @@unique([productoId, grupoId])
+  @@index([productoId])
+  @@index([grupoId])
+  @@map("producto_grupo_modificadores")
+}
+
+model ProductoPlantilla {
+  id              Int      @id @default(autoincrement())
+  nombre          String
+  descripcion     String?
+  imagenUrl       String?
+  precioSugerido  Decimal? 
+  rubroId         Int
+  categoria       String?  
+  marca           String?  
+  unidadConteo    String   @default("NIU")
+  codigo          String?  @unique 
+  
+  creadoEn        DateTime @default(now())
+  actualizadoEn   DateTime @updatedAt
+
+  rubro           Rubro    @relation(fields: [rubroId], references: [id])
+  
+  @@index([rubroId])
+  @@index([nombre])
+  @@map("producto_plantillas")
+}
+

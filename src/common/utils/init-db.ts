@@ -55,14 +55,14 @@ export async function initializeDatabase(prisma: PrismaService) {
         });
 
         // 4. Create Admin User
-        const hashedPassword = await bcrypt.hash('123456', 10);
+        const hashedPassword = await bcrypt.hash('admin123', 10);
 
         await prisma.usuario.create({
             data: {
                 nombre: 'Administrador',
                 dni: '00000001',
                 celular: '999999999',
-                email: 'admin@falcon.com',
+                email: 'admin@falconext.com',
                 password: hashedPassword,
                 rol: 'ADMIN_EMPRESA',
                 empresaId: empresa.id,
@@ -72,7 +72,7 @@ export async function initializeDatabase(prisma: PrismaService) {
         });
 
         console.log('✅ Database initialized successfully!');
-        console.log('🔑 Credentials: admin@falcon.com / 123456');
+        console.log('🔑 Credentials: admin@falconext.com / admin123');
 
     } catch (error) {
         console.error('❌ Error initializing database:', error);
