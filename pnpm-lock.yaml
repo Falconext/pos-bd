@@ -14,6 +14,9 @@ importers:
       '@aws-sdk/s3-request-presigner':
         specifier: ^3.927.0
         version: 3.928.0
+      '@google/generative-ai':
+        specifier: ^0.21.0
+        version: 0.21.0
       '@nestjs/common':
         specifier: ^11.0.1
         version: 11.1.8(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -62,6 +65,9 @@ importers:
       express:
         specifier: ^4.18.2
         version: 4.21.2
+      google-img-scrap:
+        specifier: ^1.1.4
+        version: 1.1.4
       handlebars:
         specifier: ^4.7.8
         version: 4.7.8
@@ -590,6 +596,10 @@ packages:
   '@eslint/plugin-kit@0.4.1':
     resolution: {integrity: sha512-43/qtrDUokr7LJqoF2c3+RInu/t4zfrpYdoSDfYyhg52rwLV6TnOvdG4fXm7IkSB3wErkcmJS9iEhjVtOSEjjA==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+
+  '@google/generative-ai@0.21.0':
+    resolution: {integrity: sha512-7XhUbtnlkSEZK15kN3t+tzIMxsbKm/dSkKBFalj+20NvPKe1kBY7mR2P7vuijEn+f06z5+A8bVGKO0v39cr6Wg==}
+    engines: {node: '>=18.0.0'}
 
   '@humanfs/core@0.19.1':
     resolution: {integrity: sha512-5DyQ4+1JEUzejeK1JGICcideyfUbGixgS9jNgex5nqkW+cY7WZhxBigmieN5Qnw9ZosSNVC9KQKyb+GUaGyKUA==}
@@ -2829,6 +2839,9 @@ packages:
   globals@16.5.0:
     resolution: {integrity: sha512-c/c15i26VrJ4IRt5Z89DnIzCGDn9EcebibhAOjw5ibqEHsE1wLUgkPn9RDmNcUKyU87GeaL633nyJ+pplFR2ZQ==}
     engines: {node: '>=18'}
+
+  google-img-scrap@1.1.4:
+    resolution: {integrity: sha512-PvwkbPPnO5aoFRqDStRIunlbCxV4+SwL4r/ktfpXRqRnqny2bneqEFYDnPJ7HG+wTHkOv5Y/ujUwooJxO2Z+/g==}
 
   gopd@1.2.0:
     resolution: {integrity: sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==}
@@ -5166,6 +5179,8 @@ snapshots:
     dependencies:
       '@eslint/core': 0.17.0
       levn: 0.4.1
+
+  '@google/generative-ai@0.21.0': {}
 
   '@humanfs/core@0.19.1': {}
 
@@ -7775,6 +7790,13 @@ snapshots:
   globals@14.0.0: {}
 
   globals@16.5.0: {}
+
+  google-img-scrap@1.1.4:
+    dependencies:
+      axios: 1.13.2
+      form-data: 4.0.4
+    transitivePeerDependencies:
+      - debug
 
   gopd@1.2.0: {}
 

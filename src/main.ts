@@ -4,6 +4,8 @@ import { ValidationPipe } from '@nestjs/common';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import * as express from 'express';
+import { PrismaService } from './prisma/prisma.service';
+import { initializeDatabase } from './common/utils/init-db';
 
 async function bootstrap() {
   process.env.TZ = 'America/Lima';
@@ -19,7 +21,7 @@ async function bootstrap() {
   const allowedOrigins = [
     'http://localhost:5173',
     'http://localhost:5174',
-    'http://localhost:4000',
+    'http://localhost:3000',
     'http://192.168.100.16:4000',
     'https://falconext-mype-production.up.railway.app',
     process.env.FRONTEND_URL,
@@ -29,12 +31,12 @@ async function bootstrap() {
     origin: (origin, callback) => {
       // Allow requests with no origin (like mobile apps, Postman, curl)
       if (!origin) return callback(null, true);
-      
+
       if (allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
         console.warn(`CORS: Origin ${origin} not allowed`);
-        callback(new Error('Not allowed by CORS'));
+        callback(null, true); // Allow temporarily for desktop/debugging
       }
     },
     credentials: true,
@@ -48,6 +50,15 @@ async function bootstrap() {
   app.setGlobalPrefix('api');
 
   const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
+
+  // Auto-initialize (Seed) if empty
+  try {
+    const prismaService = app.get(PrismaService);
+    await initializeDatabase(prismaService);
+  } catch (e) {
+    console.warn('Skipping auto-seed:', e.message);
+  }
+
   await app.listen(PORT, '0.0.0.0');
 }
 bootstrap();

@@ -34,4 +34,10 @@ export class ListProductoDto {
   @IsInt()
   @Min(1)
   marcaId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  categoriaId?: number;
 }

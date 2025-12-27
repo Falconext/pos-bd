@@ -22,7 +22,7 @@ export class ComprobanteService {
     private readonly inventarioNotificaciones: InventarioNotificacionesService,
     private readonly s3Service: S3Service,
     private readonly pdfGenerator: PdfGeneratorService,
-  ) {}
+  ) { }
 
   async listarTipoOperacion() {
     return this.prisma.tipoOperacion.findMany({ orderBy: { codigo: 'asc' } });
@@ -88,29 +88,29 @@ export class ComprobanteService {
       tipoDoc: { in: tipoDoc ? [tipoDoc] : tiposPermitidos },
       ...(search
         ? {
-            OR: [
-              { serie: { contains: search, mode: 'insensitive' } },
-              ...(Number.isNaN(+search)
-                ? []
-                : [{ correlativo: parseInt(search, 10) }]),
-              {
-                cliente: { nroDoc: { contains: search, mode: 'insensitive' } },
-              },
-              {
-                cliente: { nombre: { contains: search, mode: 'insensitive' } },
-              },
-            ],
-          }
+          OR: [
+            { serie: { contains: search, mode: 'insensitive' } },
+            ...(Number.isNaN(+search)
+              ? []
+              : [{ correlativo: parseInt(search, 10) }]),
+            {
+              cliente: { nroDoc: { contains: search, mode: 'insensitive' } },
+            },
+            {
+              cliente: { nombre: { contains: search, mode: 'insensitive' } },
+            },
+          ],
+        }
         : {}),
       ...(fechaInicio || fechaFin
         ? {
-            fechaEmision: {
-              ...(adjustedFechaInicio
-                ? { gte: adjustedFechaInicio as any }
-                : {}),
-              ...(adjustedFechaFin ? { lte: adjustedFechaFin as any } : {}),
-            },
-          }
+          fechaEmision: {
+            ...(adjustedFechaInicio
+              ? { gte: adjustedFechaInicio as any }
+              : {}),
+            ...(adjustedFechaFin ? { lte: adjustedFechaFin as any } : {}),
+          },
+        }
         : {}),
       ...(tipoComprobante === 'FORMAL' && estado
         ? { estadoEnvioSunat: estado }
@@ -495,7 +495,7 @@ export class ComprobanteService {
         try {
           // Usar el costo promedio del producto en lugar del precio de venta
           const costoUnitario = Number(producto.costoPromedio) || 0;
-          
+
           await this.kardexService.registrarMovimiento({
             productoId: item.productoId,
             empresaId: data.empresaId,
@@ -538,7 +538,7 @@ export class ComprobanteService {
             try {
               // Usar el costo promedio del producto
               const costoUnitario = Number(producto.costoPromedio) || 0;
-              
+
               await this.kardexService.registrarMovimiento({
                 productoId: item.productoId,
                 empresaId: data.empresaId,
@@ -670,10 +670,10 @@ export class ComprobanteService {
       estadoEnvioSunat: 'PENDIENTE' as string,
       ...(formalTipo === '08'
         ? {
-            tipDocAfectado: tipDocAfectado ?? null,
-            numDocAfectado: numDocAfectado ?? null,
-            motivoId: motivoId ?? null,
-          }
+          tipDocAfectado: tipDocAfectado ?? null,
+          numDocAfectado: numDocAfectado ?? null,
+          motivoId: motivoId ?? null,
+        }
         : {}),
       detalles: { create: detalleFinal },
       leyendas: { create: [{ code: '1000', value: leyenda }] },
@@ -682,14 +682,14 @@ export class ComprobanteService {
     const comprobante = await this.prisma.comprobante.create({
       data: dataBase,
     });
-    
+
     // Registrar movimientos de kardex
     await this.ajustarStock(detalles, {
       empresaId,
       comprobanteId: comprobante.id,
       concepto: `Venta ${formalTipo === '01' ? 'Factura' : formalTipo === '03' ? 'Boleta' : 'Nota de Débito'} ${comprobante.serie}-${comprobante.correlativo}`,
     });
-    
+
     return comprobante;
   }
 
@@ -723,7 +723,7 @@ export class ComprobanteService {
     const motivoNota = await this.prisma.motivoNota.findUnique({
       where: { id: motivoId },
     });
-    console.log("QUE ES ESTO DEL MOTIVO",motivoNota)
+    console.log("QUE ES ESTO DEL MOTIVO", motivoNota)
     if (!motivoNota) {
       throw new BadRequestException('Motivo no encontrado');
     }
@@ -760,15 +760,27 @@ export class ComprobanteService {
     }
 
     const [serieAF, corrAF] = numDocAfectado.split('-');
+
+    // Autocorrección: Detectar tipo real basado en la serie
+    let tipoDocReal = tipDocAfectado;
+    if (serieAF.startsWith('B')) {
+      tipoDocReal = '03'; // Es Boleta
+    } else if (serieAF.startsWith('F')) {
+      tipoDocReal = '01'; // Es Factura
+    }
+
     const afectado = await this.prisma.comprobante.findFirst({
       where: {
         empresaId,
-        tipoDoc: tipDocAfectado,
+        tipoDoc: tipoDocReal,
         serie: serieAF,
         correlativo: Number(corrAF),
       },
       include: { detalles: true },
     });
+
+    // Variable final para guardar en BD
+    const tipDocAfectadoFinal = afectado ? tipoDocReal : tipDocAfectado;
 
     if (!afectado) {
       throw new BadRequestException('Documento afectado no encontrado');
@@ -1057,7 +1069,7 @@ export class ComprobanteService {
         leyendas: {
           create: [{ code: '1000', value: leyenda }],
         },
-        tipDocAfectado,
+        tipDocAfectado: tipDocAfectadoFinal,
         numDocAfectado,
         motivoId,
       },
@@ -1069,6 +1081,16 @@ export class ComprobanteService {
         empresaId,
         comprobanteId: nota.id,
         concepto: `Nota de Crédito ${motivoNota.descripcion} ${nota.serie}-${nota.correlativo}`,
+      });
+    }
+
+    // 12) Si el motivo es Anulación de la Operación (01), actualizar estado del comprobante afectado
+    if (motivoNota.codigo === '01') {
+      await this.prisma.comprobante.update({
+        where: { id: afectado.id },
+        data: {
+          estadoEnvioSunat: EstadoSunat.ANULADO,
+        },
       });
     }
 

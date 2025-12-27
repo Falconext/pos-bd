@@ -28,6 +28,7 @@ import { MarcaModule } from './marca/marca.module';
 import { DisenoRubroModule } from './diseno-rubro/diseno-rubro.module';
 import { CombosModule } from './combos/combos.module';
 import { ModificadoresModule } from './modificadores/modificadores.module';
+import { RubroModule } from './rubro/rubro.module';
 
 @Module({
   imports: [
@@ -58,6 +59,7 @@ import { ModificadoresModule } from './modificadores/modificadores.module';
     DisenoRubroModule,
     CombosModule,
     ModificadoresModule,
+    RubroModule,
   ],
   controllers: [AppController],
   providers: [AppService],

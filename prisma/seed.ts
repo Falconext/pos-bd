@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
+import { seedCatalog } from './seeds/catalog.seed';
 
 const prisma = new PrismaClient();
 
@@ -288,6 +289,9 @@ async function main() {
   }
 
   console.log('\n✓ Seed completado exitosamente');
+
+  // Seed del catálogo global
+  await seedCatalog(prisma);
 }
 
 main()

@@ -19,7 +19,7 @@ export class ProductoService {
     @Inject(forwardRef(() => KardexService))
     private readonly kardexService: KardexService,
     private readonly s3: S3Service,
-  ) {}
+  ) { }
 
   private async generarCodigoProducto(empresaId: number, prefijo = 'PR') {
     const productos = await this.prisma.producto.findMany({
@@ -125,6 +125,7 @@ export class ProductoService {
     sort?: 'id' | 'descripcion' | 'codigo';
     order?: 'asc' | 'desc';
     marcaId?: number;
+    categoriaId?: number;
   }) {
     const {
       empresaId,
@@ -134,8 +135,11 @@ export class ProductoService {
       sort = 'id',
       order = 'desc',
       marcaId,
+      categoriaId,
     } = params;
-    const skip = (page - 1) * limit;
+    const pageNumber = Number(page) || 1;
+    const limitNumber = Number(limit) || 10;
+    const skip = (pageNumber - 1) * limitNumber;
 
     // Códigos de productos del sistema que no deben mostrarse a los usuarios
     const productosDelSistema = ['PLD', 'IPM', 'DGD'];
@@ -146,11 +150,12 @@ export class ProductoService {
       // Excluir productos del sistema (PENALIDAD, INTERES POR MORA, DESCUENTO GLOBAL)
       codigo: { notIn: productosDelSistema },
       marcaId: marcaId ? Number(marcaId) : undefined,
+      categoriaId: categoriaId ? Number(categoriaId) : undefined,
       OR: search
         ? [
-            { descripcion: { contains: search, mode: 'insensitive' } },
-            { codigo: { contains: search, mode: 'insensitive' } },
-          ]
+          { descripcion: { contains: search, mode: 'insensitive' } },
+          { codigo: { contains: search, mode: 'insensitive' } },
+        ]
         : undefined,
     };
 
@@ -158,7 +163,7 @@ export class ProductoService {
       this.prisma.producto.findMany({
         where,
         skip,
-        take: limit,
+        take: limitNumber,
         orderBy: { [sort]: order },
         select: {
           id: true,
@@ -262,9 +267,9 @@ export class ProductoService {
       const igv = data.igvPorcentaje ?? 18;
       const esperado = +(data.valorUnitario * (1 + igv / 100)).toFixed(2);
       const enviado = +Number(data.precioUnitario).toFixed(2);
-      if (esperado !== enviado) {
+      if (Math.abs(esperado - enviado) > 0.02) {
         throw new ForbiddenException(
-          `El precio con IGV no coincide (esperado: ${esperado})`,
+          `El precio con IGV no coincide (esperado: ${esperado}, recibido: ${enviado})`,
         );
       }
     }
@@ -274,7 +279,7 @@ export class ProductoService {
       const diferencia = data.stock - producto.stock;
       const esIngreso = diferencia > 0;
       const cantidad = Math.abs(diferencia);
-      
+
       try {
         await this.kardexService.registrarMovimiento({
           productoId: data.id,
@@ -412,9 +417,9 @@ export class ProductoService {
       estado: { in: [EstadoType.ACTIVO, EstadoType.INACTIVO] },
       OR: search
         ? [
-            { descripcion: { contains: search, mode: 'insensitive' } },
-            { codigo: { contains: search, mode: 'insensitive' } },
-          ]
+          { descripcion: { contains: search, mode: 'insensitive' } },
+          { codigo: { contains: search, mode: 'insensitive' } },
+        ]
         : undefined,
     };
 
@@ -550,10 +555,10 @@ export class ProductoService {
 
         const categoriaKey = categoriaRaw
           ? categoriaRaw
-              .toString()
-              .toUpperCase()
-              .normalize('NFD')
-              .replace(/[\u0300-\u036f]/g, '')
+            .toString()
+            .toUpperCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
           : null;
         const categoriaId = categoriaKey
           ? categoriaMap.get(categoriaKey)

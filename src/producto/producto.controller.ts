@@ -30,7 +30,7 @@ import { imageUploadOptions } from '../common/utils/multer.config';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('producto')
 export class ProductoController {
-  constructor(private readonly service: ProductoService) {}
+  constructor(private readonly service: ProductoService) { }
 
   @Post('crear')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
@@ -75,6 +75,7 @@ export class ProductoController {
     @Query() query: ListProductoDto,
     @Res({ passthrough: true }) res: Response,
   ) {
+    console.log('Listar Query:', query);
     const resultado = await this.service.listar({
       empresaId: user.empresaId,
       search: query.search,
@@ -82,7 +83,8 @@ export class ProductoController {
       limit: query.limit,
       sort: query.sort,
       order: query.order,
-      marcaId: (query as any).marcaId,
+      marcaId: query.marcaId,
+      categoriaId: query.categoriaId,
     });
     res.locals.message = 'Productos listados correctamente';
     return resultado;
@@ -227,7 +229,8 @@ export class ProductoController {
       limit: query.limit,
       sort: query.sort,
       order: query.order,
-      marcaId: (query as any).marcaId,
+      marcaId: query.marcaId,
+      categoriaId: query.categoriaId,
     });
     res.locals.message = 'Productos listados correctamente';
     return resultado;

@@ -139,8 +139,8 @@ export class AuthService {
             nombreComercial: true,
             direccion: true,
             logo: true,
-            ruc: true,
             tipoEmpresa: true,
+            rubroId: true,
             rubro: true,
             slugTienda: true,
             plan: {
@@ -152,7 +152,7 @@ export class AuthService {
         },
       },
     });
-    
+
     // Parsear permisos de JSON a array
     if (usuario && usuario.permisos) {
       try {
@@ -162,7 +162,7 @@ export class AuthService {
         (usuario as any).permisos = [];
       }
     }
-    
+
     return usuario;
   }
 
@@ -190,6 +190,7 @@ export class AuthService {
             fechaActivacion: true,
             fechaExpiracion: true,
             tipoEmpresa: true,
+            rubroId: true,
             departamento: true,
             provincia: true,
             distrito: true,
@@ -222,7 +223,7 @@ export class AuthService {
         },
       },
     });
-    
+
     // Parsear permisos de JSON a array
     if (usuario && usuario.permisos) {
       try {
@@ -232,7 +233,7 @@ export class AuthService {
         (usuario as any).permisos = [];
       }
     }
-    
+
     return usuario;
   }
 }

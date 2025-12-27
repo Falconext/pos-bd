@@ -40,6 +40,7 @@ model Rubro {
   nombre   String    @unique
   empresas Empresa[]
   disenos  DisenoRubro[]
+  plantillas ProductoPlantilla[]
 }
 
 model Empresa {
@@ -799,37 +800,61 @@ model OpcionModificador {
   grupoId         Int
   grupo           GrupoModificador @relation(fields: [grupoId], references: [id], onDelete: Cascade)
   
-  nombre          String    @db.VarChar(100)  // "Mayonesa", "Con papas fritas"
+  nombre          String    @db.VarChar(100)
   descripcion     String?   @db.VarChar(255)
-  
-  // Precio adicional (0 = gratis)
   precioExtra     Decimal   @default(0) @db.Decimal(10, 2)
   
-  // Estado
   orden           Int       @default(0)
   activo          Boolean   @default(true)
-  esDefault       Boolean   @default(false)   // Si viene seleccionado por defecto
+  esDefault       Boolean   @default(false)
   
   creadoEn        DateTime  @default(now())
-  actualizadoEn   DateTime  @updatedAt
+  actualizadoEn   DateTime  @default(now()) @updatedAt
   
+  @@index([grupoId])
   @@index([grupoId, activo])
   @@map("opciones_modificadores")
 }
 
-// Relación muchos a muchos: qué grupos de modificadores aplican a qué productos
+// Relación many-to-many entre Productos y Grupos de Modificadores
 model ProductoGrupoModificador {
-  id              Int       @id @default(autoincrement())
+  id              Int      @id @default(autoincrement())
   productoId      Int
   producto        Producto  @relation(fields: [productoId], references: [id], onDelete: Cascade)
   grupoId         Int
   grupo           GrupoModificador @relation(fields: [grupoId], references: [id], onDelete: Cascade)
   
-  // Permite override de reglas por producto si es necesario
-  ordenOverride   Int?      // Si se quiere un orden diferente para este producto
+  ordenOverride   Int?
   
   @@unique([productoId, grupoId])
   @@index([productoId])
   @@index([grupoId])
   @@map("producto_grupo_modificadores")
 }
+
+// ========================================
+// CATALOGO GLOBAL (PLANTILLAS)
+// ========================================
+model ProductoPlantilla {
+  id              Int      @id @default(autoincrement())
+  nombre          String
+  descripcion     String?
+  imagenUrl       String?
+  precioSugerido  Decimal? @db.Decimal(10, 2)
+  rubroId         Int
+  categoria       String?  @db.VarChar(100)
+  marca           String?  @db.VarChar(100)  // Brand name detected by AI or manual
+  unidadConteo    String   @default("NIU")
+  codigo          String?  @unique // Barcode or internal code for sync
+  
+  // Metadata
+  creadoEn        DateTime @default(now())
+  actualizadoEn   DateTime @updatedAt
+
+  rubro           Rubro    @relation(fields: [rubroId], references: [id])
+  
+  @@index([rubroId])
+  @@index([nombre])
+  @@map("producto_plantillas")
+}
+

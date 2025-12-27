@@ -13,7 +13,7 @@ import { PrismaService } from '../prisma/prisma.service';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('extensiones')
 export class ExtensionesController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   @Get('unidad-medida')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
@@ -73,9 +73,9 @@ export class ExtensionesController {
       uniques.length > 0
         ? uniques.map((code) => ({ code, name: code }))
         : [
-            { code: 'PEN', name: 'PEN' },
-            { code: 'USD', name: 'USD' },
-          ];
+          { code: 'PEN', name: 'PEN' },
+          { code: 'USD', name: 'USD' },
+        ];
     return currencies;
   }
 
@@ -101,6 +101,14 @@ export class ExtensionesController {
         limiteUsuarios: true,
         costo: true,
         tieneTienda: true,
+        duracionDias: true,
+        tipoFacturacion: true,
+        tieneBanners: true,
+        tieneGaleria: true,
+        tieneCulqi: true,
+        tieneDeliveryGPS: true,
+        maxBanners: true,
+        maxImagenesProducto: true,
       },
     });
     return planes;
