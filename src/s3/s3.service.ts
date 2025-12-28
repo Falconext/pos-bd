@@ -19,6 +19,11 @@ export class S3Service {
     if (!accessKeyId || !secretAccessKey || !this.bucketName) {
       this.logger.warn('⚠️  Credenciales de AWS S3 no configuradas. S3 deshabilitado.');
     } else {
+      this.logger.log(`🔍 AWS Config Check:`);
+      this.logger.log(`   - AccessKeyLength: ${accessKeyId.length} (Expected: 20)`);
+      this.logger.log(`   - SecretKeyLength: ${secretAccessKey.length} (Expected: 40)`);
+      this.logger.log(`   - Bucket: ${this.bucketName}`);
+
       this.s3Client = new S3Client({
         region: this.region,
         credentials: {
