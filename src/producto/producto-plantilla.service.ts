@@ -394,6 +394,16 @@ export class ProductoPlantillaService {
         console.log(`EstadoType:`, EstadoType);
 
         try {
+            // Fix: Reset ID sequence to avoid "Unique constraint failed on the fields: (`id`)"
+            // This happens if rows were inserted manually or via seed without updating the sequence
+            try {
+                await this.prisma.$executeRawUnsafe(`
+                    SELECT setval(pg_get_serial_sequence('producto_plantillas', 'id'), (SELECT COALESCE(MAX(id), 0) + 1 FROM producto_plantillas), false);
+                `);
+            } catch (seqError) {
+                console.warn('Could not reset sequence (might not be Postgres or permissions issue):', seqError);
+            }
+
             // Using string literal 'ACTIVO' to avoid potential Enum import issues
             const productos = await this.prisma.producto.findMany({
                 where: {
