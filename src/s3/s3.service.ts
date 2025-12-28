@@ -11,10 +11,10 @@ export class S3Service {
   private region: string;
 
   constructor(private readonly configService: ConfigService) {
-    const accessKeyId = this.configService.get<string>('AWS_ACCESS_KEY_ID');
-    const secretAccessKey = this.configService.get<string>('AWS_SECRET_ACCESS_KEY');
-    this.region = this.configService.get<string>('AWS_REGION') || 'us-east-1';
-    this.bucketName = this.configService.get<string>('AWS_S3_BUCKET_NAME') || '';
+    const accessKeyId = this.configService.get<string>('AWS_ACCESS_KEY_ID')?.trim();
+    const secretAccessKey = this.configService.get<string>('AWS_SECRET_ACCESS_KEY')?.trim();
+    this.region = (this.configService.get<string>('AWS_REGION') || 'us-east-1').trim();
+    this.bucketName = (this.configService.get<string>('AWS_S3_BUCKET_NAME') || '').trim();
 
     if (!accessKeyId || !secretAccessKey || !this.bucketName) {
       this.logger.warn('⚠️  Credenciales de AWS S3 no configuradas. S3 deshabilitado.');
@@ -66,7 +66,7 @@ export class S3Service {
 
       // Construir URL pública
       const url = `https://${this.bucketName}.s3.${this.region}.amazonaws.com/${key}`;
-      
+
       this.logger.log(`✅ Archivo subido a S3: ${url}`);
       return url;
     } catch (error) {
