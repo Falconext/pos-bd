@@ -1,10 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 @Injectable()
-export class S3Service {
+export class S3Service implements OnModuleInit {
   private readonly logger = new Logger(S3Service.name);
   private s3Client: S3Client;
   private bucketName: string;
@@ -19,11 +19,6 @@ export class S3Service {
     if (!accessKeyId || !secretAccessKey || !this.bucketName) {
       this.logger.warn('⚠️  Credenciales de AWS S3 no configuradas. S3 deshabilitado.');
     } else {
-      this.logger.log(`🔍 AWS Config Check:`);
-      this.logger.log(`   - AccessKeyLength: ${accessKeyId.length} (Expected: 20)`);
-      this.logger.log(`   - SecretKeyLength: ${secretAccessKey.length} (Expected: 40)`);
-      this.logger.log(`   - Bucket: ${this.bucketName}`);
-
       this.s3Client = new S3Client({
         region: this.region,
         credentials: {
@@ -33,6 +28,18 @@ export class S3Service {
       });
       this.logger.log(`✅ AWS S3 inicializado correctamente (bucket: ${this.bucketName})`);
     }
+  }
+
+  onModuleInit() {
+    const key = this.configService.get<string>('AWS_ACCESS_KEY_ID');
+    const secret = this.configService.get<string>('AWS_SECRET_ACCESS_KEY');
+    console.log('--- AWS S3 DEBUG ---');
+    console.log('Access Key Raw Length:', key?.length);
+    console.log('Access Key Trimmed Length:', key?.trim()?.length);
+    console.log('Secret Key Raw Length:', secret?.length);
+    console.log('Secret Key Trimmed Length:', secret?.trim()?.length);
+    console.log('Bucket:', this.bucketName);
+    console.log('--------------------');
   }
 
   /**
