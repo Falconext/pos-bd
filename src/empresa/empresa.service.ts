@@ -323,10 +323,44 @@ export class EmpresaService {
       if (dto.providerId !== undefined) updateData.providerId = dto.providerId;
       if (dto.logo !== undefined) updateData.logo = dto.logo;
 
+      // Actualizar datos de empresa
       const empresaActualizada = await this.prisma.empresa.update({
         where: { id: dto.id },
         data: updateData,
       });
+
+      // Actualizar datos del usuario administrador si se envían
+      if (dto.usuario) {
+        // Buscar usuario admin de la empresa
+        const adminUser = await this.prisma.usuario.findFirst({
+          where: {
+            empresaId: dto.id,
+            rol: { in: ['ADMIN_EMPRESA', 'ADMIN_SISTEMA'] }
+          }
+        });
+
+        if (adminUser) {
+          const userData: any = {};
+          if (dto.usuario.nombre !== undefined) userData.nombre = dto.usuario.nombre;
+          if (dto.usuario.email !== undefined) userData.email = dto.usuario.email;
+          if (dto.usuario.dni !== undefined) userData.dni = dto.usuario.dni;
+          if (dto.usuario.celular !== undefined) userData.celular = dto.usuario.celular;
+
+          if (dto.usuario.password && dto.usuario.password.length > 0) {
+            // Assuming bcrypt is imported and available
+            // If not, you'll need to add `import * as bcrypt from 'bcrypt';` at the top
+            userData.password = await bcrypt.hash(dto.usuario.password, 10);
+          }
+
+          if (Object.keys(userData).length > 0) {
+            await this.prisma.usuario.update({
+              where: { id: adminUser.id },
+              data: userData
+            });
+          }
+        }
+      }
+
       return empresaActualizada;
     } catch (error: any) {
       if (
@@ -354,6 +388,19 @@ export class EmpresaService {
       include: {
         plan: true,
         rubro: true,
+        usuarios: {
+          where: { rol: { in: ['ADMIN_EMPRESA', 'ADMIN_SISTEMA'] } },
+          select: {
+            id: true,
+            nombre: true,
+            email: true,
+            celular: true,
+            dni: true,
+            rol: true,
+            estado: true,
+          },
+          take: 1,
+        },
       },
     });
     if (!empresa) throw new NotFoundException('Empresa no encontrada');

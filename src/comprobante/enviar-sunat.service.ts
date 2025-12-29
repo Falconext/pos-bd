@@ -12,11 +12,18 @@ export class EnviarSunatService {
   private readonly maxRetries = 3;
   private readonly retryInterval = 3000;
 
+  // Retry configuration: max 5 hours window with 10 attempts
+  private readonly maxRetryAttempts = 10;
+  private readonly maxRetryHours = 5;
+
+  // Debug: Set to true to simulate SUNAT failure for testing
+  public simulateSunatFailure = false;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly s3Service: S3Service,
     private readonly pdfGenerator: PdfGeneratorService,
-  ) {}
+  ) { }
 
   async execute(comprobanteId: number) {
     const comp = await this.prisma.comprobante.findUnique({
@@ -445,6 +452,12 @@ export class EnviarSunatService {
         correlativo: comp.correlativo,
       });
 
+      // DEBUG: Simulate SUNAT failure for testing retry mechanism
+      if (this.simulateSunatFailure) {
+        console.log('⚠️ MODO SIMULACIÓN: Forzando error de SUNAT para pruebas');
+        throw new Error('SIMULACIÓN: SUNAT no disponible');
+      }
+
       const initialResponse = await axios.post(`${this.apiUrl}`, payload);
 
       console.log('📥 Respuesta inicial de SUNAT:', {
@@ -527,7 +540,7 @@ export class EnviarSunatService {
             : undefined;
 
           const fechaEmision = new Date(comp.fechaEmision);
-          
+
           const pdfData = {
             // Empresa
             nombreComercial: (comp.empresa.nombreComercial || comp.empresa.razonSocial).toUpperCase(),
@@ -576,7 +589,7 @@ export class EnviarSunatService {
           };
 
           const pdfBuffer = await this.pdfGenerator.generarPDFComprobante(pdfData);
-          
+
           const pdfKey = this.s3Service.generateComprobanteKey(
             comp.empresaId,
             comp.tipoDoc,
@@ -646,8 +659,47 @@ export class EnviarSunatService {
         error: err.message,
         response: err.response?.data,
         status: err.response?.status,
-        fullError: err,
       });
+
+      // Persist FALLIDO_ENVIO state so scheduler can retry later
+      try {
+        const currentComp = await this.prisma.comprobante.findUnique({
+          where: { id: comprobanteId },
+          select: { sunatRetriesCount: true, creadoEn: true },
+        });
+
+        if (currentComp) {
+          const newRetryCount = (currentComp.sunatRetriesCount || 0) + 1;
+          const isExpired = this.isRetryWindowExpired(currentComp);
+
+          // If within 5-hour window and under max attempts, mark for retry
+          if (!isExpired && newRetryCount < this.maxRetryAttempts) {
+            await this.prisma.comprobante.update({
+              where: { id: comprobanteId },
+              data: {
+                estadoEnvioSunat: 'FALLIDO_ENVIO',
+                sunatRetriesCount: newRetryCount,
+                sunatLastRetryAt: new Date(),
+                sunatNextRetryAt: this.calculateNextRetry(newRetryCount),
+                sunatErrorMsg: `Error de conexión (intento ${newRetryCount}): ${err.message}`,
+              },
+            });
+            console.log(`📅 Comprobante ${comprobanteId} marcado para reintento #${newRetryCount}`);
+          } else {
+            // Exceeded retry window or max attempts, mark as permanently failed
+            await this.prisma.comprobante.update({
+              where: { id: comprobanteId },
+              data: {
+                estadoEnvioSunat: 'RECHAZADO',
+                sunatErrorMsg: `Envío fallido después de ${newRetryCount} intentos en ${this.maxRetryHours}h: ${err.message}`,
+              },
+            });
+            console.log(`❌ Comprobante ${comprobanteId} marcado como RECHAZADO (agotó reintentos)`);
+          }
+        }
+      } catch (dbErr) {
+        console.error('Error guardando estado de fallo:', dbErr);
+      }
 
       throw new HttpException(
         `Error enviando a APISUNAT: ${err.response?.data?.message || err.message}`,
@@ -812,6 +864,27 @@ export class EnviarSunatService {
     // IMPORTANTE: Las notas de débito generalmente NO anulan documentos
     // Solo agregan cargos o ajustan valores hacia arriba
     // El documento original sigue siendo válido
+  }
+
+  /**
+   * Calculate next retry time using exponential backoff
+   * Retry intervals: 1min, 2min, 5min, 15min, 30min, 1h, 2h, 3h, 4h, 5h (max)
+   */
+  calculateNextRetry(currentRetryCount: number): Date {
+    const backoffMinutes = [1, 2, 5, 15, 30, 60, 120, 180, 240, 300]; // Up to 5 hours
+    const minutes = backoffMinutes[Math.min(currentRetryCount, backoffMinutes.length - 1)];
+    const nextRetry = new Date();
+    nextRetry.setMinutes(nextRetry.getMinutes() + minutes);
+    return nextRetry;
+  }
+
+  /**
+   * Check if comprobante has exceeded max retry window (5 hours from creation)
+   */
+  isRetryWindowExpired(comprobante: any): boolean {
+    const createdAt = new Date(comprobante.creadoEn);
+    const maxRetryTime = new Date(createdAt.getTime() + (this.maxRetryHours * 60 * 60 * 1000));
+    return new Date() > maxRetryTime;
   }
 
   async debugPayload(comprobanteId: number) {

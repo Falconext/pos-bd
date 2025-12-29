@@ -13,6 +13,6 @@ import { S3Module } from '../s3/s3.module';
   imports: [EmpresaModule, forwardRef(() => KardexModule), NotificacionesModule, S3Module],
   controllers: [ComprobanteController],
   providers: [ComprobanteService, RolesGuard, EnviarSunatService, PdfGeneratorService],
-  exports: [ComprobanteService],
+  exports: [ComprobanteService, EnviarSunatService],
 })
-export class ComprobanteModule {}
+export class ComprobanteModule { }

@@ -111,7 +111,8 @@ export class ProductoPlantillaService {
                     imagenUrl: plantilla.imagenUrl,
                     precioUnitario: plantilla.precioSugerido || 0,
                     valorUnitario: (Number(plantilla.precioSugerido) || 0) / 1.18,
-                    stock: 0,
+                    stock: 50,
+                    stockMinimo: 5,
                     unidadMedidaId: unidad?.id || 1,
                     categoriaId: categoriaId,
                     marcaId: marcaId, // Asignar marca

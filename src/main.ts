@@ -23,6 +23,8 @@ async function bootstrap() {
     'http://localhost:5174',
     'http://localhost:3000',
     'http://192.168.100.16:4000',
+    'tauri://localhost',  // Desktop app
+    'https://tauri.localhost',  // Desktop app (Windows)
     'https://falconext-mype-production.up.railway.app',
     process.env.FRONTEND_URL,
   ].filter(Boolean);

@@ -12,15 +12,26 @@ export class SchedulerService {
     private readonly verificarSunat: VerificarPendientesSunatService,
     private readonly notificacionesService: NotificacionesService,
     private readonly inventarioNotificacionesService: InventarioNotificacionesService,
-  ) {}
+  ) { }
 
+  // Job 1: Check status of PENDIENTE invoices with documentoId (every 30 min)
   @Cron(CronExpression.EVERY_30_MINUTES)
   async verificarComprobantesPendientes(): Promise<void> {
     this.logger.log(
-      'Iniciando verificación de comprobantes SUNAT pendientes...',
+      '🔍 [Job 1] Verificando comprobantes PENDIENTES con documentoId...',
     );
     await this.verificarSunat.execute();
-    this.logger.log('Verificación de comprobantes SUNAT completada.');
+    this.logger.log('[Job 1] Verificación completada.');
+  }
+
+  // Job 2: Retry FALLIDO_ENVIO invoices that are ready for retry (every 5 min)
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async reintentarEnviosFallidos(): Promise<void> {
+    this.logger.log(
+      '🔄 [Job 2] Reintentando envíos fallidos...',
+    );
+    await this.verificarSunat.reintentarEnviosFallidos();
+    this.logger.log('[Job 2] Reintentos completados.');
   }
 
   // Verificar suscripciones todos los días a las 9 AM

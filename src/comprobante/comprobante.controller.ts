@@ -202,7 +202,7 @@ export class ComprobanteController {
     const empresa = await this.empresaService.obtenerMiEmpresa(user.empresaId);
     if (!empresa.providerToken || !empresa.providerId) {
       throw new ForbiddenException(
-        'Aún no cuenta con permisos para generar comprobantes para SUNAT, contacte con el soporte de Nephi',
+        'Aún no cuenta con permisos para generar comprobantes para SUNAT, contacte con el soporte de falconext',
       );
     }
     const comp = await this.service.crearFormal(dto, user.empresaId, '03', user.id);
@@ -215,7 +215,7 @@ export class ComprobanteController {
     const empresa = await this.empresaService.obtenerMiEmpresa(user.empresaId);
     if (!empresa.providerToken || !empresa.providerId) {
       throw new ForbiddenException(
-        'Aún no cuenta con permisos para generar comprobantes para SUNAT, contacte con el soporte de Nephi',
+        'Aún no cuenta con permisos para generar comprobantes para SUNAT, contacte con el soporte de falconext',
       );
     }
     const comp = await this.service.crearFormal(dto, user.empresaId, '01', user.id);
@@ -228,7 +228,7 @@ export class ComprobanteController {
     const empresa = await this.empresaService.obtenerMiEmpresa(user.empresaId);
     if (!empresa.providerToken || !empresa.providerId) {
       throw new ForbiddenException(
-        'Aún no cuenta con permisos para generar comprobantes para SUNAT, contacte con el soporte de Nephi',
+        'Aún no cuenta con permisos para generar comprobantes para SUNAT, contacte con el soporte de falconext',
       );
     }
     const comp = await this.service.crearFormal(dto, user.empresaId, '07', user.id);
@@ -241,7 +241,7 @@ export class ComprobanteController {
     const empresa = await this.empresaService.obtenerMiEmpresa(user.empresaId);
     if (!empresa.providerToken || !empresa.providerId) {
       throw new ForbiddenException(
-        'Aún no cuenta con permisos para generar comprobantes para SUNAT, contacte con el soporte de Nephi',
+        'Aún no cuenta con permisos para generar comprobantes para SUNAT, contacte con el soporte de falconext',
       );
     }
     const comp = await this.service.crearFormal(dto, user.empresaId, '08', user.id);
@@ -276,4 +276,48 @@ export class ComprobanteController {
   async debugXml(@Param('id', ParseIntPipe) id: number) {
     return this.enviarSunat.debugPayload(id);
   }
+
+  // ========================
+  // DEBUG: Simulate SUNAT failure for testing retry logic
+  // ========================
+
+  @Post('debug/simulate-sunat-failure')
+  @Roles('ADMIN_SISTEMA')
+  async activarSimulacionFallo() {
+    this.enviarSunat.simulateSunatFailure = true;
+    return {
+      message: '⚠️ Modo simulación ACTIVADO: Los siguientes envíos a SUNAT fallarán intencionalmente',
+      simulateSunatFailure: true,
+    };
+  }
+
+  @Post('debug/disable-simulation')
+  @Roles('ADMIN_SISTEMA')
+  async desactivarSimulacion() {
+    this.enviarSunat.simulateSunatFailure = false;
+    return {
+      message: '✅ Modo simulación DESACTIVADO: Envíos a SUNAT funcionarán normalmente',
+      simulateSunatFailure: false,
+    };
+  }
+
+  @Get('debug/simulation-status')
+  @Roles('ADMIN_SISTEMA')
+  async estadoSimulacion() {
+    return {
+      simulateSunatFailure: this.enviarSunat.simulateSunatFailure,
+      message: this.enviarSunat.simulateSunatFailure
+        ? '⚠️ Modo simulación ACTIVO: Los envíos fallarán intencionalmente'
+        : '✅ Modo normal: Envíos funcionando correctamente',
+    };
+  }
+
+  @Get('debug/fallidos')
+  @Roles('ADMIN_SISTEMA')
+  async listarFallidos() {
+    // Usado para testing: ver qué comprobantes están marcados para reintento
+    // (Requiere inyectar PrismaService al controller, por simplicidad lo haremos vía service)
+    return { message: 'Usa la query SQL: SELECT * FROM "Comprobante" WHERE "estadoEnvioSunat" = \'FALLIDO_ENVIO\'' };
+  }
 }
+

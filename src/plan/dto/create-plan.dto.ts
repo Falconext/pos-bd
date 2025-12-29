@@ -30,6 +30,10 @@ export class CreatePlanDto {
     @IsOptional()
     maxBanners?: number;
 
+    @IsNumber()
+    @IsOptional()
+    maxComprobantes?: number;
+
     // Features
     @IsBoolean()
     @IsOptional()

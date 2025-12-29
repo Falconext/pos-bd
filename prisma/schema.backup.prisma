@@ -3,8 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider = "sqlite"
+  url      = "file:./nephi_pos.db"
 }
 
 model Plan {
@@ -288,10 +288,6 @@ model Comprobante {
   s3PdfUrl           String?
   s3XmlUrl           String?
   s3CdrUrl           String?
-  // Retry tracking for SUNAT failures
-  sunatRetriesCount   Int                  @default(0)
-  sunatLastRetryAt    DateTime?
-  sunatNextRetryAt    DateTime?
   cliente            Cliente              @relation(fields: [clienteId], references: [id])
   empresa            Empresa              @relation(fields: [empresaId], references: [id])
   motivo             MotivoNota?          @relation("ComprobanteMotivo", fields: [motivoId], references: [id])
@@ -564,7 +560,6 @@ enum EstadoSunat {
   ANULADO
   REGISTRADO
   NO_APLICA
-  FALLIDO_ENVIO
 }
 
 enum EstadoPago {

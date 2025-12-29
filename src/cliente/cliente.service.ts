@@ -10,7 +10,7 @@ import * as XLSX from 'xlsx';
 
 @Injectable()
 export class ClienteService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   async crear(data: {
     nombre: string;
@@ -86,11 +86,11 @@ export class ClienteService {
       estado: 'ACTIVO',
       ...(search
         ? {
-            OR: [
-              { nombre: { contains: search, mode: 'insensitive' } },
-              { nroDoc: { contains: search, mode: 'insensitive' } },
-            ],
-          }
+          OR: [
+            { nombre: { contains: search } },
+            { nroDoc: { contains: search } },
+          ],
+        }
         : {}),
     };
 
@@ -191,9 +191,9 @@ export class ClienteService {
       estado: { in: ['ACTIVO', 'INACTIVO'] },
       OR: search
         ? [
-            { nombre: { contains: search, mode: 'insensitive' } },
-            { nroDoc: { contains: search, mode: 'insensitive' } },
-          ]
+          { nombre: { contains: search } },
+          { nroDoc: { contains: search } },
+        ]
         : undefined,
     };
 

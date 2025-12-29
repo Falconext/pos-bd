@@ -67,4 +67,29 @@ export class UpdateEmpresaDto {
   @IsOptional()
   @IsString()
   logo?: string;
+
+  @IsOptional()
+  usuario?: UpdateEmpresaUsuarioDto;
+}
+
+export class UpdateEmpresaUsuarioDto {
+  @IsOptional()
+  @IsString()
+  nombre?: string;
+
+  @IsOptional()
+  @IsString()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  password?: string;
+
+  @IsOptional()
+  @IsString()
+  dni?: string;
+
+  @IsOptional()
+  @IsString()
+  celular?: string;
 }
