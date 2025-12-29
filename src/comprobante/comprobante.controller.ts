@@ -199,54 +199,84 @@ export class ComprobanteController {
   @Post('boleta')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async crearBoleta(@User() user: any, @Body() dto: CrearComprobanteDto) {
-    const empresa = await this.empresaService.obtenerMiEmpresa(user.empresaId);
-    if (!empresa.providerToken || !empresa.providerId) {
-      throw new ForbiddenException(
-        'Aún no cuenta con permisos para generar comprobantes para SUNAT, contacte con el soporte de falconext',
-      );
+    try {
+      console.log('[crearBoleta] Starting - empresaId:', user.empresaId, 'dto:', JSON.stringify(dto));
+      const empresa = await this.empresaService.obtenerMiEmpresa(user.empresaId);
+      if (!empresa.providerToken || !empresa.providerId) {
+        throw new ForbiddenException(
+          'Aún no cuenta con permisos para generar comprobantes para SUNAT, contacte con el soporte de falconext',
+        );
+      }
+      console.log('[crearBoleta] Creating comprobante...');
+      const comp = await this.service.crearFormal(dto, user.empresaId, '03', user.id);
+      console.log('[crearBoleta] Comprobante created:', comp.id, '- Sending to SUNAT...');
+      const sunatResp = await this.enviarSunat.execute(comp.id);
+      console.log('[crearBoleta] SUNAT response:', JSON.stringify(sunatResp));
+      return sunatResp;
+    } catch (error: any) {
+      console.error('[crearBoleta] ERROR:', error.message, error.stack);
+      throw error;
     }
-    const comp = await this.service.crearFormal(dto, user.empresaId, '03', user.id);
-    const sunatResp = await this.enviarSunat.execute(comp.id);
-    return sunatResp;
   }
   @Post('factura')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async crearFactura(@User() user: any, @Body() dto: CrearComprobanteDto) {
-    const empresa = await this.empresaService.obtenerMiEmpresa(user.empresaId);
-    if (!empresa.providerToken || !empresa.providerId) {
-      throw new ForbiddenException(
-        'Aún no cuenta con permisos para generar comprobantes para SUNAT, contacte con el soporte de falconext',
-      );
+    try {
+      console.log('[crearFactura] Starting - empresaId:', user.empresaId, 'dto:', JSON.stringify(dto));
+      const empresa = await this.empresaService.obtenerMiEmpresa(user.empresaId);
+      if (!empresa.providerToken || !empresa.providerId) {
+        throw new ForbiddenException(
+          'Aún no cuenta con permisos para generar comprobantes para SUNAT, contacte con el soporte de falconext',
+        );
+      }
+      console.log('[crearFactura] Creating comprobante...');
+      const comp = await this.service.crearFormal(dto, user.empresaId, '01', user.id);
+      console.log('[crearFactura] Comprobante created:', comp.id, '- Sending to SUNAT...');
+      const sunatResp = await this.enviarSunat.execute(comp.id);
+      console.log('[crearFactura] SUNAT response:', JSON.stringify(sunatResp));
+      return sunatResp;
+    } catch (error: any) {
+      console.error('[crearFactura] ERROR:', error.message, error.stack);
+      throw error;
     }
-    const comp = await this.service.crearFormal(dto, user.empresaId, '01', user.id);
-    const sunatResp = await this.enviarSunat.execute(comp.id);
-    return sunatResp;
   }
   @Post('nota-credito')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async crearNotaCredito(@User() user: any, @Body() dto: CrearComprobanteDto) {
-    const empresa = await this.empresaService.obtenerMiEmpresa(user.empresaId);
-    if (!empresa.providerToken || !empresa.providerId) {
-      throw new ForbiddenException(
-        'Aún no cuenta con permisos para generar comprobantes para SUNAT, contacte con el soporte de falconext',
-      );
+    try {
+      console.log('[crearNotaCredito] Starting - empresaId:', user.empresaId);
+      const empresa = await this.empresaService.obtenerMiEmpresa(user.empresaId);
+      if (!empresa.providerToken || !empresa.providerId) {
+        throw new ForbiddenException(
+          'Aún no cuenta con permisos para generar comprobantes para SUNAT, contacte con el soporte de falconext',
+        );
+      }
+      const comp = await this.service.crearFormal(dto, user.empresaId, '07', user.id);
+      const sunatResp = await this.enviarSunat.execute(comp.id);
+      return sunatResp;
+    } catch (error: any) {
+      console.error('[crearNotaCredito] ERROR:', error.message, error.stack);
+      throw error;
     }
-    const comp = await this.service.crearFormal(dto, user.empresaId, '07', user.id);
-    const sunatResp = await this.enviarSunat.execute(comp.id);
-    return sunatResp;
   }
   @Post('nota-debito')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async crearNotaDebito(@User() user: any, @Body() dto: CrearComprobanteDto) {
-    const empresa = await this.empresaService.obtenerMiEmpresa(user.empresaId);
-    if (!empresa.providerToken || !empresa.providerId) {
-      throw new ForbiddenException(
-        'Aún no cuenta con permisos para generar comprobantes para SUNAT, contacte con el soporte de falconext',
-      );
+    try {
+      console.log('[crearNotaDebito] Starting - empresaId:', user.empresaId);
+      const empresa = await this.empresaService.obtenerMiEmpresa(user.empresaId);
+      if (!empresa.providerToken || !empresa.providerId) {
+        throw new ForbiddenException(
+          'Aún no cuenta con permisos para generar comprobantes para SUNAT, contacte con el soporte de falconext',
+        );
+      }
+      const comp = await this.service.crearFormal(dto, user.empresaId, '08', user.id);
+      const sunatResp = await this.enviarSunat.execute(comp.id);
+      return sunatResp;
+    } catch (error: any) {
+      console.error('[crearNotaDebito] ERROR:', error.message, error.stack);
+      throw error;
     }
-    const comp = await this.service.crearFormal(dto, user.empresaId, '08', user.id);
-    const sunatResp = await this.enviarSunat.execute(comp.id);
-    return sunatResp;
   }
   @Post('informal')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
