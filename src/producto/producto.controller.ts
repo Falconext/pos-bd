@@ -112,6 +112,16 @@ export class ProductoController {
     return this.service.subirImagenExtra(user.empresaId, id, { buffer: file?.buffer, mimetype: file?.mimetype });
   }
 
+  @Post(':id/imagen-url')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async subirImagenDesdeUrl(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+    @Body() body: { url: string },
+  ) {
+    return this.service.subirImagenDesdeUrl(user.empresaId, id, body.url);
+  }
+
   @Get('listar')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async listar(

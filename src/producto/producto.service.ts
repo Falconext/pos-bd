@@ -390,6 +390,52 @@ export class ProductoService {
     return { url, signedUrl };
   }
 
+  async subirImagenDesdeUrl(
+    empresaId: number,
+    productoId: number,
+    externalUrl: string,
+  ) {
+    const producto = await this.prisma.producto.findFirst({ where: { id: productoId, empresaId } });
+    if (!producto) throw new NotFoundException('Producto no encontrado');
+    if (!externalUrl) throw new ForbiddenException('URL no proporcionada');
+
+    try {
+      // Download the image from external URL
+      const axios = (await import('axios')).default;
+      const response = await axios.get(externalUrl, {
+        responseType: 'arraybuffer',
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+      });
+
+      const buffer = Buffer.from(response.data);
+      const contentType = response.headers['content-type'] || 'image/jpeg';
+
+      if (!contentType.startsWith('image/')) {
+        throw new ForbiddenException('La URL no apunta a una imagen válida');
+      }
+
+      // Upload to S3
+      const s3Key = this.s3.generateProductoImageKey(empresaId, productoId, contentType, false);
+      const s3Url = await this.s3.uploadImage(buffer, s3Key, contentType);
+
+      // Update product with S3 URL
+      await this.prisma.producto.update({ where: { id: productoId }, data: { imagenUrl: s3Url } });
+
+      // Return signed URL for immediate use
+      const idx = s3Url.indexOf('amazonaws.com/');
+      const objKey = idx !== -1 ? s3Url.substring(idx + 'amazonaws.com/'.length) : '';
+      const signedUrl = objKey ? await this.s3.getSignedGetUrl(objKey, 600) : s3Url;
+
+      return { url: s3Url, signedUrl };
+    } catch (error: any) {
+      console.error('Error downloading/uploading image from URL:', error.message);
+      throw new ForbiddenException('Error al procesar la imagen desde la URL: ' + error.message);
+    }
+  }
+
   async cambiarEstado(id: number, empresaId: number, estado: EstadoType) {
     const producto = await this.prisma.producto.findFirst({
       where: { id, empresaId },
