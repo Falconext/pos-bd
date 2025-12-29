@@ -26,6 +26,10 @@ async function bootstrap() {
     'tauri://localhost',  // Desktop app
     'https://tauri.localhost',  // Desktop app (Windows)
     'https://falconext-mype-production.up.railway.app',
+    // Production domains
+    'https://falconext.pe',
+    'https://www.falconext.pe',
+    'https://app.falconext.pe',
     process.env.FRONTEND_URL,
   ].filter(Boolean);
 

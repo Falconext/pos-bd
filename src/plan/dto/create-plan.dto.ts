@@ -58,4 +58,8 @@ export class CreatePlanDto {
     @IsBoolean()
     @IsOptional()
     tieneDeliveryGPS?: boolean;
+
+    @IsBoolean()
+    @IsOptional()
+    tieneTicketera?: boolean;
 }
