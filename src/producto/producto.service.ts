@@ -52,6 +52,7 @@ export class ProductoService {
       marcaId?: number;
       stockMinimo?: number;
       stockMaximo?: number;
+      imagenUrl?: string;
     },
     empresaId: number,
   ) {
@@ -67,6 +68,7 @@ export class ProductoService {
       marcaId,
       stockMinimo,
       stockMaximo,
+      imagenUrl,
     } = data;
 
     if (!codigo) {
@@ -111,6 +113,7 @@ export class ProductoService {
             : undefined,
         marcaId: marcaId && Number(marcaId) > 0 ? Number(marcaId) : undefined,
         empresaId,
+        imagenUrl: imagenUrl || undefined,
       },
     });
 

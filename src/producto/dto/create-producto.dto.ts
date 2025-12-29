@@ -55,4 +55,8 @@ export class CreateProductoDto {
   @IsInt()
   @Type(() => Number)
   stockMaximo?: number;
+
+  @IsOptional()
+  @IsString()
+  imagenUrl?: string;
 }
