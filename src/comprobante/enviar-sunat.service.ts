@@ -708,6 +708,121 @@ export class EnviarSunatService {
     }
   }
 
+  /**
+   * Genera y sube el PDF a S3 para un comprobante ya existente.
+   * Útil para comprobantes que fueron marcados como ACEPTADO por el scheduler
+   * pero no tienen PDF generado.
+   */
+  async generarYSubirPDF(comprobanteId: number, qrCode?: string): Promise<string | null> {
+    if (!this.s3Service.isEnabled()) {
+      console.log('S3 no está habilitado, no se puede generar PDF');
+      return null;
+    }
+
+    const comp = await this.prisma.comprobante.findUnique({
+      where: { id: comprobanteId },
+      include: {
+        cliente: { include: { tipoDocumento: true } },
+        empresa: { include: { ubicacion: true, rubro: true } },
+        detalles: true,
+      },
+    });
+
+    if (!comp) {
+      console.error(`Comprobante ${comprobanteId} no encontrado`);
+      return null;
+    }
+
+    if (comp.s3PdfUrl) {
+      console.log(`Comprobante ${comprobanteId} ya tiene PDF: ${comp.s3PdfUrl}`);
+      return comp.s3PdfUrl;
+    }
+
+    try {
+      const tipoDocMap: Record<string, string> = {
+        '01': 'FACTURA',
+        '03': 'BOLETA',
+        '07': 'NOTA DE CRÉDITO',
+        '08': 'NOTA DE DÉBITO',
+      };
+
+      const detectMime = (b64?: string) => {
+        if (!b64) return undefined;
+        if (b64.startsWith('data:')) return undefined;
+        if (b64.startsWith('/9j/')) return 'image/jpeg';
+        if (b64.startsWith('iVBOR')) return 'image/png';
+        return 'image/png';
+      };
+
+      const rawLogo = (comp.empresa as any).logo || null;
+      const mime = detectMime(rawLogo || undefined);
+      const logoDataUrl = rawLogo
+        ? (rawLogo.startsWith('data:') ? rawLogo : `data:${mime};base64,${rawLogo}`)
+        : undefined;
+
+      const fechaEmision = new Date(comp.fechaEmision as any);
+
+      const pdfData = {
+        nombreComercial: ((comp.empresa as any).nombreComercial || comp.empresa.razonSocial).toUpperCase(),
+        razonSocial: comp.empresa.razonSocial.toUpperCase(),
+        ruc: comp.empresa.ruc,
+        direccion: (comp.empresa.direccion || '').toUpperCase(),
+        rubro: comp.empresa.rubro?.nombre?.toUpperCase() || 'VENTA DE MATERIALES DE CONSTRUCCIÓN',
+        celular: '',
+        email: '',
+        logo: logoDataUrl,
+        tipoDocumento: tipoDocMap[comp.tipoDoc] || 'COMPROBANTE',
+        serie: comp.serie,
+        correlativo: String(comp.correlativo).padStart(8, '0'),
+        fecha: fechaEmision.toLocaleDateString('es-PE'),
+        hora: fechaEmision.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }) + ' p.m.',
+        clienteNombre: (comp.cliente?.nombre || 'CLIENTES VARIOS').toUpperCase(),
+        clienteTipoDoc: comp.cliente?.tipoDocumento?.codigo === '6' ? 'RUC' : 'DNI',
+        clienteNumDoc: comp.cliente?.nroDoc || '',
+        clienteDireccion: (comp.cliente?.direccion || '-').toUpperCase(),
+        productos: comp.detalles.map((det: any) => ({
+          cantidad: det.cantidad,
+          unidadMedida: det.unidadMedida || 'NIU',
+          descripcion: (det.descripcion || '').toUpperCase(),
+          precioUnitario: Number(det.mtoPrecioUnitario || 0).toFixed(2),
+          total: Number((det.mtoPrecioUnitario || 0) * det.cantidad).toFixed(2),
+        })),
+        mtoOperGravadas: Number(comp.mtoOperGravadas).toFixed(2),
+        mtoIGV: Number(comp.mtoIGV).toFixed(2),
+        mtoOperInafectas: Number(comp.mtoOperInafectas || 0) > 0 ? Number(comp.mtoOperInafectas).toFixed(2) : undefined,
+        mtoImpVenta: Number(comp.mtoImpVenta).toFixed(2),
+        totalEnLetras: numeroALetras(Number(comp.mtoImpVenta)).toUpperCase(),
+        formaPago: comp.formaPagoTipo === 'Contado' ? 'CONTADO' : 'CRÉDITO',
+        medioPago: (comp.medioPago || 'EFECTIVO').toUpperCase(),
+        observaciones: comp.observaciones ? comp.observaciones.toUpperCase() : undefined,
+        qrCode: qrCode ? `data:image/png;base64,${qrCode}` : undefined,
+      };
+
+      const pdfBuffer = await this.pdfGenerator.generarPDFComprobante(pdfData);
+
+      const pdfKey = this.s3Service.generateComprobanteKey(
+        comp.empresaId,
+        comp.tipoDoc,
+        comp.serie,
+        comp.correlativo,
+        'pdf',
+      );
+
+      const s3PdfUrl = await this.s3Service.uploadPDF(pdfBuffer, pdfKey);
+      console.log(`📤 PDF generado y subido a S3 para comprobante ${comprobanteId}: ${s3PdfUrl}`);
+
+      await this.prisma.comprobante.update({
+        where: { id: comprobanteId },
+        data: { s3PdfUrl },
+      });
+
+      return s3PdfUrl;
+    } catch (error: any) {
+      console.error(`❌ Error generando PDF para comprobante ${comprobanteId}:`, error.message);
+      return null;
+    }
+  }
+
   private async procesarEfectoEnComprobanteAfectado(nota: any, status: string) {
     // Solo procesar si la nota fue aceptada y afecta a otro comprobante
     if (status !== 'ACEPTADO') return;

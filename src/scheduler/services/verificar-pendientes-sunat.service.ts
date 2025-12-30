@@ -68,6 +68,17 @@ export class VerificarPendientesSunatService {
             },
           });
 
+          // Si fue ACEPTADO, generar y subir el PDF
+          if (status === 'ACEPTADO') {
+            try {
+              const qrCode = finalResponse.data?.qr?.qrCode;
+              await this.enviarSunat.generarYSubirPDF(comprobante.id, qrCode);
+              this.logger.log(`📄 PDF generado para comprobante ${comprobante.id}`);
+            } catch (pdfErr: any) {
+              this.logger.warn(`⚠️ Error generando PDF para ${comprobante.id}: ${pdfErr.message}`);
+            }
+          }
+
           if (status === 'ACEPTADO' || status === 'RECHAZADO') {
             this.logger.log(
               `Comprobante ${comprobante.id} actualizado a ${status}`,

@@ -266,15 +266,11 @@ export class ProductoService {
     });
     if (!producto) throw new NotFoundException('Producto no encontrado');
 
-    if (data.valorUnitario !== undefined && data.precioUnitario !== undefined) {
+    // Auto-calcular valorUnitario desde precioUnitario si se proporciona
+    if (data.precioUnitario !== undefined) {
       const igv = data.igvPorcentaje ?? 18;
-      const esperado = +(data.valorUnitario * (1 + igv / 100)).toFixed(2);
-      const enviado = +Number(data.precioUnitario).toFixed(2);
-      if (Math.abs(esperado - enviado) > 0.02) {
-        throw new ForbiddenException(
-          `El precio con IGV no coincide (esperado: ${esperado}, recibido: ${enviado})`,
-        );
-      }
+      // valorUnitario = precioUnitario / (1 + IGV%)
+      data.valorUnitario = +(Number(data.precioUnitario) / (1 + igv / 100)).toFixed(6);
     }
 
     // Si cambió el stock, registrar movimiento de kardex
