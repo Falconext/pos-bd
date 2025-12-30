@@ -24,7 +24,6 @@ model Plan {
   maxBanners         Int?    @default(3)     
   maxImagenesProducto Int?   @default(1)
   maxComprobantes    Int?    @default(100)
-  tieneTicketera     Boolean @default(false)  // Impresión de tickets en impresora térmica
   empresas        Empresa[]
 }
 
