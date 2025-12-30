@@ -648,14 +648,21 @@ export class TiendaService {
     return `PED-${timestamp}-${random}`;
   }
 
-  async listarPedidos(empresaId: number, estado?: string) {
+  async listarPedidos(empresaId: number, estado?: string, page = 1, limit = 50) {
     const where: any = { empresaId };
 
     if (estado) {
       where.estado = estado;
     }
 
-    return this.prisma.pedidoTienda.findMany({
+    // Pagination
+    const skip = Math.max(0, (Number(page) || 1) - 1) * (Number(limit) || 50);
+    const take = Math.max(1, Math.min(100, Number(limit) || 50)); // Max 100 per request
+
+    // Get total count for pagination info
+    const total = await this.prisma.pedidoTienda.count({ where });
+
+    const data = await this.prisma.pedidoTienda.findMany({
       where,
       include: {
         items: {
@@ -670,7 +677,17 @@ export class TiendaService {
         },
       },
       orderBy: { creadoEn: 'desc' },
+      skip,
+      take,
     });
+
+    return {
+      data,
+      total,
+      page: Number(page) || 1,
+      limit: take,
+      totalPages: Math.ceil(total / take),
+    };
   }
 
   async obtenerPedido(empresaId: number, pedidoId: number) {

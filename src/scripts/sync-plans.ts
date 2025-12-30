@@ -20,6 +20,15 @@ async function main() {
 
     console.log(`📦 Leídos ${plans.length} planes del archivo.`);
 
+    // FIX: Reseteamos la secuencia del ID para evitar errores de Unique Constraint si los IDs están desfasados
+    try {
+        console.log('🔧 Ajustando secuencias de ID en Postgres...');
+        await prisma.$executeRawUnsafe(`SELECT setval(pg_get_serial_sequence('"Plan"', 'id'), coalesce(max(id)+1, 1), false) FROM "Plan";`);
+    } catch (error) {
+        console.warn('⚠️ No se pudo ajustar la secuencia (puede que no sea Postgres o la tabla tenga otro nombre):', error);
+    }
+
+
     for (const plan of plans) {
         console.log(`🔄 Procesando plan: ${plan.nombre}...`);
 
@@ -36,7 +45,9 @@ async function main() {
         // Si ya existen relaciones en prod, cambiar IDs es peligroso.
         // ASUMIREMOS: Match por NOMBRE. Y actualizamos el resto.
 
-        const { id, empresas, ...planData } = plan; // Omitimos ID y relaciones para el payload
+        // Excluimos explícitamente 'id' para que Postgres genere uno nuevo en 'create'
+        // y no intente sobrescribirlo en 'update'.
+        const { id, empresas, ...planData } = plan;
 
         // Asegurar tipos correctos (Decimales vienen como strings en el JSON a veces)
         /* 
@@ -46,14 +57,12 @@ async function main() {
          */
 
         await prisma.plan.upsert({
-            where: { nombre: plan.nombre }, // Clave única
+            where: { nombre: plan.nombre }, // Usamos el nombre como clave única para sincronizar
             update: {
                 ...planData,
-                // Forzamos conversión o limpieza si es necesario
             },
             create: {
                 ...planData,
-                // nombre ya está en planData
             },
         });
     }

@@ -41,9 +41,19 @@ export class TiendaController {
   // ==================== PEDIDOS ====================
 
   @Get('pedidos')
-  async listarPedidos(@Req() req: any, @Query('estado') estado?: string) {
+  async listarPedidos(
+    @Req() req: any,
+    @Query('estado') estado?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
     const empresaId = req.user.empresaId;
-    return this.tiendaService.listarPedidos(empresaId, estado);
+    return this.tiendaService.listarPedidos(
+      empresaId,
+      estado,
+      page ? parseInt(page, 10) : 1,
+      limit ? parseInt(limit, 10) : 50,
+    );
   }
 
   @Get('pedidos/:id')
