@@ -1,15 +1,14 @@
 -- ============================================================
--- MIGRACIÓN SEGURA: Agregar Rubros Multi-Industria
+-- MIGRACIÓN SEGURA V2: Agregar Rubros Multi-Industria
 -- ============================================================
--- Esta migración es 100% segura para producción:
--- - No elimina datos existentes
--- - Usa INSERT ... ON CONFLICT DO NOTHING para evitar duplicados
--- - Actualiza solo si el registro antiguo existe
+-- Corregido para no depender de constraints UNIQUE
+-- Usa INSERT ... SELECT ... WHERE NOT EXISTS
 -- ============================================================
 
--- 1. Agregar nuevos rubros específicos (solo si no existen)
-INSERT INTO rubros (nombre) 
-VALUES 
+-- 1. Agregar nuevos rubros (Verificando existencia manualmente)
+INSERT INTO rubros (nombre)
+SELECT v.nombre
+FROM (VALUES 
   ('Farmacia'),
   ('Botica'),
   ('Bodega y Abarrotes'),
@@ -19,18 +18,12 @@ VALUES
   ('Panadería y Pastelería'),
   ('Librería y Papelería'),
   ('Farmacia Veterinaria')
-ON CONFLICT (nombre) DO NOTHING;
+) AS v(nombre)
+WHERE NOT EXISTS (
+  SELECT 1 FROM rubros r WHERE r.nombre = v.nombre
+);
 
 -- 2. Actualizar nombre de rubro existente (solo si existe)
--- De "Restauración y alimentos" a "Restaurante y alimentos"
 UPDATE rubros 
 SET nombre = 'Restaurante y alimentos'
 WHERE nombre = 'Restauración y alimentos';
-
--- ============================================================
--- NOTAS:
--- - Esta migración es idempotente (se puede ejecutar múltiples veces sin problemas)
--- - No afecta empresas existentes ni sus datos
--- - Los rubros antiguos permanecen sin cambios
--- - La detección automática funciona sin configuración adicional
--- ============================================================
