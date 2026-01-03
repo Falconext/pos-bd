@@ -82,9 +82,36 @@ export class ProductoPlantillaService {
         const resultados: any[] = [];
         let importedCount = 0;
 
+        // Obtener último secuencial PR para Data
+        let startSequence = 1;
+        const allPrProducts = await this.prisma.producto.findMany({
+            where: { empresaId, codigo: { startsWith: 'PR' } },
+            select: { codigo: true }
+        });
+
+        if (allPrProducts.length > 0) {
+            const pattern = /^PR(\d+)$/;
+            let max = 0;
+            for (const p of allPrProducts) {
+                const match = p.codigo.match(pattern);
+                if (match) {
+                    const num = parseInt(match[1], 10);
+                    if (num > max) max = num;
+                }
+            }
+            startSequence = max + 1;
+        }
+        let indexInBatch = 0;
+
         for (const prod of productos) {
             // Generar código único básico si no viene
-            const codigoBase = prod.codigo || (prod.nombre.substring(0, 3).toUpperCase() + Math.floor(Math.random() * 1000));
+            let codigoBase = prod.codigo;
+            if (!codigoBase && startSequence > 0) {
+                codigoBase = `PR${(startSequence + indexInBatch).toString().padStart(3, '0')}`;
+                indexInBatch++;
+            } else if (!codigoBase) {
+                codigoBase = (prod.nombre.substring(0, 3).toUpperCase() + Math.floor(Math.random() * 1000));
+            }
 
             // 1. Manejo de Categoría
             let categoriaId: number | null = null;
@@ -225,6 +252,38 @@ export class ProductoPlantillaService {
         const resultados: any[] = [];
         const errors: any[] = [];
 
+        // Obtener último secuencial PR
+        let startSequence = 1;
+        const lastProd = await this.prisma.producto.findFirst({
+            where: {
+                empresaId,
+                codigo: { startsWith: 'PR' }
+            },
+            orderBy: { id: 'desc' }, // Aproximación, idealmente parsear código
+            take: 100 // Traer un lote para parsear el máximo real
+        });
+
+        // Buscar el máximo real parseando
+        const allPrProducts = await this.prisma.producto.findMany({
+            where: { empresaId, codigo: { startsWith: 'PR' } },
+            select: { codigo: true }
+        });
+
+        if (allPrProducts.length > 0) {
+            const pattern = /^PR(\d+)$/;
+            let max = 0;
+            for (const p of allPrProducts) {
+                const match = p.codigo.match(pattern);
+                if (match) {
+                    const num = parseInt(match[1], 10);
+                    if (num > max) max = num;
+                }
+            }
+            startSequence = max + 1;
+        }
+
+        let indexInBatch = 0;
+
         for (const plantilla of plantillas) {
             try {
                 // Validación Anti-Duplicados por Nombre
@@ -234,9 +293,10 @@ export class ProductoPlantillaService {
                     continue;
                 }
 
-                // Generar código único básico más robusto
-                const cleanName = plantilla.nombre.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase();
-                const codigoBase = (cleanName || 'PRO') + Date.now().toString().slice(-6) + Math.floor(Math.random() * 1000);
+                // Generar código secuencial PR
+                const nextId = startSequence + indexInBatch;
+                const codigoBase = `PR${nextId.toString().padStart(3, '0')}`;
+                indexInBatch++;
 
                 // 1. Manejo de Categoría
                 let categoriaId: number | null = null;
