@@ -169,81 +169,91 @@ export class TiendaService {
   // ==================== TIENDA PÚBLICA ====================
 
   async obtenerTiendaPorSlug(slug: string) {
-    const empresa = await this.prisma.empresa.findUnique({
-      where: { slugTienda: slug },
-      select: {
-        id: true,
-        nombreComercial: true,
-        razonSocial: true,
-        logo: true,
-        descripcionTienda: true,
-        whatsappTienda: true,
-        facebookUrl: true,
-        instagramUrl: true,
-        tiktokUrl: true,
-        horarioAtencion: true,
-        colorPrimario: true,
-        colorSecundario: true,
-        // Campos de envío/recojo visibles en tienda pública
-        costoEnvioFijo: true,
-        aceptaRecojo: true,
-        aceptaEnvio: true,
-        direccionRecojo: true,
-        tiempoPreparacionMin: true,
-        direccion: true,
-        distrito: true,
-        provincia: true,
-        departamento: true,
-        rubro: {
-          select: {
-            nombre: true,
+    try {
+      const empresa = await this.prisma.empresa.findUnique({
+        where: { slugTienda: slug },
+        select: {
+          id: true,
+          nombreComercial: true,
+          razonSocial: true,
+          logo: true,
+          descripcionTienda: true,
+          whatsappTienda: true,
+          facebookUrl: true,
+          instagramUrl: true,
+          tiktokUrl: true,
+          horarioAtencion: true,
+          colorPrimario: true,
+          colorSecundario: true,
+          // Campos de envío/recojo visibles en tienda pública
+          costoEnvioFijo: true,
+          aceptaRecojo: true,
+          aceptaEnvio: true,
+          direccionRecojo: true,
+          tiempoPreparacionMin: true,
+          direccion: true,
+          distrito: true,
+          provincia: true,
+          departamento: true,
+          rubro: {
+            select: {
+              nombre: true,
+            },
+          },
+          plan: {
+            select: {
+              tieneTienda: true,
+            },
+          },
+          banners: {
+            where: { activo: true },
+            orderBy: { orden: 'asc' },
           },
         },
-        plan: {
-          select: {
-            tieneTienda: true,
-          },
-        },
-        banners: {
-          where: { activo: true },
-          orderBy: { orden: 'asc' },
-        },
-      },
-    });
+      });
 
-    if (!empresa) {
-      throw new NotFoundException('Tienda no encontrada');
-    }
+      if (!empresa) {
+        console.error('obtenerTiendaPorSlug: Tienda no encontrada para slug', slug);
+        throw new NotFoundException('Tienda no encontrada');
+      }
 
-    // Firmar banners si existen
-    if (empresa.banners && empresa.banners.length > 0) {
-      await Promise.all(
-        empresa.banners.map(async (banner) => {
-          if (banner.imagenUrl && banner.imagenUrl.includes('amazonaws.com')) {
-            const urlParts = banner.imagenUrl.split('amazonaws.com/');
-            if (urlParts.length > 1) {
-              const key = urlParts[1];
-              try {
-                banner.imagenUrl = await this.s3.getSignedGetUrl(key);
-              } catch (e) {
-                // Keep original
+      // Firmar banners si existen
+      if (empresa.banners && empresa.banners.length > 0) {
+        await Promise.all(
+          empresa.banners.map(async (banner) => {
+            if (banner.imagenUrl && banner.imagenUrl.includes('amazonaws.com')) {
+              const urlParts = banner.imagenUrl.split('amazonaws.com/');
+              if (urlParts.length > 1) {
+                const key = urlParts[1];
+                try {
+                  banner.imagenUrl = await this.s3.getSignedGetUrl(key);
+                } catch (e) {
+                  console.error('Error signing banner:', e);
+                }
               }
             }
-          }
-        }),
-      );
+          }),
+        );
+      }
+
+      if (!empresa.plan.tieneTienda) {
+        console.error('obtenerTiendaPorSlug: Plan sin tienda', slug);
+        throw new ForbiddenException('Esta tienda no está disponible');
+      }
+
+      const diseno = await this.disenoService.obtenerDisenoPorEmpresa(empresa.id).catch(e => {
+        console.error('Error obteniendo diseño:', e);
+        return {}; // Fallback en caso de error de diseño
+      });
+
+      return {
+        ...empresa,
+        diseno,
+      };
+    } catch (e) {
+      console.error('Error in obtenerTiendaPorSlug:', e);
+      throw e;
     }
-
-    if (!empresa.plan.tieneTienda) {
-      throw new ForbiddenException('Esta tienda no está disponible');
-    }
-
-    const diseno = await this.disenoService.obtenerDisenoPorEmpresa(empresa.id);
-
-    return {
-      ...empresa,
-      diseno,
-    };
   }
 
   async obtenerCategoriasTienda(slug: string) {
