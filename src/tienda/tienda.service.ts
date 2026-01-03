@@ -208,6 +208,15 @@ export class TiendaService {
           banners: {
             where: { activo: true },
             orderBy: { orden: 'asc' },
+            select: {
+              id: true,
+              titulo: true,
+              subtitulo: true,
+              imagenUrl: true,
+              linkUrl: true,
+              orden: true,
+              activo: true,
+            }
           },
         },
       });
