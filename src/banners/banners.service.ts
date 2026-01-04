@@ -86,7 +86,13 @@ export class BannersService {
             const urlParts = banner.imagenUrl.split('amazonaws.com/');
             if (urlParts.length > 1) {
                 const key = urlParts[1];
-                banner.imagenUrl = await this.s3Service.getSignedGetUrl(key);
+                try {
+                    const signed = await this.s3Service.getSignedGetUrl(key);
+                    console.log(`✅ Banner signed successfully: ${signed.substring(0, 50)}...`);
+                    banner.imagenUrl = signed;
+                } catch (e) {
+                    console.error(`❌ Error signing banner URL in uploadBanner:`, e);
+                }
             }
         }
 
@@ -118,8 +124,11 @@ export class BannersService {
                 if (urlParts.length > 1) {
                     const key = urlParts[1];
                     try {
-                        banner.imagenUrl = await this.s3Service.getSignedGetUrl(key);
+                        const signed = await this.s3Service.getSignedGetUrl(key);
+                        // console.log(`✅ Banner ${banner.id} signed: ${signed.substring(0, 30)}...`);
+                        banner.imagenUrl = signed;
                     } catch (e) {
+                        console.error(`❌ Error signing banner ${banner.id} in findAll:`, e);
                         // Keep original if signing fails
                     }
                 }
