@@ -7,10 +7,10 @@ async function createPlans() {
     console.log('📋 Creando planes de suscripción...');
 
     const planes = [
-      // Planes para Empresas Informales - Mensuales
+      // Planes para Empresas nuevos sin ruc 20 - Mensuales
       {
         nombre: 'Mi Básico Informal',
-        descripcion: 'Plan básico para emprendedores informales',
+        descripcion: 'Plan básico para emprendedores nuevos sin ruc 20',
         limiteUsuarios: 2,
         costo: 20,
         esPrueba: false,
@@ -19,7 +19,7 @@ async function createPlans() {
       },
       {
         nombre: 'Pro Informal',
-        descripcion: 'Plan profesional para negocios informales en crecimiento',
+        descripcion: 'Plan profesional para negocios nuevos sin ruc 20 en crecimiento',
         limiteUsuarios: 5,
         costo: 30,
         esPrueba: false,
@@ -57,7 +57,7 @@ async function createPlans() {
       // Planes Anuales (con 15% de descuento aproximadamente)
       {
         nombre: 'Mi Básico Informal - Anual',
-        descripcion: 'Plan básico anual para emprendedores informales (2 meses gratis)',
+        descripcion: 'Plan básico anual para emprendedores nuevos sin ruc 20 (2 meses gratis)',
         limiteUsuarios: 2,
         costo: 204, // 20 * 10.2 (equivale a 10.2 meses)
         esPrueba: false,
@@ -66,7 +66,7 @@ async function createPlans() {
       },
       {
         nombre: 'Pro Informal - Anual',
-        descripcion: 'Plan profesional anual para negocios informales (2 meses gratis)',
+        descripcion: 'Plan profesional anual para negocios nuevos sin ruc 20 (2 meses gratis)',
         limiteUsuarios: 5,
         costo: 306, // 30 * 10.2 
         esPrueba: false,
@@ -122,8 +122,8 @@ async function createPlans() {
       }
     }
 
-    console.log(`\n🎉 Proceso completado: ${createdCount} planes nuevos creados`);
-    
+    console.log(`\n🎉 Proceso completado: ${createdCount} planes nuevos sin ruc 20 creados`);
+
     // Mostrar resumen de todos los planes
     console.log('\n📊 Resumen de planes disponibles:');
     const allPlans = await prisma.plan.findMany({

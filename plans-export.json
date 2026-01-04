@@ -20,7 +20,7 @@
   {
     "id": 2,
     "nombre": "Mi Básico Informal",
-    "descripcion": "Plan básico para emprendedores informales",
+    "descripcion": "Plan básico para emprendedores nuevos sin ruc 20",
     "limiteUsuarios": 2,
     "costo": "20",
     "esPrueba": false,
@@ -38,7 +38,7 @@
   {
     "id": 3,
     "nombre": "Pro Informal",
-    "descripcion": "Plan profesional para negocios informales en crecimiento",
+    "descripcion": "Plan profesional para negocios nuevos sin ruc 20 en crecimiento",
     "limiteUsuarios": 5,
     "costo": "30",
     "esPrueba": false,

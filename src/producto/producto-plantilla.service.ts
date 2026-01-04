@@ -74,134 +74,149 @@ export class ProductoPlantillaService {
     }
 
     async importarDesdeData(empresaId: number, productos: any[]) {
-        const empresa = await this.prisma.empresa.findUnique({
-            where: { id: empresaId },
-        });
-        if (!empresa) throw new NotFoundException('Empresa no encontrada');
+        try {
+            console.log(`Iniciando importación DATA para empresa ${empresaId} con ${productos.length} productos.`);
+            const empresa = await this.prisma.empresa.findUnique({
+                where: { id: empresaId },
+            });
+            if (!empresa) throw new NotFoundException('Empresa no encontrada');
 
-        const resultados: any[] = [];
-        let importedCount = 0;
+            const resultados: any[] = [];
+            let importedCount = 0;
 
-        // Obtener último secuencial PR para Data
-        let startSequence = 1;
-        const allPrProducts = await this.prisma.producto.findMany({
-            where: { empresaId, codigo: { startsWith: 'PR' } },
-            select: { codigo: true }
-        });
-
-        if (allPrProducts.length > 0) {
-            const pattern = /^PR(\d+)$/;
-            let max = 0;
-            for (const p of allPrProducts) {
-                const match = p.codigo.match(pattern);
-                if (match) {
-                    const num = parseInt(match[1], 10);
-                    if (num > max) max = num;
-                }
-            }
-            startSequence = max + 1;
-        }
-        let indexInBatch = 0;
-
-        for (const prod of productos) {
-            // Generar código único básico si no viene
-            let codigoBase = prod.codigo;
-            if (!codigoBase && startSequence > 0) {
-                codigoBase = `PR${(startSequence + indexInBatch).toString().padStart(3, '0')}`;
-                indexInBatch++;
-            } else if (!codigoBase) {
-                codigoBase = (prod.nombre.substring(0, 3).toUpperCase() + Math.floor(Math.random() * 1000));
-            }
-
-            // 1. Manejo de Categoría
-            let categoriaId: number | null = null;
-            if (prod.categoria && prod.categoria.trim() !== '') {
-                const nombreCat = prod.categoria.trim();
-                const catExistente = await this.prisma.categoria.findFirst({
-                    where: {
-                        empresaId: empresaId,
-                        nombre: { equals: nombreCat }
-                    }
-                });
-
-                if (catExistente) {
-                    categoriaId = catExistente.id;
-                } else {
-                    const nuevaCat = await this.prisma.categoria.create({
-                        data: { empresaId, nombre: nombreCat }
-                    });
-                    categoriaId = nuevaCat.id;
-                }
-            }
-
-            // 2. Manejo de Marca
-            let marcaId: number | null = null;
-            if (prod.marca && prod.marca.trim() !== '') {
-                const nombreMarca = prod.marca.trim();
-                const marcaExistente = await this.prisma.marca.findFirst({
-                    where: {
-                        empresaId: empresaId,
-                        nombre: { equals: nombreMarca }
-                    }
-                });
-
-                if (marcaExistente) {
-                    marcaId = marcaExistente.id;
-                } else {
-                    const nuevaMarca = await this.prisma.marca.create({
-                        data: { empresaId, nombre: nombreMarca }
-                    });
-                    marcaId = nuevaMarca.id;
-                }
-            }
-
-            // Mapear unidad
-            const unidad = await this.prisma.unidadMedida.findFirst({ where: { codigo: prod.unidadConteo } })
-                || await this.prisma.unidadMedida.findFirst();
-
+            // Obtener último secuencial PR para Data
+            let startSequence = 1;
             try {
-                // Verificar si código ya existe en empresa para no duplicar
-                const exists = await this.prisma.producto.findFirst({
-                    where: { empresaId, codigo: codigoBase }
+                const allPrProducts = await this.prisma.producto.findMany({
+                    where: { empresaId, codigo: { startsWith: 'PR' } },
+                    select: { codigo: true }
                 });
 
-                if (!exists) {
-                    const nuevoProducto = await this.prisma.producto.create({
-                        data: {
-                            empresaId,
-                            codigo: codigoBase,
-                            // Ojo: Schema tiene 'descripcion' como nombre comercial y 'descripcionLarga' como detalle
-                            // prod.nombre -> descripcion (campo principal visual)
-                            // prod.descripcion -> descripcionLarga
-                            descripcion: prod.nombre,
-                            descripcionLarga: prod.descripcion,
-                            imagenUrl: prod.imagenUrl || 'https://via.placeholder.com/150', // Placeholder si no hay imagen
-                            precioUnitario: Number(prod.precioSugerido) || 0,
-                            valorUnitario: (Number(prod.precioSugerido) || 0) / 1.18,
-                            stock: 50, // Stock inicial por defecto
-                            stockMinimo: 5,
-                            unidadMedidaId: unidad?.id || 1,
-                            categoriaId: categoriaId,
-                            marcaId: marcaId,
-                            tipoAfectacionIGV: '10',
-                            igvPorcentaje: 18.00,
-                            estado: 'ACTIVO',
-                            publicarEnTienda: true,
-                        },
-                    });
-                    resultados.push(nuevoProducto);
-                    importedCount++;
+                if (allPrProducts.length > 0) {
+                    const pattern = /^PR(\d+)$/;
+                    let max = 0;
+                    for (const p of allPrProducts) {
+                        const match = p.codigo.match(pattern);
+                        if (match) {
+                            const num = parseInt(match[1], 10);
+                            if (num > max) max = num;
+                        }
+                    }
+                    startSequence = max + 1;
                 }
-            } catch (e) {
-                console.error('Error importando producto IA', e);
+            } catch (seqError) {
+                console.error('Error calculando secuencia PR en DATA:', seqError);
             }
-        }
 
-        return {
-            message: 'Importación IA completada',
-            imported: importedCount,
-            total: productos.length
-        };
+            let indexInBatch = 0;
+
+            for (const prod of productos) {
+                try {
+                    // Generar código único básico si no viene
+                    let codigoBase = prod.codigo;
+                    if (!codigoBase && startSequence > 0) {
+                        codigoBase = `PR${(startSequence + indexInBatch).toString().padStart(3, '0')}`;
+                        indexInBatch++;
+                    } else if (!codigoBase) {
+                        codigoBase = (prod.nombre.substring(0, 3).toUpperCase() + Math.floor(Math.random() * 1000));
+                    }
+
+                    // 1. Manejo de Categoría
+                    let categoriaId: number | null = null;
+                    if (prod.categoria && prod.categoria.trim() !== '') {
+                        const nombreCat = prod.categoria.trim();
+                        const catExistente = await this.prisma.categoria.findFirst({
+                            where: {
+                                empresaId: empresaId,
+                                nombre: { equals: nombreCat }
+                            }
+                        });
+
+                        if (catExistente) {
+                            categoriaId = catExistente.id;
+                        } else {
+                            const nuevaCat = await this.prisma.categoria.create({
+                                data: { empresaId, nombre: nombreCat }
+                            });
+                            categoriaId = nuevaCat.id;
+                        }
+                    }
+
+                    // 2. Manejo de Marca
+                    let marcaId: number | null = null;
+                    if (prod.marca && prod.marca.trim() !== '') {
+                        const nombreMarca = prod.marca.trim();
+                        const marcaExistente = await this.prisma.marca.findFirst({
+                            where: {
+                                empresaId: empresaId,
+                                nombre: { equals: nombreMarca }
+                            }
+                        });
+
+                        if (marcaExistente) {
+                            marcaId = marcaExistente.id;
+                        } else {
+                            const nuevaMarca = await this.prisma.marca.create({
+                                data: { empresaId, nombre: nombreMarca }
+                            });
+                            marcaId = nuevaMarca.id;
+                        }
+                    }
+
+                    // Mapear unidad
+                    const unidad = await this.prisma.unidadMedida.findFirst({ where: { codigo: prod.unidadConteo } })
+                        || await this.prisma.unidadMedida.findFirst();
+
+                    try {
+                        // Verificar si código ya existe en empresa para no duplicar
+                        const exists = await this.prisma.producto.findFirst({
+                            where: { empresaId, codigo: codigoBase }
+                        });
+
+                        if (!exists) {
+                            const nuevoProducto = await this.prisma.producto.create({
+                                data: {
+                                    empresaId,
+                                    codigo: codigoBase,
+                                    // Ojo: Schema tiene 'descripcion' como nombre comercial y 'descripcionLarga' como detalle
+                                    // prod.nombre -> descripcion (campo principal visual)
+                                    // prod.descripcion -> descripcionLarga
+                                    descripcion: prod.nombre,
+                                    descripcionLarga: prod.descripcion,
+                                    imagenUrl: prod.imagenUrl || 'https://via.placeholder.com/150', // Placeholder si no hay imagen
+                                    precioUnitario: Number(prod.precioSugerido) || 0,
+                                    valorUnitario: (Number(prod.precioSugerido) || 0) / 1.18,
+                                    stock: 50, // Stock inicial por defecto
+                                    stockMinimo: 5,
+                                    unidadMedidaId: unidad?.id || 1,
+                                    categoriaId: categoriaId,
+                                    marcaId: marcaId,
+                                    tipoAfectacionIGV: '10',
+                                    igvPorcentaje: 18.00,
+                                    estado: 'ACTIVO',
+                                    publicarEnTienda: true,
+                                },
+                            });
+                            resultados.push(nuevoProducto);
+                            importedCount++;
+                        }
+                    } catch (e) {
+                        console.error('Error importando producto individua de DATA', e);
+                    }
+                } catch (prodError) {
+                    console.error('Error procesando producto data:', prodError);
+                }
+            }
+
+            return {
+                message: 'Importación IA completada',
+                imported: importedCount,
+                total: productos.length
+            };
+        } catch (error) {
+            console.error('CRITICAL ERROR IMPORTANDO DATA:', error);
+            throw error;
+        }
     }
 
     async subirImagen(id: number, file: { buffer: Buffer, mimetype: string }) {
@@ -225,161 +240,163 @@ export class ProductoPlantillaService {
     }
 
     async importarPlantillas(empresaId: number, plantillasIds: number[]) {
-        const empresa = await this.prisma.empresa.findUnique({
-            where: { id: empresaId },
-        });
+        try {
+            console.log(`Iniciando importación para empresa ${empresaId} con ${plantillasIds.length} plantillas.`);
+            const empresa = await this.prisma.empresa.findUnique({
+                where: { id: empresaId },
+            });
 
-        if (!empresa) throw new NotFoundException('Empresa no encontrada');
+            if (!empresa) throw new NotFoundException('Empresa no encontrada');
 
-        const plantillas = await this.prisma.productoPlantilla.findMany({
-            where: { id: { in: plantillasIds } },
-        });
+            const plantillas = await this.prisma.productoPlantilla.findMany({
+                where: { id: { in: plantillasIds } },
+            });
 
-        // Optimización: Cargar nombres de productos existentes para evitar duplicados por nombre
-        const productosExistentes = await this.prisma.producto.findMany({
-            where: {
-                empresaId,
-                estado: { not: EstadoType.PLACEHOLDER } // Ignorar productos eliminados, permitir re-importar
-            },
-            select: { descripcion: true }
-        });
+            // Optimización: Cargar nombres de productos existentes para evitar duplicados por nombre
+            const productosExistentes = await this.prisma.producto.findMany({
+                where: {
+                    empresaId,
+                    estado: { not: EstadoType.PLACEHOLDER } // Ignorar productos eliminados, permitir re-importar
+                },
+                select: { descripcion: true }
+            });
 
-        // Set para búsqueda rápida O(1) - Normalizado a mayúsculas/trim
-        const nombresExistentes = new Set(
-            productosExistentes.map(p => p.descripcion.trim().toUpperCase())
-        );
+            // Set para búsqueda rápida O(1) - Normalizado a mayúsculas/trim
+            const nombresExistentes = new Set(
+                productosExistentes.map(p => p.descripcion.trim().toUpperCase())
+            );
 
-        const resultados: any[] = [];
-        const errors: any[] = [];
+            const resultados: any[] = [];
+            const errors: any[] = [];
 
-        // Obtener último secuencial PR
-        let startSequence = 1;
-        const lastProd = await this.prisma.producto.findFirst({
-            where: {
-                empresaId,
-                codigo: { startsWith: 'PR' }
-            },
-            orderBy: { id: 'desc' }, // Aproximación, idealmente parsear código
-            take: 100 // Traer un lote para parsear el máximo real
-        });
-
-        // Buscar el máximo real parseando
-        const allPrProducts = await this.prisma.producto.findMany({
-            where: { empresaId, codigo: { startsWith: 'PR' } },
-            select: { codigo: true }
-        });
-
-        if (allPrProducts.length > 0) {
-            const pattern = /^PR(\d+)$/;
-            let max = 0;
-            for (const p of allPrProducts) {
-                const match = p.codigo.match(pattern);
-                if (match) {
-                    const num = parseInt(match[1], 10);
-                    if (num > max) max = num;
-                }
-            }
-            startSequence = max + 1;
-        }
-
-        let indexInBatch = 0;
-
-        for (const plantilla of plantillas) {
+            // Obtener último secuencial PR
+            let startSequence = 1;
             try {
-                // Validación Anti-Duplicados por Nombre
-                const nombreNormalizado = plantilla.nombre.trim().toUpperCase();
-                if (nombresExistentes.has(nombreNormalizado)) {
-                    // console.log(`Skipping duplicate: ${plantilla.nombre}`);
-                    continue;
-                }
-
-                // Generar código secuencial PR
-                const nextId = startSequence + indexInBatch;
-                const codigoBase = `PR${nextId.toString().padStart(3, '0')}`;
-                indexInBatch++;
-
-                // 1. Manejo de Categoría
-                let categoriaId: number | null = null;
-                if (plantilla.categoria && plantilla.categoria.trim() !== '') {
-                    const nombreCat = plantilla.categoria.trim();
-                    const catExistente = await this.prisma.categoria.findFirst({
-                        where: {
-                            empresaId: empresaId,
-                            nombre: { equals: nombreCat, mode: 'insensitive' }
-                        }
-                    });
-
-                    if (catExistente) {
-                        categoriaId = catExistente.id;
-                    } else {
-                        const nuevaCat = await this.prisma.categoria.create({
-                            data: {
-                                empresaId: empresaId,
-                                nombre: nombreCat
-                            }
-                        });
-                        categoriaId = nuevaCat.id;
-                    }
-                }
-
-                // 2. Manejo de Marca
-                let marcaId: number | null = null;
-                if (plantilla.marca && plantilla.marca.trim() !== '') {
-                    const nombreMarca = plantilla.marca.trim();
-                    const marcaExistente = await this.prisma.marca.findFirst({
-                        where: {
-                            empresaId: empresaId,
-                            nombre: { equals: nombreMarca, mode: 'insensitive' }
-                        }
-                    });
-
-                    if (marcaExistente) {
-                        marcaId = marcaExistente.id;
-                    } else {
-                        const nuevaMarca = await this.prisma.marca.create({
-                            data: {
-                                empresaId: empresaId,
-                                nombre: nombreMarca
-                            }
-                        });
-                        marcaId = nuevaMarca.id;
-                    }
-                }
-
-                // Mapear plantilla a producto
-                const unidad = await this.prisma.unidadMedida.findFirst({ where: { codigo: plantilla.unidadConteo } })
-                    || await this.prisma.unidadMedida.findFirst();
-
-                const nuevoProducto = await this.prisma.producto.create({
-                    data: {
-                        empresaId,
-                        codigo: codigoBase,
-                        descripcion: plantilla.nombre,
-                        descripcionLarga: plantilla.descripcion,
-                        imagenUrl: plantilla.imagenUrl,
-                        precioUnitario: plantilla.precioSugerido || 0,
-                        valorUnitario: (Number(plantilla.precioSugerido) || 0) / 1.18,
-                        stock: 50,
-                        stockMinimo: 5,
-                        unidadMedidaId: unidad?.id || 1,
-                        categoriaId: categoriaId,
-                        marcaId: marcaId, // Asignar marca
-                        tipoAfectacionIGV: '10',
-                        igvPorcentaje: 18.00,
-                        estado: 'ACTIVO',
-                        publicarEnTienda: true,
-                    },
+                const allPrProducts = await this.prisma.producto.findMany({
+                    where: { empresaId, codigo: { startsWith: 'PR' } },
+                    select: { codigo: true }
                 });
-                // Marcar como existente para evitar duplicados en el mismo lote
-                nombresExistentes.add(nombreNormalizado);
-                resultados.push(nuevoProducto);
-            } catch (error: any) {
-                console.warn(`Error importando plantilla ID ${plantilla.id}:`, error.message);
-                errors.push({ id: plantilla.id, error: error.message });
-            }
-        }
 
-        return resultados;
+                if (allPrProducts.length > 0) {
+                    const pattern = /^PR(\d+)$/;
+                    let max = 0;
+                    for (const p of allPrProducts) {
+                        const match = p.codigo.match(pattern);
+                        if (match) {
+                            const num = parseInt(match[1], 10);
+                            if (num > max) max = num;
+                        }
+                    }
+                    startSequence = max + 1;
+                }
+            } catch (seqError) {
+                console.error('Error calculando secuencia PR:', seqError);
+                // Fallback or rethrow? Let's proceed with default or maybe random
+            }
+
+            let indexInBatch = 0;
+
+            for (const plantilla of plantillas) {
+                try {
+                    // Validación Anti-Duplicados por Nombre
+                    const nombreNormalizado = plantilla.nombre.trim().toUpperCase();
+                    if (nombresExistentes.has(nombreNormalizado)) {
+                        // console.log(`Skipping duplicate: ${plantilla.nombre}`);
+                        continue;
+                    }
+
+                    // Generar código secuencial PR
+                    const nextId = startSequence + indexInBatch;
+                    const codigoBase = `PR${nextId.toString().padStart(3, '0')}`;
+                    indexInBatch++;
+
+                    // 1. Manejo de Categoría
+                    let categoriaId: number | null = null;
+                    if (plantilla.categoria && plantilla.categoria.trim() !== '') {
+                        const nombreCat = plantilla.categoria.trim();
+                        const catExistente = await this.prisma.categoria.findFirst({
+                            where: {
+                                empresaId: empresaId,
+                                nombre: { equals: nombreCat, mode: 'insensitive' }
+                            }
+                        });
+
+                        if (catExistente) {
+                            categoriaId = catExistente.id;
+                        } else {
+                            const nuevaCat = await this.prisma.categoria.create({
+                                data: {
+                                    empresaId: empresaId,
+                                    nombre: nombreCat
+                                }
+                            });
+                            categoriaId = nuevaCat.id;
+                        }
+                    }
+
+                    // 2. Manejo de Marca
+                    let marcaId: number | null = null;
+                    if (plantilla.marca && plantilla.marca.trim() !== '') {
+                        const nombreMarca = plantilla.marca.trim();
+                        const marcaExistente = await this.prisma.marca.findFirst({
+                            where: {
+                                empresaId: empresaId,
+                                nombre: { equals: nombreMarca, mode: 'insensitive' }
+                            }
+                        });
+
+                        if (marcaExistente) {
+                            marcaId = marcaExistente.id;
+                        } else {
+                            const nuevaMarca = await this.prisma.marca.create({
+                                data: {
+                                    empresaId: empresaId,
+                                    nombre: nombreMarca
+                                }
+                            });
+                            marcaId = nuevaMarca.id;
+                        }
+                    }
+
+                    // Mapear plantilla a producto
+                    const unidad = await this.prisma.unidadMedida.findFirst({ where: { codigo: plantilla.unidadConteo } })
+                        || await this.prisma.unidadMedida.findFirst();
+
+                    const nuevoProducto = await this.prisma.producto.create({
+                        data: {
+                            empresaId,
+                            codigo: codigoBase,
+                            descripcion: plantilla.nombre,
+                            descripcionLarga: plantilla.descripcion,
+                            imagenUrl: plantilla.imagenUrl,
+                            precioUnitario: plantilla.precioSugerido || 0,
+                            valorUnitario: (Number(plantilla.precioSugerido) || 0) / 1.18,
+                            stock: 50,
+                            stockMinimo: 5,
+                            unidadMedidaId: unidad?.id || 1,
+                            categoriaId: categoriaId,
+                            marcaId: marcaId, // Asignar marca
+                            tipoAfectacionIGV: '10',
+                            igvPorcentaje: 18.00,
+                            estado: 'ACTIVO',
+                            publicarEnTienda: true,
+                        },
+                    });
+                    // Marcar como existente para evitar duplicados en el mismo lote
+                    nombresExistentes.add(nombreNormalizado);
+                    resultados.push(nuevoProducto);
+                } catch (error: any) {
+                    console.warn(`Error importando plantilla ID ${plantilla.id}:`, error.message);
+                    errors.push({ id: plantilla.id, error: error.message });
+                }
+            }
+
+            return resultados;
+
+        } catch (error) {
+            console.error('CRITICAL ERROR IMPORTANDO PLANTILLAS:', error);
+            throw error;
+        }
     }
 
     async importarTodo(empresaId: number) {
