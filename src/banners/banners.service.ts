@@ -23,7 +23,7 @@ export class BannersService {
         });
         await this.featuresService.validarLimite(empresaId, 'banners', bannersCount);
 
-        const { productoId, ...rest } = createBannerDto; // Exclude productoId
+        const { productoId, ...rest } = createBannerDto; // Extract to ignore if present
         return this.prisma.banner.create({
             data: {
                 ...rest,
@@ -38,7 +38,7 @@ export class BannersService {
         titulo: string,
         subtitulo?: string,
         linkUrl?: string,
-        productoId?: number,
+        // productoId removed
         orden?: number,
     ) {
         // Validar si tiene feature activado

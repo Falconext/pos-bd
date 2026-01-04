@@ -713,9 +713,9 @@ model Banner {
   titulo     String?
   subtitulo  String?
   imagenUrl  String
-  linkUrl    String?
-  productoId Int?
-  producto   Producto? @relation(fields: [productoId], references: [id])
+   linkUrl    String?
+  // productoId Int?
+  // producto   Producto? @relation(fields: [productoId], references: [id])
   orden      Int      @default(0)
   activo     Boolean  @default(true)
   creadoEn   DateTime @default(now())

@@ -47,7 +47,7 @@ export class BannersController {
             titulo || 'Banner',
             subtitulo,
             linkUrl,
-            productoId ? parseInt(productoId) : undefined,
+            // productoId ? parseInt(productoId) : undefined,
             orden ? parseInt(orden) : undefined,
         );
     }
