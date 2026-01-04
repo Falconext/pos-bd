@@ -51,11 +51,13 @@ export class BannersService {
         await this.featuresService.validarLimite(empresaId, 'banners', bannersCount);
 
         // Upload to S3
+        console.log(`[BannersService] Starting uploadBanner for empresa ${empresaId}, file: ${file.originalname}`);
         const timestamp = Date.now();
         const extension = file.originalname.split('.').pop() || 'webp';
         const key = `banners/empresa-${empresaId}/banner-${timestamp}.${extension}`;
 
         const imageUrl = await this.s3Service.uploadImage(file.buffer, key, file.mimetype);
+        console.log(`[BannersService] Image uploaded to S3: ${imageUrl}`);
 
         // Get next orden if not provided
         if (orden === undefined) {
@@ -82,6 +84,7 @@ export class BannersService {
         });
 
         // Return with signed URL if needed
+        console.log(`[BannersService] Checking for signing. ImageUrl: ${banner.imagenUrl}`);
         if (banner.imagenUrl && banner.imagenUrl.includes('amazonaws.com')) {
             const urlParts = banner.imagenUrl.split('amazonaws.com/');
             if (urlParts.length > 1) {
