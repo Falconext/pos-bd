@@ -79,7 +79,7 @@ export class BannersService {
                     subtitulo,
                     imagenUrl: imageUrl,
                     linkUrl,
-                    productoId: productoId || null, // Try including it if schema supports it, or keep null
+                    // productoId eliminada por error P2022 (no existe en DB prod)
                     orden,
                     activo: true,
                 },
