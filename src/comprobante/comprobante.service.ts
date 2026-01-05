@@ -63,9 +63,7 @@ export class ComprobanteService {
       const skip = (page - 1) * limit;
 
       const tiposFormales = ['01', '03', '07', '08'];
-      const tiposInformales = ['TICKET', 'NV', 'RH', 'CP', 'NP', 'OT
-
-'];
+      const tiposInformales = ['TICKET', 'NV', 'RH', 'CP', 'NP', 'OT'];
       const tiposCotizacion = ['COT'];
 
       let tiposPermitidos: string[];
