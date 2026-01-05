@@ -30,7 +30,7 @@ export class ComprobanteService {
 
   async listar(params: {
     empresaId: number;
-    tipoComprobante: 'FORMAL' | 'INFORMAL';
+    tipoComprobante: 'FORMAL' | 'INFORMAL' | 'COTIZACION';
     search?: string;
     page?: number;
     limit?: number;
@@ -63,9 +63,19 @@ export class ComprobanteService {
       const skip = (page - 1) * limit;
 
       const tiposFormales = ['01', '03', '07', '08'];
-      const tiposInformales = ['TICKET', 'NV', 'RH', 'CP', 'NP', 'OT'];
-      const tiposPermitidos =
-        tipoComprobante === 'FORMAL' ? tiposFormales : tiposInformales;
+      const tiposInformales = ['TICKET', 'NV', 'RH', 'CP', 'NP', 'OT
+
+'];
+      const tiposCotizacion = ['COT'];
+
+      let tiposPermitidos: string[];
+      if (tipoComprobante === 'FORMAL') {
+        tiposPermitidos = tiposFormales;
+      } else if (tipoComprobante === 'COTIZACION') {
+        tiposPermitidos = tiposCotizacion;
+      } else {
+        tiposPermitidos = tiposInformales;
+      }
 
       // Validar tipoDoc si viene
       if (tipoDoc && !tiposPermitidos.includes(tipoDoc)) {
@@ -166,6 +176,7 @@ export class ComprobanteService {
         '03': 'BOLETA',
         '07': 'NOTA DE CREDITO',
         '08': 'NOTA DE DEBITO',
+        COT: 'COTIZACIÓN',
         TICKET: 'TICKET',
         NV: 'NOTA DE VENTA',
         RH: 'RECIBO POR HONORARIOS',
@@ -202,6 +213,7 @@ export class ComprobanteService {
         '03',
         '07',
         '08',
+        'COT', // Cotización
         'TICKET',
         'NV',
         'RH',
@@ -412,6 +424,9 @@ export class ComprobanteService {
           break;
         case 'OT':
           serie = 'OT01';
+          break;
+        case 'COT':
+          serie = 'COT1';
           break;
         default:
           throw new BadRequestException('Tipo de documento no reconocido');
