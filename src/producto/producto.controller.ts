@@ -29,6 +29,7 @@ import { imageUploadOptions } from '../common/utils/multer.config';
 import { GeminiService } from '../gemini/gemini.service';
 import { ProductoLoteService } from './producto-lote.service';
 import { CrearLoteDto } from './dto/lote.dto';
+import { KardexService } from '../kardex/kardex.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('producto')
@@ -37,6 +38,7 @@ export class ProductoController {
     private readonly service: ProductoService,
     private readonly geminiService: GeminiService,
     private readonly loteService: ProductoLoteService,
+    private readonly kardexService: KardexService,
   ) { }
 
   @Post('crear')
@@ -362,6 +364,7 @@ export class ProductoController {
       ...dto,
       empresaId: user.empresaId,
       fechaVencimiento: new Date(dto.fechaVencimiento),
+      usuarioId: user.id,
     });
     res.locals.message = 'Lote creado correctamente';
     return lote;
@@ -393,5 +396,45 @@ export class ProductoController {
     await this.loteService.desactivarLote(id, user.empresaId);
     res.locals.message = 'Lote desactivado correctamente';
     return { success: true };
+  }
+
+  @Patch('lotes/:id/ajustar-stock')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async ajustarStockLote(
+    @Param('id', ParseIntPipe) loteId: number,
+    @Body() body: { productoId: number; cantidad: number; tipo: 'INCREMENTO' | 'DECREMENTO'; motivo: string },
+    @User() user: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    if (body.cantidad <= 0) throw new BadRequestException('Cantidad debe ser positiva');
+
+    const tipoMovimiento = body.tipo === 'INCREMENTO' ? 'INGRESO' : 'SALIDA';
+
+    // 1. Registrar movimiento global (Kardex)
+    const movimiento = await this.kardexService.registrarMovimiento({
+      productoId: body.productoId,
+      empresaId: user.empresaId,
+      tipoMovimiento: tipoMovimiento,
+      concepto: `Ajuste Lote Manual: ${body.motivo}`,
+      cantidad: body.cantidad,
+      usuarioId: user.id
+    });
+
+    // 2. Ajustar lote específico
+    if (body.tipo === 'INCREMENTO') {
+      await this.loteService.aumentarStockLote(loteId, body.cantidad, movimiento.id);
+    } else {
+      // Usamos descontarStockLote pasando el ID explícito para que no haga FEFO, sino descuento a ESE lote.
+      await this.loteService.descontarStockLote(body.productoId, body.cantidad, movimiento.id, loteId);
+    }
+
+    res.locals.message = 'Stock ajustado correctamente';
+    return { success: true };
+  }
+
+  @Get('lotes/todos')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async listarLotesActivos(@User() user: any) {
+    return this.loteService.obtenerTodosLotes(user.empresaId);
   }
 }

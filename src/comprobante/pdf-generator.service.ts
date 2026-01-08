@@ -32,6 +32,11 @@ export class PdfGeneratorService {
       throw new Error('Template de comprobante no encontrado');
     }
 
+    // Registrar helpers de Handlebars
+    Handlebars.registerHelper('includes', (str: string, substr: string) => {
+      return str && substr && str.toUpperCase().includes(substr.toUpperCase());
+    });
+
     const templateSource = fs.readFileSync(foundPath, 'utf-8');
     this.template = Handlebars.compile(templateSource);
     this.logger.log(`✅ Template de comprobante cargado: ${foundPath}`);
@@ -102,7 +107,10 @@ export class PdfGeneratorService {
       descripcion: string;
       precioUnitario: string;
       total: string;
+      lotes?: Array<{ lote: string; fechaVencimiento: string }>;
     }>;
+
+    mostrarLotes?: boolean;
 
     // Totales
     mtoOperGravadas: string;
@@ -117,6 +125,12 @@ export class PdfGeneratorService {
     medioPago?: string;
     observaciones?: string;
     qrCode?: string; // base64 o data URL
+
+    // Detracción
+    tipoDetraccion?: string; // e.g. "037 (12%)"
+    montoDetraccion?: string; // e.g. "144.00"
+    cuentaBancoNacion?: string;
+    medioPagoDetraccion?: string; // e.g. "001 (Depósito en cuenta)"
   }): Promise<Buffer> {
     try {
       if (!this.template) {

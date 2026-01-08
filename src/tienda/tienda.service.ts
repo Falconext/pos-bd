@@ -98,6 +98,7 @@ export class TiendaService {
         plinQrUrl: true,
         plinNumero: true,
         aceptaEfectivo: true,
+        esAgenteRetencion: true,
         // Campos de envío/recojo
         costoEnvioFijo: true,
         aceptaRecojo: true,

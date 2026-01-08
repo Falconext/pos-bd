@@ -8,24 +8,24 @@ datasource db {
 }
 
 model Plan {
-  id              Int       @id @default(autoincrement())
-  nombre          String    @unique
-  descripcion     String?
-  limiteUsuarios  Int?
-  costo           Decimal   @default(0)
-  esPrueba        Boolean   @default(false)
-  duracionDias    Int       @default(30)
-  tipoFacturacion String    @default("MENSUAL")
-  tieneTienda     Boolean   @default(false) 
-  tieneBanners       Boolean @default(false) 
-  tieneGaleria       Boolean @default(false) 
-  tieneCulqi         Boolean @default(false) 
-  tieneDeliveryGPS   Boolean @default(false) 
-  maxBanners         Int?    @default(3)     
-  maxImagenesProducto Int?   @default(1)
-  maxComprobantes    Int?    @default(100)
-  tieneTicketera     Boolean @default(false)
-  empresas        Empresa[]
+  id                  Int       @id @default(autoincrement())
+  nombre              String    @unique
+  descripcion         String?
+  limiteUsuarios      Int?
+  costo               Decimal   @default(0)
+  esPrueba            Boolean   @default(false)
+  duracionDias        Int       @default(30)
+  tipoFacturacion     String    @default("MENSUAL")
+  tieneTienda         Boolean   @default(false)
+  maxBanners          Int?      @default(3)
+  maxImagenesProducto Int?      @default(1)
+  tieneBanners        Boolean   @default(false)
+  tieneCulqi          Boolean   @default(false)
+  tieneDeliveryGPS    Boolean   @default(false)
+  tieneGaleria        Boolean   @default(false)
+  maxComprobantes     Int?      @default(100)
+  tieneTicketera      Boolean   @default(false)
+  empresas            Empresa[]
 }
 
 model Ubigeo {
@@ -37,101 +37,106 @@ model Ubigeo {
 }
 
 model Rubro {
-  id       Int       @id @default(autoincrement())
-  nombre   String    @unique
-  empresas Empresa[]
-  disenos  DisenoRubro[]
+  id         Int                 @id @default(autoincrement())
+  nombre     String              @unique
+  disenos    DisenoRubro?
+  empresas   Empresa[]
   plantillas ProductoPlantilla[]
 }
 
 model Empresa {
-  id                Int                @id @default(autoincrement())
-  ruc               String             @unique
-  razonSocial       String
-  direccion         String
-  logo              String?
-  fechaActivacion   DateTime
-  fechaExpiracion   DateTime
-  planId            Int
-  estado            EstadoType         @default(ACTIVO)
-  departamento      String?
-  distrito          String?
-  provincia         String?
-  ubigeo            String?
-  providerToken     String?
-  tokenCreatedAt    DateTime?
-  tokenUpdatedAt    DateTime?
-  empresaUbigeo     String?
-  nombreComercial   String?
-  rubroId           Int?
-  providerId        String?
-  tipoEmpresa       TipoEmpresa        @default(FORMAL)
-  slugTienda        String?            @unique 
-  descripcionTienda String?            
-  whatsappTienda    String?            
-  facebookUrl       String?            
-  instagramUrl      String?            
-  tiktokUrl         String?            
-  horarioAtencion   String?            
-  colorPrimario     String?            @default("#000000") 
-  colorSecundario   String?            @default("#ffffff") 
-  yapeQrUrl         String?            
-  yapeNumero        String?            
-  plinQrUrl         String?            
-  plinNumero        String?            
-  aceptaEfectivo    Boolean            @default(true) 
-  costoEnvioFijo    Decimal?           @default(0) 
-  aceptaRecojo      Boolean            @default(true) 
-  aceptaEnvio       Boolean            @default(true) 
-  direccionRecojo   String?            
-  tiempoPreparacionMin Int?            @default(30) 
-  disenoOverride    String?            // Json as String for SQLite
-  categorias        Categoria[]
-  clientes          Cliente[]
-  comprobantes      Comprobante[]
-  ubicacion         Ubigeo?            @relation(fields: [empresaUbigeo], references: [codigo])
-  plan              Plan               @relation(fields: [planId], references: [id])
-  rubro             Rubro?             @relation(fields: [rubroId], references: [id])
-  movimientosCaja   MovimientoCaja[]
-  movimientosKardex MovimientoKardex[]
-  pagos             Pago[]
-  productos         Producto[]
-  usuarios          Usuario[]
-  marcas            Marca[]
-  Notificacion      Notificacion[]
-  whatsappEnvios    WhatsAppEnvio[]
-  pedidosTienda     PedidoTienda[]     
-  banners           Banner[]
-  combos            Combo[]            
-  preferenciasTabla PreferenciaTabla[]
-  gruposModificadores GrupoModificador[] 
+  id                   Int                @id @default(autoincrement())
+  ruc                  String             @unique
+  razonSocial          String
+  direccion            String
+  logo                 String?
+  fechaActivacion      DateTime
+  fechaExpiracion      DateTime
+  planId               Int
+  estado               EstadoType         @default(ACTIVO)
+  departamento         String?
+  distrito             String?
+  provincia            String?
+  ubigeo               String?
+  providerToken        String?
+  tokenCreatedAt       DateTime?
+  tokenUpdatedAt       DateTime?
+  empresaUbigeo        String?
+  nombreComercial      String?
+  rubroId              Int?
+  providerId           String?
+  tipoEmpresa          TipoEmpresa        @default(FORMAL)
+  aceptaEfectivo       Boolean            @default(true)
+  colorPrimario        String?            @default("#000000")
+  colorSecundario      String?            @default("#ffffff")
+  descripcionTienda    String?
+  facebookUrl          String?
+  horarioAtencion      String?
+  instagramUrl         String?
+  plinNumero           String?
+  plinQrUrl            String?
+  slugTienda           String?            @unique
+  tiktokUrl            String?
+  whatsappTienda       String?
+  yapeNumero           String?
+  yapeQrUrl            String?
+  aceptaEnvio          Boolean            @default(true)
+  aceptaRecojo         Boolean            @default(true)
+  esAgenteRetencion    Boolean            @default(false)
+  costoEnvioFijo       Decimal?           @default(0)
+  direccionRecojo      String?
+  tiempoPreparacionMin Int?               @default(30)
+  disenoOverride       String?
+  banners              Banner[]
+  categorias           Categoria[]
+  clientes             Cliente[]
+  compras              Compra[]
+  comprobantes         Comprobante[]
+  ubicacion            Ubigeo?            @relation(fields: [empresaUbigeo], references: [codigo])
+  plan                 Plan               @relation(fields: [planId], references: [id])
+  rubro                Rubro?             @relation(fields: [rubroId], references: [id])
+  marcas               Marca[]
+  movimientosCaja      MovimientoCaja[]
+  movimientosKardex    MovimientoKardex[]
+  Notificacion         Notificacion[]
+  pagos                Pago[]
+  pagosCompra          PagoCompra[]
+  pedidosTienda        PedidoTienda[]
+  preferenciasTabla    PreferenciaTabla[]
+  productos            Producto[]
+  usuarios             Usuario[]
+  whatsappEnvios       WhatsAppEnvio[]
+  combos               Combo[]
+  gruposModificadores  GrupoModificador[]
 
   @@index([providerToken])
   @@index([slugTienda])
 }
 
 model Usuario {
-  id                Int                @id @default(autoincrement())
-  nombre            String
-  dni               String
-  celular           String
-  email             String             @unique
-  password          String
-  rol               Rol
-  empresaId         Int?
-  estado            EstadoType         @default(ACTIVO)
-  telefono          String?
-  permisos          String?
-  comprobantes      Comprobante[]
-  movimientosCaja   MovimientoCaja[]
-  movimientosKardex MovimientoKardex[]
-  pagos             Pago[]
-  refreshTokens     RefreshToken[]
-  empresa           Empresa?           @relation(fields: [empresaId], references: [id])
-  Notificacion      Notificacion[]
-  whatsappEnvios    WhatsAppEnvio[]
+  id                     Int                     @id @default(autoincrement())
+  nombre                 String
+  dni                    String
+  celular                String
+  email                  String                  @unique
+  password               String
+  rol                    Rol
+  empresaId              Int?
+  estado                 EstadoType              @default(ACTIVO)
+  telefono               String?
+  permisos               String?
+  compras                Compra[]
+  comprobantes           Comprobante[]
   historialEstadosPedido HistorialEstadoPedido[]
-  preferenciasTabla PreferenciaTabla[]
+  movimientosCaja        MovimientoCaja[]
+  movimientosKardex      MovimientoKardex[]
+  Notificacion           Notificacion[]
+  pagos                  Pago[]
+  pagosCompra            PagoCompra[]
+  preferenciasTabla      PreferenciaTabla[]
+  refreshTokens          RefreshToken[]
+  empresa                Empresa?                @relation(fields: [empresaId], references: [id])
+  whatsappEnvios         WhatsAppEnvio[]
 }
 
 model Categoria {
@@ -160,67 +165,60 @@ model Marca {
 }
 
 model Producto {
-  id                  Int                  @id @default(autoincrement())
+  id                  Int                        @id @default(autoincrement())
   codigo              String
   descripcion         String
   categoriaId         Int?
-  marcaId             Int?
   unidadMedidaId      Int
   tipoAfectacionIGV   String
   precioUnitario      Decimal
   valorUnitario       Decimal
-  igvPorcentaje       Decimal              @default(18.00)
+  igvPorcentaje       Decimal                    @default(18.00)
   stock               Int
-  estado              EstadoType           @default(ACTIVO)
-  creadoEn            DateTime             @default(now())
+  estado              EstadoType                 @default(ACTIVO)
+  creadoEn            DateTime                   @default(now())
   empresaId           Int?
-  costoPromedio       Decimal?             @default(0)
+  costoPromedio       Decimal?                   @default(0)
   stockMaximo         Int?
-  stockMinimo         Int?                 @default(0)
-  publicarEnTienda    Boolean              @default(false) 
-  imagenUrl           String?              
-  imagenesExtra       String?              
-  descripcionLarga    String?              
-  destacado           Boolean              @default(false) 
-  ratingAvg           Decimal?             @default(0) 
-  ratingCount         Int?                 @default(0) 
-  
-  // 🆕 FARMACIA/BOTICA
-  principioActivo     String?
-  laboratorio         String?
-  concentracion       String?
-  presentacion        String?
-  requiereReceta      Boolean              @default(false)
-  refrigerado         Boolean              @default(false)
-  controlado          Boolean              @default(false)
-  codigoDigemid       String?              @unique
-  
-  // 🆕 BODEGA/SUPERMARKET
+  stockMinimo         Int?                       @default(0)
+  descripcionLarga    String?
+  destacado           Boolean                    @default(false)
+  imagenUrl           String?
+  imagenesExtra       String?
+  publicarEnTienda    Boolean                    @default(false)
+  marcaId             Int?
+  ratingAvg           Decimal?                   @default(0)
+  ratingCount         Int?                       @default(0)
   codigoBarras        String?
-  pesoGramos          Decimal?
-  volumenMl           Decimal?
-  ofertaActiva        Boolean              @default(false)
-  precioOferta        Decimal?
-  fechaInicioOferta   DateTime?
+  codigoDigemid       String?                    @unique
+  concentracion       String?
+  controlado          Boolean                    @default(false)
+  factorConversion    Int                        @default(1)
   fechaFinOferta      DateTime?
-  
-  // 🆕 FRACCIONAMIENTO (FARMACIA/BODEGA)
+  fechaInicioOferta   DateTime?
+  laboratorio         String?
+  ofertaActiva        Boolean                    @default(false)
+  pesoGramos          Decimal?
+  precioOferta        Decimal?
+  presentacion        String?
+  principioActivo     String?
+  refrigerado         Boolean                    @default(false)
+  requiereReceta      Boolean                    @default(false)
   unidadCompra        String?
   unidadVenta         String?
-  factorConversion    Int                  @default(1)
-  
+  volumenMl           Decimal?
+  detalleCompras      DetalleCompra[]
   detalleComprobantes DetalleComprobante[]
-  movimientosKardex   MovimientoKardex[]
-  categoria           Categoria?           @relation(fields: [categoriaId], references: [id])
-  marca               Marca?               @relation(fields: [marcaId], references: [id])
-  empresa             Empresa?             @relation(fields: [empresaId], references: [id])
-  unidadMedida        UnidadMedida         @relation(fields: [unidadMedidaId], references: [id])
+  galeria             GaleriaProducto[]
   itemsPedido         ItemPedidoTienda[]
-  galeria             GaleriaProducto[]    
-  comboItems          ComboItem[]          
-  gruposModificadores ProductoGrupoModificador[] 
+  movimientosKardex   MovimientoKardex[]
+  categoria           Categoria?                 @relation(fields: [categoriaId], references: [id])
+  empresa             Empresa?                   @relation(fields: [empresaId], references: [id])
+  marca               Marca?                     @relation(fields: [marcaId], references: [id])
+  unidadMedida        UnidadMedida               @relation(fields: [unidadMedidaId], references: [id])
+  comboItems          ComboItem[]
+  gruposModificadores ProductoGrupoModificador[]
   lotes               ProductoLote[]
-  // banners             Banner[]
 
   @@unique([empresaId, codigo])
   @@index([empresaId, publicarEnTienda])
@@ -251,6 +249,7 @@ model Cliente {
   persona         PersonaType    @default(CLIENTE)
   empresa         Empresa?       @relation(fields: [empresaId], references: [id])
   tipoDocumento   TipoDocumento? @relation(fields: [tipoDocumentoId], references: [id])
+  compras         Compra[]
   comprobantes    Comprobante[]
 }
 
@@ -271,65 +270,96 @@ model MotivoNota {
   @@unique([tipo, codigo])
 }
 
+model TipoDetraccion {
+  id           Int           @id @default(autoincrement())
+  codigo       String        @unique
+  descripcion  String
+  porcentaje   Decimal
+  activo       Boolean       @default(true)
+  comprobantes Comprobante[]
+}
+
+model MedioPagoDetraccion {
+  id           Int           @id @default(autoincrement())
+  codigo       String        @unique
+  descripcion  String
+  activo       Boolean       @default(true)
+  comprobantes Comprobante[]
+}
+
 model Comprobante {
-  id                 Int                  @id @default(autoincrement())
-  ublVersion         String               @default("2.1")
-  tipoDoc            String
-  serie              String
-  correlativo        Int
-  fechaEmision       DateTime             
-  formaPagoTipo      String
-  formaPagoMoneda    String
-  tipoMoneda         String
-  observaciones      String?
-  mtoOperGravadas    Float
-  mtoIGV             Float
-  valorVenta         Float
-  totalImpuestos     Float
-  subTotal           Float
-  mtoImpVenta        Float
-  estadoEnvioSunat   EstadoSunat          @default(PENDIENTE)
-  medioPago          String?
-  clienteId          Int
-  empresaId          Int
-  tipDocAfectado     String?
-  numDocAfectado     String?
-  creadoEn           DateTime             @default(now())
-  tipoOperacionId    Int?
-  motivoId           Int?
-  mtoOperInafectas   Float                @default(0)
-  mtoDescuentoGlobal Float                @default(0)
-  sunatCdrResponse   String? 
-  sunatCdrZip        String?
-  sunatErrorMsg      String?
-  sunatXml           String?
-  documentoId        String?
-  adelanto           Float?
-  fechaRecojo        DateTime?
-  saldo              Float?               @default(0)
-  estadoPago         EstadoPago?          @default(PENDIENTE_PAGO)
-  descuentoOT        Float?               @default(0)
-  descuentoPorcOT    Float?               @default(0)
-  estadoOT           String?
-  vuelto             Float?               @default(0)
-  usuarioId          Int?
-  s3PdfUrl           String?
-  s3XmlUrl           String?
-  s3CdrUrl           String?
-  // Retry tracking for SUNAT failures
-  sunatRetriesCount   Int                  @default(0)
-  sunatLastRetryAt    DateTime?
-  sunatNextRetryAt    DateTime?
-  cliente            Cliente              @relation(fields: [clienteId], references: [id])
-  empresa            Empresa              @relation(fields: [empresaId], references: [id])
-  motivo             MotivoNota?          @relation("ComprobanteMotivo", fields: [motivoId], references: [id])
-  tipoOperacion      TipoOperacion?       @relation(fields: [tipoOperacionId], references: [id])
-  usuario            Usuario?             @relation(fields: [usuarioId], references: [id])
-  detalles           DetalleComprobante[]
-  leyendas           Leyenda[]
-  movimientosKardex  MovimientoKardex[]
-  pagos              Pago[]
-  whatsappEnvios     WhatsAppEnvio[]
+  id                    Int                  @id @default(autoincrement())
+  ublVersion            String               @default("2.1")
+  tipoDoc               String
+  serie                 String
+  correlativo           Int
+  fechaEmision          DateTime
+  formaPagoTipo         String
+  formaPagoMoneda       String
+  tipoMoneda            String
+  observaciones         String?
+  mtoOperGravadas       Float
+  mtoIGV                Float
+  valorVenta            Float
+  totalImpuestos        Float
+  subTotal              Float
+  mtoImpVenta           Float
+  estadoEnvioSunat      EstadoSunat          @default(PENDIENTE)
+  medioPago             String?
+  clienteId             Int
+  empresaId             Int
+  tipDocAfectado        String?
+  numDocAfectado        String?
+  creadoEn              DateTime             @default(now())
+  tipoOperacionId       Int?
+  motivoId              Int?
+  mtoOperInafectas      Float                @default(0)
+  mtoDescuentoGlobal    Float                @default(0)
+  sunatCdrResponse      String?
+  sunatCdrZip           String?
+  sunatErrorMsg         String?
+  sunatXml              String?
+  documentoId           String?
+  adelanto              Float?
+  fechaRecojo           DateTime?
+  saldo                 Float?               @default(0)
+  estadoPago            EstadoPago?          @default(PENDIENTE_PAGO)
+  descuentoOT           Float?               @default(0)
+  descuentoPorcOT       Float?               @default(0)
+  estadoOT              String?
+  usuarioId             Int?
+  s3CdrUrl              String?
+  s3PdfUrl              String?
+  s3XmlUrl              String?
+  vuelto                Float?               @default(0)
+  sunatLastRetryAt      DateTime?
+  sunatNextRetryAt      DateTime?
+  sunatRetriesCount     Int                  @default(0)
+  cotizAdelanto         Float?               @default(0)
+  cotizDescuento        Float?               @default(0)
+  cotizFirmante         String?
+  cotizIncluirImagenes  Boolean?             @default(false)
+  cotizTerminos         String?
+  cotizTipoPago         String?              @default("CONTADO")
+  cotizVigencia         Int?                 @default(7)
+  cuentaBancoNacion     String?
+  medioPagoDetraccionId Int?
+  montoDetraccion       Float?
+  porcentajeDetraccion  Float?
+  tipoDetraccionId      Int?
+  cuotas                Json?
+  cliente               Cliente              @relation(fields: [clienteId], references: [id])
+  empresa               Empresa              @relation(fields: [empresaId], references: [id])
+  medioPagoDetraccion   MedioPagoDetraccion? @relation(fields: [medioPagoDetraccionId], references: [id])
+  motivo                MotivoNota?          @relation("ComprobanteMotivo", fields: [motivoId], references: [id])
+  tipoDetraccion        TipoDetraccion?      @relation(fields: [tipoDetraccionId], references: [id])
+  tipoOperacion         TipoOperacion?       @relation(fields: [tipoOperacionId], references: [id])
+  usuario               Usuario?             @relation(fields: [usuarioId], references: [id])
+  detalles              DetalleComprobante[]
+  leyendas              Leyenda[]
+  movimientosKardex     MovimientoKardex[]
+  pagos                 Pago[]
+  whatsappEnvios        WhatsAppEnvio[]
 }
 
 model DetalleComprobante {
@@ -380,7 +410,7 @@ model Pago {
 }
 
 model MovimientoKardex {
-  id               Int            @id @default(autoincrement())
+  id               Int                   @id @default(autoincrement())
   productoId       Int
   empresaId        Int
   tipoMovimiento   TipoMovimiento
@@ -391,15 +421,17 @@ model MovimientoKardex {
   stockActual      Int
   costoUnitario    Decimal?
   valorTotal       Decimal?
-  fecha            DateTime       @default(now())
+  fecha            DateTime              @default(now())
   usuarioId        Int?
   observacion      String?
   lote             String?
   fechaVencimiento DateTime?
-  comprobante      Comprobante?   @relation(fields: [comprobanteId], references: [id])
-  empresa          Empresa        @relation(fields: [empresaId], references: [id])
-  producto         Producto       @relation(fields: [productoId], references: [id])
-  usuario          Usuario?       @relation(fields: [usuarioId], references: [id])
+  compraId         Int?
+  compra           Compra?               @relation(fields: [compraId], references: [id])
+  comprobante      Comprobante?          @relation(fields: [comprobanteId], references: [id])
+  empresa          Empresa               @relation(fields: [empresaId], references: [id])
+  producto         Producto              @relation(fields: [productoId], references: [id])
+  usuario          Usuario?              @relation(fields: [usuarioId], references: [id])
   movimientoLote   MovimientoKardexLote?
 
   @@index([productoId, fecha])
@@ -445,32 +477,32 @@ model MovimientoCaja {
 }
 
 model PedidoTienda {
-  id                Int                @id @default(autoincrement())
+  id                Int                     @id @default(autoincrement())
   empresaId         Int
   clienteNombre     String
   clienteTelefono   String
   clienteEmail      String?
   clienteDireccion  String?
-  clienteReferencia String?            
-  tipoEntrega       TipoEntrega        @default(RECOJO) 
-  costoEnvio        Decimal            @default(0) 
-  codigoSeguimiento String             @unique 
-  notasInternas     String?            
+  clienteReferencia String?
   subtotal          Decimal
-  igv               Decimal            @default(0)
+  igv               Decimal                 @default(0)
   total             Decimal
-  estado            EstadoPedidoTienda @default(PENDIENTE)
-  medioPago         MedioPagoTienda    @default(YAPE)
-  observaciones     String?            
-  referenciaTransf  String?            
-  creadoEn          DateTime           @default(now())
-  actualizadoEn     DateTime           @updatedAt
-  fechaConfirmacion DateTime?          
-  usuarioConfirma   Int?               
-  comprobanteId     Int?               
-  empresa           Empresa            @relation(fields: [empresaId], references: [id])
-  items             ItemPedidoTienda[]
+  estado            EstadoPedidoTienda      @default(PENDIENTE)
+  medioPago         MedioPagoTienda         @default(YAPE)
+  observaciones     String?
+  referenciaTransf  String?
+  creadoEn          DateTime                @default(now())
+  actualizadoEn     DateTime                @updatedAt
+  fechaConfirmacion DateTime?
+  usuarioConfirma   Int?
+  comprobanteId     Int?
+  codigoSeguimiento String                  @unique
+  costoEnvio        Decimal                 @default(0)
+  notasInternas     String?
+  tipoEntrega       TipoEntrega             @default(RECOJO)
   historialEstados  HistorialEstadoPedido[]
+  items             ItemPedidoTienda[]
+  empresa           Empresa                 @relation(fields: [empresaId], references: [id])
 
   @@index([empresaId, estado])
   @@index([creadoEn])
@@ -478,75 +510,363 @@ model PedidoTienda {
 }
 
 model ItemPedidoTienda {
-  id           Int          @id @default(autoincrement())
-  pedidoId     Int
-  productoId   Int
-  cantidad     Int
-  precioUnit   Decimal      
-  subtotal     Decimal      
-  observacion  String?      
-  pedido       PedidoTienda @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
-  producto     Producto     @relation(fields: [productoId], references: [id])
-  comboId      Int?
-  combo        Combo?       @relation(fields: [comboId], references: [id])
-  esCombo      Boolean      @default(false)
-  comboSnapshot String?       // Json as String
-  
+  id            Int          @id @default(autoincrement())
+  pedidoId      Int
+  productoId    Int
+  cantidad      Int
+  precioUnit    Decimal
+  subtotal      Decimal
+  observacion   String?
+  comboId       Int?
+  comboSnapshot String?
+  esCombo       Boolean      @default(false)
+  combo         Combo?       @relation(fields: [comboId], references: [id])
+  pedido        PedidoTienda @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  producto      Producto     @relation(fields: [productoId], references: [id])
+
   @@index([pedidoId])
   @@index([productoId])
   @@index([comboId])
 }
 
 model Combo {
-  id                  Int              @id @default(autoincrement())
+  id                  Int                @id @default(autoincrement())
   empresaId           Int
-  empresa             Empresa          @relation(fields: [empresaId], references: [id], onDelete: Cascade)
-  
-  nombre              String           
-  descripcion         String?          
-  imagenUrl           String?          
-  
-  precioRegular       Decimal          
-  precioCombo         Decimal          
-  descuentoPorcentaje Decimal?         
-  
-  activo              Boolean          @default(true)
-  stock               Int?             
-  
+  nombre              String
+  descripcion         String?
+  imagenUrl           String?
+  precioRegular       Decimal
+  precioCombo         Decimal
+  descuentoPorcentaje Decimal?
+  activo              Boolean            @default(true)
+  stock               Int?
   fechaInicio         DateTime?
   fechaFin            DateTime?
-  
-  items               ComboItem[]
+  creadoEn            DateTime           @default(now())
+  actualizadoEn       DateTime           @updatedAt
   pedidoItems         ItemPedidoTienda[]
-  
-  creadoEn            DateTime         @default(now())
-  actualizadoEn       DateTime         @updatedAt
-  
+  items               ComboItem[]
+  empresa             Empresa            @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
   @@index([empresaId, activo])
   @@map("combos")
 }
 
 model ComboItem {
-  id                  Int              @id @default(autoincrement())
-  comboId             Int
-  combo               Combo            @relation(fields: [comboId], references: [id], onDelete: Cascade)
-  
-  productoId          Int
-  producto            Producto         @relation(fields: [productoId], references: [id], onDelete: Cascade)
-  
-  cantidad            Int              @default(1) 
-  
+  id         Int      @id @default(autoincrement())
+  comboId    Int
+  productoId Int
+  cantidad   Int      @default(1)
+  combo      Combo    @relation(fields: [comboId], references: [id], onDelete: Cascade)
+  producto   Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
+
   @@unique([comboId, productoId])
   @@map("combo_items")
 }
 
+model HistorialEstadoPedido {
+  id             Int                 @id @default(autoincrement())
+  pedidoId       Int
+  estadoAnterior EstadoPedidoTienda?
+  estadoNuevo    EstadoPedidoTienda
+  usuarioId      Int?
+  notas          String?
+  creadoEn       DateTime            @default(now())
+  pedido         PedidoTienda        @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  usuario        Usuario?            @relation(fields: [usuarioId], references: [id])
+
+  @@index([pedidoId])
+  @@index([creadoEn])
+}
+
+model Notificacion {
+  id        Int      @id @default(autoincrement())
+  usuarioId Int
+  empresaId Int?
+  tipo      String
+  titulo    String
+  mensaje   String
+  leida     Boolean  @default(false)
+  creadoEn  DateTime @default(now())
+  empresa   Empresa? @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  usuario   Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId, leida])
+  @@index([empresaId])
+}
+
+model WhatsAppEnvio {
+  id            Int            @id @default(autoincrement())
+  comprobanteId Int
+  empresaId     Int
+  usuarioId     Int
+  numeroDestino String
+  estado        EstadoWhatsApp @default(PENDIENTE)
+  mensajeId     String?
+  error         String?
+  costoUSD      Decimal        @default(0)
+  incluyeXML    Boolean        @default(false)
+  creadoEn      DateTime       @default(now())
+  actualizadoEn DateTime       @updatedAt
+  comprobante   Comprobante    @relation(fields: [comprobanteId], references: [id], onDelete: Cascade)
+  empresa       Empresa        @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  usuario       Usuario        @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([comprobanteId])
+  @@index([empresaId])
+  @@index([estado])
+  @@index([creadoEn])
+}
+
+model DisenoRubro {
+  id               Int      @id @default(autoincrement())
+  rubroId          Int      @unique
+  colorPrimario    String   @default("#6A6CFF")
+  colorSecundario  String   @default("#ffffff")
+  colorAccento     String   @default("#FF6B6B")
+  tipografia       String   @default("Inter")
+  espaciado        String   @default("normal")
+  bordeRadius      String   @default("medium")
+  estiloBoton      String   @default("rounded")
+  plantillaId      String   @default("moderna")
+  creadoEn         DateTime @default(now())
+  actualizadoEn    DateTime @updatedAt
+  vistaProductos   String   @default("cards")
+  tiempoEntregaMax Int?     @default(25)
+  tiempoEntregaMin Int?     @default(15)
+  rubro            Rubro    @relation(fields: [rubroId], references: [id], onDelete: Cascade)
+
+  @@index([rubroId])
+}
+
+model Banner {
+  id        Int      @id @default(autoincrement())
+  empresaId Int
+  titulo    String?
+  subtitulo String?
+  imagenUrl String
+  linkUrl   String?
+  orden     Int      @default(0)
+  activo    Boolean  @default(true)
+  creadoEn  DateTime @default(now())
+  empresa   Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  @@index([empresaId, activo, orden])
+}
+
+model GaleriaProducto {
+  id          Int      @id @default(autoincrement())
+  productoId  Int
+  imagenUrl   String
+  orden       Int      @default(0)
+  esPrincipal Boolean  @default(false)
+  creadoEn    DateTime @default(now())
+  producto    Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
+
+  @@index([productoId])
+  @@index([productoId, esPrincipal])
+}
+
+model PreferenciaTabla {
+  id             Int      @id @default(autoincrement())
+  usuarioId      Int
+  empresaId      Int?
+  tabla          String
+  visibleColumns String
+  creadoEn       DateTime @default(now())
+  actualizadoEn  DateTime @updatedAt
+  empresa        Empresa? @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  usuario        Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@unique([usuarioId, empresaId, tabla])
+  @@index([usuarioId, empresaId, tabla])
+}
+
+model GrupoModificador {
+  id            Int                        @id @default(autoincrement())
+  empresaId     Int
+  nombre        String
+  descripcion   String?
+  esObligatorio Boolean                    @default(false)
+  seleccionMin  Int                        @default(0)
+  seleccionMax  Int                        @default(1)
+  orden         Int                        @default(0)
+  activo        Boolean                    @default(true)
+  creadoEn      DateTime                   @default(now())
+  actualizadoEn DateTime                   @updatedAt
+  empresa       Empresa                    @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  opciones      OpcionModificador[]
+  productos     ProductoGrupoModificador[]
+
+  @@index([empresaId, activo])
+  @@map("grupos_modificadores")
+}
+
+model OpcionModificador {
+  id            Int              @id @default(autoincrement())
+  grupoId       Int
+  nombre        String
+  creadoEn      DateTime         @default(now())
+  activo        Boolean          @default(true)
+  actualizadoEn DateTime         @default(now()) @updatedAt
+  descripcion   String?
+  esDefault     Boolean          @default(false)
+  orden         Int              @default(0)
+  precioExtra   Decimal          @default(0)
+  grupo         GrupoModificador @relation(fields: [grupoId], references: [id], onDelete: Cascade)
+
+  @@index([grupoId])
+  @@index([grupoId, activo])
+  @@map("opciones_modificadores")
+}
+
+model ProductoGrupoModificador {
+  id            Int              @id @default(autoincrement())
+  productoId    Int
+  grupoId       Int
+  ordenOverride Int?
+  grupo         GrupoModificador @relation(fields: [grupoId], references: [id], onDelete: Cascade)
+  producto      Producto         @relation(fields: [productoId], references: [id], onDelete: Cascade)
+
+  @@unique([productoId, grupoId])
+  @@index([productoId])
+  @@index([grupoId])
+  @@map("producto_grupo_modificadores")
+}
+
+model ProductoPlantilla {
+  id             Int      @id @default(autoincrement())
+  nombre         String
+  descripcion    String?
+  imagenUrl      String?
+  precioSugerido Decimal?
+  rubroId        Int
+  unidadConteo   String   @default("NIU")
+  creadoEn       DateTime @default(now())
+  actualizadoEn  DateTime @updatedAt
+  categoria      String?
+  codigo         String?  @unique
+  marca          String?
+  rubro          Rubro    @relation(fields: [rubroId], references: [id])
+
+  @@index([rubroId])
+  @@index([nombre])
+  @@map("producto_plantillas")
+}
+
+model ProductoLote {
+  id                Int                    @id @default(autoincrement())
+  productoId        Int
+  lote              String
+  fechaVencimiento  DateTime
+  fechaIngreso      DateTime               @default(now())
+  stockActual       Int                    @default(0)
+  stockInicial      Int                    @default(0)
+  costoUnitario     Decimal?
+  proveedor         String?
+  activo            Boolean                @default(true)
+  creadoEn          DateTime               @default(now())
+  actualizadoEn     DateTime               @updatedAt
+  movimientosKardex MovimientoKardexLote[]
+  producto          Producto               @relation(fields: [productoId], references: [id], onDelete: Cascade)
+
+  @@unique([productoId, lote])
+  @@index([productoId, fechaVencimiento])
+  @@index([productoId, activo])
+  @@map("producto_lotes")
+}
+
+model MovimientoKardexLote {
+  id             Int              @id @default(autoincrement())
+  productoLoteId Int
+  movimientoId   Int              @unique
+  cantidad       Int
+  stockAnterior  Int
+  stockActual    Int
+  movimiento     MovimientoKardex @relation(fields: [movimientoId], references: [id], onDelete: Cascade)
+  lote           ProductoLote     @relation(fields: [productoLoteId], references: [id], onDelete: Cascade)
+
+  @@index([productoLoteId])
+  @@map("movimiento_kardex_lotes")
+}
+
+model Compra {
+  id               Int                @id @default(autoincrement())
+  empresaId        Int
+  proveedorId      Int
+  usuarioId        Int?
+  tipoDoc          String             @default("FACTURA")
+  serie            String
+  numero           String
+  fechaEmision     DateTime
+  fechaVencimiento DateTime?
+  moneda           String             @default("PEN")
+  tipoCambio       Decimal?           @default(1)
+  subtotal         Decimal            @default(0)
+  igv              Decimal            @default(0)
+  total            Decimal            @default(0)
+  saldo            Decimal            @default(0)
+  estado           EstadoCompra       @default(REGISTRADO)
+  estadoPago       EstadoPago         @default(PENDIENTE_PAGO)
+  observaciones    String?
+  creadoEn         DateTime           @default(now())
+  actualizadoEn    DateTime           @updatedAt
+  cuotas           Json?
+  empresa          Empresa            @relation(fields: [empresaId], references: [id])
+  proveedor        Cliente            @relation(fields: [proveedorId], references: [id])
+  usuario          Usuario?           @relation(fields: [usuarioId], references: [id])
+  detalles         DetalleCompra[]
+  movimientos      MovimientoKardex[]
+  pagos            PagoCompra[]
+
+  @@index([empresaId])
+  @@index([proveedorId])
+  @@index([fechaEmision])
+}
+
+model DetalleCompra {
+  id               Int       @id @default(autoincrement())
+  compraId         Int
+  productoId       Int?
+  descripcion      String
+  cantidad         Decimal
+  precioUnitario   Decimal
+  subtotal         Decimal
+  igv              Decimal
+  total            Decimal
+  lote             String?
+  fechaVencimiento DateTime?
+  compra           Compra    @relation(fields: [compraId], references: [id], onDelete: Cascade)
+  producto         Producto? @relation(fields: [productoId], references: [id])
+
+  @@index([compraId])
+  @@index([productoId])
+}
+
+model PagoCompra {
+  id         Int      @id @default(autoincrement())
+  compraId   Int
+  empresaId  Int
+  usuarioId  Int?
+  fecha      DateTime @default(now())
+  monto      Decimal
+  metodoPago String
+  referencia String?
+  creadoEn   DateTime @default(now())
+  compra     Compra   @relation(fields: [compraId], references: [id], onDelete: Cascade)
+  empresa    Empresa  @relation(fields: [empresaId], references: [id])
+  usuario    Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@index([compraId])
+}
+
 enum EstadoPedidoTienda {
-  PENDIENTE       
-  CONFIRMADO      
-  EN_PREPARACION  
-  LISTO           
-  ENTREGADO       
-  CANCELADO       
+  PENDIENTE
+  CONFIRMADO
+  EN_PREPARACION
+  LISTO
+  ENTREGADO
+  CANCELADO
 }
 
 enum MedioPagoTienda {
@@ -628,133 +948,6 @@ enum TipoCaja {
   EGRESO
 }
 
-model HistorialEstadoPedido {
-  id        Int                @id @default(autoincrement())
-  pedidoId  Int
-  estadoAnterior EstadoPedidoTienda?
-  estadoNuevo    EstadoPedidoTienda
-  usuarioId Int?
-  notas     String?
-  creadoEn  DateTime           @default(now())
-
-  pedido    PedidoTienda       @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
-  usuario   Usuario?           @relation(fields: [usuarioId], references: [id])
-
-  @@index([pedidoId])
-  @@index([creadoEn])
-}
-
-model Notificacion {
-  id        Int      @id @default(autoincrement())
-  usuarioId Int
-  empresaId Int?
-  tipo      String 
-  titulo    String
-  mensaje   String
-  leida     Boolean  @default(false)
-  creadoEn  DateTime @default(now())
-
-  usuario Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
-  empresa Empresa? @relation(fields: [empresaId], references: [id], onDelete: Cascade)
-
-  @@index([usuarioId, leida])
-  @@index([empresaId])
-}
-
-model WhatsAppEnvio {
-  id             Int      @id @default(autoincrement())
-  comprobanteId  Int
-  empresaId      Int
-  usuarioId      Int
-  numeroDestino  String
-  estado         EstadoWhatsApp @default(PENDIENTE)
-  mensajeId      String?  
-  error          String?
-  costoUSD       Decimal  @default(0) 
-  incluyeXML     Boolean  @default(false)
-  creadoEn       DateTime @default(now())
-  actualizadoEn  DateTime @updatedAt
-
-  comprobante Comprobante @relation(fields: [comprobanteId], references: [id], onDelete: Cascade)
-  empresa     Empresa     @relation(fields: [empresaId], references: [id], onDelete: Cascade)
-  usuario     Usuario     @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
-
-  @@index([comprobanteId])
-  @@index([empresaId])
-  @@index([estado])
-  @@index([creadoEn])
-}
-
-model DisenoRubro {
-  id              Int      @id @default(autoincrement())
-  rubroId         Int      @unique
-  colorPrimario   String   @default("#6A6CFF")
-  colorSecundario String   @default("#ffffff")
-  colorAccento    String   @default("#FF6B6B")
-  tipografia      String   @default("Inter")
-  espaciado       String   @default("normal")    
-  bordeRadius     String   @default("medium")    
-  estiloBoton     String   @default("rounded")   
-  plantillaId     String   @default("moderna")   
-  vistaProductos  String   @default("cards")     
-  tiempoEntregaMin Int?     @default(15)         
-  tiempoEntregaMax Int?     @default(25)         
-  creadoEn        DateTime @default(now())
-  actualizadoEn   DateTime @updatedAt
-
-  rubro Rubro @relation(fields: [rubroId], references: [id], onDelete: Cascade)
-
-  @@index([rubroId])
-}
-
-model Banner {
-  id         Int      @id @default(autoincrement())
-  empresaId  Int
-  titulo     String?
-  subtitulo  String?
-  imagenUrl  String
-   linkUrl    String?
-  // productoId Int?
-  // producto   Producto? @relation(fields: [productoId], references: [id])
-  orden      Int      @default(0)
-  activo     Boolean  @default(true)
-  creadoEn   DateTime @default(now())
-  
-  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
-  
-  @@index([empresaId, activo, orden])
-}
-
-model GaleriaProducto {
-  id          Int      @id @default(autoincrement())
-  productoId  Int
-  imagenUrl   String
-  orden       Int      @default(0)
-  esPrincipal Boolean  @default(false)
-  creadoEn    DateTime @default(now())
-  
-  producto Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
-  
-  @@index([productoId])
-  @@index([productoId, esPrincipal])
-}
-
-model PreferenciaTabla {
-  id             Int       @id @default(autoincrement())
-  usuarioId      Int
-  empresaId      Int?
-  tabla          String
-  visibleColumns String    // Json as String
-  creadoEn       DateTime  @default(now())
-  actualizadoEn  DateTime  @updatedAt
-
-  usuario Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
-  empresa Empresa? @relation(fields: [empresaId], references: [id], onDelete: Cascade)
-
-  @@unique([usuarioId, empresaId, tabla])
-  @@index([usuarioId, empresaId, tabla])
-}
-
 enum EstadoWhatsApp {
   PENDIENTE
   ENVIADO
@@ -763,131 +956,7 @@ enum EstadoWhatsApp {
   FALLIDO
 }
 
-model GrupoModificador {
-  id              Int       @id @default(autoincrement())
-  empresaId       Int
-  empresa         Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade)
-  
-  nombre          String    // VarChar removed
-  descripcion     String?   
-  
-  esObligatorio   Boolean   @default(false)   
-  seleccionMin    Int       @default(0)       
-  seleccionMax    Int       @default(1)       
-  
-  orden           Int       @default(0)
-  activo          Boolean   @default(true)
-  
-  opciones        OpcionModificador[]
-  productos       ProductoGrupoModificador[]
-  
-  creadoEn        DateTime  @default(now())
-  actualizadoEn   DateTime  @updatedAt
-  
-  @@index([empresaId, activo])
-  @@map("grupos_modificadores")
+enum EstadoCompra {
+  REGISTRADO
+  ANULADO
 }
-
-model OpcionModificador {
-  id              Int       @id @default(autoincrement())
-  grupoId         Int
-  grupo           GrupoModificador @relation(fields: [grupoId], references: [id], onDelete: Cascade)
-  
-  nombre          String    
-  descripcion     String?   
-  precioExtra     Decimal   @default(0) 
-  
-  orden           Int       @default(0)
-  activo          Boolean   @default(true)
-  esDefault       Boolean   @default(false)
-  
-  creadoEn        DateTime  @default(now())
-  actualizadoEn   DateTime  @default(now()) @updatedAt
-  
-  @@index([grupoId])
-  @@index([grupoId, activo])
-  @@map("opciones_modificadores")
-}
-
-model ProductoGrupoModificador {
-  id              Int      @id @default(autoincrement())
-  productoId      Int
-  producto        Producto  @relation(fields: [productoId], references: [id], onDelete: Cascade)
-  grupoId         Int
-  grupo           GrupoModificador @relation(fields: [grupoId], references: [id], onDelete: Cascade)
-  
-  ordenOverride   Int?
-  
-  @@unique([productoId, grupoId])
-  @@index([productoId])
-  @@index([grupoId])
-  @@map("producto_grupo_modificadores")
-}
-
-model ProductoPlantilla {
-  id              Int      @id @default(autoincrement())
-  nombre          String
-  descripcion     String?
-  imagenUrl       String?
-  precioSugerido  Decimal? 
-  rubroId         Int
-  categoria       String?  
-  marca           String?  
-  unidadConteo    String   @default("NIU")
-  codigo          String?  @unique 
-  
-  creadoEn        DateTime @default(now())
-  actualizadoEn   DateTime @updatedAt
-
-  rubro           Rubro    @relation(fields: [rubroId], references: [id])
-  
-  @@index([rubroId])
-  @@index([nombre])
-  @@map("producto_plantillas")
-}
-
-// 🆕 GESTIÓN DE LOTES (Para Farmacias)
-model ProductoLote {
-  id                Int       @id @default(autoincrement())
-  productoId        Int
-  producto          Producto  @relation(fields: [productoId], references: [id], onDelete: Cascade)
-  
-  lote              String
-  fechaVencimiento  DateTime
-  fechaIngreso      DateTime  @default(now())
-  
-  stockActual       Int       @default(0)
-  stockInicial      Int       @default(0)
-  
-  costoUnitario     Decimal?
-  proveedor         String?
-  
-  activo            Boolean   @default(true)
-  
-  creadoEn          DateTime  @default(now())
-  actualizadoEn     DateTime  @updatedAt
-  
-  movimientosKardex MovimientoKardexLote[]
-  
-  @@index([productoId, fechaVencimiento])
-  @@index([productoId, activo])
-  @@unique([productoId, lote])
-  @@map("producto_lotes")
-}
-
-model MovimientoKardexLote {
-  id               Int               @id @default(autoincrement())
-  productoLoteId   Int
-  lote             ProductoLote      @relation(fields: [productoLoteId], references: [id], onDelete: Cascade)
-  
-  movimientoId     Int               @unique
-  movimiento       MovimientoKardex  @relation(fields: [movimientoId], references: [id], onDelete: Cascade)
-  
-  cantidad         Int
-  stockAnterior    Int
-  stockActual      Int
-  
-  @@index([productoLoteId])
-  @@map("movimiento_kardex_lotes")
-}
-

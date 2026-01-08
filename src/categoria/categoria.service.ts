@@ -7,7 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class CategoriaService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   async crear(nombre: string, empresaId: number) {
     const existe = await this.prisma.categoria.findFirst({
@@ -24,6 +24,11 @@ export class CategoriaService {
     return this.prisma.categoria.findMany({
       where: { empresaId },
       orderBy: { id: 'desc' },
+      include: {
+        _count: {
+          select: { productos: true },
+        },
+      },
     });
   }
 

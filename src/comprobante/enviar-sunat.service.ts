@@ -5,6 +5,7 @@ import { PdfGeneratorService } from './pdf-generator.service';
 import { numeroALetras } from './utils/numero-a-letras';
 import axios from 'axios';
 
+
 @Injectable()
 export class EnviarSunatService {
   private readonly apiUrl = 'https://back.apisunat.com/personas/v1/sendBill';
@@ -35,6 +36,8 @@ export class EnviarSunatService {
         leyendas: true,
         tipoOperacion: true,
         motivo: true,
+        tipoDetraccion: true,
+        medioPagoDetraccion: true,
       },
     });
     if (!comp) throw new HttpException('Comprobante no encontrado', 404);
@@ -95,14 +98,27 @@ export class EnviarSunatService {
           'cbc:IssueDate': { _text: issueDate },
           'cbc:IssueTime': { _text: issueTime },
           'cbc:InvoiceTypeCode': {
-            _attributes: { listID: '0101' },
+            _attributes: {
+              listID: comp.tipoDetraccionId ? '1001' : (comp.tipoOperacion?.codigo || '0101')
+            },
             _text: comp.tipoDoc,
           },
           'cbc:DocumentCurrencyCode': { _text: comp.tipoMoneda },
-          'cbc:Note': comp.leyendas.map((l: any) => ({
-            _text: l.value,
-            _attributes: { languageLocaleID: '1000' },
-          })),
+          'cbc:Note': [
+            ...comp.leyendas.map((l: any) => ({
+              _text: l.value,
+              _attributes: { languageLocaleID: '1000' },
+            })),
+            ...(comp.tipoDetraccionId ? [{
+              _text: 'OPERACIÓN SUJETA A DETRACCIÓN',
+              _attributes: { languageLocaleID: '2006' },
+            }] : []),
+            // Nota para retención 3% (cuando NO es detracción pero hay monto de retención)
+            ...(!comp.tipoDetraccionId && comp.montoDetraccion && comp.porcentajeDetraccion ? [{
+              _text: 'OPERACIÓN SUJETA A RETENCIÓN DEL 3%',
+              _attributes: { languageLocaleID: '2006' },
+            }] : [])
+          ],
           'cac:AccountingSupplierParty': {
             'cac:Party': {
               'cac:PartyIdentification': {
@@ -189,6 +205,22 @@ export class EnviarSunatService {
               },
             ],
           },
+          // AllowanceCharge para Retención 3% (cuando NO es detracción pero hay monto de retención)
+          ...(!comp.tipoDetraccionId && comp.montoDetraccion && comp.porcentajeDetraccion ? [{
+            'cac:AllowanceCharge': [{
+              'cbc:ChargeIndicator': { _text: 'false' },
+              'cbc:AllowanceChargeReasonCode': { _text: '62' }, // Código 62 = Retención
+              'cbc:MultiplierFactorNumeric': { _text: Number((comp.porcentajeDetraccion / 100).toFixed(4)) },
+              'cbc:Amount': {
+                _attributes: { currencyID: comp.tipoMoneda },
+                _text: Number(Number(comp.montoDetraccion).toFixed(2)),
+              },
+              'cbc:BaseAmount': {
+                _attributes: { currencyID: comp.tipoMoneda },
+                _text: comp.mtoImpVenta,
+              },
+            }],
+          }] : []).reduce((acc, curr) => ({ ...acc, ...curr }), {}),
           'cac:LegalMonetaryTotal': {
             'cbc:LineExtensionAmount': {
               _attributes: { currencyID: comp.tipoMoneda },
@@ -268,12 +300,74 @@ export class EnviarSunatService {
       };
 
       if (comp.tipoDoc === '01') {
-        payload.documentBody['cac:PaymentTerms'] = [
-          {
+        const paymentTerms: any[] = [];
+        const esCredito = comp.formaPagoTipo?.toLowerCase() === 'credito';
+        const cuotasData = comp.cuotas ? (Array.isArray(comp.cuotas) ? comp.cuotas : []) : [];
+
+        // 1. Si hay detracción, agregar primero el bloque de detracción
+        if (comp.tipoDetraccionId && comp.tipoDetraccion) {
+          paymentTerms.push({
+            'cbc:ID': { _text: 'Detraccion' },
+            'cbc:PaymentMeansID': { _text: String(comp.tipoDetraccion.codigo).padStart(3, '0') },
+            'cbc:PaymentPercent': { _text: comp.porcentajeDetraccion || 0 },
+            'cbc:Amount': {
+              _attributes: { currencyID: comp.tipoMoneda },
+              _text: Number(Number(comp.montoDetraccion || 0).toFixed(2)),
+            },
+          });
+        }
+
+        // 2. Agregar FormaPago (Contado o Credito)
+        if (esCredito && cuotasData.length > 0) {
+          // CRÉDITO: Calcular monto a crédito (total - detracción)
+          const montoACredito = Number((comp.mtoImpVenta - (comp.montoDetraccion || 0)).toFixed(2));
+          paymentTerms.push({
             'cbc:ID': { _text: 'FormaPago' },
-            'cbc:PaymentMeansID': { _text: comp.formaPagoTipo || 'Contado' },
-          },
-        ];
+            'cbc:PaymentMeansID': { _text: 'Credito' },
+            'cbc:Amount': {
+              _attributes: { currencyID: comp.tipoMoneda },
+              _text: montoACredito,
+            },
+          });
+
+          // 3. Agregar cuotas individuales
+          cuotasData.forEach((cuota: any, index: number) => {
+            paymentTerms.push({
+              'cbc:ID': { _text: 'FormaPago' },
+              'cbc:PaymentMeansID': { _text: `Cuota${String(index + 1).padStart(3, '0')}` },
+              'cbc:Amount': {
+                _attributes: { currencyID: comp.tipoMoneda },
+                _text: Number(Number(cuota.monto).toFixed(2)),
+              },
+              'cbc:PaymentDueDate': { _text: String(cuota.fechaVencimiento).substring(0, 10) },
+            });
+          });
+        } else {
+          // CONTADO: Solo el bloque simple
+          // Normalizar formaPagoTipo a formato SUNAT: "CONTADO" -> "Contado", "CREDITO" -> "Credito"
+          const formaPagoNormalizado = comp.formaPagoTipo?.toLowerCase() === 'contado' ? 'Contado' :
+            comp.formaPagoTipo?.toLowerCase() === 'credito' ? 'Credito' :
+              'Contado';
+          paymentTerms.push({
+            'cbc:ID': { _text: 'FormaPago' },
+            'cbc:PaymentMeansID': { _text: formaPagoNormalizado },
+          });
+        }
+
+        payload.documentBody['cac:PaymentTerms'] = paymentTerms;
+
+        // Si hay detracción, agregar PaymentMeans con cuenta bancaria
+        if (comp.tipoDetraccionId && comp.cuentaBancoNacion) {
+          payload.documentBody['cac:PaymentMeans'] = [
+            {
+              'cbc:ID': { _text: 'Detraccion' },
+              'cbc:PaymentMeansCode': { _text: comp.medioPagoDetraccion?.codigo || '001' },
+              'cac:PayeeFinancialAccount': {
+                'cbc:ID': { _text: comp.cuentaBancoNacion },
+              },
+            },
+          ];
+        }
       } else if (comp.tipoDoc === '03') {
         payload.documentBody['cac:PaymentTerms'] = {
           'cbc:PaymentMeansID': { _text: comp.formaPagoTipo || 'Contado' },
@@ -541,6 +635,50 @@ export class EnviarSunatService {
 
           const fechaEmision = new Date(comp.fechaEmision);
 
+          // Recuperar información de Lotes para el PDF (Lógica Robusta Backend)
+          const movimientos = await this.prisma.movimientoKardex.findMany({
+            where: {
+              comprobanteId: comprobanteId,
+              empresaId: comp.empresaId,
+              tipoMovimiento: 'SALIDA',
+            },
+            select: {
+              productoId: true,
+              lote: true,
+              fechaVencimiento: true,
+              movimientoLote: {
+                select: {
+                  lote: { select: { lote: true, fechaVencimiento: true } },
+                },
+              },
+            },
+          });
+
+          let hayLotes = false;
+          const detallesPrevios = comp.detalles.map((det: any) => {
+            const m = movimientos.find((mov) => mov.productoId === det.productoId);
+            const lotesParsed: any[] = [];
+            if (m) {
+              if (m.movimientoLote?.lote) {
+                lotesParsed.push({
+                  lote: m.movimientoLote.lote.lote,
+                  fechaVencimiento: m.movimientoLote.lote.fechaVencimiento
+                    ? new Date(m.movimientoLote.lote.fechaVencimiento).toLocaleDateString('es-PE')
+                    : '',
+                });
+              } else if (m.lote) {
+                lotesParsed.push({
+                  lote: m.lote,
+                  fechaVencimiento: m.fechaVencimiento
+                    ? new Date(m.fechaVencimiento).toLocaleDateString('es-PE')
+                    : '',
+                });
+              }
+            }
+            if (lotesParsed.length > 0) hayLotes = true;
+            return { ...det, lotes: lotesParsed };
+          });
+
           const pdfData = {
             // Empresa
             nombreComercial: (comp.empresa.nombreComercial || comp.empresa.razonSocial).toUpperCase(),
@@ -566,13 +704,15 @@ export class EnviarSunatService {
             clienteDireccion: (comp.cliente.direccion || '-').toUpperCase(),
 
             // Productos
-            productos: comp.detalles.map((det: any) => ({
+            productos: detallesPrevios.map((det: any) => ({
               cantidad: det.cantidad,
               unidadMedida: det.unidadMedida || 'NIU',
               descripcion: (det.descripcion || '').toUpperCase(),
               precioUnitario: Number(det.mtoPrecioUnitario || 0).toFixed(2),
               total: Number((det.mtoPrecioUnitario || 0) * det.cantidad).toFixed(2),
+              lotes: det.lotes,
             })),
+            mostrarLotes: hayLotes,
 
             // Totales
             mtoOperGravadas: Number(comp.mtoOperGravadas).toFixed(2),
@@ -586,6 +726,15 @@ export class EnviarSunatService {
             medioPago: (comp.medioPago || 'EFECTIVO').toUpperCase(),
             observaciones: comp.observaciones ? comp.observaciones.toUpperCase() : undefined,
             qrCode: finalResponse.data?.qr?.qrCode ? `data:image/png;base64,${finalResponse.data.qr.qrCode}` : undefined,
+            // Detracción
+            tipoDetraccion: comp.tipoDetraccion
+              ? `${comp.tipoDetraccion.codigo} - ${comp.tipoDetraccion.descripcion} (${comp.tipoDetraccion.porcentaje}%)`
+              : undefined,
+            montoDetraccion: comp.montoDetraccion ? Number(comp.montoDetraccion).toFixed(2) : undefined,
+            cuentaBancoNacion: comp.cuentaBancoNacion || undefined,
+            medioPagoDetraccion: comp.medioPagoDetraccion
+              ? `${comp.medioPagoDetraccion.codigo} - ${comp.medioPagoDetraccion.descripcion}`
+              : undefined,
           };
 
           const pdfBuffer = await this.pdfGenerator.generarPDFComprobante(pdfData);
@@ -605,6 +754,10 @@ export class EnviarSunatService {
           console.error('⚠️ Error subiendo archivos a S3:', s3Error.message);
           // No fallar el proceso si S3 falla, solo loguear
         }
+      }
+
+      if (status !== 'ACEPTADO') {
+        console.error("❌ SUNAT Full Response:", JSON.stringify(finalResponse, null, 2));
       }
 
       await this.prisma.comprobante.update({
@@ -725,6 +878,8 @@ export class EnviarSunatService {
         cliente: { include: { tipoDocumento: true } },
         empresa: { include: { ubicacion: true, rubro: true } },
         detalles: true,
+        tipoDetraccion: true,
+        medioPagoDetraccion: true,
       },
     });
 
@@ -796,6 +951,15 @@ export class EnviarSunatService {
         medioPago: (comp.medioPago || 'EFECTIVO').toUpperCase(),
         observaciones: comp.observaciones ? comp.observaciones.toUpperCase() : undefined,
         qrCode: qrCode ? `data:image/png;base64,${qrCode}` : undefined,
+        // Detracción
+        tipoDetraccion: (comp as any).tipoDetraccion
+          ? `${(comp as any).tipoDetraccion.codigo} - ${(comp as any).tipoDetraccion.descripcion} (${(comp as any).tipoDetraccion.porcentaje}%)`
+          : undefined,
+        montoDetraccion: comp.montoDetraccion ? Number(comp.montoDetraccion).toFixed(2) : undefined,
+        cuentaBancoNacion: comp.cuentaBancoNacion || undefined,
+        medioPagoDetraccion: (comp as any).medioPagoDetraccion
+          ? `${(comp as any).medioPagoDetraccion.codigo} - ${(comp as any).medioPagoDetraccion.descripcion}`
+          : undefined,
       };
 
       const pdfBuffer = await this.pdfGenerator.generarPDFComprobante(pdfData);

@@ -3,9 +3,12 @@ import {
   IsEmail,
   IsInt,
   IsNotEmpty,
+  IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   ValidateNested,
+  IsBoolean,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -90,8 +93,12 @@ export class CreateEmpresaDto {
   providerToken?: string;
 
   @IsOptional()
-  @IsString()
+  @IsOptional()
   providerId?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  esAgenteRetencion?: boolean;
 
   @ValidateNested()
   @Type(() => UsuarioDto)

@@ -66,6 +66,10 @@ export class ConfigurarTiendaDto {
   @IsOptional()
   aceptaEfectivo?: boolean;
 
+  @IsBoolean()
+  @IsOptional()
+  esAgenteRetencion?: boolean;
+
   // === Campos de envío/recojo (permitir guardar desde este endpoint) ===
   @IsOptional()
   @Type(() => Number)

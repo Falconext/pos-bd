@@ -2,9 +2,9 @@ import { IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class ListComprobanteDto {
-  @IsString()
-  @IsIn(['FORMAL', 'INFORMAL', 'COTIZACION'])
-  tipoComprobante: 'FORMAL' | 'INFORMAL' | 'COTIZACION';
+  @IsOptional()
+  @IsIn(['FORMAL', 'INFORMAL', 'COTIZACION', 'TODOS'])
+  tipoComprobante?: 'FORMAL' | 'INFORMAL' | 'COTIZACION' | 'TODOS';
 
   @IsOptional()
   @Type(() => String)

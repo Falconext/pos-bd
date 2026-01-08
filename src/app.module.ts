@@ -30,6 +30,8 @@ import { ModificadoresModule } from './modificadores/modificadores.module';
 import { RubroModule } from './rubro/rubro.module';
 import { PlanModule } from './plan/plan.module';
 import { BannersModule } from './banners/banners.module';
+import { ComprasModule } from './compras/compras.module';
+import { FinanzasModule } from './finanzas/finanzas.module';
 
 @Module({
   imports: [
@@ -62,6 +64,8 @@ import { BannersModule } from './banners/banners.module';
     RubroModule,
     PlanModule,
     BannersModule,
+    ComprasModule,
+    FinanzasModule,
   ],
   controllers: [AppController],
   providers: [AppService],

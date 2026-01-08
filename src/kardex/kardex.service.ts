@@ -1,14 +1,14 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { 
-  FiltrosKardexDto, 
-  FiltrosReporteDto, 
-  TipoMovimiento 
+import {
+  FiltrosKardexDto,
+  FiltrosReporteDto,
+  TipoMovimiento
 } from './dto/filtros-kardex.dto';
-import { 
-  AjusteInventarioDto, 
-  AjusteMasivoDto, 
-  TipoAjuste 
+import {
+  AjusteInventarioDto,
+  AjusteMasivoDto,
+  TipoAjuste
 } from './dto/ajuste-inventario.dto';
 import {
   KardexProductoResponse,
@@ -19,7 +19,7 @@ import {
 
 @Injectable()
 export class KardexService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   /**
    * Registra un movimiento de kardex automáticamente
@@ -31,6 +31,7 @@ export class KardexService {
     concepto: string;
     cantidad: number;
     comprobanteId?: number;
+    compraId?: number;
     costoUnitario?: number;
     usuarioId?: number;
     observacion?: string;
@@ -89,6 +90,7 @@ export class KardexService {
         costoUnitario: costoUnitario || null,
         valorTotal: valorTotal || null,
         comprobanteId: data.comprobanteId,
+        compraId: data.compraId,
         usuarioId: data.usuarioId,
         observacion: data.observacion,
         lote: data.lote,
@@ -114,6 +116,13 @@ export class KardexService {
             correlativo: true,
           },
         },
+        compra: {
+          select: {
+            id: true,
+            serie: true,
+            numero: true,
+          }
+        }
       },
     });
 
@@ -308,10 +317,10 @@ export class KardexService {
       const costoUnitarioMovimiento = mov.costoUnitario ? Number(mov.costoUnitario) : null;
       const costoPromedioProducto = mov.producto && mov.producto.costoPromedio ? Number(mov.producto.costoPromedio) : 0;
       const costoFinal = costoUnitarioMovimiento || costoPromedioProducto;
-      
+
       // Calcular valor total si no existe
       const valorTotal = mov.valorTotal ? Number(mov.valorTotal) : (costoFinal * mov.cantidad);
-      
+
       // Calcular ganancia unitaria
       const precioVenta = mov.producto ? Number(mov.producto.precioUnitario || 0) : 0;
       const gananciaUnidad = precioVenta > 0 && costoFinal > 0 ? precioVenta - costoFinal : 0;
@@ -420,10 +429,10 @@ export class KardexService {
         );
         resultados.push({ productoId: ajuste.productoId, exito: true, movimiento: resultado });
       } catch (error: any) {
-        resultados.push({ 
-          productoId: ajuste.productoId, 
-          exito: false, 
-          error: error.message 
+        resultados.push({
+          productoId: ajuste.productoId,
+          exito: false,
+          error: error.message
         });
       }
     }
@@ -468,11 +477,11 @@ export class KardexService {
     });
 
     let productosAFiltrar = productos;
-    
+
     // Filtrar stock crítico si es necesario
     if (filtros?.soloStockCritico) {
-      productosAFiltrar = productos.filter(producto => 
-        producto.stock === 0 || 
+      productosAFiltrar = productos.filter(producto =>
+        producto.stock === 0 ||
         (producto.stockMinimo && producto.stock <= producto.stockMinimo)
       );
     }
@@ -509,7 +518,7 @@ export class KardexService {
     const resumen = {
       totalProductos: productosAFiltrar.length,
       valorTotalInventario: productosProcessados.reduce((sum, p) => sum + p.valorTotal, 0),
-      productosStockCritico: productosAFiltrar.filter(p => 
+      productosStockCritico: productosAFiltrar.filter(p =>
         p.stock <= (p.stockMinimo || 0) && p.stock > 0
       ).length,
       productosStockCero: productosAFiltrar.filter(p => p.stock === 0).length,
@@ -602,7 +611,7 @@ export class KardexService {
       .reduce((sum, m) => sum + m.cantidad, 0);
 
     const stockActual = await this.calcularStockActual(productoId, empresaId);
-    
+
     const producto = await this.prisma.producto.findUnique({
       where: { id: productoId },
       select: { costoPromedio: true },
@@ -639,12 +648,12 @@ export class KardexService {
       if (producto) {
         const stockAnterior = producto.stock;
         const costoAnterior = Number(producto.costoPromedio) || 0;
-        
+
         // Calcular costo promedio ponderado
         const valorAnterior = stockAnterior * costoAnterior;
         const valorNuevo = cantidad * costoUnitario;
         const stockNuevo = stockAnterior + cantidad;
-        
+
         if (stockNuevo > 0) {
           const costoPromedio = (valorAnterior + valorNuevo) / stockNuevo;
           dataUpdate.costoPromedio = costoPromedio;
@@ -668,7 +677,7 @@ export class KardexService {
   ): Promise<ReporteRotacionResponse> {
     // Si no se proporcionan fechas, usar los últimos 12 meses
     const fechaFin_date = fechaFin || new Date();
-    const fechaInicio_date = fechaInicio || 
+    const fechaInicio_date = fechaInicio ||
       new Date(fechaFin_date.getFullYear() - 1, fechaFin_date.getMonth(), fechaFin_date.getDate());
 
     // Obtener productos activos
@@ -701,11 +710,11 @@ export class KardexService {
       const ventasPeriodo1 = producto.movimientosKardex
         .filter(m => m.fecha >= mes1)
         .reduce((sum, m) => sum + m.cantidad, 0);
-      
+
       const ventasPeriodo2 = producto.movimientosKardex
         .filter(m => m.fecha >= mes2 && m.fecha < mes1)
         .reduce((sum, m) => sum + m.cantidad, 0);
-      
+
       const ventasPeriodo3 = producto.movimientosKardex
         .filter(m => m.fecha >= mes3 && m.fecha < mes2)
         .reduce((sum, m) => sum + m.cantidad, 0);
@@ -713,7 +722,7 @@ export class KardexService {
       // Calcular rotación anual
       const totalVentas = producto.movimientosKardex
         .reduce((sum, m) => sum + m.cantidad, 0);
-      
+
       const stockPromedio = producto.stock > 0 ? producto.stock : 1;
       const rotacionAnual = stockPromedio > 0 ? totalVentas / stockPromedio : 0;
       const diasInventario = rotacionAnual > 0 ? 365 / rotacionAnual : 365;
@@ -742,10 +751,10 @@ export class KardexService {
     });
 
     // Calcular resumen general
-    const rotacionPromedio = reporteProductos.length > 0 
+    const rotacionPromedio = reporteProductos.length > 0
       ? reporteProductos.reduce((sum, p) => sum + p.rotacion, 0) / reporteProductos.length
       : 0;
-    
+
     const diasInventarioPromedio = reporteProductos.length > 0
       ? reporteProductos.reduce((sum, p) => sum + p.diasInventario, 0) / reporteProductos.length
       : 0;
@@ -773,7 +782,7 @@ export class KardexService {
     fechaFin?: Date,
   ) {
     const fechaFin_date = fechaFin || new Date();
-    const fechaInicio_date = fechaInicio || 
+    const fechaInicio_date = fechaInicio ||
       new Date(fechaFin_date.getFullYear(), fechaFin_date.getMonth() - 3, fechaFin_date.getDate());
 
     // Obtener ventas por producto en el período
@@ -824,7 +833,7 @@ export class KardexService {
     const productosClasificados = productosConVentas.map(item => {
       const porcentajeIndividual = totalVentas > 0 ? (Number(item.valorVendido) / totalVentas) * 100 : 0;
       acumuladoPorcentaje += porcentajeIndividual;
-      
+
       let clasificacionABC: 'A' | 'B' | 'C' = 'C';
       if (acumuladoPorcentaje <= 80) clasificacionABC = 'A';
       else if (acumuladoPorcentaje <= 95) clasificacionABC = 'B';

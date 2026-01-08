@@ -8,9 +8,10 @@ import { EmpresaModule } from '../empresa/empresa.module';
 import { KardexModule } from '../kardex/kardex.module';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 import { S3Module } from '../s3/s3.module';
+import { ProductoModule } from '../producto/producto.module';
 
 @Module({
-  imports: [EmpresaModule, forwardRef(() => KardexModule), NotificacionesModule, S3Module],
+  imports: [EmpresaModule, forwardRef(() => KardexModule), NotificacionesModule, S3Module, forwardRef(() => ProductoModule)],
   controllers: [ComprobanteController],
   providers: [ComprobanteService, RolesGuard, EnviarSunatService, PdfGeneratorService],
   exports: [ComprobanteService, EnviarSunatService],

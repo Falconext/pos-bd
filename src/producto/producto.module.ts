@@ -13,6 +13,6 @@ import { GeminiModule } from '../gemini/gemini.module';
   imports: [forwardRef(() => KardexModule), S3Module, GeminiModule],
   controllers: [ProductoController, ProductoPlantillaController],
   providers: [ProductoService, ProductoPlantillaService, ProductoLoteService, RolesGuard],
-  exports: [ProductoService],
+  exports: [ProductoService, ProductoLoteService],
 })
 export class ProductoModule { }

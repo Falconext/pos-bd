@@ -139,6 +139,7 @@ export class EmpresaService {
         estado: 'ACTIVO',
         providerToken: data.providerToken || null,
         providerId: data.providerId || null,
+        esAgenteRetencion: data.esAgenteRetencion || false,
         usuarios: {
           create: {
             nombre: data.usuario.nombre,
@@ -344,6 +345,7 @@ export class EmpresaService {
       if (dto.providerToken !== undefined)
         updateData.providerToken = dto.providerToken;
       if (dto.providerId !== undefined) updateData.providerId = dto.providerId;
+      if (dto.esAgenteRetencion !== undefined) updateData.esAgenteRetencion = dto.esAgenteRetencion;
       if (dto.logo !== undefined) updateData.logo = dto.logo;
 
       // Actualizar datos de empresa
@@ -403,6 +405,86 @@ export class EmpresaService {
     const empresa = await this.prisma.empresa.findUnique({ where: { id } });
     if (!empresa) throw new NotFoundException('Empresa no encontrada');
     return this.prisma.empresa.update({ where: { id }, data: { estado } });
+  }
+
+  async eliminar(id: number) {
+    const empresa = await this.prisma.empresa.findUnique({ where: { id } });
+    if (!empresa) throw new NotFoundException('Empresa no encontrada');
+
+    // Eliminar en orden para respetar las relaciones FK
+    try {
+      // 1. Eliminar detalles de comprobantes
+      await this.prisma.detalleComprobante.deleteMany({
+        where: { comprobante: { empresaId: id } },
+      });
+
+      // 2. Eliminar leyendas de comprobantes
+      await this.prisma.leyenda.deleteMany({
+        where: { comprobante: { empresaId: id } },
+      });
+
+      // 3. Eliminar pagos
+      await this.prisma.pago.deleteMany({
+        where: { empresaId: id },
+      });
+
+      // 4. Eliminar comprobantes
+      await this.prisma.comprobante.deleteMany({
+        where: { empresaId: id },
+      });
+
+      // 5. Eliminar movimientos de kardex (referencia productos)
+      await this.prisma.movimientoKardex.deleteMany({
+        where: { producto: { empresaId: id } },
+      });
+
+      // 6. Eliminar items de pedidos tienda (referencia productos)
+      await this.prisma.itemPedidoTienda.deleteMany({
+        where: { producto: { empresaId: id } },
+      });
+
+      // 7. Eliminar pedidos tienda
+      await this.prisma.pedidoTienda.deleteMany({
+        where: { empresaId: id },
+      });
+
+      // 8. Eliminar productos
+      await this.prisma.producto.deleteMany({
+        where: { empresaId: id },
+      });
+
+      // 9. Eliminar clientes
+      await this.prisma.cliente.deleteMany({
+        where: { empresaId: id },
+      });
+
+      // 10. Eliminar refresh tokens (referencia usuarios)
+      await this.prisma.refreshToken.deleteMany({
+        where: { usuario: { empresaId: id } },
+      });
+
+      // 11. Eliminar movimientos de caja (referencia usuarios)
+      await this.prisma.movimientoCaja.deleteMany({
+        where: { usuario: { empresaId: id } },
+      });
+
+      // 12. Eliminar usuarios
+      await this.prisma.usuario.deleteMany({
+        where: { empresaId: id },
+      });
+
+      // 13. Eliminar categorías
+      await this.prisma.categoria.deleteMany({
+        where: { empresaId: id },
+      });
+
+      // 14. Finalmente eliminar la empresa
+      return this.prisma.empresa.delete({ where: { id } });
+    } catch (error: any) {
+      throw new ForbiddenException(
+        `Error al eliminar empresa: ${error.message}. Puede tener datos relacionados que deben eliminarse primero.`,
+      );
+    }
   }
 
   async obtenerPorId(id: number) {

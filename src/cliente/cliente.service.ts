@@ -70,6 +70,7 @@ export class ClienteService {
     limit?: number;
     sort?: 'id' | 'nombre' | 'nroDoc';
     order?: 'asc' | 'desc';
+    persona?: PersonaType;
   }) {
     const {
       empresaId,
@@ -78,12 +79,14 @@ export class ClienteService {
       limit = 10,
       sort = 'id',
       order = 'desc',
+      persona,
     } = params;
     const skip = (page - 1) * limit;
 
     const where: any = {
       empresaId,
       estado: 'ACTIVO',
+      ...(persona ? { persona } : {}),
       ...(search
         ? {
           OR: [

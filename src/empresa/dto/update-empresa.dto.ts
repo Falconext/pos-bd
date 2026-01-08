@@ -1,4 +1,4 @@
-import { IsDateString, IsInt, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsDateString, IsInt, IsOptional, IsString } from 'class-validator';
 
 export class UpdateEmpresaDto {
   @IsInt()
@@ -59,6 +59,10 @@ export class UpdateEmpresaDto {
   @IsOptional()
   @IsString()
   providerToken?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  esAgenteRetencion?: boolean;
 
   @IsOptional()
   @IsString()

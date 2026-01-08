@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -10,142 +11,217 @@
       padding: 0;
       box-sizing: border-box;
     }
+
     body {
       font-family: Arial, sans-serif;
       font-size: 12px;
       padding: 20px;
       line-height: 1.4;
     }
+
     .header {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
       margin-bottom: 20px;
     }
+
     .logo-empresa {
       display: flex;
       align-items: flex-start;
       flex: 1;
     }
+
     .logo-empresa img {
       width: 120px;
       height: 120px;
       margin-right: 15px;
       object-fit: contain;
     }
+
     .empresa-info h1 {
       font-size: 20px;
       font-weight: bold;
       margin-bottom: 5px;
     }
+
     .empresa-info p {
       font-size: 11px;
       line-height: 1.6;
     }
+
     .documento {
       border: 1px solid #000;
       padding: 15px 20px;
       text-align: center;
       min-width: 200px;
     }
+
     .documento .ruc {
       font-size: 11px;
       margin-bottom: 5px;
     }
+
     .documento .tipo {
       font-size: 18px;
       font-weight: bold;
       margin: 5px 0;
     }
+
     .documento .electronica {
       font-size: 18px;
       font-weight: bold;
       margin: 5px 0;
     }
+
     .documento .numero {
       font-size: 14px;
       margin-top: 5px;
     }
+
     .cliente-section {
       display: flex;
       justify-content: space-between;
       margin: 20px 0;
     }
-    .cliente-left, .cliente-right {
+
+    .cliente-left,
+    .cliente-right {
       flex: 1;
     }
-    .cliente-left label, .cliente-right label {
+
+    .cliente-left label,
+    .cliente-right label {
       display: flex;
       font-size: 11px;
       margin-top: 5px;
     }
+
     .cliente-left label div:first-child,
     .cliente-right label div:first-child {
       font-weight: bold;
       min-width: 100px;
     }
+
     .cliente-right label div:first-child {
       min-width: 110px;
     }
+
     .productos-table {
       width: 100%;
       border: 1px solid #222;
       border-collapse: collapse;
       margin-top: 10px;
     }
+
     .productos-table thead {
       border-bottom: 1px solid #222;
     }
+
     .productos-table th {
       padding: 5px;
       font-size: 11px;
       font-weight: bold;
       text-align: center;
     }
+
     .productos-table td {
       padding: 5px;
       font-size: 11px;
     }
+
     .productos-table .cant {
       width: 16.66%;
       text-align: center;
     }
+
     .productos-table .um {
       width: 16.66%;
       text-align: center;
     }
+
     .productos-table .desc {
       width: 50%;
       text-align: left;
     }
+
     .productos-table .pu {
       width: 16.66%;
       text-align: left;
     }
+
     .productos-table .total {
       width: 16.66%;
       text-align: right;
     }
+
+      {
+        {
+        #if mostrarLotes
+      }
+    }
+
+    .productos-table .cant {
+      width: 8%;
+    }
+
+    .productos-table .um {
+      width: 8%;
+    }
+
+    .productos-table .desc {
+      width: 34%;
+    }
+
+    .productos-table .pu {
+      width: 10%;
+    }
+
+    .productos-table .total {
+      width: 10%;
+    }
+
+    .productos-table .lote {
+      width: 15%;
+      text-align: center;
+    }
+
+    .productos-table .venc {
+      width: 15%;
+      text-align: center;
+    }
+
+      {
+        {
+        /if
+      }
+    }
+
     .totales-section {
       display: flex;
       justify-content: space-between;
       margin-top: 15px;
     }
+
     .son {
       flex: 1;
       font-size: 11px;
       font-weight: bold;
     }
+
     .total-importe {
       text-align: right;
     }
+
     .total-importe p {
       font-size: 11px;
       margin: 3px 0;
     }
+
     .total-importe .total-final {
       font-weight: bold;
     }
+
     .observaciones {
       border: 1px solid #000;
       padding: 10px;
@@ -153,10 +229,12 @@
       position: relative;
       min-height: 100px;
     }
+
     .observaciones p {
       font-size: 11px;
       line-height: 1.5;
     }
+
     .observaciones .qr {
       position: absolute;
       bottom: 10px;
@@ -166,6 +244,7 @@
     }
   </style>
 </head>
+
 <body>
   <!-- Header con logo, empresa y documento -->
   <div class="header">
@@ -187,7 +266,9 @@
     <div class="documento">
       <div class="ruc">RUC: {{ruc}}</div>
       <div class="tipo">{{tipoDocumento}}</div>
+      {{#unless (includes tipoDocumento "COTIZ")}}
       <div class="electronica">ELECTRONICA</div>
+      {{/unless}}
       <div class="numero">{{serie}}-{{correlativo}}</div>
     </div>
   </div>
@@ -195,18 +276,71 @@
   <!-- Información del cliente -->
   <div class="cliente-section">
     <div class="cliente-left">
-      <label><div>CLIENTE:</div><div>{{clienteNombre}}</div></label>
-      <label><div>DIRECCION:</div><div>{{clienteDireccion}}</div></label>
-      <label><div>FORMA PAGO:</div><div>{{formaPago}}</div></label>
-      <label><div>MEDIO PAGO:</div><div>{{medioPago}} S/ {{mtoImpVenta}}</div></label>
+      <label>
+        <div>CLIENTE:</div>
+        <div>{{clienteNombre}}</div>
+      </label>
+      <label>
+        <div>DIRECCION:</div>
+        <div>{{clienteDireccion}}</div>
+      </label>
+      <label>
+        <div>FORMA PAGO:</div>
+        <div>{{formaPago}}</div>
+      </label>
+      <label>
+        <div>MEDIO PAGO:</div>
+        <div>{{medioPago}} S/ {{mtoImpVenta}}</div>
+      </label>
     </div>
     <div class="cliente-right">
-      <label><div>RUC:</div><div>{{clienteNumDoc}}</div></label>
-      <label><div>FECHA:</div><div>{{fecha}}</div></label>
-      <label><div>HORA:</div><div>{{hora}}</div></label>
-      <label><div>MONEDA:</div><div>SOLES</div></label>
+      <label>
+        <div>RUC:</div>
+        <div>{{clienteNumDoc}}</div>
+      </label>
+      <label>
+        <div>FECHA:</div>
+        <div>{{fecha}}</div>
+      </label>
+      <label>
+        <div>HORA:</div>
+        <div>{{hora}}</div>
+      </label>
+      <label>
+        <div>MONEDA:</div>
+        <div>SOLES</div>
+      </label>
     </div>
   </div>
+
+  {{#if tipoDetraccion}}
+  <!-- Información de Detracción -->
+  <div style="border: 1px solid #000; padding: 10px; margin: 15px 0; background-color: #f9f9f9;">
+    <p style="font-weight: bold; font-size: 12px; margin-bottom: 8px;">OPERACIÓN SUJETA A DETRACCIÓN</p>
+    <div style="display: flex; justify-content: space-between;">
+      <div style="flex: 1;">
+        <label style="display: flex; font-size: 11px; margin-top: 5px;">
+          <div style="font-weight: bold; min-width: 120px;">Tipo Detracción:</div>
+          <div>{{tipoDetraccion}}</div>
+        </label>
+        <label style="display: flex; font-size: 11px; margin-top: 5px;">
+          <div style="font-weight: bold; min-width: 120px;">Monto Detracción:</div>
+          <div>S/ {{montoDetraccion}}</div>
+        </label>
+      </div>
+      <div style="flex: 1;">
+        <label style="display: flex; font-size: 11px; margin-top: 5px;">
+          <div style="font-weight: bold; min-width: 120px;">Cuenta BN:</div>
+          <div>{{cuentaBancoNacion}}</div>
+        </label>
+        <label style="display: flex; font-size: 11px; margin-top: 5px;">
+          <div style="font-weight: bold; min-width: 120px;">Medio de Pago:</div>
+          <div>{{medioPagoDetraccion}}</div>
+        </label>
+      </div>
+    </div>
+  </div>
+  {{/if}}
 
   <!-- Tabla de productos -->
   <table class="productos-table">
@@ -215,6 +349,10 @@
         <th class="cant">CANT.</th>
         <th class="um">U.M.</th>
         <th class="desc">DESCRIPCION</th>
+        {{#if mostrarLotes}}
+        <th class="lote">LOTE</th>
+        <th class="venc">VENC.</th>
+        {{/if}}
         <th class="pu">P.U.</th>
         <th class="total">IMPORTE</th>
       </tr>
@@ -225,6 +363,18 @@
         <td class="cant">{{cantidad}}</td>
         <td class="um">{{unidadMedida}}</td>
         <td class="desc">{{descripcion}}</td>
+        {{#if ../mostrarLotes}}
+        <td class="lote">
+          {{#each lotes}}
+          <div>{{this.lote}}</div>
+          {{/each}}
+        </td>
+        <td class="venc">
+          {{#each lotes}}
+          <div>{{this.fechaVencimiento}}</div>
+          {{/each}}
+        </td>
+        {{/if}}
         <td class="pu">{{precioUnitario}}</td>
         <td class="total">{{total}}</td>
       </tr>
@@ -254,4 +404,5 @@
     {{/if}}
   </div>
 </body>
+
 </html>

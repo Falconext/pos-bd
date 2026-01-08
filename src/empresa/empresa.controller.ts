@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -24,7 +25,7 @@ import { User } from '../common/decorators/user.decorator';
 
 @Controller('empresa')
 export class EmpresaController {
-  constructor(private readonly empresaService: EmpresaService) {}
+  constructor(private readonly empresaService: EmpresaService) { }
 
   @Post('crear')
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -58,6 +59,21 @@ export class EmpresaController {
     const empresa = await this.empresaService.obtenerMiEmpresa(user.empresaId);
     res.locals.message = 'Información de la empresa cargada correctamente';
     return empresa;
+  }
+
+  @Put('mia')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async actualizarMiEmpresa(
+    @User() user: any,
+    @Body() body: Partial<UpdateEmpresaDto>,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    // Force ID to match user's company
+    const dto: UpdateEmpresaDto = { ...body, id: user.empresaId } as UpdateEmpresaDto;
+    const result = await this.empresaService.actualizar(dto);
+    res.locals.message = 'Información de empresa actualizada correctamente';
+    return result;
   }
 
   @Get('listar')
@@ -96,6 +112,18 @@ export class EmpresaController {
   ) {
     const result = await this.empresaService.cambiarEstado(id, body.estado);
     res.locals.message = `Empresa ${body.estado === 'ACTIVO' ? 'activada' : 'desactivada'} correctamente`;
+    return result;
+  }
+
+  @Delete(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  async eliminar(
+    @Param('id', ParseIntPipe) id: number,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.empresaService.eliminar(id);
+    res.locals.message = 'Empresa eliminada correctamente';
     return result;
   }
 

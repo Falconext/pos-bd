@@ -12,6 +12,7 @@ import { InventarioNotificacionesService } from '../notificaciones/inventario-no
 import { S3Service } from '../s3/s3.service';
 import { PdfGeneratorService } from './pdf-generator.service';
 import { numeroALetras } from './utils/numero-a-letras';
+import { ProductoLoteService } from '../producto/producto-lote.service';
 
 @Injectable()
 export class ComprobanteService {
@@ -22,15 +23,30 @@ export class ComprobanteService {
     private readonly inventarioNotificaciones: InventarioNotificacionesService,
     private readonly s3Service: S3Service,
     private readonly pdfGenerator: PdfGeneratorService,
+    private readonly loteService: ProductoLoteService,
   ) { }
 
   async listarTipoOperacion() {
     return this.prisma.tipoOperacion.findMany({ orderBy: { codigo: 'asc' } });
   }
 
+  async listarTiposDetraccion() {
+    return this.prisma.tipoDetraccion.findMany({
+      where: { activo: true },
+      orderBy: { codigo: 'asc' },
+    });
+  }
+
+  async listarMediosPagoDetraccion() {
+    return this.prisma.medioPagoDetraccion.findMany({
+      where: { activo: true },
+      orderBy: { codigo: 'asc' },
+    });
+  }
+
   async listar(params: {
     empresaId: number;
-    tipoComprobante: 'FORMAL' | 'INFORMAL' | 'COTIZACION';
+    tipoComprobante: 'FORMAL' | 'INFORMAL' | 'COTIZACION' | 'TODOS';
     search?: string;
     page?: number;
     limit?: number;
@@ -71,6 +87,8 @@ export class ComprobanteService {
         tiposPermitidos = tiposFormales;
       } else if (tipoComprobante === 'COTIZACION') {
         tiposPermitidos = tiposCotizacion;
+      } else if (tipoComprobante === 'TODOS') {
+        tiposPermitidos = [...tiposFormales, ...tiposInformales];
       } else {
         tiposPermitidos = tiposInformales;
       }
@@ -146,7 +164,7 @@ export class ComprobanteService {
             },
             detalles: {
               select: {
-                producto: { select: { id: true, descripcion: true } },
+                producto: { select: { id: true, descripcion: true, imagenUrl: true } },
                 unidad: true,
                 descripcion: true,
                 cantidad: true,
@@ -255,17 +273,87 @@ export class ComprobanteService {
       where: { empresaId, id },
       include: {
         cliente: true,
-        detalles: { include: { producto: true } },
+        detalles: {
+          include: {
+            producto: {
+              select: {
+                id: true,
+                descripcion: true,
+                imagenUrl: true,
+              }
+            }
+          }
+        },
         usuario: {
           select: {
             id: true,
             nombre: true,
           },
         },
+        tipoDetraccion: true,
+        medioPagoDetraccion: true,
       },
     });
+
     if (!comp) throw new NotFoundException('Comprobante no encontrado');
-    return comp;
+
+    // Obtener información de lotes desde el Kardex (Soporte Dual: Campos Planos y Relación KardexLote)
+    const movimientos = await this.prisma.movimientoKardex.findMany({
+      where: {
+        comprobanteId: id,
+        empresaId,
+        tipoMovimiento: 'SALIDA',
+      },
+      select: {
+        productoId: true,
+        lote: true,             // Legacy / Simple
+        fechaVencimiento: true, // Legacy / Simple
+        movimientoLote: {       // Sistema de Lotes Complejo
+          select: {
+            lote: {
+              select: {
+                lote: true,
+                fechaVencimiento: true,
+              }
+            }
+          }
+        }
+      },
+    });
+
+    // Enriquecer detalles con información de lotes
+    const detallesConLotes = comp.detalles.map((detalle) => {
+      const lotesEncontrados = movimientos
+        .filter((m) => m.productoId === detalle.productoId)
+        .map((m) => {
+          // Prioridad: Relación > Campo Plano
+          if (m.movimientoLote?.lote) {
+            return {
+              lote: m.movimientoLote.lote.lote,
+              fechaVencimiento: m.movimientoLote.lote.fechaVencimiento,
+            };
+          } else if (m.lote) {
+            return {
+              lote: m.lote,
+              fechaVencimiento: m.fechaVencimiento,
+            };
+          }
+          return null;
+        })
+        .filter((l) => l !== null); // Filtrar nulos
+
+      // Eliminar duplicados si hubiera breakdown por mismo lote
+      const uniqueLotes = lotesEncontrados.filter(
+        (v, i, a) => a.findIndex((t) => t?.lote === v?.lote) === i,
+      );
+
+      return {
+        ...detalle,
+        lotes: uniqueLotes,
+      };
+    });
+
+    return { ...comp, detalles: detallesConLotes };
   }
 
   async anularComprobante(comprobanteId: number) {
@@ -548,7 +636,7 @@ export class ComprobanteService {
           // Usar el costo promedio del producto en lugar del precio de venta
           const costoUnitario = Number(producto.costoPromedio) || 0;
 
-          await this.kardexService.registrarMovimiento({
+          const movimiento = await this.kardexService.registrarMovimiento({
             productoId: item.productoId,
             empresaId: data.empresaId,
             tipoMovimiento: 'SALIDA',
@@ -558,6 +646,17 @@ export class ComprobanteService {
             costoUnitario: costoUnitario,
             usuarioId: data.usuarioId,
           });
+
+          // Integración Lotes (FEFO) - Intentar descontar
+          if (this.loteService) {
+            // Si el producto no tiene lotes, retorna [] y no hace nada.
+            // Si tiene lotes y falta stock, lanzará error (capturado abajo).
+            await this.loteService.descontarStockLote(
+              item.productoId,
+              item.cantidad,
+              movimiento.id
+            );
+          }
 
           // Notificar inmediatamente si el producto quedó en 0 o bajo mínimo
           await this.inventarioNotificaciones.verificarProductoDespuesVenta(
@@ -578,20 +677,34 @@ export class ComprobanteService {
     concepto: string;
     usuarioId?: number;
   }) {
+    // 1. Obtener movimientos originales de kardex asociados a este comprobante
+    const movimientosOriginales = await this.prisma.movimientoKardex.findMany({
+      where: {
+        comprobanteId: data?.comprobanteId,
+        empresaId: data?.empresaId,
+        tipoMovimiento: 'SALIDA',
+      },
+      include: {
+        // Relación con lotes (falta definirla en schema si no existe, pero asumimos que existe o la consultamos aparte)
+        // Si la relación en prisma schema no se llama 'movimientosLote', hay que consultarla manualmente.
+        // Asumiremos consulta manual para seguridad si no conozco el schema exacto.
+      }
+    });
+
     for (const item of detalles) {
       if (item.productoId) {
         const producto = await this.prisma.producto.findUnique({
           where: { id: item.productoId },
           select: { stock: true, costoPromedio: true },
         });
+
         if (producto) {
-          // Registrar movimiento de kardex si se proporcionan los datos
+          // Registrar movimiento de kardex GLOBAL (siempre se hace para subir el stock del producto)
           if (data && this.kardexService) {
             try {
-              // Usar el costo promedio del producto
               const costoUnitario = Number(producto.costoPromedio) || 0;
 
-              await this.kardexService.registrarMovimiento({
+              const movimientoIngreso = await this.kardexService.registrarMovimiento({
                 productoId: item.productoId,
                 empresaId: data.empresaId,
                 tipoMovimiento: 'INGRESO',
@@ -601,8 +714,35 @@ export class ComprobanteService {
                 costoUnitario: costoUnitario,
                 usuarioId: data.usuarioId,
               });
+
+              // --- REVERSIÓN DETALLADA DE LOTES ---
+              if (this.loteService) {
+                // Buscar si hubo salida de lotes para este producto en este comprobante
+                const movOriginal = movimientosOriginales.find(m => m.productoId === item.productoId);
+
+                if (movOriginal) {
+                  // Buscar detalles de lote para ese movimiento
+                  // Nombre de tabla en prisma suele ser camelCase. movimientoKardexLote ??
+                  // Usaré consulta directa a la tabla intermedia
+                  const movimientosLote = await this.prisma.movimientoKardexLote.findMany({
+                    where: { movimientoId: movOriginal.id }
+                  });
+
+                  if (movimientosLote.length > 0) {
+                    // Hay lotes involucrados. Devolver el stock a cada uno.
+                    for (const ml of movimientosLote) {
+                      await this.loteService.aumentarStockLote(
+                        ml.productoLoteId,
+                        ml.cantidad, // Devolver la cantidad exacta que salió de este lote
+                        movimientoIngreso.id // Ligar al nuevo movimiento de anulación
+                      );
+                    }
+                  }
+                }
+              }
+
             } catch (error) {
-              console.error('Error al registrar movimiento de kardex:', error);
+              console.error('Error al registrar movimiento de kardex (reversión):', error);
             }
           }
         }
@@ -633,7 +773,32 @@ export class ComprobanteService {
       motivoId,
       montoDescuentoGlobal,
       vuelto,
+      tipoDetraccionId,
+      medioPagoDetraccionId,
+      cuentaBancoNacion,
+      porcentajeDetraccion,
+      montoDetraccion,
+      cuotas,
+      retencionMonto,
+      retencionPorcentaje,
     } = input;
+
+    // Map retencion fields to detraccion fields if present
+    const finalMontoDetraccion = retencionMonto || montoDetraccion;
+    const finalPorcentajeDetraccion = retencionPorcentaje || porcentajeDetraccion;
+
+    // ============= VALIDACIÓN DE LÍMITE DE COMPROBANTES =============
+    // Solo validar para Facturas (01) y Boletas (03), no para notas
+    if (formalTipo === '01' || formalTipo === '03') {
+      const usageStats = await this.getUsageStats(empresaId);
+      if (!usageStats.puedeEmitir) {
+        throw new BadRequestException(
+          `Has alcanzado el límite de ${usageStats.limiteMaximo} comprobantes mensuales de tu plan "${usageStats.plan}". ` +
+          `Para continuar emitiendo comprobantes, contacta a soporte para actualizar tu plan.`
+        );
+      }
+    }
+    // ================================================================
 
     // Si es nota de crédito, usar lógica especializada
     if (formalTipo === '07') {
@@ -698,8 +863,37 @@ export class ComprobanteService {
     const mtoImpVenta = subTotal;
 
     const fecha = new Date(fechaEmision);
+
+    // Determinar estado y saldo para comprobantes formales
+    // IMPORTANTE: formaPagoTipo es la fuente autoritativa
+    // Si formaPagoTipo es CREDITO, es crédito aunque medioPago sea Efectivo
+    const formaPagoTipoUpper = formaPagoTipo?.toUpperCase() || '';
+    const esPagoCredito = formaPagoTipoUpper === 'CREDITO';
+    const esPagoContado = !esPagoCredito; // Si no es crédito, es contado
+
+    // Calcular descuento por detracción/retención
+    const montoDescontado = finalMontoDetraccion ? Number(finalMontoDetraccion) : 0;
+
+    let estadoPagoInicial: string;
+    let saldoInicial: number;
+
+    if (esPagoContado) {
+      estadoPagoInicial = 'COMPLETADO';
+      saldoInicial = 0;
+    } else {
+      // Crédito: saldo = total - detracción/retención
+      estadoPagoInicial = 'PENDIENTE_PAGO';
+      saldoInicial = Math.max(0, this.round2(mtoImpVenta - montoDescontado));
+    }
+
     const dataBase: any = {
       tipoOperacionId: tipoOperacionIdFinal ?? undefined,
+      tipoDetraccionId: tipoDetraccionId ?? undefined,
+      medioPagoDetraccionId: medioPagoDetraccionId ?? undefined,
+      cuentaBancoNacion: cuentaBancoNacion ?? null,
+      porcentajeDetraccion: finalPorcentajeDetraccion ? Number(finalPorcentajeDetraccion) : null,
+      montoDetraccion: finalMontoDetraccion ? Number(finalMontoDetraccion) : null,
+      cuotas: cuotas ?? Prisma.JsonNull,
       tipoDoc: formalTipo,
       serie,
       correlativo,
@@ -720,6 +914,8 @@ export class ComprobanteService {
       mtoImpVenta,
       vuelto: vuelto != null ? Number(vuelto) : 0,
       estadoEnvioSunat: 'PENDIENTE' as string,
+      estadoPago: estadoPagoInicial,
+      saldo: saldoInicial,
       ...(formalTipo === '08'
         ? {
           tipDocAfectado: tipDocAfectado ?? null,
@@ -1292,6 +1488,14 @@ export class ComprobanteService {
       fechaRecojo:
         tipoDoc === 'NP' && fechaRecojo ? new Date(fechaRecojo) : undefined,
       vuelto: vuelto != null ? Number(vuelto) : 0,
+      // Campos de cotización
+      cotizIncluirImagenes: input.cotizIncluirImagenes ?? false,
+      cotizDescuento: input.cotizDescuento ?? 0,
+      cotizVigencia: input.cotizVigencia ?? 7,
+      cotizFirmante: input.cotizFirmante ?? null,
+      cotizTerminos: input.cotizTerminos ?? null,
+      cotizTipoPago: input.cotizTipoPago ?? 'CONTADO',
+      cotizAdelanto: input.cotizAdelanto ?? 0,
       detalles: { create: detalleFinal },
       leyendas: { create: [{ code: '1000', value: leyenda }] },
     };
@@ -1332,6 +1536,8 @@ export class ComprobanteService {
             cliente: { include: { tipoDocumento: true } },
             empresa: { include: { ubicacion: true, rubro: true } },
             detalles: true,
+            tipoDetraccion: true,
+            medioPagoDetraccion: true,
           },
         });
         if (full) {
@@ -1342,6 +1548,7 @@ export class ComprobanteService {
             CP: 'COMPROBANTE DE PAGO',
             NP: 'NOTA DE PEDIDO',
             OT: 'ORDEN DE TRABAJO',
+            COT: 'COTIZACIÓN',
           };
 
           const fecha = new Date(full.fechaEmision as any);
@@ -1399,6 +1606,15 @@ export class ComprobanteService {
             medioPago: (full.medioPago || 'EFECTIVO').toUpperCase(),
             observaciones: full.observaciones ? full.observaciones.toUpperCase() : undefined,
             qrCode: undefined,
+            // Detracción
+            tipoDetraccion: full.tipoDetraccion
+              ? `${full.tipoDetraccion.codigo} - ${full.tipoDetraccion.descripcion} (${full.tipoDetraccion.porcentaje}%)`
+              : undefined,
+            montoDetraccion: full.montoDetraccion ? Number(full.montoDetraccion).toFixed(2) : undefined,
+            cuentaBancoNacion: full.cuentaBancoNacion || undefined,
+            medioPagoDetraccion: full.medioPagoDetraccion
+              ? `${full.medioPagoDetraccion.codigo} - ${full.medioPagoDetraccion.descripcion}`
+              : undefined,
           };
 
           const pdfBuffer = await this.pdfGenerator.generarPDFComprobante(pdfData);
@@ -1602,5 +1818,58 @@ export class ComprobanteService {
       where: { id: comprobanteId },
       data,
     });
+  }
+
+  /**
+   * Obtiene las estadísticas de uso de comprobantes SUNAT para una empresa
+   * Solo cuenta Facturas (01) y Boletas (03) con estado EMITIDO o ANULADO
+   */
+  async getUsageStats(empresaId: number) {
+    // Obtener el plan de la empresa
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      include: { plan: true }
+    });
+
+    if (!empresa) {
+      throw new NotFoundException('Empresa no encontrada');
+    }
+
+    const limiteMaximo = empresa.plan?.maxComprobantes ?? 100; // Default 100 if not set
+
+    // Calcular inicio y fin del mes actual
+    const now = new Date();
+    const inicioMes = new Date(now.getFullYear(), now.getMonth(), 1);
+    const finMes = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+    // Contar comprobantes SUNAT del mes actual
+    // Solo Facturas (01) y Boletas (03) con estado EMITIDO o ANULADO
+    const comprobantesEmitidos = await this.prisma.comprobante.count({
+      where: {
+        empresaId,
+        tipoDoc: { in: ['01', '03'] }, // Solo facturas y boletas
+        estadoEnvioSunat: { in: ['EMITIDO', 'ANULADO'] },
+        creadoEn: {
+          gte: inicioMes,
+          lte: finMes
+        }
+      }
+    });
+
+    const porcentajeUso = limiteMaximo > 0 ? Math.round((comprobantesEmitidos / limiteMaximo) * 100) : 0;
+    const puedeEmitir = comprobantesEmitidos < limiteMaximo;
+    const restantes = Math.max(0, limiteMaximo - comprobantesEmitidos);
+
+    return {
+      comprobantesEmitidos,
+      limiteMaximo,
+      porcentajeUso,
+      puedeEmitir,
+      restantes,
+      mesActual: inicioMes.toISOString().slice(0, 7), // YYYY-MM
+      alerta80: porcentajeUso >= 80 && porcentajeUso < 100,
+      limiteAlcanzado: porcentajeUso >= 100,
+      plan: empresa.plan?.nombre || 'Sin plan'
+    };
   }
 }

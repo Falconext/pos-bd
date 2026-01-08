@@ -47,6 +47,7 @@ export class ProductoLoteService {
         lote: string;
         fechaVencimiento: Date;
         stockInicial: number;
+        usuarioId: number;
         costoUnitario?: number;
         proveedor?: string;
     }) {
@@ -59,7 +60,7 @@ export class ProductoLoteService {
             throw new NotFoundException('Producto no encontrado');
         }
 
-        // Verificar que no existe un lote con el mismo código para este producto
+        // Verificar duplicados
         const loteExistente = await this.prisma.productoLote.findUnique({
             where: {
                 productoId_lote: {
@@ -75,19 +76,59 @@ export class ProductoLoteService {
             );
         }
 
-        return this.prisma.productoLote.create({
-            data: {
-                productoId: data.productoId,
-                lote: data.lote,
-                fechaVencimiento: data.fechaVencimiento,
-                stockInicial: data.stockInicial,
-                stockActual: data.stockInicial,
-                costoUnitario: data.costoUnitario,
-                proveedor: data.proveedor,
-            },
-            include: {
-                producto: true,
-            },
+        return this.prisma.$transaction(async (tx) => {
+            // 1. Validar y actualizar Stock Global del Producto
+            const productoActualizado = await tx.producto.update({
+                where: { id: data.productoId },
+                data: { stock: { increment: data.stockInicial } },
+            });
+
+            // 2. Crear Lote
+            const nuevoLote = await tx.productoLote.create({
+                data: {
+                    productoId: data.productoId,
+                    lote: data.lote,
+                    fechaVencimiento: data.fechaVencimiento,
+                    stockInicial: data.stockInicial,
+                    stockActual: data.stockInicial,
+                    costoUnitario: data.costoUnitario,
+                    proveedor: data.proveedor,
+                    activo: true,
+                },
+                include: {
+                    producto: true,
+                },
+            });
+
+            // 3. Registrar Movimiento Global (Kardex)
+            const movimiento = await tx.movimientoKardex.create({
+                data: {
+                    productoId: data.productoId,
+                    empresaId: data.empresaId,
+                    tipoMovimiento: 'INGRESO',
+                    concepto: `Apertura Lote: ${data.lote}`,
+                    cantidad: data.stockInicial,
+                    stockAnterior: productoActualizado.stock - data.stockInicial,
+                    stockActual: productoActualizado.stock,
+                    costoUnitario: data.costoUnitario || producto.costoPromedio || 0,
+                    usuarioId: data.usuarioId,
+                    comprobanteId: null,
+                    fecha: new Date(),
+                },
+            });
+
+            // 4. Registrar Movimiento Específico de Lote
+            await tx.movimientoKardexLote.create({
+                data: {
+                    movimientoId: movimiento.id,
+                    productoLoteId: nuevoLote.id,
+                    cantidad: data.stockInicial,
+                    stockAnterior: 0,
+                    stockActual: data.stockInicial,
+                },
+            });
+
+            return nuevoLote;
         });
     }
 
@@ -101,58 +142,93 @@ export class ProductoLoteService {
         movimientoKardexId: number,
         loteId?: number, // Opcional: si no se proporciona, usa FEFO
     ) {
-        let loteSeleccionado;
+        let cantidadRestante = cantidad;
+        const lotesAfectados: any[] = [];
 
         if (loteId) {
-            // Lote específico proporcionado
-            loteSeleccionado = await this.prisma.productoLote.findUnique({
+            // Caso 1: Lote específico proporcionado (ej. venta manual seleccionando lote)
+            const lote = await this.prisma.productoLote.findUnique({
                 where: { id: loteId },
             });
+
+            if (!lote) throw new NotFoundException('Lote no encontrado');
+            if (lote.stockActual < cantidad) {
+                throw new BadRequestException(
+                    `Stock insuficiente en el lote "${lote.lote}". Disponible: ${lote.stockActual}`,
+                );
+            }
+
+            lotesAfectados.push({ lote, cantidadAdescontar: cantidad });
         } else {
-            // FEFO automático: seleccionar el lote más próximo a vencer
-            loteSeleccionado = await this.prisma.productoLote.findFirst({
+            // Caso 2: FEFO automático (múltiples lotes si es necesario)
+            const lotesDisponibles = await this.prisma.productoLote.findMany({
                 where: {
                     productoId,
                     activo: true,
-                    stockActual: { gte: cantidad },
+                    stockActual: { gt: 0 },
                 },
-                orderBy: { fechaVencimiento: 'asc' },
+                orderBy: { fechaVencimiento: 'asc' }, // Primero los próximos a vencer
             });
+
+            if (lotesDisponibles.length === 0) {
+                // Si no hay lotes, no hacemos nada (quizás no es producto con lotes o es venta sin stock)
+                // O lanzamos error? Depende de la regla de negocio.
+                // Para evitar bloquear ventas de productos sin lotes configurados, retornamos null o array vacío.
+                // Pero si es farmacia, DEBERÍA tener lotes.
+                // Asumiremos que si se llama a este método, SE ESPERA que haya lotes.
+                // Pero permitamos fallo "suave" si no hay lotes, para no romper ventas antiguas.
+                // Mejor: Si no encuentra lotes, no descuenta de lotes (solo stock global ya descontado).
+                return [];
+            }
+
+            // Verificar stock total disponible en lotes
+            const stockTotalLotes = lotesDisponibles.reduce((acc, l) => acc + l.stockActual, 0);
+            if (stockTotalLotes < cantidad) {
+                // Opción: Bloquear venta o permitir stock negativo global (pero lotes en 0).
+                // Regla Farmacia: No vender sin lote.
+                throw new BadRequestException(
+                    `Stock insuficiente en lotes. Solicitado: ${cantidad}, Disponible en lotes: ${stockTotalLotes}`,
+                );
+            }
+
+            // Distribuir descuento
+            for (const lote of lotesDisponibles) {
+                if (cantidadRestante <= 0) break;
+
+                const descuento = Math.min(lote.stockActual, cantidadRestante);
+                lotesAfectados.push({ lote, cantidadAdescontar: descuento });
+                cantidadRestante -= descuento;
+            }
         }
 
-        if (!loteSeleccionado) {
-            throw new BadRequestException(
-                'No hay lotes disponibles con stock suficiente',
+        // Ejecutar transacciones
+        const transacciones: any[] = [];
+        for (const item of lotesAfectados) {
+            // Actualizar Lote
+            transacciones.push(
+                this.prisma.productoLote.update({
+                    where: { id: item.lote.id },
+                    data: { stockActual: { decrement: item.cantidadAdescontar } },
+                })
+            );
+
+            // Registrar Movimiento Lote
+            transacciones.push(
+                this.prisma.movimientoKardexLote.create({
+                    data: {
+                        productoLoteId: item.lote.id,
+                        movimientoId: movimientoKardexId,
+                        cantidad: item.cantidadAdescontar,
+                        stockAnterior: item.lote.stockActual,
+                        stockActual: item.lote.stockActual - item.cantidadAdescontar,
+                    },
+                })
             );
         }
 
-        if (loteSeleccionado.stockActual < cantidad) {
-            throw new BadRequestException(
-                `Stock insuficiente en el lote "${loteSeleccionado.lote}". Disponible: ${loteSeleccionado.stockActual}`,
-            );
-        }
+        await this.prisma.$transaction(transacciones);
 
-        // Descontar en transacción
-        await this.prisma.$transaction([
-            // Actualizar stock del lote
-            this.prisma.productoLote.update({
-                where: { id: loteSeleccionado.id },
-                data: { stockActual: { decrement: cantidad } },
-            }),
-
-            // Registrar en MovimientoKardexLote
-            this.prisma.movimientoKardexLote.create({
-                data: {
-                    productoLoteId: loteSeleccionado.id,
-                    movimientoId: movimientoKardexId,
-                    cantidad,
-                    stockAnterior: loteSeleccionado.stockActual,
-                    stockActual: loteSeleccionado.stockActual - cantidad,
-                },
-            }),
-        ]);
-
-        return loteSeleccionado;
+        return lotesAfectados;
     }
 
     /**
@@ -292,6 +368,20 @@ export class ProductoLoteService {
         return this.prisma.productoLote.update({
             where: { id: loteId },
             data: { activo: false },
+        });
+    }
+
+    async obtenerTodosLotes(empresaId: number) {
+        return this.prisma.productoLote.findMany({
+            where: {
+                producto: { empresaId },
+                activo: true,
+                stockActual: { gt: 0 },
+            },
+            include: {
+                producto: true,
+            },
+            orderBy: { fechaVencimiento: 'asc' },
         });
     }
 }

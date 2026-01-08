@@ -34,7 +34,14 @@ export class DashboardService {
           }),
           this.prisma.comprobante.count({ where: whereBase }),
           this.prisma.cliente.count({ where: { empresaId } }),
-          this.prisma.producto.count({ where: { empresaId, estado: { not: 'PLACEHOLDER' as any } } }),
+          // Excluir productos fantasma (DGD, IPM, PLD) y productos inactivos del conteo
+          this.prisma.producto.count({
+            where: {
+              empresaId,
+              estado: 'ACTIVO',
+              codigo: { notIn: ['DGD', 'IPM', 'PLD'] },
+            },
+          }),
         ]);
 
       const elapsed = Date.now() - startTime;

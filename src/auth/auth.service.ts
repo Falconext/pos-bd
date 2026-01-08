@@ -159,10 +159,12 @@ export class AuthService {
             nombreComercial: true,
             direccion: true,
             logo: true,
+            esAgenteRetencion: true,
             tipoEmpresa: true,
             rubroId: true,
             rubro: true,
             slugTienda: true,
+            ruc: true,
             plan: {
               select: {
                 tieneTienda: true,
@@ -206,6 +208,7 @@ export class AuthService {
             nombreComercial: true,
             direccion: true,
             logo: true,
+            esAgenteRetencion: true,
             ruc: true,
             fechaActivacion: true,
             fechaExpiracion: true,

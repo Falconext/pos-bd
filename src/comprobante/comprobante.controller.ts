@@ -38,6 +38,36 @@ export class ComprobanteController {
     return this.service.listarTipoOperacion();
   }
 
+  @Get('tipos-detraccion')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async listarTiposDetraccion() {
+    return this.service.listarTiposDetraccion();
+  }
+
+  @Get('medios-pago-detraccion')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async listarMediosPagoDetraccion() {
+    return this.service.listarMediosPagoDetraccion();
+  }
+
+  /**
+   * Obtiene las estadísticas de uso de comprobantes SUNAT del mes actual
+   */
+  @Get('usage')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async getUsageStats(@User() user: any) {
+    return this.service.getUsageStats(user.empresaId);
+  }
+
+  /**
+   * Obtiene las estadísticas de uso de una empresa específica (solo ADMIN_SISTEMA)
+   */
+  @Get('usage/:empresaId')
+  @Roles('ADMIN_SISTEMA')
+  async getUsageStatsForEmpresa(@Param('empresaId', ParseIntPipe) empresaId: number) {
+    return this.service.getUsageStats(empresaId);
+  }
+
   @Get('listar')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async listar(
@@ -47,11 +77,10 @@ export class ComprobanteController {
   ) {
     if (
       !query.tipoComprobante ||
-      (query.tipoComprobante !== 'FORMAL' &&
-        query.tipoComprobante !== 'INFORMAL')
+      !['FORMAL', 'INFORMAL', 'COTIZACION', 'TODOS'].includes(query.tipoComprobante)
     ) {
       throw new BadRequestException(
-        'El parámetro tipoComprobante debe ser FORMAL o INFORMAL',
+        'El parámetro tipoComprobante debe ser FORMAL, INFORMAL, COTIZACION o TODOS',
       );
     }
     const resultado = await this.service.listar({
@@ -349,5 +378,6 @@ export class ComprobanteController {
     // (Requiere inyectar PrismaService al controller, por simplicidad lo haremos vía service)
     return { message: 'Usa la query SQL: SELECT * FROM "Comprobante" WHERE "estadoEnvioSunat" = \'FALLIDO_ENVIO\'' };
   }
+
 }
 

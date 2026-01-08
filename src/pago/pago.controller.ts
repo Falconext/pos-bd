@@ -19,7 +19,7 @@ import { User } from '../common/decorators/user.decorator';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('pago')
 export class PagoController {
-  constructor(private readonly service: PagoService) {}
+  constructor(private readonly service: PagoService) { }
 
   @Get('listar')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
@@ -30,6 +30,7 @@ export class PagoController {
     @Query('fechaInicio') fechaInicio?: string,
     @Query('fechaFin') fechaFin?: string,
     @Query('medioPago') medioPago?: string,
+    @Query('search') search?: string,
   ) {
     return this.service.listarTodos({
       empresaId: user.empresaId,
@@ -38,6 +39,7 @@ export class PagoController {
       fechaInicio,
       fechaFin,
       medioPago,
+      search,
     });
   }
 
@@ -85,5 +87,20 @@ export class PagoController {
     @User() user: any,
   ) {
     return this.service.reversarPago(pagoId, user.empresaId);
+  }
+
+  @Post('comprobante/:comprobanteId/recalcular')
+  @Roles('ADMIN_EMPRESA')
+  async recalcularSaldo(
+    @Param('comprobanteId', ParseIntPipe) comprobanteId: number,
+    @User() user: any,
+  ) {
+    return this.service.recalcularSaldoComprobante(comprobanteId, user.empresaId);
+  }
+
+  @Post('recalcular-todos')
+  @Roles('ADMIN_EMPRESA')
+  async recalcularTodos(@User() user: any) {
+    return this.service.recalcularTodosSaldos(user.empresaId);
   }
 }

@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  IsBoolean,
   IsDateString,
   IsInt,
   IsNotEmpty,
@@ -66,6 +67,35 @@ export class CrearComprobanteDto {
   @IsString()
   leyenda: string;
 
+  // Configuración de cotización
+  @IsOptional()
+  @IsBoolean()
+  cotizIncluirImagenes?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  cotizDescuento?: number;
+
+  @IsOptional()
+  @IsNumber()
+  cotizVigencia?: number;
+
+  @IsOptional()
+  @IsString()
+  cotizFirmante?: string;
+
+  @IsOptional()
+  @IsString()
+  cotizTerminos?: string;
+
+  @IsOptional()
+  @IsString()
+  cotizTipoPago?: string;
+
+  @IsOptional()
+  @IsNumber()
+  cotizAdelanto?: number;
+
   @IsOptional()
   @IsString()
   observaciones?: string;
@@ -120,6 +150,43 @@ export class CrearComprobanteDto {
   @IsOptional()
   @IsDateString()
   fechaRecojo?: string;
+
+  // Campos de Detracciones
+  @IsOptional()
+  @IsInt()
+  tipoDetraccionId?: number;
+
+  @IsOptional()
+  @IsInt()
+  medioPagoDetraccionId?: number;
+
+  @IsOptional()
+  @IsString()
+  cuentaBancoNacion?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  porcentajeDetraccion?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  montoDetraccion?: number;
+
+  @IsOptional()
+  @IsArray()
+  cuotas?: any[];
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  retencionMonto?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  retencionPorcentaje?: number;
 
   @IsArray()
   @ValidateNested({ each: true })
