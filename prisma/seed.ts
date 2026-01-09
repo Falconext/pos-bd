@@ -1,11 +1,15 @@
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
+import { seedDetracciones } from './seeds/seed-detracciones';
 import { seedCatalog } from './seeds/catalog.seed';
 
 const prisma = new PrismaClient();
 
 async function main() {
   console.log('Iniciando seed...');
+
+  // Ejecutar seed de detracciones primero (catálogos)
+  await seedDetracciones();
 
   // =============================================
   // PLANES FORMALES (Empresas con RUC)
