@@ -32,6 +32,8 @@ import { PlanModule } from './plan/plan.module';
 import { BannersModule } from './banners/banners.module';
 import { ComprasModule } from './compras/compras.module';
 import { FinanzasModule } from './finanzas/finanzas.module';
+import { GuiaRemisionModule } from './guia-remision/guia-remision.module';
+import { ModulosModule } from './modulos/modulos.module';
 
 @Module({
   imports: [
@@ -66,6 +68,8 @@ import { FinanzasModule } from './finanzas/finanzas.module';
     BannersModule,
     ComprasModule,
     FinanzasModule,
+    GuiaRemisionModule,
+    ModulosModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -1,31 +1,34 @@
-import { 
-  Controller, 
-  Get, 
-  Post, 
-  Body, 
-  Query, 
-  Param, 
-  Request, 
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Query,
+  Param,
+  Request,
   UseGuards,
   ParseIntPipe,
   ValidationPipe,
   BadRequestException
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { ModuleAccessGuard } from '../common/guards/module-access.guard';
+import { RequiresModule } from '../common/decorators/module.decorator';
 import { KardexService } from './kardex.service';
-import { 
-  FiltrosKardexDto, 
-  FiltrosReporteDto 
+import {
+  FiltrosKardexDto,
+  FiltrosReporteDto
 } from './dto/filtros-kardex.dto';
-import { 
-  AjusteInventarioDto, 
-  AjusteMasivoDto 
+import {
+  AjusteInventarioDto,
+  AjusteMasivoDto
 } from './dto/ajuste-inventario.dto';
 
 @Controller('kardex')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, ModuleAccessGuard)
+@RequiresModule('kardex')
 export class KardexController {
-  constructor(private readonly kardexService: KardexService) {}
+  constructor(private readonly kardexService: KardexService) { }
 
   /**
    * Obtiene el kardex general de la empresa con filtros
@@ -70,7 +73,7 @@ export class KardexController {
   ) {
     const empresaId = req.user.empresaId;
     const usuarioId = req.user.id;
-    
+
     if (!empresaId) {
       throw new BadRequestException('Usuario sin empresa asignada');
     }
@@ -88,7 +91,7 @@ export class KardexController {
   ) {
     const empresaId = req.user.empresaId;
     const usuarioId = req.user.id;
-    
+
     if (!empresaId) {
       throw new BadRequestException('Usuario sin empresa asignada');
     }
@@ -154,7 +157,7 @@ export class KardexController {
 
     // Obtener inventario valorizado para las estadísticas
     const inventario = await this.kardexService.obtenerInventarioValorizado(empresaId);
-    
+
     // Obtener movimientos recientes
     const movimientosRecientes = await this.kardexService.obtenerKardexGeneral(empresaId, {
       page: 1,
@@ -233,7 +236,7 @@ export class KardexController {
 
     // Si no se proporcionan fechas, usar el último mes
     const fechaFin_date = fechaFin ? new Date(fechaFin) : new Date();
-    const fechaInicio_date = fechaInicio ? new Date(fechaInicio) : 
+    const fechaInicio_date = fechaInicio ? new Date(fechaInicio) :
       new Date(fechaFin_date.getFullYear(), fechaFin_date.getMonth() - 1, fechaFin_date.getDate());
 
     const movimientos = await this.kardexService.obtenerKardexGeneral(empresaId, {
@@ -269,7 +272,7 @@ export class KardexController {
 
     movimientos.movimientos.forEach(mov => {
       const valor = (mov.valorTotal || 0);
-      
+
       switch (mov.tipoMovimiento) {
         case 'INGRESO':
           resumen.ingresos.cantidad += mov.cantidad;

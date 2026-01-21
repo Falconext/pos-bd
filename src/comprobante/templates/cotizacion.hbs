@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cotización</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            font-size: 11px;
+            padding: 20px;
+            line-height: 1.4;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 20px;
+        }
+
+        .logo-empresa {
+            display: flex;
+            align-items: flex-start;
+            flex: 1;
+        }
+
+        .logo-empresa img {
+            width: 100px;
+            height: 100px;
+            margin-right: 15px;
+            object-fit: contain;
+        }
+
+        .empresa-info h1 {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 3px;
+        }
+
+        .empresa-info p {
+            font-size: 10px;
+            line-height: 1.5;
+        }
+
+        .documento {
+            border: 2px solid #000;
+            padding: 10px 15px;
+            text-align: center;
+            min-width: 180px;
+        }
+
+        .documento .ruc {
+            font-size: 11px;
+            margin-bottom: 5px;
+        }
+
+        .documento .tipo {
+            font-size: 16px;
+            font-weight: bold;
+            margin: 5px 0;
+        }
+
+        .documento .numero {
+            font-size: 12px;
+            margin-top: 5px;
+        }
+
+        .data-boxes {
+            display: flex;
+            justify-content: space-between;
+            margin: 20px 0;
+            gap: 15px;
+        }
+
+        .data-box {
+            flex: 1;
+            border: 2px solid #000;
+            border-radius: 8px;
+            padding: 12px;
+        }
+
+        .data-box-title {
+            font-weight: bold;
+            font-size: 11px;
+            margin-bottom: 8px;
+            text-align: center;
+        }
+
+        .data-box label {
+            display: flex;
+            font-size: 10px;
+            margin-top: 5px;
+        }
+
+        .data-box label div:first-child {
+            font-weight: bold;
+            min-width: 90px;
+        }
+
+        .productos-table {
+            width: 100%;
+            border: 2px solid #000;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        .productos-table thead {
+            background-color: #f0f0f0;
+            border-bottom: 2px solid #000;
+        }
+
+        .productos-table th {
+            padding: 8px 5px;
+            font-size: 10px;
+            font-weight: bold;
+            text-align: center;
+            border-right: 1px solid #ccc;
+        }
+
+        .productos-table th:last-child {
+            border-right: none;
+        }
+
+        .productos-table td {
+            padding: 6px 5px;
+            font-size: 10px;
+            border-bottom: 1px solid #e0e0e0;
+            border-right: 1px solid #e0e0e0;
+        }
+
+        .productos-table td:last-child {
+            border-right: none;
+        }
+
+        .productos-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        .productos-table .cant {
+            width: 10%;
+            text-align: center;
+        }
+
+        .productos-table .um {
+            width: 10%;
+            text-align: center;
+        }
+
+        .productos-table .desc {
+            width: 50%;
+            text-align: left;
+        }
+
+        .productos-table .pu {
+            width: 15%;
+            text-align: right;
+        }
+
+        .productos-table .total {
+            width: 15%;
+            text-align: right;
+        }
+
+        .son-section {
+            border: 2px solid #000;
+            border-radius: 8px;
+            padding: 10px;
+            margin-top: 15px;
+            font-size: 11px;
+            font-weight: bold;
+            font-style: italic;
+            text-align: center;
+        }
+
+        .footer-section {
+            margin-top: 15px;
+            display: flex;
+            justify-content: space-between;
+            gap: 15px;
+        }
+
+        .observaciones-box {
+            flex: 1;
+            border: 2px solid #000;
+            border-radius: 8px;
+            padding: 12px;
+        }
+
+        .observaciones-box .title {
+            font-weight: bold;
+            font-size: 11px;
+            margin-bottom: 8px;
+        }
+
+        .observaciones-box p {
+            font-size: 10px;
+            line-height: 1.5;
+        }
+
+        .totales-box {
+            width: 250px;
+            border: 2px solid #000;
+            border-radius: 8px;
+            padding: 12px;
+        }
+
+        .totales-box .row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            margin-bottom: 5px;
+        }
+
+        .totales-box .row.total-final {
+            font-weight: bold;
+            font-size: 11px;
+            padding-top: 5px;
+            border-top: 2px solid #000;
+            margin-top: 5px;
+        }
+
+        .bank-details {
+            margin-top: 15px;
+            border: 2px solid #000;
+            border-radius: 8px;
+            padding: 12px;
+        }
+
+        .bank-details .title {
+            font-weight: bold;
+            font-size: 11px;
+            margin-bottom: 8px;
+            text-align: center;
+        }
+
+        .bank-details-content {
+            display: flex;
+            justify-content: space-around;
+        }
+
+        .bank-details-content div {
+            text-align: center;
+        }
+
+        .bank-details-content div strong {
+            display: block;
+            font-size: 10px;
+            margin-bottom: 3px;
+        }
+
+        .bank-details-content div span {
+            font-size: 10px;
+        }
+
+        .footer-thanks {
+            text-align: center;
+            margin-top: 15px;
+            font-size: 10px;
+        }
+
+        .footer-thanks p {
+            margin: 3px 0;
+        }
+
+        .footer-thanks .brand {
+            font-weight: bold;
+            font-size: 11px;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Header con logo, empresa y documento -->
+    <div class="header">
+        <div class="logo-empresa">
+            {{#if logo}}
+            <img src="{{logo}}" alt="Logo">
+            {{/if}}
+            <div class="empresa-info">
+                <h1>{{nombreComercial}}</h1>
+                <p>
+                    <strong>{{direccion}}</strong><br>
+                    {{rubro}}<br>
+                    <strong>RAZON SOCIAL:</strong> {{razonSocial}}<br>
+                    <strong>CELULAR:</strong> {{celular}}<br>
+                    <strong>EMAIL:</strong> {{email}}
+                </p>
+            </div>
+        </div>
+        <div class="documento">
+            <div class="ruc">RUC: {{ruc}}</div>
+            <div class="tipo">COTIZACIÓN</div>
+            <div class="numero">{{serie}}-{{correlativo}}</div>
+        </div>
+    </div>
+
+    <!-- Data boxes: Cliente y Cotización -->
+    <div class="data-boxes">
+        <div class="data-box">
+            <div class="data-box-title">DATOS DEL CLIENTE</div>
+            <label>
+                <div>CLIENTE:</div>
+                <div>{{clienteNombre}}</div>
+            </label>
+            <label>
+                <div>RUC:</div>
+                <div>{{clienteNumDoc}}</div>
+            </label>
+            <label>
+                <div>EMAIL:</div>
+                <div>{{clienteEmail}}</div>
+            </label>
+            <label>
+                <div>TELF:</div>
+                <div>{{clienteTelefono}}</div>
+            </label>
+            <label>
+                <div>DIR:</div>
+                <div>{{clienteDireccion}}</div>
+            </label>
+        </div>
+        <div class="data-box">
+            <div class="data-box-title">DATOS DE LA COTIZACIÓN</div>
+            <label>
+                <div>FECHA EMISIÓN:</div>
+                <div>{{fecha}}</div>
+            </label>
+            <label>
+                <div>CONDICIÓN:</div>
+                <div>{{formaPago}}</div>
+            </label>
+            <label>
+                <div>VALIDEZ:</div>
+                <div>{{validez}}</div>
+            </label>
+            <label>
+                <div>MONEDA:</div>
+                <div>SOLES</div>
+            </label>
+        </div>
+    </div>
+
+    <!-- Tabla de productos -->
+    <table class="productos-table">
+        <thead>
+            <tr>
+                <th class="cant">N°</th>
+                <th class="cant">CANT.</th>
+                <th class="um">UNIDAD</th>
+                <th class="desc">DESCRIPCIÓN</th>
+                <th class="pu">P.UNIT.</th>
+                <th class="total">TOTAL</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{#each productos}}
+            <tr>
+                <td class="cant">{{@index}}</td>
+                <td class="cant">{{cantidad}}</td>
+                <td class="um">{{unidadMedida}}</td>
+                <td class="desc">{{descripcion}}</td>
+                <td class="pu">{{precioUnitario}}</td>
+                <td class="total">{{total}}</td>
+            </tr>
+            {{/each}}
+        </tbody>
+    </table>
+
+    <!-- SON (Total en letras) -->
+    <div class="son-section">
+        SON: {{totalEnLetras}}
+    </div>
+
+    <!-- Footer: Observaciones y Totales -->
+    <div class="footer-section">
+        <div class="observaciones-box">
+            <div class="title">OBSERVACIONES:</div>
+            <p>{{observaciones}}</p>
+            {{#if cotizTerminos}}
+            <p style="margin-top: 8px;"><strong>TÉRMINOS:</strong> {{cotizTerminos}}</p>
+            {{/if}}
+        </div>
+        <div class="totales-box">
+            <div class="row">
+                <span><strong>OP. GRAVADAS:</strong></span>
+                <span>S/ {{mtoOperGravadas}}</span>
+            </div>
+            <div class="row">
+                <span><strong>OP. EXONERADAS:</strong></span>
+                <span>S/ 0.00</span>
+            </div>
+            <div class="row">
+                <span><strong>OP. INAFECTAS:</strong></span>
+                <span>S/ 0.00</span>
+            </div>
+            <div class="row">
+                <span><strong>OP. GRATUITAS:</strong></span>
+                <span>S/ 0.00</span>
+            </div>
+            <div class="row">
+                <span><strong>SUB TOTAL:</strong></span>
+                <span>S/ {{subTotal}}</span>
+            </div>
+            {{#if descuento}}
+            <div class="row">
+                <span><strong>DESCUENTOS TOTAL:</strong></span>
+                <span>S/ {{descuento}}</span>
+            </div>
+            {{/if}}
+            <div class="row">
+                <span><strong>IGV 18%:</strong></span>
+                <span>S/ {{mtoIGV}}</span>
+            </div>
+            <div class="row total-final">
+                <span><strong>MONTO TOTAL:</strong></span>
+                <span>S/ {{mtoImpVenta}}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Detalles bancarios -->
+    {{#if bancoNombre}}
+    <div class="bank-details">
+        <div class="title">DEPOSITAR A NOMBRE DE {{nombreComercial}}</div>
+        <div class="bank-details-content">
+            <div>
+                <strong>BANCO {{bancoNombre}}</strong>
+            </div>
+            <div>
+                <strong>MONEDA SOLES</strong>
+            </div>
+            <div>
+                <strong>N° CUENTA</strong>
+                <span>{{numeroCuenta}}</span>
+            </div>
+            <div>
+                <strong>CCI</strong>
+                <span>{{cci}}</span>
+            </div>
+        </div>
+    </div>
+    {{/if}}
+
+    <!-- Footer final -->
+    <div class="footer-thanks">
+        <p><strong>GRACIAS POR ELEGIR {{nombreComercial}} PARA CUBRIR SUS REQUERIMIENTOS DE {{rubro}}</strong></p>
+        <p><strong>VUELVA PRONTO</strong></p>
+        <div class="brand">
+            <p>USUARIO: {{usuario}} {{fecha}} {{hora}}</p>
+            <p>Comprobante emitido a través de www.falconext.pe</p>
+        </div>
+    </div>
+</body>
+
+</html>

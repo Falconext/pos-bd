@@ -73,6 +73,22 @@ export class UpdateEmpresaDto {
   logo?: string;
 
   @IsOptional()
+  @IsString()
+  bancoNombre?: string;
+
+  @IsOptional()
+  @IsString()
+  numeroCuenta?: string;
+
+  @IsOptional()
+  @IsString()
+  cci?: string;
+
+  @IsOptional()
+  @IsString()
+  monedaCuenta?: string;
+
+  @IsOptional()
   usuario?: UpdateEmpresaUsuarioDto;
 }
 

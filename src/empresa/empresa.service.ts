@@ -347,6 +347,10 @@ export class EmpresaService {
       if (dto.providerId !== undefined) updateData.providerId = dto.providerId;
       if (dto.esAgenteRetencion !== undefined) updateData.esAgenteRetencion = dto.esAgenteRetencion;
       if (dto.logo !== undefined) updateData.logo = dto.logo;
+      if (dto.bancoNombre !== undefined) updateData.bancoNombre = dto.bancoNombre;
+      if (dto.numeroCuenta !== undefined) updateData.numeroCuenta = dto.numeroCuenta;
+      if (dto.cci !== undefined) updateData.cci = dto.cci;
+      if (dto.monedaCuenta !== undefined) updateData.monedaCuenta = dto.monedaCuenta;
 
       // Actualizar datos de empresa
       const empresaActualizada = await this.prisma.empresa.update({

@@ -1626,7 +1626,32 @@ export class ComprobanteService {
               : undefined,
           };
 
-          const pdfBuffer = await this.pdfGenerator.generarPDFComprobante(pdfData);
+
+          let pdfBuffer: Buffer;
+
+          // Usar template específico de cotización si es COT
+          if (full.tipoDoc === 'COT') {
+            const cotizacionData = {
+              ...pdfData,
+              // Campos adicionales específicos de cotización
+              subTotal: Number(full.subTotal || 0).toFixed(2),
+              descuento: full.mtoDescuentoGlobal ? Number(full.mtoDescuentoGlobal).toFixed(2) : undefined,
+              validez: full.cotizVigencia ? `${full.cotizVigencia} días` : '7 días',
+              cotizTerminos: full.cotizTerminos || undefined,
+              clienteEmail: (full.cliente as any)?.email || '-',
+              clienteTelefono: (full.cliente as any)?.telefono || '-',
+              // Datos bancarios de la empresa
+              bancoNombre: (full.empresa as any).bancoNombre || undefined,
+              numeroCuenta: (full.empresa as any).numeroCuenta || undefined,
+              cci: (full.empresa as any).cci || undefined,
+              monedaCuenta: (full.empresa as any).monedaCuenta || 'SOLES',
+              // Usuario que generó la cotización
+              usuario: 'ADMIN',
+            };
+            pdfBuffer = await this.pdfGenerator.generarPDFCotizacion(cotizacionData);
+          } else {
+            pdfBuffer = await this.pdfGenerator.generarPDFComprobante(pdfData);
+          }
           const key = this.s3Service.generateComprobanteKey(
             full.empresaId,
             full.tipoDoc,

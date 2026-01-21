@@ -53,6 +53,20 @@ export class ProductoService {
       stockMinimo?: number;
       stockMaximo?: number;
       imagenUrl?: string;
+      // Campos Farmacia
+      principioActivo?: string;
+      concentracion?: string;
+      presentacion?: string;
+      laboratorio?: string;
+      unidadCompra?: string;
+      unidadVenta?: string;
+      factorConversion?: number | string;
+      codigoBarras?: string;
+      codigoDigemid?: string;
+      // Campos Ofertas
+      precioOferta?: number;
+      fechaInicioOferta?: string | Date;
+      fechaFinOferta?: string | Date;
     },
     empresaId: number,
   ) {
@@ -69,6 +83,19 @@ export class ProductoService {
       stockMinimo,
       stockMaximo,
       imagenUrl,
+      // Farmacia/Otros
+      principioActivo,
+      concentracion,
+      presentacion,
+      laboratorio,
+      unidadCompra,
+      unidadVenta,
+      factorConversion,
+      codigoBarras,
+      codigoDigemid,
+      precioOferta,
+      fechaInicioOferta,
+      fechaFinOferta
     } = data;
 
     if (!codigo) {
@@ -119,7 +146,21 @@ export class ProductoService {
           marcaId: marcaId && Number(marcaId) > 0 ? Number(marcaId) : undefined,
           imagenUrl: imagenUrl || undefined,
           estado: EstadoType.ACTIVO, // Reactivar usando Enum
-          publicarEnTienda: true
+          publicarEnTienda: true,
+          // Campos Farmacia update on restore
+          principioActivo,
+          concentracion,
+          presentacion,
+          laboratorio,
+          unidadCompra,
+          unidadVenta,
+          factorConversion: factorConversion ? Number(factorConversion) : undefined,
+          codigoBarras,
+          codigoDigemid,
+          // Campos Ofertas
+          precioOferta: precioOferta ? new Decimal(precioOferta) : undefined,
+          fechaInicioOferta: fechaInicioOferta ? new Date(fechaInicioOferta) : undefined,
+          fechaFinOferta: fechaFinOferta ? new Date(fechaFinOferta) : undefined,
         }
       });
     } else {
@@ -140,7 +181,21 @@ export class ProductoService {
           marcaId: marcaId && Number(marcaId) > 0 ? Number(marcaId) : undefined,
           empresaId,
           imagenUrl: imagenUrl || undefined,
-          estado: EstadoType.ACTIVO
+          estado: EstadoType.ACTIVO,
+          // Campos Farmacia
+          principioActivo,
+          concentracion,
+          presentacion,
+          laboratorio,
+          unidadCompra,
+          unidadVenta,
+          factorConversion: factorConversion ? Number(factorConversion) : 1,
+          codigoBarras,
+          codigoDigemid,
+          // Campos Ofertas
+          precioOferta: precioOferta ? new Decimal(precioOferta) : undefined,
+          fechaInicioOferta: fechaInicioOferta ? new Date(fechaInicioOferta) : undefined,
+          fechaFinOferta: fechaFinOferta ? new Date(fechaFinOferta) : undefined,
         },
       });
     }
@@ -240,6 +295,20 @@ export class ProductoService {
               nombre: true,
             },
           },
+          lotes: {
+            where: {
+              activo: true,
+              stockActual: { gt: 0 }
+            },
+            select: {
+              lote: true,
+              fechaVencimiento: true,
+              stockActual: true
+            },
+            orderBy: {
+              fechaVencimiento: 'asc'
+            }
+          }
         },
       }),
       this.prisma.producto.count({ where }),
@@ -294,6 +363,20 @@ export class ProductoService {
     costoUnitario?: number;
     stockMinimo?: number;
     stockMaximo?: number;
+    // Campos Farmacia
+    principioActivo?: string;
+    concentracion?: string;
+    presentacion?: string;
+    laboratorio?: string;
+    unidadCompra?: string;
+    unidadVenta?: string;
+    factorConversion?: number | string;
+    codigoBarras?: string;
+    codigoDigemid?: string;
+    // Campos Ofertas
+    precioOferta?: number;
+    fechaInicioOferta?: string | Date;
+    fechaFinOferta?: string | Date;
   }, usuarioId?: number) {
     const producto = await this.prisma.producto.findFirst({
       where: { id: data.id, empresaId: data.empresaId },
@@ -346,7 +429,7 @@ export class ProductoService {
             : data.marcaId !== undefined && Number(data.marcaId) > 0
               ? Number(data.marcaId)
               : undefined,
-        unidadMedidaId: data.unidadMedidaId,
+        unidadMedidaId: data.unidadMedidaId ? Number(data.unidadMedidaId) : undefined,
         tipoAfectacionIGV: data.tipoAfectacionIGV,
         valorUnitario:
           data.valorUnitario !== undefined
@@ -369,6 +452,20 @@ export class ProductoService {
           data.stockMinimo !== undefined ? data.stockMinimo : undefined,
         stockMaximo:
           data.stockMaximo !== undefined ? data.stockMaximo : undefined,
+        // Campos Farmacia
+        principioActivo: data.principioActivo,
+        concentracion: data.concentracion,
+        presentacion: data.presentacion,
+        laboratorio: data.laboratorio,
+        unidadCompra: data.unidadCompra,
+        unidadVenta: data.unidadVenta,
+        factorConversion: data.factorConversion ? Number(data.factorConversion) : undefined,
+        codigoBarras: data.codigoBarras,
+        codigoDigemid: data.codigoDigemid,
+        // Campos Ofertas
+        precioOferta: data.precioOferta ? new Decimal(data.precioOferta) : undefined,
+        fechaInicioOferta: data.fechaInicioOferta ? new Date(data.fechaInicioOferta) : undefined, // Convertir string vacío a undefined si falla validación o manejar en frontend
+        fechaFinOferta: data.fechaFinOferta ? new Date(data.fechaFinOferta) : undefined, // Ojo: empty string -> Invalid Date
       },
     });
   }

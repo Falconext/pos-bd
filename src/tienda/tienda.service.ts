@@ -75,6 +75,11 @@ export class TiendaService {
         aceptaEnvio: true,
         direccionRecojo: true,
         tiempoPreparacionMin: true,
+        // Información Bancaria
+        bancoNombre: true,
+        numeroCuenta: true,
+        cci: true,
+        monedaCuenta: true,
       },
     });
   }
@@ -105,6 +110,11 @@ export class TiendaService {
         aceptaEnvio: true,
         direccionRecojo: true,
         tiempoPreparacionMin: true,
+        // Información Bancaria
+        bancoNombre: true,
+        numeroCuenta: true,
+        cci: true,
+        monedaCuenta: true,
         plan: {
           select: {
             tieneTienda: true,

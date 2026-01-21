@@ -94,4 +94,21 @@ export class ConfigurarTiendaDto {
   @IsInt()
   @Min(0)
   tiempoPreparacionMin?: number;
+
+  // === Información Bancaria ===
+  @IsOptional()
+  @IsString()
+  bancoNombre?: string;
+
+  @IsOptional()
+  @IsString()
+  numeroCuenta?: string;
+
+  @IsOptional()
+  @IsString()
+  cci?: string;
+
+  @IsOptional()
+  @IsString()
+  monedaCuenta?: string;
 }

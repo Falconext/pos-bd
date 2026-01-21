@@ -9,6 +9,7 @@ export class PdfGeneratorService {
   private readonly logger = new Logger(PdfGeneratorService.name);
   private browser: puppeteer.Browser | null = null;
   private template: HandlebarsTemplateDelegate | null = null;
+  private cotizacionTemplate: HandlebarsTemplateDelegate | null = null;
 
   async onModuleInit() {
     // Cargar template: intentar en dist y src para soportar start y start:dev
@@ -40,6 +41,28 @@ export class PdfGeneratorService {
     const templateSource = fs.readFileSync(foundPath, 'utf-8');
     this.template = Handlebars.compile(templateSource);
     this.logger.log(`✅ Template de comprobante cargado: ${foundPath}`);
+
+    // Cargar template de cotización
+    const cotizacionCandidates = [
+      path.join(__dirname, 'templates', 'cotizacion.hbs'),
+      path.join(process.cwd(), 'src', 'comprobante', 'templates', 'cotizacion.hbs'),
+    ];
+
+    let cotizacionPath: string | null = null;
+    for (const p of cotizacionCandidates) {
+      if (fs.existsSync(p)) {
+        cotizacionPath = p;
+        break;
+      }
+    }
+
+    if (cotizacionPath) {
+      const cotizacionSource = fs.readFileSync(cotizacionPath, 'utf-8');
+      this.cotizacionTemplate = Handlebars.compile(cotizacionSource);
+      this.logger.log(`✅ Template de cotización cargado: ${cotizacionPath}`);
+    } else {
+      this.logger.warn('⚠️ Template de cotización no encontrado, usando template genérico');
+    }
   }
 
   async onModuleDestroy() {
@@ -65,7 +88,6 @@ export class PdfGeneratorService {
           '--disable-features=VizDisplayCompositor',
           '--no-zygote',
           '--single-process',
-          '--user-data-dir=/tmp/chrome-data',
         ],
       });
       this.logger.log(`✅ Puppeteer browser inicializado (chrome: ${executablePath || 'auto'})`);
@@ -204,6 +226,104 @@ export class PdfGeneratorService {
       return Buffer.from(pdfBuffer);
     } catch (error) {
       this.logger.error(`❌ Error generando PDF ticket: ${error.message}`, error.stack);
+      throw error;
+    }
+  }
+
+  /**
+   * Genera PDF específico para cotizaciones con diseño personalizado
+   */
+  async generarPDFCotizacion(data: {
+    // Empresa
+    nombreComercial: string;
+    razonSocial: string;
+    ruc: string;
+    direccion: string;
+    rubro?: string;
+    celular?: string;
+    email?: string;
+    logo?: string;
+
+    // Documento
+    serie: string;
+    correlativo: string;
+    fecha: string;
+    hora: string;
+
+    // Cliente
+    clienteNombre: string;
+    clienteNumDoc: string;
+    clienteDireccion?: string;
+    clienteEmail?: string;
+    clienteTelefono?: string;
+
+    // Productos
+    productos: Array<{
+      cantidad: number;
+      unidadMedida: string;
+      descripcion: string;
+      precioUnitario: string;
+      total: string;
+    }>;
+
+    // Totales
+    mtoOperGravadas: string;
+    mtoIGV: string;
+    subTotal: string;
+    mtoImpVenta: string;
+    descuento?: string;
+    totalEnLetras?: string;
+
+    // Otros
+    formaPago: string;
+    validez?: string;
+    observaciones?: string;
+    cotizTerminos?: string;
+
+    // Datos bancarios
+    bancoNombre?: string;
+    numeroCuenta?: string;
+    cci?: string;
+    monedaCuenta?: string;
+
+    // Usuario
+    usuario?: string;
+  }): Promise<Buffer> {
+    try {
+      // Usar template de cotización si existe, sino el genérico
+      const template = this.cotizacionTemplate || this.template;
+      if (!template) {
+        throw new Error('Template no cargado');
+      }
+
+      // Generar HTML desde template
+      const html = template(data);
+
+      // Generar PDF con Puppeteer
+      const browser = await this.getBrowser();
+      const page = await browser.newPage();
+
+      await page.setContent(html, {
+        waitUntil: 'networkidle0',
+      });
+
+      const pdfBuffer = await page.pdf({
+        format: 'A4',
+        printBackground: true,
+        margin: {
+          top: '10mm',
+          right: '10mm',
+          bottom: '10mm',
+          left: '10mm',
+        },
+      });
+
+      await page.close();
+
+      this.logger.log('✅ PDF de cotización generado exitosamente');
+      return Buffer.from(pdfBuffer);
+    } catch (error) {
+      this.logger.error(`❌ Error generando PDF de cotización: ${error.message}`, error.stack);
       throw error;
     }
   }

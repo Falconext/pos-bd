@@ -63,4 +63,54 @@ export class UpdateProductoDto {
   @IsInt()
   @Type(() => Number)
   stockMaximo?: number;
+
+  // Campos Farmacia
+  @IsOptional()
+  @IsString()
+  principioActivo?: string;
+
+  @IsOptional()
+  @IsString()
+  concentracion?: string;
+
+  @IsOptional()
+  @IsString()
+  presentacion?: string;
+
+  @IsOptional()
+  @IsString()
+  laboratorio?: string;
+
+  @IsOptional()
+  @IsString()
+  unidadCompra?: string;
+
+  @IsOptional()
+  @IsString()
+  unidadVenta?: string;
+
+  @IsOptional()
+  // @IsNumber() // Se recibe como string/number y se convierte
+  factorConversion?: number | string;
+
+  @IsOptional()
+  @IsString()
+  codigoBarras?: string;
+
+  @IsOptional()
+  @IsString()
+  codigoDigemid?: string;
+
+  // Campos Ofertas
+  @IsOptional()
+  // @IsNumber()
+  precioOferta?: number;
+
+  @IsOptional()
+  // @IsDateString() // Puede ser vacío o string fecha
+  fechaInicioOferta?: string | Date;
+
+  @IsOptional()
+  // @IsDateString()
+  fechaFinOferta?: string | Date;
 }

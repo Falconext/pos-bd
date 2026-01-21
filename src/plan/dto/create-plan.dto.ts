@@ -62,4 +62,10 @@ export class CreatePlanDto {
     @IsBoolean()
     @IsOptional()
     tieneTicketera?: boolean;
+
+    // Módulos asignados
+    @IsOptional()
+    @IsNumber({}, { each: true })
+    @Type(() => Number)
+    moduloIds?: number[];
 }

@@ -7,9 +7,27 @@ import { UpdatePlanDto } from './dto/update-plan.dto';
 export class PlanService {
     constructor(private prisma: PrismaService) { }
 
+
     async create(createPlanDto: CreatePlanDto) {
+        const { moduloIds, ...planData } = createPlanDto;
+
         return this.prisma.plan.create({
-            data: createPlanDto,
+            data: {
+                ...planData,
+                modulosAsignados: moduloIds && moduloIds.length > 0 ? {
+                    create: moduloIds.map(moduloId => ({ moduloId }))
+                } : undefined
+            },
+            include: {
+                _count: {
+                    select: { empresas: true }
+                },
+                modulosAsignados: {
+                    include: {
+                        modulo: true
+                    }
+                }
+            }
         });
     }
 
@@ -19,6 +37,11 @@ export class PlanService {
             include: {
                 _count: {
                     select: { empresas: true }
+                },
+                modulosAsignados: {
+                    include: {
+                        modulo: true
+                    }
                 }
             }
         });
@@ -35,11 +58,45 @@ export class PlanService {
     async update(id: number, updatePlanDto: UpdatePlanDto) {
         // Verificar existencia
         await this.findOne(id);
-        return this.prisma.plan.update({
-            where: { id },
-            data: updatePlanDto,
+
+        const { moduloIds, ...planData } = updatePlanDto;
+
+        return this.prisma.$transaction(async (prisma) => {
+            // Si se proporcionan moduloIds, actualizar los módulos asignados
+            if (moduloIds !== undefined) {
+                // Eliminar asignaciones actuales
+                await prisma.planModulo.deleteMany({
+                    where: { planId: id }
+                });
+
+                // Crear nuevas asignaciones
+                if (moduloIds.length > 0) {
+                    await prisma.planModulo.createMany({
+                        data: moduloIds.map(moduloId => ({
+                            planId: id,
+                            moduloId
+                        }))
+                    });
+                }
+            }
+
+            return prisma.plan.update({
+                where: { id },
+                data: planData,
+                include: {
+                    _count: {
+                        select: { empresas: true }
+                    },
+                    modulosAsignados: {
+                        include: {
+                            modulo: true
+                        }
+                    }
+                }
+            });
         });
     }
+
 
     async remove(id: number) {
         await this.findOne(id);

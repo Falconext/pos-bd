@@ -26,6 +26,7 @@ model Plan {
   maxComprobantes     Int?      @default(100)
   tieneTicketera      Boolean   @default(false)
   empresas            Empresa[]
+  modulosAsignados    PlanModulo[]
 }
 
 model Ubigeo {
@@ -108,6 +109,12 @@ model Empresa {
   whatsappEnvios       WhatsAppEnvio[]
   combos               Combo[]
   gruposModificadores  GrupoModificador[]
+  guiasRemision        GuiaRemision[]
+
+  bancoNombre          String?
+  numeroCuenta         String?
+  cci                  String?
+  monedaCuenta         String?            @default("SOLES")
 
   @@index([providerToken])
   @@index([slugTienda])
@@ -137,6 +144,7 @@ model Usuario {
   refreshTokens          RefreshToken[]
   empresa                Empresa?                @relation(fields: [empresaId], references: [id])
   whatsappEnvios         WhatsAppEnvio[]
+  guiasRemision          GuiaRemision[]
 }
 
 model Categoria {
@@ -219,6 +227,7 @@ model Producto {
   comboItems          ComboItem[]
   gruposModificadores ProductoGrupoModificador[]
   lotes               ProductoLote[]
+  detallesGuiaRemision DetalleGuiaRemision[]
 
   @@unique([empresaId, codigo])
   @@index([empresaId, publicarEnTienda])
@@ -251,6 +260,7 @@ model Cliente {
   tipoDocumento   TipoDocumento? @relation(fields: [tipoDocumentoId], references: [id])
   compras         Compra[]
   comprobantes    Comprobante[]
+  guiasRemision   GuiaRemision[]
 }
 
 model TipoOperacion {
@@ -959,4 +969,139 @@ enum EstadoWhatsApp {
 enum EstadoCompra {
   REGISTRADO
   ANULADO
+}
+
+model GuiaRemision {
+  id                      Int      @id @default(autoincrement())
+  empresaId               Int
+  
+  // Información del documento
+  serie                   String
+  correlativo             Int
+  fechaEmision            DateTime
+  horaEmision             String?
+  tipoDocumento           String   @default("09") // Código SUNAT
+  
+  // Remitente (DespatchSupplierParty)
+  remitenteRuc            String
+  remitenteRazonSocial    String
+  remitenteDireccion      String
+  
+  // Destinatario (DeliveryCustomerParty)
+  destinatarioTipoDoc     String
+  destinatarioNumDoc      String
+  destinatarioRazonSocial String
+  
+  // Shipment
+  tipoTraslado            String   // 01: Venta, 02: Compra, etc.
+  modoTransporte          String   // 01: Transporte Público, 02: Transporte Privado
+  pesoTotal               Decimal
+  unidadPeso              String   @default("KGM")
+  
+  // Transportista (para transporte público)
+  transportistaRuc        String?
+  transportistaRazonSocial String?
+  transportistaMTC        String?  // Registro MTC
+  
+  // Conductor/Vehículo (para transporte privado)
+  conductorTipoDoc        String?
+  conductorNumDoc         String?
+  conductorNombre         String?
+  conductorLicencia       String?
+  vehiculoPlaca           String?
+  
+  // Punto de partida
+  partidaUbigeo           String
+  partidaDireccion        String
+  
+  // Punto de llegada
+  llegadaUbigeo           String
+  llegadaDireccion        String
+  
+  // Fecha de traslado
+  fechaInicioTraslado     DateTime
+  
+  // Flags opcionales
+  retornoVehiculoVacio    Boolean  @default(false)
+  retornoEnvasesVacios    Boolean  @default(false)
+  transbordoProgramado    Boolean  @default(false)
+  trasladoTotal           Boolean  @default(false)  // DAM o DS
+  vehiculoM1oL            Boolean  @default(false)
+  datosTransportista      Boolean  @default(false)
+  
+  // SUNAT
+  estadoSunat             EstadoSunat @default(PENDIENTE)
+  sunatXml                String?
+  sunatCdrResponse        String?
+  sunatCdrZip             String?
+  sunatErrorMsg           String?
+  documentoId             String?  // ID del proveedor SUNAT
+  s3XmlUrl                String?
+  s3CdrUrl                String?
+  s3PdfUrl                String?
+  
+  // Observaciones
+  observaciones           String?
+  
+  // Auditoría
+  creadoEn                DateTime @default(now())
+  actualizadoEn           DateTime @updatedAt
+  usuarioId               Int?
+  clienteId               Int?      // Destinatario si está registrado
+  
+  // Relaciones
+  empresa                 Empresa  @relation(fields: [empresaId], references: [id])
+  usuario                 Usuario? @relation(fields: [usuarioId], references: [id])
+  cliente                 Cliente? @relation(fields: [clienteId], references: [id])
+  detalles                DetalleGuiaRemision[]
+  
+  @@unique([empresaId, serie, correlativo])
+  @@index([empresaId, fechaEmision])
+  @@index([estadoSunat])
+}
+
+model DetalleGuiaRemision {
+  id                Int     @id @default(autoincrement())
+  guiaRemisionId    Int
+  numeroOrden       Int     // Orden del ítem
+  
+  productoId        Int?
+  codigoProducto    String
+  descripcion       String
+  
+  cantidad          Decimal
+  unidadMedida      String  @default("NIU")
+  
+  // Relaciones
+  guiaRemision      GuiaRemision @relation(fields: [guiaRemisionId], references: [id], onDelete: Cascade)
+  producto          Producto?    @relation(fields: [productoId], references: [id])
+  
+  @@index([guiaRemisionId])
+}
+
+model Modulo {
+  id              Int          @id @default(autoincrement())
+  codigo          String       @unique // 'dashboard', 'comprobantes', etc.
+  nombre          String       // 'Dashboard', 'Comprobantes', etc.
+  descripcion     String?
+  icono           String?      // Nombre del icono de Iconify
+  activo          Boolean      @default(true)
+  orden           Int          @default(0)
+  planesAsignados PlanModulo[]
+  creadoEn        DateTime     @default(now())
+  
+  @@index([codigo])
+  @@index([activo, orden])
+}
+
+model PlanModulo {
+  id       Int    @id @default(autoincrement())
+  planId   Int
+  moduloId Int
+  plan     Plan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+  modulo   Modulo @relation(fields: [moduloId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, moduloId])
+  @@index([planId])
+  @@index([moduloId])
 }

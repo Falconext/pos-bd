@@ -168,8 +168,18 @@ export class AuthService {
             plan: {
               select: {
                 tieneTienda: true,
+                modulosAsignados: {
+                  include: {
+                    modulo: true
+                  }
+                }
               },
             },
+            // Información Bancaria
+            bancoNombre: true,
+            numeroCuenta: true,
+            cci: true,
+            monedaCuenta: true,
           },
         },
       },
@@ -232,6 +242,11 @@ export class AuthService {
                 duracionDias: true,
                 tipoFacturacion: true,
                 esPrueba: true,
+                modulosAsignados: {
+                  include: {
+                    modulo: true
+                  }
+                }
               },
             },
             ubicacion: {
@@ -242,6 +257,11 @@ export class AuthService {
                 distrito: true,
               },
             },
+            // Información Bancaria
+            bancoNombre: true,
+            numeroCuenta: true,
+            cci: true,
+            monedaCuenta: true,
           },
         },
       },
