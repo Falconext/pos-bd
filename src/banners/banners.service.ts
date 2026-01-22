@@ -169,11 +169,35 @@ export class BannersService {
         return banner;
     }
 
-    async update(id: number, empresaId: number, updateBannerDto: UpdateBannerDto) {
-        await this.findOne(id, empresaId); // Verificar propiedad
+    async update(id: number, empresaId: number, updateBannerDto: UpdateBannerDto, file?: Express.Multer.File) {
+        const banner = await this.findOne(id, empresaId); // Verificar propiedad
+
+        let imageUrl: string | undefined = undefined;
+        if (file) {
+            console.log(`[BannersService] Updating banner image for id ${id}, file: ${file.originalname}`);
+            const timestamp = Date.now();
+            const extension = file.originalname.split('.').pop() || 'webp';
+            const key = `banners/empresa-${empresaId}/banner-${timestamp}.${extension}`;
+            imageUrl = await this.s3Service.uploadImage(file.buffer, key, file.mimetype);
+
+            // Optionally delete old image if it's S3
+            if (banner.imagenUrl && banner.imagenUrl.includes('amazonaws.com')) {
+                try {
+                    const urlParts = banner.imagenUrl.split('amazonaws.com/');
+                    if (urlParts.length > 1) {
+                        const oldKey = urlParts[1].split('?')[0];
+                        await this.s3Service.deleteFile(oldKey);
+                    }
+                } catch (e) { console.error('Error deleting old banner image:', e); }
+            }
+        }
+
         return this.prisma.banner.update({
             where: { id },
-            data: updateBannerDto,
+            data: {
+                ...updateBannerDto,
+                ...(imageUrl ? { imagenUrl: imageUrl } : {}),
+            },
         });
     }
 

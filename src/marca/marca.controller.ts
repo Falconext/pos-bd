@@ -1,4 +1,6 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Res, UseGuards, UseInterceptors, UploadedFile } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { imageUploadOptions } from '../common/utils/multer.config';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -10,7 +12,7 @@ import { CreateMarcaDto } from './dto/create-marca.dto';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('marca')
 export class MarcaController {
-  constructor(private readonly service: MarcaService) {}
+  constructor(private readonly service: MarcaService) { }
 
   @Post('crear')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
@@ -19,7 +21,7 @@ export class MarcaController {
     @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const marca = await this.service.crear(dto.nombre, user.empresaId);
+    const marca = await this.service.crear(dto, user.empresaId);
     res.locals.message = 'Marca creada correctamente';
     return marca;
   }
@@ -44,6 +46,17 @@ export class MarcaController {
     return marca;
   }
 
+  @Post(':id/imagen')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  @UseInterceptors(FileInterceptor('file', imageUploadOptions))
+  async subirImagen(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.service.subirImagenPrincipal(user.empresaId, id, { buffer: file?.buffer, mimetype: file?.mimetype });
+  }
+
   @Put(':id')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async actualizar(
@@ -52,7 +65,7 @@ export class MarcaController {
     @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const actualizada = await this.service.actualizar(id, dto.nombre, user.empresaId);
+    const actualizada = await this.service.actualizar(id, dto, user.empresaId);
     res.locals.message = 'Marca actualizada correctamente';
     return actualizada;
   }

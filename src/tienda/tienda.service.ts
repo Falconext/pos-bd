@@ -294,19 +294,115 @@ export class TiendaService {
         stock: { gt: 0 },
       },
       select: {
-        categoria: { select: { nombre: true } },
+        categoria: {
+          select: {
+            id: true,
+            nombre: true,
+            imagenUrl: true,
+          },
+        },
       },
     });
 
-    const categorias = new Set<string>();
+    const categoriasMap = new Map<string, any>();
+
     productos.forEach((p) => {
       if (p.categoria?.nombre) {
-        categorias.add(p.categoria.nombre);
+        if (!categoriasMap.has(p.categoria.nombre)) {
+          categoriasMap.set(p.categoria.nombre, {
+            nombre: p.categoria.nombre,
+            imagenUrl: p.categoria.imagenUrl,
+          });
+        }
       }
     });
 
-    // Return array directly - global interceptor will wrap it
-    return Array.from(categorias).sort();
+    const result = Array.from(categoriasMap.values()).sort((a, b) =>
+      a.nombre.localeCompare(b.nombre),
+    );
+
+    // Sign URLs if needed
+    await Promise.all(
+      result.map(async (cat) => {
+        if (cat.imagenUrl && cat.imagenUrl.includes('amazonaws.com')) {
+          const parts = cat.imagenUrl.split('amazonaws.com/');
+          if (parts.length > 1) {
+            try {
+              cat.imagenUrl = await this.s3.getSignedGetUrl(parts[1]);
+            } catch (e) {
+              console.error('Error signing category image:', e);
+            }
+          }
+        }
+      }),
+    );
+
+    return result;
+  }
+
+  async obtenerMarcasTienda(slug: string) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { slugTienda: slug },
+      select: { id: true },
+    });
+
+    if (!empresa) {
+      throw new NotFoundException('Tienda no encontrada');
+    }
+
+    // Get all unique brands from active products with stock
+    const productos = await this.prisma.producto.findMany({
+      where: {
+        empresaId: empresa.id,
+        estado: 'ACTIVO',
+        stock: { gt: 0 },
+        marcaId: { not: null }, // Only products with brand
+      },
+      select: {
+        marca: {
+          select: {
+            id: true,
+            nombre: true,
+            imagenUrl: true,
+          },
+        },
+      },
+    });
+
+    const marcasMap = new Map<string, any>();
+
+    productos.forEach((p) => {
+      if (p.marca?.nombre && p.marca?.imagenUrl) {
+        if (!marcasMap.has(p.marca.nombre)) {
+          marcasMap.set(p.marca.nombre, {
+            nombre: p.marca.nombre,
+            imagenUrl: p.marca.imagenUrl,
+          });
+        }
+      }
+    });
+
+    const result = Array.from(marcasMap.values()).sort((a, b) =>
+      a.nombre.localeCompare(b.nombre),
+    );
+
+    // Sign URLs if needed
+    await Promise.all(
+      result.map(async (marca) => {
+        if (marca.imagenUrl && marca.imagenUrl.includes('amazonaws.com')) {
+          const parts = marca.imagenUrl.split('amazonaws.com/');
+          if (parts.length > 1) {
+            try {
+              marca.imagenUrl = await this.s3.getSignedGetUrl(parts[1]);
+            } catch (e) {
+              console.error('Error signing brand image:', e);
+            }
+          }
+        }
+      }),
+    );
+
+    return result;
   }
 
   async obtenerRangoPreciosTienda(slug: string) {
@@ -336,7 +432,7 @@ export class TiendaService {
     };
   }
 
-  async obtenerProductosTienda(slug: string, page = 1, limit = 30, search = '', category = '', minPrice?: number, maxPrice?: number) {
+  async obtenerProductosTienda(slug: string, page = 1, limit = 30, search = '', category = '', minPrice?: number, maxPrice?: number, brand = '', wholesale = false) {
     const empresa = await this.prisma.empresa.findUnique({
       where: { slugTienda: slug },
       select: { id: true },
@@ -346,7 +442,7 @@ export class TiendaService {
       if (!empresa) {
         throw new NotFoundException('Tienda no encontrada');
       }
-      console.log('obtenerProductosTienda', { slug, page, limit, search, category, minPrice, maxPrice });
+      console.log('obtenerProductosTienda', { slug, page, limit, search, category, minPrice, maxPrice, brand });
 
       const signIfS3 = async (url?: string | null) => {
         try {
@@ -359,7 +455,6 @@ export class TiendaService {
           return signed || (url as any);
         } catch { return url as any; }
       };
-
 
       const skip = Math.max(0, (Number(page) || 1) - 1) * (Number(limit) || 30);
       const take = Math.max(1, Math.min(100, Number(limit) || 30));
@@ -378,6 +473,7 @@ export class TiendaService {
         ratingCount: true,
         categoria: { select: { id: true, nombre: true } },
         unidadMedida: { select: { codigo: true, nombre: true } },
+        marca: { select: { id: true, nombre: true } },
       } as const;
 
       const baseOrder = [{ destacado: 'desc' as const }, { descripcion: 'asc' as const }];
@@ -404,6 +500,40 @@ export class TiendaService {
         wherePublicados.precioUnitario = priceFilter;
       }
 
+      // Filtro por mayorista
+      if (wholesale) {
+        wherePublicados.gruposModificadores = {
+          some: {
+            grupo: {
+              nombre: { contains: 'Precios', mode: 'insensitive' }
+            }
+          }
+        };
+      }
+
+      // Filtro por marcas
+      if (brand && brand.trim()) {
+        const brands = brand.split(',').map((b) => b.trim()).filter(Boolean);
+        if (brands.length > 0) {
+          const brandConditions = brands.map((brandName) => ({
+            marca: {
+              nombre: { equals: brandName, mode: 'insensitive' as const },
+            },
+          }));
+
+          if (wherePublicados.OR) {
+            const existingOR = wherePublicados.OR;
+            delete wherePublicados.OR;
+            if (!wherePublicados.AND) wherePublicados.AND = [];
+            wherePublicados.AND.push({ OR: existingOR });
+            wherePublicados.AND.push({ OR: brandConditions });
+          } else {
+            if (!wherePublicados.AND) wherePublicados.AND = [];
+            wherePublicados.AND.push({ OR: brandConditions });
+          }
+        }
+      }
+
       // Filtro por categorías - use OR conditions for case-insensitive matching
       if (category && category.trim()) {
         const cats = category.split(',').map((c) => c.trim()).filter(Boolean);
@@ -417,15 +547,14 @@ export class TiendaService {
 
           // If there's already an OR condition (from search), we need to AND them
           if (wherePublicados.OR) {
-            // Wrap existing OR in AND with category filter
             const existingOR = wherePublicados.OR;
             delete wherePublicados.OR;
-            wherePublicados.AND = [
-              { OR: existingOR },
-              { OR: categoryConditions },
-            ];
+            if (!wherePublicados.AND) wherePublicados.AND = [];
+            wherePublicados.AND.push({ OR: existingOR });
+            wherePublicados.AND.push({ OR: categoryConditions });
           } else {
-            wherePublicados.OR = categoryConditions;
+            if (!wherePublicados.AND) wherePublicados.AND = [];
+            wherePublicados.AND.push({ OR: categoryConditions });
           }
         }
       }
@@ -474,6 +603,39 @@ export class TiendaService {
         whereActivos.precioUnitario = priceFilter;
       }
 
+      if (wholesale) {
+        whereActivos.gruposModificadores = {
+          some: {
+            grupo: {
+              nombre: { contains: 'Precios', mode: 'insensitive' }
+            }
+          }
+        };
+      }
+
+      // Fallback filtering for brand
+      if (brand && brand.trim()) {
+        const brands = brand.split(',').map((b) => b.trim()).filter(Boolean);
+        if (brands.length > 0) {
+          const brandConditions = brands.map((brandName) => ({
+            marca: {
+              nombre: { equals: brandName, mode: 'insensitive' as const },
+            },
+          }));
+          if (whereActivos.OR) {
+            const existingOR = whereActivos.OR;
+            delete whereActivos.OR;
+            if (!whereActivos.AND) whereActivos.AND = [];
+            whereActivos.AND.push({ OR: existingOR });
+            whereActivos.AND.push({ OR: brandConditions });
+          } else {
+            if (!whereActivos.AND) whereActivos.AND = [];
+            whereActivos.AND.push({ OR: brandConditions });
+          }
+        }
+      }
+
+      // Fallback filtering for category
       if (category && category.trim()) {
         const cats = category.split(',').map((c) => c.trim()).filter(Boolean);
         if (cats.length > 0) {
@@ -482,16 +644,15 @@ export class TiendaService {
               nombre: { equals: catName, mode: 'insensitive' as const },
             },
           }));
-
           if (whereActivos.OR) {
             const existingOR = whereActivos.OR;
             delete whereActivos.OR;
-            whereActivos.AND = [
-              { OR: existingOR },
-              { OR: categoryConditions },
-            ];
+            if (!whereActivos.AND) whereActivos.AND = [];
+            whereActivos.AND.push({ OR: existingOR });
+            whereActivos.AND.push({ OR: categoryConditions });
           } else {
-            whereActivos.OR = categoryConditions;
+            if (!whereActivos.AND) whereActivos.AND = [];
+            whereActivos.AND.push({ OR: categoryConditions });
           }
         }
       }
@@ -504,7 +665,6 @@ export class TiendaService {
         skip,
         take,
       });
-
 
       const items = await Promise.all(
         itemsRaw.map(async (p: any) => ({
@@ -529,7 +689,7 @@ export class TiendaService {
     const tienda = await this.obtenerTiendaPorSlug(slug);
     const producto = await this.prisma.producto.findUnique({
       where: { id },
-      include: { categoria: true },
+      select: { categoriaId: true },
     });
 
     if (!producto) throw new NotFoundException('Producto no encontrado');
@@ -710,6 +870,7 @@ export class TiendaService {
         plinQrUrl: true,
         plinNumero: true,
         aceptaEfectivo: true,
+        whatsappTienda: true,
       },
     });
 
@@ -739,6 +900,7 @@ export class TiendaService {
       plinQrUrl: await signIfS3(empresa.plinQrUrl),
       plinNumero: empresa.plinNumero,
       aceptaEfectivo: empresa.aceptaEfectivo,
+      whatsappTienda: empresa.whatsappTienda,
     };
   }
 

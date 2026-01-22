@@ -9,7 +9,11 @@ import {
   Put,
   Res,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { imageUploadOptions } from '../common/utils/multer.config';
 import { CategoriaService } from './categoria.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -21,7 +25,7 @@ import { CreateCategoriaDto } from './dto/create-categoria.dto';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('categoria')
 export class CategoriaController {
-  constructor(private readonly service: CategoriaService) {}
+  constructor(private readonly service: CategoriaService) { }
 
   @Post('crear')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
@@ -30,9 +34,20 @@ export class CategoriaController {
     @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const categoria = await this.service.crear(dto.nombre, user.empresaId);
+    const categoria = await this.service.crear(dto, user.empresaId);
     res.locals.message = 'Categoría creada correctamente';
     return categoria;
+  }
+
+  @Post(':id/imagen')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  @UseInterceptors(FileInterceptor('file', imageUploadOptions))
+  async subirImagenPrincipal(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.service.subirImagenPrincipal(user.empresaId, id, { buffer: file?.buffer, mimetype: file?.mimetype });
   }
 
   @Get('listar')
@@ -65,7 +80,7 @@ export class CategoriaController {
   ) {
     const actualizada = await this.service.actualizar(
       id,
-      dto.nombre,
+      dto,
       user.empresaId,
     );
     res.locals.message = 'Categoría actualizada correctamente';

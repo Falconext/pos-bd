@@ -24,9 +24,12 @@ export class TiendaPublicController {
     @Query('category') category = '',
     @Query('minPrice') minPrice = '',
     @Query('maxPrice') maxPrice = '',
+    @Query('brand') brand = '',
+    @Query('wholesale') wholesale = '',
   ) {
     const min = minPrice && !isNaN(Number(minPrice)) ? Number(minPrice) : undefined;
     const max = maxPrice && !isNaN(Number(maxPrice)) ? Number(maxPrice) : undefined;
+    const isWholesale = wholesale === 'true';
 
     return this.tiendaService.obtenerProductosTienda(
       slug,
@@ -36,12 +39,19 @@ export class TiendaPublicController {
       category,
       min,
       max,
+      brand,
+      isWholesale
     );
   }
 
   @Get(':slug/categories')
   async obtenerCategorias(@Param('slug') slug: string) {
     return this.tiendaService.obtenerCategoriasTienda(slug);
+  }
+
+  @Get(':slug/brands')
+  async obtenerMarcas(@Param('slug') slug: string) {
+    return this.tiendaService.obtenerMarcasTienda(slug);
   }
 
   @Get(':slug/price-range')

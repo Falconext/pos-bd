@@ -63,8 +63,14 @@ export class BannersController {
     }
 
     @Patch(':id')
-    update(@Req() req: any, @Param('id') id: string, @Body() updateBannerDto: UpdateBannerDto) {
-        return this.bannersService.update(+id, req.user.empresaId, updateBannerDto);
+    @UseInterceptors(FileInterceptor('file'))
+    update(
+        @Req() req: any,
+        @Param('id') id: string,
+        @Body() updateBannerDto: UpdateBannerDto,
+        @UploadedFile() file?: Express.Multer.File
+    ) {
+        return this.bannersService.update(+id, req.user.empresaId, updateBannerDto, file);
     }
 
     @Delete(':id')

@@ -150,6 +150,7 @@ model Usuario {
 model Categoria {
   id        Int        @id @default(autoincrement())
   nombre    String
+  imagenUrl String?
   empresaId Int?
   empresa   Empresa?   @relation(fields: [empresaId], references: [id])
   productos Producto[]
@@ -165,6 +166,7 @@ model UnidadMedida {
 model Marca {
   id        Int        @id @default(autoincrement())
   nombre    String
+  imagenUrl String?
   empresaId Int?
   empresa   Empresa?   @relation(fields: [empresaId], references: [id])
   productos Producto[]
