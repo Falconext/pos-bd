@@ -110,11 +110,15 @@ model Empresa {
   combos               Combo[]
   gruposModificadores  GrupoModificador[]
   guiasRemision        GuiaRemision[]
+  sedes                Sede[]
 
   bancoNombre          String?
   numeroCuenta         String?
   cci                  String?
   monedaCuenta         String?            @default("SOLES")
+  resellerId           Int?
+  reseller             Reseller?          @relation(fields: [resellerId], references: [id])
+  resellerMovimientos  ResellerMovimiento[]
 
   @@index([providerToken])
   @@index([slugTienda])
@@ -145,6 +149,10 @@ model Usuario {
   empresa                Empresa?                @relation(fields: [empresaId], references: [id])
   whatsappEnvios         WhatsAppEnvio[]
   guiasRemision          GuiaRemision[]
+  sedeId                 Int?
+  sede                   Sede?                   @relation(fields: [sedeId], references: [id])
+  resellerId             Int?
+  reseller               Reseller?               @relation(fields: [resellerId], references: [id])
 }
 
 model Categoria {
@@ -230,6 +238,7 @@ model Producto {
   gruposModificadores ProductoGrupoModificador[]
   lotes               ProductoLote[]
   detallesGuiaRemision DetalleGuiaRemision[]
+  stocks               ProductoStock[]
 
   @@unique([empresaId, codigo])
   @@index([empresaId, publicarEnTienda])
@@ -367,6 +376,8 @@ model Comprobante {
   tipoDetraccion        TipoDetraccion?      @relation(fields: [tipoDetraccionId], references: [id])
   tipoOperacion         TipoOperacion?       @relation(fields: [tipoOperacionId], references: [id])
   usuario               Usuario?             @relation(fields: [usuarioId], references: [id])
+  sedeId                Int?
+  sede                  Sede?                @relation(fields: [sedeId], references: [id])
   detalles              DetalleComprobante[]
   leyendas              Leyenda[]
   movimientosKardex     MovimientoKardex[]
@@ -444,6 +455,8 @@ model MovimientoKardex {
   empresa          Empresa               @relation(fields: [empresaId], references: [id])
   producto         Producto              @relation(fields: [productoId], references: [id])
   usuario          Usuario?              @relation(fields: [usuarioId], references: [id])
+  sedeId           Int?
+  sede             Sede?                 @relation(fields: [sedeId], references: [id])
   movimientoLote   MovimientoKardexLote?
 
   @@index([productoId, fecha])
@@ -609,7 +622,8 @@ model Notificacion {
 
 model WhatsAppEnvio {
   id            Int            @id @default(autoincrement())
-  comprobanteId Int
+  comprobanteId Int?
+  guiaRemisionId Int?
   empresaId     Int
   usuarioId     Int
   numeroDestino String
@@ -620,11 +634,13 @@ model WhatsAppEnvio {
   incluyeXML    Boolean        @default(false)
   creadoEn      DateTime       @default(now())
   actualizadoEn DateTime       @updatedAt
-  comprobante   Comprobante    @relation(fields: [comprobanteId], references: [id], onDelete: Cascade)
+  comprobante   Comprobante?   @relation(fields: [comprobanteId], references: [id], onDelete: Cascade)
+  guiaRemision  GuiaRemision?  @relation(fields: [guiaRemisionId], references: [id], onDelete: Cascade)
   empresa       Empresa        @relation(fields: [empresaId], references: [id], onDelete: Cascade)
   usuario       Usuario        @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
 
   @@index([comprobanteId])
+  @@index([guiaRemisionId])
   @@index([empresaId])
   @@index([estado])
   @@index([creadoEn])
@@ -802,6 +818,43 @@ model MovimientoKardexLote {
   @@map("movimiento_kardex_lotes")
 }
 
+model Sede {
+  id            Int             @id @default(autoincrement())
+  empresaId     Int
+  nombre        String
+  direccion     String?
+  codigo        String?
+  esPrincipal   Boolean         @default(false)
+  activo        Boolean         @default(true)
+  creadoEn      DateTime        @default(now())
+  actualizadoEn DateTime        @updatedAt
+  
+  empresa       Empresa         @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  stocks        ProductoStock[]
+  usuarios      Usuario[]
+  comprobantes  Comprobante[]
+  movimientosKardex MovimientoKardex[]
+
+  @@index([empresaId])
+}
+
+model ProductoStock {
+  id            Int      @id @default(autoincrement())
+  productoId    Int
+  sedeId        Int
+  stock         Int      @default(0)
+  stockMinimo   Int?     @default(0)
+  stockMaximo   Int?
+  ubicacion     String?
+  
+  producto      Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  sede          Sede     @relation(fields: [sedeId], references: [id], onDelete: Cascade)
+
+  @@unique([productoId, sedeId])
+  @@index([productoId])
+  @@index([sedeId])
+}
+
 model Compra {
   id               Int                @id @default(autoincrement())
   empresaId        Int
@@ -909,6 +962,7 @@ enum Rol {
   ADMIN_SISTEMA
   ADMIN_EMPRESA
   USUARIO_EMPRESA
+  RESELLER
 }
 
 enum PersonaType {
@@ -1056,6 +1110,7 @@ model GuiaRemision {
   usuario                 Usuario? @relation(fields: [usuarioId], references: [id])
   cliente                 Cliente? @relation(fields: [clienteId], references: [id])
   detalles                DetalleGuiaRemision[]
+  whatsappEnvios          WhatsAppEnvio[]
   
   @@unique([empresaId, serie, correlativo])
   @@index([empresaId, fechaEmision])
@@ -1106,4 +1161,49 @@ model PlanModulo {
   @@unique([planId, moduloId])
   @@index([planId])
   @@index([moduloId])
+}
+
+model Reseller {
+  id             Int       @id @default(autoincrement())
+  nombre         String
+  codigo         String    @unique // Unique code for the reseller
+  representante  String?
+  telefono       String?
+  email          String    @unique // Contact email
+  saldo          Decimal   @default(0) @db.Decimal(10, 2)
+  porcentajeDescuento Decimal @default(20.00) @db.Decimal(5, 2) // Porcentaje de descuento (20, 30, 40)
+  activo         Boolean   @default(true)
+  creadoEn       DateTime  @default(now())
+  actualizadoEn  DateTime  @updatedAt
+  
+  empresas       Empresa[]
+  usuarios       Usuario[]
+  recargas       ResellerRecarga[]
+  movimientos    ResellerMovimiento[]
+}
+
+model ResellerRecarga {
+  id          Int      @id @default(autoincrement())
+  resellerId  Int
+  monto       Decimal  @db.Decimal(10, 2)
+  fecha       DateTime @default(now())
+  medioPago   String?
+  referencia  String?  // Transaction ID
+  observacion String?
+  usuarioId   Int?     // User who processed the recharge (Admin)
+  
+  reseller    Reseller @relation(fields: [resellerId], references: [id])
+}
+
+model ResellerMovimiento {
+  id          Int      @id @default(autoincrement())
+  resellerId  Int
+  empresaId   Int?     // Link to the client company causing the charge
+  tipo        String   // "MENSUALIDAD", "ACTIVACION", "DEVOLUCION"
+  monto       Decimal  @db.Decimal(10, 2) // Amount deducted (usually negative)
+  fecha       DateTime @default(now())
+  descripcion String?
+  
+  reseller    Reseller @relation(fields: [resellerId], references: [id])
+  empresa     Empresa? @relation(fields: [empresaId], references: [id])
 }

@@ -18,6 +18,18 @@ interface EnviarComprobanteParams {
   monto: number;
 }
 
+interface EnviarGuiaParams {
+  guiaRemisionId: number;
+  empresaId: number;
+  usuarioId: number;
+  numeroDestino: string;
+  pdfUrl: string;
+  empresaNombre: string;
+  serie: string;
+  correlativo: number;
+  destinatario: string;
+}
+
 @Injectable()
 export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
@@ -210,6 +222,115 @@ export class WhatsAppService {
           error: error.message,
           costoUSD: 0,
           incluyeXML,
+        },
+      });
+
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Genera el mensaje de WhatsApp para la guía
+   */
+  private generarMensajeGuia(params: EnviarGuiaParams): string {
+    const {
+      empresaNombre,
+      serie,
+      correlativo,
+      destinatario,
+    } = params;
+
+    let mensaje = `🚚 *Guía de Remisión Electrónica*\n\n`;
+    mensaje += `Empresa: *${empresaNombre}*\n`;
+    mensaje += `Serie-Número: *${serie}-${String(correlativo).padStart(8, '0')}*\n`;
+    mensaje += `Destinatario: ${destinatario}\n\n`;
+    mensaje += `📄 *Adjuntos:*\n`;
+    mensaje += `- Guía PDF\n`;
+    mensaje += `\nGracias por su preferencia. 🙏`;
+
+    return mensaje;
+  }
+
+  /**
+   * Envía guía de remisión por WhatsApp
+   */
+  async enviarGuia(
+    params: EnviarGuiaParams,
+  ): Promise<{ success: boolean; mensajeId?: string; error?: string }> {
+    if (!this.isEnabled()) {
+      throw new BadRequestException(
+        'WhatsApp no está configurado. Contacte al administrador del sistema.',
+      );
+    }
+
+    const {
+      guiaRemisionId,
+      empresaId,
+      usuarioId,
+      numeroDestino,
+      pdfUrl,
+    } = params;
+
+    try {
+      const numeroFormateado = this.formatearNumero(numeroDestino);
+      let mensaje = this.generarMensajeGuia(params);
+      const mediaUrls = [pdfUrl].filter((u): u is string => !!u);
+
+      if (mediaUrls.length === 0) {
+        mensaje += `\n\nEnlace de descarga:\n- PDF: ${pdfUrl}`;
+      }
+
+      const payload: any = {
+        from: this.whatsappNumber,
+        to: numeroFormateado,
+        body: mensaje,
+      };
+
+      if (mediaUrls.length > 0) {
+        payload.mediaUrl = mediaUrls;
+      }
+
+      const messageResponse = await this.twilioClient.messages.create(payload);
+
+      await this.prisma.whatsAppEnvio.create({
+        data: {
+          guiaRemisionId,
+          empresaId,
+          usuarioId,
+          numeroDestino: numeroFormateado,
+          estado: 'ENVIADO',
+          mensajeId: messageResponse.sid,
+          costoUSD: 0.02,
+          incluyeXML: false,
+        },
+      });
+
+      this.logger.log(
+        `✅ WhatsApp Guía enviado: ${messageResponse.sid} a ${numeroFormateado}`,
+      );
+
+      return {
+        success: true,
+        mensajeId: messageResponse.sid,
+      };
+    } catch (error) {
+      this.logger.error(
+        `❌ Error enviando WhatsApp Guía: ${error.message}`,
+        error.stack,
+      );
+
+      await this.prisma.whatsAppEnvio.create({
+        data: {
+          guiaRemisionId,
+          empresaId,
+          usuarioId,
+          numeroDestino,
+          estado: 'FALLIDO',
+          error: error.message,
+          costoUSD: 0,
         },
       });
 

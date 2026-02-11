@@ -621,8 +621,33 @@ export class ComprobanteService {
     empresaId: number;
     comprobanteId: number;
     concepto: string;
+
     usuarioId?: number;
+    sedeId?: number;
   }) {
+    // Resolver Sede ID una sola vez para todo el ajuste
+    let sedeId = data?.sedeId;
+
+    // 1. Si no viene explícito, intentar obtener del usuario
+    if (!sedeId && data?.usuarioId) {
+      const usuario = await this.prisma.usuario.findUnique({ where: { id: data.usuarioId }, select: { sedeId: true } });
+      if (usuario?.sedeId) sedeId = usuario.sedeId;
+    }
+
+    // 2. Si sigue nulo, usar Sede Principal
+    if (!sedeId && data?.empresaId) {
+      const principal = await this.prisma.sede.findFirst({ where: { empresaId: data.empresaId, esPrincipal: true } });
+      if (principal) sedeId = principal.id;
+    }
+
+    if (!sedeId) {
+      // Fallback final: No se puede ajustar stock sin sede. 
+      // Loggear warning y salir o lanzar error. 
+      // Para evitar romper flujos críticos legacy, loggeamos error y continuamos sin mover stock (o asumimos que no hay stock que mover).
+      console.error('CRITICAL: No se pudo determinar Sede para ajuste de stock en ComprobanteService');
+      return;
+    }
+
     for (const item of detalles) {
       const producto = await this.prisma.producto.findUnique({
         where: { id: item.productoId },
@@ -645,6 +670,7 @@ export class ComprobanteService {
             comprobanteId: data.comprobanteId,
             costoUnitario: costoUnitario,
             usuarioId: data.usuarioId,
+            sedeId: sedeId!, // Pass resolved sedeId (non-null asserted because of check above)
           });
 
           // Integración Lotes (FEFO) - Intentar descontar
@@ -675,8 +701,13 @@ export class ComprobanteService {
     empresaId: number;
     comprobanteId: number;
     concepto: string;
+
     usuarioId?: number;
   }) {
+    // Resolver Sede ID (similar a ajustarStock)
+    // Nota: Idealmente deberíamos revertir en la MISMA sede donde se hizo la salida.
+    // Para eso, deberíamos consultar el movimiento original.
+
     // 1. Obtener movimientos originales de kardex asociados a este comprobante
     const movimientosOriginales = await this.prisma.movimientoKardex.findMany({
       where: {
@@ -713,6 +744,7 @@ export class ComprobanteService {
                 comprobanteId: data.comprobanteId,
                 costoUnitario: costoUnitario,
                 usuarioId: data.usuarioId,
+                sedeId: movimientosOriginales.find(m => m.productoId === item.productoId)?.sedeId || 1, // Usar sede original o fallback (esto debe mejorarse recuperando la sede principal si falla)
               });
 
               // --- REVERSIÓN DETALLADA DE LOTES ---

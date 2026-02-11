@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guía de Remisión</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            font-size: 11px;
+            padding: 20px;
+            line-height: 1.3;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 15px;
+        }
+
+        .logo-empresa {
+            display: flex;
+            align-items: flex-start;
+            flex: 1;
+        }
+
+        .logo-empresa img {
+            width: 100px;
+            height: 100px;
+            margin-right: 15px;
+            object-fit: contain;
+        }
+
+        .empresa-info h1 {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .empresa-info p {
+            font-size: 10px;
+            line-height: 1.4;
+        }
+
+        .documento {
+            border: 1px solid #000;
+            padding: 10px 15px;
+            text-align: center;
+            min-width: 220px;
+        }
+
+        .documento .ruc {
+            font-size: 12px;
+            margin-bottom: 5px;
+        }
+
+        .documento .tipo {
+            font-size: 16px;
+            font-weight: bold;
+            margin: 5px 0;
+            background-color: #eee;
+            padding: 5px 0;
+        }
+
+        .documento .numero {
+            font-size: 14px;
+            margin-top: 5px;
+            font-weight: bold;
+        }
+
+        .section-title {
+            font-weight: bold;
+            font-size: 11px;
+            background-color: #eee;
+            padding: 3px 5px;
+            margin-bottom: 5px;
+            border: 1px solid #ccc;
+        }
+
+        .grid-2 {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .col-half {
+            flex: 1;
+            border: 1px solid #ccc;
+            padding: 5px;
+        }
+
+        .label-row {
+            display: flex;
+            margin-bottom: 3px;
+        }
+
+        .label-key {
+            font-weight: bold;
+            width: 120px;
+            min-width: 120px;
+        }
+
+        .label-val {
+            flex: 1;
+        }
+
+        .productos-table {
+            width: 100%;
+            border: 1px solid #000;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        .productos-table th {
+            border-bottom: 1px solid #000;
+            background-color: #eee;
+            padding: 4px;
+            font-size: 10px;
+            text-align: center;
+        }
+
+        .productos-table td {
+            padding: 4px;
+            font-size: 10px;
+            border-right: 1px solid #ccc;
+        }
+
+        .productos-table td:last-child {
+            border-right: none;
+        }
+
+        .footer {
+            margin-top: 20px;
+            border-top: 1px solid #000;
+            padding-top: 10px;
+        }
+
+        .qr-section {
+            text-align: center;
+            margin-top: 10px;
+        }
+
+        .qr-img {
+            width: 80px;
+            height: 80px;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Header -->
+    <div class="header">
+        <div class="logo-empresa">
+            {{#if logo}}
+            <img src="{{logo}}" alt="Logo">
+            {{/if}}
+            <div class="empresa-info">
+                <h1>{{nombreComercial}}</h1>
+                <p>
+                    {{razonSocial}}<br>
+                    {{direccion}}<br>
+                    {{#if rubro}}{{rubro}}<br>{{/if}}
+                    {{#if contacto}}Telf: {{contacto}}<br>{{/if}}
+                    {{#if email}}Email: {{email}}{{/if}}
+                </p>
+            </div>
+        </div>
+        <div class="documento">
+            <div class="ruc">R.U.C. {{ruc}}</div>
+            <div class="tipo">GUÍA DE REMISIÓN<br>REMITENTE ELECTRÓNICA</div>
+            <div class="numero">{{serie}}-{{correlativo}}</div>
+        </div>
+    </div>
+
+    <!-- Fechas y Motivo -->
+    <div class="col-half" style="margin-bottom: 10px; border: 1px solid #000;">
+        <div class="label-row">
+            <div class="label-key">FECHA EMISIÓN:</div>
+            <div class="label-val">{{fechaEmision}}</div>
+        </div>
+        <div class="label-row">
+            <div class="label-key">FECHA TRASLADO:</div>
+            <div class="label-val">{{fechaTraslado}}</div>
+        </div>
+        <div class="label-row">
+            <div class="label-key">MOTIVO TRASLADO:</div>
+            <div class="label-val">{{motivoTraslado}}</div>
+        </div>
+        <div class="label-row">
+            <div class="label-key">MODALIDAD:</div>
+            <div class="label-val">{{modalidadTraslado}}</div>
+        </div>
+        <div class="label-row">
+            <div class="label-key">PESO BRUTO TOTAL:</div>
+            <div class="label-val">{{pesoTotal}} {{unidadPeso}}</div>
+        </div>
+    </div>
+
+    <!-- Puntos de Partida y Llegada -->
+    <div class="grid-2">
+        <div class="col-half">
+            <div class="section-title">PUTO DE PARTIDA</div>
+            <div class="label-row">
+                <div class="label-val">{{partidaDireccion}} <br> {{partidaUbigeo}}</div>
+            </div>
+        </div>
+        <div class="col-half">
+            <div class="section-title">PUNTO DE LLEGADA</div>
+            <div class="label-row">
+                <div class="label-val">{{llegadaDireccion}} <br> {{llegadaUbigeo}}</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Destinatario -->
+    <div class="col-half" style="margin-bottom: 10px;">
+        <div class="section-title">DATOS DEL DESTINATARIO</div>
+        <div class="label-row">
+            <div class="label-key">RAZÓN SOCIAL:</div>
+            <div class="label-val">{{destinatarioRazonSocial}}</div>
+        </div>
+        <div class="label-row">
+            <div class="label-key">RUC / DOC:</div>
+            <div class="label-val">{{destinatarioNumDoc}}</div>
+        </div>
+    </div>
+
+    <!-- Datos del Transporte -->
+    <div class="col-half" style="margin-bottom: 10px;">
+        <div class="section-title">DATOS DEL TRANSPORTE</div>
+
+        {{#if esTransportePublico}}
+        <div class="label-row">
+            <div class="label-key">TRANSPORTISTA:</div>
+            <div class="label-val">{{transportistaRazonSocial}}</div>
+        </div>
+        <div class="label-row">
+            <div class="label-key">RUC:</div>
+            <div class="label-val">{{transportistaRuc}}</div>
+        </div>
+        {{else}}
+        <div class="label-row">
+            <div class="label-key">VEHÍCULO (PLACA):</div>
+            <div class="label-val">{{vehiculoPlaca}}</div>
+        </div>
+        <div class="label-row">
+            <div class="label-key">CONDUCTOR:</div>
+            <div class="label-val">{{conductorNombre}}</div>
+        </div>
+        <div class="label-row">
+            <div class="label-key">LICENCIA:</div>
+            <div class="label-val">{{conductorLicencia}}</div>
+        </div>
+        {{/if}}
+    </div>
+
+    <!-- Items -->
+    <table class="productos-table">
+        <thead>
+            <tr>
+                <th style="width: 5%;">ITEM</th>
+                <th style="width: 10%;">CODIGO</th>
+                <th style="width: 50%;">DESCRIPCION</th>
+                <th style="width: 10%;">U.M.</th>
+                <th style="width: 10%;">CANT.</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{#each detalles}}
+            <tr>
+                <td style="text-align: center;">{{item}}</td>
+                <td style="text-align: center;">{{codigo}}</td>
+                <td>{{descripcion}}</td>
+                <td style="text-align: center;">{{unidad}}</td>
+                <td style="text-align: center;">{{cantidad}}</td>
+            </tr>
+            {{/each}}
+        </tbody>
+    </table>
+
+    <!-- Footer / Observaciones -->
+    <div class="footer">
+        {{#if observaciones}}
+        <p><strong>OBSERVACIONES:</strong> {{observaciones}}</p>
+        {{/if}}
+        <p style="text-align: center; margin-top: 20px; font-size: 10px;">
+            Representación impresa de la GUÍA DE REMISIÓN REMITENTE ELECTRÓNICA<br>
+            Este documento ha sido emitido a través de un Proveedor de Servicios Electrónicos autorizado por SUNAT.
+        </p>
+
+        {{#if qrCode}}
+        <div class="qr-section">
+            <img src="{{qrCode}}" alt="QR" class="qr-img">
+        </div>
+        {{/if}}
+    </div>
+
+</body>
+
+</html>

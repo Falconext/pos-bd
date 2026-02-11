@@ -22,7 +22,7 @@ export class WhatsAppController {
   constructor(
     private readonly whatsappService: WhatsAppService,
     private readonly prisma: PrismaService,
-  ) {}
+  ) { }
 
   /**
    * Enviar comprobante por WhatsApp
@@ -116,6 +116,74 @@ export class WhatsAppController {
       message: resultado.success
         ? 'Comprobante enviado por WhatsApp exitosamente'
         : 'Error al enviar comprobante por WhatsApp',
+      data: resultado,
+    };
+  }
+
+  /**
+   * Enviar guía por WhatsApp
+   * POST /whatsapp/enviar-guia/:guiaId
+   */
+  @Post('enviar-guia/:guiaId')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async enviarGuia(
+    @Param('guiaId', ParseIntPipe) guiaId: number,
+    @Body() body: { numeroDestino: string },
+    @User() user: any,
+  ) {
+    const { numeroDestino } = body;
+
+    if (!numeroDestino) {
+      throw new BadRequestException('El número de destino es requerido');
+    }
+
+    const guia = await this.prisma.guiaRemision.findFirst({
+      where: {
+        id: guiaId,
+        empresaId: user.empresaId,
+      },
+      select: {
+        id: true,
+        serie: true,
+        correlativo: true,
+        s3PdfUrl: true,
+        empresa: {
+          select: {
+            razonSocial: true,
+            nombreComercial: true,
+          },
+        },
+        destinatarioRazonSocial: true,
+      },
+    });
+
+    if (!guia) {
+      throw new BadRequestException(
+        'Guía no encontrada o no pertenece a su empresa',
+      );
+    }
+
+    const baseUrl = process.env.BACKEND_URL || 'http://localhost:4000';
+    const pdfUrl = guia.s3PdfUrl || `${baseUrl}/guia-remision/${guiaId}/pdf`;
+
+    const resultado = await this.whatsappService.enviarGuia({
+      guiaRemisionId: guiaId,
+      empresaId: user.empresaId,
+      usuarioId: user.id,
+      numeroDestino,
+      pdfUrl,
+      empresaNombre:
+        guia.empresa.nombreComercial || guia.empresa.razonSocial,
+      serie: guia.serie,
+      correlativo: guia.correlativo,
+      destinatario: guia.destinatarioRazonSocial,
+    });
+
+    return {
+      code: resultado.success ? 200 : 400,
+      message: resultado.success
+        ? 'Guía enviada por WhatsApp exitosamente'
+        : 'Error al enviar guía por WhatsApp',
       data: resultado,
     };
   }

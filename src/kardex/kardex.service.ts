@@ -35,20 +35,29 @@ export class KardexService {
     costoUnitario?: number;
     usuarioId?: number;
     observacion?: string;
+    sedeId: number; // Changed to required
     lote?: string;
     fechaVencimiento?: Date;
   }) {
-    // Obtener el producto actual
-    const producto = await this.prisma.producto.findUnique({
-      where: { id: data.productoId },
-      select: { stock: true, costoPromedio: true },
+    // Obtener el producto stock en la sede
+    const productoStock = await this.prisma.productoStock.findUnique({
+      where: {
+        productoId_sedeId: {
+          productoId: data.productoId,
+          sedeId: data.sedeId
+        }
+      },
+      include: { producto: { select: { costoPromedio: true } } }
     });
 
-    if (!producto) {
-      throw new NotFoundException('Producto no encontrado');
+    if (!productoStock) {
+      // Si no existe, crearlo (caso raro si la sede existe, pero posible en migración)
+      // O lanzar error. Mejor crear en 0 si no existe y evitar bloqueo
+      throw new NotFoundException('Stock no encontrado para esta sede y producto');
     }
 
-    const stockAnterior = producto.stock;
+    const stockAnterior = productoStock.stock;
+    const costoPromedio = Number(productoStock.producto.costoPromedio) || 0;
     let stockActual = stockAnterior;
 
     // Calcular nuevo stock según el tipo de movimiento
@@ -72,7 +81,7 @@ export class KardexService {
     // Calcular costo unitario si no se proporciona
     let costoUnitario = data.costoUnitario;
     if (!costoUnitario && data.tipoMovimiento === 'INGRESO') {
-      costoUnitario = Number(producto.costoPromedio) || 0;
+      costoUnitario = costoPromedio;
     }
 
     const valorTotal = costoUnitario ? costoUnitario * data.cantidad : null;
@@ -89,6 +98,7 @@ export class KardexService {
         stockActual,
         costoUnitario: costoUnitario || null,
         valorTotal: valorTotal || null,
+        sedeId: data.sedeId, // Guardar la sede en el movimiento
         comprobanteId: data.comprobanteId,
         compraId: data.compraId,
         usuarioId: data.usuarioId,
@@ -126,8 +136,8 @@ export class KardexService {
       },
     });
 
-    // Actualizar el stock y costo promedio del producto
-    await this.actualizarStockYCosto(data.productoId, stockActual, data.tipoMovimiento, costoUnitario, data.cantidad);
+    // Actualizar el stock en la sede y costo promedio del producto
+    await this.actualizarStockYCosto(data.productoId, data.sedeId, stockActual, data.tipoMovimiento, costoUnitario, data.cantidad);
 
     return movimiento;
   }
@@ -357,6 +367,14 @@ export class KardexService {
     empresaId: number,
     usuarioId?: number,
   ) {
+    // 0. Resolver Sede
+    let sedeId = ajusteDto.sedeId;
+    if (!sedeId) {
+      const sede = await this.prisma.sede.findFirst({ where: { empresaId, esPrincipal: true } });
+      if (!sede) throw new NotFoundException('No se encontró sede principal para el ajuste');
+      sedeId = sede.id;
+    }
+
     // Verificar que el producto existe
     const producto = await this.prisma.producto.findFirst({
       where: { id: ajusteDto.productoId, empresaId },
@@ -388,6 +406,7 @@ export class KardexService {
     const movimiento = await this.registrarMovimiento({
       productoId: ajusteDto.productoId,
       empresaId,
+      sedeId, // Pass resolved sedeId
       tipoMovimiento: 'AJUSTE',
       concepto: `Ajuste ${ajusteDto.tipoAjuste.toLowerCase()}: ${ajusteDto.motivo}`,
       cantidad: Math.abs(cantidad),
@@ -631,40 +650,61 @@ export class KardexService {
 
   private async actualizarStockYCosto(
     productoId: number,
+    sedeId: number,
     nuevoStock: number,
     tipoMovimiento: string,
     costoUnitario?: number,
     cantidad?: number,
   ) {
-    const dataUpdate: any = { stock: Math.max(0, nuevoStock) };
+    // Actualizar stock en la sede específica
+    await this.prisma.productoStock.update({
+      where: { productoId_sedeId: { productoId, sedeId } },
+      data: { stock: Math.max(0, nuevoStock) }
+    });
 
-    // Actualizar costo promedio solo para ingresos
+    // Opcional: Actualizar el campo 'stock' global en Producto sumando todas las sedes (para compatibilidad lectura rápida)
+    /* 
+    const total = await this.prisma.productoStock.aggregate({
+        where: { productoId },
+        _sum: { stock: true }
+    });
+    await this.prisma.producto.update({ where: { id: productoId }, data: { stock: total._sum.stock || 0 } });
+    */
+
+    // Actualizar costo promedio solo para ingresos (afecta al producto globalmente)
     if (tipoMovimiento === 'INGRESO' && costoUnitario && cantidad) {
+      // Recalcular costo promedio global
       const producto = await this.prisma.producto.findUnique({
         where: { id: productoId },
-        select: { stock: true, costoPromedio: true },
+        select: { costoPromedio: true },
       });
+      // Obtener stock TOTAL de todas las sedes para el ponderado
+      const totalStock = await this.prisma.productoStock.aggregate({
+        where: { productoId },
+        _sum: { stock: true }
+      });
+      const stockTotalGlobal = totalStock._sum.stock || 0; // Este es el stock NUEVO total ya actualizado en la línea anterior?
+      // Espera, acabamos de actualizar el stock de la sede. 
+      // El stockAnteriorGlobal seria stockTotalGlobal - cantidad.
 
       if (producto) {
-        const stockAnterior = producto.stock;
+        const stockActualGlobal = stockTotalGlobal;
+        const stockAnteriorGlobal = stockActualGlobal - cantidad;
         const costoAnterior = Number(producto.costoPromedio) || 0;
 
         // Calcular costo promedio ponderado
-        const valorAnterior = stockAnterior * costoAnterior;
+        const valorAnterior = stockAnteriorGlobal * costoAnterior;
         const valorNuevo = cantidad * costoUnitario;
-        const stockNuevo = stockAnterior + cantidad;
 
-        if (stockNuevo > 0) {
-          const costoPromedio = (valorAnterior + valorNuevo) / stockNuevo;
-          dataUpdate.costoPromedio = costoPromedio;
+        if (stockActualGlobal > 0) {
+          const costoPromedio = (valorAnterior + valorNuevo) / stockActualGlobal;
+          await this.prisma.producto.update({
+            where: { id: productoId },
+            data: { costoPromedio },
+          });
         }
       }
     }
-
-    await this.prisma.producto.update({
-      where: { id: productoId },
-      data: dataUpdate,
-    });
   }
 
   /**

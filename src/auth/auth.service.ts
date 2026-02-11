@@ -107,8 +107,8 @@ export class AuthService {
       throw new ForbiddenException('Cuenta inactiva');
     }
 
-    // Validar que la empresa esté activa (solo si el usuario pertenece a una empresa y no es ADMIN_SISTEMA)
-    if (user.rol !== 'ADMIN_SISTEMA' && user.empresaId && user.empresa?.estado !== 'ACTIVO') {
+    // Validar que la empresa esté activa (solo si el usuario pertenece a una empresa y no es ADMIN_SISTEMA o RESELLER)
+    if (user.rol !== 'ADMIN_SISTEMA' && user.rol !== 'RESELLER' && user.empresaId && user.empresa?.estado !== 'ACTIVO') {
       throw new ForbiddenException('La empresa está inactiva. Contacte con soporte.');
     }
 
@@ -150,6 +150,7 @@ export class AuthService {
         celular: true,
         telefono: true,
         empresaId: true,
+        resellerId: true, // Added field
         estado: true,
         permisos: true, // Incluir permisos
         empresa: {
@@ -209,6 +210,7 @@ export class AuthService {
         celular: true,
         telefono: true,
         empresaId: true,
+        resellerId: true,
         estado: true,
         permisos: true, // Incluir permisos
         empresa: {

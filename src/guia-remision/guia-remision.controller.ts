@@ -10,7 +10,9 @@ import {
     UseGuards,
     Request,
     ParseIntPipe,
+    Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { GuiaRemisionService } from './guia-remision.service';
 import { CreateGuiaRemisionDto } from './dto/create-guia-remision.dto';
 import { UpdateGuiaRemisionDto } from './dto/update-guia-remision.dto';
@@ -73,5 +75,22 @@ export class GuiaRemisionController {
             id,
             empresaId
         );
+    }
+    @Get(':id/pdf')
+    async generarPdf(
+        @Param('id', ParseIntPipe) id: number,
+        @Request() req,
+        @Res() res: Response,
+    ) {
+        const empresaId = req.user.empresaId;
+        const pdfBuffer = await this.guiaRemisionService.generarPdf(id, empresaId);
+
+        res.set({
+            'Content-Type': 'application/pdf',
+            'Content-Disposition': `inline; filename=guia-remision-${id}.pdf`,
+            'Content-Length': pdfBuffer.length,
+        });
+
+        res.end(pdfBuffer);
     }
 }

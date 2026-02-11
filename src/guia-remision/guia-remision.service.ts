@@ -9,12 +9,14 @@ import { CreateGuiaRemisionDto } from './dto/create-guia-remision.dto';
 import { UpdateGuiaRemisionDto } from './dto/update-guia-remision.dto';
 import { QueryGuiaRemisionDto } from './dto/query-guia-remision.dto';
 import { SunatGuiaService } from './sunat-guia.service';
+import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
 
 @Injectable()
 export class GuiaRemisionService {
     constructor(
         private prisma: PrismaService,
         private sunatGuiaService: SunatGuiaService,
+        private pdfGeneratorService: PdfGeneratorService,
     ) { }
 
     async create(createDto: CreateGuiaRemisionDto, empresaId: number, usuarioId?: number) {
@@ -408,6 +410,97 @@ export class GuiaRemisionService {
     private getCurrentTime(): string {
         const now = new Date();
         return now.toTimeString().split(' ')[0]; // HH:MM:SS
+    }
+
+    async generarPdf(id: number, empresaId: number) {
+        const guia = await this.findOne(id, empresaId);
+
+        // Helper para formatear fecha
+        const formatDate = (d: Date) => d.toISOString().split('T')[0];
+
+        // Mapear modo de transporte (Catálogo 18)
+        const modosTransporte: Record<string, string> = {
+            '01': 'TRANSPORTE PÚBLICO',
+            '02': 'TRANSPORTE PRIVADO',
+        };
+
+        // Mapear motivo de traslado (Catálogo 20)
+        const motivosTraslado: Record<string, string> = {
+            '01': 'VENTA',
+            '02': 'COMPRA',
+            '04': 'TRASLADO ENTRE ESTABLECIMIENTOS DE LA MISMA EMPRESA',
+            '08': 'IMPORTACION',
+            '09': 'EXPORTACION',
+            '13': 'OTROS',
+            '14': 'VENTA SUJETA A CONFIRMACION DEL COMPRADOR',
+            '18': 'TRASLADO EMISOR ITINERANTE CP',
+            '19': 'TRASLADO A ZONA PRIMARIA',
+        };
+
+        const empresa = await this.prisma.empresa.findUnique({
+            where: { id: empresaId },
+            include: { rubro: true }
+        });
+
+        if (!empresa) {
+            throw new BadRequestException('Empresa no encontrada');
+        }
+
+        const data = {
+            // Empresa
+            nombreComercial: empresa.nombreComercial,
+            razonSocial: empresa.razonSocial,
+            direccion: empresa.direccion,
+            rubro: empresa.rubro?.nombre || '',
+            contacto: empresa.whatsappTienda || empresa.yapeNumero || '',
+            email: '', // Empresa model currently does not have explicit email field, usually in Usuario
+            logo: empresa.logo,
+
+            // Documento
+            ruc: empresa.ruc,
+            serie: guia.serie,
+            correlativo: String(guia.correlativo).padStart(8, '0'),
+            fechaEmision: formatDate(guia.fechaEmision),
+            fechaTraslado: formatDate(guia.fechaInicioTraslado),
+            // @ts-ignore: tipoTraslado might be property on guia
+            motivoTraslado: motivosTraslado[guia['tipoTraslado']] || guia['tipoTraslado'] || 'VENTA',
+            modalidadTraslado: modosTransporte[guia.modoTransporte] || guia.modoTransporte,
+            pesoTotal: guia.pesoTotal,
+            unidadPeso: guia.unidadPeso === 'KGM' ? 'KG' : guia.unidadPeso,
+
+            // Puntos
+            partidaDireccion: guia.partidaDireccion,
+            partidaUbigeo: guia.partidaUbigeo,
+            llegadaDireccion: guia.llegadaDireccion,
+            llegadaUbigeo: guia.llegadaUbigeo,
+
+            // Destinatario
+            destinatarioRazonSocial: guia.destinatarioRazonSocial,
+            destinatarioNumDoc: guia.destinatarioNumDoc,
+
+            // Transporte
+            esTransportePublico: guia.modoTransporte === '01',
+            transportistaRazonSocial: guia.transportistaRazonSocial,
+            transportistaRuc: guia.transportistaRuc,
+            vehiculoPlaca: guia.vehiculoPlaca,
+            conductorNombre: guia.conductorNombre,
+            conductorLicencia: guia.conductorLicencia,
+
+            // Items
+            detalles: guia.detalles.map((d, i) => ({
+                item: i + 1,
+                codigo: d.codigoProducto,
+                descripcion: d.descripcion,
+                unidad: d.unidadMedida,
+                cantidad: d.cantidad,
+            })),
+
+            // Footer
+            observaciones: guia.observaciones,
+            qrCode: null, // TODO: Generar QR Code real
+        };
+
+        return this.pdfGeneratorService.generarPDFGuiaRemision(data);
     }
 
     async getNextCorrelativo(serie: string, empresaId: number): Promise<number> {

@@ -198,6 +198,24 @@ export class ProductoService {
           fechaFinOferta: fechaFinOferta ? new Date(fechaFinOferta) : undefined,
         },
       });
+
+      // Inicializar stock en las sedes
+      const sedes = await this.prisma.sede.findMany({ where: { empresaId } });
+      if (sedes.length > 0) {
+        // Buscar sede principal para asignar el stock inicial
+        const sedePrincipal = sedes.find(s => s.esPrincipal) || sedes[0];
+
+        await this.prisma.productoStock.createMany({
+          data: sedes.map(s => ({
+            productoId: nuevo.id,
+            sedeId: s.id,
+            // Asignar el stock inicial solo a la sede principal
+            stock: s.id === sedePrincipal.id ? stock : 0,
+            stockMinimo: s.id === sedePrincipal.id ? stockMinimo : 0,
+            stockMaximo: s.id === sedePrincipal.id ? stockMaximo : null
+          }))
+        });
+      }
     }
 
     return nuevo;
@@ -262,9 +280,15 @@ export class ProductoService {
           codigo: true,
           descripcion: true,
           imagenUrl: true,
-          stock: true,
-          stockMinimo: true,
-          stockMaximo: true,
+          // stock: true, // Deprecated: usar stocks relation
+          // stockMinimo: true,
+          // stockMaximo: true,
+          stocks: {
+            where: {
+              // Si se filtra por sede en el futuro, agregar aquí
+            },
+            select: { stock: true, stockMinimo: true, stockMaximo: true, sedeId: true }
+          },
           costoPromedio: true,
           precioUnitario: true,
           valorUnitario: true,
@@ -330,10 +354,19 @@ export class ProductoService {
     };
 
     const productos = await Promise.all(
-      productosRaw.map(async (p) => ({
-        ...p,
-        imagenUrl: await signIfS3((p as any).imagenUrl as any),
-      }))
+      productosRaw.map(async (p) => {
+        // Calcular stock total (suma de todas las sedes)
+        // O si hubiera filtro por sede, solo de esa sede
+        const stockTotal = p.stocks.reduce((sum, s) => sum + s.stock, 0);
+        const stockMinimo = p.stocks.reduce((sum, s) => sum + (s.stockMinimo || 0), 0);
+
+        return {
+          ...p,
+          stock: stockTotal, // Sobrescribir propiedad stock para compatibilidad con frontend
+          stockMinimo: stockMinimo,
+          imagenUrl: await signIfS3((p as any).imagenUrl as any),
+        };
+      })
     );
 
     return { productos, total, page, limit };
@@ -377,6 +410,8 @@ export class ProductoService {
     precioOferta?: number;
     fechaInicioOferta?: string | Date;
     fechaFinOferta?: string | Date;
+
+    sedeId?: number; // Nueva propiedad opcional para identificar dónde se ajusta el stock
   }, usuarioId?: number) {
     const producto = await this.prisma.producto.findFirst({
       where: { id: data.id, empresaId: data.empresaId },
@@ -391,25 +426,42 @@ export class ProductoService {
     }
 
     // Si cambió el stock, registrar movimiento de kardex
-    if (data.stock !== undefined && data.stock !== producto.stock) {
-      const diferencia = data.stock - producto.stock;
-      const esIngreso = diferencia > 0;
-      const cantidad = Math.abs(diferencia);
+    // NOTA: Para cambio de stock directo, se asume Sede Principal si no se especifica
+    if (data.stock !== undefined) {
+      // Obtener sede principal por defecto si no viene en data
+      let targetSedeId = data.sedeId;
+      if (!targetSedeId) {
+        const sedePrincipal = await this.prisma.sede.findFirst({ where: { empresaId: data.empresaId, esPrincipal: true } });
+        targetSedeId = sedePrincipal?.id;
+      }
 
-      try {
-        await this.kardexService.registrarMovimiento({
-          productoId: data.id,
-          empresaId: data.empresaId,
-          tipoMovimiento: esIngreso ? 'INGRESO' : 'SALIDA',
-          concepto: `Ajuste manual de stock desde inventario (${esIngreso ? '+' : '-'}${cantidad})`,
-          cantidad,
-          costoUnitario: Number(producto.costoPromedio) || 0,
-          usuarioId,
-          observacion: `Stock anterior: ${producto.stock}, Stock nuevo: ${data.stock}`,
+      if (targetSedeId) {
+        // Obtener stock actual en esa sede
+        const currentStock = await this.prisma.productoStock.findUnique({
+          where: { productoId_sedeId: { productoId: data.id, sedeId: targetSedeId } }
         });
-      } catch (error) {
-        console.error('Error al registrar movimiento de kardex desde edición de producto:', error);
-        // No fallar la actualización del producto por error en kardex
+
+        if (currentStock && currentStock.stock !== data.stock) {
+          const diferencia = data.stock - currentStock.stock;
+          const esIngreso = diferencia > 0;
+          const cantidad = Math.abs(diferencia);
+
+          try {
+            await this.kardexService.registrarMovimiento({
+              productoId: data.id,
+              empresaId: data.empresaId,
+              sedeId: targetSedeId,
+              tipoMovimiento: esIngreso ? 'INGRESO' : 'SALIDA',
+              concepto: `Ajuste manual de stock desde inventario (${esIngreso ? '+' : '-'}${cantidad})`,
+              cantidad,
+              costoUnitario: Number(producto.costoPromedio) || 0,
+              usuarioId,
+              observacion: `Stock anterior: ${currentStock.stock}, Stock nuevo: ${data.stock}`,
+            });
+          } catch (error) {
+            console.error('Error al registrar movimiento de kardex desde edición de producto:', error);
+          }
+        }
       }
     }
 
@@ -447,7 +499,7 @@ export class ProductoService {
           data.costoUnitario !== undefined
             ? new Decimal(data.costoUnitario)
             : undefined,
-        stock: data.stock,
+        // stock: data.stock, // DEPRECATED: No actualizar stock global directamente aquí, se hace vía triggers o agregación
         stockMinimo:
           data.stockMinimo !== undefined ? data.stockMinimo : undefined,
         stockMaximo:
@@ -602,6 +654,13 @@ export class ProductoService {
 
   async obtenerSiguienteCodigo(empresaId: number, prefijo = 'PR') {
     return this.generarCodigoProducto(empresaId, prefijo);
+  }
+
+  async getSedePrincipalId(empresaId: number): Promise<number> {
+    const sede = await this.prisma.sede.findFirst({
+      where: { empresaId, esPrincipal: true }
+    });
+    return sede?.id || 0; // Return 0 or handle error if no sede found (though database should have one)
   }
 
   async exportar(empresaId: number, search?: string): Promise<Buffer> {

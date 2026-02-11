@@ -410,6 +410,9 @@ export class ProductoController {
 
     const tipoMovimiento = body.tipo === 'INCREMENTO' ? 'INGRESO' : 'SALIDA';
 
+    // Obtener sede principal
+    const sedePrincipal = await this.service.getSedePrincipalId(user.empresaId);
+
     // 1. Registrar movimiento global (Kardex)
     const movimiento = await this.kardexService.registrarMovimiento({
       productoId: body.productoId,
@@ -417,7 +420,8 @@ export class ProductoController {
       tipoMovimiento: tipoMovimiento,
       concepto: `Ajuste Lote Manual: ${body.motivo}`,
       cantidad: body.cantidad,
-      usuarioId: user.id
+      usuarioId: user.id,
+      sedeId: sedePrincipal
     });
 
     // 2. Ajustar lote específico

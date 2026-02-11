@@ -14,6 +14,11 @@ export class AjusteInventarioDto {
   @Min(1)
   productoId: number;
 
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  sedeId?: number;
+
   @IsNotEmpty()
   @IsEnum(TipoAjuste)
   tipoAjuste: TipoAjuste;

@@ -14,6 +14,6 @@ import { ProductoModule } from '../producto/producto.module';
   imports: [EmpresaModule, forwardRef(() => KardexModule), NotificacionesModule, S3Module, forwardRef(() => ProductoModule)],
   controllers: [ComprobanteController],
   providers: [ComprobanteService, RolesGuard, EnviarSunatService, PdfGeneratorService],
-  exports: [ComprobanteService, EnviarSunatService],
+  exports: [ComprobanteService, EnviarSunatService, PdfGeneratorService],
 })
 export class ComprobanteModule { }

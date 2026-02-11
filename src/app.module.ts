@@ -34,6 +34,8 @@ import { ComprasModule } from './compras/compras.module';
 import { FinanzasModule } from './finanzas/finanzas.module';
 import { GuiaRemisionModule } from './guia-remision/guia-remision.module';
 import { ModulosModule } from './modulos/modulos.module';
+import { ResellerModule } from './reseller/reseller.module';
+import { SedeModule } from './sede/sede.module';
 
 @Module({
   imports: [
@@ -70,6 +72,8 @@ import { ModulosModule } from './modulos/modulos.module';
     FinanzasModule,
     GuiaRemisionModule,
     ModulosModule,
+    ResellerModule,
+    SedeModule,
   ],
   controllers: [AppController],
   providers: [AppService],

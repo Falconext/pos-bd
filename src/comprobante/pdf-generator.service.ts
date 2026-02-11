@@ -10,6 +10,7 @@ export class PdfGeneratorService {
   private browser: puppeteer.Browser | null = null;
   private template: HandlebarsTemplateDelegate | null = null;
   private cotizacionTemplate: HandlebarsTemplateDelegate | null = null;
+  private guiaTemplate: HandlebarsTemplateDelegate | null = null;
 
   async onModuleInit() {
     // Cargar template: intentar en dist y src para soportar start y start:dev
@@ -62,6 +63,28 @@ export class PdfGeneratorService {
       this.logger.log(`✅ Template de cotización cargado: ${cotizacionPath}`);
     } else {
       this.logger.warn('⚠️ Template de cotización no encontrado, usando template genérico');
+    }
+
+    // Cargar template de guía de remisión
+    const guiaCandidates = [
+      path.join(__dirname, 'templates', 'guia-remision.hbs'),
+      path.join(process.cwd(), 'src', 'comprobante', 'templates', 'guia-remision.hbs'),
+    ];
+
+    let guiaPath: string | null = null;
+    for (const p of guiaCandidates) {
+      if (fs.existsSync(p)) {
+        guiaPath = p;
+        break;
+      }
+    }
+
+    if (guiaPath) {
+      const guiaSource = fs.readFileSync(guiaPath, 'utf-8');
+      this.guiaTemplate = Handlebars.compile(guiaSource);
+      this.logger.log(`✅ Template de guía remisión cargado: ${guiaPath}`);
+    } else {
+      this.logger.warn('⚠️ Template de guía remisión no encontrado');
     }
   }
 
@@ -324,6 +347,41 @@ export class PdfGeneratorService {
       return Buffer.from(pdfBuffer);
     } catch (error) {
       this.logger.error(`❌ Error generando PDF de cotización: ${error.message}`, error.stack);
+      throw error;
+    }
+  }
+  async generarPDFGuiaRemision(data: any): Promise<Buffer> {
+    try {
+      if (!this.guiaTemplate) {
+        throw new Error('Template de guía de remisión no cargado');
+      }
+
+      const html = this.guiaTemplate(data);
+
+      const browser = await this.getBrowser();
+      const page = await browser.newPage();
+
+      await page.setContent(html, {
+        waitUntil: 'networkidle0',
+      });
+
+      const pdfBuffer = await page.pdf({
+        format: 'A4',
+        printBackground: true,
+        margin: {
+          top: '10mm',
+          right: '10mm',
+          bottom: '10mm',
+          left: '10mm',
+        },
+      });
+
+      await page.close();
+
+      this.logger.log('✅ PDF de guía de remisión generado exitosamente');
+      return Buffer.from(pdfBuffer);
+    } catch (error) {
+      this.logger.error(`❌ Error generando PDF de guía: ${error.message}`, error.stack);
       throw error;
     }
   }

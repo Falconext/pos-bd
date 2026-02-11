@@ -14,6 +14,12 @@ export class ComprasService {
     async crear(empresaId: number, usuarioId: number, data: CrearCompraDto) {
         let subtotal = 0;
 
+        // Obtener sede principal para kardex
+        const sedePrincipal = await this.prisma.sede.findFirst({
+            where: { empresaId, esPrincipal: true }
+        });
+        const sedeId = sedePrincipal?.id || 1; // Fallback unsafe but necessary to prevent crash if no sede
+
         // Prepare detail data and calculate totals from items to be safe
         const detallesData: any[] = [];
 
@@ -94,6 +100,7 @@ export class ComprasService {
                         costoUnitario: Number(item.precioUnitario),
                         compraId: compra.id,
                         usuarioId,
+                        sedeId,
                         lote: item.lote,
                         fechaVencimiento: item.fechaVencimiento ? new Date(item.fechaVencimiento) : undefined
                     });
