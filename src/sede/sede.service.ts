@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateSedeDto } from './dto/create-sede.dto';
 import { UpdateSedeDto } from './dto/update-sede.dto';
@@ -8,6 +8,26 @@ export class SedeService {
     constructor(private readonly prisma: PrismaService) { }
 
     async create(createSedeDto: CreateSedeDto, empresaId: number) {
+        // Validar límite del plan
+        const empresa = await this.prisma.empresa.findUnique({
+            where: { id: empresaId },
+            include: { plan: true },
+        });
+
+        if (!empresa) throw new NotFoundException('Empresa no encontrada');
+
+        const sedesCount = await this.prisma.sede.count({
+            where: { empresaId, activo: true },
+        });
+
+        const maxSedes = empresa.plan?.maxSedes || 1; // Default a 1 si no hay plan definido
+
+        if (sedesCount >= maxSedes) {
+            throw new ForbiddenException(
+                `Has alcanzado el límite de sedes permitido por tu plan (${maxSedes}). Actualiza tu plan para agregar más.`
+            );
+        }
+
         // Si es principal, desmarcar otras principales
         if (createSedeDto.esPrincipal) {
             await this.prisma.sede.updateMany({

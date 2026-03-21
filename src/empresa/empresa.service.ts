@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import bcrypt from 'bcrypt';
 import { CreateEmpresaDto } from './dto/create-empresa.dto';
 import { UpdateEmpresaDto } from './dto/update-empresa.dto';
+import { SedeService } from '../sede/sede.service';
 import axios from 'axios';
 
 function parseDDMMYYYY(input: string): Date {
@@ -36,7 +37,10 @@ function parseDDMMYYYY(input: string): Date {
 
 @Injectable()
 export class EmpresaService {
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly sedeService: SedeService,
+  ) { }
 
   async crear(data: CreateEmpresaDto) {
     const fechaActivacion = parseDDMMYYYY(data.fechaActivacion);
@@ -200,6 +204,14 @@ export class EmpresaService {
       include: { plan: true, productos: true, clientes: true },
     });
 
+    // Crear Sede Principal automáticamente
+    await this.sedeService.create({
+      nombre: 'Sede Principal',
+      direccion: data.direccion,
+      codigo: '001',
+      esPrincipal: true,
+    }, empresa.id);
+
     return empresa;
   }
 
@@ -273,6 +285,7 @@ export class EmpresaService {
               nombre: true,
               costo: true,
               descripcion: true,
+              maxSedes: true,
               tieneTienda: true,
             },
           },
@@ -304,6 +317,7 @@ export class EmpresaService {
         plan: {
           nombre: e.plan.nombre,
           costo: e.plan.costo,
+          maxSedes: e.plan.maxSedes,
           descripcion: e.plan.descripcion,
           tieneTienda: e.plan.tieneTienda,
         },

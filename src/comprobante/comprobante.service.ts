@@ -13,6 +13,7 @@ import { S3Service } from '../s3/s3.service';
 import { PdfGeneratorService } from './pdf-generator.service';
 import { numeroALetras } from './utils/numero-a-letras';
 import { ProductoLoteService } from '../producto/producto-lote.service';
+import { EnviarSunatService } from './enviar-sunat.service';
 
 @Injectable()
 export class ComprobanteService {
@@ -24,6 +25,8 @@ export class ComprobanteService {
     private readonly s3Service: S3Service,
     private readonly pdfGenerator: PdfGeneratorService,
     private readonly loteService: ProductoLoteService,
+    @Inject(forwardRef(() => EnviarSunatService))
+    private readonly enviarSunatService: EnviarSunatService,
   ) { }
 
   async listarTipoOperacion() {
@@ -356,7 +359,7 @@ export class ComprobanteService {
     return { ...comp, detalles: detallesConLotes };
   }
 
-  async anularComprobante(comprobanteId: number) {
+  async anularComprobante(comprobanteId: number, motivo?: string) {
     const comp = await this.prisma.comprobante.findUnique({
       where: { id: comprobanteId },
       include: { detalles: true },
@@ -366,6 +369,14 @@ export class ComprobanteService {
       comp.tipoDoc,
     );
     const isFormal = ['01', '03', '08'].includes(comp.tipoDoc);
+
+    // Comunicar baja o anulación a SUNAT si es comprobante electrónico
+    if (isFormal && comp.documentoId) {
+      if (comp.tipoDoc === '03' || comp.tipoDoc === '09') {
+        throw new BadRequestException('Las Boletas de Venta emitidas deben anularse usando una Nota de Crédito. Use el botón "Generar NC (Anular)".');
+      }
+      await this.enviarSunatService.anularComprobanteSunat(comp.documentoId, comp.empresaId, motivo);
+    }
 
     // Revertir stock para todos los tipos de comprobantes que afectan inventario
     // (tanto formales como informales, excluyendo notas de crédito que ya manejan su propio stock)

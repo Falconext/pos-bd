@@ -1170,6 +1170,42 @@ export class EnviarSunatService {
     return new Date() > maxRetryTime;
   }
 
+  async anularComprobanteSunat(documentId: string, empresaId: number, motivo: string = 'ANULACION DE LA OPERACION') {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { providerToken: true, providerId: true },
+    });
+
+    if (!empresa || !empresa.providerToken) {
+      throw new HttpException('Empresa no configurada para APISUNAT', 400);
+    }
+
+    try {
+      console.log(`🚀 Enviando Comunicación de Baja a SUNAT para el documento: ${documentId}`);
+
+      const payload = {
+        personaId: empresa.providerId,
+        personaToken: empresa.providerToken,
+        documentId: documentId,
+        reason: motivo.substring(0, 100), // SUNAT limits reason length
+      };
+
+      const response = await axios.post('https://back.apisunat.com/personas/v1/voidBill', payload);
+
+      console.log('✅ Documento anulado en SUNAT:', response.data);
+      return response.data;
+    } catch (err: any) {
+      console.error('🚫 Error anulando en SUNAT:', {
+        documentId,
+        error: err.response?.data || err.message,
+      });
+      throw new HttpException(
+        `APISUNAT rechazó la anulación: ${err.response?.data?.message || err.message || 'Error desconocido'}`,
+        502,
+      );
+    }
+  }
+
   async debugPayload(comprobanteId: number) {
     const comp = await this.prisma.comprobante.findUnique({
       where: { id: comprobanteId },

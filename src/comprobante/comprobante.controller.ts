@@ -195,8 +195,9 @@ export class ComprobanteController {
   @Roles('ADMIN_EMPRESA')
   async anularComprobante(
     @Param('comprobanteId', ParseIntPipe) comprobanteId: number,
+    @Body() input: any,
   ) {
-    return this.service.anularComprobante(comprobanteId);
+    return this.service.anularComprobante(comprobanteId, input?.motivo);
   }
 
   @Patch(':comprobanteId/completar-pago')

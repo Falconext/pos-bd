@@ -12,6 +12,7 @@ model Plan {
   nombre              String    @unique
   descripcion         String?
   limiteUsuarios      Int?
+  maxSedes            Int?      @default(1)
   costo               Decimal   @default(0)
   esPrueba            Boolean   @default(false)
   duracionDias        Int       @default(30)
