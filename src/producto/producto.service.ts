@@ -280,9 +280,9 @@ export class ProductoService {
           codigo: true,
           descripcion: true,
           imagenUrl: true,
-          // stock: true, // Deprecated: usar stocks relation
-          // stockMinimo: true,
-          // stockMaximo: true,
+          stock: true, // Fallback cuando ProductoStock está vacío
+          stockMinimo: true,
+          stockMaximo: true,
           stocks: {
             where: {
               // Si se filtra por sede en el futuro, agregar aquí
@@ -355,14 +355,18 @@ export class ProductoService {
 
     const productos = await Promise.all(
       productosRaw.map(async (p) => {
-        // Calcular stock total (suma de todas las sedes)
-        // O si hubiera filtro por sede, solo de esa sede
-        const stockTotal = p.stocks.reduce((sum, s) => sum + s.stock, 0);
-        const stockMinimo = p.stocks.reduce((sum, s) => sum + (s.stockMinimo || 0), 0);
+        // Calcular stock total (suma de todas las sedes).
+        // Si no hay entradas en ProductoStock, usar el campo legacy Producto.stock como fallback.
+        const stockTotal = p.stocks.length > 0
+          ? p.stocks.reduce((sum, s) => sum + s.stock, 0)
+          : ((p as any).stock ?? 0);
+        const stockMinimo = p.stocks.length > 0
+          ? p.stocks.reduce((sum, s) => sum + (s.stockMinimo || 0), 0)
+          : ((p as any).stockMinimo ?? 0);
 
         return {
           ...p,
-          stock: stockTotal, // Sobrescribir propiedad stock para compatibilidad con frontend
+          stock: stockTotal,
           stockMinimo: stockMinimo,
           imagenUrl: await signIfS3((p as any).imagenUrl as any),
         };

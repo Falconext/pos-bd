@@ -14,6 +14,7 @@
     "start:debug": "nest start --debug --watch",
     "start:prod": "npx prisma db push && npx ts-node prisma/seed.ts && npx ts-node src/scripts/migrate-sedes.ts && node dist/main",
     "migrate:sedes": "npx ts-node src/scripts/migrate-sedes.ts",
+    "reset:stock": "npx ts-node src/scripts/reset-stock-50.ts",
     "postinstall": "prisma generate",
     "migrate:deploy": "prisma migrate deploy",
     "prisma:web": "cp prisma/schema.prisma prisma/schema.backup.prisma && prisma generate && echo 'Usando PostgreSQL (Web)'",
