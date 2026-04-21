@@ -112,4 +112,16 @@ export class TiendaController {
     }
     return this.tiendaService.subirQr(empresaId, tipo, { buffer: file?.buffer, mimetype: file?.mimetype });
   }
+
+  // ==================== UPLOAD LOGO ====================
+
+  @Post('logo')
+  @UseInterceptors(FileInterceptor('file', imageUploadOptions))
+  async subirLogo(
+    @Req() req: any,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    const empresaId = req.user.empresaId;
+    return this.tiendaService.subirLogo(empresaId, { buffer: file?.buffer, mimetype: file?.mimetype });
+  }
 }

@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsDateString, IsEnum } from 'class-validator';
+import { IsInt, IsOptional, IsString, IsDateString } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class QueryGuiaRemisionDto {
@@ -33,4 +33,10 @@ export class QueryGuiaRemisionDto {
     @IsOptional()
     @IsString()
     search?: string;
+
+    // Solo para ADMIN_EMPRESA: filtrar por sede específica
+    @IsOptional()
+    @Type(() => Number)
+    @IsInt()
+    sedeId?: number;
 }

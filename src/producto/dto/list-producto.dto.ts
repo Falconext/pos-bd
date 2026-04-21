@@ -40,4 +40,10 @@ export class ListProductoDto {
   @IsInt()
   @Min(1)
   categoriaId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  sedeId?: number;
 }

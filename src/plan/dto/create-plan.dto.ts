@@ -24,6 +24,10 @@ export class CreatePlanDto {
 
     @IsNumber()
     @IsOptional()
+    maxSedes?: number;
+
+    @IsNumber()
+    @IsOptional()
     maxImagenesProducto?: number;
 
     @IsNumber()

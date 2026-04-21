@@ -19,7 +19,7 @@ export class GuiaRemisionService {
         private pdfGeneratorService: PdfGeneratorService,
     ) { }
 
-    async create(createDto: CreateGuiaRemisionDto, empresaId: number, usuarioId?: number) {
+    async create(createDto: CreateGuiaRemisionDto, empresaId: number, usuarioId?: number, sedeId?: number) {
         // Generar correlativo automático si no se proporciona
         if (!createDto.correlativo) {
             const ultimaGuia = await this.prisma.guiaRemision.findFirst({
@@ -50,13 +50,16 @@ export class GuiaRemisionService {
         }
 
         // Validaciones de negocio
-        this.validateModoTransporte(createDto);
+        this.validateGuiaRemision(createDto);
 
         // Extraer detalles para crear por separado
         const { detalles, ...guiaData } = createDto;
 
         // Asegurar que correlativo esté definido
         const correlativoFinal = createDto.correlativo!;
+
+        // Determinar tipoDocumento según tipoGuia
+        const tipoDocumento = createDto.tipoGuia === 'TRANSPORTISTA' ? '31' : '09';
 
         // Crear guía de remisión
         // Crear guía de remisión con reintento por si hay colisión de correlativo
@@ -65,7 +68,9 @@ export class GuiaRemisionService {
                 data: {
                     ...guiaData,
                     correlativo: correlativoFinal,
+                    tipoDocumento,
                     empresaId,
+                    sedeId,
                     usuarioId,
                     fechaEmision: new Date(guiaData.fechaEmision),
                     fechaInicioTraslado: new Date(guiaData.fechaInicioTraslado),
@@ -101,7 +106,9 @@ export class GuiaRemisionService {
                     data: {
                         ...guiaData,
                         correlativo: nuevoCorrelativo,
+                        tipoDocumento,
                         empresaId,
+                        sedeId,
                         usuarioId,
                         fechaEmision: new Date(guiaData.fechaEmision),
                         fechaInicioTraslado: new Date(guiaData.fechaInicioTraslado),
@@ -133,11 +140,25 @@ export class GuiaRemisionService {
         }
     }
 
-    async findAll(query: QueryGuiaRemisionDto, empresaId: number) {
+    async findAll(query: QueryGuiaRemisionDto, empresaId: number, sedeId?: number) {
         const { page = 1, limit = 10, ...filters } = query;
         const skip = (page - 1) * limit;
 
-        const where: any = { empresaId };
+        // Principal sede: include legacy records with sedeId=null (created before JWT sedeId fix)
+        let sedeFilter: any = {};
+        if (sedeId) {
+            const esPrincipal = await this.prisma.sede.findFirst({
+                where: { empresaId, id: sedeId, esPrincipal: true },
+                select: { id: true },
+            });
+            if (esPrincipal) {
+                sedeFilter = { AND: [{ OR: [{ sedeId }, { sedeId: null }] }] };
+            } else {
+                sedeFilter = { sedeId };
+            }
+        }
+
+        const where: any = { empresaId, ...sedeFilter };
 
         if (filters.serie) {
             where.serie = filters.serie;
@@ -217,9 +238,9 @@ export class GuiaRemisionService {
         };
     }
 
-    async findOne(id: number, empresaId: number) {
+    async findOne(id: number, empresaId: number, sedeId?: number) {
         const guia = await this.prisma.guiaRemision.findFirst({
-            where: { id, empresaId },
+            where: { id, empresaId, ...(sedeId ? { sedeId } : {}) },
             include: {
                 detalles: {
                     include: {
@@ -245,13 +266,14 @@ export class GuiaRemisionService {
         return guia;
     }
 
-    async update(id: number, updateDto: UpdateGuiaRemisionDto, empresaId: number) {
-        const guia = await this.findOne(id, empresaId);
+    async update(id: number, updateDto: UpdateGuiaRemisionDto, empresaId: number, sedeId?: number) {
+        const guia = await this.findOne(id, empresaId, sedeId);
 
-        // No permitir actualizar si ya fue enviada a SUNAT
-        if (guia.estadoSunat !== 'PENDIENTE') {
+        // No permitir actualizar si ya fue aceptada/emitida
+        const estadosNoEditables = ['ACEPTADO', 'EMITIDO'];
+        if (estadosNoEditables.includes(guia.estadoSunat)) {
             throw new ForbiddenException(
-                'No se puede actualizar una guía que ya fue enviada a SUNAT',
+                'No se puede actualizar una guía que ya fue aceptada por SUNAT',
             );
         }
 
@@ -260,6 +282,10 @@ export class GuiaRemisionService {
 
         const dataToUpdate: any = {
             ...guiaData,
+            // Al editar una guía fallida o rechazada, resetear estado para que pueda re-enviarse
+            ...(['FALLIDO_ENVIO', 'RECHAZADO'].includes(guia.estadoSunat)
+                ? { estadoSunat: 'PENDIENTE', sunatErrorMsg: null, documentoId: null }
+                : {}),
         };
 
         if (guiaData.fechaEmision) {
@@ -305,8 +331,8 @@ export class GuiaRemisionService {
         return guiaActualizada;
     }
 
-    async remove(id: number, empresaId: number) {
-        const guia = await this.findOne(id, empresaId);
+    async remove(id: number, empresaId: number, sedeId?: number) {
+        const guia = await this.findOne(id, empresaId, sedeId);
 
         // No permitir eliminar si ya fue enviada a SUNAT (mejor anular)
         if (guia.estadoSunat === 'EMITIDO') {
@@ -322,8 +348,8 @@ export class GuiaRemisionService {
         return { message: 'Guía de remisión eliminada correctamente' };
     }
 
-    async enviarSunat(id: number, empresaId: number) {
-        const guia = await this.findOne(id, empresaId);
+    async enviarSunat(id: number, empresaId: number, sedeId?: number) {
+        const guia = await this.findOne(id, empresaId, sedeId);
 
         // Obtener credenciales de la empresa
         const empresa = await this.prisma.empresa.findUnique({
@@ -335,8 +361,8 @@ export class GuiaRemisionService {
             throw new BadRequestException('La empresa no tiene configuradas las credenciales de facturación electrónica (providerId/Token)');
         }
 
-        // Validar que esté pendiente
-        if (guia.estadoSunat !== 'PENDIENTE') {
+        // Validar que esté en estado enviable (nuevo o fallido)
+        if (!['PENDIENTE', 'FALLIDO_ENVIO'].includes(guia.estadoSunat)) {
             throw new BadRequestException(
                 `La guía ya fue procesada. Estado actual: ${guia.estadoSunat}`,
             );
@@ -385,8 +411,54 @@ export class GuiaRemisionService {
         }
     }
 
-    private validateModoTransporte(dto: CreateGuiaRemisionDto | UpdateGuiaRemisionDto) {
-        // Validar que si es transporte público, tenga datos del transportista
+    private validateGuiaRemision(dto: CreateGuiaRemisionDto | UpdateGuiaRemisionDto) {
+        // Validaciones específicas para GRE-T (Guía de Remisión Transportista)
+        if (dto.tipoGuia === 'TRANSPORTISTA') {
+            if (!dto.transportistaRuc || !dto.transportistaRazonSocial) {
+                throw new BadRequestException(
+                    'Para GRE-T se requieren datos completos del transportista (RUC y Razón Social)',
+                );
+            }
+            // Para GRE-T, el transportista debe tener registro MTC
+            if (!dto.transportistaMTC) {
+                throw new BadRequestException(
+                    'Para GRE-T se requiere el número de registro MTC del transportista',
+                );
+            }
+            if (!dto.conductorNumDoc || !dto.conductorNombre || !dto.conductorApellidos || !dto.conductorLicencia || !dto.vehiculoPlaca) {
+                throw new BadRequestException(
+                    'Para GRE-T se requieren datos de conductor (doc, nombre, apellidos, licencia) y vehículo (placa)',
+                );
+            }
+
+            const licencia = String(dto.conductorLicencia || '').trim().toUpperCase();
+            if (!/^[A-Z0-9]{9}$/.test(licencia)) {
+                throw new BadRequestException(
+                    'La licencia del conductor debe tener exactamente 9 caracteres alfanuméricos.',
+                );
+            }
+
+            const placa = String(dto.vehiculoPlaca || '').trim();
+            if (placa.length < 6) {
+                throw new BadRequestException('La placa del vehículo debe tener al menos 6 caracteres.');
+            }
+
+            const numeroTuc = String(dto.vehiculoAutorizacion || '').trim();
+            const tucRegex = /^[A-Za-z0-9]{11,13}$/;
+            if (!numeroTuc) {
+                throw new BadRequestException(
+                    'Para GRE-T se requiere el número correlativo de la Tarjeta Única de Circulación (11 a 13 caracteres alfanuméricos).',
+                );
+            }
+
+            if (!tucRegex.test(numeroTuc)) {
+                throw new BadRequestException(
+                    'El número correlativo de la Tarjeta Única de Circulación debe tener entre 11 y 13 caracteres alfanuméricos.',
+                );
+            }
+        }
+
+        // Validaciones según modo de transporte
         if (dto.modoTransporte === '01') {
             // Transporte público
             if (!dto.transportistaRuc || !dto.transportistaRazonSocial) {
@@ -396,7 +468,6 @@ export class GuiaRemisionService {
             }
         }
 
-        // Validar que si es transporte privado, tenga datos del conductor/vehículo
         if (dto.modoTransporte === '02') {
             // Transporte privado
             if (!dto.conductorNumDoc || !dto.vehiculoPlaca) {
@@ -412,8 +483,8 @@ export class GuiaRemisionService {
         return now.toTimeString().split(' ')[0]; // HH:MM:SS
     }
 
-    async generarPdf(id: number, empresaId: number) {
-        const guia = await this.findOne(id, empresaId);
+    async generarPdf(id: number, empresaId: number, sedeId?: number) {
+        const guia = await this.findOne(id, empresaId, sedeId);
 
         // Helper para formatear fecha
         const formatDate = (d: Date) => d.toISOString().split('T')[0];

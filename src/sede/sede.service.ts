@@ -43,21 +43,41 @@ export class SedeService {
             },
         });
 
-        // Crear stocks en 0 para todos los productos de la empresa
+        // Inicializar stock de la nueva sede copiando el stock de la sede principal
+        // (como punto de partida; luego cada sede gestiona su inventario de forma independiente)
+        const sedePrincipal = await this.prisma.sede.findFirst({
+            where: { empresaId, esPrincipal: true, activo: true, id: { not: sede.id } },
+        });
+
+        // Obtener stocks actuales de la sede principal (o en 0 si no hay sede principal aún)
+        const stocksPrincipal = sedePrincipal
+            ? await this.prisma.productoStock.findMany({
+                where: { sedeId: sedePrincipal.id },
+                select: { productoId: true, stock: true, stockMinimo: true, stockMaximo: true },
+              })
+            : [];
+
+        // Construir mapa para acceso rápido
+        const stockMap = new Map(stocksPrincipal.map(s => [s.productoId, s]));
+
         const productos = await this.prisma.producto.findMany({
-            where: { empresaId }
+            where: { empresaId },
+            select: { id: true, stock: true, stockMinimo: true, stockMaximo: true },
         });
 
         if (productos.length > 0) {
-            // En lote
-            const stocksData = productos.map(p => ({
-                productoId: p.id,
-                sedeId: sede.id,
-                stock: 0
-            }));
-            await this.prisma.productoStock.createMany({
-                data: stocksData
+            const stocksData = productos.map(p => {
+                const ref = stockMap.get(p.id);
+                return {
+                    productoId: p.id,
+                    sedeId: sede.id,
+                    // Copiar stock de la sede principal; si no existe, usar el campo legacy del producto
+                    stock: ref ? ref.stock : (p.stock ?? 0),
+                    stockMinimo: ref ? (ref.stockMinimo ?? 0) : (p.stockMinimo ?? 0),
+                    stockMaximo: ref ? ref.stockMaximo : p.stockMaximo,
+                };
             });
+            await this.prisma.productoStock.createMany({ data: stocksData });
         }
 
         return sede;
@@ -65,8 +85,8 @@ export class SedeService {
 
     async findAll(empresaId: number) {
         return this.prisma.sede.findMany({
-            where: { empresaId, activo: true },
-            orderBy: { esPrincipal: 'desc' },
+            where: { empresaId },
+            orderBy: [{ esPrincipal: 'desc' }, { activo: 'desc' }],
         });
     }
 
@@ -97,5 +117,51 @@ export class SedeService {
             where: { id },
             data: { activo: false },
         });
+    }
+
+    /**
+     * Sincroniza el stock de una sede copiando desde la sede principal.
+     * Útil para sedes que ya existen pero tienen stock en 0 por la configuración anterior.
+     * Solo actualiza registros con stock = 0 para no pisar ventas ya registradas.
+     */
+    async sincronizarStockDesdePrincipal(sedeId: number, empresaId: number) {
+        const sede = await this.prisma.sede.findFirst({
+            where: { id: sedeId, empresaId },
+        });
+        if (!sede) throw new NotFoundException('Sede no encontrada');
+
+        const sedePrincipal = await this.prisma.sede.findFirst({
+            where: { empresaId, esPrincipal: true, activo: true, id: { not: sedeId } },
+        });
+        if (!sedePrincipal) throw new NotFoundException('No hay sede principal configurada');
+
+        const stocksPrincipal = await this.prisma.productoStock.findMany({
+            where: { sedeId: sedePrincipal.id },
+            select: { productoId: true, stock: true, stockMinimo: true, stockMaximo: true },
+        });
+
+        let actualizados = 0;
+        for (const sp of stocksPrincipal) {
+            // Solo actualizar si el stock de la sede destino sigue en 0 (no pisamos operaciones reales)
+            const stockActual = await this.prisma.productoStock.findUnique({
+                where: { productoId_sedeId: { productoId: sp.productoId, sedeId } },
+            });
+            if (stockActual && stockActual.stock === 0) {
+                await this.prisma.productoStock.update({
+                    where: { productoId_sedeId: { productoId: sp.productoId, sedeId } },
+                    data: {
+                        stock: sp.stock,
+                        stockMinimo: sp.stockMinimo ?? 0,
+                        stockMaximo: sp.stockMaximo,
+                    },
+                });
+                actualizados++;
+            }
+        }
+
+        return {
+            message: `Stock sincronizado correctamente desde la sede principal`,
+            productosActualizados: actualizados,
+        };
     }
 }

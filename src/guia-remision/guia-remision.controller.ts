@@ -28,13 +28,17 @@ export class GuiaRemisionController {
     create(@Body() createGuiaRemisionDto: CreateGuiaRemisionDto, @Request() req) {
         const empresaId = req.user.empresaId;
         const usuarioId = req.user.id;
-        return this.guiaRemisionService.create(createGuiaRemisionDto, empresaId, usuarioId);
+        const sedeId = req.user.sedeId;
+        return this.guiaRemisionService.create(createGuiaRemisionDto, empresaId, usuarioId, sedeId);
     }
 
     @Get()
     findAll(@Query() query: QueryGuiaRemisionDto, @Request() req) {
         const empresaId = req.user.empresaId;
-        return this.guiaRemisionService.findAll(query, empresaId);
+        const isAdmin = ['ADMIN_EMPRESA', 'ADMIN_SISTEMA'].includes(req.user.rol);
+        // Admin puede pasar ?sedeId=X para filtrar, o dejar vacío para ver todas las sedes
+        const sedeId = isAdmin ? (query.sedeId ?? null) : req.user.sedeId;
+        return this.guiaRemisionService.findAll(query, empresaId, sedeId);
     }
 
     @Get('next-correlativo/:serie')
@@ -46,7 +50,8 @@ export class GuiaRemisionController {
     @Get(':id')
     findOne(@Param('id', ParseIntPipe) id: number, @Request() req) {
         const empresaId = req.user.empresaId;
-        return this.guiaRemisionService.findOne(id, empresaId);
+        const sedeId = req.user.sedeId;
+        return this.guiaRemisionService.findOne(id, empresaId, sedeId);
     }
 
     @Patch(':id')
@@ -56,13 +61,15 @@ export class GuiaRemisionController {
         @Request() req,
     ) {
         const empresaId = req.user.empresaId;
-        return this.guiaRemisionService.update(id, updateGuiaRemisionDto, empresaId);
+        const sedeId = req.user.sedeId;
+        return this.guiaRemisionService.update(id, updateGuiaRemisionDto, empresaId, sedeId);
     }
 
     @Delete(':id')
     remove(@Param('id', ParseIntPipe) id: number, @Request() req) {
         const empresaId = req.user.empresaId;
-        return this.guiaRemisionService.remove(id, empresaId);
+        const sedeId = req.user.sedeId;
+        return this.guiaRemisionService.remove(id, empresaId, sedeId);
     }
 
     @Post(':id/enviar-sunat')
@@ -71,9 +78,11 @@ export class GuiaRemisionController {
         @Request() req,
     ) {
         const empresaId = req.user.empresaId;
+        const sedeId = req.user.sedeId;
         return this.guiaRemisionService.enviarSunat(
             id,
-            empresaId
+            empresaId,
+            sedeId
         );
     }
     @Get(':id/pdf')
@@ -83,7 +92,8 @@ export class GuiaRemisionController {
         @Res() res: Response,
     ) {
         const empresaId = req.user.empresaId;
-        const pdfBuffer = await this.guiaRemisionService.generarPdf(id, empresaId);
+        const sedeId = req.user.sedeId;
+        const pdfBuffer = await this.guiaRemisionService.generarPdf(id, empresaId, sedeId);
 
         res.set({
             'Content-Type': 'application/pdf',

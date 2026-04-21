@@ -13,26 +13,45 @@ export class DashboardService {
     return Object.keys(whereFecha).length ? whereFecha : undefined;
   }
 
+  // Lima es siempre UTC-5 (sin DST). Extrae "YYYY-MM-DD" en hora Lima.
+  private toFechaLima(d: Date): string {
+    return new Date(d.getTime() - 5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  }
+
   async headerResumen(
     empresaId: number,
     fechaInicio?: string,
     fechaFin?: string,
+    sedeId?: number,
   ) {
     const startTime = Date.now();
     try {
       const fechaEmision = this.parseRange(fechaInicio, fechaFin);
       const whereBase: any = {
         empresaId,
+        ...(sedeId ? { sedeId } : {}),
         ...(fechaEmision ? { fechaEmision } : {}),
       };
 
-      const [totalIngresosAgg, totalComprobantes, totalClientes, totalProductos] =
+      const guiaWhere: any = {
+        empresaId,
+        ...(fechaEmision ? { fechaEmision } : {}),
+      };
+
+      const [totalIngresosPositivo, totalIngresosNC, totalComprobantes, totalGuias, totalClientes, totalProductos] =
         await Promise.all([
+          // Suma facturas/boletas/informales (positivos)
           this.prisma.comprobante.aggregate({
             _sum: { mtoImpVenta: true },
-            where: whereBase,
+            where: { ...whereBase, tipoDoc: { notIn: ['07'] } },
+          }),
+          // Suma notas de crédito (se restan)
+          this.prisma.comprobante.aggregate({
+            _sum: { mtoImpVenta: true },
+            where: { ...whereBase, tipoDoc: '07' },
           }),
           this.prisma.comprobante.count({ where: whereBase }),
+          this.prisma.guiaRemision.count({ where: guiaWhere }),
           this.prisma.cliente.count({ where: { empresaId } }),
           // Excluir productos fantasma (DGD, IPM, PLD) y productos inactivos del conteo
           this.prisma.producto.count({
@@ -48,8 +67,8 @@ export class DashboardService {
       console.log(`[Dashboard] headerResumen completed in ${elapsed}ms for empresa ${empresaId}`);
 
       return {
-        totalIngresos: Number(totalIngresosAgg._sum.mtoImpVenta ?? 0),
-        totalComprobantes,
+        totalIngresos: Number(totalIngresosPositivo._sum.mtoImpVenta ?? 0) - Number(totalIngresosNC._sum.mtoImpVenta ?? 0),
+        totalComprobantes: totalComprobantes + totalGuias,
         totalClientes,
         totalProductos,
       };
@@ -64,13 +83,16 @@ export class DashboardService {
     empresaId: number,
     fechaInicio?: string,
     fechaFin?: string,
+    sedeId?: number,
   ) {
     const fechaEmision = this.parseRange(fechaInicio, fechaFin);
     const rows = await this.prisma.comprobante.groupBy({
       by: ['fechaEmision', 'tipoDoc'],
-      where: { empresaId, ...(fechaEmision ? { fechaEmision } : {}) },
+      where: { empresaId, ...(sedeId ? { sedeId } : {}), ...(fechaEmision ? { fechaEmision } : {}) },
       _sum: { mtoImpVenta: true },
     });
+    const TIPOS_INFORMALES = new Set(['NP', 'OT', 'COT', 'TICKET', 'NV', 'RH', 'CP']);
+
     const map = new Map<
       string,
       {
@@ -79,22 +101,25 @@ export class DashboardService {
         boletas: number;
         notasCredito: number;
         notasDebito: number;
+        informales: number;
       }
     >();
     for (const r of rows) {
-      const fecha = r.fechaEmision.toISOString().slice(0, 10);
+      const fecha = this.toFechaLima(r.fechaEmision);
       const item = map.get(fecha) || {
         fecha,
         facturas: 0,
         boletas: 0,
         notasCredito: 0,
         notasDebito: 0,
+        informales: 0,
       };
       const total = Number(r._sum.mtoImpVenta ?? 0);
       if (r.tipoDoc === '01') item.facturas += total;
       else if (r.tipoDoc === '03') item.boletas += total;
       else if (r.tipoDoc === '07') item.notasCredito += total;
       else if (r.tipoDoc === '08') item.notasDebito += total;
+      else if (TIPOS_INFORMALES.has(r.tipoDoc)) item.informales += total;
       map.set(fecha, item);
     }
     return Array.from(map.values()).sort((a, b) =>
@@ -106,11 +131,12 @@ export class DashboardService {
     empresaId: number,
     fechaInicio?: string,
     fechaFin?: string,
+    sedeId?: number,
   ) {
     const fechaEmision = this.parseRange(fechaInicio, fechaFin);
     const rows = await this.prisma.comprobante.groupBy({
       by: ['fechaEmision', 'medioPago'],
-      where: { empresaId, ...(fechaEmision ? { fechaEmision } : {}) },
+      where: { empresaId, ...(sedeId ? { sedeId } : {}), ...(fechaEmision ? { fechaEmision } : {}) },
       _sum: { mtoImpVenta: true },
     });
     const map = new Map<
@@ -118,7 +144,7 @@ export class DashboardService {
       { fecha: string; YAPE: number; PLIN: number; EFECTIVO: number }
     >();
     for (const r of rows) {
-      const fecha = r.fechaEmision.toISOString().slice(0, 10);
+      const fecha = this.toFechaLima(r.fechaEmision);
       const item = map.get(fecha) || { fecha, YAPE: 0, PLIN: 0, EFECTIVO: 0 };
       const total = Number(r._sum.mtoImpVenta ?? 0);
       const medio = (r.medioPago || '').toString().toUpperCase();
@@ -137,11 +163,12 @@ export class DashboardService {
     fechaInicio?: string,
     fechaFin?: string,
     limit = 10,
+    sedeId?: number,
   ) {
     const fechaEmision = this.parseRange(fechaInicio, fechaFin);
-    // Prefiltrar comprobantes (IDs) porque groupBy no soporta filtros por relación de forma fiable
+    // Prefiltrar comprobantes (IDs) filtrar tambien por sede
     const comprobantes = await this.prisma.comprobante.findMany({
-      where: { empresaId, ...(fechaEmision ? { fechaEmision } : {}) },
+      where: { empresaId, ...(sedeId ? { sedeId } : {}), ...(fechaEmision ? { fechaEmision } : {}) },
       select: { id: true },
     });
     const compIds = comprobantes.map((c) => c.id);
@@ -182,15 +209,18 @@ export class DashboardService {
     empresaId: number,
     fechaInicio?: string,
     fechaFin?: string,
+    sedeId?: number,
   ) {
     const fechaEmision = this.parseRange(fechaInicio, fechaFin);
     if (!fechaEmision)
       throw new BadRequestException(
         'Se requiere rango de fechas para clientes nuevos',
       );
+    // Clientes nuevos = primer comprobante de ese cliente en la empresa
+    // Filtrar por sede si corresponde
     const rows = await this.prisma.comprobante.groupBy({
       by: ['clienteId'],
-      where: { empresaId },
+      where: { empresaId, ...(sedeId ? { sedeId } : {}) },
       _min: { fechaEmision: true },
     });
     const counts = new Map<string, number>();

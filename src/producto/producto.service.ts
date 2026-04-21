@@ -199,20 +199,16 @@ export class ProductoService {
         },
       });
 
-      // Inicializar stock en las sedes
-      const sedes = await this.prisma.sede.findMany({ where: { empresaId } });
+      // Inicializar stock en todas las sedes activas con el mismo stock inicial
+      const sedes = await this.prisma.sede.findMany({ where: { empresaId, activo: true } });
       if (sedes.length > 0) {
-        // Buscar sede principal para asignar el stock inicial
-        const sedePrincipal = sedes.find(s => s.esPrincipal) || sedes[0];
-
         await this.prisma.productoStock.createMany({
           data: sedes.map(s => ({
             productoId: nuevo.id,
             sedeId: s.id,
-            // Asignar el stock inicial solo a la sede principal
-            stock: s.id === sedePrincipal.id ? stock : 0,
-            stockMinimo: s.id === sedePrincipal.id ? stockMinimo : 0,
-            stockMaximo: s.id === sedePrincipal.id ? stockMaximo : null
+            stock: stock ?? 0,
+            stockMinimo: stockMinimo ?? 0,
+            stockMaximo: stockMaximo ?? null,
           }))
         });
       }
@@ -223,6 +219,7 @@ export class ProductoService {
 
   async listar(params: {
     empresaId: number;
+    sedeId?: number;
     search?: string;
     page?: number;
     limit?: number;
@@ -285,7 +282,7 @@ export class ProductoService {
           stockMaximo: true,
           stocks: {
             where: {
-              // Si se filtra por sede en el futuro, agregar aquí
+              ...(params.sedeId ? { sedeId: params.sedeId } : {})
             },
             select: { stock: true, stockMinimo: true, stockMaximo: true, sedeId: true }
           },
@@ -466,6 +463,23 @@ export class ProductoService {
             console.error('Error al registrar movimiento de kardex desde edición de producto:', error);
           }
         }
+
+        // Always update the actual stock in productoStock for this sede
+        await this.prisma.productoStock.upsert({
+          where: { productoId_sedeId: { productoId: data.id, sedeId: targetSedeId } },
+          update: {
+            stock: data.stock,
+            ...(data.stockMinimo !== undefined ? { stockMinimo: data.stockMinimo } : {}),
+            ...(data.stockMaximo !== undefined ? { stockMaximo: data.stockMaximo } : {}),
+          },
+          create: {
+            productoId: data.id,
+            sedeId: targetSedeId,
+            stock: data.stock,
+            stockMinimo: data.stockMinimo ?? 0,
+            stockMaximo: data.stockMaximo ?? null,
+          },
+        });
       }
     }
 

@@ -14,6 +14,11 @@ describe('KardexService', () => {
       findMany: jest.fn(),
       findFirst: jest.fn(),
     },
+    productoStock: {
+      findUnique: jest.fn().mockResolvedValue({ stock: 100, producto: { costoPromedio: 10.5 } }),
+      update: jest.fn().mockResolvedValue({}),
+      aggregate: jest.fn().mockResolvedValue({ _sum: { stock: 100 } }),
+    },
     movimientoKardex: {
       create: jest.fn(),
       findMany: jest.fn(),
@@ -81,6 +86,7 @@ describe('KardexService', () => {
       const result = await service.registrarMovimiento({
         productoId: 1,
         empresaId: 1,
+        sedeId: 1,
         tipoMovimiento: 'SALIDA',
         concepto: 'Venta producto',
         cantidad: 5,
@@ -116,6 +122,7 @@ describe('KardexService', () => {
       await expect(service.registrarMovimiento({
         productoId: 999,
         empresaId: 1,
+        sedeId: 1,
         tipoMovimiento: 'SALIDA',
         concepto: 'Venta producto',
         cantidad: 5,
@@ -158,6 +165,7 @@ describe('KardexService', () => {
       const result = await service.registrarMovimiento({
         productoId: 1,
         empresaId: 1,
+        sedeId: 1,
         tipoMovimiento: 'INGRESO',
         concepto: 'Compra producto',
         cantidad: 20,

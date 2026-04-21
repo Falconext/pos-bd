@@ -3,6 +3,7 @@ import {
   UnauthorizedException,
   ForbiddenException,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -29,21 +30,19 @@ export class AuthService {
     const nodeEnv = this.config.get<string>('NODE_ENV') || process.env.NODE_ENV || 'development';
     const isProduction = nodeEnv === 'production';
 
-    // Access token: 1 día (86400s); Refresh token: 7 días (604800s)
     this.accessExpiresInSec = isProduction ? (Number(accessEnv) || 86400) : 86400;
     this.refreshExpiresInSec = isProduction ? (Number(refreshEnv) || 604800) : 604800;
   }
 
   async login({ email, password }: LoginPayload) {
-    const user = await this.prisma.usuario.findUnique({
+    const user: any = await this.prisma.usuario.findUnique({
       where: { email },
       include: { empresa: true },
-    });
+    } as any);
     if (!user) throw new NotFoundException('Usuario no encontrado');
     if (user.estado !== 'ACTIVO')
       throw new ForbiddenException('Cuenta inactiva');
 
-    // Validar que la empresa esté activa (solo si el usuario pertenece a una empresa)
     if (user.empresaId && user.empresa?.estado !== 'ACTIVO') {
       throw new ForbiddenException('La empresa está inactiva. Contacte con soporte.');
     }
@@ -56,23 +55,84 @@ export class AuthService {
     }
 
     const isValid = await bcrypt.compare(password, user.password);
-    if (!isValid) throw new UnauthorizedException('Contraseña incorreta');
+    if (!isValid) throw new UnauthorizedException('Contraseña incorrecta');
+
+    // ── Multi-sede logic ──────────────────────────────────────────
+    // ADMIN_EMPRESA y ADMIN_SISTEMA entran sin restricción de sede
+    const isAdmin = user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA' || user.rol === 'RESELLER';
+
+    let sedeIdFinal: number | null = null;
+    let requiresSedeSelection = false;
+    let sedesDisponibles: any[] = [];
+
+    if (!isAdmin) {
+      // Obtener sedes asignadas al usuario
+      const usuarioSedes = await this.prisma.usuarioSede.findMany({
+        where: { usuarioId: user.id },
+        include: {
+          sede: {
+            select: { id: true, nombre: true, codigo: true, esPrincipal: true, activo: true }
+          }
+        },
+      });
+
+      // Solo sedes activas
+      const sedesActivas = usuarioSedes
+        .filter(us => us.sede.activo)
+        .map(us => us.sede);
+
+      if (sedesActivas.length === 0) {
+        throw new ForbiddenException(
+          'No tienes sedes asignadas. Contacta al administrador de tu empresa.'
+        );
+      }
+
+      if (sedesActivas.length === 1) {
+        sedeIdFinal = sedesActivas[0].id;
+      } else {
+        // Múltiples sedes → necesita seleccionar
+        requiresSedeSelection = true;
+        sedesDisponibles = sedesActivas;
+      }
+    }
 
     const usuarioCompleto = await this.obtenerUsuarioActual(user.id);
     if (!usuarioCompleto)
       throw new NotFoundException('Error al obtener datos del usuario');
 
-    const payload: { sub: number; rol: string; empresaId: number | null } = {
+    if (requiresSedeSelection) {
+      // Emitir token temporal (sin sedeId) marcado como pendiente
+      const tempPayload = {
+        sub: user.id,
+        rol: user.rol as string,
+        empresaId: user.empresaId ?? null,
+        pendingSedeSelection: true,
+      };
+      const tempToken = await this.jwt.signAsync(tempPayload, {
+        expiresIn: 300, // 5 minutos para elegir sede
+      });
+
+      return {
+        requiresSedeSelection: true,
+        sedes: sedesDisponibles,
+        tempToken,
+        usuario: usuarioCompleto,
+      };
+    }
+
+    // Flujo normal: generar tokens definitivos
+    const payload: any = {
       sub: user.id,
-      rol: user.rol as unknown as string,
+      rol: user.rol as string,
       empresaId: user.empresaId ?? null,
     };
+    if (sedeIdFinal) payload.sedeId = sedeIdFinal;
 
     const accessToken = await this.jwt.signAsync(payload, {
       expiresIn: this.accessExpiresInSec,
     });
     const refreshToken = await this.jwt.signAsync(
-      { sub: user.id },
+      { sub: user.id, sedeId: sedeIdFinal ?? null },
       { expiresIn: this.refreshExpiresInSec },
     );
 
@@ -85,13 +145,61 @@ export class AuthService {
     return { accessToken, refreshToken, usuario: usuarioCompleto };
   }
 
+  async selectSede(userId: number, sedeId: number) {
+    // Validar que el usuario tiene acceso a esa sede
+    const usuarioSede = await this.prisma.usuarioSede.findUnique({
+      where: { usuarioId_sedeId: { usuarioId: userId, sedeId } },
+      include: { sede: true },
+    });
+
+    if (!usuarioSede) {
+      throw new ForbiddenException('No tienes acceso a esta sede');
+    }
+    if (!usuarioSede.sede.activo) {
+      throw new ForbiddenException('Esta sede está inactiva');
+    }
+
+    const user = await this.prisma.usuario.findUnique({
+      where: { id: userId },
+      include: { empresa: true },
+    });
+    if (!user) throw new NotFoundException('Usuario no encontrado');
+
+    const payload: any = {
+      sub: user.id,
+      rol: user.rol as string,
+      empresaId: user.empresaId ?? null,
+      sedeId,
+    };
+
+    const accessToken = await this.jwt.signAsync(payload, {
+      expiresIn: this.accessExpiresInSec,
+    });
+    const refreshToken = await this.jwt.signAsync(
+      { sub: user.id, sedeId },
+      { expiresIn: this.refreshExpiresInSec },
+    );
+
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7);
+    await this.prisma.refreshToken.create({
+      data: { token: refreshToken, usuarioId: user.id, expiresAt },
+    });
+
+    const usuarioCompleto = await this.obtenerUsuarioActual(user.id);
+    return {
+      accessToken,
+      refreshToken,
+      usuario: usuarioCompleto,
+      sede: usuarioSede.sede,
+    };
+  }
+
   async refresh(refreshToken: string) {
     const stored = await this.prisma.refreshToken.findUnique({
       where: { token: refreshToken },
       include: {
-        usuario: {
-          include: { empresa: true }
-        }
+        usuario: { include: { empresa: true } }
       },
     });
     if (!stored) throw new UnauthorizedException('Refresh token inválido');
@@ -102,27 +210,30 @@ export class AuthService {
 
     const user = stored.usuario;
 
-    // Validar que el usuario esté activo
     if (user.estado !== 'ACTIVO') {
       throw new ForbiddenException('Cuenta inactiva');
     }
 
-    // Validar que la empresa esté activa (solo si el usuario pertenece a una empresa y no es ADMIN_SISTEMA o RESELLER)
     if (user.rol !== 'ADMIN_SISTEMA' && user.rol !== 'RESELLER' && user.empresaId && user.empresa?.estado !== 'ACTIVO') {
       throw new ForbiddenException('La empresa está inactiva. Contacte con soporte.');
     }
 
-    const payload: { sub: number; rol: string; empresaId: number | null } = {
+    // Recuperar sedeId del refresh token anterior (incluido en el payload al hacer login)
+    const decoded = this.jwt.decode(refreshToken) as any;
+    const sedeId: number | null = decoded?.sedeId ?? null;
+
+    const payload: any = {
       sub: user.id,
-      rol: user.rol as unknown as string,
+      rol: user.rol as string,
       empresaId: user.empresaId ?? null,
     };
+    if (sedeId) payload.sedeId = sedeId;
 
     const accessToken = await this.jwt.signAsync(payload, {
       expiresIn: this.accessExpiresInSec,
     });
     const newRefreshToken = await this.jwt.signAsync(
-      { sub: user.id },
+      { sub: user.id, sedeId },
       { expiresIn: this.refreshExpiresInSec },
     );
 
@@ -140,67 +251,7 @@ export class AuthService {
   }
 
   async obtenerUsuarioActual(userId: number) {
-    const usuario = await this.prisma.usuario.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        nombre: true,
-        email: true,
-        rol: true,
-        celular: true,
-        telefono: true,
-        empresaId: true,
-        resellerId: true, // Added field
-        estado: true,
-        permisos: true, // Incluir permisos
-        empresa: {
-          select: {
-            id: true,
-            razonSocial: true,
-            nombreComercial: true,
-            direccion: true,
-            logo: true,
-            esAgenteRetencion: true,
-            tipoEmpresa: true,
-            rubroId: true,
-            rubro: true,
-            slugTienda: true,
-            ruc: true,
-            plan: {
-              select: {
-                tieneTienda: true,
-                modulosAsignados: {
-                  include: {
-                    modulo: true
-                  }
-                }
-              },
-            },
-            // Información Bancaria
-            bancoNombre: true,
-            numeroCuenta: true,
-            cci: true,
-            monedaCuenta: true,
-          },
-        },
-      },
-    });
-
-    // Parsear permisos de JSON a array
-    if (usuario && usuario.permisos) {
-      try {
-        (usuario as any).permisos = JSON.parse(usuario.permisos);
-      } catch (error) {
-        console.error('Error parsing permissions:', error);
-        (usuario as any).permisos = [];
-      }
-    }
-
-    return usuario;
-  }
-
-  async obtenerPerfilCompleto(userId: number) {
-    const usuario = await this.prisma.usuario.findUnique({
+    const usuario: any = await this.prisma.usuario.findUnique({
       where: { id: userId },
       select: {
         id: true,
@@ -212,7 +263,14 @@ export class AuthService {
         empresaId: true,
         resellerId: true,
         estado: true,
-        permisos: true, // Incluir permisos
+        permisos: true,
+        sedesAsignadas: {
+          select: {
+            sede: {
+              select: { id: true, nombre: true, codigo: true, esPrincipal: true, activo: true }
+            }
+          }
+        },
         empresa: {
           select: {
             id: true,
@@ -221,6 +279,71 @@ export class AuthService {
             direccion: true,
             logo: true,
             esAgenteRetencion: true,
+            usaCodigoBarrasManual: true,
+            tipoEmpresa: true,
+            rubroId: true,
+            rubro: true,
+            slugTienda: true,
+            ruc: true,
+            plan: {
+              select: {
+                tieneTienda: true,
+                maxSedes: true,
+                modulosAsignados: {
+                  include: { modulo: true }
+                }
+              },
+            },
+            bancoNombre: true,
+            numeroCuenta: true,
+            cci: true,
+            monedaCuenta: true,
+          },
+        },
+      },
+    } as any);
+
+    if (!usuario) return null;
+
+    // Parsear permisos
+    if (usuario.permisos) {
+      try {
+        (usuario as any).permisos = JSON.parse(usuario.permisos);
+      } catch {
+        (usuario as any).permisos = [];
+      }
+    }
+
+    // Aplanar sedes
+    (usuario as any).sedes = (usuario.sedesAsignadas || []).map((us: any) => us.sede);
+    delete (usuario as any).sedesAsignadas;
+
+    return usuario;
+  }
+
+  async obtenerPerfilCompleto(userId: number) {
+    const usuario: any = await this.prisma.usuario.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        nombre: true,
+        email: true,
+        rol: true,
+        celular: true,
+        telefono: true,
+        empresaId: true,
+        resellerId: true,
+        estado: true,
+        permisos: true,
+        empresa: {
+          select: {
+            id: true,
+            razonSocial: true,
+            nombreComercial: true,
+            direccion: true,
+            logo: true,
+            esAgenteRetencion: true,
+            usaCodigoBarrasManual: true,
             ruc: true,
             fechaActivacion: true,
             fechaExpiracion: true,
@@ -230,10 +353,7 @@ export class AuthService {
             provincia: true,
             distrito: true,
             rubro: {
-              select: {
-                id: true,
-                nombre: true,
-              },
+              select: { id: true, nombre: true },
             },
             plan: {
               select: {
@@ -245,9 +365,7 @@ export class AuthService {
                 tipoFacturacion: true,
                 esPrueba: true,
                 modulosAsignados: {
-                  include: {
-                    modulo: true
-                  }
+                  include: { modulo: true }
                 }
               },
             },
@@ -259,7 +377,6 @@ export class AuthService {
                 distrito: true,
               },
             },
-            // Información Bancaria
             bancoNombre: true,
             numeroCuenta: true,
             cci: true,
@@ -267,14 +384,12 @@ export class AuthService {
           },
         },
       },
-    });
+    } as any);
 
-    // Parsear permisos de JSON a array
-    if (usuario && usuario.permisos) {
+    if (usuario?.permisos) {
       try {
         (usuario as any).permisos = JSON.parse(usuario.permisos);
-      } catch (error) {
-        console.error('Error parsing permissions:', error);
+      } catch {
         (usuario as any).permisos = [];
       }
     }

@@ -1,4 +1,5 @@
 import {
+  IsArray,
   IsEmail,
   IsInt,
   IsNotEmpty,
@@ -33,4 +34,8 @@ export class CreateUserDto {
 
   @IsOptional()
   permisos?: string[];
+
+  @IsArray()
+  @IsOptional()
+  sedeIds?: number[];
 }

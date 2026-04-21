@@ -115,6 +115,8 @@ export class TiendaService {
         numeroCuenta: true,
         cci: true,
         monedaCuenta: true,
+        // Logo
+        logo: true,
         plan: {
           select: {
             tieneTienda: true,
@@ -146,6 +148,7 @@ export class TiendaService {
       ...empresa,
       yapeQrSignedUrl: await signIfS3(empresa.yapeQrUrl as any),
       plinQrSignedUrl: await signIfS3(empresa.plinQrUrl as any),
+      logoSignedUrl: await signIfS3(empresa.logo as any),
     } as any;
   }
 
@@ -171,6 +174,30 @@ export class TiendaService {
 
     await this.prisma.empresa.update({ where: { id: empresaId }, data });
     // Devolver también URL firmada para previsualizar inmediatamente
+    const idx = url.indexOf('amazonaws.com/');
+    const objKey = idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
+    const signedUrl = objKey ? await this.s3.getSignedGetUrl(objKey, 600) : url;
+    return { url, signedUrl };
+  }
+
+  // ==================== UPLOAD LOGO ====================
+
+  async subirLogo(
+    empresaId: number,
+    file: { buffer: Buffer; mimetype?: string },
+  ) {
+    if (!file || !file.buffer)
+      throw new BadRequestException('Archivo no proporcionado');
+    const ct = file.mimetype || 'image/jpeg';
+    if (!/^image\//i.test(ct))
+      throw new BadRequestException('El archivo debe ser una imagen');
+
+    const ext = ct.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg';
+    const s3Key = `logos/empresa-${empresaId}/logo-${Date.now()}.${ext}`;
+    const url = await this.s3.uploadImage(file.buffer, s3Key, ct);
+
+    await this.prisma.empresa.update({ where: { id: empresaId }, data: { logo: url } });
+
     const idx = url.indexOf('amazonaws.com/');
     const objKey = idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
     const signedUrl = objKey ? await this.s3.getSignedGetUrl(objKey, 600) : url;

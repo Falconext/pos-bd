@@ -12,10 +12,17 @@ export interface RubroFeatures {
     controlStock: boolean;           // Todos (siempre true)
 }
 
+type FeatureOverrides = {
+    usaCodigoBarrasManual?: boolean | null;
+};
+
 /**
  * Detecta automáticamente las funcionalidades según el nombre del rubro
  */
-export function detectarFuncionesRubro(nombreRubro: string): RubroFeatures {
+export function detectarFuncionesRubro(
+    nombreRubro: string,
+    overrides?: FeatureOverrides,
+): RubroFeatures {
     const nombre = nombreRubro.toLowerCase();
 
     // FARMACIA / BOTICA
@@ -37,6 +44,11 @@ export function detectarFuncionesRubro(nombreRubro: string): RubroFeatures {
         nombre.includes('pastelería') ||
         nombre.includes('pasteleria');
 
+    const usaCodigoBarras =
+        typeof overrides?.usaCodigoBarrasManual === 'boolean'
+            ? overrides.usaCodigoBarrasManual
+            : esBodega;
+
     return {
         // Lotes: Farmacia principalmente (pero también alimentos si quieren)
         gestionLotes: esFarmacia,
@@ -45,7 +57,7 @@ export function detectarFuncionesRubro(nombreRubro: string): RubroFeatures {
         requiereVencimientos: esFarmacia || esAlimentos,
 
         // Código de barras: Bodega/Supermarket
-        usaCodigoBarras: esBodega,
+        usaCodigoBarras,
 
         // Fraccionamiento (venta por unidad de caja): Farmacia
         permiteFraccionamiento: esFarmacia,

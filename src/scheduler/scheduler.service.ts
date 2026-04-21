@@ -3,6 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { VerificarPendientesSunatService } from './services/verificar-pendientes-sunat.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { InventarioNotificacionesService } from '../notificaciones/inventario-notificaciones.service';
+import { ResellerService } from '../reseller/reseller.service';
 
 @Injectable()
 export class SchedulerService {
@@ -12,10 +13,11 @@ export class SchedulerService {
     private readonly verificarSunat: VerificarPendientesSunatService,
     private readonly notificacionesService: NotificacionesService,
     private readonly inventarioNotificacionesService: InventarioNotificacionesService,
+    private readonly resellerService: ResellerService,
   ) { }
 
-  // Job 1: Check status of PENDIENTE invoices with documentoId (every 30 min)
-  @Cron(CronExpression.EVERY_30_MINUTES)
+  // Job 1: Check status of PENDIENTE invoices with documentoId (every 5 min)
+  @Cron(CronExpression.EVERY_5_MINUTES)
   async verificarComprobantesPendientes(): Promise<void> {
     this.logger.log(
       '🔍 [Job 1] Verificando comprobantes PENDIENTES con documentoId...',
@@ -61,6 +63,20 @@ export class SchedulerService {
       this.logger.log('✅ Verificación de inventario completada');
     } catch (error) {
       this.logger.error('❌ Error al verificar inventario:', error);
+    }
+  }
+
+  @Cron('10 9 * * *', {
+    name: 'renovar-clientes-reseller',
+    timeZone: 'America/Lima',
+  })
+  async renovarClientesReseller(): Promise<void> {
+    this.logger.log('💼 Iniciando renovación mensual de clientes reseller...');
+    try {
+      const resultado = await this.resellerService.processMonthlyRenewals();
+      this.logger.log(`✅ Renovación reseller completada. Evaluadas: ${resultado.totalEvaluadas}, renovadas: ${resultado.renovadas}, suspendidas: ${resultado.suspendidas}`);
+    } catch (error) {
+      this.logger.error('❌ Error en renovación mensual reseller:', error);
     }
   }
 }

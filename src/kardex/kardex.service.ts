@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import type { MovimientoKardex } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   FiltrosKardexDto,
@@ -10,6 +11,7 @@ import {
   AjusteMasivoDto,
   TipoAjuste
 } from './dto/ajuste-inventario.dto';
+import { TrasladoKardexDto } from './dto/traslado-kardex.dto';
 import {
   KardexProductoResponse,
   MovimientoKardexResponse,
@@ -40,7 +42,7 @@ export class KardexService {
     fechaVencimiento?: Date;
   }) {
     // Obtener el producto stock en la sede
-    const productoStock = await this.prisma.productoStock.findUnique({
+    let productoStock = await this.prisma.productoStock.findUnique({
       where: {
         productoId_sedeId: {
           productoId: data.productoId,
@@ -51,9 +53,28 @@ export class KardexService {
     });
 
     if (!productoStock) {
-      // Si no existe, crearlo (caso raro si la sede existe, pero posible en migración)
-      // O lanzar error. Mejor crear en 0 si no existe y evitar bloqueo
-      throw new NotFoundException('Stock no encontrado para esta sede y producto');
+      // El registro de stock para esta sede no existe aún (p.ej. producto creado antes
+      // de la migración multi-sede). Crearlo inicializando con el stock global del producto
+      // para que el movimiento pueda registrarse correctamente.
+      const stockFallback = await this.prisma.producto.findUnique({
+        where: { id: data.productoId },
+        select: { stock: true, costoPromedio: true },
+      });
+      await this.prisma.productoStock.upsert({
+        where: { productoId_sedeId: { productoId: data.productoId, sedeId: data.sedeId } },
+        create: {
+          productoId: data.productoId,
+          sedeId: data.sedeId,
+          stock: stockFallback?.stock ?? 0,
+          stockMinimo: 0,
+        },
+        update: {},
+      });
+      productoStock = await this.prisma.productoStock.findUnique({
+        where: { productoId_sedeId: { productoId: data.productoId, sedeId: data.sedeId } },
+        include: { producto: { select: { costoPromedio: true } } },
+      });
+      if (!productoStock) throw new NotFoundException('No se pudo crear el stock para esta sede y producto');
     }
 
     const stockAnterior = productoStock.stock;
@@ -149,6 +170,7 @@ export class KardexService {
     productoId: number,
     empresaId: number,
     filtros?: FiltrosKardexDto,
+    sedeId?: number,
   ): Promise<KardexProductoResponse> {
     // Verificar que el producto existe y pertenece a la empresa
     const producto = await this.prisma.producto.findFirst({
@@ -167,6 +189,7 @@ export class KardexService {
     const whereMovimientos: any = {
       productoId,
       empresaId,
+      ...(sedeId ? { sedeId } : {}),
     };
 
     if (filtros?.fechaInicio || filtros?.fechaFin) {
@@ -228,7 +251,7 @@ export class KardexService {
     ]);
 
     // Calcular resumen
-    const resumen = await this.calcularResumenKardex(productoId, empresaId);
+    const resumen = await this.calcularResumenKardex(productoId, empresaId, sedeId);
 
     return {
       producto: {
@@ -266,8 +289,8 @@ export class KardexService {
   /**
    * Obtiene kardex general de la empresa con filtros
    */
-  async obtenerKardexGeneral(empresaId: number, filtros?: FiltrosKardexDto) {
-    const whereMovimientos: any = { empresaId };
+  async obtenerKardexGeneral(empresaId: number, filtros?: FiltrosKardexDto, sedeId?: number) {
+    const whereMovimientos: any = { empresaId, ...(sedeId ? { sedeId } : {}) };
 
     // Aplicar filtros
     if (filtros?.fechaInicio || filtros?.fechaFin) {
@@ -366,9 +389,10 @@ export class KardexService {
     ajusteDto: AjusteInventarioDto,
     empresaId: number,
     usuarioId?: number,
+    sedeIdParam?: number,
   ) {
-    // 0. Resolver Sede
-    let sedeId = ajusteDto.sedeId;
+    // 0. Resolver Sede — prefer the user's session sedeId, then DTO, then principal
+    let sedeId = sedeIdParam || ajusteDto.sedeId;
     if (!sedeId) {
       const sede = await this.prisma.sede.findFirst({ where: { empresaId, esPrincipal: true } });
       if (!sede) throw new NotFoundException('No se encontró sede principal para el ajuste');
@@ -427,6 +451,7 @@ export class KardexService {
     ajusteMasivoDto: AjusteMasivoDto,
     empresaId: number,
     usuarioId?: number,
+    sedeIdParam?: number,
   ) {
     const resultados: Array<{
       productoId: number;
@@ -445,6 +470,7 @@ export class KardexService {
           },
           empresaId,
           usuarioId,
+          sedeIdParam,
         );
         resultados.push({ productoId: ajuste.productoId, exito: true, movimiento: resultado });
       } catch (error: any) {
@@ -469,6 +495,7 @@ export class KardexService {
   async obtenerInventarioValorizado(
     empresaId: number,
     filtros?: FiltrosReporteDto,
+    sedeId?: number,
   ): Promise<InventarioValorizadoResponse> {
     const whereProductos: any = {
       empresaId,
@@ -482,18 +509,20 @@ export class KardexService {
     // Para stock crítico, filtraremos después de obtener los datos
     // porque Prisma no maneja bien la comparación entre campos
 
-    const productos = await this.prisma.producto.findMany({
+    const productos = await (this.prisma.producto.findMany({
       where: whereProductos,
       include: {
         categoria: true,
         unidadMedida: true,
+        stocks: sedeId ? { where: { sedeId } } : true,
         movimientosKardex: {
+          where: sedeId ? { sedeId } : undefined,
           orderBy: { fecha: 'desc' },
           take: 1,
         },
       },
       orderBy: { descripcion: 'asc' },
-    });
+    }) as Promise<any[]>);
 
     let productosAFiltrar = productos;
 
@@ -505,15 +534,20 @@ export class KardexService {
       );
     }
 
-    const productosProcessados = productosAFiltrar.map(producto => {
+    const productosProcessados = productosAFiltrar.map((producto: any) => {
+      // Use branch specific stock if requested, otherwise global stock
+      const stockUsar = sedeId
+        ? (producto.stocks && producto.stocks.length > 0 ? producto.stocks[0].stock : 0)
+        : producto.stock;
+
       const costoPromedio = Number(producto.costoPromedio) || 0;
-      const valorTotal = producto.stock * costoPromedio;
+      const valorTotal = stockUsar * costoPromedio;
 
       return {
         id: producto.id,
         codigo: producto.codigo,
         descripcion: producto.descripcion,
-        stock: producto.stock,
+        stock: stockUsar,
         costoPromedio,
         valorTotal,
         stockMinimo: producto.stockMinimo || 0,
@@ -522,11 +556,11 @@ export class KardexService {
           id: producto.categoria.id,
           nombre: producto.categoria.nombre,
         } : undefined,
-        unidadMedida: {
+        unidadMedida: producto.unidadMedida ? {
           codigo: producto.unidadMedida.codigo,
           nombre: producto.unidadMedida.nombre,
-        },
-        ultimoMovimiento: producto.movimientosKardex[0] ? {
+        } : { codigo: '', nombre: '' },
+        ultimoMovimiento: producto.movimientosKardex?.[0] ? {
           fecha: producto.movimientosKardex[0].fecha,
           tipoMovimiento: producto.movimientosKardex[0].tipoMovimiento,
           concepto: producto.movimientosKardex[0].concepto,
@@ -552,9 +586,9 @@ export class KardexService {
   /**
    * Calcular stock actual por producto (para validación)
    */
-  async calcularStockActual(productoId: number, empresaId: number): Promise<number> {
+  async calcularStockActual(productoId: number, empresaId: number, sedeId?: number): Promise<number> {
     const movimientos = await this.prisma.movimientoKardex.findMany({
-      where: { productoId, empresaId },
+      where: { productoId, empresaId, ...(sedeId ? { sedeId } : {}) },
       orderBy: { fecha: 'desc' },
       take: 1,
     });
@@ -574,7 +608,7 @@ export class KardexService {
   /**
    * Validar consistencia de stock
    */
-  async validarConsistenciaStock(empresaId: number) {
+  async validarConsistenciaStock(empresaId: number, sedeId?: number) {
     const productos = await this.prisma.producto.findMany({
       where: { empresaId, estado: 'ACTIVO' },
       select: { id: true, codigo: true, descripcion: true, stock: true },
@@ -590,7 +624,7 @@ export class KardexService {
     }> = [];
 
     for (const producto of productos) {
-      const stockCalculado = await this.calcularStockActual(producto.id, empresaId);
+      const stockCalculado = await this.calcularStockActual(producto.id, empresaId, sedeId);
       if (stockCalculado !== producto.stock) {
         inconsistencias.push({
           productoId: producto.id,
@@ -612,9 +646,9 @@ export class KardexService {
 
   // Métodos privados auxiliares
 
-  private async calcularResumenKardex(productoId: number, empresaId: number) {
+  private async calcularResumenKardex(productoId: number, empresaId: number, sedeId?: number) {
     const movimientos = await this.prisma.movimientoKardex.findMany({
-      where: { productoId, empresaId },
+      where: { productoId, empresaId, ...(sedeId ? { sedeId } : {}) },
     });
 
     const totalIngresos = movimientos
@@ -629,7 +663,7 @@ export class KardexService {
       .filter(m => m.tipoMovimiento === 'AJUSTE')
       .reduce((sum, m) => sum + m.cantidad, 0);
 
-    const stockActual = await this.calcularStockActual(productoId, empresaId);
+    const stockActual = await this.calcularStockActual(productoId, empresaId, sedeId);
 
     const producto = await this.prisma.producto.findUnique({
       where: { id: productoId },
@@ -662,14 +696,16 @@ export class KardexService {
       data: { stock: Math.max(0, nuevoStock) }
     });
 
-    // Opcional: Actualizar el campo 'stock' global en Producto sumando todas las sedes (para compatibilidad lectura rápida)
-    /* 
+    // Sincronizar el campo 'stock' global en Producto (suma de todas las sedes) para que las
+    // notificaciones de stock mínimo y otras consultas legacy lean el valor correcto.
     const total = await this.prisma.productoStock.aggregate({
-        where: { productoId },
-        _sum: { stock: true }
+      where: { productoId },
+      _sum: { stock: true }
     });
-    await this.prisma.producto.update({ where: { id: productoId }, data: { stock: total._sum.stock || 0 } });
-    */
+    await this.prisma.producto.update({
+      where: { id: productoId },
+      data: { stock: total._sum.stock ?? 0 }
+    });
 
     // Actualizar costo promedio solo para ingresos (afecta al producto globalmente)
     if (tipoMovimiento === 'INGRESO' && costoUnitario && cantidad) {
@@ -714,6 +750,7 @@ export class KardexService {
     empresaId: number,
     fechaInicio?: Date,
     fechaFin?: Date,
+    sedeId?: number,
   ): Promise<ReporteRotacionResponse> {
     // Si no se proporcionan fechas, usar los últimos 12 meses
     const fechaFin_date = fechaFin || new Date();
@@ -820,6 +857,7 @@ export class KardexService {
     empresaId: number,
     fechaInicio?: Date,
     fechaFin?: Date,
+    sedeId?: number,
   ) {
     const fechaFin_date = fechaFin || new Date();
     const fechaInicio_date = fechaInicio ||
@@ -830,6 +868,7 @@ export class KardexService {
       by: ['productoId'],
       where: {
         empresaId,
+        ...(sedeId ? { sedeId } : {}),
         tipoMovimiento: 'SALIDA',
         fecha: {
           gte: fechaInicio_date,
@@ -918,6 +957,7 @@ export class KardexService {
   async obtenerProductosObsoletos(
     empresaId: number,
     diasSinMovimiento: number = 90,
+    sedeId?: number,
   ) {
     const fechaLimite = new Date();
     fechaLimite.setDate(fechaLimite.getDate() - diasSinMovimiento);
@@ -978,5 +1018,129 @@ export class KardexService {
         fechaAnalisis: new Date(),
       },
     };
+  }
+
+  /**
+   * Realiza el traslado de productos entre sedes
+   */
+  async realizarTraslado(
+    dto: TrasladoKardexDto,
+    empresaId: number,
+    usuarioId: number,
+  ) {
+    const { sedeOrigenId, sedeDestinoId, items, observacion } = dto;
+
+    if (sedeOrigenId === sedeDestinoId) {
+      throw new BadRequestException('La sede de origen y destino no pueden ser iguales');
+    }
+
+    // Obtener nombres de las sedes para los conceptos
+    const [sedeOrigen, sedeDestino] = await Promise.all([
+      this.prisma.sede.findUnique({ where: { id: sedeOrigenId }, select: { nombre: true } }),
+      this.prisma.sede.findUnique({ where: { id: sedeDestinoId }, select: { nombre: true } }),
+    ]);
+
+    if (!sedeOrigen || !sedeDestino) {
+      throw new BadRequestException('Una o ambas sedes no existen');
+    }
+
+    return await this.prisma.$transaction(async (tx) => {
+      const resultados: Array<{ productoId: number; movSalida: MovimientoKardex; movIngreso: MovimientoKardex }> = [];
+
+      for (const item of items) {
+        // 1. Obtener stock en sede origen
+        const stockOrigen = await tx.productoStock.findUnique({
+          where: { productoId_sedeId: { productoId: item.productoId, sedeId: sedeOrigenId } },
+          include: { producto: true }
+        });
+
+        if (!stockOrigen || stockOrigen.stock < item.cantidad) {
+          throw new BadRequestException(
+            `Stock insuficiente en ${sedeOrigen.nombre} para el producto ${stockOrigen?.producto?.descripcion || item.productoId}`
+          );
+        }
+
+        // 2. Registrar SALIDA en sede origen
+        const movSalida = await tx.movimientoKardex.create({
+          data: {
+            productoId: item.productoId,
+            empresaId,
+            tipoMovimiento: 'SALIDA',
+            concepto: `Traslado a ${sedeDestino.nombre}`,
+            cantidad: item.cantidad,
+            stockAnterior: stockOrigen.stock,
+            stockActual: stockOrigen.stock - item.cantidad,
+            costoUnitario: stockOrigen.producto.costoPromedio,
+            valorTotal: Number(stockOrigen.producto.costoPromedio) * item.cantidad,
+            sedeId: sedeOrigenId,
+            usuarioId,
+            observacion,
+            lote: item.lote,
+          }
+        });
+
+        // 3. Obtener/Crear stock en sede destino
+        let stockDestino = await tx.productoStock.findUnique({
+          where: { productoId_sedeId: { productoId: item.productoId, sedeId: sedeDestinoId } }
+        });
+
+        if (!stockDestino) {
+          stockDestino = await tx.productoStock.create({
+            data: {
+              productoId: item.productoId,
+              sedeId: sedeDestinoId,
+              stock: 0,
+              stockMinimo: 0,
+            }
+          });
+        }
+
+        // 4. Registrar INGRESO en sede destino
+        const movIngreso = await tx.movimientoKardex.create({
+          data: {
+            productoId: item.productoId,
+            empresaId,
+            tipoMovimiento: 'INGRESO',
+            concepto: `Traslado desde ${sedeOrigen.nombre}`,
+            cantidad: item.cantidad,
+            stockAnterior: stockDestino.stock,
+            stockActual: stockDestino.stock + item.cantidad,
+            costoUnitario: stockOrigen.producto.costoPromedio,
+            valorTotal: Number(stockOrigen.producto.costoPromedio) * item.cantidad,
+            sedeId: sedeDestinoId,
+            usuarioId,
+            observacion,
+            lote: item.lote,
+          }
+        });
+
+        // 5. Actualizar stocks físicos
+        await tx.productoStock.update({
+          where: { id: stockOrigen.id },
+          data: { stock: stockOrigen.stock - item.cantidad }
+        });
+
+        await tx.productoStock.update({
+          where: { id: stockDestino.id },
+          data: { stock: stockDestino.stock + item.cantidad }
+        });
+
+        resultados.push({ productoId: item.productoId, movSalida, movIngreso });
+      }
+
+      // Sincronizar stock global del producto (suma de todas las sedes)
+      for (const item of items) {
+        const totalStock = await tx.productoStock.aggregate({
+          where: { productoId: item.productoId },
+          _sum: { stock: true }
+        });
+        await tx.producto.update({
+          where: { id: item.productoId },
+          data: { stock: totalStock._sum.stock ?? 0 }
+        });
+      }
+
+      return resultados;
+    });
   }
 }

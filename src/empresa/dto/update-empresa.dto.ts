@@ -65,6 +65,10 @@ export class UpdateEmpresaDto {
   esAgenteRetencion?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  usaCodigoBarrasManual?: boolean;
+
+  @IsOptional()
   @IsString()
   providerId?: string;
 

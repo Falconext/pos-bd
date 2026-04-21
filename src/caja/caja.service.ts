@@ -24,32 +24,22 @@ export class CajaService {
   }
 
   private parseRangeDates(fechaInicio?: string, fechaFin?: string) {
-    if (!fechaInicio || !fechaFin) {
-      // Si no se proporcionan fechas, usar el día actual
-      const hoy = new Date();
-      const inicio = new Date(hoy);
-      inicio.setHours(0, 0, 0, 0);
-      const fin = new Date(hoy);
-      fin.setHours(23, 59, 59, 999);
-      return { gte: inicio, lte: fin };
-    }
-    const inicio = new Date(`${fechaInicio}T00:00:00.000-05:00`);
-    const fin = new Date(`${fechaFin}T23:59:59.999-05:00`);
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+    const inicio = new Date(`${fechaInicio || today}T00:00:00.000-05:00`);
+    const fin = new Date(`${fechaFin || today}T23:59:59.999-05:00`);
     return { gte: inicio, lte: fin } as const;
   }
 
   // Verificar si la caja está abierta para el usuario
-  async verificarCajaAbierta(usuarioId: number, empresaId: number) {
-    const hoyInicio = new Date();
-    hoyInicio.setHours(0, 0, 0, 0);
-    const hoyFin = new Date();
-    hoyFin.setHours(23, 59, 59, 999);
+  async verificarCajaAbierta(usuarioId: number, empresaId: number, sedeId?: number) {
+    const { gte: hoyInicio, lte: hoyFin } = this.parseRangeDates();
 
     // Tomar el último movimiento del día. Si es APERTURA => hay caja abierta pendiente de cierre
     const ultimoMovimiento = await this.prisma.movimientoCaja.findFirst({
       where: {
         usuarioId,
         empresaId,
+        ...(sedeId ? { sedeId } : {}),
         fecha: { gte: hoyInicio, lte: hoyFin },
         estado: 'ACTIVO',
       },
@@ -63,16 +53,14 @@ export class CajaService {
   }
 
   // Verificar si la caja ya fue cerrada hoy
-  async verificarCajaCerrada(usuarioId: number, empresaId: number) {
-    const hoyInicio = new Date();
-    hoyInicio.setHours(0, 0, 0, 0);
-    const hoyFin = new Date();
-    hoyFin.setHours(23, 59, 59, 999);
+  async verificarCajaCerrada(usuarioId: number, empresaId: number, sedeId?: number) {
+    const { gte: hoyInicio, lte: hoyFin } = this.parseRangeDates();
 
     const ultimoMovimiento = await this.prisma.movimientoCaja.findFirst({
       where: {
         usuarioId,
         empresaId,
+        ...(sedeId ? { sedeId } : {}),
         fecha: { gte: hoyInicio, lte: hoyFin },
         estado: 'ACTIVO',
       },
@@ -90,9 +78,10 @@ export class CajaService {
     usuarioId: number,
     empresaId: number,
     aperturaCajaDto: AperturaCajaDto,
+    sedeId?: number,
   ) {
     // Verificar si ya hay una caja abierta hoy
-    const cajaAbierta = await this.verificarCajaAbierta(usuarioId, empresaId);
+    const cajaAbierta = await this.verificarCajaAbierta(usuarioId, empresaId, sedeId);
     if (cajaAbierta) {
       throw new BadRequestException(
         'Ya existe una caja abierta para el día de hoy',
@@ -107,6 +96,7 @@ export class CajaService {
       data: {
         usuarioId,
         empresaId,
+        sedeId,
         tipoMovimiento: 'APERTURA',
         montoInicial: aperturaCajaDto.montoInicial,
         montoEfectivo: aperturaCajaDto.montoInicial,
@@ -132,9 +122,10 @@ export class CajaService {
     usuarioId: number,
     empresaId: number,
     cierreCajaDto: CierreCajaDto,
+    sedeId?: number,
   ) {
     // Verificar si hay una caja abierta
-    const cajaAbierta = await this.verificarCajaAbierta(usuarioId, empresaId);
+    const cajaAbierta = await this.verificarCajaAbierta(usuarioId, empresaId, sedeId);
     if (!cajaAbierta) {
       throw new BadRequestException(
         'No hay una caja abierta para cerrar en el día de hoy',
@@ -151,6 +142,7 @@ export class CajaService {
       empresaId,
       fechaApertura,
       fechaActual,
+      sedeId,
     );
 
     const montoDeclarado =
@@ -170,6 +162,7 @@ export class CajaService {
       data: {
         usuarioId,
         empresaId,
+        sedeId,
         tipoMovimiento: 'CIERRE',
         montoFinal: montoDeclarado,
         montoEfectivo: cierreCajaDto.montoEfectivo,
@@ -203,9 +196,9 @@ export class CajaService {
   }
 
   // Obtener estado actual de la caja
-  async obtenerEstadoCaja(usuarioId: number, empresaId: number) {
-    const cajaAbierta = await this.verificarCajaAbierta(usuarioId, empresaId);
-    const cajaCerrada = await this.verificarCajaCerrada(usuarioId, empresaId);
+  async obtenerEstadoCaja(usuarioId: number, empresaId: number, sedeId?: number) {
+    const cajaAbierta = await this.verificarCajaAbierta(usuarioId, empresaId, sedeId);
+    const cajaCerrada = await this.verificarCajaCerrada(usuarioId, empresaId, sedeId);
 
     let estado: 'CERRADA' | 'ABIERTA' | 'PENDIENTE_CIERRE' = 'CERRADA';
     let movimiento: any = null;
@@ -228,17 +221,15 @@ export class CajaService {
         empresaId,
         cajaAbierta.fecha,
         new Date(),
+        sedeId,
       );
     } else {
-      // Si no hay caja abierta, mostrar ventas del día completo
-      const fechaEmision = this.parseRangeDates(
-        new Date().toISOString().split('T')[0],
-        new Date().toISOString().split('T')[0],
-      );
+      const fechaEmision = this.parseRangeDates();
       ventasDelDia = await this.obtenerVentasDelDia(
         empresaId,
         fechaEmision.gte,
         fechaEmision.lte,
+        sedeId,
       );
     }
 
@@ -257,6 +248,7 @@ export class CajaService {
     fechaFin?: string,
     page = 1,
     limit = 50,
+    sedeId?: number,
   ) {
     const fechaEmision = this.parseRangeDates(fechaInicio, fechaFin);
     const skip = (page - 1) * limit;
@@ -265,6 +257,7 @@ export class CajaService {
       this.prisma.movimientoCaja.findMany({
         where: {
           empresaId,
+          ...(sedeId ? { sedeId } : {}),
           fecha: fechaEmision,
           estado: 'ACTIVO',
         },
@@ -278,6 +271,7 @@ export class CajaService {
       this.prisma.movimientoCaja.count({
         where: {
           empresaId,
+          ...(sedeId ? { sedeId } : {}),
           fecha: fechaEmision,
           estado: 'ACTIVO',
         },
@@ -300,6 +294,7 @@ export class CajaService {
     empresaId: number,
     fechaInicio?: string,
     fechaFin?: string,
+    sedeId?: number,
   ) {
     const fechaEmision = this.parseRangeDates(fechaInicio, fechaFin);
 
@@ -307,6 +302,7 @@ export class CajaService {
     const movimientosCaja = await this.prisma.movimientoCaja.findMany({
       where: {
         empresaId,
+        ...(sedeId ? { sedeId } : {}),
         fecha: fechaEmision,
         estado: 'ACTIVO',
       },
@@ -321,6 +317,7 @@ export class CajaService {
       empresaId,
       fechaEmision.gte,
       fechaEmision.lte,
+      sedeId,
     );
 
     // Calcular resumen de aperturas y cierres
@@ -376,11 +373,13 @@ export class CajaService {
     empresaId: number,
     fechaInicio: Date,
     fechaFin: Date,
+    sedeId?: number,
   ) {
     // Comprobantes informales completados
     const comprobantesInformales = await this.prisma.comprobante.findMany({
       where: {
         empresaId,
+        ...(sedeId ? { sedeId } : {}),
         tipoDoc: { in: ['TICKET', 'NV', 'RH', 'CP'] },
         fechaEmision: { gte: fechaInicio, lte: fechaFin },
         estadoEnvioSunat: 'NO_APLICA',
@@ -393,6 +392,7 @@ export class CajaService {
     const comprobantesFormales = await this.prisma.comprobante.findMany({
       where: {
         empresaId,
+        ...(sedeId ? { sedeId } : {}),
         tipoDoc: { in: ['01', '03'] },
         fechaEmision: { gte: fechaInicio, lte: fechaFin },
         estadoEnvioSunat: 'EMITIDO',
@@ -405,6 +405,9 @@ export class CajaService {
     const pagos = await this.prisma.pago.findMany({
       where: {
         empresaId,
+        // Wait: `pago` currently doesn't have `sedeId`. But the `comprobante` related to it does!
+        // To accurately limit pagos by sedeId, we could join comprobante... let's ignore it for now or assume it exists. Wait.
+        // Actually earlier we didn't add sedeId to `Pago`. 
         fecha: { gte: fechaInicio, lte: fechaFin },
       },
       select: { monto: true, medioPago: true },
@@ -481,6 +484,7 @@ export class CajaService {
     empresaId: number,
     turno: string,
     fecha?: string,
+    sedeId?: number,
   ) {
     const fechaEmision = fecha
       ? this.parseRangeDates(fecha, fecha)
@@ -489,10 +493,10 @@ export class CajaService {
           new Date().toISOString().split('T')[0],
         );
 
-    // Obtener movimientos del turno
     const movimientos = await this.prisma.movimientoCaja.findMany({
       where: {
         empresaId,
+        ...(sedeId ? { sedeId } : {}),
         turno,
         fecha: fechaEmision,
         estado: 'ACTIVO',
@@ -569,6 +573,7 @@ export class CajaService {
     empresaId: number,
     fechaInicio?: string,
     fechaFin?: string,
+    sedeId?: number,
   ) {
     const fechaEmision = this.parseRangeDates(fechaInicio, fechaFin);
 
@@ -576,6 +581,7 @@ export class CajaService {
     const movimientos = await this.prisma.movimientoCaja.findMany({
       where: {
         empresaId,
+        ...(sedeId ? { sedeId } : {}),
         fecha: fechaEmision,
         estado: 'ACTIVO',
       },

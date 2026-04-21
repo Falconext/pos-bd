@@ -147,4 +147,11 @@ export class NotificacionesService {
 
     return notificacion;
   }
+
+  // Enviar notificación en tiempo real usando el gateway
+  emitirNotificacionEnTiempoReal(usuarioId: number, notificacion: any) {
+    if (this.gateway) {
+      this.gateway.enviarNotificacionAUsuario(usuarioId, notificacion);
+    }
+  }
 }

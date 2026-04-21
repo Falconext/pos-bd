@@ -5,12 +5,14 @@ import { VerificarPendientesSunatService } from './services/verificar-pendientes
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 import { ComprobanteModule } from '../comprobante/comprobante.module';
+import { ResellerModule } from '../reseller/reseller.module';
 
 @Module({
   imports: [
     ScheduleModule.forRoot(),
     NotificacionesModule,
     forwardRef(() => ComprobanteModule),
+    ResellerModule,
   ],
   providers: [SchedulerService, VerificarPendientesSunatService, PrismaService],
   exports: [VerificarPendientesSunatService],

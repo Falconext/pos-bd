@@ -49,6 +49,7 @@ export class ComprobanteService {
 
   async listar(params: {
     empresaId: number;
+    sedeId?: number;
     tipoComprobante: 'FORMAL' | 'INFORMAL' | 'COTIZACION' | 'TODOS';
     search?: string;
     page?: number;
@@ -116,8 +117,24 @@ export class ComprobanteService {
         ).toISOString();
       }
 
+      // Build sedeId filter — for the principal sede also include legacy records (sedeId=null)
+      let sedeFilter: any = {};
+      if (params.sedeId) {
+        const esPrincipal = await this.prisma.sede.findFirst({
+          where: { empresaId, id: params.sedeId, esPrincipal: true },
+          select: { id: true },
+        });
+        if (esPrincipal) {
+          // Legacy comprobantes were created with sedeId=null before the JWT fix
+          sedeFilter = { AND: [{ OR: [{ sedeId: params.sedeId }, { sedeId: null }] }] };
+        } else {
+          sedeFilter = { sedeId: params.sedeId };
+        }
+      }
+
       const where: any = {
         empresaId,
+        ...sedeFilter,
         tipoDoc: { in: tipoDoc ? [tipoDoc] : tiposPermitidos },
         ...(search
           ? {
@@ -183,6 +200,8 @@ export class ComprobanteService {
             leyendas: { select: { code: true, value: true } },
             motivo: { select: { codigo: true, descripcion: true } },
             tipoOperacion: { select: { codigo: true, descripcion: true } },
+            usuario: { select: { id: true, nombre: true } },
+            sede: { select: { id: true, nombre: true } },
           },
         }),
         this.prisma.comprobante.count({ where }),
@@ -262,18 +281,18 @@ export class ComprobanteService {
     }
   }
 
-  async detalle(empresaId: number, serie: string, correlativo: number) {
+  async detalle(empresaId: number, serie: string, correlativo: number, sedeId?: number) {
     const comp = await this.prisma.comprobante.findFirst({
-      where: { empresaId, serie, correlativo },
+      where: { empresaId, serie, correlativo, ...(sedeId ? { sedeId } : {}) },
       include: { cliente: true, detalles: { include: { producto: true } } },
     });
     if (!comp) throw new NotFoundException('Comprobante no encontrado');
     return comp;
   }
 
-  async obtenerPorId(empresaId: number, id: number) {
+  async obtenerPorId(empresaId: number, id: number, sedeId?: number) {
     const comp = await this.prisma.comprobante.findFirst({
-      where: { empresaId, id },
+      where: { empresaId, id, ...(sedeId ? { sedeId } : {}) },
       include: {
         cliente: true,
         detalles: {
@@ -470,6 +489,32 @@ export class ComprobanteService {
 
   private round2(n: number): number {
     return parseFloat(n.toFixed(2));
+  }
+
+  // Crea el comprobante con reintentos automáticos en caso de colisión de correlativo (race condition)
+  private async crearComprobanteConReintento(
+    data: any,
+    tipoDoc: string,
+    tipDocAfectado: string | null,
+    empresaId: number,
+    maxIntentos = 5,
+  ) {
+    let intento = 0;
+    while (intento < maxIntentos) {
+      const { serie, correlativo } = await this.obtenerSerieYCorrelativo(tipoDoc, tipDocAfectado, empresaId);
+      try {
+        return await this.prisma.comprobante.create({
+          data: { ...data, serie, correlativo },
+        });
+      } catch (err: any) {
+        if (err?.code === 'P2002' && intento < maxIntentos - 1) {
+          intento++;
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw new BadRequestException('No se pudo generar el correlativo. Intente de nuevo.');
   }
 
   private async obtenerSerieYCorrelativo(
@@ -699,6 +744,7 @@ export class ComprobanteService {
           await this.inventarioNotificaciones.verificarProductoDespuesVenta(
             item.productoId,
             data.empresaId,
+            sedeId,
           );
         } catch (error) {
           // Log el error pero no fallar la operación principal
@@ -755,7 +801,9 @@ export class ComprobanteService {
                 comprobanteId: data.comprobanteId,
                 costoUnitario: costoUnitario,
                 usuarioId: data.usuarioId,
-                sedeId: movimientosOriginales.find(m => m.productoId === item.productoId)?.sedeId || 1, // Usar sede original o fallback (esto debe mejorarse recuperando la sede principal si falla)
+                sedeId: movimientosOriginales.find(m => m.productoId === item.productoId)?.sedeId
+                  || (await this.prisma.sede.findFirst({ where: { empresaId: data?.empresaId, esPrincipal: true }, select: { id: true } }))?.id
+                  || 1,
               });
 
               // --- REVERSIÓN DETALLADA DE LOTES ---
@@ -798,6 +846,7 @@ export class ComprobanteService {
     empresaId: number,
     formalTipo: '01' | '03' | '07' | '08',
     usuarioId?: number,
+    sedeId?: number,
   ) {
     const {
       fechaEmision,
@@ -845,7 +894,7 @@ export class ComprobanteService {
 
     // Si es nota de crédito, usar lógica especializada
     if (formalTipo === '07') {
-      return this.crearNotaCredito(input, empresaId);
+      return this.crearNotaCredito(input, empresaId, usuarioId, sedeId);
     }
 
     // Lógica original para facturas, boletas y notas de débito
@@ -897,11 +946,6 @@ export class ComprobanteService {
       }
     }
 
-    const { serie, correlativo } = await this.obtenerSerieYCorrelativo(
-      formalTipo,
-      tipDocAfectado ?? null,
-      empresaId,
-    );
     const subTotal = this.round2(mtoOperGravadas + totalIGV);
     const mtoImpVenta = subTotal;
 
@@ -938,8 +982,6 @@ export class ComprobanteService {
       montoDetraccion: finalMontoDetraccion ? Number(finalMontoDetraccion) : null,
       cuotas: cuotas ?? Prisma.JsonNull,
       tipoDoc: formalTipo,
-      serie,
-      correlativo,
       fechaEmision: fecha,
       formaPagoTipo,
       formaPagoMoneda,
@@ -947,6 +989,7 @@ export class ComprobanteService {
       observaciones: observaciones ?? null,
       clienteId: finalClienteId,
       empresaId,
+      sedeId,
       usuarioId: usuarioId ?? undefined,
       mtoOperGravadas,
       medioPago,
@@ -970,15 +1013,20 @@ export class ComprobanteService {
       leyendas: { create: [{ code: '1000', value: leyenda }] },
     };
 
-    const comprobante = await this.prisma.comprobante.create({
-      data: dataBase,
-    });
+    const comprobante = await this.crearComprobanteConReintento(
+      dataBase,
+      formalTipo,
+      tipDocAfectado ?? null,
+      empresaId,
+    );
 
     // Registrar movimientos de kardex
     await this.ajustarStock(detalles, {
       empresaId,
       comprobanteId: comprobante.id,
       concepto: `Venta ${formalTipo === '01' ? 'Factura' : formalTipo === '03' ? 'Boleta' : 'Nota de Débito'} ${comprobante.serie}-${comprobante.correlativo}`,
+      sedeId,
+      usuarioId,
     });
     return comprobante;
   }
@@ -987,13 +1035,22 @@ export class ComprobanteService {
     return this.prisma.comprobante.update({
       where: { id },
       data: {
-        estadoEnvioSunat: 'FALLIDO_ENVIO', // O un estado claro de error
+        estadoEnvioSunat: 'FALLIDO_ENVIO',
         sunatErrorMsg: errorMessage,
       },
     });
   }
 
-  async crearNotaCredito(input: any, empresaId: number) {
+  /**
+   * Elimina un comprobante que no pudo armarse correctamente antes de enviarse a SUNAT.
+   * Solo debe llamarse cuando el error es de datos (SunatPayloadException), nunca
+   * por errores de red, ya que esos sí deben reintentarse.
+   */
+  async eliminarComprobante(id: number) {
+    await this.prisma.comprobante.delete({ where: { id } });
+  }
+
+  async crearNotaCredito(input: any, empresaId: number, usuarioId?: number, sedeId?: number) {
     const {
       fechaEmision,
       formaPagoTipo,
@@ -1023,7 +1080,6 @@ export class ComprobanteService {
     const motivoNota = await this.prisma.motivoNota.findUnique({
       where: { id: motivoId },
     });
-    console.log("QUE ES ESTO DEL MOTIVO", motivoNota)
     if (!motivoNota) {
       throw new BadRequestException('Motivo no encontrado');
     }
@@ -1353,6 +1409,8 @@ export class ComprobanteService {
         observaciones: observaciones ?? null,
         clienteId: finalClienteId,
         empresaId,
+        sedeId,
+        usuarioId: usuarioId ?? undefined,
         mtoOperGravadas,
         mtoIGV: totalIGV,
         medioPago,
@@ -1397,7 +1455,7 @@ export class ComprobanteService {
     return nota;
   }
 
-  async crearInformal(input: any, empresaId: number, usuarioId?: number) {
+  async crearInformal(input: any, empresaId: number, usuarioId?: number, sedeId?: number) {
     const {
       fechaEmision,
       formaPagoTipo,
@@ -1437,11 +1495,6 @@ export class ComprobanteService {
     }
     const { detalleFinal, mtoOperGravadas, totalIGV } =
       await this.cargarProductosYDetalles(detalles, empresaId);
-    const { serie, correlativo } = await this.obtenerSerieYCorrelativo(
-      tipoDoc,
-      null,
-      empresaId,
-    );
     const subTotal = this.round2(mtoOperGravadas + totalIGV);
     const mtoImpVenta = subTotal;
     const fecha = new Date(fechaEmision);
@@ -1516,8 +1569,6 @@ export class ComprobanteService {
     const dataBase: any = {
       tipoOperacionId: tipoOperacionIdFinal ?? undefined,
       tipoDoc,
-      serie,
-      correlativo,
       fechaEmision: fecha,
       formaPagoTipo,
       formaPagoMoneda,
@@ -1525,6 +1576,7 @@ export class ComprobanteService {
       observaciones: observaciones ?? null,
       clienteId: finalClienteId,
       empresaId,
+      sedeId,
       usuarioId: usuarioId ?? undefined,
       mtoOperGravadas,
       medioPago: medioPagoValido,
@@ -1536,9 +1588,9 @@ export class ComprobanteService {
       estadoEnvioSunat: 'NO_APLICA' as string,
       estadoPago: estadoPagoInicial,
       saldo: saldoInicial,
-      adelanto: tipoDoc === 'NP' && adelanto ? Number(adelanto) : undefined,
+      adelanto: (tipoDoc === 'NP' || tipoDoc === 'OT') && adelanto ? Number(adelanto) : undefined,
       fechaRecojo:
-        tipoDoc === 'NP' && fechaRecojo ? new Date(fechaRecojo) : undefined,
+        (tipoDoc === 'NP' || tipoDoc === 'OT') && fechaRecojo ? new Date(fechaRecojo) : undefined,
       vuelto: vuelto != null ? Number(vuelto) : 0,
       // Campos de cotización
       cotizIncluirImagenes: input.cotizIncluirImagenes ?? false,
@@ -1551,7 +1603,7 @@ export class ComprobanteService {
       detalles: { create: detalleFinal },
       leyendas: { create: [{ code: '1000', value: leyenda }] },
     };
-    const comp = await this.prisma.comprobante.create({ data: dataBase });
+    const comp = await this.crearComprobanteConReintento(dataBase, tipoDoc, null, empresaId);
 
     // Crear registro de pago automáticamente si hay adelanto
     if (
@@ -1567,17 +1619,21 @@ export class ComprobanteService {
           monto: adelantoNormalizado,
           medioPago: medioPagoValido,
           observacion: 'Pago adelantado registrado automáticamente',
-          referencia: `${tipoDoc}-${serie}-${correlativo}`,
+          referencia: `${tipoDoc}-${comp.serie}-${comp.correlativo}`,
         },
       });
     }
 
     // Registrar movimientos de kardex
-    await this.ajustarStock(detalles, {
-      empresaId,
-      comprobanteId: comp.id,
-      concepto: `Venta ${tipoDoc} ${comp.serie}-${comp.correlativo}`,
-    });
+    if (tipoDoc !== 'COT') {
+      await this.ajustarStock(detalles, {
+        empresaId,
+        comprobanteId: comp.id,
+        concepto: `Venta ${tipoDoc} ${comp.serie}-${comp.correlativo}`,
+        sedeId,
+        usuarioId,
+      });
+    }
 
     // Generar y subir PDF a S3 para comprobantes informales
     try {
@@ -1718,7 +1774,7 @@ export class ComprobanteService {
     return comp;
   }
 
-  async crearOT(input: any, empresaId: number, usuarioId?: number) {
+  async crearOT(input: any, empresaId: number, usuarioId?: number, sedeId?: number) {
     const {
       productoId,
       cantidad,
@@ -1798,6 +1854,7 @@ export class ComprobanteService {
         fechaEmision: fecha,
         clienteId: finalClienteId,
         empresaId,
+        sedeId,
         usuarioId: usuarioId ?? undefined,
         mtoOperGravadas: mtoValorVenta,
         mtoIGV: 0,
@@ -1901,7 +1958,7 @@ export class ComprobanteService {
    * Obtiene las estadísticas de uso de comprobantes SUNAT para una empresa
    * Solo cuenta Facturas (01) y Boletas (03) con estado EMITIDO o ANULADO
    */
-  async getUsageStats(empresaId: number) {
+  async getUsageStats(empresaId: number, sedeId?: number) {
     // Obtener el plan de la empresa
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
@@ -1920,18 +1977,35 @@ export class ComprobanteService {
     const finMes = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
 
     // Contar comprobantes SUNAT del mes actual
-    // Solo Facturas (01) y Boletas (03) con estado EMITIDO o ANULADO
-    const comprobantesEmitidos = await this.prisma.comprobante.count({
-      where: {
-        empresaId,
-        tipoDoc: { in: ['01', '03'] }, // Solo facturas y boletas
-        estadoEnvioSunat: { in: ['EMITIDO', 'ANULADO'] },
-        creadoEn: {
-          gte: inicioMes,
-          lte: finMes
+    // Facturas (01), Boletas (03), Notas Crédito (07), Notas Débito (08) con estado EMITIDO o ANULADO
+    // + Guías de Remisión (tipoDocumento 09 y 31) con estado EMITIDO o ANULADO
+    const ESTADOS_CONTABLES: EstadoSunat[] = [
+      EstadoSunat.ENVIADO,
+      EstadoSunat.EMITIDO,
+      EstadoSunat.REGISTRADO,
+      EstadoSunat.ANULADO,
+    ];
+
+    const [facturasYBoletas, guiasRemision] = await Promise.all([
+      this.prisma.comprobante.count({
+        where: {
+          empresaId,
+          ...(sedeId ? { sedeId } : {}),
+          tipoDoc: { in: ['01', '03'] },
+          estadoEnvioSunat: { in: ESTADOS_CONTABLES },
+          creadoEn: { gte: inicioMes, lte: finMes }
         }
-      }
-    });
+      }),
+      this.prisma.guiaRemision.count({
+        where: {
+          empresaId,
+          estadoSunat: { in: ESTADOS_CONTABLES },
+          creadoEn: { gte: inicioMes, lte: finMes }
+        }
+      })
+    ]);
+
+    const comprobantesEmitidos = facturasYBoletas + guiasRemision;
 
     const porcentajeUso = limiteMaximo > 0 ? Math.round((comprobantesEmitidos / limiteMaximo) * 100) : 0;
     const puedeEmitir = comprobantesEmitidos < limiteMaximo;
@@ -1939,11 +2013,13 @@ export class ComprobanteService {
 
     return {
       comprobantesEmitidos,
+      facturasYBoletas,
+      guiasRemision,
       limiteMaximo,
       porcentajeUso,
       puedeEmitir,
       restantes,
-      mesActual: inicioMes.toISOString().slice(0, 7), // YYYY-MM
+      mesActual: inicioMes.toISOString().slice(0, 7),
       alerta80: porcentajeUso >= 80 && porcentajeUso < 100,
       limiteAlcanzado: porcentajeUso >= 100,
       plan: empresa.plan?.nombre || 'Sin plan'

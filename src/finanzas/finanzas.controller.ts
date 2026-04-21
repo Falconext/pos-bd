@@ -16,12 +16,18 @@ export class FinanzasController {
         @User() user: any,
         @Query('fechaInicio') fechaInicio?: string,
         @Query('fechaFin') fechaFin?: string,
+        @Query('sedeId') sedeIdQuery?: string,
     ) {
         const empresaId = user.empresaId;
+        const isAdmin = user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
+        const sedeId = isAdmin
+            ? (sedeIdQuery ? Number(sedeIdQuery) : null)
+            : (user.sedeId ?? null);
         return this.finanzasService.getResumenFinanciero(
             empresaId,
             fechaInicio,
             fechaFin,
+            sedeId,
         );
     }
 }

@@ -18,6 +18,7 @@ export class ArqueoService {
     empresaId: number,
     fechaInicio: string,
     fechaFin: string,
+    sedeId?: number,
   ) {
     const fechaEmision = this.parseRangeDates(fechaInicio, fechaFin);
 
@@ -26,6 +27,7 @@ export class ArqueoService {
       await this.prisma.comprobante.findMany({
         where: {
           empresaId,
+          ...(sedeId ? { sedeId } : {}),
           tipoDoc: { in: ['TICKET', 'NV', 'RH', 'CP'] },
           fechaEmision,
           estadoEnvioSunat: 'NO_APLICA',
@@ -50,10 +52,11 @@ export class ArqueoService {
     const comprobantesFormales = await this.prisma.comprobante.findMany({
       where: {
         empresaId,
+        ...(sedeId ? { sedeId } : {}),
         tipoDoc: { in: ['01', '03'] }, // Facturas y Boletas
         fechaEmision,
-        estadoEnvioSunat: 'EMITIDO',
-        formaPagoTipo: 'Contado', // Solo los de contado van a caja
+        estadoEnvioSunat: { in: ['EMITIDO', 'REGISTRADO'] as any },
+        NOT: { formaPagoTipo: { equals: 'CREDITO', mode: 'insensitive' } as any },
       },
       select: {
         id: true,
@@ -73,6 +76,7 @@ export class ArqueoService {
     const pagos = await this.prisma.pago.findMany({
       where: {
         empresaId,
+        ...(sedeId ? { comprobante: { sedeId } } : {}),
         fecha: fechaEmision,
       },
       select: {

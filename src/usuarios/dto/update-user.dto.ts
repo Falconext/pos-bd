@@ -1,4 +1,5 @@
 import {
+  IsArray,
   IsEmail,
   IsInt,
   IsNotEmpty,
@@ -34,4 +35,8 @@ export class UpdateUserDto {
 
   @IsOptional()
   permisos?: string[];
+
+  @IsArray()
+  @IsOptional()
+  sedeIds?: number[];
 }

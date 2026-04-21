@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsNumber, IsDecimal, IsEnum } from 'class-validator';
+import { IsOptional, IsString, IsNumber, IsEnum, IsIn, Min } from 'class-validator';
 import { Transform } from 'class-transformer';
 
 export enum TipoCaja {
@@ -8,9 +8,12 @@ export enum TipoCaja {
   EGRESO = 'EGRESO',
 }
 
+const TURNOS_VALIDOS = ['MAÑANA', 'TARDE', 'NOCHE'] as const;
+
 export class AperturaCajaDto {
   @IsNumber()
-  @Transform(({ value }) => parseFloat(value))
+  @Min(0, { message: 'El monto inicial no puede ser negativo' })
+  @Transform(({ value }) => parseFloat(value) || 0)
   montoInicial: number;
 
   @IsOptional()
@@ -18,29 +21,34 @@ export class AperturaCajaDto {
   observaciones?: string;
 
   @IsOptional()
-  @IsString()
-  turno?: string; // MAÑANA, TARDE, NOCHE
+  @IsIn(TURNOS_VALIDOS, { message: 'El turno debe ser MAÑANA, TARDE o NOCHE' })
+  turno?: string;
 }
 
 export class CierreCajaDto {
   @IsNumber()
-  @Transform(({ value }) => parseFloat(value))
+  @Min(0, { message: 'El monto de efectivo no puede ser negativo' })
+  @Transform(({ value }) => parseFloat(value) || 0)
   montoEfectivo: number;
 
   @IsNumber()
-  @Transform(({ value }) => parseFloat(value))
+  @Min(0, { message: 'El monto de Yape no puede ser negativo' })
+  @Transform(({ value }) => parseFloat(value) || 0)
   montoYape: number;
 
   @IsNumber()
-  @Transform(({ value }) => parseFloat(value))
+  @Min(0, { message: 'El monto de Plin no puede ser negativo' })
+  @Transform(({ value }) => parseFloat(value) || 0)
   montoPlin: number;
 
   @IsNumber()
-  @Transform(({ value }) => parseFloat(value))
+  @Min(0, { message: 'El monto de transferencia no puede ser negativo' })
+  @Transform(({ value }) => parseFloat(value) || 0)
   montoTransferencia: number;
 
   @IsNumber()
-  @Transform(({ value }) => parseFloat(value))
+  @Min(0, { message: 'El monto de tarjeta no puede ser negativo' })
+  @Transform(({ value }) => parseFloat(value) || 0)
   montoTarjeta: number;
 
   @IsOptional()

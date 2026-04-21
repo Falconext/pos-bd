@@ -10,7 +10,13 @@ import {
     ValidateNested,
     Min,
     IsDecimal,
+    IsEnum,
 } from 'class-validator';
+
+export enum TipoGuiaRemision {
+    REMITENTE = 'REMITENTE',
+    TRANSPORTISTA = 'TRANSPORTISTA',
+}
 
 export class CreateDetalleGuiaDto {
     @IsOptional()
@@ -35,6 +41,10 @@ export class CreateDetalleGuiaDto {
 }
 
 export class CreateGuiaRemisionDto {
+    @IsEnum(TipoGuiaRemision)
+    @IsOptional()
+    tipoGuia?: TipoGuiaRemision = TipoGuiaRemision.REMITENTE;
+
     @IsString()
     @IsNotEmpty()
     serie: string;
@@ -125,11 +135,19 @@ export class CreateGuiaRemisionDto {
 
     @IsOptional()
     @IsString()
+    conductorApellidos?: string;
+
+    @IsOptional()
+    @IsString()
     conductorLicencia?: string;
 
     @IsOptional()
     @IsString()
     vehiculoPlaca?: string;
+
+    @IsOptional()
+    @IsString()
+    vehiculoAutorizacion?: string;
 
     // Punto de partida
     @IsString()
@@ -140,6 +158,10 @@ export class CreateGuiaRemisionDto {
     @IsNotEmpty()
     partidaDireccion: string;
 
+    @IsOptional()
+    @IsString()
+    partidaCodigoEstablecimiento?: string;
+
     // Punto de llegada
     @IsString()
     @IsNotEmpty()
@@ -148,6 +170,10 @@ export class CreateGuiaRemisionDto {
     @IsString()
     @IsNotEmpty()
     llegadaDireccion: string;
+
+    @IsOptional()
+    @IsString()
+    llegadaCodigoEstablecimiento?: string;
 
     // Fecha de traslado
     @IsDateString()

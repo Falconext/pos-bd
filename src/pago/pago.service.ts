@@ -131,9 +131,9 @@ export class PagoService {
     if (filtros?.fechaInicio || filtros?.fechaFin) {
       where.fecha = {};
       if (filtros.fechaInicio)
-        where.fecha.gte = new Date(`${filtros.fechaInicio}T00:00:00.000Z`);
+        where.fecha.gte = new Date(`${filtros.fechaInicio}T00:00:00.000-05:00`);
       if (filtros.fechaFin)
-        where.fecha.lte = new Date(`${filtros.fechaFin}T23:59:59.999Z`);
+        where.fecha.lte = new Date(`${filtros.fechaFin}T23:59:59.999-05:00`);
     }
     if (filtros?.clienteId) {
       where.comprobante = { clienteId: filtros.clienteId };
@@ -199,8 +199,8 @@ export class PagoService {
     fechaInicio: string,
     fechaFin: string,
   ) {
-    const inicio = new Date(`${fechaInicio}T00:00:00.000Z`);
-    const fin = new Date(`${fechaFin}T23:59:59.999Z`);
+    const inicio = new Date(`${fechaInicio}T00:00:00.000-05:00`);
+    const fin = new Date(`${fechaFin}T23:59:59.999-05:00`);
 
     const pagos = await this.prisma.pago.findMany({
       where: {
@@ -255,15 +255,22 @@ export class PagoService {
 
     const comprobante = pago.comprobante;
 
+    // Eliminar pago primero
+    await this.prisma.pago.delete({ where: { id: pagoId } });
+
     // Restaurar saldo
     const nuevoSaldo = (comprobante.saldo ?? 0) + pago.monto;
-    let nuevoEstado = comprobante.estadoPago;
-    if (nuevoSaldo > 0 && comprobante.estadoPago === 'COMPLETADO') {
+
+    // Determinar nuevo estado según pagos restantes
+    const pagosRestantes = await this.prisma.pago.count({
+      where: { comprobanteId: comprobante.id },
+    });
+    let nuevoEstado: string;
+    if (pagosRestantes === 0) {
+      nuevoEstado = 'PENDIENTE_PAGO';
+    } else {
       nuevoEstado = 'PAGO_PARCIAL';
     }
-
-    // Eliminar pago
-    await this.prisma.pago.delete({ where: { id: pagoId } });
 
     // Actualizar comprobante
     return this.prisma.comprobante.update({

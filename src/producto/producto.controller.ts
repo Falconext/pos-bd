@@ -162,8 +162,13 @@ export class ProductoController {
     @Res({ passthrough: true }) res: Response,
   ) {
     console.log('Listar Query:', query);
+    const isAdmin = user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
+    const sedeId = isAdmin
+      ? (query.sedeId ? Number(query.sedeId) : null)
+      : user.sedeId;
     const resultado = await this.service.listar({
       empresaId: user.empresaId,
+      sedeId,
       search: query.search,
       page: query.page,
       limit: query.limit,
@@ -223,6 +228,7 @@ export class ProductoController {
     const actualizado = await this.service.actualizar({
       id,
       empresaId: user.empresaId,
+      sedeId: user.sedeId ?? undefined, // forward JWT sedeId so stock updates target the user's sede
       ...body,
     }, user.id); // Pasar el usuarioId para el kardex
     res.locals.message = 'Producto actualizado correctamente';
@@ -321,6 +327,7 @@ export class ProductoController {
   ) {
     const resultado = await this.service.listar({
       empresaId: user.empresaId,
+      sedeId: user.sedeId,
       search: query.search,
       page: query.page,
       limit: query.limit,
@@ -421,7 +428,8 @@ export class ProductoController {
       concepto: `Ajuste Lote Manual: ${body.motivo}`,
       cantidad: body.cantidad,
       usuarioId: user.id,
-      sedeId: sedePrincipal
+      // Usar la sede del usuario si está disponible o la principal
+      sedeId: user.sedeId || sedePrincipal
     });
 
     // 2. Ajustar lote específico

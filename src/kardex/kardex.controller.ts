@@ -23,6 +23,7 @@ import {
   AjusteInventarioDto,
   AjusteMasivoDto
 } from './dto/ajuste-inventario.dto';
+import { TrasladoKardexDto } from './dto/traslado-kardex.dto';
 
 @Controller('kardex')
 @UseGuards(JwtAuthGuard, ModuleAccessGuard)
@@ -43,7 +44,7 @@ export class KardexController {
       throw new BadRequestException('Usuario sin empresa asignada');
     }
 
-    return this.kardexService.obtenerKardexGeneral(empresaId, filtros);
+    return this.kardexService.obtenerKardexGeneral(empresaId, filtros, req.user.sedeId);
   }
 
   /**
@@ -60,7 +61,7 @@ export class KardexController {
       throw new BadRequestException('Usuario sin empresa asignada');
     }
 
-    return this.kardexService.obtenerKardexProducto(productoId, empresaId, filtros);
+    return this.kardexService.obtenerKardexProducto(productoId, empresaId, filtros, req.user.sedeId);
   }
 
   /**
@@ -78,7 +79,7 @@ export class KardexController {
       throw new BadRequestException('Usuario sin empresa asignada');
     }
 
-    return this.kardexService.realizarAjusteInventario(ajusteDto, empresaId, usuarioId);
+    return this.kardexService.realizarAjusteInventario(ajusteDto, empresaId, usuarioId, req.user.sedeId);
   }
 
   /**
@@ -96,7 +97,25 @@ export class KardexController {
       throw new BadRequestException('Usuario sin empresa asignada');
     }
 
-    return this.kardexService.realizarAjusteMasivo(ajusteMasivoDto, empresaId, usuarioId);
+    return this.kardexService.realizarAjusteMasivo(ajusteMasivoDto, empresaId, usuarioId, req.user.sedeId);
+  }
+
+  /**
+   * Realiza el traslado de productos entre sedes
+   */
+  @Post('traslado')
+  async realizarTraslado(
+    @Body(ValidationPipe) trasladoDto: TrasladoKardexDto,
+    @Request() req,
+  ) {
+    const empresaId = req.user.empresaId;
+    const usuarioId = req.user.id;
+
+    if (!empresaId) {
+      throw new BadRequestException('Usuario sin empresa asignada');
+    }
+
+    return this.kardexService.realizarTraslado(trasladoDto, empresaId, usuarioId);
   }
 
   /**
@@ -112,7 +131,7 @@ export class KardexController {
       throw new BadRequestException('Usuario sin empresa asignada');
     }
 
-    return this.kardexService.obtenerInventarioValorizado(empresaId, filtros);
+    return this.kardexService.obtenerInventarioValorizado(empresaId, filtros, req.user.sedeId);
   }
 
   /**
@@ -128,7 +147,7 @@ export class KardexController {
       throw new BadRequestException('Usuario sin empresa asignada');
     }
 
-    const stockActual = await this.kardexService.calcularStockActual(productoId, empresaId);
+    const stockActual = await this.kardexService.calcularStockActual(productoId, empresaId, req.user.sedeId);
     return { productoId, stockActual };
   }
 
@@ -142,7 +161,7 @@ export class KardexController {
       throw new BadRequestException('Usuario sin empresa asignada');
     }
 
-    return this.kardexService.validarConsistenciaStock(empresaId);
+    return this.kardexService.validarConsistenciaStock(empresaId, req.user.sedeId);
   }
 
   /**
@@ -156,13 +175,13 @@ export class KardexController {
     }
 
     // Obtener inventario valorizado para las estadísticas
-    const inventario = await this.kardexService.obtenerInventarioValorizado(empresaId);
+    const inventario = await this.kardexService.obtenerInventarioValorizado(empresaId, undefined, req.user.sedeId);
 
     // Obtener movimientos recientes
     const movimientosRecientes = await this.kardexService.obtenerKardexGeneral(empresaId, {
       page: 1,
       limit: 10,
-    });
+    }, req.user.sedeId);
 
     return {
       resumenInventario: inventario.resumen,
@@ -194,7 +213,7 @@ export class KardexController {
       ...filtros,
       page: 1,
       limit: 10000, // Límite alto para exportación
-    });
+    }, req.user.sedeId);
 
     return {
       tipo,
@@ -217,7 +236,7 @@ export class KardexController {
 
     return this.kardexService.obtenerInventarioValorizado(empresaId, {
       soloStockCritico: true,
-    });
+    }, req.user.sedeId);
   }
 
   /**
@@ -244,7 +263,7 @@ export class KardexController {
       fechaFin: fechaFin_date.toISOString(),
       page: 1,
       limit: 10000,
-    });
+    }, req.user.sedeId);
 
     // Calcular resumen por tipo de movimiento
     const resumen = {
@@ -312,7 +331,7 @@ export class KardexController {
     const fechaInicio_date = fechaInicio ? new Date(fechaInicio) : undefined;
     const fechaFin_date = fechaFin ? new Date(fechaFin) : undefined;
 
-    return this.kardexService.obtenerReporteRotacion(empresaId, fechaInicio_date, fechaFin_date);
+    return this.kardexService.obtenerReporteRotacion(empresaId, fechaInicio_date, fechaFin_date, req.user.sedeId);
   }
 
   /**
@@ -332,7 +351,7 @@ export class KardexController {
     const fechaInicio_date = fechaInicio ? new Date(fechaInicio) : undefined;
     const fechaFin_date = fechaFin ? new Date(fechaFin) : undefined;
 
-    return this.kardexService.obtenerAnalisisABC(empresaId, fechaInicio_date, fechaFin_date);
+    return this.kardexService.obtenerAnalisisABC(empresaId, fechaInicio_date, fechaFin_date, req.user.sedeId);
   }
 
   /**
@@ -349,7 +368,7 @@ export class KardexController {
     }
 
     const dias = diasSinMovimiento ? parseInt(diasSinMovimiento, 10) : 90;
-    return this.kardexService.obtenerProductosObsoletos(empresaId, dias);
+    return this.kardexService.obtenerProductosObsoletos(empresaId, dias, req.user.sedeId);
   }
 
   /**
@@ -364,10 +383,10 @@ export class KardexController {
 
     // Obtener datos en paralelo para mejor rendimiento
     const [inventarioValorizado, estadisticas, stockCritico, productosObsoletos] = await Promise.all([
-      this.kardexService.obtenerInventarioValorizado(empresaId),
+      this.kardexService.obtenerInventarioValorizado(empresaId, undefined, req.user.sedeId),
       this.obtenerEstadisticasInventario(req),
-      this.kardexService.obtenerInventarioValorizado(empresaId, { soloStockCritico: true }),
-      this.kardexService.obtenerProductosObsoletos(empresaId, 60), // 60 días
+      this.kardexService.obtenerInventarioValorizado(empresaId, { soloStockCritico: true }, req.user.sedeId),
+      this.kardexService.obtenerProductosObsoletos(empresaId, 60, req.user.sedeId), // 60 días
     ]);
 
     return {

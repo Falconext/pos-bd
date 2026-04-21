@@ -144,6 +144,7 @@ export class EmpresaService {
         providerToken: data.providerToken || null,
         providerId: data.providerId || null,
         esAgenteRetencion: data.esAgenteRetencion || false,
+        usaCodigoBarrasManual: data.usaCodigoBarrasManual,
         usuarios: {
           create: {
             nombre: data.usuario.nombre,
@@ -200,7 +201,8 @@ export class EmpresaService {
             },
           ],
         },
-      },
+        costoActivacionReseller: planSeleccionado.costo,
+      } as any,
       include: { plan: true, productos: true, clientes: true },
     });
 
@@ -360,6 +362,8 @@ export class EmpresaService {
         updateData.providerToken = dto.providerToken;
       if (dto.providerId !== undefined) updateData.providerId = dto.providerId;
       if (dto.esAgenteRetencion !== undefined) updateData.esAgenteRetencion = dto.esAgenteRetencion;
+      if (dto.usaCodigoBarrasManual !== undefined)
+        updateData.usaCodigoBarrasManual = dto.usaCodigoBarrasManual;
       if (dto.logo !== undefined) updateData.logo = dto.logo;
       if (dto.bancoNombre !== undefined) updateData.bancoNombre = dto.bancoNombre;
       if (dto.numeroCuenta !== undefined) updateData.numeroCuenta = dto.numeroCuenta;

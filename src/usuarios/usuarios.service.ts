@@ -14,11 +14,9 @@ export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateUserDto, empresaIdFromToken: number) {
-    const { nombre, email, dni, celular, password, permisos } = dto;
+    const { nombre, email, dni, celular, password, permisos, sedeIds } = dto;
 
-    const existeEmail = await this.prisma.usuario.findUnique({
-      where: { email },
-    });
+    const existeEmail = await this.prisma.usuario.findUnique({ where: { email } });
     if (existeEmail) throw new BadRequestException('El email ya está en uso');
 
     const existeDni = await this.prisma.usuario.findFirst({ where: { dni } });
@@ -71,6 +69,14 @@ export class UsersService {
       },
     });
 
+    // Asignar sedes si vienen
+    if (sedeIds && sedeIds.length > 0) {
+      await this.prisma.usuarioSede.createMany({
+        data: sedeIds.map((sedeId) => ({ usuarioId: nuevo.id, sedeId })),
+        skipDuplicates: true,
+      });
+    }
+
     return nuevo;
   }
 
@@ -117,34 +123,47 @@ export class UsersService {
           empresaId: true,
           estado: true,
           permisos: true,
+          sedesAsignadas: {
+            select: {
+              sede: {
+                select: { id: true, nombre: true, codigo: true, esPrincipal: true }
+              }
+            }
+          },
         },
       }),
     ]);
 
-    return { total, page, limit, items };
+    // Aplanar sedes asignadas
+    const itemsConSedes = items.map((u) => ({
+      ...u,
+      sedes: (u.sedesAsignadas || []).map((us: any) => us.sede),
+      sedesAsignadas: undefined,
+    }));
+
+    return { total, page, limit, items: itemsConSedes };
   }
 
   async changeState(id: number, estado: 'ACTIVO' | 'INACTIVO') {
     const exists = await this.prisma.usuario.findUnique({ where: { id } });
     if (!exists) throw new NotFoundException('Usuario no encontrado');
-
     return this.prisma.usuario.update({ where: { id }, data: { estado } });
   }
 
   async update(dto: UpdateUserDto, empresaId: number) {
-    const { id, nombre, email, dni, celular, permisos } = dto;
+    const { id, nombre, email, dni, celular, permisos, sedeIds } = dto;
 
     const usuario = await this.prisma.usuario.findUnique({ where: { id } });
     if (!usuario) throw new NotFoundException('Usuario no encontrado');
     if (usuario.empresaId !== empresaId)
       throw new ForbiddenException('Empresa no identificada');
 
-    return this.prisma.usuario.update({
+    const updated = await this.prisma.usuario.update({
       where: { id },
-      data: { 
-        nombre, 
-        email, 
-        dni, 
+      data: {
+        nombre,
+        email,
+        dni,
         celular,
         permisos: permisos ? JSON.stringify(permisos) : undefined,
       },
@@ -160,6 +179,19 @@ export class UsersService {
         estado: true,
       },
     });
+
+    // Sincronizar sedes si vienen
+    if (sedeIds !== undefined) {
+      await this.prisma.usuarioSede.deleteMany({ where: { usuarioId: id } });
+      if (sedeIds.length > 0) {
+        await this.prisma.usuarioSede.createMany({
+          data: sedeIds.map((sedeId) => ({ usuarioId: id, sedeId })),
+          skipDuplicates: true,
+        });
+      }
+    }
+
+    return updated;
   }
 
   async me(userId: number) {
@@ -202,9 +234,7 @@ export class UsersService {
   }
 
   async changePassword(userId: number, actual: string, nueva: string) {
-    const usuario = await this.prisma.usuario.findUnique({
-      where: { id: userId },
-    });
+    const usuario = await this.prisma.usuario.findUnique({ where: { id: userId } });
     if (!usuario) throw new NotFoundException('Usuario no encontrado');
 
     const ok = await bcrypt.compare(actual, usuario.password);

@@ -10,17 +10,28 @@ import { DashboardService } from './dashboard.service';
 export class DashboardController {
   constructor(private readonly service: DashboardService) {}
 
+  private resolveSedeId(user: any, sedeIdQuery?: string): number | undefined {
+    const isAdmin = user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
+    if (isAdmin) {
+      return sedeIdQuery ? Number(sedeIdQuery) : undefined;
+    }
+    return user.sedeId ?? undefined;
+  }
+
   @Get('dashboard')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async resumen(
     @User() user: any,
     @Query('fechaInicio') fechaInicio?: string,
     @Query('fechaFin') fechaFin?: string,
+    @Query('sedeId') sedeIdQuery?: string,
   ) {
+    const sedeId = this.resolveSedeId(user, sedeIdQuery);
     const data = await this.service.headerResumen(
       user.empresaId,
       fechaInicio,
       fechaFin,
+      sedeId,
     );
     return data;
   }
@@ -31,11 +42,14 @@ export class DashboardController {
     @User() user: any,
     @Query('fechaInicio') fechaInicio?: string,
     @Query('fechaFin') fechaFin?: string,
+    @Query('sedeId') sedeIdQuery?: string,
   ) {
+    const sedeId = this.resolveSedeId(user, sedeIdQuery);
     const data = await this.service.ingresosPorComprobante(
       user.empresaId,
       fechaInicio,
       fechaFin,
+      sedeId,
     );
     return data;
   }
@@ -46,11 +60,14 @@ export class DashboardController {
     @User() user: any,
     @Query('fechaInicio') fechaInicio?: string,
     @Query('fechaFin') fechaFin?: string,
+    @Query('sedeId') sedeIdQuery?: string,
   ) {
+    const sedeId = this.resolveSedeId(user, sedeIdQuery);
     const data = await this.service.ingresosPorMedioPago(
       user.empresaId,
       fechaInicio,
       fechaFin,
+      sedeId,
     );
     return data;
   }
@@ -62,13 +79,16 @@ export class DashboardController {
     @Query('fechaInicio') fechaInicio?: string,
     @Query('fechaFin') fechaFin?: string,
     @Query('limit') limitRaw?: string,
+    @Query('sedeId') sedeIdQuery?: string,
   ) {
     const limit = limitRaw ? Number(limitRaw) : 10;
+    const sedeId = this.resolveSedeId(user, sedeIdQuery);
     const data = await this.service.topProductos(
       user.empresaId,
       fechaInicio,
       fechaFin,
       limit,
+      sedeId,
     );
     return data;
   }
@@ -79,11 +99,14 @@ export class DashboardController {
     @User() user: any,
     @Query('fechaInicio') fechaInicio?: string,
     @Query('fechaFin') fechaFin?: string,
+    @Query('sedeId') sedeIdQuery?: string,
   ) {
+    const sedeId = this.resolveSedeId(user, sedeIdQuery);
     const data = await this.service.clientesNuevos(
       user.empresaId,
       fechaInicio,
       fechaFin,
+      sedeId,
     );
     return data;
   }

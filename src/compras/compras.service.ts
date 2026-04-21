@@ -11,14 +11,21 @@ export class ComprasService {
         private kardexService: KardexService,
     ) { }
 
-    async crear(empresaId: number, usuarioId: number, data: CrearCompraDto) {
+    async crear(empresaId: number, usuarioId: number, data: CrearCompraDto, reqSedeId?: number) {
         let subtotal = 0;
 
-        // Obtener sede principal para kardex
-        const sedePrincipal = await this.prisma.sede.findFirst({
-            where: { empresaId, esPrincipal: true }
-        });
-        const sedeId = sedePrincipal?.id || 1; // Fallback unsafe but necessary to prevent crash if no sede
+        // Usar la sede del token; si el usuario es admin sin sede asignada, usar la sede principal
+        let sedeId = reqSedeId;
+        if (!sedeId) {
+            const principal = await this.prisma.sede.findFirst({
+                where: { empresaId, esPrincipal: true, activo: true },
+                select: { id: true },
+            });
+            if (!principal) {
+                throw new BadRequestException('No se pudo determinar la sede. Asigne una sede al usuario o configure una sede principal.');
+            }
+            sedeId = principal.id;
+        }
 
         // Prepare detail data and calculate totals from items to be safe
         const detallesData: any[] = [];
@@ -72,6 +79,7 @@ export class ComprasService {
                     detalles: {
                         create: detallesData
                     },
+                    sedeId: sedeId, // Guardar la sede a nivel de la cabecera de la compra
                     pagos: data.montoPagadoInicial ? {
                         create: {
                             empresaId,
@@ -114,12 +122,27 @@ export class ComprasService {
         return compra;
     }
 
-    async listar(empresaId: number, query: any) {
+    async listar(empresaId: number, query: any, sedeId?: number) {
         const { page = 1, limit = 10, search, estadoPago, fechaInicio, fechaFin } = query;
         const skip = (Number(page) - 1) * Number(limit);
 
+        // Principal sede: include legacy records with sedeId=null (created before JWT sedeId fix)
+        let sedeFilter: any = {};
+        if (sedeId) {
+            const esPrincipal = await this.prisma.sede.findFirst({
+                where: { empresaId, id: sedeId, esPrincipal: true },
+                select: { id: true },
+            });
+            if (esPrincipal) {
+                sedeFilter = { AND: [{ OR: [{ sedeId }, { sedeId: null }] }] };
+            } else {
+                sedeFilter = { sedeId };
+            }
+        }
+
         const where: Prisma.CompraWhereInput = {
             empresaId,
+            ...sedeFilter,
             ...(estadoPago ? { estadoPago: estadoPago } : {}),
             ...(fechaInicio ? {
                 fechaEmision: {
@@ -150,9 +173,9 @@ export class ComprasService {
         return { data, total, page: Number(page), limit: Number(limit) };
     }
 
-    async obtenerPorId(empresaId: number, id: number) {
+    async obtenerPorId(empresaId: number, id: number, sedeId?: number) {
         const compra = await this.prisma.compra.findFirst({
-            where: { id, empresaId },
+            where: { id, empresaId, ...(sedeId ? { sedeId } : {}) },
             include: {
                 proveedor: true,
                 detalles: {
@@ -169,9 +192,9 @@ export class ComprasService {
         return compra;
     }
 
-    async registrarPago(empresaId: number, usuarioId: number, compraId: number, data: any) {
+    async registrarPago(empresaId: number, usuarioId: number, compraId: number, data: any, sedeId?: number) {
         const compra = await this.prisma.compra.findFirst({
-            where: { id: compraId, empresaId }
+            where: { id: compraId, empresaId, ...(sedeId ? { sedeId } : {}) }
         });
 
         if (!compra) throw new NotFoundException('Compra no encontrada');
@@ -212,7 +235,12 @@ export class ComprasService {
         return { success: true, ...result };
     }
 
-    async getHistorialPagos(empresaId: number, compraId: number) {
+    async getHistorialPagos(empresaId: number, compraId: number, sedeId?: number) {
+        const compra = await this.prisma.compra.findFirst({
+            where: { id: compraId, empresaId, ...(sedeId ? { sedeId } : {}) }
+        });
+        if (!compra) return { success: true, data: [], totalPagado: 0 }; // Filtrar pagos si no es su sede
+
         const pagos = await this.prisma.pagoCompra.findMany({
             where: { compraId, empresaId },
             orderBy: { fecha: 'desc' }

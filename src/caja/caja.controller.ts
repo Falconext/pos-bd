@@ -29,6 +29,7 @@ export class CajaController {
       user.id,
       user.empresaId,
       aperturaCajaDto,
+      user.sedeId,
     );
   }
 
@@ -39,13 +40,14 @@ export class CajaController {
       user.id,
       user.empresaId,
       cierreCajaDto,
+      user.sedeId,
     );
   }
 
   @Get('estado')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async obtenerEstadoCaja(@User() user: any) {
-    return await this.cajaService.obtenerEstadoCaja(user.id, user.empresaId);
+    return await this.cajaService.obtenerEstadoCaja(user.id, user.empresaId, user.sedeId);
   }
 
   @Get('historial')
@@ -56,9 +58,12 @@ export class CajaController {
     @Query('fechaFin') fechaFin?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('sedeId') sedeIdQuery?: string,
   ) {
     const pageNum = page ? parseInt(page, 10) : 1;
     const limitNum = limit ? parseInt(limit, 10) : 50;
+    const isAdmin = ['ADMIN_EMPRESA', 'ADMIN_SISTEMA'].includes(user.rol);
+    const sedeId = isAdmin ? (sedeIdQuery ? Number(sedeIdQuery) : null) : user.sedeId;
 
     return await this.cajaService.obtenerHistorialCaja(
       user.empresaId,
@@ -66,6 +71,7 @@ export class CajaController {
       fechaFin,
       pageNum,
       limitNum,
+      sedeId,
     );
   }
 
@@ -76,11 +82,15 @@ export class CajaController {
     @Res({ passthrough: true }) res: Response,
     @Query('fechaInicio') fechaInicio?: string,
     @Query('fechaFin') fechaFin?: string,
+    @Query('sedeId') sedeIdQuery?: string,
   ) {
+    const isAdmin = ['ADMIN_EMPRESA', 'ADMIN_SISTEMA'].includes(user.rol);
+    const sedeId = isAdmin ? (sedeIdQuery ? Number(sedeIdQuery) : null) : user.sedeId;
     const arqueo = await this.cajaService.obtenerArqueoConCaja(
       user.empresaId,
       fechaInicio,
       fechaFin,
+      sedeId,
     );
     res.locals.message = 'Arqueo de caja obtenido correctamente';
     return arqueo;
@@ -98,6 +108,7 @@ export class CajaController {
       user.empresaId,
       fechaInicio,
       fechaFin,
+      user.sedeId,
     );
 
     // Preparar datos para Excel
@@ -204,6 +215,7 @@ export class CajaController {
       user.empresaId,
       turno,
       fecha,
+      user.sedeId,
     );
   }
 
@@ -218,6 +230,7 @@ export class CajaController {
       user.empresaId,
       fechaInicio,
       fechaFin,
+      user.sedeId,
     );
   }
 }

@@ -56,4 +56,11 @@ export class ListComprobanteDto {
   @Type(() => String)
   @IsString()
   tipoDoc?: string;
+
+  // Solo para ADMIN_EMPRESA: filtrar por sede específica
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  sedeId?: number;
 }

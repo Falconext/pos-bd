@@ -16,6 +16,11 @@ import { CajaService } from '../caja/caja.service';
 import type { Response } from 'express';
 import * as XLSX from 'xlsx';
 
+// Lima es UTC-5 sin DST — extrae "YYYY-MM-DD" en hora local Lima
+function toFechaLima(d: Date): string {
+  return new Date(d.getTime() - 5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('contabilidad')
 export class ContabilidadController {
@@ -31,6 +36,7 @@ export class ContabilidadController {
     @User() user: any,
     @Query('fechaInicio') fechaInicio?: string,
     @Query('fechaFin') fechaFin?: string,
+    @Query('sedeId') sedeId?: string,
   ) {
     if (!fechaInicio || !fechaFin)
       throw new BadRequestException('fechaInicio y fechaFin son requeridos');
@@ -38,6 +44,7 @@ export class ContabilidadController {
       user.empresaId,
       fechaInicio,
       fechaFin,
+      sedeId ? Number(sedeId) : undefined,
     );
     return data;
   }
@@ -48,6 +55,7 @@ export class ContabilidadController {
     @User() user: any,
     @Query('fechaInicio') fechaInicio?: string,
     @Query('fechaFin') fechaFin?: string,
+    @Query('sedeId') sedeId?: string,
   ) {
     if (!fechaInicio || !fechaFin)
       throw new BadRequestException('fechaInicio y fechaFin son requeridos');
@@ -55,6 +63,7 @@ export class ContabilidadController {
       user.empresaId,
       fechaInicio,
       fechaFin,
+      sedeId ? Number(sedeId) : undefined,
     );
     return data;
   }
@@ -66,6 +75,7 @@ export class ContabilidadController {
     @Query('fechaInicio') fechaInicio: string,
     @Query('fechaFin') fechaFin: string,
     @Res() res: Response,
+    @Query('sedeId') sedeId?: string,
   ) {
     if (!fechaInicio || !fechaFin)
       throw new BadRequestException('fechaInicio y fechaFin son requeridos');
@@ -73,60 +83,66 @@ export class ContabilidadController {
       user.empresaId,
       fechaInicio,
       fechaFin,
+      sedeId ? Number(sedeId) : undefined,
     );
 
-    // Preparar datos para Excel siguiendo formato del proyecto Node original
-    const datosExcel = comprobantes.map((comp) => ({
+    const estadoPagoLabel: Record<string, string> = {
+      COMPLETADO: 'Pagado', PENDIENTE_PAGO: 'Pendiente', PAGO_PARCIAL: 'Pago Parcial', ANULADO: 'Anulado',
+    };
+
+    const datosExcel = comprobantes.map((comp: any) => ({
+      SEDE: comp.sede?.nombre ?? '',
       TIPO: comp.comprobante,
       SERIE: comp.serie,
       CORRELATIVO: comp.correlativo,
-      'NUMERO DOCUMENTO': comp.cliente?.nroDoc ?? '',
+      'RUC/DNI': comp.cliente?.nroDoc ?? '',
       CLIENTE: comp.cliente?.nombre ?? '',
-      'FECHA EMISIÓN': new Date(comp.fechaEmision).toISOString().split('T')[0],
+      'FECHA EMISIÓN': toFechaLima(new Date(comp.fechaEmision)),
+      MONEDA: comp.tipoMoneda ?? 'PEN',
+      'FORMA PAGO': (comp.formaPagoTipo ?? '').toUpperCase() === 'CREDITO' ? 'Crédito' : 'Contado',
+      'MEDIO PAGO': comp.medioPago ?? '',
       'ESTADO SUNAT': comp.estadoEnvioSunat,
-      'OPERACION GRAVADAS': Number(comp.mtoOperGravadas ?? 0),
+      'ESTADO PAGO': estadoPagoLabel[comp.estadoPago] ?? comp.estadoPago ?? '',
+      'TIPO OPERACION': comp.tipoOperacion ? `${comp.tipoOperacion.codigo} - ${comp.tipoOperacion.descripcion}` : '',
+      'OP. GRAVADAS': Number(comp.mtoOperGravadas ?? 0),
+      'OP. INAFECTAS': Number(comp.mtoOperInafectas ?? 0),
       IGV: Number(comp.mtoIGV ?? 0),
+      DESCUENTO: Number(comp.mtoDescuentoGlobal ?? 0),
       TOTAL: Number(comp.mtoImpVenta ?? 0),
+      'SALDO PENDIENTE': Number(comp.saldo ?? 0),
+      'MONTO DETRACCION': Number(comp.montoDetraccion ?? 0),
+      '% DETRACCION': Number(comp.porcentajeDetraccion ?? 0),
+      'MOTIVO NC/ND': comp.motivo?.descripcion ?? '',
+      USUARIO: comp.usuario?.nombre ?? '',
+      OBSERVACIONES: comp.observaciones ?? '',
     }));
 
-    // Crear hoja de cálculo
     const worksheet = XLSX.utils.json_to_sheet(datosExcel);
-
-    // Ajustar anchos de columnas
     worksheet['!cols'] = [
-      { wch: 12 }, // TIPO
-      { wch: 10 }, // SERIE
-      { wch: 15 }, // CORRELATIVO
-      { wch: 20 }, // NUMERO DOCUMENTO
-      { wch: 30 }, // CLIENTE
-      { wch: 30 }, // FECHA EMISIÓN
-      { wch: 30 }, // ESTADO SUNAT
-      { wch: 30 }, // OPERACION GRAVADAS
-      { wch: 30 }, // IGV
-      { wch: 30 }, // TOTAL
+      { wch: 20 }, { wch: 14 }, { wch: 8 }, { wch: 12 }, { wch: 14 },
+      { wch: 32 }, { wch: 14 }, { wch: 8 }, { wch: 10 }, { wch: 14 },
+      { wch: 12 }, { wch: 14 }, { wch: 40 }, { wch: 14 }, { wch: 14 },
+      { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 },
+      { wch: 12 }, { wch: 14 }, { wch: 16 }, { wch: 30 },
     ];
 
-    // Agregar filas vacías de separación
     XLSX.utils.sheet_add_aoa(worksheet, [[''], ['']], { origin: -1 });
 
-    // Agregar filas de resumen como en el proyecto Node original
     const resumenData = [
       ['BOLETAS', resumen.totalBoletas],
       ['FACTURAS', resumen.totalFacturas],
       ['NOTA DE CREDITO', resumen.totalNotasCredito],
       ['NOTA DE DEBITO', resumen.totalNotasDebito],
-      ['TOTAL DESCUENTO', resumen.totalDescuentos],
-      ['TOTAL INAFECTAS', resumen.totalInafectas],
-      ['TOTAL GRAVADAS', resumen.totalGravadas],
-      ['TOTAL IGV', resumen.totalIGV],
-      ['TOTALES:', resumen.totalVenta],
+      ['TOTAL DESCUENTOS', resumen.totalDescuentos],
+      ['TOTAL OP. INAFECTAS', resumen.totalInafectas],
+      ['TOTAL OP. GRAVADAS', resumen.totalGravadas],
+      ['TOTAL IGV (18%)', resumen.totalIGV],
+      ['TOTAL VENTAS NETO:', resumen.totalVenta],
     ];
 
     XLSX.utils.sheet_add_aoa(
       worksheet,
-      resumenData.map(([label, value]) =>
-        Array(8).fill('').concat([label, value]),
-      ),
+      resumenData.map(([label, value]) => Array(22).fill('').concat([label, value])),
       { origin: -1 },
     );
 
@@ -153,6 +169,7 @@ export class ContabilidadController {
     @Query('fechaInicio') fechaInicio: string,
     @Query('fechaFin') fechaFin: string,
     @Res() res: Response,
+    @Query('sedeId') sedeId?: string,
   ) {
     if (!fechaInicio || !fechaFin)
       throw new BadRequestException('fechaInicio y fechaFin son requeridos');
@@ -161,16 +178,18 @@ export class ContabilidadController {
         user.empresaId,
         fechaInicio,
         fechaFin,
+        sedeId ? Number(sedeId) : undefined,
       );
 
     // Preparar datos para Excel siguiendo formato del proyecto Node original
-    const datosExcel = comprobantes.map((comp) => ({
+    const datosExcel = comprobantes.map((comp: any) => ({
+      SEDE: comp.sede?.nombre ?? '',
       TIPO: comp.comprobante,
       SERIE: comp.serie,
       CORRELATIVO: comp.correlativo,
       'NUMERO DOCUMENTO': comp.cliente?.nroDoc ?? '',
       CLIENTE: comp.cliente?.nombre ?? '',
-      'FECHA EMISIÓN': new Date(comp.fechaEmision).toISOString().split('T')[0],
+      'FECHA EMISIÓN': toFechaLima(new Date(comp.fechaEmision)),
       'ESTADO PAGO': comp.estadoPago,
       SALDO: Number(comp.saldo ?? 0),
       'MEDIO PAGO': comp.medioPago || '-',
@@ -184,12 +203,13 @@ export class ContabilidadController {
 
     // Ajustar anchos de columnas
     worksheet['!cols'] = [
+      { wch: 20 }, // SEDE
       { wch: 12 }, // TIPO
       { wch: 10 }, // SERIE
       { wch: 15 }, // CORRELATIVO
       { wch: 20 }, // NUMERO DOCUMENTO
       { wch: 30 }, // CLIENTE
-      { wch: 20 }, // FECHA EMISIÓN
+      { wch: 15 }, // FECHA EMISIÓN
       { wch: 15 }, // ESTADO PAGO
       { wch: 12 }, // SALDO
       { wch: 15 }, // MEDIO PAGO
@@ -246,6 +266,7 @@ export class ContabilidadController {
     @User() user: any,
     @Query('fechaInicio') fechaInicio?: string,
     @Query('fechaFin') fechaFin?: string,
+    @Query('sedeId') sedeId?: string,
   ) {
     if (!fechaInicio || !fechaFin)
       throw new BadRequestException('fechaInicio y fechaFin son requeridos');
@@ -253,6 +274,7 @@ export class ContabilidadController {
       user.empresaId,
       fechaInicio,
       fechaFin,
+      sedeId ? Number(sedeId) : undefined,
     );
     return data;
   }
@@ -264,6 +286,7 @@ export class ContabilidadController {
     @Query('fechaInicio') fechaInicio: string,
     @Query('fechaFin') fechaFin: string,
     @Res() res: Response,
+    @Query('sedeId') sedeId?: string,
   ) {
     if (!fechaInicio || !fechaFin)
       throw new BadRequestException('fechaInicio y fechaFin son requeridos');
@@ -272,6 +295,7 @@ export class ContabilidadController {
         user.empresaId,
         fechaInicio,
         fechaFin,
+        sedeId ? Number(sedeId) : undefined,
       );
 
     // Preparar datos para Excel siguiendo formato del proyecto Node original

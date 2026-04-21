@@ -21,6 +21,21 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Post('select-sede')
+  async selectSede(
+    @User() user: any,
+    @Body() body: { sedeId: number },
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.selectSede(
+      user.id ?? user.sub,
+      Number(body.sedeId),
+    );
+    res.locals.message = 'Sede seleccionada correctamente';
+    return result;
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Get('me')
   async me(@User() user: any) {
     const usuario = await this.authService.obtenerUsuarioActual(

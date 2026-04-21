@@ -18,6 +18,7 @@ export class ContabilidadService {
     empresaId: number,
     fechaInicio: string,
     fechaFin: string,
+    sedeId?: number,
   ) {
     const fechaEmision = this.parseRangeDates(fechaInicio, fechaFin);
 
@@ -32,9 +33,10 @@ export class ContabilidadService {
     const comprobantesRaw = await this.prisma.comprobante.findMany({
       where: {
         empresaId,
+        ...(sedeId ? { sedeId } : {}),
         tipoDoc: { in: ['01', '03', '07', '08'] },
         fechaEmision,
-        estadoEnvioSunat: { in: ['EMITIDO'] as any },
+        estadoEnvioSunat: { in: ['EMITIDO', 'REGISTRADO'] as any },
       },
       orderBy: { fechaEmision: 'desc' },
       select: {
@@ -43,17 +45,28 @@ export class ContabilidadService {
         serie: true,
         correlativo: true,
         fechaEmision: true,
+        tipoMoneda: true,
+        formaPagoTipo: true,
+        medioPago: true,
+        estadoPago: true,
+        saldo: true,
         mtoOperGravadas: true,
         mtoOperInafectas: true,
         mtoIGV: true,
         mtoDescuentoGlobal: true,
         mtoImpVenta: true,
+        montoDetraccion: true,
+        porcentajeDetraccion: true,
+        observaciones: true,
         estadoEnvioSunat: true,
         tipDocAfectado: true,
         numDocAfectado: true,
         motivoId: true,
         motivo: { select: { codigo: true, descripcion: true, tipo: true } },
+        tipoOperacion: { select: { codigo: true, descripcion: true } },
         cliente: { select: { nombre: true, nroDoc: true } },
+        usuario: { select: { nombre: true } },
+        sede: { select: { nombre: true } },
       },
     });
 
@@ -126,8 +139,9 @@ export class ContabilidadService {
 
   /**
    * Filtra documentos según reglas contables:
-   * 1. Excluye documentos ANULADOS (no deben aparecer en reportes contables)
-   * 2. Para notas de crédito con motivo anulación (01, 06): excluye el documento afectado
+   * 1. Excluye documentos ANULADOS
+   * 2. Para notas de crédito con motivo anulación (01, 06): excluye TANTO el documento
+   *    afectado COMO la propia nota de crédito (se cancelan mutuamente, neto = 0)
    * 3. Mantiene notas de corrección/descuento (02, 03, 04, 05, 07) y sus documentos afectados
    */
   private async filtrarDocumentosParaReporte(
@@ -144,16 +158,14 @@ export class ContabilidadService {
         comp.motivo &&
         ['01', '06'].includes(comp.motivo.codigo)
       ) {
+        // Excluir la nota de crédito misma (cancela completamente al afectado)
+        const ncKey = `${comp.tipoDoc}-${comp.serie}-${comp.correlativo}`;
+        documentosExcluidos.add(ncKey);
+
         if (comp.numDocAfectado) {
-          // Marcar el documento afectado para exclusión
+          // Excluir también el documento original afectado
           const docKey = `${comp.tipDocAfectado}-${comp.numDocAfectado}`;
           documentosExcluidos.add(docKey);
-
-          console.log(`📝 Documento excluido del reporte por anulación:`, {
-            documentoAfectado: docKey,
-            notaCredito: `${comp.serie}-${comp.correlativo}`,
-            motivo: comp.motivo.descripcion,
-          });
         }
       }
     }
@@ -162,16 +174,12 @@ export class ContabilidadService {
     const comprobantes = comprobantesRaw.filter((comp) => {
       // Excluir documentos con estado ANULADO
       if (comp.estadoEnvioSunat === 'ANULADO') {
-        console.log(
-          `⚠️ Documento anulado excluido del reporte: ${comp.tipoDoc}-${comp.serie}-${comp.correlativo}`,
-        );
         return false;
       }
 
       // Verificar si este documento está en la lista de exclusión
       const docKey = `${comp.tipoDoc}-${comp.serie}-${comp.correlativo}`;
       if (documentosExcluidos.has(docKey)) {
-        console.log(`🚫 Documento excluido por nota de anulación: ${docKey}`);
         return false;
       }
 
@@ -189,6 +197,7 @@ export class ContabilidadService {
     empresaId: number,
     fechaInicio: string,
     fechaFin: string,
+    sedeId?: number,
   ) {
     const fechaEmision = this.parseRangeDates(fechaInicio, fechaFin);
 
@@ -205,6 +214,7 @@ export class ContabilidadService {
     const comprobantes = await this.prisma.comprobante.findMany({
       where: {
         empresaId,
+        ...(sedeId ? { sedeId } : {}),
         tipoDoc: { in: ['TICKET', 'NV', 'RH', 'CP', 'NP', 'OT'] },
         fechaEmision,
         estadoEnvioSunat: 'NO_APLICA', // Solo informales activos
@@ -223,6 +233,7 @@ export class ContabilidadService {
         estadoOT: true,
         adelanto: true,
         cliente: { select: { nombre: true, nroDoc: true } },
+        sede: { select: { nombre: true } },
       },
     });
 

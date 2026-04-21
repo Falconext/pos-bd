@@ -5,13 +5,41 @@ import { PdfGeneratorService } from './pdf-generator.service';
 import { numeroALetras } from './utils/numero-a-letras';
 import axios from 'axios';
 
+/**
+ * Error de datos: el payload no pudo armarse por datos incorrectos del comprobante.
+ * A diferencia de errores de red, este tipo NO debe reintentarse —
+ * el comprobante debe eliminarse para que el usuario corrija y reintente.
+ */
+export class SunatPayloadException extends Error {
+  readonly isPayloadError = true;
+  constructor(message: string) {
+    super(message);
+    this.name = 'SunatPayloadException';
+  }
+}
+
+
+// Catálogo 51 SUNAT — códigos de tipo de operación válidos
+const VALID_TIPO_OPERACION_CODES = new Set([
+  '0101', // Venta interna
+  '0102', // Exportación
+  '0112', // Venta interna - Anticipos
+  '0113', // Exportación - Anticipos
+  '0121', // Venta interna sujeta a IVAP
+  '0200', // Exportación de servicios - Prestación de servicios realizados en el país
+  '0201', // Exportación de servicios - Prestación de servicios realizados íntegramente en el extranjero
+  '0202', // Exportación de servicios - Servicios de hospedaje no domiciliados
+  '0205', // Exportación de servicios - Servicios a naves y aeronaves de bandera extranjera
+  '0206', // Exportación de servicios - Servicios complementarios al transporte de carga
+  '0401', // Operaciones sujetas a detracción
+]);
 
 @Injectable()
 export class EnviarSunatService {
   private readonly apiUrl = 'https://back.apisunat.com/personas/v1/sendBill';
   private readonly documentUrl = 'https://back.apisunat.com/documents';
-  private readonly maxRetries = 3;
-  private readonly retryInterval = 3000;
+  private readonly maxRetries = 12;       // 12 intentos × 5s = 60s máximo esperando SUNAT
+  private readonly retryInterval = 5000;
 
   // Retry configuration: max 5 hours window with 10 attempts
   private readonly maxRetryAttempts = 10;
@@ -87,6 +115,19 @@ export class EnviarSunatService {
         comp.fechaEmision as any,
       );
 
+      // Normalize Catálogo 51 listID — unknown/null codes always fall back to '0101'
+      const rawCodigo = comp.tipoOperacion?.codigo;
+      const tipoOperacionListID = (rawCodigo && VALID_TIPO_OPERACION_CODES.has(rawCodigo))
+        ? rawCodigo
+        : '0101';
+
+      // Validate early: Boleta (03) only allows 0101 (Venta Interna)
+      if (comp.tipoDoc === '03' && tipoOperacionListID !== '0101') {
+        throw new SunatPayloadException(
+          `Tipo de operación (Catálogo 51) inválido para Boleta: ${tipoOperacionListID}. Debe ser 0101 (Venta Interna).`,
+        );
+      }
+
       payload = {
         personaId: empresa?.providerId,
         personaToken: empresa?.providerToken,
@@ -99,11 +140,7 @@ export class EnviarSunatService {
           'cbc:IssueTime': { _text: issueTime },
           'cbc:InvoiceTypeCode': {
             _attributes: {
-              listID: comp.tipoDetraccionId
-                ? '1001'
-                : (comp.tipoOperacion?.codigo === '1001' && !comp.tipoDetraccionId
-                  ? '0101' // Fallback: ID 1001 sin detracción explícita -> Venta Interna 0101
-                  : (comp.tipoOperacion?.codigo || '0101'))
+              listID: tipoOperacionListID,
             },
             _text: comp.tipoDoc,
           },
@@ -537,8 +574,10 @@ export class EnviarSunatService {
           },
         };
       }
-    } catch (err) {
-      throw new HttpException('Error armando payload para APISUNAT', 500);
+    } catch (err: any) {
+      throw new SunatPayloadException(
+        `Los datos del comprobante no son válidos para SUNAT: ${err?.message || 'estructura incorrecta'}`,
+      );
     }
 
     let finalResponse: any;
@@ -764,16 +803,22 @@ export class EnviarSunatService {
         console.error("❌ SUNAT Full Response:", JSON.stringify(finalResponse, null, 2));
       }
 
+      // Mapear el estado de SUNAT al estado interno del comprobante
+      const estadoFinal: string =
+        status === 'ACEPTADO' ? 'EMITIDO' :
+        status === 'PENDIENTE' ? 'PENDIENTE' :  // aún procesando → scheduler reintentará
+        'RECHAZADO';                             // cualquier otro estado (ERROR, RECHAZADO, etc.)
+
       await this.prisma.comprobante.update({
         where: { id: comprobanteId },
         data: {
-          estadoEnvioSunat: status === 'ACEPTADO' ? 'EMITIDO' : 'PENDIENTE',
+          estadoEnvioSunat: estadoFinal as any,
           sunatXml: finalResponse.xml || null,
           sunatCdrZip: finalResponse.cdr || null,
           sunatCdrResponse: JSON.stringify(finalResponse),
           sunatErrorMsg:
-            status !== 'ACEPTADO'
-              ? finalResponse.error?.message || 'Error desconocido'
+            estadoFinal !== 'EMITIDO'
+              ? finalResponse.error?.message || `SUNAT devolvió estado: ${status}`
               : null,
           s3PdfUrl,
         },

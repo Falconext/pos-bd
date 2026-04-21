@@ -100,6 +100,10 @@ export class CreateEmpresaDto {
   @IsBoolean()
   esAgenteRetencion?: boolean;
 
+  @IsOptional()
+  @IsBoolean()
+  usaCodigoBarrasManual?: boolean;
+
   @ValidateNested()
   @Type(() => UsuarioDto)
   usuario: UsuarioDto;

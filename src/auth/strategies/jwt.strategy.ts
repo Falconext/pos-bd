@@ -7,6 +7,7 @@ export type JwtPayload = {
   sub: number;
   rol: string;
   empresaId: number | null;
+  sedeId?: number | null;
 };
 
 @Injectable()
@@ -24,6 +25,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       id: payload.sub,
       rol: payload.rol,
       empresaId: payload.empresaId ?? null,
+      sedeId: payload.sedeId ?? null,
     };
   }
 }

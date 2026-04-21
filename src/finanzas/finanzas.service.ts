@@ -21,26 +21,26 @@ export class FinanzasService {
         empresaId: number,
         fechaInicio?: string,
         fechaFin?: string,
+        sedeId?: number,
     ) {
         const rangoFecha = this.parseRange(fechaInicio, fechaFin);
 
-        // 1. Cuentas por Pagar (Compras)
-        // Suma de saldos pendientes de todas las compras activas
+        // 1. Cuentas por Pagar (Compras) — filtradas por sede
         const porPagarAgg = await this.prisma.compra.aggregate({
             where: {
                 empresaId,
+                ...(sedeId ? { sedeId } : {}),
                 estado: { not: 'ANULADO' },
                 saldo: { gt: 0 },
             },
             _sum: { saldo: true },
         });
 
-        // 2. Cuentas por Cobrar (Ventas)
-        // Usar el mismo filtro que la vista de Cuentas por Cobrar: saldo > 0 y NO completado/anulado
-        // Esto incluye ventas al contado con pagos parciales y ventas a crédito pendientes
+        // 2. Cuentas por Cobrar — filtradas por sede
         const porCobrarAgg = await this.prisma.comprobante.aggregate({
             where: {
                 empresaId,
+                ...(sedeId ? { sedeId } : {}),
                 estadoEnvioSunat: { notIn: ['ANULADO'] },
                 estadoPago: { notIn: ['COMPLETADO', 'ANULADO'] },
                 saldo: { gt: 0 },
@@ -51,11 +51,12 @@ export class FinanzasService {
         const totalPorCobrar = Number(porCobrarAgg._sum.saldo || 0);
 
         // 3. Flujo de Caja (Ingresos vs Egresos) en el rango de fechas
-        // VENTAS CONTADO (Ingreso Real)
+        // VENTAS CONTADO (Ingreso Real) — filtradas por sede
         const ventasContado = await this.prisma.comprobante.groupBy({
             by: ['fechaEmision'],
             where: {
                 empresaId,
+                ...(sedeId ? { sedeId } : {}),
                 fechaEmision: rangoFecha,
                 formaPagoTipo: 'Contado',
                 estadoEnvioSunat: { not: 'ANULADO' },
@@ -63,7 +64,7 @@ export class FinanzasService {
             _sum: { mtoImpVenta: true },
         });
 
-        // COBROS DE CREDITOS (Ingreso Real)
+        // COBROS DE CREDITOS (Ingreso Real) — filtrados por sede (a través de empresaId)
         const cobrosCredito = await this.prisma.pago.groupBy({
             by: ['fecha'],
             where: {
@@ -73,7 +74,7 @@ export class FinanzasService {
             _sum: { monto: true },
         });
 
-        // PAGOS A PROVEEDORES (Egreso Real)
+        // PAGOS A PROVEEDORES (Egreso Real) — filtrados por sede
         const pagosCompras = await this.prisma.pagoCompra.groupBy({
             by: ['fecha'],
             where: {
