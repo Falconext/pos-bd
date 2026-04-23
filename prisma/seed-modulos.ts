@@ -59,12 +59,26 @@ const modulosIniciales = [
     icono: 'mdi:cash-register', 
     orden: 8 
   },
-  { 
-    codigo: 'pagos', 
-    nombre: 'Gestión de Pagos', 
-    descripcion: 'Cobros, pagos y conciliaciones bancarias', 
-    icono: 'mdi:credit-card', 
-    orden: 9 
+  {
+    codigo: 'pagos',
+    nombre: 'Gestión de Pagos',
+    descripcion: 'Cobros, pagos y conciliaciones bancarias',
+    icono: 'mdi:credit-card',
+    orden: 9
+  },
+  {
+    codigo: 'compras',
+    nombre: 'Compras',
+    descripcion: 'Gestión de órdenes de compra y proveedores',
+    icono: 'mdi:cart-arrow-down',
+    orden: 10,
+  },
+  {
+    codigo: 'tienda',
+    nombre: 'Tienda Virtual',
+    descripcion: 'Configuración y gestión de la tienda en línea',
+    icono: 'mdi:store',
+    orden: 11,
   },
 ];
 
@@ -110,6 +124,49 @@ async function seedModulos() {
     }
   }
   
+  // ── Submódulos por módulo ─────────────────────────────────────────────────
+  console.log('\n🔧 Seeding submódulos...');
+
+  const subModulosData: { moduloCodigo: string; codigo: string; nombre: string; descripcion: string; orden: number }[] = [
+    // Kardex
+    { moduloCodigo: 'kardex', codigo: 'kardex:dashboard',   nombre: 'Dashboard',          descripcion: 'Gráficos y análisis del inventario',            orden: 1 },
+    { moduloCodigo: 'kardex', codigo: 'kardex:productos',   nombre: 'Inventario',          descripcion: 'Productos, marcas, categorías y análisis financiero', orden: 2 },
+    { moduloCodigo: 'kardex', codigo: 'kardex:traslados',   nombre: 'Traslados',           descripcion: 'Traslado de productos entre sedes',              orden: 3 },
+    { moduloCodigo: 'kardex', codigo: 'kardex:combos',      nombre: 'Kits / Packs',        descripcion: 'Kits de productos para venta por mayor',          orden: 4 },
+    { moduloCodigo: 'kardex', codigo: 'kardex:movimientos', nombre: 'Movimientos',         descripcion: 'Movimientos de entrada y salida de productos',   orden: 5 },
+    // Comprobantes
+    { moduloCodigo: 'comprobantes', codigo: 'comprobantes:lista',      nombre: 'Comprobantes SUNAT', descripcion: 'Listado de comprobantes electrónicos',      orden: 1 },
+    { moduloCodigo: 'comprobantes', codigo: 'comprobantes:emitir',     nombre: 'Crear comprobantes', descripcion: 'Emisión de nuevos comprobantes electrónicos', orden: 2 },
+    { moduloCodigo: 'comprobantes', codigo: 'comprobantes:informales', nombre: 'Notas de ventas',    descripcion: 'Comprobantes informales y notas de pedido',  orden: 3 },
+    // Cotizaciones
+    { moduloCodigo: 'cotizaciones', codigo: 'cotizaciones:lista', nombre: 'Ver cotizaciones',  descripcion: 'Listado de cotizaciones generadas',   orden: 1 },
+    { moduloCodigo: 'cotizaciones', codigo: 'cotizaciones:nueva', nombre: 'Nueva cotización',  descripcion: 'Crear y emitir nuevas cotizaciones',  orden: 2 },
+    // Compras
+    { moduloCodigo: 'compras', codigo: 'compras:gestion',     nombre: 'Gestión de compras', descripcion: 'Registrar y gestionar órdenes de compra', orden: 1 },
+    { moduloCodigo: 'compras', codigo: 'compras:proveedores', nombre: 'Proveedores',        descripcion: 'Gestión del catálogo de proveedores',     orden: 2 },
+    // Reportes
+    { moduloCodigo: 'reportes', codigo: 'reportes:formal',   nombre: 'Reportes formales',   descripcion: 'Reportes de contabilidad y facturación SUNAT', orden: 1 },
+    { moduloCodigo: 'reportes', codigo: 'reportes:informal', nombre: 'Reportes informales', descripcion: 'Reportes de notas de venta y arqueo de caja',  orden: 2 },
+    // Tienda
+    { moduloCodigo: 'tienda', codigo: 'tienda:configuracion', nombre: 'Configuración',  descripcion: 'Configuración del diseño y datos de la tienda', orden: 1 },
+    { moduloCodigo: 'tienda', codigo: 'tienda:pedidos',       nombre: 'Pedidos',        descripcion: 'Gestión de pedidos recibidos por la tienda',    orden: 2 },
+    { moduloCodigo: 'tienda', codigo: 'tienda:modificadores', nombre: 'Modificadores',  descripcion: 'Modificadores y opciones de productos',         orden: 3 },
+  ];
+
+  for (const sub of subModulosData) {
+    const modulo = await prisma.modulo.findUnique({ where: { codigo: sub.moduloCodigo } });
+    if (!modulo) {
+      console.log(`⚠️  Módulo '${sub.moduloCodigo}' no encontrado, saltando submódulo '${sub.codigo}'`);
+      continue;
+    }
+    await prisma.subModulo.upsert({
+      where: { codigo: sub.codigo },
+      update: { nombre: sub.nombre, descripcion: sub.descripcion, orden: sub.orden, activo: true },
+      create: { moduloId: modulo.id, codigo: sub.codigo, nombre: sub.nombre, descripcion: sub.descripcion, orden: sub.orden, activo: true },
+    });
+    console.log(`✅ SubMódulo '${sub.codigo}' creado/actualizado`);
+  }
+
   console.log('\n✨ Seed completado exitosamente!');
 }
 

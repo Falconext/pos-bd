@@ -72,4 +72,10 @@ export class CreatePlanDto {
     @IsNumber({}, { each: true })
     @Type(() => Number)
     moduloIds?: number[];
+
+    // Submódulos asignados al plan
+    @IsOptional()
+    @IsNumber({}, { each: true })
+    @Type(() => Number)
+    subModuloIds?: number[];
 }

@@ -38,6 +38,12 @@ class DetalleDto {
 }
 
 export class CrearComprobanteDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  sedeId?: number;
+
   @IsInt()
   tipoOperacionId: number;
 

@@ -3,79 +3,80 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreatePlanDto } from './dto/create-plan.dto';
 import { UpdatePlanDto } from './dto/update-plan.dto';
 
+const PLAN_INCLUDE = {
+    _count: { select: { empresas: true } },
+    modulosAsignados: {
+        include: {
+            modulo: {
+                include: { subModulos: { where: { activo: true }, orderBy: { orden: 'asc' as const } } }
+            }
+        },
+        orderBy: { modulo: { orden: 'asc' as const } },
+    },
+    subModulosAsignados: {
+        include: {
+            subModulo: { select: { id: true, codigo: true, nombre: true, moduloId: true } }
+        }
+    },
+} as const;
+
 @Injectable()
 export class PlanService {
     constructor(private prisma: PrismaService) { }
 
-
-    async create(createPlanDto: CreatePlanDto) {
-        const { moduloIds, ...planData } = createPlanDto;
+    async create(dto: CreatePlanDto) {
+        const { moduloIds, subModuloIds, ...planData } = dto;
 
         return this.prisma.plan.create({
             data: {
                 ...planData,
-                modulosAsignados: moduloIds && moduloIds.length > 0 ? {
-                    create: moduloIds.map(moduloId => ({ moduloId }))
-                } : undefined
+                modulosAsignados: moduloIds?.length
+                    ? { create: moduloIds.map(moduloId => ({ moduloId })) }
+                    : undefined,
+                subModulosAsignados: subModuloIds?.length
+                    ? { create: subModuloIds.map(subModuloId => ({ subModuloId })) }
+                    : undefined,
             },
-            include: {
-                _count: {
-                    select: { empresas: true }
-                },
-                modulosAsignados: {
-                    include: {
-                        modulo: true
-                    }
-                }
-            }
+            include: PLAN_INCLUDE,
         });
     }
 
     async findAll() {
         return this.prisma.plan.findMany({
             orderBy: { costo: 'asc' },
-            include: {
-                _count: {
-                    select: { empresas: true }
-                },
-                modulosAsignados: {
-                    include: {
-                        modulo: true
-                    }
-                }
-            }
+            include: PLAN_INCLUDE,
         });
     }
 
     async findOne(id: number) {
         const plan = await this.prisma.plan.findUnique({
             where: { id },
+            include: PLAN_INCLUDE,
         });
-        if (!plan) throw new NotFoundException(`Plan with ID ${id} not found`);
+        if (!plan) throw new NotFoundException(`Plan con ID ${id} no encontrado`);
         return plan;
     }
 
-    async update(id: number, updatePlanDto: UpdatePlanDto) {
-        // Verificar existencia
-        await this.findOne(id);
+    async update(id: number, dto: UpdatePlanDto) {
+        await this.prisma.plan.findUniqueOrThrow({ where: { id } });
 
-        const { moduloIds, ...planData } = updatePlanDto;
+        const { moduloIds, subModuloIds, ...planData } = dto;
 
         return this.prisma.$transaction(async (prisma) => {
-            // Si se proporcionan moduloIds, actualizar los módulos asignados
             if (moduloIds !== undefined) {
-                // Eliminar asignaciones actuales
-                await prisma.planModulo.deleteMany({
-                    where: { planId: id }
-                });
-
-                // Crear nuevas asignaciones
+                await prisma.planModulo.deleteMany({ where: { planId: id } });
                 if (moduloIds.length > 0) {
                     await prisma.planModulo.createMany({
-                        data: moduloIds.map(moduloId => ({
-                            planId: id,
-                            moduloId
-                        }))
+                        data: moduloIds.map(moduloId => ({ planId: id, moduloId })),
+                    });
+                }
+            }
+
+            if (subModuloIds !== undefined) {
+                await prisma.planSubModulo.deleteMany({ where: { planId: id } });
+                if (subModuloIds.length > 0) {
+                    await prisma.planSubModulo.createMany({
+                        data: subModuloIds.map(subModuloId => ({ planId: id, subModuloId })),
                     });
                 }
             }
@@ -83,31 +84,17 @@ export class PlanService {
             return prisma.plan.update({
                 where: { id },
                 data: planData,
-                include: {
-                    _count: {
-                        select: { empresas: true }
-                    },
-                    modulosAsignados: {
-                        include: {
-                            modulo: true
-                        }
-                    }
-                }
+                include: PLAN_INCLUDE,
             });
         });
     }
 
-
     async remove(id: number) {
         await this.findOne(id);
-        // Verificar si tiene empresas
         const count = await this.prisma.empresa.count({ where: { planId: id } });
         if (count > 0) {
             throw new Error(`No se puede eliminar el plan porque tiene ${count} empresas asignadas.`);
         }
-
-        return this.prisma.plan.delete({
-            where: { id },
-        });
+        return this.prisma.plan.delete({ where: { id } });
     }
 }

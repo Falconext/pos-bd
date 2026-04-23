@@ -81,6 +81,11 @@ export class ProductoPlantillaService {
             });
             if (!empresa) throw new NotFoundException('Empresa no encontrada');
 
+            const sedesActivasData = await this.prisma.sede.findMany({
+                where: { empresaId, activo: true },
+                select: { id: true },
+            });
+
             const resultados: any[] = [];
             let importedCount = 0;
 
@@ -197,6 +202,17 @@ export class ProductoPlantillaService {
                                     publicarEnTienda: true,
                                 },
                             });
+                            if (sedesActivasData.length > 0) {
+                                await this.prisma.productoStock.createMany({
+                                    data: sedesActivasData.map(s => ({
+                                        productoId: nuevoProducto.id,
+                                        sedeId: s.id,
+                                        stock: 50,
+                                        stockMinimo: 5,
+                                    })),
+                                    skipDuplicates: true,
+                                });
+                            }
                             resultados.push(nuevoProducto);
                             importedCount++;
                         }
@@ -247,6 +263,12 @@ export class ProductoPlantillaService {
             });
 
             if (!empresa) throw new NotFoundException('Empresa no encontrada');
+
+            // Cargar sedes activas una sola vez para crear ProductoStock por cada producto nuevo
+            const sedesActivas = await this.prisma.sede.findMany({
+                where: { empresaId, activo: true },
+                select: { id: true },
+            });
 
             const plantillas = await this.prisma.productoPlantilla.findMany({
                 where: { id: { in: plantillasIds } },
@@ -375,13 +397,27 @@ export class ProductoPlantillaService {
                             stockMinimo: 5,
                             unidadMedidaId: unidad?.id || 1,
                             categoriaId: categoriaId,
-                            marcaId: marcaId, // Asignar marca
+                            marcaId: marcaId,
                             tipoAfectacionIGV: '10',
                             igvPorcentaje: 18.00,
                             estado: 'ACTIVO',
                             publicarEnTienda: true,
                         },
                     });
+
+                    // Crear registro de stock por sede para que los traslados funcionen correctamente
+                    if (sedesActivas.length > 0) {
+                        await this.prisma.productoStock.createMany({
+                            data: sedesActivas.map(s => ({
+                                productoId: nuevoProducto.id,
+                                sedeId: s.id,
+                                stock: 50,
+                                stockMinimo: 5,
+                            })),
+                            skipDuplicates: true,
+                        });
+                    }
+
                     // Marcar como existente para evitar duplicados en el mismo lote
                     nombresExistentes.add(nombreNormalizado);
                     resultados.push(nuevoProducto);
@@ -416,8 +452,9 @@ export class ProductoPlantillaService {
         if (plantillas.length === 0) return { message: 'No hay plantillas disponibles para este rubro', imported: 0, updated: 0 };
 
         // 3. Obtener productos existentes en la empresa (con código, imagen y categoría)
+        // Excluir PLACEHOLDER para que productos eliminados puedan re-importarse
         const productosExistentes = await this.prisma.producto.findMany({
-            where: { empresaId },
+            where: { empresaId, estado: { not: EstadoType.PLACEHOLDER } },
             select: { id: true, codigo: true, imagenUrl: true, categoriaId: true, marcaId: true }
         });
 

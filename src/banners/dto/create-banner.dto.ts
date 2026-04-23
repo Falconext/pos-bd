@@ -3,7 +3,8 @@ import { Transform } from 'class-transformer';
 
 export class CreateBannerDto {
     @IsString()
-    titulo: string;
+    @IsOptional()
+    titulo?: string;
 
     @IsString()
     @IsOptional()

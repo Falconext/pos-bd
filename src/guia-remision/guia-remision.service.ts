@@ -3,6 +3,7 @@ import {
     NotFoundException,
     BadRequestException,
     ForbiddenException,
+    Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateGuiaRemisionDto } from './dto/create-guia-remision.dto';
@@ -13,6 +14,8 @@ import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
 
 @Injectable()
 export class GuiaRemisionService {
+    private readonly logger = new Logger(GuiaRemisionService.name);
+
     constructor(
         private prisma: PrismaService,
         private sunatGuiaService: SunatGuiaService,
@@ -20,33 +23,26 @@ export class GuiaRemisionService {
     ) { }
 
     async create(createDto: CreateGuiaRemisionDto, empresaId: number, usuarioId?: number, sedeId?: number) {
-        // Generar correlativo automático si no se proporciona
-        if (!createDto.correlativo) {
-            const ultimaGuia = await this.prisma.guiaRemision.findFirst({
-                where: {
-                    empresaId,
-                    serie: createDto.serie,
-                },
-                orderBy: {
-                    correlativo: 'desc',
-                },
-            });
-            createDto.correlativo = ultimaGuia ? ultimaGuia.correlativo + 1 : 1;
-        }
-
-        // Validar que el correlativo no exista
-        const existeGuia = await this.prisma.guiaRemision.findFirst({
-            where: {
-                empresaId,
-                serie: createDto.serie,
-                correlativo: createDto.correlativo,
-            },
+        // Resolver correlativo: siempre usar el siguiente al MAX existente en BD para
+        // esta serie, ignorando el valor enviado si ya está ocupado. Esto evita errores
+        // de "numeración repetida" tanto en nuestra BD como en SUNAT (error 1033).
+        const ultimaGuia = await this.prisma.guiaRemision.findFirst({
+            where: { empresaId, serie: createDto.serie },
+            orderBy: { correlativo: 'desc' },
+            select: { correlativo: true },
         });
+        const maxCorrelativo = ultimaGuia?.correlativo ?? 0;
 
-        if (existeGuia) {
-            throw new BadRequestException(
-                `Ya existe una guía con serie ${createDto.serie} y correlativo ${createDto.correlativo}`,
-            );
+        // Si el correlativo enviado es mayor al máximo existente, lo respetamos.
+        // En cualquier otro caso (no enviado, ya ocupado, o menor al máximo) usamos MAX+1.
+        if (!createDto.correlativo || createDto.correlativo <= maxCorrelativo) {
+            if (createDto.correlativo && createDto.correlativo <= maxCorrelativo) {
+                this.logger.warn(
+                    `Correlativo ${createDto.serie}-${createDto.correlativo} ya existe en BD. ` +
+                    `Auto-avanzando a ${maxCorrelativo + 1}.`
+                );
+            }
+            createDto.correlativo = maxCorrelativo + 1;
         }
 
         // Validaciones de negocio
@@ -370,17 +366,63 @@ export class GuiaRemisionService {
 
         try {
             // Transformar a formato SUNAT y enviar
-            const resultado = await this.sunatGuiaService.enviarGuia(
-                guia,
+            let guiaParaEnviar = guia;
+            let resultado = await this.sunatGuiaService.enviarGuia(
+                guiaParaEnviar,
                 empresa.providerId,
                 empresa.providerToken,
             );
 
+            // ── Auto-avance de correlativo para error 1033 (Numeración repetida) ──
+            // Si SUNAT rechaza por numeración repetida, buscamos el siguiente correlativo
+            // disponible, actualizamos la guía en BD y reintentamos automáticamente.
+            if (!resultado.success && (resultado as any).sunatErrorCode === '1033') {
+                this.logger.warn(
+                    `SUNAT error 1033 – numeración repetida (${guia.serie}-${guia.correlativo}). ` +
+                    `Buscando siguiente correlativo disponible...`
+                );
+
+                const ultimaGuia = await this.prisma.guiaRemision.findFirst({
+                    where: { empresaId, serie: guia.serie },
+                    orderBy: { correlativo: 'desc' },
+                    select: { correlativo: true },
+                });
+                const nuevoCorrelativo = (ultimaGuia?.correlativo ?? 0) + 1;
+
+                this.logger.log(`Nuevo correlativo asignado a guía ${id}: ${guia.serie}-${nuevoCorrelativo}`);
+
+                // Actualizar el correlativo en la BD y reintentar (una sola vez)
+                const guiaConNuevoCorrelativo = await this.prisma.guiaRemision.update({
+                    where: { id },
+                    data: { correlativo: nuevoCorrelativo },
+                    include: {
+                        detalles: { include: { producto: true } },
+                        empresa: true,
+                        cliente: true,
+                    },
+                });
+
+                guiaParaEnviar = guiaConNuevoCorrelativo as any;
+                resultado = await this.sunatGuiaService.enviarGuia(
+                    guiaParaEnviar,
+                    empresa.providerId,
+                    empresa.providerToken,
+                );
+            }
+
             // Actualizar guía con respuesta de SUNAT
+            // Si el doc fue enviado pero SUNAT aún procesa (pendienteVerificacion), mantenemos PENDIENTE
+            // para que el usuario pueda reenviar/verificar sin perder el documentoId
+            const nuevoEstado = resultado.success
+                ? 'ENVIADO'
+                : resultado.pendienteVerificacion
+                    ? 'PENDIENTE'
+                    : 'FALLIDO_ENVIO';
+
             const guiaActualizada = await this.prisma.guiaRemision.update({
                 where: { id },
                 data: {
-                    estadoSunat: resultado.success ? 'ENVIADO' : 'FALLIDO_ENVIO',
+                    estadoSunat: nuevoEstado,
                     sunatXml: resultado.xml,
                     sunatCdrResponse: resultado.cdrResponse,
                     sunatCdrZip: resultado.cdrZip,
@@ -412,6 +454,18 @@ export class GuiaRemisionService {
     }
 
     private validateGuiaRemision(dto: CreateGuiaRemisionDto | UpdateGuiaRemisionDto) {
+        // Traslado entre establecimientos de la misma empresa: destinatario debe ser la misma empresa
+        const tipoTraslado = (dto as any).tipoTraslado;
+        const remitenteRuc = String((dto as any).remitenteRuc || '').trim();
+        if (tipoTraslado === '04' && remitenteRuc) {
+            const destinatarioDoc = String(dto.destinatarioNumDoc || '').trim();
+            if (destinatarioDoc !== remitenteRuc) {
+                throw new BadRequestException(
+                    'Para traslado entre establecimientos de la misma empresa, el destinatario debe ser la misma empresa (mismo RUC del remitente).'
+                );
+            }
+        }
+
         // Validaciones específicas para GRE-T (Guía de Remisión Transportista)
         if (dto.tipoGuia === 'TRANSPORTISTA') {
             if (!dto.transportistaRuc || !dto.transportistaRazonSocial) {
@@ -525,7 +579,14 @@ export class GuiaRemisionService {
             rubro: empresa.rubro?.nombre || '',
             contacto: empresa.whatsappTienda || empresa.yapeNumero || '',
             email: '', // Empresa model currently does not have explicit email field, usually in Usuario
-            logo: empresa.logo,
+            logo: (() => {
+              const raw = empresa.logo;
+              if (!raw) return undefined;
+              const t = raw.trim();
+              if (t.startsWith('data:')) return t;
+              if (/^https?:\/\//i.test(t) || t.startsWith('/')) return t;
+              return `data:${t.startsWith('/9j/') ? 'image/jpeg' : 'image/png'};base64,${t}`;
+            })(),
 
             // Documento
             ruc: empresa.ruc,

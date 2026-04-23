@@ -7,8 +7,8 @@ export class SunatGuiaService {
     private readonly logger = new Logger(SunatGuiaService.name);
     private readonly apiUrl = 'https://back.apisunat.com/personas/v1/sendBill';
     private readonly documentUrl = 'https://back.apisunat.com/documents';
-    private readonly maxRetries = 3;
-    private readonly retryInterval = 3000;
+    private readonly maxRetries = 15;
+    private readonly retryInterval = 5000;
 
     constructor(private configService: ConfigService) { }
 
@@ -95,18 +95,29 @@ export class SunatGuiaService {
 
             // 3. Procesar respuesta final
             const success = status === 'ACEPTADO';
-            const providerError = success ? null : this.extractProviderError(finalResponse, status);
+            // Si agotó los reintentos y sigue PENDIENTE, el doc fue enviado pero SUNAT aún procesa
+            const pendienteVerificacion = !success && status === 'PENDIENTE';
+            const providerError = (success || pendienteVerificacion) ? null : this.extractProviderError(finalResponse, status);
 
             // Extract PDF URL if available
             const pdfUrl = finalResponse?.pdf?.A4 || finalResponse?.pdf?.['80mm'] || null;
 
+            if (pendienteVerificacion) {
+                this.logger.warn(`Documento ${documentId} enviado a SUNAT pero aún en procesamiento tras ${this.maxRetries} intentos. Guardando documentoId para verificación posterior.`);
+            }
+
             return {
                 success,
-                xml: finalResponse.xml || null,
+                pendienteVerificacion,
+                xml: finalResponse?.xml || null,
                 cdrResponse: JSON.stringify(finalResponse),
-                cdrZip: finalResponse.cdr || null,
+                cdrZip: finalResponse?.cdr || null,
                 documentoId: documentId,
-                message: success ? 'Guía de remisión aceptada por SUNAT' : `Rechazado por SUNAT: ${providerError}`,
+                message: success
+                    ? 'Guía de remisión aceptada por SUNAT'
+                    : pendienteVerificacion
+                        ? 'Documento enviado a SUNAT pero aún en procesamiento. Verifique el estado en unos minutos.'
+                        : `Rechazado por SUNAT: ${providerError}`,
                 s3XmlUrl: null,
                 s3CdrUrl: null,
                 s3PdfUrl: pdfUrl,
@@ -120,7 +131,9 @@ export class SunatGuiaService {
             }
 
             // Manejo de errores de axios
-            const errorMsg = error.response?.data?.message || error.message || 'Error desconocido al conectar con APISUNAT';
+            const errorData = error.response?.data;
+            const sunatErrorCode: string | null = errorData?.error?.code || null;
+            const errorMsg = errorData?.error?.message || errorData?.message || error.message || 'Error desconocido al conectar con APISUNAT';
 
             return {
                 success: false,
@@ -132,6 +145,7 @@ export class SunatGuiaService {
                 s3XmlUrl: null,
                 s3CdrUrl: null,
                 error: errorMsg,
+                sunatErrorCode, // Código de error SUNAT (ej: '1033' = numeración repetida)
             };
         }
     }
@@ -282,10 +296,14 @@ export class SunatGuiaService {
                         },
                         ...(tipoDocCodigo === '31'
                             ? {
+                                  // GRE-T: DespatchParty = quien envía los bienes (remitente real),
+                                  // puede ser una empresa diferente al transportista.
+                                  // Se usa greTRemitenteNumDoc si está disponible;
+                                  // si no, cae a los datos del destinatario por compatibilidad.
                                   'cac:DespatchParty': buildParty(
-                                      guia.destinatarioTipoDoc,
-                                      guia.destinatarioNumDoc,
-                                      guia.destinatarioRazonSocial,
+                                      '6', // Siempre RUC para el remitente de bienes en GRE-T
+                                      guia.greTRemitenteNumDoc || guia.destinatarioNumDoc,
+                                      guia.greTRemitenteRazonSocial || guia.destinatarioRazonSocial,
                                   )['cac:Party'],
                               }
                             : {}),
@@ -375,8 +393,9 @@ export class SunatGuiaService {
 
         // Si es transporte público o guía transportista (31), agregar datos del transportista
         if (includeCarrierParty) {
+            const carrierRuc = String(guia.transportistaRuc || guia.remitenteRuc || '').trim();
             const carrierSchemeId = (() => {
-                const doc = String(guia.transportistaRuc || '').trim();
+                const doc = carrierRuc;
                 // RUC Perú: 11 dígitos
                 if (/^\d{11}$/.test(doc)) return '6';
                 return this.getTipoDocumentoSchemeId('1');
@@ -386,12 +405,12 @@ export class SunatGuiaService {
                 'cac:PartyIdentification': {
                     'cbc:ID': {
                         _attributes: { schemeID: carrierSchemeId },
-                        _text: guia.transportistaRuc,
+                        _text: carrierRuc, // Nunca vacío: fallback a remitenteRuc para GRE-T
                     },
                 },
                 'cac:PartyLegalEntity': {
                     'cbc:RegistrationName': {
-                        _text: guia.transportistaRazonSocial,
+                        _text: guia.transportistaRazonSocial || guia.remitenteRazonSocial,
                     },
                 },
             };
@@ -401,6 +420,22 @@ export class SunatGuiaService {
                     _text: guia.transportistaMTC,
                 };
             }
+        } else if (tipoDocCodigo === '31') {
+            // GRE-T siempre necesita CarrierParty. Si no hay transportistaRuc en el form,
+            // usar el remitenteRuc (la empresa que emite la GRE-T ES el transportista).
+            const carrierRuc = String(guia.remitenteRuc || '').trim();
+            stage['cac:CarrierParty'] = {
+                'cac:PartyIdentification': {
+                    'cbc:ID': {
+                        _attributes: { schemeID: '6' },
+                        _text: carrierRuc,
+                    },
+                },
+                'cac:PartyLegalEntity': {
+                    'cbc:RegistrationName': { _text: guia.remitenteRazonSocial },
+                    ...(guia.transportistaMTC ? { 'cbc:CompanyID': { _text: guia.transportistaMTC } } : {}),
+                },
+            };
         }
 
         const includeDriverData = guia.modoTransporte === '02' || tipoDocCodigo === '31';

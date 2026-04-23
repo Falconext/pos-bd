@@ -26,8 +26,9 @@ model Plan {
   tieneGaleria        Boolean      @default(false)
   maxComprobantes     Int?         @default(100)
   tieneTicketera      Boolean      @default(false)
-  empresas            Empresa[]
-  modulosAsignados    PlanModulo[]
+  empresas             Empresa[]
+  modulosAsignados     PlanModulo[]
+  subModulosAsignados  PlanSubModulo[]
 }
 
 model Ubigeo {
@@ -157,6 +158,7 @@ model Usuario {
   resellerId             Int?
   reseller               Reseller?               @relation(fields: [resellerId], references: [id])
   sedesAsignadas         UsuarioSede[]
+  subModulosAsignados    UsuarioSubModulo[]
 }
 
 model Categoria {
@@ -865,6 +867,18 @@ model UsuarioSede {
   @@index([sedeId])
 }
 
+model UsuarioSubModulo {
+  id          Int       @id @default(autoincrement())
+  usuarioId   Int
+  subModuloId Int
+  usuario     Usuario   @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  subModulo   SubModulo @relation(fields: [subModuloId], references: [id], onDelete: Cascade)
+
+  @@unique([usuarioId, subModuloId])
+  @@index([usuarioId])
+  @@index([subModuloId])
+}
+
 model ProductoStock {
   id          Int     @id @default(autoincrement())
   productoId  Int
@@ -1095,6 +1109,11 @@ model GuiaRemision {
   transportistaRazonSocial String?
   transportistaMTC         String? // Registro MTC
 
+  // Para GRE-T: remitente real de los bienes (diferente al transportista)
+  // En GRE-T, DespatchParty = quien envía la carga (puede ser otra empresa)
+  greTRemitenteNumDoc      String? // RUC/DNI del remitente de los bienes
+  greTRemitenteRazonSocial String? // Razón social del remitente de los bienes
+
   // Conductor/Vehículo (para transporte privado)
   conductorTipoDoc  String?
   conductorNumDoc   String?
@@ -1188,10 +1207,40 @@ model Modulo {
   activo          Boolean      @default(true)
   orden           Int          @default(0)
   planesAsignados PlanModulo[]
+  subModulos      SubModulo[]
   creadoEn        DateTime     @default(now())
 
   @@index([codigo])
   @@index([activo, orden])
+}
+
+model SubModulo {
+  id              Int               @id @default(autoincrement())
+  moduloId        Int
+  modulo          Modulo            @relation(fields: [moduloId], references: [id], onDelete: Cascade)
+  codigo          String            @unique
+  nombre          String
+  descripcion     String?
+  activo          Boolean           @default(true)
+  orden           Int               @default(0)
+  creadoEn        DateTime          @default(now())
+  usuarios        UsuarioSubModulo[]
+  planesAsignados PlanSubModulo[]
+
+  @@index([moduloId])
+  @@index([activo, orden])
+}
+
+model PlanSubModulo {
+  id          Int       @id @default(autoincrement())
+  planId      Int
+  subModuloId Int
+  plan        Plan      @relation(fields: [planId], references: [id], onDelete: Cascade)
+  subModulo   SubModulo @relation(fields: [subModuloId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, subModuloId])
+  @@index([planId])
+  @@index([subModuloId])
 }
 
 model PlanModulo {

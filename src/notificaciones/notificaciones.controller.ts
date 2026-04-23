@@ -20,6 +20,12 @@ export class NotificacionesController {
     return await this.notificacionesService.obtenerNotificacionesUsuario(user.id);
   }
 
+  @Patch('leer-todas')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async marcarTodasComoLeidas(@User() user: any) {
+    return await this.notificacionesService.marcarTodasComoLeidas(user.id);
+  }
+
   @Patch(':id/leer')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async marcarComoLeida(
@@ -27,12 +33,6 @@ export class NotificacionesController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return await this.notificacionesService.marcarComoLeida(id, user.id);
-  }
-
-  @Patch('leer-todas')
-  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
-  async marcarTodasComoLeidas(@User() user: any) {
-    return await this.notificacionesService.marcarTodasComoLeidas(user.id);
   }
 
   @Get('verificar-suscripciones')

@@ -44,7 +44,7 @@ export class BannersController {
         return this.bannersService.uploadBanner(
             req.user.empresaId,
             file,
-            titulo || 'Banner',
+            titulo || '',
             subtitulo,
             linkUrl,
             // productoId ? parseInt(productoId) : undefined,

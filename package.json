@@ -9,8 +9,8 @@
   "scripts": {
     "build": "prisma generate && prisma db push && nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "start": "prisma migrate deploy && nest start",
-    "start:dev": "nest start --watch",
+    "start": "prisma migrate deploy && prisma generate && nest start",
+    "start:dev": "prisma generate && nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "npx prisma db push && npx ts-node prisma/seed.ts && npx ts-node src/scripts/migrate-sedes.ts && node dist/main",
     "migrate:sedes": "npx ts-node src/scripts/migrate-sedes.ts",

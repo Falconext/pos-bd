@@ -38,4 +38,8 @@ export class CreateUserDto {
   @IsArray()
   @IsOptional()
   sedeIds?: number[];
+
+  @IsArray()
+  @IsOptional()
+  subModuloIds?: number[];
 }

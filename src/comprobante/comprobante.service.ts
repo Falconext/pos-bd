@@ -1663,20 +1663,16 @@ export class ComprobanteService {
           const pagosAlContado = ['EFECTIVO', 'YAPE', 'PLIN'];
           const formaPago = pagosAlContado.includes((full.medioPago || '').toUpperCase()) ? 'CONTADO' : 'CRÉDITO';
 
-          // Detectar MIME del logo y construir data URL si existe
-          const detectMime = (b64?: string) => {
-            if (!b64) return undefined;
-            if (b64.startsWith('data:')) return undefined;
-            if (b64.startsWith('/9j/')) return 'image/jpeg';
-            if (b64.startsWith('iVBOR')) return 'image/png';
-            return 'image/png';
+          const buildLogoDataUrl = (raw?: string | null): string | undefined => {
+            if (!raw) return undefined;
+            const t = raw.trim();
+            if (t.startsWith('data:')) return t;
+            if (/^https?:\/\//i.test(t) || t.startsWith('/')) return t;
+            return `data:${t.startsWith('/9j/') ? 'image/jpeg' : 'image/png'};base64,${t}`;
           };
 
           const rawLogo = (full.empresa as any).logo || null;
-          const mime = detectMime(rawLogo || undefined);
-          const logoDataUrl = rawLogo
-            ? (rawLogo.startsWith('data:') ? rawLogo : `data:${mime};base64,${rawLogo}`)
-            : undefined;
+          const logoDataUrl = buildLogoDataUrl(rawLogo);
 
           const productos = full.detalles.map((d: any) => ({
             cantidad: d.cantidad,

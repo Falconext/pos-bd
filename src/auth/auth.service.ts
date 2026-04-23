@@ -271,6 +271,13 @@ export class AuthService {
             }
           }
         },
+        subModulosAsignados: {
+          select: {
+            subModulo: {
+              select: { id: true, codigo: true, nombre: true, moduloId: true }
+            }
+          }
+        },
         empresa: {
           select: {
             id: true,
@@ -291,7 +298,14 @@ export class AuthService {
                 maxSedes: true,
                 modulosAsignados: {
                   include: { modulo: true }
-                }
+                },
+                subModulosAsignados: {
+                  include: {
+                    subModulo: {
+                      select: { id: true, codigo: true, nombre: true, moduloId: true }
+                    }
+                  }
+                },
               },
             },
             bancoNombre: true,
@@ -317,6 +331,10 @@ export class AuthService {
     // Aplanar sedes
     (usuario as any).sedes = (usuario.sedesAsignadas || []).map((us: any) => us.sede);
     delete (usuario as any).sedesAsignadas;
+
+    // Aplanar submódulos del usuario
+    (usuario as any).subModulos = (usuario.subModulosAsignados || []).map((us: any) => us.subModulo);
+    delete (usuario as any).subModulosAsignados;
 
     return usuario;
   }

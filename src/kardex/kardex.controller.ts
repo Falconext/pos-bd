@@ -44,7 +44,12 @@ export class KardexController {
       throw new BadRequestException('Usuario sin empresa asignada');
     }
 
-    return this.kardexService.obtenerKardexGeneral(empresaId, filtros, req.user.sedeId);
+    // Admins see all sedes by default so traslados show both SALIDA and INGRESO.
+    // Regular users are always scoped to their sede.
+    const isAdmin = ['ADMIN_EMPRESA', 'ADMIN_SISTEMA'].includes(req.user.rol);
+    const sedeId = isAdmin ? undefined : req.user.sedeId;
+
+    return this.kardexService.obtenerKardexGeneral(empresaId, filtros, sedeId);
   }
 
   /**
@@ -381,18 +386,16 @@ export class KardexController {
       throw new BadRequestException('Usuario sin empresa asignada');
     }
 
-    // Obtener datos en paralelo para mejor rendimiento
-    const [inventarioValorizado, estadisticas, stockCritico, productosObsoletos] = await Promise.all([
+    const [inventarioValorizado, movimientosRecientes, stockCritico, productosObsoletos] = await Promise.all([
       this.kardexService.obtenerInventarioValorizado(empresaId, undefined, req.user.sedeId),
-      this.obtenerEstadisticasInventario(req),
+      this.kardexService.obtenerKardexGeneral(empresaId, { page: 1, limit: 10 }, req.user.sedeId),
       this.kardexService.obtenerInventarioValorizado(empresaId, { soloStockCritico: true }, req.user.sedeId),
-      this.kardexService.obtenerProductosObsoletos(empresaId, 60, req.user.sedeId), // 60 días
+      this.kardexService.obtenerProductosObsoletos(empresaId, 60, req.user.sedeId),
     ]);
 
     return {
       resumenGeneral: inventarioValorizado.resumen,
-      estadisticas: estadisticas.resumenInventario,
-      movimientosRecientes: estadisticas.movimientosRecientes,
+      movimientosRecientes: movimientosRecientes.movimientos,
       alertas: {
         stockCritico: stockCritico.productos.length,
         productosObsoletos: productosObsoletos.productos.length,

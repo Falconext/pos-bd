@@ -120,6 +120,16 @@ export class CreateGuiaRemisionDto {
     @IsString()
     transportistaMTC?: string;
 
+    // Para GRE-T: RUC/razón social del remitente real de los bienes
+    // (la empresa que envía la carga, diferente al transportista)
+    @IsOptional()
+    @IsString()
+    greTRemitenteNumDoc?: string;
+
+    @IsOptional()
+    @IsString()
+    greTRemitenteRazonSocial?: string;
+
     // Conductor/Vehículo (condicional para transporte privado)
     @IsOptional()
     @IsString()

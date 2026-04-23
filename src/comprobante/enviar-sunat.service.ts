@@ -595,7 +595,49 @@ export class EnviarSunatService {
         throw new Error('SIMULACIÓN: SUNAT no disponible');
       }
 
-      const initialResponse = await axios.post(`${this.apiUrl}`, payload);
+      let initialResponse: any;
+      try {
+        initialResponse = await axios.post(`${this.apiUrl}`, payload);
+      } catch (axiosErr: any) {
+        // ── Auto-avance de correlativo para error 1033 (Numeración repetida) ──
+        // APISUNAT devuelve 4xx con body { status: 'ERROR', error: { code: '1033', ... } }
+        const errCode = axiosErr.response?.data?.error?.code;
+        if (errCode === '1033') {
+          console.warn(`⚠️ SUNAT error 1033 – numeración repetida (${comp.serie}-${comp.correlativo}). Buscando siguiente correlativo disponible...`);
+
+          // Obtener el próximo correlativo libre para esta serie y empresa
+          const ultimoComp = await this.prisma.comprobante.findFirst({
+            where: { empresaId: comp.empresaId, serie: comp.serie, tipoDoc: comp.tipoDoc },
+            orderBy: { correlativo: 'desc' },
+            select: { correlativo: true },
+          });
+          const nuevoCorrelativo = (ultimoComp?.correlativo ?? 0) + 1;
+
+          console.log(`📋 Nuevo correlativo asignado: ${comp.serie}-${nuevoCorrelativo}`);
+
+          // Actualizar el comprobante en BD con el nuevo correlativo
+          await this.prisma.comprobante.update({
+            where: { id: comprobanteId },
+            data: { correlativo: nuevoCorrelativo },
+          });
+
+          // Actualizar el payload para que coincida con el nuevo correlativo
+          const newPaddedCorrelativo = nuevoCorrelativo.toString().padStart(8, '0');
+          payload.fileName = `${empresa!.ruc}-${comp.tipoDoc}-${comp.serie}-${newPaddedCorrelativo}`;
+          payload.documentBody['cbc:ID'] = { _text: `${comp.serie}-${newPaddedCorrelativo}` };
+
+          // Reintentar el envío con el nuevo correlativo (sin bucle — si vuelve a fallar con 1033
+          // significa que hay un problema más profundo y debe reportarse al usuario).
+          initialResponse = await axios.post(`${this.apiUrl}`, payload);
+          console.log(`✅ Reintento exitoso con correlativo ${nuevoCorrelativo}`);
+
+          // Actualizar referencia local para los logs posteriores
+          comp.correlativo = nuevoCorrelativo;
+        } else {
+          // Cualquier otro error de axios, relanzar normalmente
+          throw axiosErr;
+        }
+      }
 
       console.log('📥 Respuesta inicial de SUNAT:', {
         status: initialResponse.status,
@@ -661,20 +703,16 @@ export class EnviarSunatService {
             '08': 'NOTA DE DÉBITO',
           };
 
-          // Detectar MIME del logo
-          const detectMime = (b64?: string) => {
-            if (!b64) return undefined;
-            if (b64.startsWith('data:')) return undefined;
-            if (b64.startsWith('/9j/')) return 'image/jpeg';
-            if (b64.startsWith('iVBOR')) return 'image/png';
-            return 'image/png';
+          const buildLogoDataUrl = (raw?: string | null): string | undefined => {
+            if (!raw) return undefined;
+            const t = raw.trim();
+            if (t.startsWith('data:')) return t;
+            if (/^https?:\/\//i.test(t) || t.startsWith('/')) return t;
+            return `data:${t.startsWith('/9j/') ? 'image/jpeg' : 'image/png'};base64,${t}`;
           };
 
           const rawLogo = comp.empresa.logo || null;
-          const mime = detectMime(rawLogo || undefined);
-          const logoDataUrl = rawLogo
-            ? (rawLogo.startsWith('data:') ? rawLogo : `data:${mime};base64,${rawLogo}`)
-            : undefined;
+          const logoDataUrl = buildLogoDataUrl(rawLogo);
 
           const fechaEmision = new Date(comp.fechaEmision);
 
@@ -911,6 +949,16 @@ export class EnviarSunatService {
   }
 
   /**
+   * Detecta si un error de axios corresponde al código SUNAT 1033
+   * (Numeración repetida / documento ya existe).
+   */
+  private isSunatNumeracionRepetida(err: any): boolean {
+    return err?.response?.data?.error?.code === '1033' ||
+      err?.response?.data?.error?.message?.includes('Numeraci') ||
+      (err?.response?.data?.status === 'ERROR' && String(err?.response?.data?.error?.code) === '1033');
+  }
+
+  /**
    * Genera y sube el PDF a S3 para un comprobante ya existente.
    * Útil para comprobantes que fueron marcados como ACEPTADO por el scheduler
    * pero no tienen PDF generado.
@@ -950,19 +998,16 @@ export class EnviarSunatService {
         '08': 'NOTA DE DÉBITO',
       };
 
-      const detectMime = (b64?: string) => {
-        if (!b64) return undefined;
-        if (b64.startsWith('data:')) return undefined;
-        if (b64.startsWith('/9j/')) return 'image/jpeg';
-        if (b64.startsWith('iVBOR')) return 'image/png';
-        return 'image/png';
+      const buildLogoDataUrl = (raw?: string | null): string | undefined => {
+        if (!raw) return undefined;
+        const t = raw.trim();
+        if (t.startsWith('data:')) return t;
+        if (/^https?:\/\//i.test(t) || t.startsWith('/')) return t;
+        return `data:${t.startsWith('/9j/') ? 'image/jpeg' : 'image/png'};base64,${t}`;
       };
 
       const rawLogo = (comp.empresa as any).logo || null;
-      const mime = detectMime(rawLogo || undefined);
-      const logoDataUrl = rawLogo
-        ? (rawLogo.startsWith('data:') ? rawLogo : `data:${mime};base64,${rawLogo}`)
-        : undefined;
+      const logoDataUrl = buildLogoDataUrl(rawLogo);
 
       const fechaEmision = new Date(comp.fechaEmision as any);
 

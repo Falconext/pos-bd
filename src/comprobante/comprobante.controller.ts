@@ -239,6 +239,7 @@ export class ComprobanteController {
     let comp;
     try {
       console.log('[crearBoleta] Starting - empresaId:', user.empresaId, 'dto:', JSON.stringify(dto));
+      const effectiveSedeId = user.sedeId ?? dto?.sedeId ?? undefined;
       const empresa = await this.empresaService.obtenerMiEmpresa(user.empresaId);
       if (!empresa.providerToken || !empresa.providerId) {
         throw new ForbiddenException(
@@ -246,7 +247,7 @@ export class ComprobanteController {
         );
       }
       console.log('[crearBoleta] Creating comprobante...');
-      comp = await this.service.crearFormal(dto, user.empresaId, '03', user.id, user.sedeId);
+      comp = await this.service.crearFormal(dto, user.empresaId, '03', user.id, effectiveSedeId);
       console.log('[crearBoleta] Comprobante created:', comp.id, '- Sending to SUNAT...');
       const sunatResp = await this.enviarSunat.execute(comp.id);
       console.log('[crearBoleta] SUNAT response:', JSON.stringify(sunatResp));
@@ -278,6 +279,7 @@ export class ComprobanteController {
     let comp;
     try {
       console.log('[crearFactura] Starting - empresaId:', user.empresaId, 'dto:', JSON.stringify(dto));
+      const effectiveSedeId = user.sedeId ?? dto?.sedeId ?? undefined;
       const empresa = await this.empresaService.obtenerMiEmpresa(user.empresaId);
       if (!empresa.providerToken || !empresa.providerId) {
         throw new ForbiddenException(
@@ -285,7 +287,7 @@ export class ComprobanteController {
         );
       }
       console.log('[crearFactura] Creating comprobante...');
-      comp = await this.service.crearFormal(dto, user.empresaId, '01', user.id, user.sedeId);
+      comp = await this.service.crearFormal(dto, user.empresaId, '01', user.id, effectiveSedeId);
       console.log('[crearFactura] Comprobante created:', comp.id, '- Sending to SUNAT...');
       const sunatResp = await this.enviarSunat.execute(comp.id);
       console.log('[crearFactura] SUNAT response:', JSON.stringify(sunatResp));
@@ -314,13 +316,14 @@ export class ComprobanteController {
   async crearNotaCredito(@User() user: any, @Body() dto: CrearComprobanteDto) {
     try {
       console.log('[crearNotaCredito] Starting - empresaId:', user.empresaId);
+      const effectiveSedeId = user.sedeId ?? dto?.sedeId ?? undefined;
       const empresa = await this.empresaService.obtenerMiEmpresa(user.empresaId);
       if (!empresa.providerToken || !empresa.providerId) {
         throw new ForbiddenException(
           'Aún no cuenta con permisos para generar comprobantes para SUNAT, contacte con el soporte de falconext',
         );
       }
-      const comp = await this.service.crearFormal(dto, user.empresaId, '07', user.id, user.sedeId);
+      const comp = await this.service.crearFormal(dto, user.empresaId, '07', user.id, effectiveSedeId);
       const sunatResp = await this.enviarSunat.execute(comp.id);
       return sunatResp;
     } catch (error: any) {
@@ -333,13 +336,14 @@ export class ComprobanteController {
   async crearNotaDebito(@User() user: any, @Body() dto: CrearComprobanteDto) {
     try {
       console.log('[crearNotaDebito] Starting - empresaId:', user.empresaId);
+      const effectiveSedeId = user.sedeId ?? dto?.sedeId ?? undefined;
       const empresa = await this.empresaService.obtenerMiEmpresa(user.empresaId);
       if (!empresa.providerToken || !empresa.providerId) {
         throw new ForbiddenException(
           'Aún no cuenta con permisos para generar comprobantes para SUNAT, contacte con el soporte de falconext',
         );
       }
-      const comp = await this.service.crearFormal(dto, user.empresaId, '08', user.id, user.sedeId);
+      const comp = await this.service.crearFormal(dto, user.empresaId, '08', user.id, effectiveSedeId);
       const sunatResp = await this.enviarSunat.execute(comp.id);
       return sunatResp;
     } catch (error: any) {
@@ -353,14 +357,16 @@ export class ComprobanteController {
     @User() user: any,
     @Body() dto: CrearComprobanteDto,
   ) {
-    const comp = await this.service.crearInformal(dto, user.empresaId, user.id, user.sedeId);
+    const effectiveSedeId = user.sedeId ?? dto?.sedeId ?? undefined;
+    const comp = await this.service.crearInformal(dto, user.empresaId, user.id, effectiveSedeId);
     return comp;
   }
 
   @Post('ot')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async crearOT(@User() user: any, @Body() dto: any) {
-    return this.service.crearOT(dto, user.empresaId, user.id, user.sedeId);
+    const effectiveSedeId = user.sedeId ?? dto?.sedeId ?? undefined;
+    return this.service.crearOT(dto, user.empresaId, user.id, effectiveSedeId);
   }
 
   // Enviar comprobante existente a SUNAT

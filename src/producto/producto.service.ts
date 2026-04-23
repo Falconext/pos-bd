@@ -69,6 +69,7 @@ export class ProductoService {
       fechaFinOferta?: string | Date;
     },
     empresaId: number,
+    sedeId?: number,
   ) {
     let {
       codigo,
@@ -199,14 +200,19 @@ export class ProductoService {
         },
       });
 
-      // Inicializar stock en todas las sedes activas con el mismo stock inicial
+      // Inicializar el registro de stock por sede. Solo la sede que crea el producto
+      // (o la principal si no se conoce la sede) recibe el stock inicial. Las demás
+      // arrancan en 0 para que los traslados partan de valores reales y no inflados.
       const sedes = await this.prisma.sede.findMany({ where: { empresaId, activo: true } });
       if (sedes.length > 0) {
+        const sedePrincipalId = sedes.find(s => s.esPrincipal)?.id;
+        // La sede que recibe el stock inicial: la del usuario actual, o la principal como fallback.
+        const sedeConStock = sedeId ?? sedePrincipalId;
         await this.prisma.productoStock.createMany({
           data: sedes.map(s => ({
             productoId: nuevo.id,
             sedeId: s.id,
-            stock: stock ?? 0,
+            stock: s.id === sedeConStock ? (stock ?? 0) : 0,
             stockMinimo: stockMinimo ?? 0,
             stockMaximo: stockMaximo ?? null,
           }))
@@ -653,14 +659,49 @@ export class ProductoService {
     });
   }
 
-  async eliminarTodo(empresaId: number) {
+  async eliminarTodo(empresaId: number, sedeId?: number) {
     const productosDelSistema = ['PLD', 'IPM', 'DGD'];
-    // Actualizar todos los productos de la empresa a estado PLACEHOLDER, excepto los del sistema
+
+    if (sedeId) {
+      // Sede-scoped delete:
+      // 1. Remove all ProductoStock records for this sede
+      await this.prisma.productoStock.deleteMany({
+        where: {
+          sedeId,
+          producto: { empresaId },
+        },
+      });
+
+      // 2. Mark as PLACEHOLDER any productos that now have no ProductoStock
+      //    at any sede (they were exclusively in this sede)
+      const huerfanos = await this.prisma.producto.findMany({
+        where: {
+          empresaId,
+          codigo: { notIn: productosDelSistema },
+          estado: { not: 'PLACEHOLDER' as any },
+          stocks: { none: {} },
+        },
+        select: { id: true },
+      });
+
+      let count = 0;
+      if (huerfanos.length > 0) {
+        const res = await this.prisma.producto.updateMany({
+          where: { id: { in: huerfanos.map((p) => p.id) } },
+          data: { estado: 'PLACEHOLDER' as any, publicarEnTienda: false as any },
+        });
+        count = res.count;
+      }
+
+      return { count };
+    }
+
+    // Empresa-wide: mark all products as PLACEHOLDER
     const result = await this.prisma.producto.updateMany({
       where: {
         empresaId,
         codigo: { notIn: productosDelSistema },
-        estado: { not: 'PLACEHOLDER' as any }, // Evitar re-actualizar los que ya están eliminados
+        estado: { not: 'PLACEHOLDER' as any },
       },
       data: {
         estado: 'PLACEHOLDER' as any,

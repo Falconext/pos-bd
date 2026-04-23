@@ -90,8 +90,8 @@ export class KardexService {
         stockActual -= data.cantidad;
         break;
       case 'AJUSTE':
-        // Para ajustes, la cantidad puede ser positiva o negativa
-        stockActual = data.cantidad;
+        // Para ajustes, la cantidad puede ser positiva o negativa (delta)
+        stockActual += data.cantidad;
         break;
       case 'TRANSFERENCIA':
         // Lógica específica para transferencias
@@ -336,6 +336,7 @@ export class KardexService {
           },
           usuario: { select: { id: true, nombre: true } },
           comprobante: { select: { id: true, tipoDoc: true, serie: true, correlativo: true } },
+          sede: { select: { id: true, nombre: true } },
         },
         orderBy: { fecha: 'desc' },
         skip,
@@ -416,10 +417,12 @@ export class KardexService {
         cantidad = ajusteDto.cantidad;
         nuevoStock = producto.stock + cantidad;
         break;
-      case TipoAjuste.NEGATIVO:
-        cantidad = -ajusteDto.cantidad;
-        nuevoStock = Math.max(0, producto.stock - ajusteDto.cantidad);
+      case TipoAjuste.NEGATIVO: {
+        const descuentoAplicado = Math.min(producto.stock, ajusteDto.cantidad);
+        cantidad = -descuentoAplicado;
+        nuevoStock = producto.stock - descuentoAplicado;
         break;
+      }
       case TipoAjuste.CORRECCION:
         cantidad = ajusteDto.cantidad - producto.stock;
         nuevoStock = ajusteDto.cantidad;
@@ -433,7 +436,7 @@ export class KardexService {
       sedeId, // Pass resolved sedeId
       tipoMovimiento: 'AJUSTE',
       concepto: `Ajuste ${ajusteDto.tipoAjuste.toLowerCase()}: ${ajusteDto.motivo}`,
-      cantidad: Math.abs(cantidad),
+      cantidad,
       costoUnitario: ajusteDto.costoUnitario,
       usuarioId,
       observacion: ajusteDto.observacion,
@@ -1049,10 +1052,32 @@ export class KardexService {
 
       for (const item of items) {
         // 1. Obtener stock en sede origen
-        const stockOrigen = await tx.productoStock.findUnique({
+        let stockOrigen = await tx.productoStock.findUnique({
           where: { productoId_sedeId: { productoId: item.productoId, sedeId: sedeOrigenId } },
           include: { producto: true }
         });
+
+        // Si no existe ProductoStock para la sede origen (producto legado anterior a multi-sede),
+        // crear el registro con stock 0. Usar producto.stock global sería incorrecto porque ese
+        // campo puede estar inflado (suma de todas las sedes). El check de stock insuficiente
+        // fallará correctamente y le indicará al usuario que ajuste el stock de esa sede primero.
+        if (!stockOrigen) {
+          const producto = await tx.producto.findUnique({
+            where: { id: item.productoId },
+            include: { unidadMedida: true },
+          });
+          if (producto) {
+            stockOrigen = await tx.productoStock.create({
+              data: {
+                productoId: item.productoId,
+                sedeId: sedeOrigenId,
+                stock: 0,
+                stockMinimo: producto.stockMinimo || 0,
+              },
+              include: { producto: true },
+            });
+          }
+        }
 
         if (!stockOrigen || stockOrigen.stock < item.cantidad) {
           throw new BadRequestException(
@@ -1079,23 +1104,27 @@ export class KardexService {
           }
         });
 
-        // 3. Obtener/Crear stock en sede destino
-        let stockDestino = await tx.productoStock.findUnique({
-          where: { productoId_sedeId: { productoId: item.productoId, sedeId: sedeDestinoId } }
+        // 3. Obtener/Crear stock en sede destino (upsert garantiza que el registro exista)
+        //    Se usa upsert para evitar la condición de carrera entre findUnique + create separados.
+        await tx.productoStock.upsert({
+          where: { productoId_sedeId: { productoId: item.productoId, sedeId: sedeDestinoId } },
+          create: {
+            productoId: item.productoId,
+            sedeId: sedeDestinoId,
+            stock: 0,
+            stockMinimo: 0,
+          },
+          update: {}, // No sobreescribir si ya existe
         });
 
-        if (!stockDestino) {
-          stockDestino = await tx.productoStock.create({
-            data: {
-              productoId: item.productoId,
-              sedeId: sedeDestinoId,
-              stock: 0,
-              stockMinimo: 0,
-            }
-          });
-        }
+        // Re-leer el stock REAL de la sede destino después del upsert para evitar valores obsoletos
+        const stockDestinoActual = await tx.productoStock.findUnique({
+          where: { productoId_sedeId: { productoId: item.productoId, sedeId: sedeDestinoId } },
+        });
 
-        // 4. Registrar INGRESO en sede destino
+        const stockAnteriorDestino = stockDestinoActual?.stock ?? 0;
+
+        // 4. Registrar INGRESO en sede destino con el stock real leído
         const movIngreso = await tx.movimientoKardex.create({
           data: {
             productoId: item.productoId,
@@ -1103,8 +1132,8 @@ export class KardexService {
             tipoMovimiento: 'INGRESO',
             concepto: `Traslado desde ${sedeOrigen.nombre}`,
             cantidad: item.cantidad,
-            stockAnterior: stockDestino.stock,
-            stockActual: stockDestino.stock + item.cantidad,
+            stockAnterior: stockAnteriorDestino,
+            stockActual: stockAnteriorDestino + item.cantidad,
             costoUnitario: stockOrigen.producto.costoPromedio,
             valorTotal: Number(stockOrigen.producto.costoPromedio) * item.cantidad,
             sedeId: sedeDestinoId,
@@ -1114,15 +1143,16 @@ export class KardexService {
           }
         });
 
-        // 5. Actualizar stocks físicos
+        // 5. Actualizar stocks físicos usando increment para garantizar atomicidad
+        //    Evita condiciones de carrera al no depender del valor leído en memoria.
         await tx.productoStock.update({
           where: { id: stockOrigen.id },
-          data: { stock: stockOrigen.stock - item.cantidad }
+          data: { stock: { decrement: item.cantidad } }
         });
 
         await tx.productoStock.update({
-          where: { id: stockDestino.id },
-          data: { stock: stockDestino.stock + item.cantidad }
+          where: { productoId_sedeId: { productoId: item.productoId, sedeId: sedeDestinoId } },
+          data: { stock: { increment: item.cantidad } }
         });
 
         resultados.push({ productoId: item.productoId, movSalida, movIngreso });

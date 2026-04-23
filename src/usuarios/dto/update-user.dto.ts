@@ -39,4 +39,8 @@ export class UpdateUserDto {
   @IsArray()
   @IsOptional()
   sedeIds?: number[];
+
+  @IsArray()
+  @IsOptional()
+  subModuloIds?: number[];
 }

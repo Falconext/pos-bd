@@ -14,7 +14,7 @@ export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateUserDto, empresaIdFromToken: number) {
-    const { nombre, email, dni, celular, password, permisos, sedeIds } = dto;
+    const { nombre, email, dni, celular, password, permisos, sedeIds, subModuloIds } = dto;
 
     const existeEmail = await this.prisma.usuario.findUnique({ where: { email } });
     if (existeEmail) throw new BadRequestException('El email ya está en uso');
@@ -77,6 +77,14 @@ export class UsersService {
       });
     }
 
+    // Asignar submódulos si vienen
+    if (subModuloIds && subModuloIds.length > 0) {
+      await this.prisma.usuarioSubModulo.createMany({
+        data: subModuloIds.map((subModuloId) => ({ usuarioId: nuevo.id, subModuloId })),
+        skipDuplicates: true,
+      });
+    }
+
     return nuevo;
   }
 
@@ -130,15 +138,24 @@ export class UsersService {
               }
             }
           },
+          subModulosAsignados: {
+            select: {
+              subModulo: {
+                select: { id: true, codigo: true, nombre: true, moduloId: true }
+              }
+            }
+          },
         },
       }),
     ]);
 
-    // Aplanar sedes asignadas
+    // Aplanar sedes y submódulos asignados
     const itemsConSedes = items.map((u) => ({
       ...u,
       sedes: (u.sedesAsignadas || []).map((us: any) => us.sede),
       sedesAsignadas: undefined,
+      subModulos: (u.subModulosAsignados || []).map((us: any) => us.subModulo),
+      subModulosAsignados: undefined,
     }));
 
     return { total, page, limit, items: itemsConSedes };
@@ -151,7 +168,7 @@ export class UsersService {
   }
 
   async update(dto: UpdateUserDto, empresaId: number) {
-    const { id, nombre, email, dni, celular, permisos, sedeIds } = dto;
+    const { id, nombre, email, dni, celular, permisos, sedeIds, subModuloIds } = dto;
 
     const usuario = await this.prisma.usuario.findUnique({ where: { id } });
     if (!usuario) throw new NotFoundException('Usuario no encontrado');
@@ -186,6 +203,17 @@ export class UsersService {
       if (sedeIds.length > 0) {
         await this.prisma.usuarioSede.createMany({
           data: sedeIds.map((sedeId) => ({ usuarioId: id, sedeId })),
+          skipDuplicates: true,
+        });
+      }
+    }
+
+    // Sincronizar submódulos si vienen
+    if (subModuloIds !== undefined) {
+      await this.prisma.usuarioSubModulo.deleteMany({ where: { usuarioId: id } });
+      if (subModuloIds.length > 0) {
+        await this.prisma.usuarioSubModulo.createMany({
+          data: subModuloIds.map((subModuloId) => ({ usuarioId: id, subModuloId })),
           skipDuplicates: true,
         });
       }

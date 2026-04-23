@@ -48,7 +48,7 @@ export class ProductoController {
     @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const producto = await this.service.crear(dto, user.empresaId);
+    const producto = await this.service.crear(dto, user.empresaId, user.sedeId ?? undefined);
     res.locals.message = 'Producto creado correctamente';
     return producto;
   }
@@ -198,9 +198,11 @@ export class ProductoController {
   @Roles('ADMIN_EMPRESA')
   async eliminarTodo(
     @User() user: any,
+    @Query('sedeId') sedeId: string,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const eliminados = await this.service.eliminarTodo(user.empresaId);
+    const sedeIdNum = sedeId ? parseInt(sedeId, 10) : undefined;
+    const eliminados = await this.service.eliminarTodo(user.empresaId, sedeIdNum);
     res.locals.message = `Se eliminaron (lógicamente) ${eliminados.count} productos correctamente`;
     return eliminados;
   }
