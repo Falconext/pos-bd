@@ -1,7 +1,9 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Get,
+  Post,
   Query,
   Res,
   UseGuards,
@@ -13,6 +15,7 @@ import { User } from '../common/decorators/user.decorator';
 import { ContabilidadService } from './contabilidad.service';
 import { ArqueoService } from './arqueo.service';
 import { CajaService } from '../caja/caja.service';
+import { SireService } from './sire.service';
 import type { Response } from 'express';
 import * as XLSX from 'xlsx';
 
@@ -28,6 +31,7 @@ export class ContabilidadController {
     private readonly service: ContabilidadService,
     private readonly arqueoService: ArqueoService,
     private readonly cajaService: CajaService,
+    private readonly sireService: SireService,
   ) {}
 
   @Get('obtener-reporte')
@@ -362,5 +366,152 @@ export class ContabilidadController {
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     res.setHeader('Content-Length', buffer.length.toString());
     return res.end(buffer, 'binary');
+  }
+
+  // ──────────────── SIRE ────────────────
+
+  private parseSireParams(mes: string, anio: string) {
+    const m = parseInt(mes, 10);
+    const a = parseInt(anio, 10);
+    if (!m || m < 1 || m > 12) throw new BadRequestException('mes inválido (1-12)');
+    if (!a || a < 2020) throw new BadRequestException('anio inválido');
+    return { mes: m, anio: a };
+  }
+
+  @Get('sire/ventas-txt')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async sireVentasTxt(
+    @User() user: any,
+    @Res() res: Response,
+    @Query('mes') mes: string,
+    @Query('anio') anio: string,
+    @Query('simple') simple?: string,
+    @Query('empresarial') empresarial?: string,
+  ) {
+    const { mes: m, anio: a } = this.parseSireParams(mes, anio);
+    const buffer = await this.sireService.generarTxtVentas(
+      user.empresaId,
+      m, a,
+      simple === 'true',
+      empresarial === 'true',
+      user.sedeId,
+    );
+    const periodo = `${a}${String(m).padStart(2, '0')}`;
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="SIRE_RVIE_${periodo}.txt"`);
+    res.setHeader('Content-Length', buffer.length.toString());
+    return res.end(buffer);
+  }
+
+  @Get('sire/ventas-excel')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async sireVentasExcel(
+    @User() user: any,
+    @Res() res: Response,
+    @Query('mes') mes: string,
+    @Query('anio') anio: string,
+    @Query('simple') simple?: string,
+    @Query('empresarial') empresarial?: string,
+  ) {
+    const { mes: m, anio: a } = this.parseSireParams(mes, anio);
+    const buffer = await this.sireService.generarExcelVentas(
+      user.empresaId,
+      m, a,
+      simple === 'true',
+      empresarial === 'true',
+      user.sedeId,
+    );
+    const periodo = `${a}${String(m).padStart(2, '0')}`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="SIRE_RVIE_${periodo}.xlsx"`);
+    res.setHeader('Content-Length', buffer.length.toString());
+    return res.end(buffer, 'binary');
+  }
+
+  @Post('sire/ventas-correo')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async sireVentasCorreo(
+    @User() user: any,
+    @Body() body: { mes: number; anio: number; simple?: boolean; empresarial?: boolean; destinatario: string },
+  ) {
+    const { mes, anio, simple, empresarial, destinatario } = body;
+    if (!destinatario) throw new BadRequestException('destinatario es requerido');
+    await this.sireService.enviarPorCorreo({
+      tipo: 'ventas',
+      mes,
+      anio,
+      simple: simple ?? false,
+      empresarial: empresarial ?? false,
+      empresaId: user.empresaId,
+      destinatario,
+      sedeId: user.sedeId,
+    });
+    return { message: `Libro de ventas enviado a ${destinatario}` };
+  }
+
+  @Get('sire/compras-txt')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async sireComprasTxt(
+    @User() user: any,
+    @Res() res: Response,
+    @Query('mes') mes: string,
+    @Query('anio') anio: string,
+    @Query('simple') simple?: string,
+  ) {
+    const { mes: m, anio: a } = this.parseSireParams(mes, anio);
+    const buffer = await this.sireService.generarTxtCompras(
+      user.empresaId,
+      m, a,
+      simple === 'true',
+      user.sedeId,
+    );
+    const periodo = `${a}${String(m).padStart(2, '0')}`;
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="SIRE_RCE_${periodo}.txt"`);
+    res.setHeader('Content-Length', buffer.length.toString());
+    return res.end(buffer);
+  }
+
+  @Get('sire/compras-excel')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async sireComprasExcel(
+    @User() user: any,
+    @Res() res: Response,
+    @Query('mes') mes: string,
+    @Query('anio') anio: string,
+    @Query('simple') simple?: string,
+  ) {
+    const { mes: m, anio: a } = this.parseSireParams(mes, anio);
+    const buffer = await this.sireService.generarExcelCompras(
+      user.empresaId,
+      m, a,
+      simple === 'true',
+      user.sedeId,
+    );
+    const periodo = `${a}${String(m).padStart(2, '0')}`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="SIRE_RCE_${periodo}.xlsx"`);
+    res.setHeader('Content-Length', buffer.length.toString());
+    return res.end(buffer, 'binary');
+  }
+
+  @Post('sire/compras-correo')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async sireComprasCorreo(
+    @User() user: any,
+    @Body() body: { mes: number; anio: number; simple?: boolean; destinatario: string },
+  ) {
+    const { mes, anio, simple, destinatario } = body;
+    if (!destinatario) throw new BadRequestException('destinatario es requerido');
+    await this.sireService.enviarPorCorreo({
+      tipo: 'compras',
+      mes,
+      anio,
+      simple: simple ?? false,
+      empresaId: user.empresaId,
+      destinatario,
+      sedeId: user.sedeId,
+    });
+    return { message: `Registro de compras enviado a ${destinatario}` };
   }
 }

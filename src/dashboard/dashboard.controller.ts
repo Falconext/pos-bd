@@ -36,6 +36,24 @@ export class DashboardController {
     return data;
   }
 
+  @Get('overview')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async overview(
+    @User() user: any,
+    @Query('fechaInicio') fechaInicio: string,
+    @Query('fechaFin') fechaFin: string,
+    @Query('sedeId') sedeIdQuery?: string,
+  ) {
+    const sedeId = this.resolveSedeId(user, sedeIdQuery);
+    const data = await this.service.overview(
+      user.empresaId,
+      fechaInicio,
+      fechaFin,
+      sedeId,
+    );
+    return data;
+  }
+
   @Get('ingresos-por-fecha-comprobante')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async ingresosPorComprobante(

@@ -205,6 +205,175 @@ export class DashboardService {
     });
   }
 
+  async overview(
+    empresaId: number,
+    fechaInicio: string,
+    fechaFin: string,
+    sedeId?: number,
+  ) {
+    const currentRange = this.parseRange(fechaInicio, fechaFin);
+    if (!currentRange) {
+      throw new BadRequestException('fechaInicio y fechaFin son requeridos para overview');
+    }
+
+    const start = new Date(`${fechaInicio}T00:00:00.000-05:00`);
+    const end = new Date(`${fechaFin}T23:59:59.999-05:00`);
+    const diffMs = end.getTime() - start.getTime();
+    const prevStart = new Date(start.getTime() - diffMs - 24 * 60 * 60 * 1000);
+    const prevEnd = new Date(end.getTime() - diffMs - 24 * 60 * 60 * 1000);
+
+    const prevRange = {
+      gte: new Date(prevStart.setHours(0, 0, 0, 0)),
+      lte: new Date(prevEnd.setHours(23, 59, 59, 999)),
+    };
+
+    const baseWhere = { empresaId, ...(sedeId ? { sedeId } : {}) };
+
+    const [ventasCurr, ventasPrev, ventasNCCurr, ventasNCPrev] = await Promise.all([
+      this.prisma.comprobante.aggregate({
+        _sum: { mtoImpVenta: true },
+        where: { ...baseWhere, fechaEmision: currentRange, tipoDoc: { notIn: ['07'] } },
+      }),
+      this.prisma.comprobante.aggregate({
+        _sum: { mtoImpVenta: true },
+        where: { ...baseWhere, fechaEmision: prevRange, tipoDoc: { notIn: ['07'] } },
+      }),
+      this.prisma.comprobante.aggregate({
+        _sum: { mtoImpVenta: true },
+        where: { ...baseWhere, fechaEmision: currentRange, tipoDoc: '07' },
+      }),
+      this.prisma.comprobante.aggregate({
+        _sum: { mtoImpVenta: true },
+        where: { ...baseWhere, fechaEmision: prevRange, tipoDoc: '07' },
+      }),
+    ]);
+
+    const ingresosCurr = Number(ventasCurr._sum.mtoImpVenta ?? 0) - Number(ventasNCCurr._sum.mtoImpVenta ?? 0);
+    const ingresosPrev = Number(ventasPrev._sum.mtoImpVenta ?? 0) - Number(ventasNCPrev._sum.mtoImpVenta ?? 0);
+    const ventasTrend = ingresosPrev === 0 ? 100 : ((ingresosCurr - ingresosPrev) / ingresosPrev) * 100;
+
+    const [pedidosCurr, pedidosPrev] = await Promise.all([
+      this.prisma.comprobante.count({ where: { ...baseWhere, fechaEmision: currentRange } }),
+      this.prisma.comprobante.count({ where: { ...baseWhere, fechaEmision: prevRange } }),
+    ]);
+    const pedidosTrend = pedidosPrev === 0 ? 100 : ((pedidosCurr - pedidosPrev) / pedidosPrev) * 100;
+
+    const clientesNuevosCurrRows = await this.clientesNuevos(empresaId, fechaInicio, fechaFin, sedeId);
+    const clientesNuevosCurr = clientesNuevosCurrRows.reduce((acc, curr) => acc + curr.nuevos, 0);
+
+    const prevStartStr = prevRange.gte.toISOString().slice(0, 10);
+    const prevEndStr = prevRange.lte.toISOString().slice(0, 10);
+    let clientesNuevosPrev = 0;
+    try {
+      const clientesNuevosPrevRows = await this.clientesNuevos(empresaId, prevStartStr, prevEndStr, sedeId);
+      clientesNuevosPrev = clientesNuevosPrevRows.reduce((acc, curr) => acc + curr.nuevos, 0);
+    } catch (e) {
+      clientesNuevosPrev = 0;
+    }
+    const clientesTrend = clientesNuevosPrev === 0 ? 100 : ((clientesNuevosCurr - clientesNuevosPrev) / clientesNuevosPrev) * 100;
+
+    const conversionCurr = pedidosCurr === 0 ? 0 : ingresosCurr / pedidosCurr;
+    const conversionTrend = pedidosPrev === 0 ? 100 : (((ingresosCurr / pedidosCurr) - (ingresosPrev / pedidosPrev)) / (ingresosPrev / pedidosPrev)) * 100;
+
+    const dailyVentasRows = await this.prisma.comprobante.groupBy({
+      by: ['fechaEmision'],
+      where: { ...baseWhere, fechaEmision: currentRange, tipoDoc: { notIn: ['07'] } },
+      _sum: { mtoImpVenta: true },
+    });
+
+    const mapDaily = new Map<string, number>();
+    for (const r of dailyVentasRows) {
+      const f = this.toFechaLima(r.fechaEmision);
+      mapDaily.set(f, (mapDaily.get(f) || 0) + Number(r._sum.mtoImpVenta ?? 0));
+    }
+    const chartVentas = Array.from(mapDaily.entries())
+      .map(([date, total]) => ({ date, total: Math.max(0, total) }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    const ventasCanalRows = await this.prisma.comprobante.groupBy({
+      by: ['medioPago'],
+      where: { ...baseWhere, fechaEmision: currentRange },
+      _sum: { mtoImpVenta: true },
+    });
+
+    let sumTarjeta = 0;
+    let sumTransferencia = 0;
+    let sumRedes = 0;
+    let sumEfectivo = 0;
+    let sumOtros = 0;
+    for (const r of ventasCanalRows) {
+      const m = (r.medioPago || '').toString().toUpperCase();
+      const t = Number(r._sum.mtoImpVenta ?? 0);
+      if (m === 'TARJETA') sumTarjeta += t;
+      else if (m === 'TRANSFERENCIA') sumTransferencia += t;
+      else if (m === 'YAPE' || m === 'PLIN') sumRedes += t;
+      else if (m === 'EFECTIVO') sumEfectivo += t;
+      else sumOtros += t;
+    }
+    const totalCanales = sumTarjeta + sumTransferencia + sumRedes + sumEfectivo + sumOtros;
+    const chartCanales = totalCanales === 0 ? [] : [
+      { name: 'Tarjeta', value: sumTarjeta, percentage: (sumTarjeta / totalCanales) * 100 },
+      { name: 'Transferencia', value: sumTransferencia, percentage: (sumTransferencia / totalCanales) * 100 },
+      { name: 'Yape / Plin', value: sumRedes, percentage: (sumRedes / totalCanales) * 100 },
+      { name: 'Efectivo', value: sumEfectivo, percentage: (sumEfectivo / totalCanales) * 100 },
+      { name: 'Otros', value: sumOtros, percentage: (sumOtros / totalCanales) * 100 },
+    ].filter((x) => x.value > 0);
+
+    const recientes = await this.prisma.comprobante.findMany({
+      where: baseWhere,
+      orderBy: { fechaEmision: 'desc' },
+      take: 4,
+      include: { cliente: { select: { nombre: true } } },
+    });
+    const actividad = recientes.map((r) => ({
+      id: r.id,
+      tipo: r.tipoDoc === '07' ? 'Reembolso procesado' : 'Nueva venta',
+      descripcion: `#${r.serie}-${r.correlativo}`,
+      fecha: r.fechaEmision,
+      monto: r.tipoDoc === '07' ? -r.mtoImpVenta : r.mtoImpVenta,
+      cliente: r.cliente?.nombre || 'CLIENTES VARIOS',
+    }));
+
+    const topProds = await this.topProductos(empresaId, fechaInicio, fechaFin, 4, sedeId);
+
+    const comprasRows = await this.prisma.compra.aggregate({
+      _sum: { total: true },
+      where: { ...baseWhere, fechaEmision: currentRange },
+    });
+    const comprasPrevRows = await this.prisma.compra.aggregate({
+      _sum: { total: true },
+      where: { ...baseWhere, fechaEmision: prevRange },
+    });
+
+    const gastosCurr = Number(comprasRows._sum.total ?? 0);
+    const gastosPrev = Number(comprasPrevRows._sum.total ?? 0);
+    const gananciasCurr = ingresosCurr - gastosCurr;
+    const gananciasPrev = ingresosPrev - gastosPrev;
+
+    const gastosTrend = gastosPrev === 0 ? 100 : ((gastosCurr - gastosPrev) / gastosPrev) * 100;
+    const gananciasTrend = gananciasPrev === 0 ? 100 : ((gananciasCurr - gananciasPrev) / gananciasPrev) * 100;
+    const marginCurr = ingresosCurr > 0 ? (gananciasCurr / ingresosCurr) * 100 : 0;
+
+    return {
+      kpis: {
+        ventas: { value: ingresosCurr, trend: ventasTrend },
+        pedidos: { value: pedidosCurr, trend: pedidosTrend },
+        clientes: { value: clientesNuevosCurr, trend: clientesTrend },
+        conversion: { value: conversionCurr, trend: conversionTrend },
+      },
+      chartVentas,
+      chartCanales,
+      actividad,
+      topProductos: topProds,
+      financiero: {
+        ingresos: { value: ingresosCurr, trend: ventasTrend },
+        gastos: { value: gastosCurr, trend: gastosTrend },
+        ganancias: { value: gananciasCurr, trend: gananciasTrend },
+        margen: marginCurr,
+      },
+    };
+  }
+
   async clientesNuevos(
     empresaId: number,
     fechaInicio?: string,

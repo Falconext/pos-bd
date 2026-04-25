@@ -1635,138 +1635,6 @@ export class ComprobanteService {
       });
     }
 
-    // Generar y subir PDF a S3 para comprobantes informales
-    try {
-      if (this.s3Service && this.s3Service.isEnabled()) {
-        const full = await this.prisma.comprobante.findUnique({
-          where: { id: comp.id },
-          include: {
-            cliente: { include: { tipoDocumento: true } },
-            empresa: { include: { ubicacion: true, rubro: true } },
-            detalles: true,
-            tipoDetraccion: true,
-            medioPagoDetraccion: true,
-          },
-        });
-        if (full) {
-          const tipoDocMap: Record<string, string> = {
-            TICKET: 'TICKET',
-            NV: 'NOTA DE VENTA',
-            RH: 'RECIBO POR HONORARIOS',
-            CP: 'COMPROBANTE DE PAGO',
-            NP: 'NOTA DE PEDIDO',
-            OT: 'ORDEN DE TRABAJO',
-            COT: 'COTIZACIÓN',
-          };
-
-          const fecha = new Date(full.fechaEmision as any);
-          const pagosAlContado = ['EFECTIVO', 'YAPE', 'PLIN'];
-          const formaPago = pagosAlContado.includes((full.medioPago || '').toUpperCase()) ? 'CONTADO' : 'CRÉDITO';
-
-          const buildLogoDataUrl = (raw?: string | null): string | undefined => {
-            if (!raw) return undefined;
-            const t = raw.trim();
-            if (t.startsWith('data:')) return t;
-            if (/^https?:\/\//i.test(t) || t.startsWith('/')) return t;
-            return `data:${t.startsWith('/9j/') ? 'image/jpeg' : 'image/png'};base64,${t}`;
-          };
-
-          const rawLogo = (full.empresa as any).logo || null;
-          const logoDataUrl = buildLogoDataUrl(rawLogo);
-
-          const productos = full.detalles.map((d: any) => ({
-            cantidad: d.cantidad,
-            unidadMedida: d.unidad || 'NIU',
-            descripcion: (d.descripcion || '').toUpperCase(),
-            precioUnitario: Number(d.mtoPrecioUnitario || 0).toFixed(2),
-            total: Number((d.mtoPrecioUnitario || 0) * d.cantidad).toFixed(2),
-          }));
-
-          const pdfData = {
-            nombreComercial: (full.empresa as any).nombreComercial ? (full.empresa as any).nombreComercial.toUpperCase() : full.empresa.razonSocial.toUpperCase(),
-            razonSocial: full.empresa.razonSocial.toUpperCase(),
-            ruc: full.empresa.ruc,
-            direccion: (full.empresa.direccion || '').toUpperCase(),
-            rubro: full.empresa.rubro?.nombre?.toUpperCase() || undefined,
-            celular: '',
-            email: '',
-            logo: logoDataUrl,
-            tipoDocumento: tipoDocMap[full.tipoDoc] || 'COMPROBANTE',
-            serie: full.serie,
-            correlativo: String(full.correlativo).padStart(8, '0'),
-            fecha: fecha.toLocaleDateString('es-PE'),
-            hora: fecha.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }),
-            clienteNombre: (full.cliente?.nombre || 'CLIENTES VARIOS').toUpperCase(),
-            clienteTipoDoc: full.cliente?.tipoDocumento?.codigo === '6' ? 'RUC' : 'DNI',
-            clienteNumDoc: full.cliente?.nroDoc || '',
-            clienteDireccion: (full.cliente?.direccion || '-').toUpperCase(),
-            productos,
-            mtoOperGravadas: Number(full.mtoOperGravadas || 0).toFixed(2),
-            mtoIGV: Number(full.mtoIGV || 0).toFixed(2),
-            mtoOperInafectas: full.mtoOperInafectas && full.mtoOperInafectas > 0 ? Number(full.mtoOperInafectas).toFixed(2) : undefined,
-            mtoImpVenta: Number(full.mtoImpVenta || 0).toFixed(2),
-            totalEnLetras: numeroALetras(Number(full.mtoImpVenta || 0)).toUpperCase(),
-            formaPago,
-            medioPago: (full.medioPago || 'EFECTIVO').toUpperCase(),
-            observaciones: full.observaciones ? full.observaciones.toUpperCase() : undefined,
-            qrCode: undefined,
-            // Detracción
-            tipoDetraccion: full.tipoDetraccion
-              ? `${full.tipoDetraccion.codigo} - ${full.tipoDetraccion.descripcion} (${full.tipoDetraccion.porcentaje}%)`
-              : undefined,
-            montoDetraccion: full.montoDetraccion ? Number(full.montoDetraccion).toFixed(2) : undefined,
-            cuentaBancoNacion: full.cuentaBancoNacion || undefined,
-            medioPagoDetraccion: full.medioPagoDetraccion
-              ? `${full.medioPagoDetraccion.codigo} - ${full.medioPagoDetraccion.descripcion}`
-              : undefined,
-          };
-
-
-          let pdfBuffer: Buffer;
-
-          // Usar template específico de cotización si es COT
-          if (full.tipoDoc === 'COT') {
-            const cotizacionData = {
-              ...pdfData,
-              // Campos adicionales específicos de cotización
-              subTotal: Number(full.subTotal || 0).toFixed(2),
-              descuento: full.mtoDescuentoGlobal ? Number(full.mtoDescuentoGlobal).toFixed(2) : undefined,
-              validez: full.cotizVigencia ? `${full.cotizVigencia} días` : '7 días',
-              cotizTerminos: full.cotizTerminos || undefined,
-              clienteEmail: (full.cliente as any)?.email || '-',
-              clienteTelefono: (full.cliente as any)?.telefono || '-',
-              // Datos bancarios de la empresa
-              bancoNombre: (full.empresa as any).bancoNombre || undefined,
-              numeroCuenta: (full.empresa as any).numeroCuenta || undefined,
-              cci: (full.empresa as any).cci || undefined,
-              monedaCuenta: (full.empresa as any).monedaCuenta || 'SOLES',
-              // Usuario que generó la cotización
-              usuario: 'ADMIN',
-            };
-            pdfBuffer = await this.pdfGenerator.generarPDFCotizacion(cotizacionData);
-          } else {
-            pdfBuffer = await this.pdfGenerator.generarPDFComprobante(pdfData);
-          }
-          const key = this.s3Service.generateComprobanteKey(
-            full.empresaId,
-            full.tipoDoc,
-            full.serie,
-            full.correlativo,
-            'pdf',
-          );
-          const s3PdfUrl = await this.s3Service.uploadPDF(pdfBuffer, key);
-
-          await this.prisma.comprobante.update({
-            where: { id: full.id },
-            data: { s3PdfUrl },
-          });
-        }
-      }
-    } catch (e) {
-      // Log y continuar sin fallar la creación del comprobante
-      console.error('Error generando/subiendo PDF informal a S3:', (e as any)?.message || e);
-    }
-
     return comp;
   }
 
@@ -2020,5 +1888,312 @@ export class ComprobanteService {
       limiteAlcanzado: porcentajeUso >= 100,
       plan: empresa.plan?.nombre || 'Sin plan'
     };
+  }
+
+  // ─── Helpers compartidos PDF informal ────────────────────────────────────
+
+  private async cargarComprobanteCompleto(id: number) {
+    return this.prisma.comprobante.findUnique({
+      where: { id },
+      include: {
+        cliente: { include: { tipoDocumento: true } },
+        empresa: { include: { ubicacion: true, rubro: true } },
+        detalles: true,
+        tipoDetraccion: true,
+        medioPagoDetraccion: true,
+      },
+    });
+  }
+
+  private async buildPdfBufferInformal(id: number): Promise<{ buffer: Buffer; key: string }> {
+    const full = await this.cargarComprobanteCompleto(id);
+    if (!full) throw new NotFoundException('Comprobante no encontrado');
+
+    const tipoDocMap: Record<string, string> = {
+      TICKET: 'TICKET', NV: 'NOTA DE VENTA', RH: 'RECIBO POR HONORARIOS',
+      CP: 'COMPROBANTE DE PAGO', NP: 'NOTA DE PEDIDO', OT: 'ORDEN DE TRABAJO', COT: 'COTIZACIÓN',
+    };
+    const fecha = new Date(full.fechaEmision as any);
+    const pagosAlContado = ['EFECTIVO', 'YAPE', 'PLIN'];
+    const formaPago = pagosAlContado.includes((full.medioPago || '').toUpperCase()) ? 'CONTADO' : 'CRÉDITO';
+
+    const buildLogoDataUrl = (raw?: string | null): string | undefined => {
+      if (!raw) return undefined;
+      const t = raw.trim();
+      if (t.startsWith('data:')) return t;
+      if (/^https?:\/\//i.test(t) || t.startsWith('/')) return t;
+      return `data:${t.startsWith('/9j/') ? 'image/jpeg' : 'image/png'};base64,${t}`;
+    };
+
+    const productos = full.detalles.map((d: any) => ({
+      cantidad: d.cantidad,
+      unidadMedida: d.unidad || 'NIU',
+      descripcion: (d.descripcion || '').toUpperCase(),
+      precioUnitario: Number(d.mtoPrecioUnitario || 0).toFixed(2),
+      total: Number((d.mtoPrecioUnitario || 0) * d.cantidad).toFixed(2),
+    }));
+
+    const pdfData: any = {
+      nombreComercial: (full.empresa as any).nombreComercial
+        ? (full.empresa as any).nombreComercial.toUpperCase()
+        : full.empresa.razonSocial.toUpperCase(),
+      razonSocial: full.empresa.razonSocial.toUpperCase(),
+      ruc: full.empresa.ruc,
+      direccion: (full.empresa.direccion || '').toUpperCase(),
+      rubro: full.empresa.rubro?.nombre?.toUpperCase() || undefined,
+      celular: '',
+      email: '',
+      logo: buildLogoDataUrl((full.empresa as any).logo),
+      tipoDocumento: tipoDocMap[full.tipoDoc] || 'COMPROBANTE',
+      serie: full.serie,
+      correlativo: String(full.correlativo).padStart(8, '0'),
+      fecha: fecha.toLocaleDateString('es-PE'),
+      hora: fecha.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }),
+      clienteNombre: (full.cliente?.nombre || 'CLIENTES VARIOS').toUpperCase(),
+      clienteTipoDoc: full.cliente?.tipoDocumento?.codigo === '6' ? 'RUC' : 'DNI',
+      clienteNumDoc: full.cliente?.nroDoc || '',
+      clienteDireccion: (full.cliente?.direccion || '-').toUpperCase(),
+      productos,
+      mtoOperGravadas: Number(full.mtoOperGravadas || 0).toFixed(2),
+      mtoIGV: Number(full.mtoIGV || 0).toFixed(2),
+      mtoOperInafectas: full.mtoOperInafectas && full.mtoOperInafectas > 0
+        ? Number(full.mtoOperInafectas).toFixed(2) : undefined,
+      mtoImpVenta: Number(full.mtoImpVenta || 0).toFixed(2),
+      totalEnLetras: numeroALetras(Number(full.mtoImpVenta || 0)).toUpperCase(),
+      formaPago,
+      medioPago: (full.medioPago || 'EFECTIVO').toUpperCase(),
+      observaciones: full.observaciones ? full.observaciones.toUpperCase() : undefined,
+      qrCode: undefined,
+      tipoDetraccion: full.tipoDetraccion
+        ? `${full.tipoDetraccion.codigo} - ${full.tipoDetraccion.descripcion} (${full.tipoDetraccion.porcentaje}%)`
+        : undefined,
+      montoDetraccion: full.montoDetraccion ? Number(full.montoDetraccion).toFixed(2) : undefined,
+      cuentaBancoNacion: full.cuentaBancoNacion || undefined,
+      medioPagoDetraccion: full.medioPagoDetraccion
+        ? `${full.medioPagoDetraccion.codigo} - ${full.medioPagoDetraccion.descripcion}`
+        : undefined,
+    };
+
+    let buffer: Buffer;
+    if (full.tipoDoc === 'COT') {
+      const cotizacionData = {
+        ...pdfData,
+        subTotal: Number(full.subTotal || 0).toFixed(2),
+        descuento: full.mtoDescuentoGlobal ? Number(full.mtoDescuentoGlobal).toFixed(2) : undefined,
+        validez: full.cotizVigencia ? `${full.cotizVigencia} días` : '7 días',
+        cotizTerminos: full.cotizTerminos || undefined,
+        clienteEmail: (full.cliente as any)?.email || '-',
+        clienteTelefono: (full.cliente as any)?.telefono || '-',
+        bancoNombre: (full.empresa as any).bancoNombre || undefined,
+        numeroCuenta: (full.empresa as any).numeroCuenta || undefined,
+        cci: (full.empresa as any).cci || undefined,
+        monedaCuenta: (full.empresa as any).monedaCuenta || 'SOLES',
+        usuario: 'ADMIN',
+      };
+      buffer = await this.pdfGenerator.generarPDFCotizacion(cotizacionData);
+    } else {
+      buffer = await this.pdfGenerator.generarPDFComprobante(pdfData);
+    }
+
+    const key = this.s3Service.generateComprobanteKey(
+      full.empresaId, full.tipoDoc, full.serie, full.correlativo, 'pdf',
+    );
+    return { buffer, key };
+  }
+
+  // ─── Wrapper público para el controller público ───────────────────────────
+  async generarBufferPdf(id: number): Promise<{ buffer: Buffer; key: string }> {
+    return this.buildPdfBufferInformal(id);
+  }
+
+  // ─── URL pública con token HMAC (sin S3) ─────────────────────────────────
+
+  private tokenPdf(id: number): string {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const crypto = require('crypto');
+    const secret = process.env.JWT_SECRET || 'fallback-pdf-secret';
+    return crypto.createHmac('sha256', secret).update(`pdf:${id}`).digest('hex');
+  }
+
+  generarUrlPdfPublico(id: number): string {
+    const base = process.env.BACKEND_URL || 'http://localhost:4001';
+    const token = this.tokenPdf(id);
+    return `${base}/api/comprobante/${id}/pdf-publico?token=${token}`;
+  }
+
+  validarTokenPdf(id: number, token: string): boolean {
+    return token === this.tokenPdf(id);
+  }
+
+  // ─── Enviar por WhatsApp (Meta Cloud API) ────────────────────────────────
+
+  async enviarWhatsAppComprobante(id: number, celular: string): Promise<void> {
+    const token = process.env.WHATSAPP_TOKEN;
+    const phoneNumberId = process.env.WHATSAPP_PHONE_ID;
+
+    if (!token || !phoneNumberId) {
+      throw new BadRequestException('WhatsApp no configurado. Agrega WHATSAPP_TOKEN y WHATSAPP_PHONE_ID en el .env.');
+    }
+
+    const comp = await this.cargarComprobanteCompleto(id);
+    if (!comp) throw new NotFoundException('Comprobante no encontrado');
+
+    const tipoDocMap: Record<string, string> = {
+      TICKET: 'Ticket', NV: 'Nota de Venta', RH: 'Recibo por Honorarios',
+      CP: 'Comprobante de Pago', NP: 'Nota de Pedido', OT: 'Orden de Trabajo', COT: 'Cotización',
+    };
+    const tipoPretty = tipoDocMap[comp.tipoDoc] || comp.tipoDoc;
+    const serie = comp.serie;
+    const correlativo = String(comp.correlativo).padStart(8, '0');
+    const monto = `S/ ${Number(comp.mtoImpVenta || 0).toFixed(2)}`;
+    const clienteNombre = comp.cliente?.nombre || 'Cliente';
+    const empresaNombre = comp.empresa.razonSocial;
+    // Comprobantes SUNAT (BOLETA/FACTURA) ya tienen PDF en S3 — usar esa URL directamente.
+    // Informales (Ticket, NV, etc.) se generan al vuelo con el endpoint HMAC.
+    const pdfUrl = comp.s3PdfUrl || this.generarUrlPdfPublico(id);
+
+    const numero = celular.replace(/\D/g, '').replace(/^0+/, '');
+    const to = numero.startsWith('51') ? numero : `51${numero}`;
+    const filename = `${tipoPretty.replace(/ /g, '_')}_${serie}-${correlativo}.pdf`;
+    const caption = `Hola ${clienteNombre}, aquí está tu ${tipoPretty} ${serie}-${correlativo} por ${monto}.\n\nGracias por tu preferencia — ${empresaNombre}.`;
+
+    // ── Paso 1: Obtener el buffer del PDF ────────────────────────────────────
+    // Comprobantes SUNAT → descargar desde S3. Informales → generar con Puppeteer.
+    let pdfBuffer: Buffer;
+    if (comp.s3PdfUrl) {
+      const s3Res = await fetch(comp.s3PdfUrl);
+      if (!s3Res.ok) throw new BadRequestException('No se pudo descargar el PDF desde S3');
+      pdfBuffer = Buffer.from(await s3Res.arrayBuffer());
+    } else {
+      ({ buffer: pdfBuffer } = await this.buildPdfBufferInformal(id));
+    }
+
+    const apiBase = `https://graph.facebook.com/v25.0/${phoneNumberId}`;
+    const authHeader = `Bearer ${token}`;
+
+    // ── Paso 2: Subir el PDF a los servidores de Meta ────────────────────────
+    // Así Meta nunca necesita descargar desde una URL pública nuestra.
+    const formData = new FormData();
+    formData.append('messaging_product', 'whatsapp');
+    formData.append('type', 'application/pdf');
+    formData.append(
+      'file',
+      new Blob([new Uint8Array(pdfBuffer)], { type: 'application/pdf' }),
+      filename,
+    );
+
+    const uploadRes = await fetch(`${apiBase}/media`, {
+      method: 'POST',
+      headers: { Authorization: authHeader },
+      body: formData,
+    });
+
+    if (!uploadRes.ok) {
+      const uploadErr: any = await uploadRes.json().catch(() => ({}));
+      throw new BadRequestException(uploadErr?.error?.message || 'No se pudo subir el PDF a WhatsApp');
+    }
+
+    const { id: mediaId } = await uploadRes.json() as { id: string };
+
+    // ── Paso 3: Enviar el documento usando el media ID ────────────────────────
+    const sendRes = await fetch(`${apiBase}/messages`, {
+      method: 'POST',
+      headers: { Authorization: authHeader, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to,
+        type: 'document',
+        document: { id: mediaId, filename, caption },
+      }),
+    });
+
+    if (!sendRes.ok) {
+      const sendErr: any = await sendRes.json().catch(() => ({}));
+      throw new BadRequestException(sendErr?.error?.message || `Error al enviar WhatsApp (HTTP ${sendRes.status})`);
+    }
+  }
+
+  // ─── Enviar por email ─────────────────────────────────────────────────────
+
+  async enviarEmailComprobante(id: number, destinatario: string): Promise<void> {
+    const resendKey = process.env.RESEND_API_KEY;
+    if (!resendKey) {
+      throw new BadRequestException('Correo no configurado. Agrega RESEND_API_KEY en el .env del backend.');
+    }
+
+    const comp = await this.cargarComprobanteCompleto(id);
+    if (!comp) throw new NotFoundException('Comprobante no encontrado');
+
+    // Comprobantes SUNAT ya tienen PDF en S3 — descargarlo directamente.
+    // Informales se generan en memoria con Puppeteer.
+    let buffer: Buffer;
+    if (comp.s3PdfUrl) {
+      const s3Res = await fetch(comp.s3PdfUrl);
+      if (!s3Res.ok) throw new BadRequestException('No se pudo descargar el PDF desde S3');
+      buffer = Buffer.from(await s3Res.arrayBuffer());
+    } else {
+      ({ buffer } = await this.buildPdfBufferInformal(id));
+    }
+
+    const tipoDocMap: Record<string, string> = {
+      TICKET: 'Ticket', NV: 'Nota de Venta', RH: 'Recibo por Honorarios',
+      CP: 'Comprobante de Pago', NP: 'Nota de Pedido', OT: 'Orden de Trabajo', COT: 'Cotización',
+    };
+    const tipoPretty = tipoDocMap[comp.tipoDoc] || comp.tipoDoc;
+    const serie = comp.serie;
+    const correlativo = String(comp.correlativo).padStart(8, '0');
+    const monto = `S/ ${Number(comp.mtoImpVenta || 0).toFixed(2)}`;
+    const empresaNombre = comp.empresa.razonSocial;
+    const empresaRuc = comp.empresa.ruc ?? '';
+    const empresaDireccion = comp.empresa.direccion ?? undefined;
+    const clienteNombre = comp.cliente?.nombre || 'Cliente';
+    const fecha = new Date(comp.fechaEmision).toLocaleDateString('es-PE', { day: '2-digit', month: 'long', year: 'numeric' });
+    const pdfUrl = comp.s3PdfUrl || this.generarUrlPdfPublico(id);
+
+    const productos = (comp.detalles ?? []).map((item: any) => ({
+      descripcion: item.descripcion,
+      cantidad: Number(item.cantidad),
+      precioUnitario: Number(item.mtoValorUnitario || 0).toFixed(2),
+      total: Number(item.mtoValorVenta || 0).toFixed(2),
+    }));
+
+    const { Resend } = await import('resend');
+    const { render } = await import('@react-email/render');
+    const { ComprobanteEmail } = await import('./emails/ComprobanteEmail.js');
+
+    const html = await render(
+      (ComprobanteEmail as any)({
+        empresaNombre,
+        empresaRuc,
+        empresaDireccion,
+        tipoPretty,
+        serie,
+        correlativo,
+        fecha,
+        clienteNombre,
+        monto,
+        pdfUrl,
+        productos,
+      }),
+    );
+
+    const resend = new Resend(resendKey);
+    const { error } = await resend.emails.send({
+      from: `${empresaNombre} <onboarding@resend.dev>`,
+      to: destinatario,
+      subject: `${tipoPretty} ${serie}-${correlativo} — ${monto}`,
+      html,
+      attachments: [
+        {
+          filename: `${tipoPretty.replace(/ /g, '_')}_${serie}-${correlativo}.pdf`,
+          content: buffer,
+          contentType: 'application/pdf',
+        },
+      ],
+    });
+
+    if (error) {
+      throw new BadRequestException(`Error al enviar correo: ${error.message}`);
+    }
   }
 }

@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { ComprobanteService } from './comprobante.service';
 import { ComprobanteController } from './comprobante.controller';
+import { ComprobantePublicoController } from './comprobante-publico.controller';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { EnviarSunatService } from './enviar-sunat.service';
 import { PdfGeneratorService } from './pdf-generator.service';
@@ -12,7 +13,7 @@ import { ProductoModule } from '../producto/producto.module';
 
 @Module({
   imports: [EmpresaModule, forwardRef(() => KardexModule), NotificacionesModule, S3Module, forwardRef(() => ProductoModule)],
-  controllers: [ComprobanteController],
+  controllers: [ComprobanteController, ComprobantePublicoController],
   providers: [ComprobanteService, RolesGuard, EnviarSunatService, PdfGeneratorService],
   exports: [ComprobanteService, EnviarSunatService, PdfGeneratorService],
 })

@@ -370,6 +370,36 @@ export class ComprobanteController {
   }
 
   // Enviar comprobante existente a SUNAT
+  @Post(':id/generar-pdf')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
+  async generarPdf(@Param('id', ParseIntPipe) id: number) {
+    // Devuelve una URL pública con token HMAC — no sube nada a S3
+    const pdfUrl = this.service.generarUrlPdfPublico(id);
+    return { pdfUrl };
+  }
+
+  @Post(':id/enviar-email')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
+  async enviarEmail(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { email: string },
+  ) {
+    if (!body?.email) throw new BadRequestException('El campo email es requerido');
+    await this.service.enviarEmailComprobante(id, body.email);
+    return { message: 'Correo enviado correctamente' };
+  }
+
+  @Post(':id/enviar-whatsapp')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
+  async enviarWhatsApp(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { celular: string },
+  ) {
+    if (!body?.celular) throw new BadRequestException('El campo celular es requerido');
+    await this.service.enviarWhatsAppComprobante(id, body.celular);
+    return { message: 'Mensaje de WhatsApp enviado correctamente' };
+  }
+
   @Post(':id/enviar-sunat')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async enviarASunat(@Param('id', ParseIntPipe) id: number) {
