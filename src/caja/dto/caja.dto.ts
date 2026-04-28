@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsNumber, IsEnum, IsIn, Min } from 'class-validator';
+import { IsOptional, IsString, IsNumber, IsEnum, IsIn, Min, IsNotEmpty } from 'class-validator';
 import { Transform } from 'class-transformer';
 
 export enum TipoCaja {
@@ -86,4 +86,43 @@ export class EstadoCajaDto {
   @IsOptional()
   @IsString()
   fechaFin?: string;
+}
+
+export class EditarEgresoDto {
+  @IsOptional()
+  @IsNumber()
+  @Min(0.01, { message: 'El monto debe ser mayor a 0' })
+  @Transform(({ value }) => parseFloat(value))
+  monto?: number;
+
+  @IsOptional()
+  @IsString()
+  categoriaGasto?: string;
+
+  @IsOptional()
+  @IsString()
+  descripcionGasto?: string;
+
+  @IsOptional()
+  @IsString()
+  metodoPago?: string;
+}
+
+export class RegistrarEgresoDto {
+  @IsNumber()
+  @Min(0.01, { message: 'El monto debe ser mayor a 0' })
+  @Transform(({ value }) => parseFloat(value))
+  monto: number;
+
+  @IsString()
+  @IsNotEmpty({ message: 'La categoría es requerida' })
+  categoriaGasto: string;
+
+  @IsOptional()
+  @IsString()
+  descripcionGasto?: string;
+
+  @IsOptional()
+  @IsString()
+  metodoPago?: string;
 }

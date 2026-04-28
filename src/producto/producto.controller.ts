@@ -207,6 +207,18 @@ export class ProductoController {
     return eliminados;
   }
 
+  @Get('barcode/:codigo')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async getByBarcode(
+    @Param('codigo') codigo: string,
+    @User() user: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const producto = await this.service.getByBarcode(user.empresaId, codigo);
+    res.locals.message = 'Producto obtenido por código de barras';
+    return producto;
+  }
+
   @Get(':id')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async obtenerPorId(

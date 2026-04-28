@@ -2,7 +2,11 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
+  Param,
+  ParseIntPipe,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -13,7 +17,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { User } from '../common/decorators/user.decorator';
 import { CajaService } from './caja.service';
-import { AperturaCajaDto, CierreCajaDto, EstadoCajaDto } from './dto/caja.dto';
+import { AperturaCajaDto, CierreCajaDto, EstadoCajaDto, RegistrarEgresoDto, EditarEgresoDto } from './dto/caja.dto';
 import type { Response } from 'express';
 import * as XLSX from 'xlsx';
 
@@ -232,5 +236,27 @@ export class CajaController {
       fechaFin,
       user.sedeId,
     );
+  }
+
+  @Post('egreso')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async registrarEgreso(@User() user: any, @Body() dto: RegistrarEgresoDto) {
+    return await this.cajaService.registrarEgreso(user.id, user.empresaId, dto, user.sedeId);
+  }
+
+  @Patch('egreso/:id')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async editarEgreso(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: EditarEgresoDto,
+  ) {
+    return await this.cajaService.editarEgreso(user.empresaId, id, dto);
+  }
+
+  @Delete('egreso/:id')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async eliminarEgreso(@User() user: any, @Param('id', ParseIntPipe) id: number) {
+    return await this.cajaService.eliminarEgreso(user.empresaId, id);
   }
 }

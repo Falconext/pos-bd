@@ -2,9 +2,10 @@ import {
   Injectable,
   BadRequestException,
   ForbiddenException,
+  NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { AperturaCajaDto, CierreCajaDto, MovimientoCajaDto } from './dto/caja.dto';
+import { AperturaCajaDto, CierreCajaDto, MovimientoCajaDto, RegistrarEgresoDto, EditarEgresoDto } from './dto/caja.dto';
 
 @Injectable()
 export class CajaService {
@@ -34,7 +35,7 @@ export class CajaService {
   async verificarCajaAbierta(usuarioId: number, empresaId: number, sedeId?: number) {
     const { gte: hoyInicio, lte: hoyFin } = this.parseRangeDates();
 
-    // Tomar el último movimiento del día. Si es APERTURA => hay caja abierta pendiente de cierre
+    // Solo considerar APERTURA y CIERRE — los EGRESO/INGRESO no cambian el estado de la caja
     const ultimoMovimiento = await this.prisma.movimientoCaja.findFirst({
       where: {
         usuarioId,
@@ -42,6 +43,7 @@ export class CajaService {
         ...(sedeId ? { sedeId } : {}),
         fecha: { gte: hoyInicio, lte: hoyFin },
         estado: 'ACTIVO',
+        tipoMovimiento: { in: ['APERTURA', 'CIERRE'] },
       },
       orderBy: { fecha: 'desc' },
     });
@@ -63,6 +65,7 @@ export class CajaService {
         ...(sedeId ? { sedeId } : {}),
         fecha: { gte: hoyInicio, lte: hoyFin },
         estado: 'ACTIVO',
+        tipoMovimiento: { in: ['APERTURA', 'CIERRE'] },
       },
       orderBy: { fecha: 'desc' },
     });
@@ -233,10 +236,27 @@ export class CajaService {
       );
     }
 
+    // Sumar egresos del turno actual
+    let totalEgresos = 0;
+    if (estado === 'ABIERTA' && cajaAbierta) {
+      const resumenEgresos = await this.prisma.movimientoCaja.aggregate({
+        where: {
+          empresaId,
+          ...(sedeId ? { sedeId } : {}),
+          tipoMovimiento: 'EGRESO',
+          fecha: { gte: cajaAbierta.fecha },
+          estado: 'ACTIVO',
+        },
+        _sum: { monto: true },
+      });
+      totalEgresos = Number(resumenEgresos._sum.monto || 0);
+    }
+
     return {
       estado,
       movimiento,
       ventasDelDia,
+      totalEgresos,
       fecha: new Date(),
     };
   }
@@ -658,5 +678,73 @@ export class CajaService {
       fechaFin: fechaEmision.lte,
       usuarios: reporteArray,
     };
+  }
+
+  async registrarEgreso(
+    usuarioId: number,
+    empresaId: number,
+    dto: RegistrarEgresoDto,
+    sedeId?: number,
+  ) {
+    const cajaAbierta = await this.verificarCajaAbierta(usuarioId, empresaId, sedeId);
+    if (!cajaAbierta) {
+      throw new BadRequestException('No hay una caja abierta. Abre un turno antes de registrar gastos.');
+    }
+
+    const egreso = await this.prisma.movimientoCaja.create({
+      data: {
+        usuarioId,
+        empresaId,
+        sedeId,
+        tipoMovimiento: 'EGRESO',
+        monto: dto.monto,
+        categoriaGasto: dto.categoriaGasto,
+        descripcionGasto: dto.descripcionGasto,
+        metodoPago: dto.metodoPago || 'Efectivo',
+        estado: 'ACTIVO',
+      },
+      include: {
+        usuario: { select: { nombre: true, email: true } },
+      },
+    });
+
+    return {
+      code: 1,
+      message: 'Gasto registrado correctamente',
+      data: egreso,
+    };
+  }
+
+  async editarEgreso(empresaId: number, id: number, dto: EditarEgresoDto) {
+    const egreso = await this.prisma.movimientoCaja.findFirst({
+      where: { id, empresaId, tipoMovimiento: 'EGRESO', estado: 'ACTIVO' },
+    });
+    if (!egreso) throw new NotFoundException('Gasto no encontrado');
+
+    const updated = await this.prisma.movimientoCaja.update({
+      where: { id },
+      data: {
+        ...(dto.monto !== undefined && { monto: dto.monto }),
+        ...(dto.categoriaGasto !== undefined && { categoriaGasto: dto.categoriaGasto }),
+        ...(dto.descripcionGasto !== undefined && { descripcionGasto: dto.descripcionGasto }),
+        ...(dto.metodoPago !== undefined && { metodoPago: dto.metodoPago }),
+      },
+    });
+
+    return { code: 1, message: 'Gasto actualizado correctamente', data: updated };
+  }
+
+  async eliminarEgreso(empresaId: number, id: number) {
+    const egreso = await this.prisma.movimientoCaja.findFirst({
+      where: { id, empresaId, tipoMovimiento: 'EGRESO', estado: 'ACTIVO' },
+    });
+    if (!egreso) throw new NotFoundException('Gasto no encontrado');
+
+    await this.prisma.movimientoCaja.update({
+      where: { id },
+      data: { estado: 'INACTIVO' },
+    });
+
+    return { code: 1, message: 'Gasto eliminado correctamente' };
   }
 }

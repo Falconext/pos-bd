@@ -220,7 +220,10 @@ export class ProductoService {
       }
     }
 
-    return nuevo;
+    return {
+      ...nuevo,
+      costoUnitario: Number((nuevo as any).costoPromedio) || 0,
+    };
   }
 
   async listar(params: {
@@ -371,6 +374,7 @@ export class ProductoService {
           ...p,
           stock: stockTotal,
           stockMinimo: stockMinimo,
+          costoUnitario: Number(p.costoPromedio) || 0,
           imagenUrl: await signIfS3((p as any).imagenUrl as any),
         };
       })
@@ -385,7 +389,34 @@ export class ProductoService {
       include: { unidadMedida: true, categoria: true, marca: true },
     });
     if (!producto) throw new NotFoundException('Producto no encontrado');
-    return producto;
+    return {
+      ...producto,
+      costoUnitario: Number((producto as any).costoPromedio) || 0,
+    };
+  }
+
+  async getByBarcode(empresaId: number, codigoBarras: string) {
+    const producto = await this.prisma.producto.findFirst({
+      where: { empresaId, codigoBarras },
+      select: {
+        id: true,
+        codigo: true,
+        descripcion: true,
+        costoPromedio: true,
+        precioUnitario: true,
+        stock: true,
+        codigoBarras: true,
+        imagenUrl: true,
+        unidadMedida: { select: { id: true, codigo: true, nombre: true } },
+        stocks: { select: { sedeId: true, stock: true } },
+      },
+    });
+    if (!producto) throw new NotFoundException('Producto no encontrado con ese código de barras');
+    
+    return {
+      ...producto,
+      costoUnitario: Number(producto.costoPromedio) || 0,
+    };
   }
 
   async actualizar(data: {
@@ -489,7 +520,7 @@ export class ProductoService {
       }
     }
 
-    return this.prisma.producto.update({
+    const actualizado = await this.prisma.producto.update({
       where: { id: data.id },
       data: {
         descripcion: data.descripcion,
@@ -544,6 +575,11 @@ export class ProductoService {
         fechaFinOferta: data.fechaFinOferta ? new Date(data.fechaFinOferta) : undefined, // Ojo: empty string -> Invalid Date
       },
     });
+
+    return {
+      ...actualizado,
+      costoUnitario: Number((actualizado as any).costoPromedio) || 0,
+    };
   }
 
   // ==================== IMÁGENES (S3) ====================

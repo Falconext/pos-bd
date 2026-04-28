@@ -499,6 +499,10 @@ model MovimientoCaja {
   totalIngresos      Decimal?   @default(0)
   diferencia         Decimal?   @default(0)
   turno              String?
+  monto              Decimal?
+  categoriaGasto     String?
+  descripcionGasto   String?
+  metodoPago         String?
   empresa            Empresa    @relation(fields: [empresaId], references: [id])
   usuario            Usuario    @relation(fields: [usuarioId], references: [id])
 
