@@ -34,17 +34,14 @@ interface EnviarGuiaParams {
 export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
   private readonly apiUrl = 'https://graph.facebook.com/v21.0';
-  private readonly token: string;
-  private readonly phoneId: string;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
   ) {
-    this.token = this.configService.get<string>('WHATSAPP_TOKEN') || '';
-    this.phoneId = this.configService.get<string>('WHATSAPP_PHONE_ID') || '';
+    const { token, phoneId } = this.getCredentials();
 
-    if (!this.token || !this.phoneId) {
+    if (!token || !phoneId) {
       this.logger.warn(
         '⚠️  Credenciales de WhatsApp Cloud API no configuradas.',
       );
@@ -53,11 +50,26 @@ export class WhatsAppService {
     }
   }
 
+  private getCredentials(): { token: string; phoneId: string } {
+    const token =
+      this.configService.get<string>('WHATSAPP_TOKEN') ||
+      this.configService.get<string>('META_WHATSAPP_TOKEN') ||
+      '';
+    const phoneId =
+      this.configService.get<string>('WHATSAPP_PHONE_ID') ||
+      this.configService.get<string>('WHATSAPP_PHONE_NUMBER_ID') ||
+      this.configService.get<string>('META_WHATSAPP_PHONE_ID') ||
+      '';
+
+    return { token, phoneId };
+  }
+
   /**
    * Verifica si WhatsApp está habilitado
    */
   isEnabled(): boolean {
-    return !!this.token && !!this.phoneId;
+    const { token, phoneId } = this.getCredentials();
+    return !!token && !!phoneId;
   }
 
   /**
@@ -80,7 +92,8 @@ export class WhatsAppService {
   async enviarComprobante(
     params: EnviarComprobanteParams,
   ): Promise<{ success: boolean; mensajeId?: string; error?: string }> {
-    if (!this.isEnabled()) {
+    const { token, phoneId } = this.getCredentials();
+    if (!token || !phoneId) {
       throw new BadRequestException('WhatsApp no está configurado.');
     }
 
@@ -118,11 +131,11 @@ export class WhatsAppService {
       };
 
       const response = await axios.post(
-        `${this.apiUrl}/${this.phoneId}/messages`,
+        `${this.apiUrl}/${phoneId}/messages`,
         payload,
         {
           headers: {
-            Authorization: `Bearer ${this.token}`,
+            Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
         },
@@ -173,7 +186,8 @@ export class WhatsAppService {
   async enviarGuia(
     params: EnviarGuiaParams,
   ): Promise<{ success: boolean; mensajeId?: string; error?: string }> {
-    if (!this.isEnabled()) {
+    const { token, phoneId } = this.getCredentials();
+    if (!token || !phoneId) {
       throw new BadRequestException('WhatsApp no está configurado.');
     }
 
@@ -200,11 +214,11 @@ export class WhatsAppService {
       };
 
       const response = await axios.post(
-        `${this.apiUrl}/${this.phoneId}/messages`,
+        `${this.apiUrl}/${phoneId}/messages`,
         payload,
         {
           headers: {
-            Authorization: `Bearer ${this.token}`,
+            Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
         },

@@ -19,21 +19,25 @@ export class SchedulerService {
   // Job 1: Check status of PENDIENTE invoices with documentoId (every 5 min)
   @Cron(CronExpression.EVERY_5_MINUTES)
   async verificarComprobantesPendientes(): Promise<void> {
-    this.logger.log(
-      '🔍 [Job 1] Verificando comprobantes PENDIENTES con documentoId...',
-    );
-    await this.verificarSunat.execute();
-    this.logger.log('[Job 1] Verificación completada.');
+    try {
+      await this.verificarSunat.execute();
+    } catch (error: any) {
+      this.logger.error(
+        `[Job 1] Error al verificar comprobantes pendientes: ${error?.message || 'Error desconocido'}`,
+      );
+    }
   }
 
   // Job 2: Retry FALLIDO_ENVIO invoices that are ready for retry (every 5 min)
   @Cron(CronExpression.EVERY_5_MINUTES)
   async reintentarEnviosFallidos(): Promise<void> {
-    this.logger.log(
-      '🔄 [Job 2] Reintentando envíos fallidos...',
-    );
-    await this.verificarSunat.reintentarEnviosFallidos();
-    this.logger.log('[Job 2] Reintentos completados.');
+    try {
+      await this.verificarSunat.reintentarEnviosFallidos();
+    } catch (error: any) {
+      this.logger.error(
+        `[Job 2] Error al reintentar envíos fallidos: ${error?.message || 'Error desconocido'}`,
+      );
+    }
   }
 
   // Verificar suscripciones todos los días a las 9 AM

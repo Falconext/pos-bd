@@ -4,6 +4,7 @@ import {
   NotFoundException,
   Inject,
   forwardRef,
+  Logger,
 } from '@nestjs/common';
 import { Prisma, EstadoSunat } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -17,6 +18,8 @@ import { EnviarSunatService } from './enviar-sunat.service';
 
 @Injectable()
 export class ComprobanteService {
+  private readonly logger = new Logger(ComprobanteService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => KardexService))
@@ -77,10 +80,27 @@ export class ComprobanteService {
       estadoPago,
     } = params;
 
-    console.log('[ComprobanteService.listar] Params:', JSON.stringify(params));
-
     try {
       const skip = (page - 1) * limit;
+      const normalizedEstado =
+        typeof estado === 'string' && estado.trim().length > 0
+          ? estado.trim().toUpperCase()
+          : undefined;
+      const validEstadosSunat = new Set(Object.values(EstadoSunat));
+      const estadoSunatFilter =
+        normalizedEstado && validEstadosSunat.has(normalizedEstado as EstadoSunat)
+          ? (normalizedEstado as EstadoSunat)
+          : undefined;
+
+      if (
+        tipoComprobante === 'FORMAL' &&
+        normalizedEstado &&
+        !estadoSunatFilter
+      ) {
+        this.logger.warn(
+          `Filtro estado inválido recibido en listar: "${estado}". Se ignorará el filtro estadoEnvioSunat.`,
+        );
+      }
 
       const tiposFormales = ['01', '03', '07', '08'];
       const tiposInformales = ['TICKET', 'NV', 'RH', 'CP', 'NP', 'OT'];
@@ -162,15 +182,13 @@ export class ComprobanteService {
             },
           }
           : {}),
-        ...(tipoComprobante === 'FORMAL' && estado
-          ? { estadoEnvioSunat: estado }
+        ...(tipoComprobante === 'FORMAL' && estadoSunatFilter
+          ? { estadoEnvioSunat: estadoSunatFilter }
           : {}),
         ...(tipoComprobante === 'INFORMAL' && estadoPago
           ? { estadoPago: estadoPago as any }
           : {}),
       };
-
-      console.log('[ComprobanteService.listar] Where clause:', JSON.stringify(where));
 
       const [rawItems, totalDb] = await Promise.all([
         this.prisma.comprobante.findMany({
@@ -207,8 +225,6 @@ export class ComprobanteService {
         this.prisma.comprobante.count({ where }),
       ]);
 
-      console.log('[ComprobanteService.listar] Query successful. Found:', rawItems.length, 'items');
-
       const tipoLabels: Record<string, string> = {
         '01': 'FACTURA',
         '03': 'BOLETA',
@@ -231,9 +247,7 @@ export class ComprobanteService {
 
       return { comprobantes: mapped, total: totalDb, page, limit };
     } catch (error: any) {
-      console.error('[ComprobanteService.listar] ❌ ERROR:', error.message);
-      console.error('[ComprobanteService.listar] Error code:', error.code);
-      console.error('[ComprobanteService.listar] Full error:', JSON.stringify(error, null, 2));
+      this.logger.error(`Error al listar comprobantes: ${error?.message || 'Error desconocido'}`);
       throw error;
     }
   }
@@ -2025,11 +2039,41 @@ export class ComprobanteService {
     return token === this.tokenPdf(id);
   }
 
+  private getWhatsAppCredentials(): { token: string; phoneNumberId: string } {
+    const token =
+      process.env.WHATSAPP_TOKEN ||
+      process.env.META_WHATSAPP_TOKEN ||
+      '';
+
+    const phoneNumberId =
+      process.env.WHATSAPP_PHONE_ID ||
+      process.env.WHATSAPP_PHONE_NUMBER_ID ||
+      process.env.META_WHATSAPP_PHONE_ID ||
+      '';
+
+    return { token, phoneNumberId };
+  }
+
+  private formatMetaWhatsAppError(metaPayload: any, fallback: string): string {
+    const metaErr = metaPayload?.error || {};
+    const type = metaErr?.type;
+    const code = metaErr?.code;
+    const subcode = metaErr?.error_subcode;
+    const message = metaErr?.message || fallback;
+
+    const tags = [
+      type ? `type=${type}` : '',
+      code !== undefined ? `code=${code}` : '',
+      subcode !== undefined ? `subcode=${subcode}` : '',
+    ].filter(Boolean);
+
+    return `${tags.length ? `[Meta ${tags.join(', ')}] ` : ''}${message}`;
+  }
+
   // ─── Enviar por WhatsApp (Meta Cloud API) ────────────────────────────────
 
   async enviarWhatsAppComprobante(id: number, celular: string): Promise<void> {
-    const token = process.env.WHATSAPP_TOKEN;
-    const phoneNumberId = process.env.WHATSAPP_PHONE_ID;
+    const { token, phoneNumberId } = this.getWhatsAppCredentials();
 
     if (!token || !phoneNumberId) {
       throw new BadRequestException('WhatsApp no configurado. Agrega WHATSAPP_TOKEN y WHATSAPP_PHONE_ID en el .env.');
@@ -2090,7 +2134,21 @@ export class ComprobanteService {
 
     if (!uploadRes.ok) {
       const uploadErr: any = await uploadRes.json().catch(() => ({}));
-      throw new BadRequestException(uploadErr?.error?.message || 'No se pudo subir el PDF a WhatsApp');
+      const errorCode = uploadErr?.error?.code;
+      const errorType = uploadErr?.error?.type;
+      const errorSubcode = uploadErr?.error?.error_subcode;
+      const formattedUploadError = this.formatMetaWhatsAppError(
+        uploadErr,
+        'No se pudo subir el PDF a WhatsApp',
+      );
+
+      if (errorType === 'OAuthException' || errorCode === 190 || errorSubcode === 463) {
+        throw new BadRequestException(
+          `Error de autenticación en WhatsApp Cloud API. ${formattedUploadError}`,
+        );
+      }
+
+      throw new BadRequestException(formattedUploadError);
     }
 
     const { id: mediaId } = await uploadRes.json() as { id: string };
@@ -2109,7 +2167,21 @@ export class ComprobanteService {
 
     if (!sendRes.ok) {
       const sendErr: any = await sendRes.json().catch(() => ({}));
-      throw new BadRequestException(sendErr?.error?.message || `Error al enviar WhatsApp (HTTP ${sendRes.status})`);
+      const errorCode = sendErr?.error?.code;
+      const errorType = sendErr?.error?.type;
+      const errorSubcode = sendErr?.error?.error_subcode;
+      const formattedSendError = this.formatMetaWhatsAppError(
+        sendErr,
+        `Error al enviar WhatsApp (HTTP ${sendRes.status})`,
+      );
+
+      if (errorType === 'OAuthException' || errorCode === 190 || errorSubcode === 463) {
+        throw new BadRequestException(
+          `Error de autenticación en WhatsApp Cloud API. ${formattedSendError}`,
+        );
+      }
+
+      throw new BadRequestException(formattedSendError);
     }
   }
 
