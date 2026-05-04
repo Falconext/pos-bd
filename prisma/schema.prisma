@@ -1291,6 +1291,27 @@ model ResellerRecarga {
   reseller Reseller @relation(fields: [resellerId], references: [id])
 }
 
+// Catálogo de productos que Falconext vende en su propio portal web
+model StoreProduct {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  price       Decimal  @db.Decimal(10, 2)
+  oldPrice    Decimal? @db.Decimal(10, 2)
+  imageUrl    String?
+  badge       String?    // "Nuevo", "Popular", "Oferta", etc.
+  category    String?    // "Accesorios" | "Combo" | "Equipos" | "Sistema"
+  stock       Int?       // null = stock desconocido / ilimitado, 0 = agotado
+  isActive    Boolean  @default(true)
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive, order])
+  @@index([category])
+  @@map("store_products")
+}
+
 model ResellerMovimiento {
   id          Int      @id @default(autoincrement())
   resellerId  Int

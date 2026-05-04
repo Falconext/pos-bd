@@ -176,6 +176,12 @@ export class PdfGeneratorService {
     montoDetraccion?: string; // e.g. "144.00"
     cuentaBancoNacion?: string;
     medioPagoDetraccion?: string; // e.g. "001 (Depósito en cuenta)"
+
+    // Pagos digitales
+    yapeNumero?: string;
+    yapeQrUrl?: string;
+    plinNumero?: string;
+    plinQrUrl?: string;
   }): Promise<Buffer> {
     try {
       if (!this.template) {
@@ -311,6 +317,12 @@ export class PdfGeneratorService {
 
     // Usuario
     usuario?: string;
+
+    // Pagos digitales
+    yapeNumero?: string;
+    yapeQrUrl?: string;
+    plinNumero?: string;
+    plinQrUrl?: string;
   }): Promise<Buffer> {
     try {
       // Usar template de cotización si existe, sino el genérico

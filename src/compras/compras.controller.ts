@@ -32,6 +32,11 @@ export class ComprasController {
         return this.comprasService.registrarPago(req.user.empresaId, req.user.id, id, body, req.user.sedeId);
     }
 
+    @Post(':id/registrar-pago')
+    async registrarPagoAlias(@Request() req, @Param('id', ParseIntPipe) id: number, @Body() body: any) {
+        return this.comprasService.registrarPago(req.user.empresaId, req.user.id, id, body, req.user.sedeId);
+    }
+
     @Get(':id/pagos')
     async historialPagos(@Request() req, @Param('id', ParseIntPipe) id: number) {
         return this.comprasService.getHistorialPagos(req.user.empresaId, id, req.user.sedeId);

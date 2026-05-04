@@ -236,20 +236,36 @@ export class CajaService {
       );
     }
 
-    // Sumar egresos del turno actual
+    // Calcular total de egresos y obtener recientes
     let totalEgresos = 0;
+    let egresosRecientes: any[] = [];
     if (estado === 'ABIERTA' && cajaAbierta) {
-      const resumenEgresos = await this.prisma.movimientoCaja.aggregate({
-        where: {
-          empresaId,
-          ...(sedeId ? { sedeId } : {}),
-          tipoMovimiento: 'EGRESO',
-          fecha: { gte: cajaAbierta.fecha },
-          estado: 'ACTIVO',
-        },
-        _sum: { monto: true },
-      });
-      totalEgresos = Number(resumenEgresos._sum.monto || 0);
+      const [resumen, recientes] = await Promise.all([
+        this.prisma.movimientoCaja.aggregate({
+          where: {
+            empresaId,
+            ...(sedeId ? { sedeId } : {}),
+            tipoMovimiento: 'EGRESO',
+            fecha: { gte: cajaAbierta.fecha },
+            estado: 'ACTIVO',
+          },
+          _sum: { monto: true },
+        }),
+        this.prisma.movimientoCaja.findMany({
+          where: {
+            empresaId,
+            ...(sedeId ? { sedeId } : {}),
+            tipoMovimiento: 'EGRESO',
+            fecha: { gte: cajaAbierta.fecha },
+            estado: 'ACTIVO',
+          },
+          orderBy: { fecha: 'desc' },
+          take: 10,
+          include: { usuario: { select: { nombre: true } } }
+        })
+      ]);
+      totalEgresos = Number(resumen._sum.monto || 0);
+      egresosRecientes = recientes;
     }
 
     return {
@@ -257,6 +273,7 @@ export class CajaService {
       movimiento,
       ventasDelDia,
       totalEgresos,
+      egresosRecientes,
       fecha: new Date(),
     };
   }
@@ -400,10 +417,14 @@ export class CajaService {
       where: {
         empresaId,
         ...(sedeId ? { sedeId } : {}),
-        tipoDoc: { in: ['TICKET', 'NV', 'RH', 'CP'] },
-        fechaEmision: { gte: fechaInicio, lte: fechaFin },
-        estadoEnvioSunat: 'NO_APLICA',
+        tipoDoc: { in: ['TICKET', 'NV', 'RH', 'CP', 'NP', 'OT'] },
+        creadoEn: { gte: fechaInicio, lte: fechaFin },
         estadoPago: 'COMPLETADO',
+        estadoEnvioSunat: { not: 'ANULADO' as any },
+        OR: [
+          { adelanto: null },
+          { adelanto: 0 }
+        ]
       },
       select: { mtoImpVenta: true, medioPago: true },
     });
@@ -414,8 +435,8 @@ export class CajaService {
         empresaId,
         ...(sedeId ? { sedeId } : {}),
         tipoDoc: { in: ['01', '03'] },
-        fechaEmision: { gte: fechaInicio, lte: fechaFin },
-        estadoEnvioSunat: 'EMITIDO',
+        creadoEn: { gte: fechaInicio, lte: fechaFin },
+        estadoEnvioSunat: { in: ['EMITIDO', 'PENDIENTE', 'REGISTRADO', 'ENVIADO'] as any },
         formaPagoTipo: 'Contado',
       },
       select: { mtoImpVenta: true, medioPago: true },
@@ -425,10 +446,8 @@ export class CajaService {
     const pagos = await this.prisma.pago.findMany({
       where: {
         empresaId,
-        // Wait: `pago` currently doesn't have `sedeId`. But the `comprobante` related to it does!
-        // To accurately limit pagos by sedeId, we could join comprobante... let's ignore it for now or assume it exists. Wait.
-        // Actually earlier we didn't add sedeId to `Pago`. 
         fecha: { gte: fechaInicio, lte: fechaFin },
+        ...(sedeId ? { comprobante: { sedeId } } : {}),
       },
       select: { monto: true, medioPago: true },
     });

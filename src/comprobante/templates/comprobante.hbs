@@ -390,6 +390,32 @@
     </div>
   </div>
 
+  {{#if yapeNumero}}
+  <div style="margin-top: 20px; border: 1px solid #000; border-radius: 8px; padding: 15px; display: flex; flex-direction: column; align-items: center;">
+    <div style="font-weight: bold; font-size: 14px; margin-bottom: 10px; text-align: center; width: 100%;">PAGAR CON YAPE / PLIN</div>
+    <div style="display: flex; gap: 40px; justify-content: center; width: 100%;">
+      {{#if yapeNumero}}
+      <div style="text-align: center;">
+        <div style="font-weight: bold; margin-bottom: 5px;">YAPE</div>
+        {{#if yapeQrUrl}}
+        <img src="{{yapeQrUrl}}" style="width: 120px; height: 120px; border: 1px solid #eee; padding: 5px;" />
+        {{/if}}
+        <div style="margin-top: 5px; font-weight: bold; font-size: 13px;">{{yapeNumero}}</div>
+      </div>
+      {{/if}}
+      {{#if plinNumero}}
+      <div style="text-align: center;">
+        <div style="font-weight: bold; margin-bottom: 5px;">PLIN</div>
+        {{#if plinQrUrl}}
+        <img src="{{plinQrUrl}}" style="width: 120px; height: 120px; border: 1px solid #eee; padding: 5px;" />
+        {{/if}}
+        <div style="margin-top: 5px; font-weight: bold; font-size: 13px;">{{plinNumero}}</div>
+      </div>
+      {{/if}}
+    </div>
+  </div>
+  {{/if}}
+
   <!-- Observaciones y QR -->
   <div class="observaciones">
     <p>

@@ -275,4 +275,104 @@ export class UsersService {
     });
     return { message: 'Contraseña actualizada correctamente' };
   }
+
+  // ─── ADMIN_SISTEMA: Gestión de usuarios del sistema ──────────────────────────
+
+  async listSistema(params: { search?: string; page?: number; limit?: number }) {
+    const { search, page = 1, limit = 50 } = params;
+    const where: any = { rol: { in: ['ADMIN_SISTEMA'] } };
+    if (search) {
+      where.OR = [
+        { nombre: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+        { dni: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+    const [total, items] = await this.prisma.$transaction([
+      this.prisma.usuario.count({ where }),
+      this.prisma.usuario.findMany({
+        where,
+        orderBy: { id: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+        select: {
+          id: true,
+          nombre: true,
+          email: true,
+          dni: true,
+          celular: true,
+          rol: true,
+          estado: true,
+        },
+      }),
+    ]);
+    return { total, page, limit, items };
+  }
+
+  async createSistema(dto: CreateUserDto) {
+    const { nombre, email, dni, celular, password } = dto;
+
+    const existeEmail = await this.prisma.usuario.findUnique({ where: { email } });
+    if (existeEmail) throw new BadRequestException('El email ya está en uso');
+
+    const existeDni = await this.prisma.usuario.findFirst({ where: { dni } });
+    if (existeDni) throw new BadRequestException('El DNI ya está en uso');
+
+    const hash = await bcrypt.hash(password, 10);
+
+    return this.prisma.usuario.create({
+      data: {
+        nombre,
+        email,
+        dni,
+        celular,
+        password: hash,
+        rol: 'ADMIN_SISTEMA',
+      },
+      select: {
+        id: true,
+        nombre: true,
+        email: true,
+        dni: true,
+        celular: true,
+        rol: true,
+        estado: true,
+      },
+    });
+  }
+
+  async updateSistema(id: number, data: Partial<{ nombre: string; email: string; dni: string; celular: string }>) {
+    const usuario = await this.prisma.usuario.findUnique({ where: { id, rol: 'ADMIN_SISTEMA' } });
+    if (!usuario) throw new NotFoundException('Administrador no encontrado');
+
+    return this.prisma.usuario.update({
+      where: { id },
+      data: {
+        nombre: data.nombre,
+        email: data.email,
+        dni: data.dni,
+        celular: data.celular,
+      },
+      select: {
+        id: true,
+        nombre: true,
+        email: true,
+        dni: true,
+        celular: true,
+        rol: true,
+        estado: true,
+      },
+    });
+  }
+
+  async deleteSistema(id: number) {
+    const usuario = await this.prisma.usuario.findUnique({ where: { id, rol: 'ADMIN_SISTEMA' } });
+    if (!usuario) throw new NotFoundException('Administrador no encontrado');
+    // Soft delete — cambia estado a INACTIVO en lugar de borrar físicamente
+    return this.prisma.usuario.update({
+      where: { id },
+      data: { estado: 'INACTIVO' },
+      select: { id: true, nombre: true, estado: true },
+    });
+  }
 }

@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -13,6 +14,8 @@ import {
 } from '@nestjs/common';
 import { UsersService } from './usuarios.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ListUsersDto } from './dto/list-users.dto';
@@ -119,5 +122,65 @@ export class UsersController {
     );
     res.locals.message = result.message;
     return { result };
+  }
+
+  // ─── ADMIN_SISTEMA: Gestión de usuarios del sistema ──────────────────────────
+
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  @Get('sistema')
+  async listarSistema(
+    @Query('search') search?: string,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+  ) {
+    return this.usersService.listSistema({ search, page: Number(page) || 1, limit: Number(limit) || 50 });
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  @Post('sistema')
+  async crearSistema(@Body() dto: CreateUserDto, @Res({ passthrough: true }) res: Response) {
+    const nuevo = await this.usersService.createSistema(dto);
+    res.locals.message = 'Administrador creado exitosamente';
+    return nuevo;
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  @Put('sistema/:id')
+  async editarSistema(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: Omit<UpdateUserDto, 'id'>,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const usuario = await this.usersService.updateSistema(id, body);
+    res.locals.message = 'Administrador actualizado correctamente';
+    return usuario;
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  @Patch('sistema/:id/estado')
+  async cambiarEstadoSistema(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ChangeStateDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.usersService.changeState(id, dto.estado);
+    res.locals.message = `Administrador ${dto.estado === 'ACTIVO' ? 'activado' : 'desactivado'} correctamente`;
+    return result;
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  @Delete('sistema/:id')
+  async eliminarSistema(
+    @Param('id', ParseIntPipe) id: number,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.usersService.deleteSistema(id);
+    res.locals.message = 'Administrador eliminado correctamente';
+    return result;
   }
 }

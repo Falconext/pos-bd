@@ -450,6 +450,32 @@
     </div>
     {{/if}}
 
+    {{#if yapeNumero}}
+    <div style="margin-top: 15px; border: 2px solid #000; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; align-items: center;">
+        <div style="font-weight: bold; font-size: 11px; margin-bottom: 8px; text-align: center; width: 100%;">PAGAR CON YAPE / PLIN</div>
+        <div style="display: flex; gap: 30px; justify-content: center; width: 100%;">
+            {{#if yapeNumero}}
+            <div style="text-align: center;">
+                <div style="font-weight: bold; font-size: 10px; margin-bottom: 4px;">YAPE</div>
+                {{#if yapeQrUrl}}
+                <img src="{{yapeQrUrl}}" style="width: 100px; height: 100px; border: 1px solid #ccc; padding: 3px;" />
+                {{/if}}
+                <div style="margin-top: 4px; font-weight: bold; font-size: 10px;">{{yapeNumero}}</div>
+            </div>
+            {{/if}}
+            {{#if plinNumero}}
+            <div style="text-align: center;">
+                <div style="font-weight: bold; font-size: 10px; margin-bottom: 4px;">PLIN</div>
+                {{#if plinQrUrl}}
+                <img src="{{plinQrUrl}}" style="width: 100px; height: 100px; border: 1px solid #ccc; padding: 3px;" />
+                {{/if}}
+                <div style="margin-top: 4px; font-weight: bold; font-size: 10px;">{{plinNumero}}</div>
+            </div>
+            {{/if}}
+        </div>
+    </div>
+    {{/if}}
+
     <!-- Footer final -->
     <div class="footer-thanks">
         <p><strong>GRACIAS POR ELEGIR {{nombreComercial}} PARA CUBRIR SUS REQUERIMIENTOS DE {{rubro}}</strong></p>

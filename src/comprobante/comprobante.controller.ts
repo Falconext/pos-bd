@@ -232,6 +232,19 @@ export class ComprobanteController {
     return this.service.actualizarEstadoOT(comprobanteId, input);
   }
 
+  @Patch(':id')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async actualizarCotizacion(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CrearComprobanteDto,
+    @User() user: any,
+  ) {
+    if (dto.tipoDoc !== 'COT') {
+      throw new BadRequestException('Solo se pueden editar cotizaciones');
+    }
+    return this.service.actualizarCotizacion(id, dto, user.empresaId);
+  }
+
   // Crear endpoints (stubs: la lógica completa de emitir + enviar SUNAT se implementa en una segunda fase)
   @Post('boleta')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')

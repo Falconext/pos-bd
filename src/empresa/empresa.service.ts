@@ -369,6 +369,10 @@ export class EmpresaService {
       if (dto.numeroCuenta !== undefined) updateData.numeroCuenta = dto.numeroCuenta;
       if (dto.cci !== undefined) updateData.cci = dto.cci;
       if (dto.monedaCuenta !== undefined) updateData.monedaCuenta = dto.monedaCuenta;
+      if (dto.yapeNumero !== undefined) updateData.yapeNumero = dto.yapeNumero;
+      if (dto.yapeQrUrl !== undefined) updateData.yapeQrUrl = dto.yapeQrUrl;
+      if (dto.plinNumero !== undefined) updateData.plinNumero = dto.plinNumero;
+      if (dto.plinQrUrl !== undefined) updateData.plinQrUrl = dto.plinQrUrl;
 
       // Actualizar datos de empresa
       const empresaActualizada = await this.prisma.empresa.update({

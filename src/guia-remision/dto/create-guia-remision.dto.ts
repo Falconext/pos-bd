@@ -90,6 +90,19 @@ export class CreateGuiaRemisionDto {
     @IsNumber()
     clienteId?: number;
 
+    // Comprador (Para motivo 03: Venta con entrega a terceros)
+    @IsOptional()
+    @IsString()
+    compradorTipoDoc?: string;
+
+    @IsOptional()
+    @IsString()
+    compradorNumDoc?: string;
+
+    @IsOptional()
+    @IsString()
+    compradorRazonSocial?: string;
+
     // Shipment
     @IsString()
     @IsNotEmpty()

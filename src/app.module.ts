@@ -36,6 +36,7 @@ import { GuiaRemisionModule } from './guia-remision/guia-remision.module';
 import { ModulosModule } from './modulos/modulos.module';
 import { ResellerModule } from './reseller/reseller.module';
 import { SedeModule } from './sede/sede.module';
+import { StoreCatalogModule } from './store-catalog/store-catalog.module';
 
 @Module({
   imports: [
@@ -74,6 +75,7 @@ import { SedeModule } from './sede/sede.module';
     ModulosModule,
     ResellerModule,
     SedeModule,
+    StoreCatalogModule,
   ],
   controllers: [AppController],
   providers: [AppService],

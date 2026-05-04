@@ -6,7 +6,7 @@ import {
   forwardRef,
   Logger,
 } from '@nestjs/common';
-import { Prisma, EstadoSunat } from '@prisma/client';
+import { Prisma, EstadoSunat, EstadoType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { KardexService } from '../kardex/kardex.service';
 import { InventarioNotificacionesService } from '../notificaciones/inventario-notificaciones.service';
@@ -71,7 +71,7 @@ export class ComprobanteService {
       search,
       page = 1,
       limit = 10,
-      sort = 'fechaEmision',
+      sort = 'id',
       order = 'desc',
       fechaInicio,
       fechaFin,
@@ -185,7 +185,7 @@ export class ComprobanteService {
         ...(tipoComprobante === 'FORMAL' && estadoSunatFilter
           ? { estadoEnvioSunat: estadoSunatFilter }
           : {}),
-        ...(tipoComprobante === 'INFORMAL' && estadoPago
+        ...(['INFORMAL', 'TODOS'].includes(tipoComprobante) && estadoPago
           ? { estadoPago: estadoPago as any }
           : {}),
       };
@@ -195,7 +195,7 @@ export class ComprobanteService {
           where,
           skip,
           take: limit,
-          orderBy: { [sort]: order } as any,
+          orderBy: [{ [sort]: order }, { id: 'desc' }] as any,
           include: {
             cliente: {
               select: { id: true, nombre: true, nroDoc: true, persona: true },
@@ -298,15 +298,32 @@ export class ComprobanteService {
   async detalle(empresaId: number, serie: string, correlativo: number, sedeId?: number) {
     const comp = await this.prisma.comprobante.findFirst({
       where: { empresaId, serie, correlativo, ...(sedeId ? { sedeId } : {}) },
-      include: { cliente: true, detalles: { include: { producto: true } } },
+      include: {
+        cliente: true,
+        detalles: { include: { producto: true } },
+        pagos: true
+      },
     });
     if (!comp) throw new NotFoundException('Comprobante no encontrado');
     return comp;
   }
 
   async obtenerPorId(empresaId: number, id: number, sedeId?: number) {
+    let sedeFilter: any = {};
+    if (sedeId) {
+      const esPrincipal = await this.prisma.sede.findFirst({
+        where: { empresaId, id: sedeId, esPrincipal: true },
+        select: { id: true },
+      });
+      if (esPrincipal) {
+        sedeFilter = { AND: [{ OR: [{ sedeId: sedeId }, { sedeId: null }] }] };
+      } else {
+        sedeFilter = { sedeId };
+      }
+    }
+
     const comp = await this.prisma.comprobante.findFirst({
-      where: { empresaId, id, ...(sedeId ? { sedeId } : {}) },
+      where: { empresaId, id, ...sedeFilter },
       include: {
         cliente: true,
         detalles: {
@@ -328,6 +345,7 @@ export class ComprobanteService {
         },
         tipoDetraccion: true,
         medioPagoDetraccion: true,
+        pagos: true,
       },
     });
 
@@ -620,7 +638,6 @@ export class ComprobanteService {
       where: {
         id: { in: productIds },
         empresaId,
-        estado: 'ACTIVO' as any,
       },
       include: { unidadMedida: true },
     });
@@ -637,13 +654,16 @@ export class ComprobanteService {
         where: { id: { in: productosFaltantes } },
         select: { id: true, descripcion: true, estado: true, empresaId: true },
       });
+      const productosRealmenteFaltantes = productosInactivos.filter(p => p.estado !== 'PLACEHOLDER' as any);
 
-      const detalleError =
-        productosInactivos.length > 0
-          ? `Productos encontrados pero inactivos o con otros problemas: ${productosInactivos.map((p) => `ID ${p.id} (${p.descripcion}) - Estado: ${p.estado}, EmpresaId: ${p.empresaId}`).join('; ')}`
-          : `Productos no encontrados: IDs ${productosFaltantes.join(', ')}`;
+      if (productosRealmenteFaltantes.length > 0 || productosFaltantes.length > productosInactivos.length) {
+        const detalleError =
+          productosRealmenteFaltantes.length > 0
+            ? `Productos encontrados pero inactivos: ${productosRealmenteFaltantes.map((p) => `ID ${p.id} (${p.descripcion}) - Estado: ${p.estado}`).join('; ')}`
+            : `Productos no encontrados: IDs ${productosFaltantes.join(', ')}`;
 
-      throw new BadRequestException(detalleError);
+        throw new BadRequestException(detalleError);
+      }
     }
     let mtoOperGravadas = 0;
     let totalIGV = 0;
@@ -1580,6 +1600,16 @@ export class ComprobanteService {
       saldoInicial = mtoImpVenta;
     }
 
+    // Si no viene sedeId, intentar usar la sede principal de la empresa
+    let finalSedeId = sedeId;
+    if (!finalSedeId) {
+      const principal = await this.prisma.sede.findFirst({
+        where: { empresaId, esPrincipal: true },
+        select: { id: true }
+      });
+      if (principal) finalSedeId = principal.id;
+    }
+
     const dataBase: any = {
       tipoOperacionId: tipoOperacionIdFinal ?? undefined,
       tipoDoc,
@@ -1590,7 +1620,7 @@ export class ComprobanteService {
       observaciones: observaciones ?? null,
       clienteId: finalClienteId,
       empresaId,
-      sedeId,
+      sedeId: finalSedeId,
       usuarioId: usuarioId ?? undefined,
       mtoOperGravadas,
       medioPago: medioPagoValido,
@@ -1650,6 +1680,99 @@ export class ComprobanteService {
     }
 
     return comp;
+  }
+
+  async actualizarCotizacion(id: number, input: any, empresaId: number) {
+    const {
+      fechaEmision,
+      clienteId,
+      leyenda,
+      detalles,
+      observaciones,
+      clienteName,
+      cotizVigencia,
+      cotizTerminos,
+    } = input;
+
+    const comp = await this.prisma.comprobante.findFirst({
+      where: { id, empresaId, tipoDoc: 'COT' },
+    });
+    if (!comp) {
+      throw new NotFoundException('Cotización no encontrada');
+    }
+
+    // Resolver cliente
+    let finalClienteId: number | null = clienteId ?? null;
+    if (clienteName === 'CLIENTES VARIOS') {
+      const clienteVarios = await this.prisma.cliente.findFirst({
+        where: { nombre: 'CLIENTES VARIOS', empresaId, estado: 'ACTIVO' as any },
+        select: { id: true },
+      });
+      if (!clienteVarios) {
+        throw new BadRequestException("No existe el cliente 'CLIENTES VARIOS' ACTIVO");
+      }
+      finalClienteId = clienteVarios.id;
+    } else if (!finalClienteId) {
+      throw new BadRequestException('clienteId es requerido');
+    }
+
+    const { detalleFinal, mtoOperGravadas, totalIGV } = await this.cargarProductosYDetalles(detalles, empresaId);
+    const subTotal = this.round2(mtoOperGravadas + totalIGV);
+    const mtoImpVenta = subTotal;
+    const fecha = new Date(fechaEmision);
+
+    return this.prisma.$transaction(async (tx) => {
+      // Eliminar detalles y leyendas antiguos
+      await tx.detalleComprobante.deleteMany({ where: { comprobanteId: id } });
+      await tx.leyenda.deleteMany({ where: { comprobanteId: id } });
+
+      // Actualizar comprobante
+      const updated = await tx.comprobante.update({
+        where: { id },
+        data: {
+          fechaEmision: fecha,
+          observaciones: observaciones ?? null,
+          clienteId: finalClienteId as number,
+          leyendas: {
+            create: [
+              {
+                code: '1000',
+                value: leyenda ?? `Son S/ ${mtoImpVenta.toFixed(2)} soles`,
+              },
+            ],
+          },
+          mtoOperGravadas,
+          mtoIGV: totalIGV,
+          valorVenta: mtoOperGravadas,
+          totalImpuestos: totalIGV,
+          subTotal,
+          mtoImpVenta,
+          cotizVigencia: cotizVigencia ? Number(cotizVigencia) : null,
+          cotizTerminos: cotizTerminos ?? null,
+          detalles: {
+            createMany: {
+              data: detalleFinal.map((d: any) => ({
+                productoId: d.productoId,
+                unidad: d.unidad,
+                descripcion: d.descripcion,
+                cantidad: d.cantidad,
+                mtoValorUnitario: d.mtoValorUnitario,
+                mtoValorVenta: d.mtoValorVenta,
+                mtoBaseIgv: d.mtoBaseIgv,
+                porcentajeIgv: d.porcentajeIgv,
+                igv: d.igv,
+                totalImpuestos: d.totalImpuestos,
+                mtoPrecioUnitario: d.mtoPrecioUnitario,
+                factorIcbper: d.factorIcbper,
+                icbper: d.icbper,
+                tipAfeIgv: d.tipAfeIgv,
+              })),
+            },
+          },
+        },
+      });
+      return updated;
+    });
   }
 
   async crearOT(input: any, empresaId: number, usuarioId?: number, sedeId?: number) {
@@ -1986,6 +2109,10 @@ export class ComprobanteService {
       medioPagoDetraccion: full.medioPagoDetraccion
         ? `${full.medioPagoDetraccion.codigo} - ${full.medioPagoDetraccion.descripcion}`
         : undefined,
+      yapeNumero: (full.empresa as any).yapeNumero || undefined,
+      yapeQrUrl: buildLogoDataUrl((full.empresa as any).yapeQrUrl),
+      plinNumero: (full.empresa as any).plinNumero || undefined,
+      plinQrUrl: buildLogoDataUrl((full.empresa as any).plinQrUrl),
     };
 
     let buffer: Buffer;
@@ -2250,8 +2377,9 @@ export class ComprobanteService {
     );
 
     const resend = new Resend(resendKey);
+    const fromEmail = process.env.MAIL_FROM || 'facturacion@falconext.pe';
     const { error } = await resend.emails.send({
-      from: `${empresaNombre} <onboarding@resend.dev>`,
+      from: `${empresaNombre} <${fromEmail}>`,
       to: destinatario,
       subject: `${tipoPretty} ${serie}-${correlativo} — ${monto}`,
       html,

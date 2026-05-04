@@ -93,6 +93,22 @@ export class UpdateEmpresaDto {
   monedaCuenta?: string;
 
   @IsOptional()
+  @IsString()
+  yapeNumero?: string;
+
+  @IsOptional()
+  @IsString()
+  yapeQrUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  plinNumero?: string;
+
+  @IsOptional()
+  @IsString()
+  plinQrUrl?: string;
+
+  @IsOptional()
   usuario?: UpdateEmpresaUsuarioDto;
 }
 
