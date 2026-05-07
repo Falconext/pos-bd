@@ -6,6 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 import { ComprobanteModule } from '../comprobante/comprobante.module';
 import { ResellerModule } from '../reseller/reseller.module';
+import { S3Module } from '../s3/s3.module';
 
 @Module({
   imports: [
@@ -13,9 +14,9 @@ import { ResellerModule } from '../reseller/reseller.module';
     NotificacionesModule,
     forwardRef(() => ComprobanteModule),
     ResellerModule,
+    S3Module,
   ],
   providers: [SchedulerService, VerificarPendientesSunatService, PrismaService],
   exports: [VerificarPendientesSunatService],
 })
 export class SchedulerModule { }
-

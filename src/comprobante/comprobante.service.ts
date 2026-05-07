@@ -421,12 +421,15 @@ export class ComprobanteService {
     );
     const isFormal = ['01', '03', '08'].includes(comp.tipoDoc);
 
-    // Comunicar baja o anulación a SUNAT si es comprobante electrónico
-    if (isFormal && comp.documentoId) {
-      if (comp.tipoDoc === '03' || comp.tipoDoc === '09') {
-        throw new BadRequestException('Las Boletas de Venta emitidas deben anularse usando una Nota de Crédito. Use el botón "Generar NC (Anular)".');
-      }
-      await this.enviarSunatService.anularComprobanteSunat(comp.documentoId, comp.empresaId, motivo);
+    // Documentos SUNAT formales: Boleta y Factura ya aceptadas NO pueden darse de baja directamente.
+    // - Boleta (03): comunicación de baja SUNAT — use Nota de Crédito (botón "Generar NC")
+    // - Factura (01): SUNAT exige Nota de Crédito, nunca baja directa
+    // - Nota de Débito (08): ídem, use Nota de Crédito
+    if (isFormal && comp.estadoEnvioSunat === 'EMITIDO') {
+      const tipoNombre = comp.tipoDoc === '01' ? 'Factura' : comp.tipoDoc === '03' ? 'Boleta' : 'Nota de Débito';
+      throw new BadRequestException(
+        `Una ${tipoNombre} ya aceptada por SUNAT debe anularse emitiendo una Nota de Crédito. Use el botón "Generar NC (Anular)".`,
+      );
     }
 
     // Revertir stock para todos los tipos de comprobantes que afectan inventario
@@ -1084,6 +1087,51 @@ export class ComprobanteService {
     await this.prisma.comprobante.delete({ where: { id } });
   }
 
+  /**
+   * Elimina manualmente un comprobante atascado (PENDIENTE, FALLIDO_ENVIO o RECHAZADO).
+   * Revierte el stock de los productos y borra el registro permanentemente.
+   * No se permite sobre comprobantes ya EMITIDO o ANULADO.
+   */
+  async descartarComprobante(id: number, empresaId: number) {
+    const comp = await this.prisma.comprobante.findFirst({
+      where: { id, empresaId },
+      include: { detalles: true },
+    });
+
+    if (!comp) throw new NotFoundException('Comprobante no encontrado');
+
+    if (['EMITIDO', 'ANULADO'].includes(comp.estadoEnvioSunat as string)) {
+      throw new BadRequestException(
+        `No se puede eliminar un comprobante con estado ${comp.estadoEnvioSunat}`,
+      );
+    }
+
+    // 1) Revertir stock primero (antes de borrar los detalles)
+    if (comp.detalles?.length) {
+      try {
+        await this.revertirStock(comp.detalles, {
+          empresaId: comp.empresaId,
+          comprobanteId: comp.id,
+          concepto: 'Eliminación de comprobante pendiente/fallido',
+        });
+      } catch (stockErr: any) {
+        // No bloquear el borrado si el stock falla — registrar y continuar
+        console.warn(`[descartarComprobante] No se pudo revertir stock para ${id}: ${stockErr.message}`);
+      }
+    }
+
+    // 2) Borrar en orden respetando FK sin cascade:
+    //    movimientoKardex → detalleComprobante → leyenda → comprobante
+    await this.prisma.$transaction([
+      this.prisma.movimientoKardex.deleteMany({ where: { comprobanteId: id } }),
+      this.prisma.detalleComprobante.deleteMany({ where: { comprobanteId: id } }),
+      this.prisma.leyenda.deleteMany({ where: { comprobanteId: id } }),
+      this.prisma.comprobante.delete({ where: { id } }),
+    ]);
+
+    return { message: 'Comprobante eliminado y stock revertido', eliminado: true };
+  }
+
   async crearNotaCredito(input: any, empresaId: number, usuarioId?: number, sedeId?: number) {
     const {
       fechaEmision,
@@ -1476,12 +1524,14 @@ export class ComprobanteService {
       });
     }
 
-    // 12) Si el motivo es Anulación de la Operación (01), actualizar estado del comprobante afectado
-    if (motivoNota.codigo === '01') {
+    // 12) Actualizar estado del comprobante afectado según motivo
+    if (['01', '06'].includes(motivoNota.codigo)) {
       await this.prisma.comprobante.update({
         where: { id: afectado.id },
         data: {
           estadoEnvioSunat: EstadoSunat.ANULADO,
+          estadoPago: 'ANULADO' as any,
+          saldo: 0,
         },
       });
     }
@@ -2145,6 +2195,60 @@ export class ComprobanteService {
   // ─── Wrapper público para el controller público ───────────────────────────
   async generarBufferPdf(id: number): Promise<{ buffer: Buffer; key: string }> {
     return this.buildPdfBufferInformal(id);
+  }
+
+  async obtenerXmlComprobante(
+    empresaId: number,
+    id: number,
+  ): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
+    const comprobante = await this.prisma.comprobante.findFirst({
+      where: { id, empresaId },
+      select: {
+        tipoDoc: true,
+        serie: true,
+        correlativo: true,
+        sunatXml: true,
+      },
+    });
+
+    if (!comprobante?.sunatXml) {
+      throw new BadRequestException('El comprobante no tiene XML disponible');
+    }
+
+    const correlativo = String(comprobante.correlativo).padStart(8, '0');
+    return {
+      buffer: Buffer.from(comprobante.sunatXml, 'utf8'),
+      filename: `${comprobante.serie}-${correlativo}.xml`,
+      contentType: 'application/xml',
+    };
+  }
+
+  async obtenerCdrComprobante(
+    empresaId: number,
+    id: number,
+  ): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
+    const comprobante = await this.prisma.comprobante.findFirst({
+      where: { id, empresaId },
+      select: {
+        serie: true,
+        correlativo: true,
+        sunatCdrZip: true,
+      },
+    });
+
+    if (!comprobante?.sunatCdrZip) {
+      throw new BadRequestException('El comprobante no tiene CDR disponible');
+    }
+
+    const buffer = Buffer.from(comprobante.sunatCdrZip, 'base64');
+    const isXml = buffer.toString('utf8').trim().startsWith('<');
+    const correlativo = String(comprobante.correlativo).padStart(8, '0');
+
+    return {
+      buffer,
+      filename: `${comprobante.serie}-${correlativo}-CDR.${isXml ? 'xml' : 'zip'}`,
+      contentType: isXml ? 'application/xml' : 'application/zip',
+    };
   }
 
   // ─── URL pública con token HMAC (sin S3) ─────────────────────────────────

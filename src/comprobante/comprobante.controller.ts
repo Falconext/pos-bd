@@ -10,7 +10,6 @@ import {
   Query,
   Res,
   UseGuards,
-  ForbiddenException,
 } from '@nestjs/common';
 import { ComprobanteService } from './comprobante.service';
 import { EnviarSunatService, SunatPayloadException } from './enviar-sunat.service';
@@ -197,7 +196,42 @@ export class ComprobanteController {
     return this.service.obtenerPorId(user.empresaId, id, user.sedeId);
   }
 
+  @Get(':id/xml')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async descargarXml(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+    @Res() res: Response,
+  ) {
+    const file = await this.service.obtenerXmlComprobante(user.empresaId, id);
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+    res.end(file.buffer);
+  }
+
+  @Get(':id/cdr')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async descargarCdr(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+    @Res() res: Response,
+  ) {
+    const file = await this.service.obtenerCdrComprobante(user.empresaId, id);
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+    res.end(file.buffer);
+  }
+
   // Estado y pagos
+  @Patch(':id/descartar')
+  @Roles('ADMIN_EMPRESA')
+  async descartarComprobante(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+  ) {
+    return this.service.descartarComprobante(id, user.empresaId);
+  }
+
   @Patch(':comprobanteId/anular')
   @Roles('ADMIN_EMPRESA')
   async anularComprobante(
@@ -253,12 +287,7 @@ export class ComprobanteController {
     try {
       console.log('[crearBoleta] Starting - empresaId:', user.empresaId, 'dto:', JSON.stringify(dto));
       const effectiveSedeId = user.sedeId ?? dto?.sedeId ?? undefined;
-      const empresa = await this.empresaService.obtenerMiEmpresa(user.empresaId);
-      if (!empresa.providerToken || !empresa.providerId) {
-        throw new ForbiddenException(
-          'Aún no cuenta con permisos para generar comprobantes para SUNAT, contacte con el soporte de falconext',
-        );
-      }
+      await this.empresaService.obtenerMiEmpresa(user.empresaId);
       console.log('[crearBoleta] Creating comprobante...');
       comp = await this.service.crearFormal(dto, user.empresaId, '03', user.id, effectiveSedeId);
       console.log('[crearBoleta] Comprobante created:', comp.id, '- Sending to SUNAT...');
@@ -293,12 +322,7 @@ export class ComprobanteController {
     try {
       console.log('[crearFactura] Starting - empresaId:', user.empresaId, 'dto:', JSON.stringify(dto));
       const effectiveSedeId = user.sedeId ?? dto?.sedeId ?? undefined;
-      const empresa = await this.empresaService.obtenerMiEmpresa(user.empresaId);
-      if (!empresa.providerToken || !empresa.providerId) {
-        throw new ForbiddenException(
-          'Aún no cuenta con permisos para generar comprobantes para SUNAT, contacte con el soporte de falconext',
-        );
-      }
+      await this.empresaService.obtenerMiEmpresa(user.empresaId);
       console.log('[crearFactura] Creating comprobante...');
       comp = await this.service.crearFormal(dto, user.empresaId, '01', user.id, effectiveSedeId);
       console.log('[crearFactura] Comprobante created:', comp.id, '- Sending to SUNAT...');
@@ -330,12 +354,7 @@ export class ComprobanteController {
     try {
       console.log('[crearNotaCredito] Starting - empresaId:', user.empresaId);
       const effectiveSedeId = user.sedeId ?? dto?.sedeId ?? undefined;
-      const empresa = await this.empresaService.obtenerMiEmpresa(user.empresaId);
-      if (!empresa.providerToken || !empresa.providerId) {
-        throw new ForbiddenException(
-          'Aún no cuenta con permisos para generar comprobantes para SUNAT, contacte con el soporte de falconext',
-        );
-      }
+      await this.empresaService.obtenerMiEmpresa(user.empresaId);
       const comp = await this.service.crearFormal(dto, user.empresaId, '07', user.id, effectiveSedeId);
       const sunatResp = await this.enviarSunat.execute(comp.id);
       return sunatResp;
@@ -350,12 +369,7 @@ export class ComprobanteController {
     try {
       console.log('[crearNotaDebito] Starting - empresaId:', user.empresaId);
       const effectiveSedeId = user.sedeId ?? dto?.sedeId ?? undefined;
-      const empresa = await this.empresaService.obtenerMiEmpresa(user.empresaId);
-      if (!empresa.providerToken || !empresa.providerId) {
-        throw new ForbiddenException(
-          'Aún no cuenta con permisos para generar comprobantes para SUNAT, contacte con el soporte de falconext',
-        );
-      }
+      await this.empresaService.obtenerMiEmpresa(user.empresaId);
       const comp = await this.service.crearFormal(dto, user.empresaId, '08', user.id, effectiveSedeId);
       const sunatResp = await this.enviarSunat.execute(comp.id);
       return sunatResp;
@@ -469,4 +483,3 @@ export class ComprobanteController {
   }
 
 }
-

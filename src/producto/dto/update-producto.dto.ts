@@ -55,6 +55,10 @@ export class UpdateProductoDto {
   costoUnitario?: number;
 
   @IsOptional()
+  @IsString()
+  imagenUrl?: string | null;
+
+  @IsOptional()
   @IsInt()
   @Type(() => Number)
   stockMinimo?: number;
@@ -113,4 +117,7 @@ export class UpdateProductoDto {
   @IsOptional()
   // @IsDateString()
   fechaFinOferta?: string | Date;
+
+  @IsOptional()
+  preciosMayorista?: { cantidadMinima: number; precio: number }[];
 }

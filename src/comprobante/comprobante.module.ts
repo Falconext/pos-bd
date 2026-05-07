@@ -10,11 +10,12 @@ import { KardexModule } from '../kardex/kardex.module';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 import { S3Module } from '../s3/s3.module';
 import { ProductoModule } from '../producto/producto.module';
+import { QpseClient } from '../common/utils/qpse.client';
 
 @Module({
   imports: [EmpresaModule, forwardRef(() => KardexModule), NotificacionesModule, S3Module, forwardRef(() => ProductoModule)],
   controllers: [ComprobanteController, ComprobantePublicoController],
-  providers: [ComprobanteService, RolesGuard, EnviarSunatService, PdfGeneratorService],
-  exports: [ComprobanteService, EnviarSunatService, PdfGeneratorService],
+  providers: [ComprobanteService, RolesGuard, EnviarSunatService, PdfGeneratorService, QpseClient],
+  exports: [ComprobanteService, EnviarSunatService, PdfGeneratorService, QpseClient],
 })
 export class ComprobanteModule { }

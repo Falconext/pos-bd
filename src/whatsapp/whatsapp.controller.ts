@@ -87,10 +87,10 @@ export class WhatsAppController {
     }
 
     // Preferir URLs de S3 (públicas) sobre URLs locales o de SUNAT
-    const baseUrl = process.env.BACKEND_URL || 'http://localhost:4000';
+    const baseUrl = (process.env.BACKEND_URL || 'http://localhost:4001').replace(/\/+$/, '');
     const pdfUrl = comprobante.s3PdfUrl || `${baseUrl}/comprobante/pdf/${comprobanteId}`;
     const xmlUrl = incluyeXML
-      ? (comprobante.s3XmlUrl || comprobante.sunatXml || `${baseUrl}/comprobante/xml/${comprobanteId}`)
+      ? (comprobante.s3XmlUrl || `${baseUrl}/api/comprobante/${comprobanteId}/xml`)
       : undefined;
 
     // Enviar por WhatsApp

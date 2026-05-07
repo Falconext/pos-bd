@@ -110,4 +110,7 @@ export class CreateProductoDto {
   @IsInt()
   @Type(() => Number)
   factorConversion?: number;
+
+  @IsOptional()
+  preciosMayorista?: { cantidadMinima: number; precio: number }[];
 }

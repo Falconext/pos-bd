@@ -231,6 +231,7 @@ model Producto {
   unidadCompra         String?
   unidadVenta          String?
   volumenMl            Decimal?
+  preciosMayorista     Json?
   detalleCompras       DetalleCompra[]
   detalleComprobantes  DetalleComprobante[]
   galeria              GaleriaProducto[]

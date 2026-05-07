@@ -67,6 +67,7 @@ export class ProductoService {
       precioOferta?: number;
       fechaInicioOferta?: string | Date;
       fechaFinOferta?: string | Date;
+      preciosMayorista?: { cantidadMinima: number; precio: number }[];
     },
     empresaId: number,
     sedeId?: number,
@@ -96,7 +97,8 @@ export class ProductoService {
       codigoDigemid,
       precioOferta,
       fechaInicioOferta,
-      fechaFinOferta
+      fechaFinOferta,
+      preciosMayorista
     } = data;
 
     if (!codigo) {
@@ -162,6 +164,7 @@ export class ProductoService {
           precioOferta: precioOferta ? new Decimal(precioOferta) : undefined,
           fechaInicioOferta: fechaInicioOferta ? new Date(fechaInicioOferta) : undefined,
           fechaFinOferta: fechaFinOferta ? new Date(fechaFinOferta) : undefined,
+          preciosMayorista: preciosMayorista ?? undefined,
         }
       });
     } else {
@@ -197,6 +200,7 @@ export class ProductoService {
           precioOferta: precioOferta ? new Decimal(precioOferta) : undefined,
           fechaInicioOferta: fechaInicioOferta ? new Date(fechaInicioOferta) : undefined,
           fechaFinOferta: fechaFinOferta ? new Date(fechaFinOferta) : undefined,
+          preciosMayorista: preciosMayorista ?? undefined,
         },
       });
 
@@ -306,6 +310,7 @@ export class ProductoService {
           marcaId: true,
           empresaId: true,
           creadoEn: true,
+          preciosMayorista: true,
           unidadMedida: {
             select: {
               id: true,
@@ -407,6 +412,7 @@ export class ProductoService {
         stock: true,
         codigoBarras: true,
         imagenUrl: true,
+        preciosMayorista: true,
         unidadMedida: { select: { id: true, codigo: true, nombre: true } },
         stocks: { select: { sedeId: true, stock: true } },
       },
@@ -432,6 +438,7 @@ export class ProductoService {
     precioUnitario?: number;
     stock?: number;
     costoUnitario?: number;
+    imagenUrl?: string | null;
     stockMinimo?: number;
     stockMaximo?: number;
     // Campos Farmacia
@@ -448,6 +455,7 @@ export class ProductoService {
     precioOferta?: number;
     fechaInicioOferta?: string | Date;
     fechaFinOferta?: string | Date;
+    preciosMayorista?: { cantidadMinima: number; precio: number }[];
 
     sedeId?: number; // Nueva propiedad opcional para identificar dónde se ajusta el stock
   }, usuarioId?: number) {
@@ -550,6 +558,10 @@ export class ProductoService {
           data.precioUnitario !== undefined
             ? new Decimal(data.precioUnitario)
             : undefined,
+        imagenUrl:
+          data.imagenUrl !== undefined
+            ? data.imagenUrl
+            : undefined,
         costoPromedio:
           data.costoUnitario !== undefined
             ? new Decimal(data.costoUnitario)
@@ -571,8 +583,9 @@ export class ProductoService {
         codigoDigemid: data.codigoDigemid,
         // Campos Ofertas
         precioOferta: data.precioOferta ? new Decimal(data.precioOferta) : undefined,
-        fechaInicioOferta: data.fechaInicioOferta ? new Date(data.fechaInicioOferta) : undefined, // Convertir string vacío a undefined si falla validación o manejar en frontend
-        fechaFinOferta: data.fechaFinOferta ? new Date(data.fechaFinOferta) : undefined, // Ojo: empty string -> Invalid Date
+        fechaInicioOferta: data.fechaInicioOferta ? new Date(data.fechaInicioOferta) : undefined,
+        fechaFinOferta: data.fechaFinOferta ? new Date(data.fechaFinOferta) : undefined,
+        preciosMayorista: data.preciosMayorista !== undefined ? data.preciosMayorista : undefined,
       },
     });
 

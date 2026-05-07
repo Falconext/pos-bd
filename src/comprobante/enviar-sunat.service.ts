@@ -1,9 +1,11 @@
-import { BadRequestException, HttpException, Injectable } from '@nestjs/common';
+import { BadRequestException, HttpException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import { PdfGeneratorService } from './pdf-generator.service';
 import { numeroALetras } from './utils/numero-a-letras';
 import axios from 'axios';
+import { QpseClient, QpseSendResponse } from '../common/utils/qpse.client';
+import { buildUblXml } from '../common/utils/ubl-xml';
 
 /**
  * Error de datos: el payload no pudo armarse por datos incorrectos del comprobante.
@@ -36,12 +38,19 @@ const VALID_TIPO_OPERACION_CODES = new Set([
 
 @Injectable()
 export class EnviarSunatService {
-  private readonly apiUrl = 'https://back.apisunat.com/personas/v1/sendBill';
-  private readonly documentUrl = 'https://back.apisunat.com/documents';
+  private readonly logger = new Logger(EnviarSunatService.name);
   private readonly maxRetries = 12;       // 12 intentos × 5s = 60s máximo esperando SUNAT
   private readonly retryInterval = 5000;
 
-  // Retry configuration: max 5 hours window with 10 attempts
+  // Casuística 1: Error de DATOS — SUNAT/QPSE rechaza explícitamente (XML inválido, RUC incorrecto, etc.)
+  // Máx 5 intentos con backoff corto → luego RECHAZADO definitivo
+  private readonly MAX_DATA_ERROR_RETRIES = 5;
+
+  // Casuística 2: Error de RED — SUNAT caída, timeout, QPSE no disponible
+  // Máx 30 intentos (~30 días con backoff de 24h) → el usuario puede eliminar manualmente si quiere
+  private readonly MAX_INFRA_ERROR_RETRIES = 30;
+
+  // Kept for backward compatibility reference only
   private readonly maxRetryAttempts = 10;
   private readonly maxRetryHours = 5;
 
@@ -52,6 +61,7 @@ export class EnviarSunatService {
     private readonly prisma: PrismaService,
     private readonly s3Service: S3Service,
     private readonly pdfGenerator: PdfGeneratorService,
+    private readonly qpseClient: QpseClient,
   ) { }
 
   async execute(comprobanteId: number) {
@@ -72,8 +82,16 @@ export class EnviarSunatService {
 
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: comp.empresaId },
-      select: { providerToken: true, providerId: true, ruc: true },
+      select: { ruc: true },
     });
+    const qpseUsername = process.env.QPSE_USERNAME;
+    const qpsePassword = process.env.QPSE_PASSWORD;
+    if (!qpseUsername || !qpsePassword) {
+      throw new HttpException(
+        'Credenciales QPSE no configuradas en variables de entorno (QPSE_USERNAME / QPSE_PASSWORD).',
+        400,
+      );
+    }
 
     function limpiarTexto(texto: string): string {
       return texto
@@ -129,8 +147,6 @@ export class EnviarSunatService {
       }
 
       payload = {
-        personaId: empresa?.providerId,
-        personaToken: empresa?.providerToken,
         fileName,
         documentBody: {
           'cbc:UBLVersionID': { _text: '2.1' },
@@ -144,7 +160,7 @@ export class EnviarSunatService {
             },
             _text: comp.tipoDoc,
           },
-          'cbc:DocumentCurrencyCode': { _text: comp.tipoMoneda },
+          // cbc:Note DEBE ir antes de cbc:DocumentCurrencyCode (UBL 2.1 SUNAT schema)
           'cbc:Note': [
             ...comp.leyendas.map((l: any) => ({
               _text: l.value,
@@ -154,12 +170,15 @@ export class EnviarSunatService {
               _text: 'OPERACIÓN SUJETA A DETRACCIÓN',
               _attributes: { languageLocaleID: '2006' },
             }] : []),
-            // Nota para retención 3% (cuando NO es detracción pero hay monto de retención)
             ...(!comp.tipoDetraccionId && comp.montoDetraccion && comp.porcentajeDetraccion ? [{
               _text: 'OPERACIÓN SUJETA A RETENCIÓN DEL 3%',
               _attributes: { languageLocaleID: '2006' },
             }] : [])
           ],
+          'cbc:DocumentCurrencyCode': { _text: comp.tipoMoneda },
+          // Placeholders en el orden exacto UBL 2.1 SUNAT.
+          // Las asignaciones posteriores actualizan la key en su posición original.
+          'cac:Signature': null,
           'cac:AccountingSupplierParty': {
             'cac:Party': {
               'cac:PartyIdentification': {
@@ -221,6 +240,13 @@ export class EnviarSunatService {
               },
             },
           },
+          // UBL 2.1: PaymentMeans → PaymentTerms → AllowanceCharge → BillingReference
+          //           → DiscrepancyResponse deben ir ANTES de TaxTotal
+          'cac:PaymentMeans': null,
+          'cac:PaymentTerms': null,
+          'cac:AllowanceCharge': null,
+          'cac:BillingReference': null,
+          'cac:DiscrepancyResponse': null,
           'cac:TaxTotal': {
             'cbc:TaxAmount': {
               _attributes: { currencyID: comp.tipoMoneda },
@@ -246,22 +272,6 @@ export class EnviarSunatService {
               },
             ],
           },
-          // AllowanceCharge para Retención 3% (cuando NO es detracción pero hay monto de retención)
-          ...(!comp.tipoDetraccionId && comp.montoDetraccion && comp.porcentajeDetraccion ? [{
-            'cac:AllowanceCharge': [{
-              'cbc:ChargeIndicator': { _text: 'false' },
-              'cbc:AllowanceChargeReasonCode': { _text: '62' }, // Código 62 = Retención
-              'cbc:MultiplierFactorNumeric': { _text: Number((comp.porcentajeDetraccion / 100).toFixed(4)) },
-              'cbc:Amount': {
-                _attributes: { currencyID: comp.tipoMoneda },
-                _text: Number(Number(comp.montoDetraccion).toFixed(2)),
-              },
-              'cbc:BaseAmount': {
-                _attributes: { currencyID: comp.tipoMoneda },
-                _text: comp.mtoImpVenta,
-              },
-            }],
-          }] : []).reduce((acc, curr) => ({ ...acc, ...curr }), {}),
           'cac:LegalMonetaryTotal': {
             'cbc:LineExtensionAmount': {
               _attributes: { currencyID: comp.tipoMoneda },
@@ -337,6 +347,23 @@ export class EnviarSunatService {
               },
             },
           })),
+        },
+      };
+
+      payload.documentBody['cac:Signature'] = {
+        'cbc:ID': { _text: `SIG-${empresa!.ruc}` },
+        'cac:SignatoryParty': {
+          'cac:PartyIdentification': {
+            'cbc:ID': { _text: empresa!.ruc },
+          },
+          'cac:PartyName': {
+            'cbc:Name': { _text: comp.empresa.razonSocial },
+          },
+        },
+        'cac:DigitalSignatureAttachment': {
+          'cac:ExternalReference': {
+            'cbc:URI': { _text: '#signatureQPSE' },
+          },
         },
       };
 
@@ -416,6 +443,23 @@ export class EnviarSunatService {
         };
       }
 
+      // AllowanceCharge para Retención 3% — en posición correcta (antes de TaxTotal)
+      if (!comp.tipoDetraccionId && comp.montoDetraccion && comp.porcentajeDetraccion) {
+        payload.documentBody['cac:AllowanceCharge'] = [{
+          'cbc:ChargeIndicator': { _text: 'false' },
+          'cbc:AllowanceChargeReasonCode': { _text: '62' },
+          'cbc:MultiplierFactorNumeric': { _text: Number((comp.porcentajeDetraccion / 100).toFixed(4)) },
+          'cbc:Amount': {
+            _attributes: { currencyID: comp.tipoMoneda },
+            _text: Number(Number(comp.montoDetraccion).toFixed(2)),
+          },
+          'cbc:BaseAmount': {
+            _attributes: { currencyID: comp.tipoMoneda },
+            _text: comp.mtoImpVenta,
+          },
+        }];
+      }
+
       if ((comp.tipoDoc === '07' || comp.tipoDoc === '08') && comp.motivo) {
         payload.documentBody['cac:BillingReference'] = {
           'cac:InvoiceDocumentReference': {
@@ -426,24 +470,6 @@ export class EnviarSunatService {
         payload.documentBody['cac:DiscrepancyResponse'] = {
           'cbc:ResponseCode': { _text: comp.motivo.codigo },
           'cbc:Description': { _text: comp.motivo.descripcion },
-        };
-
-        // Agregar Signature requerido para notas de crédito
-        payload.documentBody['cac:Signature'] = {
-          'cbc:ID': { _text: 'APISUNAT' },
-          'cac:SignatoryParty': {
-            'cac:PartyIdentification': {
-              'cbc:ID': { _text: empresa!.ruc },
-            },
-            'cac:PartyName': {
-              'cbc:Name': { _text: comp.empresa.razonSocial },
-            },
-          },
-          'cac:DigitalSignatureAttachment': {
-            'cac:ExternalReference': {
-              'cbc:URI': { _text: 'https://apisunat.com/' },
-            },
-          },
         };
       }
 
@@ -559,19 +585,68 @@ export class EnviarSunatService {
           },
         };
 
-        delete payload.documentBody['cac:InvoiceLine'];
+        // Rebuild in correct CreditNote UBL 2.1 element order.
+        // UBL 2.1 CreditNoteType sequence (OASIS + SUNAT Peru):
+        //   pos 12: DiscrepancyResponse (0..n)  ← BEFORE BillingReference
+        //   pos 14: BillingReference (0..n)     ← AFTER DiscrepancyResponse
+        //   pos 23: Signature (0..n)            ← BEFORE AccountingSupplierParty
+        //   pos 24: AccountingSupplierParty (1..1)
+        //   pos 25: AccountingCustomerParty (1..1)
+        const cn = payload.documentBody;
+        payload.documentBody = {
+          'cbc:UBLVersionID': cn['cbc:UBLVersionID'],
+          'cbc:CustomizationID': cn['cbc:CustomizationID'],
+          'cbc:ID': cn['cbc:ID'],
+          'cbc:IssueDate': cn['cbc:IssueDate'],
+          'cbc:IssueTime': cn['cbc:IssueTime'],
+          'cbc:CreditNoteTypeCode': cn['cbc:CreditNoteTypeCode'],
+          'cbc:Note': cn['cbc:Note'],
+          'cbc:DocumentCurrencyCode': cn['cbc:DocumentCurrencyCode'],
+          'cac:DiscrepancyResponse': cn['cac:DiscrepancyResponse'],
+          'cac:BillingReference': cn['cac:BillingReference'],
+          'cac:Signature': cn['cac:Signature'],
+          'cac:AccountingSupplierParty': cn['cac:AccountingSupplierParty'],
+          'cac:AccountingCustomerParty': cn['cac:AccountingCustomerParty'],
+          'cac:AllowanceCharge': cn['cac:AllowanceCharge'],
+          'cac:TaxTotal': cn['cac:TaxTotal'],
+          'cac:LegalMonetaryTotal': cn['cac:LegalMonetaryTotal'],
+          'cac:CreditNoteLine': cn['cac:CreditNoteLine'],
+        };
       }
       if (comp.tipoDoc === '08') {
-        delete payload.documentBody['cbc:InvoiceTypeCode'];
-        payload.documentBody['cac:DebitNoteLine'] =
-          payload.documentBody['cac:InvoiceLine'];
-        delete payload.documentBody['cac:InvoiceLine'];
-        delete payload.documentBody['cac:LegalMonetaryTotal'];
-        payload.documentBody['cac:RequestedMonetaryTotal'] = {
+        const debitNoteTypeCode = {
+          _attributes: { listID: '0101' },
+          _text: '08',
+        };
+        const debitNoteLines = payload.documentBody['cac:InvoiceLine'];
+        const requestedMonetaryTotal = {
           'cbc:PayableAmount': {
             _attributes: { currencyID: comp.tipoMoneda },
             _text: comp.mtoImpVenta,
           },
+        };
+
+        // Rebuild in correct DebitNote UBL 2.1 element order
+        // Same sequence as CreditNote: DiscrepancyResponse → BillingReference → Signature → Parties
+        const dn = payload.documentBody;
+        payload.documentBody = {
+          'cbc:UBLVersionID': dn['cbc:UBLVersionID'],
+          'cbc:CustomizationID': dn['cbc:CustomizationID'],
+          'cbc:ID': dn['cbc:ID'],
+          'cbc:IssueDate': dn['cbc:IssueDate'],
+          'cbc:IssueTime': dn['cbc:IssueTime'],
+          'cbc:DebitNoteTypeCode': debitNoteTypeCode,
+          'cbc:Note': dn['cbc:Note'],
+          'cbc:DocumentCurrencyCode': dn['cbc:DocumentCurrencyCode'],
+          'cac:DiscrepancyResponse': dn['cac:DiscrepancyResponse'],
+          'cac:BillingReference': dn['cac:BillingReference'],
+          'cac:Signature': dn['cac:Signature'],
+          'cac:AccountingSupplierParty': dn['cac:AccountingSupplierParty'],
+          'cac:AccountingCustomerParty': dn['cac:AccountingCustomerParty'],
+          'cac:AllowanceCharge': dn['cac:AllowanceCharge'],
+          'cac:TaxTotal': dn['cac:TaxTotal'],
+          'cac:RequestedMonetaryTotal': requestedMonetaryTotal,
+          'cac:DebitNoteLine': debitNoteLines,
         };
       }
     } catch (err: any) {
@@ -595,99 +670,152 @@ export class EnviarSunatService {
         throw new Error('SIMULACIÓN: SUNAT no disponible');
       }
 
-      let initialResponse: any;
-      try {
-        initialResponse = await axios.post(`${this.apiUrl}`, payload);
-      } catch (axiosErr: any) {
-        // ── Auto-avance de correlativo para error 1033 (Numeración repetida) ──
-        // APISUNAT devuelve 4xx con body { status: 'ERROR', error: { code: '1033', ... } }
-        const errCode = axiosErr.response?.data?.error?.code;
-        if (errCode === '1033') {
-          console.warn(`⚠️ SUNAT error 1033 – numeración repetida (${comp.serie}-${comp.correlativo}). Buscando siguiente correlativo disponible...`);
+      const buildXmlArtifacts = (currentCorrelativo: number) => {
+        const padded = currentCorrelativo.toString().padStart(8, '0');
+        payload.fileName = `${empresa!.ruc}-${comp.tipoDoc}-${comp.serie}-${padded}`;
+        payload.documentBody['cbc:ID'] = { _text: `${comp.serie}-${padded}` };
 
-          // Obtener el próximo correlativo libre para esta serie y empresa
-          const ultimoComp = await this.prisma.comprobante.findFirst({
-            where: { empresaId: comp.empresaId, serie: comp.serie, tipoDoc: comp.tipoDoc },
-            orderBy: { correlativo: 'desc' },
-            select: { correlativo: true },
-          });
-          const nuevoCorrelativo = (ultimoComp?.correlativo ?? 0) + 1;
+        const xmlFilename = payload.fileName;
+        const xmlContent = buildUblXml(this.resolveUblRootName(comp.tipoDoc), payload.documentBody);
 
-          console.log(`📋 Nuevo correlativo asignado: ${comp.serie}-${nuevoCorrelativo}`);
-
-          // Actualizar el comprobante en BD con el nuevo correlativo
-          await this.prisma.comprobante.update({
-            where: { id: comprobanteId },
-            data: { correlativo: nuevoCorrelativo },
-          });
-
-          // Actualizar el payload para que coincida con el nuevo correlativo
-          const newPaddedCorrelativo = nuevoCorrelativo.toString().padStart(8, '0');
-          payload.fileName = `${empresa!.ruc}-${comp.tipoDoc}-${comp.serie}-${newPaddedCorrelativo}`;
-          payload.documentBody['cbc:ID'] = { _text: `${comp.serie}-${newPaddedCorrelativo}` };
-
-          // Reintentar el envío con el nuevo correlativo (sin bucle — si vuelve a fallar con 1033
-          // significa que hay un problema más profundo y debe reportarse al usuario).
-          initialResponse = await axios.post(`${this.apiUrl}`, payload);
-          console.log(`✅ Reintento exitoso con correlativo ${nuevoCorrelativo}`);
-
-          // Actualizar referencia local para los logs posteriores
-          comp.correlativo = nuevoCorrelativo;
-        } else {
-          // Cualquier otro error de axios, relanzar normalmente
-          throw axiosErr;
+        if (['07', '08'].includes(comp.tipoDoc)) {
+          console.log(`[XML-DEBUG tipoDoc=${comp.tipoDoc}] primeros 2000 chars:\n`, xmlContent.substring(0, 2000));
         }
+
+        return {
+          xmlFilename,
+          xmlContent,
+          xmlContentBase64: Buffer.from(xmlContent, 'utf8').toString('base64'),
+        };
+      };
+
+      let xmlArtifacts = buildXmlArtifacts(comp.correlativo);
+      const qpseAccess = await this.qpseClient.obtenerTokenAcceso({
+        username: qpseUsername,
+        password: qpsePassword,
+      });
+      const accessToken = qpseAccess.token_acceso;
+      if (!accessToken) {
+        throw new HttpException('No se pudo obtener el token de acceso de QPSE', 502);
       }
 
-      console.log('📥 Respuesta inicial de SUNAT:', {
-        status: initialResponse.status,
-        data: initialResponse.data,
+      let signResponse = await this.qpseClient.firmarXML({
+        accessToken,
+        xmlFilename: xmlArtifacts.xmlFilename,
+        xmlContentBase64: xmlArtifacts.xmlContentBase64,
       });
 
-      const documentId = initialResponse.data.documentId;
-      if (!documentId) {
-        console.error('❌ Error: No se recibió documentId de SUNAT');
-        throw new HttpException(
-          'No se recibió documentId en la respuesta inicial',
-          500,
-        );
+      if (!signResponse.xml) {
+        throw new HttpException('QPSE no devolvió el XML firmado', 502);
       }
+
+      let signedXmlBase64 = signResponse.xml;
+      let signedXmlContent = this.decodeBase64ToUtf8(signedXmlBase64);
+      let initialResponse = await this.qpseClient.enviarXML({
+        accessToken,
+        xmlFilename: xmlArtifacts.xmlFilename,
+        externalId: signResponse.external_id,
+        xmlSignedBase64: signedXmlBase64,
+      });
+
+      if (this.isSunatNumeracionRepetida(initialResponse)) {
+        console.warn(
+          `⚠️ QPSE reportó numeración repetida (${comp.serie}-${comp.correlativo}). Buscando siguiente correlativo disponible...`,
+        );
+
+        const ultimoComp = await this.prisma.comprobante.findFirst({
+          where: { empresaId: comp.empresaId, serie: comp.serie, tipoDoc: comp.tipoDoc },
+          orderBy: { correlativo: 'desc' },
+          select: { correlativo: true },
+        });
+        const nuevoCorrelativo = (ultimoComp?.correlativo ?? 0) + 1;
+
+        await this.prisma.comprobante.update({
+          where: { id: comprobanteId },
+          data: { correlativo: nuevoCorrelativo },
+        });
+
+        comp.correlativo = nuevoCorrelativo;
+        xmlArtifacts = buildXmlArtifacts(nuevoCorrelativo);
+        signResponse = await this.qpseClient.firmarXML({
+          accessToken,
+          xmlFilename: xmlArtifacts.xmlFilename,
+          xmlContentBase64: xmlArtifacts.xmlContentBase64,
+        });
+
+        if (!signResponse.xml) {
+          throw new HttpException('QPSE no devolvió el XML firmado en el reintento', 502);
+        }
+
+        signedXmlBase64 = signResponse.xml;
+        signedXmlContent = this.decodeBase64ToUtf8(signedXmlBase64);
+        initialResponse = await this.qpseClient.enviarXML({
+          accessToken,
+          xmlFilename: xmlArtifacts.xmlFilename,
+          externalId: signResponse.external_id,
+          xmlSignedBase64: signedXmlBase64,
+        });
+      }
+
+      finalResponse = initialResponse;
+
+      const qpseTicket = initialResponse.ticket;
+      const documentId = String(qpseTicket || xmlArtifacts.xmlFilename);
+      let status = this.normalizeQpseStatus(initialResponse);
 
       await this.prisma.comprobante.update({
         where: { id: comprobanteId },
-        data: { documentoId: documentId, estadoEnvioSunat: 'PENDIENTE' },
+        data: {
+          documentoId: documentId,
+          estadoEnvioSunat: status === 'PENDIENTE' ? 'PENDIENTE' : 'RECHAZADO',
+        },
       });
 
-      let retries = 0;
-      let status = initialResponse.data.status;
+      // Solo Factura (01) y similares retornan ticket para polling asíncrono.
+      // Boleta (03) es síncrona: la respuesta de enviarXML ya es definitiva.
+      if (qpseTicket && status === 'PENDIENTE') {
+        let retries = 0;
+        console.log(`🔄 Estado inicial QPSE: ${status}, iniciando polling por ticket ${qpseTicket}...`);
 
-      console.log(`🔄 Estado inicial: ${status}, iniciando polling...`);
+        while (status === 'PENDIENTE' && retries < this.maxRetries) {
+          await new Promise((r) => setTimeout(r, this.retryInterval));
 
-      while (status === 'PENDIENTE' && retries < this.maxRetries) {
-        await new Promise((r) => setTimeout(r, this.retryInterval));
+          finalResponse = await this.qpseClient.consultarTicket(qpseTicket, accessToken);
+          status = this.normalizeQpseStatus(finalResponse);
+          retries++;
 
-        console.log(
-          `🔍 Consultando estado (intento ${retries + 1}/${this.maxRetries})...`,
-        );
+          console.log(`📊 Estado actual QPSE: ${status}`, {
+            intento: retries,
+            response: finalResponse,
+          });
+        }
+      } else if (!qpseTicket) {
+        console.log(`✅ QPSE respuesta síncrona (sin ticket): ${status}`);
+      }
 
-        const statusResponse = await axios.get(
-          `${this.documentUrl}/${documentId}/getById?data=true`,
-          {
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${empresa?.providerToken}`,
-            },
-          },
-        );
+      let s3XmlUrl: string | null = null;
+      let s3CdrUrl: string | null = null;
+      if (this.s3Service.isEnabled()) {
+        try {
+          const xmlKey = this.s3Service.generateComprobanteKey(
+            comp.empresaId,
+            comp.tipoDoc,
+            comp.serie,
+            comp.correlativo,
+            'xml',
+          );
+          s3XmlUrl = await this.s3Service.uploadXML(Buffer.from(signedXmlContent, 'utf8'), xmlKey);
 
-        finalResponse = statusResponse.data;
-        status = finalResponse.status;
-        retries++;
-
-        console.log(`📊 Estado actual: ${status}`, {
-          intento: retries,
-          response: finalResponse,
-        });
+          if (finalResponse?.cdr) {
+            const cdrBuffer = this.decodeBase64ToBuffer(finalResponse.cdr);
+            const cdrKey = this.buildCdrStorageKey(comp.empresaId, comp.tipoDoc, comp.serie, comp.correlativo, cdrBuffer);
+            s3CdrUrl = cdrBuffer.toString('utf8').trim().startsWith('<')
+              ? await this.s3Service.uploadXML(cdrBuffer, cdrKey)
+              : await this.s3Service.uploadZIP(cdrBuffer, cdrKey);
+          }
+        } catch (storageError: any) {
+          this.logger.warn(`No se pudo subir XML/CDR a S3: ${storageError.message}`);
+        }
       }
 
       // Generar PDF personalizado del sistema y subir a S3
@@ -806,7 +934,7 @@ export class EnviarSunatService {
             formaPago: comp.formaPagoTipo === 'Contado' ? 'CONTADO' : 'CRÉDITO',
             medioPago: (comp.medioPago || 'EFECTIVO').toUpperCase(),
             observaciones: comp.observaciones ? comp.observaciones.toUpperCase() : undefined,
-            qrCode: finalResponse.data?.qr?.qrCode ? `data:image/png;base64,${finalResponse.data.qr.qrCode}` : undefined,
+            qrCode: undefined,
             // Detracción
             tipoDetraccion: comp.tipoDetraccion
               ? `${comp.tipoDetraccion.codigo} - ${comp.tipoDetraccion.descripcion} (${comp.tipoDetraccion.porcentaje}%)`
@@ -830,7 +958,6 @@ export class EnviarSunatService {
           s3PdfUrl = await this.s3Service.uploadPDF(pdfBuffer, pdfKey);
           console.log(`📤 PDF personalizado subido a S3: ${s3PdfUrl}`);
 
-          // Nota: Por solicitud, NO se sube XML ni CDR a S3 en esta etapa
         } catch (s3Error) {
           console.error('⚠️ Error subiendo archivos a S3:', s3Error.message);
           // No fallar el proceso si S3 falla, solo loguear
@@ -851,14 +978,16 @@ export class EnviarSunatService {
         where: { id: comprobanteId },
         data: {
           estadoEnvioSunat: estadoFinal as any,
-          sunatXml: finalResponse.xml || null,
+          sunatXml: signedXmlContent || null,
           sunatCdrZip: finalResponse.cdr || null,
           sunatCdrResponse: JSON.stringify(finalResponse),
           sunatErrorMsg:
             estadoFinal !== 'EMITIDO'
-              ? finalResponse.error?.message || `SUNAT devolvió estado: ${status}`
+              ? this.extractQpseMessage(finalResponse, status)
               : null,
           s3PdfUrl,
+          s3XmlUrl,
+          s3CdrUrl,
         },
       });
 
@@ -867,7 +996,7 @@ export class EnviarSunatService {
         return {
           status: 'PENDIENTE',
           documentId,
-          message: 'El documento está pendiente de procesamiento por SUNAT.',
+          message: this.extractQpseMessage(finalResponse, status) || 'El documento está pendiente de procesamiento por SUNAT.',
         };
       }
 
@@ -878,7 +1007,7 @@ export class EnviarSunatService {
           fullResponse: finalResponse,
         });
         throw new HttpException(
-          `APISUNAT rechazó el documento: ${finalResponse.error?.message || 'Error desconocido'}`,
+          `QPSE rechazó el documento: ${this.extractQpseMessage(finalResponse, status) || 'Error desconocido'}`,
           502,
         );
       }
@@ -901,40 +1030,48 @@ export class EnviarSunatService {
         status: err.response?.status,
       });
 
-      // Persist FALLIDO_ENVIO state so scheduler can retry later
+      // Persist retry state based on error type:
+      // - DATOS (SUNAT/QPSE rechazó explícitamente): máx 5 intentos → RECHAZADO
+      // - RED (SUNAT caída, timeout, no disponible): máx 30 intentos con backoff hasta 24h
       try {
         const currentComp = await this.prisma.comprobante.findUnique({
           where: { id: comprobanteId },
-          select: { sunatRetriesCount: true, creadoEn: true },
+          select: { sunatRetriesCount: true },
         });
 
         if (currentComp) {
           const newRetryCount = (currentComp.sunatRetriesCount || 0) + 1;
-          const isExpired = this.isRetryWindowExpired(currentComp);
+          const errorType = this.classifyError(err);
+          const maxRetries = errorType === 'DATOS'
+            ? this.MAX_DATA_ERROR_RETRIES
+            : this.MAX_INFRA_ERROR_RETRIES;
 
-          // If within 5-hour window and under max attempts, mark for retry
-          if (!isExpired && newRetryCount < this.maxRetryAttempts) {
+          if (newRetryCount < maxRetries) {
+            const nextRetry = errorType === 'DATOS'
+              ? this.calculateNextRetry(newRetryCount)
+              : this.calculateNetworkRetry(newRetryCount);
+
             await this.prisma.comprobante.update({
               where: { id: comprobanteId },
               data: {
                 estadoEnvioSunat: 'FALLIDO_ENVIO',
                 sunatRetriesCount: newRetryCount,
                 sunatLastRetryAt: new Date(),
-                sunatNextRetryAt: this.calculateNextRetry(newRetryCount),
-                sunatErrorMsg: `Error de conexión (intento ${newRetryCount}): ${err.message}`,
+                sunatNextRetryAt: nextRetry,
+                sunatErrorMsg: `[${errorType}] (intento ${newRetryCount}/${maxRetries}): ${err.message}`,
               },
             });
-            console.log(`📅 Comprobante ${comprobanteId} marcado para reintento #${newRetryCount}`);
+            console.log(`📅 Comprobante ${comprobanteId} → reintento #${newRetryCount} [${errorType}] en ${nextRetry.toISOString()}`);
           } else {
-            // Exceeded retry window or max attempts, mark as permanently failed
             await this.prisma.comprobante.update({
               where: { id: comprobanteId },
               data: {
                 estadoEnvioSunat: 'RECHAZADO',
-                sunatErrorMsg: `Envío fallido después de ${newRetryCount} intentos en ${this.maxRetryHours}h: ${err.message}`,
+                sunatNextRetryAt: null,
+                sunatErrorMsg: `[${errorType}] Fallido tras ${newRetryCount} intentos: ${err.message}`,
               },
             });
-            console.log(`❌ Comprobante ${comprobanteId} marcado como RECHAZADO (agotó reintentos)`);
+            console.log(`❌ Comprobante ${comprobanteId} → RECHAZADO (agotó ${maxRetries} reintentos [${errorType}])`);
           }
         }
       } catch (dbErr) {
@@ -942,20 +1079,117 @@ export class EnviarSunatService {
       }
 
       throw new HttpException(
-        `Error enviando a APISUNAT: ${err.response?.data?.message || err.message}`,
+        `Error enviando a QPSE: ${err.response?.data?.message || err.message}`,
         502,
       );
     }
   }
 
-  /**
-   * Detecta si un error de axios corresponde al código SUNAT 1033
-   * (Numeración repetida / documento ya existe).
-   */
-  private isSunatNumeracionRepetida(err: any): boolean {
-    return err?.response?.data?.error?.code === '1033' ||
-      err?.response?.data?.error?.message?.includes('Numeraci') ||
-      (err?.response?.data?.status === 'ERROR' && String(err?.response?.data?.error?.code) === '1033');
+  private resolveUblRootName(tipoDoc: string): 'Invoice' | 'CreditNote' | 'DebitNote' {
+    if (tipoDoc === '07') return 'CreditNote';
+    if (tipoDoc === '08') return 'DebitNote';
+    return 'Invoice';
+  }
+
+  private normalizeQpseStatus(response: QpseSendResponse | null | undefined): 'ACEPTADO' | 'PENDIENTE' | 'RECHAZADO' {
+    const stateLabel = String(response?.state_label || '').toLowerCase();
+    const code = String(response?.code ?? '');
+    const estado = Number(response?.estado ?? -1);
+
+    console.log(`[normalizeQpseStatus] raw response:`, JSON.stringify({
+      sunat_success: response?.sunat_success,
+      state_label: response?.state_label,
+      code: response?.code,
+      estado: response?.estado,
+      success: (response as any)?.success,
+      message: response?.message,
+      mensaje: response?.mensaje,
+    }));
+
+    // Si hay errores de SUNAT (código 0306, etc.), es RECHAZADO independientemente de success HTTP
+    const hasErrors = (Array.isArray(response?.errors) && response.errors.length > 0) ||
+      (Array.isArray((response as any)?.errores) && (response as any).errores.length > 0);
+    const hasErrorCode = code !== '' && code !== '0' && code !== 'null' && code !== 'undefined' && !/^2\d\d$/.test(code);
+
+    if (hasErrors && hasErrorCode) {
+      return 'RECHAZADO';
+    }
+
+    // QPSE state_label: 'aceptado', 'registrado', 'observado' = aceptado por SUNAT
+    if (
+      response?.sunat_success === true ||
+      stateLabel === 'aceptado' ||
+      stateLabel === 'registrado' ||
+      stateLabel === 'observado' ||
+      estado === 1 ||
+      code === '0'
+    ) {
+      return 'ACEPTADO';
+    }
+
+    if (
+      stateLabel === 'pendiente' ||
+      stateLabel === 'en_proceso' ||
+      stateLabel === 'en proceso' ||
+      stateLabel === 'indeterminado' ||
+      code === '98'
+    ) {
+      return 'PENDIENTE';
+    }
+
+    return 'RECHAZADO';
+  }
+
+  private isSunatNumeracionRepetida(response: any): boolean {
+    const responseText = JSON.stringify(response || {}).toLowerCase();
+    const code = String(
+      response?.code ??
+      response?.error?.code ??
+      response?.response?.data?.code ??
+      response?.response?.data?.error?.code ??
+      '',
+    );
+
+    return code === '1033' || responseText.includes('1033') || responseText.includes('numeraci');
+  }
+
+  private extractQpseMessage(response: any, status?: string): string {
+    const messages = [
+      response?.message,
+      response?.mensaje,
+      Array.isArray(response?.errors) ? response.errors.join(' | ') : response?.errors,
+      Array.isArray(response?.errores) ? response.errores.join(' | ') : response?.errores,
+      Array.isArray(response?.notes) ? response.notes.join(' | ') : response?.notes,
+      Array.isArray(response?.observaciones) ? response.observaciones.join(' | ') : response?.observaciones,
+    ].filter(Boolean);
+
+    return messages[0] || (status ? `SUNAT devolvió estado: ${status}` : 'Respuesta sin detalle de QPSE');
+  }
+
+  private decodeBase64ToUtf8(value: string): string {
+    try {
+      return Buffer.from(value, 'base64').toString('utf8');
+    } catch {
+      return value;
+    }
+  }
+
+  private decodeBase64ToBuffer(value: string): Buffer {
+    return Buffer.from(value, 'base64');
+  }
+
+  private buildCdrStorageKey(
+    empresaId: number,
+    tipoDoc: string,
+    serie: string,
+    correlativo: number,
+    cdrBuffer: Buffer,
+  ): string {
+    const tipo =
+      tipoDoc === '01' ? 'factura' : tipoDoc === '03' ? 'boleta' : 'nota';
+    const numero = String(correlativo).padStart(8, '0');
+    const extension = cdrBuffer.toString('utf8').trim().startsWith('<') ? 'xml' : 'zip';
+    return `comprobantes/empresa-${empresaId}/${tipo}/${serie}-${numero}-cdr.${extension}`;
   }
 
   /**
@@ -1136,12 +1370,8 @@ export class EnviarSunatService {
           where: { id: comprobanteAfectado.id },
           data: {
             estadoEnvioSunat: 'ANULADO',
-            // Si es informal, también cambiar estado de pago
-            ...(['TICKET', 'NV', 'RH', 'CP', 'NP', 'OT'].includes(
-              comprobanteAfectado.tipoDoc,
-            )
-              ? { estadoPago: 'ANULADO', saldo: 0 }
-              : {}),
+            estadoPago: 'ANULADO' as any,
+            saldo: 0,
           },
         });
 
@@ -1253,6 +1483,7 @@ export class EnviarSunatService {
 
   /**
    * Check if comprobante has exceeded max retry window (5 hours from creation)
+   * @deprecated Kept for backward compatibility — retry logic now uses classifyError()
    */
   isRetryWindowExpired(comprobante: any): boolean {
     const createdAt = new Date(comprobante.creadoEn);
@@ -1260,37 +1491,81 @@ export class EnviarSunatService {
     return new Date() > maxRetryTime;
   }
 
+  /**
+   * Backoff para errores de RED: 5m → 15m → 1h → 4h → 12h → 24h (se mantiene en 24h).
+   * Cubre apagones de SUNAT de varias horas o días completos.
+   * Public para que el scheduler también pueda usarlo en Job 1.
+   */
+  public calculateNetworkRetry(currentRetryCount: number): Date {
+    const backoffMinutes = [5, 15, 60, 240, 720, 1440]; // último = 24h
+    const minutes = backoffMinutes[Math.min(currentRetryCount, backoffMinutes.length - 1)];
+    const next = new Date();
+    next.setMinutes(next.getMinutes() + minutes);
+    return next;
+  }
+
+  /**
+   * Clasifica el error para decidir la estrategia de reintento:
+   * - DATOS: SUNAT/QPSE rechazó explícitamente (XML inválido, datos incorrectos) → máx 5 reintentos
+   * - RED: falla de infraestructura (SUNAT caída, timeout, sin conexión) → máx 30 reintentos con backoff 24h
+   */
+  private classifyError(err: any): 'DATOS' | 'RED' {
+    const msg = String(err?.message || '').toLowerCase();
+    const httpStatus = err?.status || err?.response?.status;
+
+    // HttpException lanzada por nosotros al detectar rechazo explícito de SUNAT/QPSE
+    if (msg.includes('qpse rechaz') || msg.includes('rechazó el documento')) return 'DATOS';
+
+    // Errores de validación XML / UBL
+    if (msg.includes('no se puede leer') || msg.includes('parsear') ||
+        msg.includes('xml') || msg.includes('ubl') || msg.includes('cvc-')) return 'DATOS';
+
+    // HTTP 4xx = rechazo explícito del servidor (no infraestructura)
+    if (httpStatus && httpStatus >= 400 && httpStatus < 500) return 'DATOS';
+
+    // Todo lo demás: timeouts, conexión rechazada, 5xx, QPSE no disponible → RED
+    return 'RED';
+  }
+
   async anularComprobanteSunat(documentId: string, empresaId: number, motivo: string = 'ANULACION DE LA OPERACION') {
-    const empresa = await this.prisma.empresa.findUnique({
-      where: { id: empresaId },
-      select: { providerToken: true, providerId: true },
-    });
-
-    if (!empresa || !empresa.providerToken) {
-      throw new HttpException('Empresa no configurada para APISUNAT', 400);
-    }
-
     try {
-      console.log(`🚀 Enviando Comunicación de Baja a SUNAT para el documento: ${documentId}`);
+      const qpseUsername = process.env.QPSE_USERNAME;
+      const qpsePassword = process.env.QPSE_PASSWORD;
+      if (!qpseUsername || !qpsePassword) {
+        throw new HttpException(
+          'Credenciales QPSE no configuradas en variables de entorno (QPSE_USERNAME / QPSE_PASSWORD).',
+          400,
+        );
+      }
 
-      const payload = {
-        personaId: empresa.providerId,
-        personaToken: empresa.providerToken,
-        documentId: documentId,
-        reason: motivo.substring(0, 100), // SUNAT limits reason length
-      };
+      const comprobante = await this.prisma.comprobante.findFirst({
+        where: { empresaId, documentoId: documentId },
+        select: { documentoId: true, serie: true, correlativo: true, tipoDoc: true },
+      });
 
-      const response = await axios.post('https://back.apisunat.com/personas/v1/voidBill', payload);
+      const externalId = comprobante?.documentoId || documentId;
+      const qpseAccess = await this.qpseClient.obtenerTokenAcceso({
+        username: qpseUsername,
+        password: qpsePassword,
+      });
 
-      console.log('✅ Documento anulado en SUNAT:', response.data);
-      return response.data;
+      console.log(`🚀 Enviando anulación a QPSE para el documento: ${externalId}`);
+
+      const response = await this.qpseClient.anularComprobante({
+        accessToken: qpseAccess.token_acceso!,
+        externalId,
+        motivo: motivo.substring(0, 100),
+      });
+
+      console.log('✅ Documento anulado en QPSE:', response);
+      return response;
     } catch (err: any) {
-      console.error('🚫 Error anulando en SUNAT:', {
+      console.error('🚫 Error anulando en QPSE:', {
         documentId,
         error: err.response?.data || err.message,
       });
       throw new HttpException(
-        `APISUNAT rechazó la anulación: ${err.response?.data?.message || err.message || 'Error desconocido'}`,
+        `QPSE rechazó la anulación: ${err.response?.data?.message || err.message || 'Error desconocido'}`,
         502,
       );
     }
