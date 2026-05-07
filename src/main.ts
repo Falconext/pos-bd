@@ -32,6 +32,7 @@ async function bootstrap() {
     'https://www.falconext.pe',
     'https://app.falconext.pe',
     'https://app.krezka.com',
+    'https://www.krezka.com',
     process.env.FRONTEND_URL,
   ].filter(Boolean);
 
