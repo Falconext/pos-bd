@@ -42,7 +42,7 @@ export class EmpresaService {
     private readonly sedeService: SedeService,
   ) { }
 
-  async crear(data: CreateEmpresaDto) {
+  async crear(data: CreateEmpresaDto, adminSistemaNegocio?: string | null) {
     const fechaActivacion = parseDDMMYYYY(data.fechaActivacion);
     const tipoEmpresa = data.tipoEmpresa || 'FORMAL';
     const esPrueba = data.esPrueba || false;
@@ -145,6 +145,11 @@ export class EmpresaService {
         providerId: data.providerId || null,
         esAgenteRetencion: data.esAgenteRetencion || false,
         usaCodigoBarrasManual: data.usaCodigoBarrasManual,
+        brand: adminSistemaNegocio
+          ? adminSistemaNegocio.toLowerCase()
+          : (data.brand || 'falconext'),
+        usuarioPse: data.usuarioPse || null,
+        contrasenaPse: data.contrasenaPse || null,
         usuarios: {
           create: {
             nombre: data.usuario.nombre,
@@ -225,7 +230,8 @@ export class EmpresaService {
     order?: 'asc' | 'desc';
     estado?: 'ACTIVO' | 'INACTIVO' | 'TODOS';
     tipoEmpresa?: 'FORMAL' | 'INFORMAL' | '';
-  }) {
+    brand?: string;
+  }, adminSistemaNegocio?: string | null) {
     const {
       search,
       page = 1,
@@ -234,8 +240,14 @@ export class EmpresaService {
       order = 'desc',
       estado = 'TODOS',
       tipoEmpresa = '',
+      brand,
     } = params;
     const skip = (page - 1) * limit;
+
+    // Si el admin tiene sistemaNegocio, siempre forzar ese brand (ignora el brand del query)
+    const brandFiltro = adminSistemaNegocio
+      ? adminSistemaNegocio.toLowerCase()
+      : brand;
 
     let where: any = {};
 
@@ -249,11 +261,17 @@ export class EmpresaService {
       where.tipoEmpresa = tipoEmpresa;
     }
 
+    // Filtro por brand (forzado por sistemaNegocio o enviado en query)
+    if (brandFiltro) {
+      where.brand = brandFiltro;
+    }
+
     if (search) {
       where = {
         AND: [
           ...(estado !== 'TODOS' ? [{ estado }] : []),
           ...(tipoEmpresa ? [{ tipoEmpresa }] : []),
+          ...(brandFiltro ? [{ brand: brandFiltro }] : []),
           {
             OR: [
               { ruc: { contains: search } },
@@ -373,6 +391,9 @@ export class EmpresaService {
       if (dto.yapeQrUrl !== undefined) updateData.yapeQrUrl = dto.yapeQrUrl;
       if (dto.plinNumero !== undefined) updateData.plinNumero = dto.plinNumero;
       if (dto.plinQrUrl !== undefined) updateData.plinQrUrl = dto.plinQrUrl;
+      if (dto.brand !== undefined) updateData.brand = dto.brand;
+      if (dto.usuarioPse !== undefined) updateData.usuarioPse = dto.usuarioPse;
+      if (dto.contrasenaPse !== undefined) updateData.contrasenaPse = dto.contrasenaPse;
 
       // Actualizar datos de empresa
       const empresaActualizada = await this.prisma.empresa.update({

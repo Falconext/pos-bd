@@ -54,6 +54,17 @@ export class GuiaRemisionController {
         return this.guiaRemisionService.findOne(id, empresaId, sedeId);
     }
 
+    @Patch(':id/estado-sunat')
+    syncEstadoSunat(
+        @Param('id', ParseIntPipe) id: number,
+        @Body() body: any,
+        @Request() req,
+    ) {
+        const empresaId = req.user.empresaId;
+        const sedeId = req.user.sedeId;
+        return this.guiaRemisionService.syncEstadoSunat(id, body, empresaId, sedeId);
+    }
+
     @Patch(':id')
     update(
         @Param('id', ParseIntPipe) id: number,

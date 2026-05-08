@@ -23,4 +23,14 @@ export class ActualizarConfigEnvioDto {
   @IsInt()
   @Min(0)
   tiempoPreparacionMin?: number;
+
+  @IsOptional()
+  @IsDecimal()
+  @Type(() => Number)
+  envioGratisDesdeSoles?: number;
+
+  @IsOptional()
+  @IsDecimal()
+  @Type(() => Number)
+  minimoCompra?: number;
 }

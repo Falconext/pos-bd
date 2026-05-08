@@ -22,7 +22,7 @@ export class VerificarPendientesSunatService {
    */
   async execute(): Promise<void> {
     try {
-      const pendientes = await this.prisma.comprobante.findMany({
+      const pendientes = await (this.prisma.comprobante as any).findMany({
         where: {
           estadoEnvioSunat: 'PENDIENTE',
           documentoId: { not: null },
@@ -34,12 +34,12 @@ export class VerificarPendientesSunatService {
         include: {
           empresa: {
             select: {
-              providerId: true,
-              providerToken: true,
+              usuarioPse: true,
+              contrasenaPse: true,
             },
           },
         },
-      });
+      }) as (any & { empresa: { usuarioPse: string | null; contrasenaPse: string | null } | null })[];
 
       this.logger.log(
         `[Job 1] Encontrados ${pendientes.length} comprobantes PENDIENTES con documentoId`,
@@ -51,8 +51,8 @@ export class VerificarPendientesSunatService {
 
       for (const comprobante of pendientes) {
         try {
-          const qpseUsername = process.env.QPSE_USERNAME;
-          const qpsePassword = process.env.QPSE_PASSWORD;
+          const qpseUsername = comprobante.empresa?.usuarioPse;
+          const qpsePassword = comprobante.empresa?.contrasenaPse;
           if (!qpseUsername || !qpsePassword) {
             this.logger.warn(`Comprobante ${comprobante.id} sin credenciales QPSE configuradas`);
             continue;

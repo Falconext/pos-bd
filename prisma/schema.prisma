@@ -89,6 +89,8 @@ model Empresa {
   usaCodigoBarrasManual Boolean?
   costoActivacionReseller Decimal?         @default(0)
   costoEnvioFijo       Decimal?           @default(0)
+  envioGratisDesdeSoles Decimal?          @default(0)
+  minimoCompra         Decimal?           @default(0)
   direccionRecojo      String?
   tiempoPreparacionMin Int?               @default(30)
   disenoOverride       String?
@@ -123,9 +125,13 @@ model Empresa {
   resellerId          Int?
   reseller            Reseller?            @relation(fields: [resellerId], references: [id])
   resellerMovimientos ResellerMovimiento[]
+  brand               String               @default("falconext")
+  usuarioPse          String?
+  contrasenaPse       String?
 
   @@index([providerToken])
   @@index([slugTienda])
+  @@index([brand])
 }
 
 model Usuario {
@@ -157,6 +163,7 @@ model Usuario {
   sede                   Sede?                   @relation(fields: [sedeId], references: [id])
   resellerId             Int?
   reseller               Reseller?               @relation(fields: [resellerId], references: [id])
+  sistemaNegocio         String?
   sedesAsignadas         UsuarioSede[]
   subModulosAsignados    UsuarioSubModulo[]
 }
@@ -1330,4 +1337,20 @@ model ResellerMovimiento {
 
   @@index([resellerId, tipo, estado])
   @@index([empresaId, tipo, fecha])
+}
+
+model GastoSistema {
+  id           Int      @id @default(autoincrement())
+  concepto     String
+  categoria    String   // HOSTING, HERRAMIENTAS, NOMINA, MARKETING, LEGAL, OTROS
+  monto        Decimal
+  fecha        DateTime
+  descripcion  String?
+  recurrente   Boolean  @default(false)
+  periodicidad String?  // MENSUAL, ANUAL
+  creadoEn     DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  @@index([fecha])
+  @@index([categoria])
 }

@@ -13,6 +13,7 @@ import * as bcrypt from 'bcrypt';
 interface LoginPayload {
   email: string;
   password: string;
+  brand?: string;
 }
 
 @Injectable()
@@ -34,7 +35,15 @@ export class AuthService {
     this.refreshExpiresInSec = isProduction ? (Number(refreshEnv) || 604800) : 604800;
   }
 
-  async login({ email, password }: LoginPayload) {
+  private resolveBrandFromOrigin(origin: string | undefined): string | null {
+    if (!origin) return null;
+    if (origin.includes('krezka.com')) return 'krezka';
+    if (origin.includes('falconext.pe') || origin.includes('falconext.app')) return 'falconext';
+    // localhost/dev: sin restricción
+    return null;
+  }
+
+  async login({ email, password, brand: bodyBrand }: LoginPayload, origin?: string) {
     const user: any = await this.prisma.usuario.findUnique({
       where: { email },
       include: { empresa: true },
@@ -56,6 +65,19 @@ export class AuthService {
 
     const isValid = await bcrypt.compare(password, user.password);
     if (!isValid) throw new UnauthorizedException('Contraseña incorrecta');
+
+    // ── Brand validation ─────────────────────────────────────────
+    // ADMIN_SISTEMA y RESELLER no tienen empresa, pueden entrar desde cualquier frontend
+    const rolesLibres = ['ADMIN_SISTEMA', 'RESELLER'];
+    if (!rolesLibres.includes(user.rol) && user.empresa) {
+      // Origin header tiene prioridad; si no resuelve, usa el brand enviado en el body
+      const expectedBrand = this.resolveBrandFromOrigin(origin) ?? bodyBrand ?? null;
+      if (expectedBrand && user.empresa.brand !== expectedBrand) {
+        throw new ForbiddenException(
+          `Esta cuenta no pertenece a este portal. Accede desde el portal correcto.`,
+        );
+      }
+    }
 
     // ── Multi-sede logic ──────────────────────────────────────────
     // ADMIN_EMPRESA y ADMIN_SISTEMA entran sin restricción de sede
@@ -125,6 +147,7 @@ export class AuthService {
       sub: user.id,
       rol: user.rol as string,
       empresaId: user.empresaId ?? null,
+      sistemaNegocio: user.sistemaNegocio ?? null,
     };
     if (sedeIdFinal) payload.sedeId = sedeIdFinal;
 
@@ -170,6 +193,7 @@ export class AuthService {
       rol: user.rol as string,
       empresaId: user.empresaId ?? null,
       sedeId,
+      sistemaNegocio: user.sistemaNegocio ?? null,
     };
 
     const accessToken = await this.jwt.signAsync(payload, {
@@ -226,6 +250,7 @@ export class AuthService {
       sub: user.id,
       rol: user.rol as string,
       empresaId: user.empresaId ?? null,
+      sistemaNegocio: (user as any).sistemaNegocio ?? null,
     };
     if (sedeId) payload.sedeId = sedeId;
 
@@ -264,6 +289,7 @@ export class AuthService {
         resellerId: true,
         estado: true,
         permisos: true,
+        sistemaNegocio: true,
         sedesAsignadas: {
           select: {
             sede: {

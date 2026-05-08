@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Post, Res, UseGuards } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
@@ -14,8 +14,9 @@ export class AuthController {
   async login(
     @Body() dto: LoginDto,
     @Res({ passthrough: true }) res: Response,
+    @Headers('origin') origin: string,
   ) {
-    const result = await this.authService.login(dto);
+    const result = await this.authService.login(dto, origin);
     res.locals.message = 'Inicio de sesión exitoso';
     return result;
   }

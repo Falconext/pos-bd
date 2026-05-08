@@ -37,6 +37,7 @@ import { ModulosModule } from './modulos/modulos.module';
 import { ResellerModule } from './reseller/reseller.module';
 import { SedeModule } from './sede/sede.module';
 import { StoreCatalogModule } from './store-catalog/store-catalog.module';
+import { SistemaFinanzasModule } from './sistema-finanzas/sistema-finanzas.module';
 
 @Module({
   imports: [
@@ -76,6 +77,7 @@ import { StoreCatalogModule } from './store-catalog/store-catalog.module';
     ResellerModule,
     SedeModule,
     StoreCatalogModule,
+    SistemaFinanzasModule,
   ],
   controllers: [AppController],
   providers: [AppService],

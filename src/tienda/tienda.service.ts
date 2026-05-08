@@ -936,6 +936,8 @@ export class TiendaService {
       where: { slugTienda: slug },
       select: {
         costoEnvioFijo: true,
+        envioGratisDesdeSoles: true,
+        minimoCompra: true,
         aceptaRecojo: true,
         aceptaEnvio: true,
         direccionRecojo: true,
@@ -959,6 +961,7 @@ export class TiendaService {
       select: {
         id: true,
         costoEnvioFijo: true,
+        minimoCompra: true,
         aceptaRecojo: true,
         aceptaEnvio: true,
       },
@@ -1049,6 +1052,12 @@ export class TiendaService {
     // IGV = Subtotal - (Subtotal / 1.18)
     const igv = subtotal - (subtotal / 1.18);
     const total = subtotal + costoEnvio;
+
+    // Validar monto mínimo de pedido (se evalúa después de calcular el total real)
+    const minimoCompra = Number(empresa.minimoCompra || 0);
+    if (minimoCompra > 0 && total < minimoCompra) {
+      throw new BadRequestException(`El monto mínimo de pedido es S/ ${minimoCompra.toFixed(2)}`);
+    }
 
     // Generar un código de seguimiento único y corto
     const codigoSeguimiento = `PT-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`.toUpperCase();
@@ -1241,6 +1250,8 @@ export class TiendaService {
       where: { id: empresaId },
       select: {
         costoEnvioFijo: true,
+        envioGratisDesdeSoles: true,
+        minimoCompra: true,
         aceptaRecojo: true,
         aceptaEnvio: true,
         direccionRecojo: true,
@@ -1261,6 +1272,8 @@ export class TiendaService {
       data: dto,
       select: {
         costoEnvioFijo: true,
+        envioGratisDesdeSoles: true,
+        minimoCompra: true,
         aceptaRecojo: true,
         aceptaEnvio: true,
         direccionRecojo: true,

@@ -327,6 +327,30 @@ export class GuiaRemisionService {
         return guiaActualizada;
     }
 
+    async syncEstadoSunat(id: number, body: any, empresaId: number, sedeId?: number) {
+        await this.findOne(id, empresaId, sedeId);
+
+        const estado = String(body?.estadoSunat || '').toUpperCase();
+        const estadosPermitidos = ['PENDIENTE', 'ENVIADO', 'EMITIDO', 'RECHAZADO', 'FALLIDO_ENVIO'];
+        if (!estadosPermitidos.includes(estado)) {
+            throw new BadRequestException('Estado SUNAT inválido para guía de remisión.');
+        }
+
+        return this.prisma.guiaRemision.update({
+            where: { id },
+            data: {
+                estadoSunat: estado as any,
+                sunatXml: body?.sunatXml ?? undefined,
+                sunatCdrResponse: body?.sunatCdrResponse
+                    ? String(body.sunatCdrResponse)
+                    : undefined,
+                sunatCdrZip: body?.sunatCdrZip ?? undefined,
+                sunatErrorMsg: body?.sunatErrorMsg ?? null,
+                documentoId: body?.documentoId ? String(body.documentoId) : undefined,
+            },
+        });
+    }
+
     async remove(id: number, empresaId: number, sedeId?: number) {
         const guia = await this.findOne(id, empresaId, sedeId);
 
@@ -347,17 +371,20 @@ export class GuiaRemisionService {
     async enviarSunat(id: number, empresaId: number, sedeId?: number) {
         const guia = await this.findOne(id, empresaId, sedeId);
 
-        // Obtener credenciales de la empresa
-        const empresa = await this.prisma.empresa.findUnique({
+        // Obtener credenciales QPSE de la empresa
+        const empresa = await (this.prisma.empresa as any).findUnique({
             where: { id: empresaId },
-            select: { providerId: true, providerToken: true }
-        });
+            select: { usuarioPse: true, contrasenaPse: true },
+        }) as { usuarioPse: string | null; contrasenaPse: string | null } | null;
 
-        if (!empresa?.providerId || !empresa?.providerToken) {
-            throw new BadRequestException('La empresa no tiene configuradas las credenciales de facturación electrónica (providerId/Token)');
+        if (!empresa?.usuarioPse || !empresa?.contrasenaPse) {
+            throw new BadRequestException(
+                'La empresa no tiene configuradas las credenciales QPSE (usuarioPse / contrasenaPse). ' +
+                'Configúralas en Configuración → Empresa → pestaña SUNAT.'
+            );
         }
 
-        // Validar que esté en estado enviable (nuevo o fallido)
+        // Validar estado enviable
         if (!['PENDIENTE', 'FALLIDO_ENVIO'].includes(guia.estadoSunat)) {
             throw new BadRequestException(
                 `La guía ya fue procesada. Estado actual: ${guia.estadoSunat}`,
@@ -365,21 +392,18 @@ export class GuiaRemisionService {
         }
 
         try {
-            // Transformar a formato SUNAT y enviar
             let guiaParaEnviar = guia;
             let resultado = await this.sunatGuiaService.enviarGuia(
                 guiaParaEnviar,
-                empresa.providerId,
-                empresa.providerToken,
+                empresa.usuarioPse,
+                empresa.contrasenaPse,
             );
 
-            // ── Auto-avance de correlativo para error 1033 (Numeración repetida) ──
-            // Si SUNAT rechaza por numeración repetida, buscamos el siguiente correlativo
-            // disponible, actualizamos la guía en BD y reintentamos automáticamente.
-            if (!resultado.success && (resultado as any).sunatErrorCode === '1033') {
+            // Auto-avance de correlativo cuando SUNAT reporta numeración repetida
+            if (resultado.numeracionRepetida) {
                 this.logger.warn(
-                    `SUNAT error 1033 – numeración repetida (${guia.serie}-${guia.correlativo}). ` +
-                    `Buscando siguiente correlativo disponible...`
+                    `Numeración repetida (${guia.serie}-${guia.correlativo}). ` +
+                    `Buscando siguiente correlativo disponible…`
                 );
 
                 const ultimaGuia = await this.prisma.guiaRemision.findFirst({
@@ -388,10 +412,8 @@ export class GuiaRemisionService {
                     select: { correlativo: true },
                 });
                 const nuevoCorrelativo = (ultimaGuia?.correlativo ?? 0) + 1;
-
                 this.logger.log(`Nuevo correlativo asignado a guía ${id}: ${guia.serie}-${nuevoCorrelativo}`);
 
-                // Actualizar el correlativo en la BD y reintentar (una sola vez)
                 const guiaConNuevoCorrelativo = await this.prisma.guiaRemision.update({
                     where: { id },
                     data: { correlativo: nuevoCorrelativo },
@@ -405,16 +427,13 @@ export class GuiaRemisionService {
                 guiaParaEnviar = guiaConNuevoCorrelativo as any;
                 resultado = await this.sunatGuiaService.enviarGuia(
                     guiaParaEnviar,
-                    empresa.providerId,
-                    empresa.providerToken,
+                    empresa.usuarioPse,
+                    empresa.contrasenaPse,
                 );
             }
 
-            // Actualizar guía con respuesta de SUNAT
-            // Si el doc fue enviado pero SUNAT aún procesa (pendienteVerificacion), mantenemos PENDIENTE
-            // para que el usuario pueda reenviar/verificar sin perder el documentoId
             const nuevoEstado = resultado.success
-                ? 'ENVIADO'
+                ? 'EMITIDO'
                 : resultado.pendienteVerificacion
                     ? 'PENDIENTE'
                     : 'FALLIDO_ENVIO';
@@ -422,15 +441,12 @@ export class GuiaRemisionService {
             const guiaActualizada = await this.prisma.guiaRemision.update({
                 where: { id },
                 data: {
-                    estadoSunat: nuevoEstado,
-                    sunatXml: resultado.xml,
-                    sunatCdrResponse: resultado.cdrResponse,
-                    sunatCdrZip: resultado.cdrZip,
-                    sunatErrorMsg: resultado.error,
-                    documentoId: resultado.documentoId,
-                    s3XmlUrl: resultado.s3XmlUrl,
-                    s3CdrUrl: resultado.s3CdrUrl,
-                    s3PdfUrl: resultado.s3PdfUrl,
+                    estadoSunat: nuevoEstado as any,
+                    sunatXml: resultado.xml || null,
+                    sunatCdrResponse: resultado.cdrResponse || null,
+                    sunatCdrZip: resultado.cdrZip || null,
+                    sunatErrorMsg: resultado.error || null,
+                    documentoId: resultado.documentoId || null,
                 },
             });
 
@@ -440,15 +456,13 @@ export class GuiaRemisionService {
                 message: resultado.message,
             };
         } catch (error) {
-            // Actualizar estado a fallido
             await this.prisma.guiaRemision.update({
                 where: { id },
                 data: {
-                    estadoSunat: 'FALLIDO_ENVIO',
+                    estadoSunat: 'FALLIDO_ENVIO' as any,
                     sunatErrorMsg: error.message,
                 },
             });
-
             throw error;
         }
     }

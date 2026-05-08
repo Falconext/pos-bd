@@ -32,9 +32,10 @@ export class EmpresaController {
   @Roles('ADMIN_SISTEMA')
   async crear(
     @Body() dto: CreateEmpresaDto,
+    @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const nueva = await this.empresaService.crear(dto);
+    const nueva = await this.empresaService.crear(dto, user.sistemaNegocio);
     res.locals.message = 'Empresa creada exitosamente';
     return nueva;
   }
@@ -81,9 +82,10 @@ export class EmpresaController {
   @Roles('ADMIN_SISTEMA')
   async listar(
     @Query() query: ListEmpresaDto,
+    @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const empresas = await this.empresaService.listar(query);
+    const empresas = await this.empresaService.listar(query, user.sistemaNegocio);
     res.locals.message = 'Empresas listadas correctamente';
     return empresas;
   }

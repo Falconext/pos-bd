@@ -104,6 +104,18 @@ export class CreateEmpresaDto {
   @IsBoolean()
   usaCodigoBarrasManual?: boolean;
 
+  @IsOptional()
+  @IsString()
+  brand?: string;
+
+  @IsOptional()
+  @IsString()
+  usuarioPse?: string;
+
+  @IsOptional()
+  @IsString()
+  contrasenaPse?: string;
+
   @ValidateNested()
   @Type(() => UsuarioDto)
   usuario: UsuarioDto;

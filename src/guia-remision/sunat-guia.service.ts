@@ -1,116 +1,166 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import axios from 'axios';
+import { Injectable, Logger, HttpException } from '@nestjs/common';
+import { QpseClient, QpseSendResponse } from '../common/utils/qpse.client';
+import { buildUblXml } from '../common/utils/ubl-xml';
 
 @Injectable()
 export class SunatGuiaService {
     private readonly logger = new Logger(SunatGuiaService.name);
-    private readonly apiUrl = 'https://back.apisunat.com/personas/v1/sendBill';
-    private readonly documentUrl = 'https://back.apisunat.com/documents';
-    private readonly maxRetries = 15;
+    private readonly maxRetries = 12;
     private readonly retryInterval = 5000;
 
-    constructor(private configService: ConfigService) { }
+    constructor(private readonly qpseClient: QpseClient) {}
 
-    async enviarGuia(guia: any, personaId: string, personaToken: string) {
-        try {
-            const tipoDocCodigo = guia.tipoGuia === 'TRANSPORTISTA' ? '31' : '09';
-            const documentBody = this.buildSunatDocument(guia, tipoDocCodigo);
+    async enviarGuia(guia: any, usuarioPse: string, contrasenaPse: string) {
+        const tipoDocCodigo = guia.tipoGuia === 'TRANSPORTISTA' ? '31' : '09';
+        const rucEmisor = String(guia.remitenteRuc || '').trim();
+        const paddedCorrelativo = String(guia.correlativo).padStart(8, '0');
+        const xmlFilename = `${rucEmisor}-${tipoDocCodigo}-${guia.serie}-${paddedCorrelativo}`;
 
-            // APISUNAT valida que el RUC del fileName sea el del proveedor asociado.
-            // Para GRE-T el emisor del documento sigue siendo el remitente (empresa).
-            const rucEmisor = guia.remitenteRuc;
-            const fileName = `${rucEmisor}-${tipoDocCodigo}-${guia.serie}-${String(guia.correlativo).padStart(8, '0')}`;
+        const documentBody = this.buildSunatDocument(guia, tipoDocCodigo);
 
-            const payload = { personaId, personaToken, fileName, documentBody };
+        const xmlContent = buildUblXml('DespatchAdvice', documentBody);
+        const xmlContentBase64 = Buffer.from(xmlContent, 'utf8').toString('base64');
 
-            this.logger.log(`Enviando guía ${fileName} a SUNAT`);
-            this.logger.debug(`Payload (sin token): ${JSON.stringify({ personaId, fileName, documentBody })}`);
+        this.logger.log(`Enviando guía ${xmlFilename} a SUNAT vía QPSE`);
 
-            const initialResponse = await axios.post(this.apiUrl, payload);
+        // 1. Obtener token QPSE
+        const qpseAccess = await this.qpseClient.obtenerTokenAcceso({
+            username: usuarioPse,
+            password: contrasenaPse,
+        });
+        const accessToken = qpseAccess.token_acceso;
+        if (!accessToken) {
+            throw new HttpException('No se pudo obtener el token de acceso de QPSE', 502);
+        }
 
-            if (!initialResponse.data.documentId) {
-                throw new Error('No se recibió documentId de APISUNAT');
-            }
+        // 2. Firmar XML
+        const signResponse = await this.qpseClient.firmarXML({
+            accessToken,
+            xmlFilename,
+            xmlContentBase64,
+        });
+        if (!signResponse.xml) {
+            throw new HttpException('QPSE no devolvió el XML firmado', 502);
+        }
 
-            const documentId = initialResponse.data.documentId;
-            let status = initialResponse.data.status;
-            let retries = 0;
-            let finalResponse: any;
+        const signedXmlBase64 = signResponse.xml;
+        const signedXmlContent = Buffer.from(signedXmlBase64, 'base64').toString('utf8');
 
-            this.logger.log(`Documento enviado. ID: ${documentId}. Estado inicial: ${status}. Iniciando polling…`);
+        // 3. Enviar a SUNAT
+        let initialResponse = await this.qpseClient.enviarXML({
+            accessToken,
+            xmlFilename,
+            externalId: signResponse.external_id,
+            xmlSignedBase64: signedXmlBase64,
+        });
 
-            while (status === 'PENDIENTE' && retries < this.maxRetries) {
-                await new Promise((r) => setTimeout(r, this.retryInterval));
-                const statusResponse = await axios.get(
-                    `${this.documentUrl}/${documentId}/getById?data=true`,
-                    { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${personaToken}` } },
-                );
-                finalResponse = statusResponse.data;
-                status = finalResponse.status;
-                retries++;
-                this.logger.log(`Polling intento ${retries}: Estado ${status}`);
-            }
-
-            if (!finalResponse) {
-                const statusResponse = await axios.get(
-                    `${this.documentUrl}/${documentId}/getById?data=true`,
-                    { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${personaToken}` } },
-                );
-                finalResponse = statusResponse.data;
-                status = finalResponse.status;
-            }
-
-            const success = status === 'ACEPTADO';
-            const pendienteVerificacion = !success && status === 'PENDIENTE';
-            const providerError = (success || pendienteVerificacion) ? null : this.extractProviderError(finalResponse, status);
-            const pdfUrl = finalResponse?.pdf?.A4 || finalResponse?.pdf?.['80mm'] || null;
-
-            if (pendienteVerificacion) {
-                this.logger.warn(`Documento ${documentId} enviado pero aún en procesamiento tras ${this.maxRetries} intentos.`);
-            }
-
-            return {
-                success,
-                pendienteVerificacion,
-                xml: finalResponse?.xml || null,
-                cdrResponse: JSON.stringify(finalResponse),
-                cdrZip: finalResponse?.cdr || null,
-                documentoId: documentId,
-                message: success
-                    ? 'Guía de remisión aceptada por SUNAT'
-                    : pendienteVerificacion
-                        ? 'Documento enviado a SUNAT pero aún en procesamiento. Verifique el estado en unos minutos.'
-                        : `Rechazado por SUNAT: ${providerError}`,
-                s3XmlUrl: null,
-                s3CdrUrl: null,
-                s3PdfUrl: pdfUrl,
-                error: providerError,
-            };
-
-        } catch (error: any) {
-            this.logger.error(`Error al enviar guía a SUNAT: ${error.message}`, error.stack);
-            if (error.response?.data) {
-                this.logger.error(`Respuesta APISUNAT: ${JSON.stringify(error.response.data)}`);
-            }
-
-            const errorData = error.response?.data;
-            const sunatErrorCode: string | null = errorData?.error?.code || null;
-            const errorMsg = errorData?.error?.message || errorData?.message || error.message || 'Error desconocido al conectar con APISUNAT';
-
+        // 4. Manejar numeración repetida — retornar flag para que el caller avance correlativo
+        if (this.isNumeracionRepetida(initialResponse)) {
             return {
                 success: false,
-                xml: null,
-                cdrResponse: null,
+                numeracionRepetida: true,
+                xml: signedXmlContent,
+                cdrResponse: JSON.stringify(initialResponse),
                 cdrZip: null,
                 documentoId: null,
-                message: 'Error de conexión o validación con SUNAT provider',
-                s3XmlUrl: null,
-                s3CdrUrl: null,
-                error: errorMsg,
-                sunatErrorCode,
+                message: 'Numeración repetida en SUNAT',
+                error: 'Numeración repetida en SUNAT',
             };
         }
+
+        let finalResponse: QpseSendResponse = initialResponse;
+        const qpseTicket = initialResponse.ticket;
+        const documentId = String(xmlFilename);
+        let status = this.normalizeStatus(initialResponse);
+
+        // 5. Polling asíncrono. Para GRE, QPSE resuelve mejor la consulta por xml_filename.
+        if (qpseTicket && status === 'PENDIENTE') {
+            let retries = 0;
+            this.logger.log(`[QPSE] Estado inicial: ${status}. Polling por archivo ${xmlFilename}…`);
+            while (status === 'PENDIENTE' && retries < this.maxRetries) {
+                await new Promise(r => setTimeout(r, this.retryInterval));
+                try {
+                    finalResponse = await this.qpseClient.consultarTicket(xmlFilename, accessToken);
+                } catch (error) {
+                    this.logger.warn(`[QPSE] Consulta por archivo falló. Reintentando por ticket ${qpseTicket}`);
+                    finalResponse = await this.qpseClient.consultarTicket(qpseTicket, accessToken);
+                }
+                status = this.normalizeStatus(finalResponse);
+                retries++;
+                this.logger.log(`[QPSE] Polling intento ${retries}: ${status}`);
+            }
+        } else if (!qpseTicket) {
+            this.logger.log(`[QPSE] Respuesta síncrona (sin ticket): ${status}`);
+        }
+
+        const success = status === 'ACEPTADO';
+        const pendiente = status === 'PENDIENTE';
+
+        return {
+            success,
+            numeracionRepetida: false,
+            pendienteVerificacion: pendiente,
+            xml: signedXmlContent,
+            cdrResponse: JSON.stringify(finalResponse),
+            cdrZip: finalResponse.cdr || null,
+            documentoId: documentId,
+            message: success
+                ? 'Guía de remisión aceptada por SUNAT'
+                : pendiente
+                    ? 'Enviada a SUNAT pero aún en procesamiento. El estado se actualizará automáticamente.'
+                    : `Rechazada por SUNAT: ${this.extractMessage(finalResponse)}`,
+            error: !success && !pendiente ? this.extractMessage(finalResponse) : null,
+        };
+    }
+
+    // ─── Status helpers ────────────────────────────────────────────────────────
+
+    private normalizeStatus(response: QpseSendResponse): 'ACEPTADO' | 'PENDIENTE' | 'RECHAZADO' {
+        const stateLabel = String(response?.state_label || '').toLowerCase();
+        const code = String(response?.code ?? '');
+        const hasCdr = Boolean(response?.cdr);
+        const hasErrors = Array.isArray(response?.errors)
+            ? response.errors.length > 0
+            : Boolean(response?.errors);
+
+        if (
+            stateLabel === 'aceptado' ||
+            stateLabel === 'observado' ||
+            (code === '0' && hasCdr)
+        ) return 'ACEPTADO';
+        if (
+            stateLabel === 'rechazado' ||
+            code === '99' ||
+            (response?.sunat_success === false && (hasErrors || hasCdr))
+        ) return 'RECHAZADO';
+        if (
+            stateLabel === 'enviado' ||
+            stateLabel === 'pendiente' ||
+            stateLabel === 'en_proceso' ||
+            stateLabel === 'indeterminado' ||
+            code === '98' ||
+            response?.sunat_success == null ||
+            response?.success === true
+        ) return 'PENDIENTE';
+        return 'RECHAZADO';
+    }
+
+    private isNumeracionRepetida(response: any): boolean {
+        const text = JSON.stringify(response || {}).toLowerCase();
+        const code = String(response?.code ?? response?.error?.code ?? '');
+        return code === '1033' || text.includes('1033') || text.includes('numeraci');
+    }
+
+    private extractMessage(response: QpseSendResponse): string {
+        return (
+            response?.message ||
+            response?.mensaje ||
+            response?.errors?.join(' | ') ||
+            response?.errores?.join(' | ') ||
+            response?.notes?.join(' | ') ||
+            response?.observaciones?.join(' | ') ||
+            'Error desconocido'
+        );
     }
 
     // ─── Document dispatcher ───────────────────────────────────────────────────
@@ -122,24 +172,15 @@ export class SunatGuiaService {
     }
 
     // ─── GRE-R (09): Remitente ─────────────────────────────────────────────────
-    //
-    // Reglas SUNAT UBL 2.1:
-    //  - HandlingCode (tipoTraslado) OBLIGATORIO
-    //  - SpecialInstructions para indicadores de retorno/transbordo
-    //  - AddressTypeCode en DeliveryAddress y DespatchAddress
-    //  - ShipmentStage: TransportModeCode + CarrierParty (público) | DriverPerson (privado)
-    //  - TransportHandlingUnit con SOLO placa en transporte privado
-    //  - NUNCA incluir ApplicableTransportMeans (TUC) — causa error SUNAT 3452
-    //  - DespatchParty NO requerido para GRE-R
 
     private buildGRERemitenteDocument(guia: any): any {
         const isCompra = guia.tipoTraslado === '02';
+        const isEmisorItineranteCp = guia.tipoTraslado === '18';
         const remitenteRuc = String(guia.remitenteRuc || '').trim();
         const destinatarioRuc = guia.destinatarioTipoDoc === '6'
             ? String(guia.destinatarioNumDoc || '').trim()
             : '';
 
-        // Para compras los ubigeos de partida/llegada se invierten conceptualmente
         const partidaListId = isCompra ? (destinatarioRuc || remitenteRuc) : remitenteRuc;
         const llegadaListId = isCompra ? remitenteRuc : (destinatarioRuc || remitenteRuc);
 
@@ -175,30 +216,31 @@ export class SunatGuiaService {
                     _text: Number(guia.pesoTotal),
                 },
                 ...(specialInstructions.length > 0 ? { 'cbc:SpecialInstructions': specialInstructions } : {}),
-                // Orden UBL obligatorio: ShipmentStage → Delivery → TransportHandlingUnit
                 'cac:ShipmentStage': this.buildShipmentStageRemitente(guia),
                 'cac:Delivery': {
                     'cac:DeliveryAddress': {
                         'cbc:ID': { _text: guia.llegadaUbigeo },
-                        'cbc:AddressTypeCode': {
-                            _attributes: { listID: llegadaListId },
-                            _text: this.normalizeEstablishmentCode(guia.llegadaCodigoEstablecimiento),
-                        },
+                        ...(!isEmisorItineranteCp ? {
+                            'cbc:AddressTypeCode': {
+                                _attributes: { listID: llegadaListId },
+                                _text: this.getEstablishmentCode(guia, guia.llegadaCodigoEstablecimiento),
+                            },
+                        } : {}),
                         'cac:AddressLine': { 'cbc:Line': { _text: guia.llegadaDireccion } },
                     },
                     'cac:Despatch': {
                         'cac:DespatchAddress': {
                             'cbc:ID': { _text: guia.partidaUbigeo },
-                            'cbc:AddressTypeCode': {
-                                _attributes: { listID: partidaListId },
-                                _text: this.normalizeEstablishmentCode(guia.partidaCodigoEstablecimiento),
-                            },
+                            ...(!isEmisorItineranteCp ? {
+                                'cbc:AddressTypeCode': {
+                                    _attributes: { listID: partidaListId },
+                                    _text: this.getEstablishmentCode(guia, guia.partidaCodigoEstablecimiento),
+                                },
+                            } : {}),
                             'cac:AddressLine': { 'cbc:Line': { _text: guia.partidaDireccion } },
                         },
-                        // GRE-R no incluye DespatchParty
                     },
                 },
-                // GRE-R transporte privado: placa va AQUÍ. NUNCA ApplicableTransportMeans (error 3452).
                 ...(guia.modoTransporte === '02' && String(guia.vehiculoPlaca || '').trim()
                     ? { 'cac:TransportHandlingUnit': this.buildTransportHandlingUnitRemitente(guia) }
                     : {}),
@@ -208,39 +250,25 @@ export class SunatGuiaService {
     }
 
     // ─── GRE-T (31): Transportista ────────────────────────────────────────────
-    //
-    // Reglas SUNAT UBL 2.1:
-    //  - NO HandlingCode, NO SpecialInstructions
-    //  - NO AddressTypeCode en las direcciones
-    //  - NO TransportModeCode en ShipmentStage
-    //  - CarrierParty OBLIGATORIO en ShipmentStage (con CompanyID/MTC)
-    //  - DriverPerson OBLIGATORIO en ShipmentStage
-    //  - DespatchParty OBLIGATORIO en Despatch (remitente de los bienes)
-    //  - TransportHandlingUnit OBLIGATORIO con placa + ApplicableTransportMeans (TUC)
 
     private buildGRETransportistaDocument(guia: any): any {
         const carrierRuc = String(guia.transportistaRuc || guia.remitenteRuc || '').trim();
         const carrierRazonSocial = String(guia.transportistaRazonSocial || guia.remitenteRazonSocial || '').trim();
-
         const greTRemitenteRuc = String(guia.greTRemitenteNumDoc || guia.destinatarioNumDoc || '').trim();
         const greTRemitenteNombre = String(guia.greTRemitenteRazonSocial || guia.destinatarioRazonSocial || '').trim();
 
         return {
             ...this.buildDocumentHeader(guia, '31'),
             'cac:DespatchSupplierParty': this.buildDespatchSupplierParty(guia),
-            // GRE-T: DeliveryCustomerParty = el mismo transportista
             'cac:DeliveryCustomerParty': this.buildPartyCac('6', carrierRuc, carrierRazonSocial),
             'cac:Shipment': {
                 'cbc:ID': { _text: 'SUNAT_Envio' },
-                // GRE-T: NO HandlingCode, NO SpecialInstructions
                 'cbc:GrossWeightMeasure': {
                     _attributes: { unitCode: this.cleanUnit(guia.unidadPeso) },
                     _text: Number(guia.pesoTotal),
                 },
-                // Orden UBL obligatorio: ShipmentStage → Delivery → TransportHandlingUnit
                 'cac:ShipmentStage': this.buildShipmentStageTransportista(guia),
                 'cac:Delivery': {
-                    // GRE-T: NO AddressTypeCode en las direcciones
                     'cac:DeliveryAddress': {
                         'cbc:ID': { _text: guia.llegadaUbigeo },
                         'cac:AddressLine': { 'cbc:Line': { _text: guia.llegadaDireccion } },
@@ -250,11 +278,9 @@ export class SunatGuiaService {
                             'cbc:ID': { _text: guia.partidaUbigeo },
                             'cac:AddressLine': { 'cbc:Line': { _text: guia.partidaDireccion } },
                         },
-                        // GRE-T: DespatchParty OBLIGATORIO — remitente real de los bienes
                         'cac:DespatchParty': this.buildPartyCac('6', greTRemitenteRuc, greTRemitenteNombre),
                     },
                 },
-                // GRE-T: TransportHandlingUnit OBLIGATORIO con placa + TUC (ApplicableTransportMeans)
                 'cac:TransportHandlingUnit': this.buildTransportHandlingUnitTransportista(guia),
             },
             'cac:DespatchLine': this.buildDespatchLines(guia),
@@ -271,7 +297,6 @@ export class SunatGuiaService {
             },
         };
 
-        // Transporte público: datos del transportista contratado
         if (guia.modoTransporte === '01' && String(guia.transportistaRuc || '').trim()) {
             const ruc = String(guia.transportistaRuc).trim();
             stage['cac:CarrierParty'] = {
@@ -283,15 +308,11 @@ export class SunatGuiaService {
                 },
                 'cac:PartyLegalEntity': {
                     'cbc:RegistrationName': { _text: guia.transportistaRazonSocial || '' },
-                    ...(guia.transportistaMTC
-                        ? { 'cbc:CompanyID': { _text: guia.transportistaMTC } }
-                        : {}),
+                    ...(guia.transportistaMTC ? { 'cbc:CompanyID': { _text: guia.transportistaMTC } } : {}),
                 },
             };
         }
 
-        // Transporte privado: datos del conductor en DriverPerson.
-        // La placa va en TransportHandlingUnit — NO en TransportMeans aquí para GRE-R.
         if (guia.modoTransporte === '02' && String(guia.conductorNumDoc || '').trim()) {
             stage['cac:DriverPerson'] = [this.buildDriverPerson(guia)];
         }
@@ -301,12 +322,10 @@ export class SunatGuiaService {
 
     private buildShipmentStageTransportista(guia: any): any {
         const carrierRuc = String(guia.transportistaRuc || guia.remitenteRuc || '').trim();
-        const stage: any = {
-            // GRE-T: NO TransportModeCode
+        return {
             'cac:TransitPeriod': {
                 'cbc:StartDate': { _text: this.formatDate(guia.fechaInicioTraslado) },
             },
-            // GRE-T: CarrierParty siempre obligatorio con MTC
             'cac:CarrierParty': {
                 'cac:PartyIdentification': {
                     'cbc:ID': {
@@ -318,44 +337,32 @@ export class SunatGuiaService {
                     'cbc:RegistrationName': {
                         _text: guia.transportistaRazonSocial || guia.remitenteRazonSocial || '',
                     },
-                    // MTC obligatorio para GRE-T
-                    ...(guia.transportistaMTC
-                        ? { 'cbc:CompanyID': { _text: guia.transportistaMTC } }
-                        : {}),
+                    ...(guia.transportistaMTC ? { 'cbc:CompanyID': { _text: guia.transportistaMTC } } : {}),
                 },
             },
-            // GRE-T: DriverPerson siempre obligatorio
-            // La placa NO va aquí — va en TransportHandlingUnit
             'cac:DriverPerson': [this.buildDriverPerson(guia)],
         };
-
-        return stage;
     }
 
     // ─── TransportHandlingUnit builders ───────────────────────────────────────
 
-    /** GRE-R (09) transporte privado: solo placa. NUNCA ApplicableTransportMeans (TUC). */
     private buildTransportHandlingUnitRemitente(guia: any): any {
         const placa = String(guia.vehiculoPlaca || '').trim();
         if (!placa) return undefined;
-
         return {
             'cac:TransportEquipment': {
                 'cbc:ID': { _text: placa },
-                // ApplicableTransportMeans EXCLUIDO intencionalmente — causa error SUNAT 3452 en GRE-R
+                // ApplicableTransportMeans excluido — causa error SUNAT 3452 en GRE-R
             },
         };
     }
 
-    /** GRE-T (31): placa + ApplicableTransportMeans (TUC) — ambos obligatorios. */
     private buildTransportHandlingUnitTransportista(guia: any): any {
         const placa = String(guia.vehiculoPlaca || '').trim();
         const tuc = String(guia.vehiculoAutorizacion || '').trim();
-
         return {
             'cac:TransportEquipment': {
                 ...(placa ? { 'cbc:ID': { _text: placa } } : {}),
-                // TUC obligatorio para GRE-T
                 ...(tuc ? {
                     'cac:ApplicableTransportMeans': {
                         'cbc:RegistrationNationalityID': { _text: tuc },
@@ -399,11 +406,6 @@ export class SunatGuiaService {
         };
     }
 
-    /**
-     * Construye un nodo cac:Party con wrapping correcto.
-     * Retorna { 'cac:Party': { ... } } para uso directo en DespatchSupplierParty,
-     * DeliveryCustomerParty, SellerSupplierParty y DespatchParty.
-     */
     private buildPartyCac(tipoDoc: string, numDoc: string, razonSocial: string, direccion?: string): any {
         const party: any = {
             'cac:Party': {
@@ -418,20 +420,17 @@ export class SunatGuiaService {
                 },
             },
         };
-
         if (direccion) {
             party['cac:Party']['cac:PartyLegalEntity']['cac:RegistrationAddress'] = {
                 'cac:AddressLine': { 'cbc:Line': { _text: direccion } },
             };
         }
-
         return party;
     }
 
     private buildDriverPerson(guia: any): any {
         const firstName = String(guia.conductorNombre || '').trim();
         const familyName = String(guia.conductorApellidos || '').trim();
-
         return {
             'cbc:ID': {
                 _attributes: { schemeID: this.getTipoDocumentoSchemeId(guia.conductorTipoDoc || '1') },
@@ -481,8 +480,12 @@ export class SunatGuiaService {
     }
 
     private normalizeEstablishmentCode(value: any): string {
-        const code = String(value || '').trim();
-        return code || '0000';
+        return String(value || '').trim() || '0000';
+    }
+
+    private getEstablishmentCode(guia: any, value: any): string {
+        const code = this.normalizeEstablishmentCode(value);
+        return guia.tipoTraslado === '04' && code === '0000' ? '0700' : code;
     }
 
     private getTipoDocumentoSchemeId(tipoDoc: string): string {
@@ -497,15 +500,5 @@ export class SunatGuiaService {
         const month = String(d.getUTCMonth() + 1).padStart(2, '0');
         const day = String(d.getUTCDate()).padStart(2, '0');
         return `${year}-${month}-${day}`;
-    }
-
-    private extractProviderError(finalResponse: any, status?: string): string {
-        if (finalResponse?.error?.message) return finalResponse.error.message;
-        const firstFault = finalResponse?.faults?.[0];
-        if (firstFault?.desError && firstFault?.numError) return `${firstFault.desError} (Código ${firstFault.numError})`;
-        if (firstFault?.desError) return firstFault.desError;
-        if (firstFault?.numError) return `Código SUNAT: ${firstFault.numError}`;
-        if (status) return `SUNAT devolvió estado: ${status}`;
-        return 'Error desconocido';
     }
 }

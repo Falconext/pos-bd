@@ -109,6 +109,18 @@ export class UpdateEmpresaDto {
   plinQrUrl?: string;
 
   @IsOptional()
+  @IsString()
+  brand?: string;
+
+  @IsOptional()
+  @IsString()
+  usuarioPse?: string;
+
+  @IsOptional()
+  @IsString()
+  contrasenaPse?: string;
+
+  @IsOptional()
   usuario?: UpdateEmpresaUsuarioDto;
 }
 

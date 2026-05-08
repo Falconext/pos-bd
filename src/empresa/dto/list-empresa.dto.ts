@@ -29,4 +29,8 @@ export class ListEmpresaDto {
   @IsString()
   @IsIn(['asc', 'desc'])
   order?: 'asc' | 'desc' = 'desc';
+
+  @IsOptional()
+  @IsString()
+  brand?: string;
 }

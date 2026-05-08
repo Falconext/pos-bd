@@ -80,15 +80,15 @@ export class EnviarSunatService {
     });
     if (!comp) throw new HttpException('Comprobante no encontrado', 404);
 
-    const empresa = await this.prisma.empresa.findUnique({
+    const empresa = await (this.prisma.empresa as any).findUnique({
       where: { id: comp.empresaId },
-      select: { ruc: true },
-    });
-    const qpseUsername = process.env.QPSE_USERNAME;
-    const qpsePassword = process.env.QPSE_PASSWORD;
+      select: { ruc: true, usuarioPse: true, contrasenaPse: true },
+    }) as { ruc: string | null; usuarioPse: string | null; contrasenaPse: string | null } | null;
+    const qpseUsername = empresa?.usuarioPse;
+    const qpsePassword = empresa?.contrasenaPse;
     if (!qpseUsername || !qpsePassword) {
       throw new HttpException(
-        'Credenciales QPSE no configuradas en variables de entorno (QPSE_USERNAME / QPSE_PASSWORD).',
+        'Credenciales QPSE no configuradas. Configure usuarioPse y contrasenaPse en la empresa.',
         400,
       );
     }
@@ -1529,11 +1529,15 @@ export class EnviarSunatService {
 
   async anularComprobanteSunat(documentId: string, empresaId: number, motivo: string = 'ANULACION DE LA OPERACION') {
     try {
-      const qpseUsername = process.env.QPSE_USERNAME;
-      const qpsePassword = process.env.QPSE_PASSWORD;
+      const empresaCreds = await (this.prisma.empresa as any).findUnique({
+        where: { id: empresaId },
+        select: { usuarioPse: true, contrasenaPse: true },
+      }) as { usuarioPse: string | null; contrasenaPse: string | null } | null;
+      const qpseUsername = empresaCreds?.usuarioPse;
+      const qpsePassword = empresaCreds?.contrasenaPse;
       if (!qpseUsername || !qpsePassword) {
         throw new HttpException(
-          'Credenciales QPSE no configuradas en variables de entorno (QPSE_USERNAME / QPSE_PASSWORD).',
+          'Credenciales QPSE no configuradas. Configure usuarioPse y contrasenaPse en la empresa.',
           400,
         );
       }

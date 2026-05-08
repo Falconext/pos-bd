@@ -249,6 +249,16 @@ export class ProductoController {
     return actualizado;
   }
 
+  @Patch(':id/publicar-tienda')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async togglePublicarEnTienda(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+    @Body() body: { publicarEnTienda: boolean },
+  ) {
+    return this.service.togglePublicarEnTienda(id, user.empresaId, body.publicarEnTienda);
+  }
+
   @Patch(':id/estado')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async cambiarEstado(

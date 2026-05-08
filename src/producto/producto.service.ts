@@ -696,6 +696,16 @@ export class ProductoService {
     return this.prisma.producto.update({ where: { id }, data: { estado } });
   }
 
+  async togglePublicarEnTienda(id: number, empresaId: number, publicar: boolean) {
+    const producto = await this.prisma.producto.findFirst({ where: { id, empresaId } });
+    if (!producto) throw new NotFoundException('Producto no encontrado');
+    return this.prisma.producto.update({
+      where: { id },
+      data: { publicarEnTienda: publicar },
+      select: { id: true, descripcion: true, publicarEnTienda: true },
+    });
+  }
+
   async eliminar(id: number, empresaId: number) {
     const producto = await this.prisma.producto.findFirst({ where: { id, empresaId } });
     if (!producto) throw new NotFoundException('Producto no encontrado');
