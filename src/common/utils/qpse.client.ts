@@ -4,7 +4,7 @@ import axios, { AxiosError, AxiosInstance } from 'axios';
 const DEFAULT_QPSE_BASE_URL = 'https://cpe.qpse.pe';
 const DEFAULT_QPSE_PANEL_BASE_URL = 'https://cpanel.qpse.pe';
 const DEFAULT_QPSE_DEMO_BASE_URL = 'https://demo-cpe.qpse.pe';
-const DEFAULT_QPSE_AUTH_BASE_URL = 'https://cpanel.qpse.pe';
+const DEFAULT_QPSE_AUTH_BASE_URL = 'https://cpe.qpse.pe';
 
 export interface QpseSignResponse {
   success?: boolean;
