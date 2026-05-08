@@ -37,7 +37,7 @@ export class AuthService {
 
   private resolveBrandFromOrigin(origin: string | undefined): string | null {
     if (!origin) return null;
-    if (origin.includes('krezka.com')) return 'krezka';
+    if (origin.includes('krezka.com') || origin.includes('krezka.pe')) return 'krezka';
     if (origin.includes('falconext.pe') || origin.includes('falconext.app')) return 'falconext';
     // localhost/dev: sin restricción
     return null;

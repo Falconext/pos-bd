@@ -1078,10 +1078,20 @@ export class EnviarSunatService {
         console.error('Error guardando estado de fallo:', dbErr);
       }
 
-      throw new HttpException(
-        `Error enviando a QPSE: ${err.response?.data?.message || err.message}`,
-        502,
-      );
+      // Errores de RED (SUNAT caída, timeout): el comprobante ya quedó guardado
+      // y el scheduler reintentará. Devolver 200 con estado PENDIENTE para no confundir al usuario.
+      const finalErrorType = this.classifyError(err);
+      if (finalErrorType === 'RED') {
+        return {
+          status: 'PENDIENTE',
+          documentId: comprobanteId,
+          message: 'Comprobante registrado correctamente. SUNAT no está disponible en este momento; la confirmación llegará automáticamente cuando el servicio se restablezca.',
+        };
+      }
+
+      // Errores de DATOS: el usuario debe corregir algo.
+      const rawMsg = err.response?.data?.message || err.message || 'Error al enviar a SUNAT';
+      throw new HttpException(`Error al emitir el comprobante: ${rawMsg}`, 502);
     }
   }
 
