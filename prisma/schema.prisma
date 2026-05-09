@@ -128,6 +128,8 @@ model Empresa {
   brand               String               @default("falconext")
   usuarioPse          String?
   contrasenaPse       String?
+  notas                NotaEmpresa[]
+  logs                 EmpresaLog[]
 
   @@index([providerToken])
   @@index([slugTienda])
@@ -1353,4 +1355,45 @@ model GastoSistema {
 
   @@index([fecha])
   @@index([categoria])
+}
+
+model NotaEmpresa {
+  id          Int      @id @default(autoincrement())
+  empresaId   Int
+  empresa     Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  contenido   String
+  autorNombre String
+  autorEmail  String
+  notificado  Boolean  @default(false)
+  creadoEn    DateTime @default(now())
+
+  @@index([empresaId])
+}
+
+model EmpresaLog {
+  id          Int      @id @default(autoincrement())
+  empresaId   Int
+  empresa     Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  accion      String   // CREADA, ACTIVADA, DESACTIVADA, EDITADA, PLAN_CAMBIADO
+  detalle     String?
+  autorNombre String
+  autorEmail  String
+  creadoEn    DateTime @default(now())
+
+  @@index([empresaId])
+  @@index([creadoEn])
+}
+
+model IngresoSistema {
+  id            Int      @id @default(autoincrement())
+  concepto      String
+  tipo          String   // SUSCRIPCION, ACTIVACION, SOPORTE, PERSONALIZADO, OTROS
+  monto         Decimal
+  fecha         DateTime
+  descripcion   String?
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  @@index([fecha])
+  @@index([tipo])
 }

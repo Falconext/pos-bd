@@ -42,7 +42,7 @@ export class EmpresaService {
     private readonly sedeService: SedeService,
   ) { }
 
-  async crear(data: CreateEmpresaDto, adminSistemaNegocio?: string | null) {
+  async crear(data: CreateEmpresaDto, adminSistemaNegocio?: string | null, adminUserId?: number) {
     const fechaActivacion = parseDDMMYYYY(data.fechaActivacion);
     const tipoEmpresa = data.tipoEmpresa || 'FORMAL';
     const esPrueba = data.esPrueba || false;
@@ -218,6 +218,12 @@ export class EmpresaService {
       codigo: '001',
       esPrincipal: true,
     }, empresa.id);
+
+    // Log creación
+    if (adminUserId) {
+      await this.registrarLog(empresa.id, 'CREADA',
+        `Plan: ${planSeleccionado.nombre} | Admin: ${data.usuario.email}`, adminUserId);
+    }
 
     return empresa;
   }
@@ -448,10 +454,14 @@ export class EmpresaService {
     }
   }
 
-  async cambiarEstado(id: number, estado: 'ACTIVO' | 'INACTIVO') {
+  async cambiarEstado(id: number, estado: 'ACTIVO' | 'INACTIVO', userId?: number) {
     const empresa = await this.prisma.empresa.findUnique({ where: { id } });
     if (!empresa) throw new NotFoundException('Empresa no encontrada');
-    return this.prisma.empresa.update({ where: { id }, data: { estado } });
+    const result = await this.prisma.empresa.update({ where: { id }, data: { estado } });
+    if (userId) {
+      await this.registrarLog(id, estado === 'ACTIVO' ? 'ACTIVADA' : 'DESACTIVADA', null, userId);
+    }
+    return result;
   }
 
   async eliminar(id: number) {
@@ -624,6 +634,7 @@ export class EmpresaService {
       id: empresa.id,
       ruc: empresa.ruc,
       razonSocial: empresa.razonSocial,
+      nombreComercial: empresa.nombreComercial,
       fechaExpiracion: empresa.fechaExpiracion,
       diasRestantes: Math.ceil(
         (empresa.fechaExpiracion.getTime() - new Date().getTime()) /
@@ -631,5 +642,209 @@ export class EmpresaService {
       ),
       plan: empresa.plan,
     }));
+  }
+
+  // ── NOTAS INTERNAS ─────────────────────────────────────────────────────────
+
+  private async resolverAutor(userId: number): Promise<{ nombre: string; email: string }> {
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { id: userId },
+      select: { nombre: true, email: true },
+    });
+    return { nombre: usuario?.nombre ?? 'Admin', email: usuario?.email ?? 'sistema' };
+  }
+
+  async listarNotas(empresaId: number) {
+    return this.prisma.notaEmpresa.findMany({
+      where: { empresaId },
+      orderBy: { creadoEn: 'desc' },
+    });
+  }
+
+  async crearNota(empresaId: number, contenido: string, userId: number, notificar = false) {
+    const empresa = await this.prisma.empresa.findUnique({ where: { id: empresaId } });
+    if (!empresa) throw new NotFoundException('Empresa no encontrada');
+    const autor = await this.resolverAutor(userId);
+    const nota = await this.prisma.notaEmpresa.create({
+      data: { empresaId, contenido, autorNombre: autor.nombre, autorEmail: autor.email, notificado: notificar },
+    });
+    if (notificar) {
+      this.enviarEmailNota(empresa, contenido, autor.nombre).catch(() => {});
+    }
+    return nota;
+  }
+
+  private async enviarEmailNota(empresa: any, contenido: string, autorNombre: string) {
+    const admins = await this.prisma.usuario.findMany({
+      where: { empresaId: empresa.id, rol: 'ADMIN_EMPRESA', estado: 'ACTIVO' },
+      select: { email: true },
+    });
+    const empresaNombre = empresa.nombreComercial || empresa.razonSocial;
+    const appName = empresa.brand === 'krezka' ? 'Krezka' : 'Falconext';
+    for (const admin of admins) {
+      await this.enviarEmailPlantilla(admin.email, {
+        tipo: 'NOTA',
+        empresaNombre,
+        mensajeCustom: contenido,
+        adminNombre: autorNombre,
+        autorNombre,
+        appName,
+      }).catch(() => {});
+    }
+  }
+
+  // ── EMAIL PLANTILLAS ───────────────────────────────────────────────────────
+
+  async enviarEmailTemplate(
+    empresaId: number,
+    tipo: 'BIENVENIDA' | 'AGRADECIMIENTO' | 'RECORDATORIO' | 'PROMOCION',
+    opts: { mensajeCustom?: string; tituloPromo?: string; etiqueta?: string } = {},
+  ) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      include: { plan: { select: { nombre: true } } },
+    });
+    if (!empresa) throw new NotFoundException('Empresa no encontrada');
+
+    const admins = await this.prisma.usuario.findMany({
+      where: { empresaId, rol: 'ADMIN_EMPRESA', estado: 'ACTIVO' },
+      select: { email: true, nombre: true },
+    });
+    if (!admins.length) throw new NotFoundException('La empresa no tiene administradores activos');
+
+    const empresaNombre = empresa.nombreComercial || empresa.razonSocial;
+    const appName = empresa.brand === 'krezka' ? 'Krezka' : 'Falconext';
+    const planNombre = (empresa.plan as any)?.nombre ?? '';
+    const fechaExp = empresa.fechaExpiracion;
+    const fechaExpiracion = fechaExp?.toLocaleDateString('es-PE') ?? '';
+    const diasRestantes = fechaExp
+      ? Math.ceil((fechaExp.getTime() - Date.now()) / 86400000)
+      : 30;
+
+    let enviados = 0;
+    for (const admin of admins) {
+      await this.enviarEmailPlantilla(admin.email, {
+        tipo,
+        empresaNombre,
+        adminNombre: admin.nombre,
+        mensajeCustom: opts.mensajeCustom,
+        tituloPromo: opts.tituloPromo,
+        etiqueta: opts.etiqueta,
+        fechaExpiracion,
+        diasRestantes,
+        planNombre,
+        appName,
+      });
+      enviados++;
+    }
+    return { enviados };
+  }
+
+  private async enviarEmailPlantilla(
+    destinatario: string,
+    opts: {
+      tipo: string;
+      empresaNombre: string;
+      adminNombre: string;
+      mensajeCustom?: string;
+      tituloPromo?: string;
+      etiqueta?: string;
+      fechaExpiracion?: string;
+      diasRestantes?: number;
+      planNombre?: string;
+      autorNombre?: string;
+      appName: string;
+    },
+  ) {
+    const resendKey = process.env.RESEND_API_KEY;
+    if (!resendKey) return;
+
+    const { Resend } = await import('resend');
+    const { render } = await import('@react-email/render');
+    const resend = new Resend(resendKey);
+    const fromEmail = process.env.MAIL_FROM || 'notificaciones@falconext.pe';
+
+    const {
+      tipo, empresaNombre, adminNombre, mensajeCustom, tituloPromo,
+      etiqueta, fechaExpiracion, diasRestantes = 7, planNombre, autorNombre, appName,
+    } = opts;
+
+    let asunto = '';
+    let html = '';
+
+    if (tipo === 'BIENVENIDA') {
+      const { BienvenidaEmail } = await import('./emails/BienvenidaEmail.js');
+      asunto = `¡Bienvenido/a a ${appName}! — ${empresaNombre}`;
+      html = await render((BienvenidaEmail as any)({ empresaNombre, adminNombre, planNombre, appName, mensajeExtra: mensajeCustom }));
+    } else if (tipo === 'AGRADECIMIENTO') {
+      const { AgradecimientoEmail } = await import('./emails/AgradecimientoEmail.js');
+      asunto = `¡Gracias por tu pago puntual! — ${empresaNombre}`;
+      html = await render((AgradecimientoEmail as any)({ empresaNombre, adminNombre, planNombre, fechaExpiracion, appName, mensajeExtra: mensajeCustom }));
+    } else if (tipo === 'RECORDATORIO') {
+      const { RecordatorioEmail } = await import('./emails/RecordatorioEmail.js');
+      asunto = `⏰ Recordatorio: tu suscripción vence en ${diasRestantes} día${diasRestantes !== 1 ? 's' : ''} — ${empresaNombre}`;
+      html = await render((RecordatorioEmail as any)({ empresaNombre, adminNombre, diasRestantes, fechaExpiracion, planNombre, appName, mensajeExtra: mensajeCustom }));
+    } else if (tipo === 'PROMOCION') {
+      const { PromocionEmail } = await import('./emails/PromocionEmail.js');
+      asunto = `🎁 ${tituloPromo || 'Oferta especial'} — ${empresaNombre}`;
+      html = await render((PromocionEmail as any)({ empresaNombre, adminNombre, tituloPromo: tituloPromo || 'Oferta especial', mensajePromo: mensajeCustom || '', appName, etiqueta }));
+    } else {
+      // NOTA ad-hoc
+      const { BienvenidaEmail } = await import('./emails/BienvenidaEmail.js');
+      asunto = `Mensaje de ${appName} — ${empresaNombre}`;
+      // Para notas usamos HTML simple sin React Email
+      html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/></head>
+<body style="margin:0;padding:0;background:#f8fafc;font-family:sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="padding:32px 16px">
+  <tr><td align="center">
+    <table width="560" style="max-width:560px;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.06)">
+      <tr><td style="background:#6366f1;padding:28px 32px;text-align:center">
+        <h1 style="margin:0;color:#fff;font-size:20px;font-weight:700">📩 Mensaje de ${appName}</h1>
+        <p style="margin:6px 0 0;color:rgba(255,255,255,.8);font-size:13px">${empresaNombre}</p>
+      </td></tr>
+      <tr><td style="padding:28px 32px;color:#374151;font-size:15px;line-height:1.7">
+        <p style="padding:16px;background:#f8fafc;border-left:4px solid #6366f1;border-radius:0 10px 10px 0;margin:0">${(mensajeCustom ?? '').replace(/\n/g, '<br/>')}</p>
+        ${autorNombre ? `<p style="font-size:12px;color:#94a3b8;margin-top:16px">Enviado por ${autorNombre}</p>` : ''}
+      </td></tr>
+      <tr><td style="padding:16px 32px;background:#f8fafc;border-top:1px solid #e2e8f0;text-align:center">
+        <p style="margin:0;color:#94a3b8;font-size:12px">${appName}</p>
+      </td></tr>
+    </table>
+  </td></tr>
+</table></body></html>`;
+    }
+
+    const { error } = await resend.emails.send({
+      from: `${appName} <${fromEmail}>`,
+      to: destinatario,
+      subject: asunto,
+      html,
+    });
+    if (error) throw new Error(error.message);
+  }
+
+  async eliminarNota(notaId: number) {
+    const nota = await this.prisma.notaEmpresa.findUnique({ where: { id: notaId } });
+    if (!nota) throw new NotFoundException('Nota no encontrada');
+    return this.prisma.notaEmpresa.delete({ where: { id: notaId } });
+  }
+
+  // ── HISTORIAL / AUDITORÍA ─────────────────────────────────────────────────
+
+  async listarLog(empresaId: number) {
+    return this.prisma.empresaLog.findMany({
+      where: { empresaId },
+      orderBy: { creadoEn: 'desc' },
+      take: 100,
+    });
+  }
+
+  async registrarLog(empresaId: number, accion: string, detalle: string | null, userId: number) {
+    try {
+      const autor = await this.resolverAutor(userId);
+      await this.prisma.empresaLog.create({
+        data: { empresaId, accion, detalle, autorNombre: autor.nombre, autorEmail: autor.email },
+      });
+    } catch { /* nunca debe romper el flujo principal */ }
   }
 }

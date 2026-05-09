@@ -253,4 +253,64 @@ export class SistemaFinanzasService {
         await this.prisma.gastoSistema.delete({ where: { id } });
         return { ok: true };
     }
+
+    // ── INGRESOS CRUD ──────────────────────────────────────────────────────────
+
+    async listarIngresos(params: { desde?: string; hasta?: string; tipo?: string }) {
+        const where: any = {};
+        if (params.desde || params.hasta) {
+            where.fecha = {};
+            if (params.desde) where.fecha.gte = new Date(params.desde);
+            if (params.hasta) where.fecha.lte = new Date(params.hasta + 'T23:59:59');
+        }
+        if (params.tipo) where.tipo = params.tipo;
+
+        const [ingresos, total] = await Promise.all([
+            this.prisma.ingresoSistema.findMany({ where, orderBy: { fecha: 'desc' } }),
+            this.prisma.ingresoSistema.aggregate({ where, _sum: { monto: true }, _count: true }),
+        ]);
+
+        return {
+            ingresos: ingresos.map((i) => ({ ...i, monto: Number(i.monto) })),
+            totalMonto: Number(total._sum.monto ?? 0),
+            totalItems: total._count,
+        };
+    }
+
+    async crearIngreso(dto: {
+        concepto: string; tipo: string; monto: number;
+        fecha: string; descripcion?: string;
+    }) {
+        const ingreso = await this.prisma.ingresoSistema.create({
+            data: {
+                concepto: dto.concepto,
+                tipo: dto.tipo,
+                monto: dto.monto,
+                fecha: new Date(dto.fecha),
+                descripcion: dto.descripcion,
+            },
+        });
+        return { ...ingreso, monto: Number(ingreso.monto) };
+    }
+
+    async actualizarIngreso(id: number, dto: Partial<{
+        concepto: string; tipo: string; monto: number;
+        fecha: string; descripcion: string;
+    }>) {
+        const existe = await this.prisma.ingresoSistema.findUnique({ where: { id } });
+        if (!existe) throw new NotFoundException('Ingreso no encontrado');
+
+        const data: any = { ...dto };
+        if (dto.fecha) data.fecha = new Date(dto.fecha);
+
+        const ingreso = await this.prisma.ingresoSistema.update({ where: { id }, data });
+        return { ...ingreso, monto: Number(ingreso.monto) };
+    }
+
+    async eliminarIngreso(id: number) {
+        const existe = await this.prisma.ingresoSistema.findUnique({ where: { id } });
+        if (!existe) throw new NotFoundException('Ingreso no encontrado');
+        await this.prisma.ingresoSistema.delete({ where: { id } });
+        return { ok: true };
+    }
 }

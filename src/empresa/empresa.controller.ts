@@ -35,7 +35,7 @@ export class EmpresaController {
     @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const nueva = await this.empresaService.crear(dto, user.sistemaNegocio);
+    const nueva = await this.empresaService.crear(dto, user.sistemaNegocio, user.id);
     res.locals.message = 'Empresa creada exitosamente';
     return nueva;
   }
@@ -110,11 +110,72 @@ export class EmpresaController {
   async cambiarEstado(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { estado: 'ACTIVO' | 'INACTIVO' },
+    @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.empresaService.cambiarEstado(id, body.estado);
+    const result = await this.empresaService.cambiarEstado(id, body.estado, user.id);
     res.locals.message = `Empresa ${body.estado === 'ACTIVO' ? 'activada' : 'desactivada'} correctamente`;
     return result;
+  }
+
+  // ── Notas internas ──────────────────────────────────────────────────────────
+
+  @Get(':id/notas')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  listarNotas(@Param('id', ParseIntPipe) id: number) {
+    return this.empresaService.listarNotas(id);
+  }
+
+  @Post(':id/notas')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  crearNota(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { contenido: string; notificar?: boolean },
+    @User() user: any,
+  ) {
+    return this.empresaService.crearNota(id, body.contenido, user.id, body.notificar ?? false);
+  }
+
+  @Delete(':id/notas/:notaId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  eliminarNota(@Param('notaId', ParseIntPipe) notaId: number) {
+    return this.empresaService.eliminarNota(notaId);
+  }
+
+  // ── Email Plantillas ───────────────────────────────────────────────────────
+
+  @Post(':id/enviar-email')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  async enviarEmailTemplate(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: {
+      tipo: 'BIENVENIDA' | 'AGRADECIMIENTO' | 'RECORDATORIO' | 'PROMOCION';
+      mensajeCustom?: string;
+      tituloPromo?: string;
+      etiqueta?: string;
+    },
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.empresaService.enviarEmailTemplate(id, body.tipo, {
+      mensajeCustom: body.mensajeCustom,
+      tituloPromo: body.tituloPromo,
+      etiqueta: body.etiqueta,
+    });
+    res.locals.message = `Email enviado a ${result.enviados} administrador(es)`;
+    return result;
+  }
+
+  // ── Historial / Auditoría ──────────────────────────────────────────────────
+
+  @Get(':id/log')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  listarLog(@Param('id', ParseIntPipe) id: number) {
+    return this.empresaService.listarLog(id);
   }
 
   @Delete(':id')

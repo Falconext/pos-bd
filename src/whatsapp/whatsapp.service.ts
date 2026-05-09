@@ -87,6 +87,28 @@ export class WhatsAppService {
   }
 
   /**
+   * Envía un mensaje de texto libre (requiere ventana activa de 24h o template aprobado)
+   */
+  async enviarTexto(numero: string, mensaje: string): Promise<{ success: boolean; error?: string }> {
+    const { token, phoneId } = this.getCredentials();
+    if (!token || !phoneId) return { success: false, error: 'WhatsApp no configurado' };
+
+    const to = this.formatearNumero(numero);
+    try {
+      await axios.post(
+        `${this.apiUrl}/${phoneId}/messages`,
+        { messaging_product: 'whatsapp', recipient_type: 'individual', to, type: 'text', text: { body: mensaje } },
+        { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } },
+      );
+      return { success: true };
+    } catch (error) {
+      const msg = error.response?.data?.error?.message || error.message;
+      this.logger.warn(`WhatsApp texto fallido a ${to}: ${msg}`);
+      return { success: false, error: msg };
+    }
+  }
+
+  /**
    * Envía comprobante por WhatsApp usando Meta Cloud API
    */
   async enviarComprobante(

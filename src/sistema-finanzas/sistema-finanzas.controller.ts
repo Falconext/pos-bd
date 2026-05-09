@@ -53,4 +53,34 @@ export class SistemaFinanzasController {
     eliminarGasto(@Param('id', ParseIntPipe) id: number) {
         return this.service.eliminarGasto(id);
     }
+
+    @Get('ingresos')
+    listarIngresos(
+        @Query('desde') desde?: string,
+        @Query('hasta') hasta?: string,
+        @Query('tipo') tipo?: string,
+    ) {
+        return this.service.listarIngresos({ desde, hasta, tipo });
+    }
+
+    @Post('ingresos')
+    crearIngreso(@Body() body: {
+        concepto: string; tipo: string; monto: number;
+        fecha: string; descripcion?: string;
+    }) {
+        return this.service.crearIngreso(body);
+    }
+
+    @Patch('ingresos/:id')
+    actualizarIngreso(
+        @Param('id', ParseIntPipe) id: number,
+        @Body() body: any,
+    ) {
+        return this.service.actualizarIngreso(id, body);
+    }
+
+    @Delete('ingresos/:id')
+    eliminarIngreso(@Param('id', ParseIntPipe) id: number) {
+        return this.service.eliminarIngreso(id);
+    }
 }
