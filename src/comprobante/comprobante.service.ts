@@ -2112,13 +2112,34 @@ export class ComprobanteService {
       return `data:${t.startsWith('/9j/') ? 'image/jpeg' : 'image/png'};base64,${t}`;
     };
 
-    const productos = full.detalles.map((d: any) => ({
-      cantidad: d.cantidad,
-      unidadMedida: d.unidad || 'NIU',
+    const productos = full.detalles.map((d: any, i: number) => ({
+      index: i + 1,
+      cantidad: Number(d.cantidad || 0).toFixed(3),
+      unidadMedida: (d.unidad || 'NIU').toUpperCase(),
       descripcion: (d.descripcion || '').toUpperCase(),
       precioUnitario: Number(d.mtoPrecioUnitario || 0).toFixed(2),
       total: Number((d.mtoPrecioUnitario || 0) * d.cantidad).toFixed(2),
+      lotes: d.lotes?.map((l: any) => ({
+        lote: l.lote,
+        fechaVencimiento: l.fechaVencimiento
+          ? new Date(l.fechaVencimiento).toLocaleDateString('es-PE')
+          : '',
+      })) || undefined,
     }));
+
+    const mtoImpVenta = Number(full.mtoImpVenta || 0);
+    const isDocumentoFiscal = ['01', '03', '07', '08'].includes(full.tipoDoc);
+    const descuento = Number((full as any).mtoDescuentoGlobal || 0).toFixed(2);
+
+    // Retención
+    const obs = (full.observaciones || '').toUpperCase();
+    const hasRetentionText = obs.includes('RETENCIÓN') && obs.includes('3%');
+    const retencionMonto = hasRetentionText ? Number((mtoImpVenta * 0.03).toFixed(2)) : 0;
+    const shouldShowRetention = hasRetentionText && retencionMonto > 0;
+
+    const ahora = new Date();
+    const fechaImpresion = ahora.toLocaleDateString('es-PE') + ' ' +
+      ahora.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
 
     const pdfData: any = {
       nombreComercial: (full.empresa as any).nombreComercial
@@ -2127,7 +2148,7 @@ export class ComprobanteService {
       razonSocial: full.empresa.razonSocial.toUpperCase(),
       ruc: full.empresa.ruc,
       direccion: (full.empresa.direccion || '').toUpperCase(),
-      rubro: full.empresa.rubro?.nombre?.toUpperCase() || undefined,
+      rubro: full.empresa.rubro?.nombre?.toUpperCase() || '',
       celular: '',
       email: '',
       logo: buildLogoDataUrl((full.empresa as any).logo),
@@ -2140,16 +2161,22 @@ export class ComprobanteService {
       clienteTipoDoc: full.cliente?.tipoDocumento?.codigo === '6' ? 'RUC' : 'DNI',
       clienteNumDoc: full.cliente?.nroDoc || '',
       clienteDireccion: (full.cliente?.direccion || '-').toUpperCase(),
+      clienteEmail: (full.cliente as any)?.email || undefined,
+      clienteTelefono: (full.cliente as any)?.telefono || undefined,
       productos,
+      isDocumentoFiscal,
       mtoOperGravadas: Number(full.mtoOperGravadas || 0).toFixed(2),
       mtoIGV: Number(full.mtoIGV || 0).toFixed(2),
-      mtoOperInafectas: full.mtoOperInafectas && full.mtoOperInafectas > 0
-        ? Number(full.mtoOperInafectas).toFixed(2) : undefined,
-      mtoImpVenta: Number(full.mtoImpVenta || 0).toFixed(2),
-      totalEnLetras: numeroALetras(Number(full.mtoImpVenta || 0)).toUpperCase(),
+      mtoOperInafectas: Number((full as any).mtoOperInafectas || 0).toFixed(2),
+      mtoImpVenta: mtoImpVenta.toFixed(2),
+      descuento,
+      totalEnLetras: numeroALetras(mtoImpVenta).toUpperCase(),
       formaPago,
       medioPago: (full.medioPago || 'EFECTIVO').toUpperCase(),
       observaciones: full.observaciones ? full.observaciones.toUpperCase() : undefined,
+      shouldShowRetention,
+      retencionMonto: retencionMonto.toFixed(2),
+      importeNeto: (mtoImpVenta - retencionMonto).toFixed(2),
       qrCode: undefined,
       tipoDetraccion: full.tipoDetraccion
         ? `${full.tipoDetraccion.codigo} - ${full.tipoDetraccion.descripcion} (${full.tipoDetraccion.porcentaje}%)`
@@ -2163,6 +2190,8 @@ export class ComprobanteService {
       yapeQrUrl: buildLogoDataUrl((full.empresa as any).yapeQrUrl),
       plinNumero: (full.empresa as any).plinNumero || undefined,
       plinQrUrl: buildLogoDataUrl((full.empresa as any).plinQrUrl),
+      usuario: 'ADMIN',
+      fechaImpresion,
     };
 
     let buffer: Buffer;

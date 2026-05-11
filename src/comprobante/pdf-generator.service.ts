@@ -38,6 +38,7 @@ export class PdfGeneratorService {
     Handlebars.registerHelper('includes', (str: string, substr: string) => {
       return str && substr && str.toUpperCase().includes(substr.toUpperCase());
     });
+    Handlebars.registerHelper('inc', (value: number) => value + 1);
 
     const templateSource = fs.readFileSync(foundPath, 'utf-8');
     this.template = Handlebars.compile(templateSource);
