@@ -105,6 +105,7 @@ export class ProductoService {
       codigo = await this.generarCodigoProducto(empresaId, 'PR');
     }
 
+    // 1. Validar unicidad de SKU (codigo)
     const existe = await this.prisma.producto.findFirst({
       where: { codigo, empresaId },
     });
@@ -112,6 +113,16 @@ export class ProductoService {
     // Validar si existe y no está eliminado
     if (existe && existe.estado !== 'PLACEHOLDER') {
       throw new ForbiddenException('Ya existe un producto con ese código');
+    }
+
+    // 2. Validar unicidad de Código de Barras (si se proporciona)
+    if (codigoBarras) {
+      const existeBarras = await this.prisma.producto.findFirst({
+        where: { empresaId, codigoBarras, estado: { not: 'PLACEHOLDER' as any } },
+      });
+      if (existeBarras) {
+        throw new ForbiddenException(`El código de barras "${codigoBarras}" ya está asignado a otro producto: ${existeBarras.descripcion}`);
+      }
     }
 
     const unidad = await this.prisma.unidadMedida.findUnique({
@@ -402,7 +413,11 @@ export class ProductoService {
 
   async getByBarcode(empresaId: number, codigoBarras: string) {
     const producto = await this.prisma.producto.findFirst({
-      where: { empresaId, codigoBarras },
+      where: { 
+        empresaId, 
+        codigoBarras, 
+        estado: { not: 'PLACEHOLDER' as any } 
+      },
       select: {
         id: true,
         codigo: true,
@@ -412,6 +427,8 @@ export class ProductoService {
         stock: true,
         codigoBarras: true,
         imagenUrl: true,
+        tipoAfectacionIGV: true,
+        igvPorcentaje: true,
         preciosMayorista: true,
         unidadMedida: { select: { id: true, codigo: true, nombre: true } },
         stocks: { select: { sedeId: true, stock: true } },
@@ -463,6 +480,21 @@ export class ProductoService {
       where: { id: data.id, empresaId: data.empresaId },
     });
     if (!producto) throw new NotFoundException('Producto no encontrado');
+
+    // Validar unicidad de Código de Barras (si cambió)
+    if (data.codigoBarras && data.codigoBarras !== producto.codigoBarras) {
+      const existeBarras = await this.prisma.producto.findFirst({
+        where: { 
+          empresaId: data.empresaId, 
+          codigoBarras: data.codigoBarras,
+          id: { not: data.id },
+          estado: { not: 'PLACEHOLDER' as any }
+        },
+      });
+      if (existeBarras) {
+        throw new ForbiddenException(`El código de barras "${data.codigoBarras}" ya está asignado a otro producto: ${existeBarras.descripcion}`);
+      }
+    }
 
     // Auto-calcular valorUnitario desde precioUnitario si se proporciona
     if (data.precioUnitario !== undefined) {

@@ -262,6 +262,7 @@ model Producto {
   @@unique([empresaId, codigo])
   @@index([empresaId, publicarEnTienda])
   @@index([marcaId])
+  @@index([empresaId, codigoBarras])
 }
 
 model TipoDocumento {
