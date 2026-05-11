@@ -82,10 +82,11 @@ export class EnviarSunatService {
 
     const empresa = await (this.prisma.empresa as any).findUnique({
       where: { id: comp.empresaId },
-      select: { ruc: true, usuarioPse: true, contrasenaPse: true },
-    }) as { ruc: string | null; usuarioPse: string | null; contrasenaPse: string | null } | null;
+      select: { ruc: true, usuarioPse: true, contrasenaPse: true, usaDemo: true },
+    }) as { ruc: string | null; usuarioPse: string | null; contrasenaPse: string | null; usaDemo: boolean } | null;
     const qpseUsername = empresa?.usuarioPse;
     const qpsePassword = empresa?.contrasenaPse;
+    const usaDemo = empresa?.usaDemo ?? false;
     if (!qpseUsername || !qpsePassword) {
       throw new HttpException(
         'Credenciales QPSE no configuradas. Configure usuarioPse y contrasenaPse en la empresa.',
@@ -693,6 +694,7 @@ export class EnviarSunatService {
       const qpseAccess = await this.qpseClient.obtenerTokenAcceso({
         username: qpseUsername,
         password: qpsePassword,
+        usaDemo,
       });
       const accessToken = qpseAccess.token_acceso;
       if (!accessToken) {
@@ -703,6 +705,7 @@ export class EnviarSunatService {
         accessToken,
         xmlFilename: xmlArtifacts.xmlFilename,
         xmlContentBase64: xmlArtifacts.xmlContentBase64,
+        usaDemo,
       });
 
       if (!signResponse.xml) {
@@ -716,6 +719,7 @@ export class EnviarSunatService {
         xmlFilename: xmlArtifacts.xmlFilename,
         externalId: signResponse.external_id,
         xmlSignedBase64: signedXmlBase64,
+        usaDemo,
       });
 
       if (this.isSunatNumeracionRepetida(initialResponse)) {
@@ -741,6 +745,7 @@ export class EnviarSunatService {
           accessToken,
           xmlFilename: xmlArtifacts.xmlFilename,
           xmlContentBase64: xmlArtifacts.xmlContentBase64,
+          usaDemo,
         });
 
         if (!signResponse.xml) {
@@ -754,6 +759,7 @@ export class EnviarSunatService {
           xmlFilename: xmlArtifacts.xmlFilename,
           externalId: signResponse.external_id,
           xmlSignedBase64: signedXmlBase64,
+          usaDemo,
         });
       }
 
@@ -780,7 +786,7 @@ export class EnviarSunatService {
         while (status === 'PENDIENTE' && retries < this.maxRetries) {
           await new Promise((r) => setTimeout(r, this.retryInterval));
 
-          finalResponse = await this.qpseClient.consultarTicket(qpseTicket, accessToken);
+          finalResponse = await this.qpseClient.consultarTicket(qpseTicket, accessToken, usaDemo);
           status = this.normalizeQpseStatus(finalResponse);
           retries++;
 
@@ -1541,10 +1547,11 @@ export class EnviarSunatService {
     try {
       const empresaCreds = await (this.prisma.empresa as any).findUnique({
         where: { id: empresaId },
-        select: { usuarioPse: true, contrasenaPse: true },
-      }) as { usuarioPse: string | null; contrasenaPse: string | null } | null;
+        select: { usuarioPse: true, contrasenaPse: true, usaDemo: true },
+      }) as { usuarioPse: string | null; contrasenaPse: string | null; usaDemo: boolean } | null;
       const qpseUsername = empresaCreds?.usuarioPse;
       const qpsePassword = empresaCreds?.contrasenaPse;
+      const usaDemo = empresaCreds?.usaDemo ?? false;
       if (!qpseUsername || !qpsePassword) {
         throw new HttpException(
           'Credenciales QPSE no configuradas. Configure usuarioPse y contrasenaPse en la empresa.',
@@ -1561,6 +1568,7 @@ export class EnviarSunatService {
       const qpseAccess = await this.qpseClient.obtenerTokenAcceso({
         username: qpseUsername,
         password: qpsePassword,
+        usaDemo,
       });
 
       console.log(`🚀 Enviando anulación a QPSE para el documento: ${externalId}`);
@@ -1569,6 +1577,7 @@ export class EnviarSunatService {
         accessToken: qpseAccess.token_acceso!,
         externalId,
         motivo: motivo.substring(0, 100),
+        usaDemo,
       });
 
       console.log('✅ Documento anulado en QPSE:', response);

@@ -150,6 +150,7 @@ export class EmpresaService {
           : (data.brand || 'falconext'),
         usuarioPse: data.usuarioPse || null,
         contrasenaPse: data.contrasenaPse || null,
+        usaDemo: data.usaDemo ?? false,
         usuarios: {
           create: {
             nombre: data.usuario.nombre,
@@ -400,6 +401,7 @@ export class EmpresaService {
       if (dto.brand !== undefined) updateData.brand = dto.brand;
       if (dto.usuarioPse !== undefined) updateData.usuarioPse = dto.usuarioPse;
       if (dto.contrasenaPse !== undefined) updateData.contrasenaPse = dto.contrasenaPse;
+      if (dto.usaDemo !== undefined) updateData.usaDemo = dto.usaDemo;
 
       // Actualizar datos de empresa
       const empresaActualizada = await this.prisma.empresa.update({

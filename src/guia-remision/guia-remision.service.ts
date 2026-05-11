@@ -374,8 +374,9 @@ export class GuiaRemisionService {
         // Obtener credenciales QPSE de la empresa
         const empresa = await (this.prisma.empresa as any).findUnique({
             where: { id: empresaId },
-            select: { usuarioPse: true, contrasenaPse: true },
-        }) as { usuarioPse: string | null; contrasenaPse: string | null } | null;
+            select: { usuarioPse: true, contrasenaPse: true, usaDemo: true },
+        }) as { usuarioPse: string | null; contrasenaPse: string | null; usaDemo: boolean } | null;
+        const usaDemo = empresa?.usaDemo ?? false;
 
         if (!empresa?.usuarioPse || !empresa?.contrasenaPse) {
             throw new BadRequestException(
@@ -397,6 +398,7 @@ export class GuiaRemisionService {
                 guiaParaEnviar,
                 empresa.usuarioPse,
                 empresa.contrasenaPse,
+                usaDemo,
             );
 
             // Auto-avance de correlativo cuando SUNAT reporta numeración repetida
@@ -429,6 +431,7 @@ export class GuiaRemisionService {
                     guiaParaEnviar,
                     empresa.usuarioPse,
                     empresa.contrasenaPse,
+                    usaDemo,
                 );
             }
 

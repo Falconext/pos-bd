@@ -6,6 +6,7 @@ const DEFAULT_QPSE_PANEL_BASE_URL = 'https://cpanel.qpse.pe';
 const DEFAULT_QPSE_DEMO_BASE_URL = 'https://demo-cpe.qpse.pe';
 const DEFAULT_QPSE_AUTH_BASE_URL = 'https://cpe.qpse.pe';
 
+
 export interface QpseSignResponse {
   success?: boolean;
   external_id?: string;
@@ -70,6 +71,7 @@ export class QpseClient {
   private readonly integrationToken = process.env.QPSE_ACCESS_TOKEN;
   private readonly client: AxiosInstance;
   private readonly panelClient: AxiosInstance;
+  private readonly demoClient: AxiosInstance;
 
   constructor() {
     this.client = axios.create({
@@ -89,15 +91,33 @@ export class QpseClient {
       },
       timeout: 30000,
     });
+
+    this.demoClient = axios.create({
+      baseURL: this.demoBaseUrl,
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      timeout: 30000,
+    });
+  }
+
+  private getClient(usaDemo?: boolean): AxiosInstance {
+    return usaDemo ? this.demoClient : this.client;
+  }
+
+  private getAuthBaseUrlForDemo(usaDemo?: boolean): string {
+    return usaDemo ? this.demoBaseUrl : this.authBaseUrl;
   }
 
   async obtenerTokenAcceso(input: {
     username: string;
     password: string;
+    usaDemo?: boolean;
   }): Promise<QpseAccessTokenResponse> {
     const username = input.username.trim();
     const password = input.password.trim();
-    const url = `${this.authBaseUrl}/api/auth/cpe/token`;
+    const url = `${this.getAuthBaseUrlForDemo(input.usaDemo)}/api/auth/cpe/token`;
 
     try {
       console.log(`[QPSE] Intentando token_acceso en: ${url}`);
@@ -139,9 +159,10 @@ export class QpseClient {
     accessToken: string;
     xmlFilename: string;
     xmlContentBase64: string;
+    usaDemo?: boolean;
   }): Promise<QpseSignResponse> {
     try {
-      const { data } = await this.client.post<QpseSignResponse>(
+      const { data } = await this.getClient(input.usaDemo).post<QpseSignResponse>(
         '/api/cpe/generar',
         {
           xml_filename: input.xmlFilename,
@@ -162,9 +183,10 @@ export class QpseClient {
     xmlFilename: string;
     externalId?: string;
     xmlSignedBase64?: string;
+    usaDemo?: boolean;
   }): Promise<QpseSendResponse> {
     try {
-      const { data } = await this.client.post<QpseSendResponse>(
+      const { data } = await this.getClient(input.usaDemo).post<QpseSendResponse>(
         '/api/cpe/enviar',
         {
           xml_filename: input.xmlFilename,
@@ -185,9 +207,10 @@ export class QpseClient {
     accessToken: string;
     externalId: string;
     motivo: string;
+    usaDemo?: boolean;
   }): Promise<QpseCancelResponse> {
     try {
-      const { data } = await this.client.post<QpseCancelResponse>(
+      const { data } = await this.getClient(input.usaDemo).post<QpseCancelResponse>(
         '/api/cpe/anular',
         {
           external_id: input.externalId,
@@ -204,10 +227,10 @@ export class QpseClient {
     }
   }
 
-  async consultarTicket(identifier: string, accessToken: string): Promise<QpseSendResponse> {
+  async consultarTicket(identifier: string, accessToken: string, usaDemo?: boolean): Promise<QpseSendResponse> {
     try {
       const safeIdentifier = encodeURIComponent(identifier);
-      const { data } = await this.client.get<QpseSendResponse>(
+      const { data } = await this.getClient(usaDemo).get<QpseSendResponse>(
         `/api/cpe/consultar/${safeIdentifier}`,
         {
           headers: this.buildAccessHeaders(accessToken),

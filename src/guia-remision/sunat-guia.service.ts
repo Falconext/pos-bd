@@ -10,7 +10,7 @@ export class SunatGuiaService {
 
     constructor(private readonly qpseClient: QpseClient) {}
 
-    async enviarGuia(guia: any, usuarioPse: string, contrasenaPse: string) {
+    async enviarGuia(guia: any, usuarioPse: string, contrasenaPse: string, usaDemo?: boolean) {
         const tipoDocCodigo = guia.tipoGuia === 'TRANSPORTISTA' ? '31' : '09';
         const rucEmisor = String(guia.remitenteRuc || '').trim();
         const paddedCorrelativo = String(guia.correlativo).padStart(8, '0');
@@ -27,6 +27,7 @@ export class SunatGuiaService {
         const qpseAccess = await this.qpseClient.obtenerTokenAcceso({
             username: usuarioPse,
             password: contrasenaPse,
+            usaDemo,
         });
         const accessToken = qpseAccess.token_acceso;
         if (!accessToken) {
@@ -38,6 +39,7 @@ export class SunatGuiaService {
             accessToken,
             xmlFilename,
             xmlContentBase64,
+            usaDemo,
         });
         if (!signResponse.xml) {
             throw new HttpException('QPSE no devolvió el XML firmado', 502);
@@ -52,6 +54,7 @@ export class SunatGuiaService {
             xmlFilename,
             externalId: signResponse.external_id,
             xmlSignedBase64: signedXmlBase64,
+            usaDemo,
         });
 
         // 4. Manejar numeración repetida — retornar flag para que el caller avance correlativo
@@ -80,10 +83,10 @@ export class SunatGuiaService {
             while (status === 'PENDIENTE' && retries < this.maxRetries) {
                 await new Promise(r => setTimeout(r, this.retryInterval));
                 try {
-                    finalResponse = await this.qpseClient.consultarTicket(xmlFilename, accessToken);
+                    finalResponse = await this.qpseClient.consultarTicket(xmlFilename, accessToken, usaDemo);
                 } catch (error) {
                     this.logger.warn(`[QPSE] Consulta por archivo falló. Reintentando por ticket ${qpseTicket}`);
-                    finalResponse = await this.qpseClient.consultarTicket(qpseTicket, accessToken);
+                    finalResponse = await this.qpseClient.consultarTicket(qpseTicket, accessToken, usaDemo);
                 }
                 status = this.normalizeStatus(finalResponse);
                 retries++;

@@ -116,6 +116,10 @@ export class CreateEmpresaDto {
   @IsString()
   contrasenaPse?: string;
 
+  @IsOptional()
+  @IsBoolean()
+  usaDemo?: boolean;
+
   @ValidateNested()
   @Type(() => UsuarioDto)
   usuario: UsuarioDto;

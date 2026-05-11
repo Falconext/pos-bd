@@ -121,6 +121,10 @@ export class UpdateEmpresaDto {
   contrasenaPse?: string;
 
   @IsOptional()
+  @IsBoolean()
+  usaDemo?: boolean;
+
+  @IsOptional()
   usuario?: UpdateEmpresaUsuarioDto;
 }
 

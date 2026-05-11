@@ -9,6 +9,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
 
 interface LoginPayload {
   email: string;
@@ -439,5 +440,78 @@ export class AuthService {
     }
 
     return usuario;
+  }
+
+  async forgotPassword(email: string): Promise<void> {
+    const user = await this.prisma.usuario.findUnique({ where: { email } } as any);
+    // Always return silently to avoid user enumeration
+    if (!user) return;
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const expires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+    await (this.prisma.usuario as any).update({
+      where: { id: user.id },
+      data: {
+        passwordResetToken: token,
+        passwordResetExpires: expires,
+      },
+    });
+
+    const resendKey = this.config.get<string>('RESEND_API_KEY') || process.env.RESEND_API_KEY;
+    if (!resendKey) return;
+
+    const frontendUrl = this.config.get<string>('FRONTEND_URL') || process.env.FRONTEND_URL || 'http://localhost:5173';
+    const resetUrl = `${frontendUrl}/reset-password?token=${token}`;
+    const appName = this.config.get<string>('APP_NAME') || process.env.APP_NAME || 'Falconext';
+    const fromEmail = this.config.get<string>('RESEND_FROM_EMAIL') || process.env.RESEND_FROM_EMAIL || 'noreply@falconext.pe';
+
+    const { Resend } = await import('resend');
+    const { render } = await import('@react-email/components');
+    const { RecuperacionPasswordEmail } = await import('./emails/RecuperacionPasswordEmail');
+
+    const html = await render(
+      RecuperacionPasswordEmail({
+        nombre: user.nombre,
+        resetUrl,
+        appName,
+        expiresInMinutes: 15,
+      }),
+    );
+
+    const resend = new Resend(resendKey);
+    await resend.emails.send({
+      from: `${appName} <${fromEmail}>`,
+      to: [email],
+      subject: `🔐 Recupera tu contraseña — ${appName}`,
+      html,
+    });
+  }
+
+  async resetPassword(token: string, newPassword: string): Promise<void> {
+    const user = await (this.prisma.usuario as any).findFirst({
+      where: {
+        passwordResetToken: token,
+        passwordResetExpires: { gt: new Date() },
+      },
+    });
+
+    if (!user) {
+      throw new BadRequestException('El enlace de recuperación es inválido o ha expirado.');
+    }
+
+    const hashed = await bcrypt.hash(newPassword, 10);
+
+    await (this.prisma.usuario as any).update({
+      where: { id: user.id },
+      data: {
+        password: hashed,
+        passwordResetToken: null,
+        passwordResetExpires: null,
+      },
+    });
+
+    // Invalidate all refresh tokens
+    await this.prisma.refreshToken.deleteMany({ where: { usuarioId: user.id } });
   }
 }
