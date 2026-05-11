@@ -476,7 +476,7 @@ export class AuthService {
         resetUrl,
         appName,
         expiresInMinutes: 15,
-      }),
+      }) as any,
     );
 
     const resend = new Resend(resendKey);
