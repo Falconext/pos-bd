@@ -86,10 +86,11 @@ async function seedModulos() {
   console.log('🌱 Seeding módulos del sistema...');
   
   for (const modulo of modulosIniciales) {
+    const moduloData = { ...modulo, producto: 'facturacion' as const };
     await prisma.modulo.upsert({
-      where: { codigo: modulo.codigo },
-      update: modulo,
-      create: modulo,
+      where: { codigo_producto: { codigo: modulo.codigo, producto: 'facturacion' } },
+      update: moduloData,
+      create: moduloData,
     });
     console.log(`✅ Módulo ${modulo.nombre} creado/actualizado`);
   }
@@ -102,7 +103,9 @@ async function seedModulos() {
   
   // Asignar todos los módulos a cada plan existente (migración)
   for (const plan of planes) {
-    for (const modulo of modulos) {
+    const productoPlan = (plan as any).producto || 'facturacion';
+    const modulosDelProducto = modulos.filter((m: any) => ((m as any).producto || 'facturacion') === productoPlan);
+    for (const modulo of modulosDelProducto) {
       const exists = await prisma.planModulo.findUnique({
         where: {
           planId_moduloId: {
@@ -154,7 +157,7 @@ async function seedModulos() {
   ];
 
   for (const sub of subModulosData) {
-    const modulo = await prisma.modulo.findUnique({ where: { codigo: sub.moduloCodigo } });
+    const modulo = await prisma.modulo.findFirst({ where: { codigo: sub.moduloCodigo, producto: 'facturacion' } });
     if (!modulo) {
       console.log(`⚠️  Módulo '${sub.moduloCodigo}' no encontrado, saltando submódulo '${sub.codigo}'`);
       continue;

@@ -492,7 +492,7 @@ export class SunatGuiaService {
     }
 
     private getTipoDocumentoSchemeId(tipoDoc: string): string {
-        const map: Record<string, string> = { '1': '1', '6': '6', '4': '4', '7': '7' };
+        const map: Record<string, string> = { '0': '0', '1': '1', '6': '6', '4': '4', '7': '7' };
         return map[tipoDoc] || '1';
     }
 

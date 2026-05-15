@@ -36,6 +36,26 @@ const VALID_TIPO_OPERACION_CODES = new Set([
   '0401', // Operaciones sujetas a detracción
 ]);
 
+// Catálogo 06 SUNAT — tipos de documento de identidad (schemeID UBL)
+// Nota: este mapping se usa para UBL (schemeID). El valor es el mismo código.
+function getTipoDocumentoSchemeId(tipoDocCodigo: string | null | undefined): string {
+  const codigo = String(tipoDocCodigo ?? '').trim();
+  const map: Record<string, string> = { '0': '0', '1': '1', '4': '4', '6': '6', '7': '7' };
+  return map[codigo] ?? '1';
+}
+
+function getTipoDocumentoLabel(tipoDocCodigo: string | null | undefined): string {
+  const codigo = String(tipoDocCodigo ?? '').trim();
+  const map: Record<string, string> = {
+    '0': 'NO DOM. (SIN RUC)',
+    '1': 'DNI',
+    '4': 'CE',
+    '6': 'RUC',
+    '7': 'PASAPORTE',
+  };
+  return map[codigo] ?? 'DNI';
+}
+
 @Injectable()
 export class EnviarSunatService {
   private readonly logger = new Logger(EnviarSunatService.name);
@@ -213,8 +233,7 @@ export class EnviarSunatService {
               'cac:PartyIdentification': {
                 'cbc:ID': {
                   _attributes: {
-                    schemeID:
-                      comp.cliente.tipoDocumento!.codigo === '1' ? '1' : '6',
+                    schemeID: getTipoDocumentoSchemeId(comp.cliente.tipoDocumento?.codigo),
                   },
                   _text: comp.cliente.nroDoc,
                 },
@@ -914,7 +933,7 @@ export class EnviarSunatService {
 
             // Cliente
             clienteNombre: (comp.cliente.nombre || 'CLIENTES VARIOS').toUpperCase(),
-            clienteTipoDoc: comp.cliente.tipoDocumento?.codigo === '6' ? 'RUC' : 'DNI',
+            clienteTipoDoc: getTipoDocumentoLabel(comp.cliente.tipoDocumento?.codigo),
             clienteNumDoc: comp.cliente.nroDoc || '',
             clienteDireccion: (comp.cliente.direccion || '-').toUpperCase(),
 
@@ -1276,7 +1295,7 @@ export class EnviarSunatService {
         fecha: fechaEmision.toLocaleDateString('es-PE'),
         hora: fechaEmision.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }) + ' p.m.',
         clienteNombre: (comp.cliente?.nombre || 'CLIENTES VARIOS').toUpperCase(),
-        clienteTipoDoc: comp.cliente?.tipoDocumento?.codigo === '6' ? 'RUC' : 'DNI',
+        clienteTipoDoc: getTipoDocumentoLabel(comp.cliente?.tipoDocumento?.codigo),
         clienteNumDoc: comp.cliente?.nroDoc || '',
         clienteDireccion: (comp.cliente?.direccion || '-').toUpperCase(),
         productos: comp.detalles.map((det: any) => ({

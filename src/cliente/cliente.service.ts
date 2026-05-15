@@ -14,7 +14,7 @@ export class ClienteService {
 
   async crear(data: {
     nombre: string;
-    tipoDoc: 'DNI' | 'RUC';
+    tipoDoc: 'DNI' | 'RUC' | 'CE' | 'PASAPORTE' | 'OTRO';
     nroDoc: string;
     direccion?: string;
     email?: string;
@@ -33,8 +33,11 @@ export class ClienteService {
     if (tipoDoc === 'RUC' && nroDoc.length !== 11)
       throw new ForbiddenException('El RUC debe tener 11 dígitos');
 
+    const TIPO_DOC_CODIGO: Record<string, string> = {
+      DNI: '1', RUC: '6', CE: '4', PASAPORTE: '7', OTRO: '0',
+    };
     const tipoDocumento = await this.prisma.tipoDocumento.findUnique({
-      where: { codigo: tipoDoc === 'DNI' ? '1' : tipoDoc === 'RUC' ? '6' : '' },
+      where: { codigo: TIPO_DOC_CODIGO[tipoDoc] ?? '1' },
     });
     if (!tipoDocumento)
       throw new ForbiddenException('Tipo de documento no válido');

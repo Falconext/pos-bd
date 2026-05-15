@@ -13,6 +13,13 @@ import { UpdateUserDto } from './dto/update-user.dto';
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private buildSistemaScope(actor?: { sistemaNegocio?: string | null; sistemaProducto?: string | null }) {
+    const where: any = {};
+    if (actor?.sistemaNegocio) where.sistemaNegocio = actor.sistemaNegocio;
+    if (actor?.sistemaProducto) where.sistemaProducto = actor.sistemaProducto;
+    return where;
+  }
+
   async create(dto: CreateUserDto, empresaIdFromToken: number) {
     const { nombre, email, dni, celular, password, permisos, sedeIds, subModuloIds } = dto;
 
@@ -278,9 +285,12 @@ export class UsersService {
 
   // ─── ADMIN_SISTEMA: Gestión de usuarios del sistema ──────────────────────────
 
-  async listSistema(params: { search?: string; page?: number; limit?: number }) {
+  async listSistema(
+    params: { search?: string; page?: number; limit?: number },
+    actorScope?: { sistemaNegocio?: string | null; sistemaProducto?: string | null },
+  ) {
     const { search, page = 1, limit = 50 } = params;
-    const where: any = { rol: 'ADMIN_SISTEMA' };
+    const where: any = { rol: 'ADMIN_SISTEMA', ...this.buildSistemaScope(actorScope) };
     if (search) {
       where.OR = [
         { nombre: { contains: search, mode: 'insensitive' } },
@@ -304,14 +314,18 @@ export class UsersService {
           rol: true,
           estado: true,
           sistemaNegocio: true,
+          sistemaProducto: true,
         },
       }),
     ]);
     return { total, page, limit, items };
   }
 
-  async createSistema(dto: CreateUserDto & { sistemaNegocio?: string }) {
-    const { nombre, email, dni, celular, password, sistemaNegocio } = dto;
+  async createSistema(
+    dto: CreateUserDto & { sistemaNegocio?: string; sistemaProducto?: string },
+    actorScope?: { sistemaNegocio?: string | null; sistemaProducto?: string | null },
+  ) {
+    const { nombre, email, dni, celular, password, sistemaNegocio, sistemaProducto } = dto;
 
     const existeEmail = await this.prisma.usuario.findUnique({ where: { email } });
     if (existeEmail) throw new BadRequestException('El email ya está en uso');
@@ -321,6 +335,9 @@ export class UsersService {
 
     const hash = await bcrypt.hash(password, 10);
 
+    const sistemaNegocioFinal = actorScope?.sistemaNegocio ?? sistemaNegocio ?? null;
+    const sistemaProductoFinal = actorScope?.sistemaProducto ?? sistemaProducto ?? null;
+
     return this.prisma.usuario.create({
       data: {
         nombre,
@@ -329,7 +346,8 @@ export class UsersService {
         celular,
         password: hash,
         rol: 'ADMIN_SISTEMA',
-        sistemaNegocio: sistemaNegocio || null,
+        sistemaNegocio: sistemaNegocioFinal,
+        sistemaProducto: sistemaProductoFinal,
       },
       select: {
         id: true,
@@ -340,13 +358,25 @@ export class UsersService {
         rol: true,
         estado: true,
         sistemaNegocio: true,
+        sistemaProducto: true,
       },
     });
   }
 
-  async updateSistema(id: number, data: Partial<{ nombre: string; email: string; dni: string; celular: string; sistemaNegocio: string | null }>) {
-    const usuario = await this.prisma.usuario.findFirst({ where: { id, rol: 'ADMIN_SISTEMA' } });
+  async updateSistema(
+    id: number,
+    data: Partial<{ nombre: string; email: string; dni: string; celular: string; sistemaNegocio: string | null; sistemaProducto: string | null }>,
+    actorScope?: { sistemaNegocio?: string | null; sistemaProducto?: string | null },
+  ) {
+    const usuario = await this.prisma.usuario.findFirst({
+      where: { id, rol: 'ADMIN_SISTEMA', ...this.buildSistemaScope(actorScope) },
+    });
     if (!usuario) throw new NotFoundException('Administrador no encontrado');
+
+    const sistemaNegocioFinal =
+      actorScope?.sistemaNegocio !== undefined ? actorScope.sistemaNegocio : data.sistemaNegocio;
+    const sistemaProductoFinal =
+      actorScope?.sistemaProducto !== undefined ? actorScope.sistemaProducto : data.sistemaProducto;
 
     return this.prisma.usuario.update({
       where: { id },
@@ -355,7 +385,8 @@ export class UsersService {
         email: data.email,
         dni: data.dni,
         celular: data.celular,
-        ...(data.sistemaNegocio !== undefined ? { sistemaNegocio: data.sistemaNegocio } : {}),
+        ...(sistemaNegocioFinal !== undefined ? { sistemaNegocio: sistemaNegocioFinal } : {}),
+        ...(sistemaProductoFinal !== undefined ? { sistemaProducto: sistemaProductoFinal } : {}),
       },
       select: {
         id: true,
@@ -366,12 +397,28 @@ export class UsersService {
         rol: true,
         estado: true,
         sistemaNegocio: true,
+        sistemaProducto: true,
       },
     });
   }
 
-  async deleteSistema(id: number) {
-    const usuario = await this.prisma.usuario.findFirst({ where: { id, rol: 'ADMIN_SISTEMA' } });
+  async changeStateSistema(
+    id: number,
+    estado: 'ACTIVO' | 'INACTIVO',
+    actorScope?: { sistemaNegocio?: string | null; sistemaProducto?: string | null },
+  ) {
+    const usuario = await this.prisma.usuario.findFirst({
+      where: { id, rol: 'ADMIN_SISTEMA', ...this.buildSistemaScope(actorScope) },
+      select: { id: true },
+    });
+    if (!usuario) throw new NotFoundException('Administrador no encontrado');
+    return this.prisma.usuario.update({ where: { id }, data: { estado } });
+  }
+
+  async deleteSistema(id: number, actorScope?: { sistemaNegocio?: string | null; sistemaProducto?: string | null }) {
+    const usuario = await this.prisma.usuario.findFirst({
+      where: { id, rol: 'ADMIN_SISTEMA', ...this.buildSistemaScope(actorScope) },
+    });
     if (!usuario) throw new NotFoundException('Administrador no encontrado');
     return this.prisma.usuario.update({
       where: { id },

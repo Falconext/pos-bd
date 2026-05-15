@@ -36,7 +36,6 @@ export class ContabilidadService {
         ...(sedeId ? { sedeId } : {}),
         tipoDoc: { in: ['01', '03', '07', '08'] },
         fechaEmision,
-        estadoEnvioSunat: { in: ['EMITIDO', 'REGISTRADO'] as any },
       },
       orderBy: { fechaEmision: 'desc' },
       select: {

@@ -9,6 +9,7 @@ export type JwtPayload = {
   empresaId: number | null;
   sedeId?: number | null;
   sistemaNegocio?: string | null;
+  sistemaProducto?: string | null;
 };
 
 @Injectable()
@@ -28,6 +29,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       empresaId: payload.empresaId ?? null,
       sedeId: payload.sedeId ?? null,
       sistemaNegocio: payload.sistemaNegocio ?? null,
+      sistemaProducto: payload.sistemaProducto ?? null,
     };
   }
 }

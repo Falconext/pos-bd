@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Delete, Put, UseGuards, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Delete, Put, UseGuards, ParseIntPipe, Query } from '@nestjs/common';
 import { PlanService } from './plan.service';
 import { CreatePlanDto } from './dto/create-plan.dto';
 import { UpdatePlanDto } from './dto/update-plan.dto';
@@ -11,8 +11,8 @@ export class PlanController {
     constructor(private readonly planService: PlanService) { }
 
     @Get()
-    findAll() {
-        return this.planService.findAll();
+    findAll(@Query('producto') producto?: string) {
+        return this.planService.findAll(producto);
     }
 
     @Get(':id')

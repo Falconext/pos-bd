@@ -1,5 +1,7 @@
 import { Controller, Get, Param, ParseIntPipe, Post, Body, Put, Delete, Query } from '@nestjs/common';
 import { ModulosService } from './modulos.service';
+import { CreateModuloDto } from './dto/create-modulo.dto';
+import { UpdateModuloDto } from './dto/update-modulo.dto';
 import { CreateSubModuloDto } from './dto/create-submodulo.dto';
 import { UpdateSubModuloDto } from './dto/update-submodulo.dto';
 
@@ -8,10 +10,10 @@ export class ModulosController {
     constructor(private readonly modulosService: ModulosService) { }
 
     @Get()
-    findAll(@Query('admin') admin?: string) {
+    findAll(@Query('admin') admin?: string, @Query('producto') producto?: string) {
         return admin === 'true'
-            ? this.modulosService.findAllAdmin()
-            : this.modulosService.findAll();
+            ? this.modulosService.findAllAdmin(producto)
+            : this.modulosService.findAll(producto);
     }
 
     // Rutas literales antes que las parametrizadas para evitar conflictos
@@ -45,12 +47,12 @@ export class ModulosController {
     }
 
     @Post()
-    create(@Body() createModuloDto: any) {
+    create(@Body() createModuloDto: CreateModuloDto) {
         return this.modulosService.create(createModuloDto);
     }
 
     @Put(':id')
-    update(@Param('id', ParseIntPipe) id: number, @Body() updateModuloDto: any) {
+    update(@Param('id', ParseIntPipe) id: number, @Body() updateModuloDto: UpdateModuloDto) {
         return this.modulosService.update(id, updateModuloDto);
     }
 

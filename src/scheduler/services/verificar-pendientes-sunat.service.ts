@@ -1,6 +1,7 @@
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EnviarSunatService } from '../../comprobante/enviar-sunat.service';
+import { GuiaRemisionService } from '../../guia-remision/guia-remision.service';
 import { QpseClient, QpseSendResponse } from '../../common/utils/qpse.client';
 import { S3Service } from '../../s3/s3.service';
 
@@ -12,9 +13,42 @@ export class VerificarPendientesSunatService {
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => EnviarSunatService))
     private readonly enviarSunat: EnviarSunatService,
+    @Inject(forwardRef(() => GuiaRemisionService))
+    private readonly guiaRemisionService: GuiaRemisionService,
     private readonly qpseClient: QpseClient,
     private readonly s3Service: S3Service,
   ) { }
+
+  /**
+   * Job 3: Retry failed Guías Remisión (estadoSunat = FALLIDO_ENVIO and sunatNextRetryAt <= now)
+   */
+  async reintentarGuiasFallidas(): Promise<void> {
+    try {
+      const fallidas = await this.prisma.guiaRemision.findMany({
+        where: {
+          estadoSunat: 'FALLIDO_ENVIO',
+          sunatNextRetryAt: { lte: new Date() },
+        },
+        take: 10,
+        orderBy: { sunatNextRetryAt: 'asc' },
+      });
+
+      if (fallidas.length > 0) {
+        this.logger.log(`[Job 3] Reintentando ${fallidas.length} guías FALLIDO_ENVIO`);
+      }
+
+      for (const guia of fallidas) {
+        try {
+          this.logger.log(`🔄 Reintentando guía ${guia.id} (${guia.serie}-${guia.correlativo})`);
+          await this.guiaRemisionService.enviarSunat(guia.id, guia.empresaId);
+        } catch (err: any) {
+          this.logger.warn(`⚠️ Reintento de guía ${guia.id} falló: ${err.message}`);
+        }
+      }
+    } catch (err: any) {
+      this.logger.error(`Error en reintentos de Guías: ${err.message}`);
+    }
+  }
 
   /**
    * Job 1: Check status of invoices that were received by SUNAT but still processing

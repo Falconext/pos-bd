@@ -133,15 +133,22 @@ export class UsersController {
     @Query('search') search?: string,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
+    @User() user?: any,
   ) {
-    return this.usersService.listSistema({ search, page: Number(page) || 1, limit: Number(limit) || 50 });
+    return this.usersService.listSistema(
+      { search, page: Number(page) || 1, limit: Number(limit) || 50 },
+      { sistemaNegocio: user?.sistemaNegocio ?? null, sistemaProducto: user?.sistemaProducto ?? null },
+    );
   }
 
   @UseGuards(RolesGuard)
   @Roles('ADMIN_SISTEMA')
   @Post('sistema')
-  async crearSistema(@Body() dto: CreateUserDto, @Res({ passthrough: true }) res: Response) {
-    const nuevo = await this.usersService.createSistema(dto);
+  async crearSistema(@Body() dto: CreateUserDto, @User() user: any, @Res({ passthrough: true }) res: Response) {
+    const nuevo = await this.usersService.createSistema(dto, {
+      sistemaNegocio: user?.sistemaNegocio ?? null,
+      sistemaProducto: user?.sistemaProducto ?? null,
+    });
     res.locals.message = 'Administrador creado exitosamente';
     return nuevo;
   }
@@ -152,9 +159,13 @@ export class UsersController {
   async editarSistema(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: Omit<UpdateUserDto, 'id'>,
+    @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const usuario = await this.usersService.updateSistema(id, body);
+    const usuario = await this.usersService.updateSistema(id, body, {
+      sistemaNegocio: user?.sistemaNegocio ?? null,
+      sistemaProducto: user?.sistemaProducto ?? null,
+    });
     res.locals.message = 'Administrador actualizado correctamente';
     return usuario;
   }
@@ -165,9 +176,13 @@ export class UsersController {
   async cambiarEstadoSistema(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: ChangeStateDto,
+    @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.usersService.changeState(id, dto.estado);
+    const result = await this.usersService.changeStateSistema(id, dto.estado, {
+      sistemaNegocio: user?.sistemaNegocio ?? null,
+      sistemaProducto: user?.sistemaProducto ?? null,
+    });
     res.locals.message = `Administrador ${dto.estado === 'ACTIVO' ? 'activado' : 'desactivado'} correctamente`;
     return result;
   }
@@ -177,9 +192,13 @@ export class UsersController {
   @Delete('sistema/:id')
   async eliminarSistema(
     @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.usersService.deleteSistema(id);
+    const result = await this.usersService.deleteSistema(id, {
+      sistemaNegocio: user?.sistemaNegocio ?? null,
+      sistemaProducto: user?.sistemaProducto ?? null,
+    });
     res.locals.message = 'Administrador eliminado correctamente';
     return result;
   }

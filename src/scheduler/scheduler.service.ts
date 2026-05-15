@@ -28,11 +28,15 @@ export class SchedulerService {
     }
   }
 
-  // Job 2: Retry FALLIDO_ENVIO invoices that are ready for retry (every 5 min)
+  // Job 2: Retry FALLIDO_ENVIO invoices and guías that are ready for retry (every 5 min)
   @Cron(CronExpression.EVERY_5_MINUTES)
   async reintentarEnviosFallidos(): Promise<void> {
     try {
+      // Reintentar Comprobantes
       await this.verificarSunat.reintentarEnviosFallidos();
+      
+      // Reintentar Guías de Remisión
+      await this.verificarSunat.reintentarGuiasFallidas();
     } catch (error: any) {
       this.logger.error(
         `[Job 2] Error al reintentar envíos fallidos: ${error?.message || 'Error desconocido'}`,

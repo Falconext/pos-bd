@@ -103,16 +103,16 @@ export async function seedDetracciones() {
 
     const tiposOperacionNuevos = [
         { codigo: '0101', descripcion: 'VENTA INTERNA' },
-        { codigo: '0102', descripcion: 'VENTA INTERNA - ANTICIPOS' },
-        { codigo: '0112', descripcion: 'OPERACIÓN SUJETA A DETRACCIÓN' },
-        { codigo: '0113', descripcion: 'SUSTENTA TRASLADO DE BIENES' },
-        { codigo: '0121', descripcion: 'VENTA NO DOMICILIADOS QUE NO CALIFICA COMO EXPORTACIÓN' },
-        { codigo: '0200', descripcion: 'EXPORTACIÓN DE BIENES' },
-        { codigo: '0201', descripcion: 'EXPORTACIÓN DE SERVICIOS - REALIZADOS EN EL PAÍS' },
-        { codigo: '0202', descripcion: 'EXPORTACIÓN DE SERVICIOS - EN EL EXTRANJERO' },
-        { codigo: '0205', descripcion: 'EXPORTACIÓN DE SERVICIOS - TRANSPORTE DE NAVIERAS' },
-        { codigo: '0206', descripcion: 'EXPORTACIÓN DE SERVICIOS - NAVES Y AERONAVES DE BANDERA EXTRANJERA' },
-        { codigo: '0401', descripcion: 'VENTAS NO DOMICILIADOS' },
+        { codigo: '0102', descripcion: 'EXPORTACIÓN' },
+        { codigo: '0112', descripcion: 'VENTA INTERNA - ANTICIPOS' },
+        { codigo: '0113', descripcion: 'EXPORTACIÓN - ANTICIPOS' },
+        { codigo: '0121', descripcion: 'VENTA INTERNA SUJETA A IVAP' },
+        { codigo: '0200', descripcion: 'EXPORTACIÓN DE SERVICIOS - PRESTACIÓN DE SERVICIOS REALIZADOS EN EL PAÍS' },
+        { codigo: '0201', descripcion: 'EXPORTACIÓN DE SERVICIOS - PRESTACIÓN DE SERVICIOS REALIZADOS ÍNTEGRAMENTE EN EL EXTRANJERO' },
+        { codigo: '0202', descripcion: 'EXPORTACIÓN DE SERVICIOS - SERVICIOS DE HOSPEDAJE NO DOMICILIADOS' },
+        { codigo: '0205', descripcion: 'EXPORTACIÓN DE SERVICIOS - SERVICIOS A NAVES Y AERONAVES DE BANDERA EXTRANJERA' },
+        { codigo: '0206', descripcion: 'EXPORTACIÓN DE SERVICIOS - SERVICIOS COMPLEMENTARIOS AL TRANSPORTE DE CARGA' },
+        { codigo: '0401', descripcion: 'OPERACIONES SUJETAS A DETRACCIÓN' },
     ];
 
     for (const op of tiposOperacionNuevos) {

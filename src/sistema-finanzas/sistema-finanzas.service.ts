@@ -7,18 +7,20 @@ export class SistemaFinanzasService {
 
     // ── DASHBOARD KPIs ─────────────────────────────────────────────────────────
 
-    async getDashboard(sistemaNegocio?: string | null) {
+    async getDashboard(sistemaNegocio?: string | null, sistemaProducto?: string | null) {
         const ahora = new Date();
         const inicioMes = new Date(ahora.getFullYear(), ahora.getMonth(), 1);
         const inicioAnio = new Date(ahora.getFullYear(), 0, 1);
         const hace12Meses = new Date(ahora.getFullYear(), ahora.getMonth() - 11, 1);
 
-        // Filtro de brand según sistemaNegocio del admin
-        const brandWhere = sistemaNegocio ? { brand: sistemaNegocio.toLowerCase() } : {};
+        // Filtros de alcance del admin (plataforma + producto)
+        const empresaScopeWhere: any = {};
+        if (sistemaNegocio) empresaScopeWhere.brand = sistemaNegocio.toLowerCase();
+        if (sistemaProducto) empresaScopeWhere.producto = sistemaProducto.toLowerCase();
 
         // Empresas activas con su plan
         const empresasParaMRR = await this.prisma.empresa.findMany({
-            where: { estado: 'ACTIVO', ...brandWhere },
+            where: { estado: 'ACTIVO', ...empresaScopeWhere },
             select: { id: true, fechaExpiracion: true, plan: { select: { costo: true, nombre: true } } },
         });
 
@@ -27,7 +29,7 @@ export class SistemaFinanzasService {
 
         // Ingresos cobrados este mes — filtrados por empresas del sistema
         const empresaIds = empresasParaMRR.map(e => e.id);
-        const movimientoWhere = empresaIds.length > 0 && sistemaNegocio
+        const movimientoWhere = empresaIds.length > 0 && (sistemaNegocio || sistemaProducto)
             ? { empresaId: { in: empresaIds } }
             : {};
 
@@ -56,23 +58,23 @@ export class SistemaFinanzasService {
         // Clientes: nuevos este mes vs mes anterior
         const inicioMesAnterior = new Date(ahora.getFullYear(), ahora.getMonth() - 1, 1);
         const [nuevosEsteMes, nuevosMesAnterior, totalActivos, totalInactivos] = await Promise.all([
-            this.prisma.empresa.count({ where: { fechaActivacion: { gte: inicioMes }, ...brandWhere } }),
-            this.prisma.empresa.count({ where: { fechaActivacion: { gte: inicioMesAnterior, lt: inicioMes }, ...brandWhere } }),
-            this.prisma.empresa.count({ where: { estado: 'ACTIVO', ...brandWhere } }),
-            this.prisma.empresa.count({ where: { estado: { not: 'ACTIVO' }, ...brandWhere } }),
+            this.prisma.empresa.count({ where: { fechaActivacion: { gte: inicioMes }, ...empresaScopeWhere } }),
+            this.prisma.empresa.count({ where: { fechaActivacion: { gte: inicioMesAnterior, lt: inicioMes }, ...empresaScopeWhere } }),
+            this.prisma.empresa.count({ where: { estado: 'ACTIVO', ...empresaScopeWhere } }),
+            this.prisma.empresa.count({ where: { estado: { not: 'ACTIVO' }, ...empresaScopeWhere } }),
         ]);
 
         // Próximas a vencer (7 días)
         const en7Dias = new Date();
         en7Dias.setDate(en7Dias.getDate() + 7);
         const proximasVencer = await this.prisma.empresa.count({
-            where: { estado: 'ACTIVO', fechaExpiracion: { lte: en7Dias, gte: ahora }, ...brandWhere },
+            where: { estado: 'ACTIVO', fechaExpiracion: { lte: en7Dias, gte: ahora }, ...empresaScopeWhere },
         });
 
         // Distribución de clientes por plan
         const porPlan = await this.prisma.empresa.groupBy({
             by: ['planId'],
-            where: { estado: 'ACTIVO', ...brandWhere },
+            where: { estado: 'ACTIVO', ...empresaScopeWhere },
             _count: true,
         });
         const planes = await this.prisma.plan.findMany({ select: { id: true, nombre: true, costo: true } });
@@ -83,7 +85,7 @@ export class SistemaFinanzasService {
 
         // Lista de empresas activas con su admin principal
         const empresasActivas = await this.prisma.empresa.findMany({
-            where: { estado: 'ACTIVO', ...brandWhere },
+            where: { estado: 'ACTIVO', ...empresaScopeWhere },
             select: {
                 id: true,
                 razonSocial: true,
@@ -146,16 +148,18 @@ export class SistemaFinanzasService {
 
     // ── TENDENCIA MENSUAL (últimos N meses) ────────────────────────────────────
 
-    async getTendencia(meses = 12, sistemaNegocio?: string | null) {
+    async getTendencia(meses = 12, sistemaNegocio?: string | null, sistemaProducto?: string | null) {
         const ahora = new Date();
         const resultado: any[] = [];
-        const brandWhere = sistemaNegocio ? { brand: sistemaNegocio.toLowerCase() } : {};
+        const empresaScopeWhere: any = {};
+        if (sistemaNegocio) empresaScopeWhere.brand = sistemaNegocio.toLowerCase();
+        if (sistemaProducto) empresaScopeWhere.producto = sistemaProducto.toLowerCase();
 
         // IDs de empresas del sistema para filtrar movimientos
-        const empresasDelSistema = sistemaNegocio
-            ? await this.prisma.empresa.findMany({ where: brandWhere, select: { id: true } })
+        const empresasDelSistema = (sistemaNegocio || sistemaProducto)
+            ? await this.prisma.empresa.findMany({ where: empresaScopeWhere, select: { id: true } })
             : [];
-        const movimientoWhere = sistemaNegocio && empresasDelSistema.length > 0
+        const movimientoWhere = (sistemaNegocio || sistemaProducto) && empresasDelSistema.length > 0
             ? { empresaId: { in: empresasDelSistema.map(e => e.id) } }
             : {};
 
@@ -172,8 +176,8 @@ export class SistemaFinanzasService {
                     where: { fecha: { gte: ini, lte: fin } },
                     _sum: { monto: true },
                 }),
-                this.prisma.empresa.count({ where: { fechaActivacion: { gte: ini, lte: fin }, ...brandWhere } }),
-                this.prisma.empresa.count({ where: { estado: 'INACTIVO', fechaExpiracion: { gte: ini, lte: fin }, ...brandWhere } }),
+                this.prisma.empresa.count({ where: { fechaActivacion: { gte: ini, lte: fin }, ...empresaScopeWhere } }),
+                this.prisma.empresa.count({ where: { estado: 'INACTIVO', fechaExpiracion: { gte: ini, lte: fin }, ...empresaScopeWhere } }),
             ]);
 
             const ing = Number(ingresos._sum.monto ?? 0);

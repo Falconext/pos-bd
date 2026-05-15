@@ -33,4 +33,9 @@ export class ListEmpresaDto {
   @IsOptional()
   @IsString()
   brand?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['facturacion', 'hotel'])
+  producto?: string;
 }

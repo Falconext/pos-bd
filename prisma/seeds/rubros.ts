@@ -20,7 +20,7 @@ async function seedRubros() {
     'Textil y confecciones',
     'Automotriz y repuestos',
     'Inmobiliaria',
-    'Turismo y hotelería',
+    'Turismo y viajes',
     'Servicios financieros',
     'Manufactura e industria',
     'Arte y diseño',

@@ -35,6 +35,45 @@ function parseDDMMYYYY(input: string): Date {
   }
 }
 
+function normalizeBrand(value?: string | null): 'falconext' | 'krezka' {
+  return (String(value ?? '').trim().toLowerCase() === 'krezka') ? 'krezka' : 'falconext';
+}
+
+function normalizeProducto(value?: string | null): 'facturacion' | 'hotel' {
+  return (String(value ?? '').trim().toLowerCase() === 'hotel') ? 'hotel' : 'facturacion';
+}
+
+function mapHotelPlanName(planNombre?: string | null): string {
+  const raw = String(planNombre ?? '').trim().toUpperCase();
+  if (!raw) return 'BASIC';
+  if (raw.includes('PREMIUM')) return 'PREMIUM';
+  if (raw.includes('PRO')) return 'PROFESSIONAL';
+  if (raw.includes('PROFES')) return 'PROFESSIONAL';
+  return raw.replace(/\s+/g, '_');
+}
+
+interface HotelSyncPayload {
+  mypeEmpresaId: number;
+  mypeUsuarioId?: number;
+  hotelName: string;
+  tradeName?: string;
+  ruc?: string;
+  address?: string;
+  city?: string;
+  department?: string;
+  phone?: string;
+  email?: string;
+  adminEmail: string;
+  adminPassword?: string;
+  adminFirstName: string;
+  adminLastName: string;
+  adminPhone?: string;
+  isActive: boolean;
+  producto: 'hotel';
+  plan?: string;
+  planExpiresAt?: string;
+}
+
 @Injectable()
 export class EmpresaService {
   constructor(
@@ -42,10 +81,120 @@ export class EmpresaService {
     private readonly sedeService: SedeService,
   ) { }
 
-  async crear(data: CreateEmpresaDto, adminSistemaNegocio?: string | null, adminUserId?: number) {
+  private getHotelSyncConfig() {
+    const baseUrl = (process.env.HOTEL_BACKEND_SYNC_URL || '').trim();
+    const syncToken = (process.env.HOTEL_BACKEND_SYNC_TOKEN || '').trim();
+    return { baseUrl, syncToken };
+  }
+
+  private async callHotelSync(payload: HotelSyncPayload): Promise<{ tenantId: string; adminUserId: string }> {
+    const { baseUrl, syncToken } = this.getHotelSyncConfig();
+    if (!baseUrl || !syncToken) {
+      throw new ForbiddenException('Falta configurar HOTEL_BACKEND_SYNC_URL / HOTEL_BACKEND_SYNC_TOKEN');
+    }
+
+    try {
+      const response = await axios.post(
+        baseUrl,
+        payload,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'x-sync-token': syncToken,
+          },
+          timeout: 12000,
+        },
+      );
+
+      const data = response?.data || {};
+      if (!data.tenantId || !data.adminUserId) {
+        throw new Error('Respuesta inválida desde Falconext Hotel');
+      }
+      return { tenantId: data.tenantId, adminUserId: data.adminUserId };
+    } catch (error: any) {
+      const message = error?.response?.data?.message || error?.message || 'Error de sincronización';
+      throw new ForbiddenException(`No se pudo sincronizar con Falconext Hotel: ${message}`);
+    }
+  }
+
+  private async buildHotelSyncPayload(empresaId: number, adminPassword?: string): Promise<HotelSyncPayload> {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      include: { plan: true },
+    });
+    if (!empresa) throw new NotFoundException('Empresa no encontrada');
+    if (normalizeProducto(empresa.producto) !== 'hotel') {
+      throw new ForbiddenException('Solo aplica para empresas de producto HOTEL');
+    }
+
+    const admin = await this.prisma.usuario.findFirst({
+      where: { empresaId, rol: { in: ['ADMIN_EMPRESA', 'ADMIN_SISTEMA'] } },
+      orderBy: { id: 'asc' },
+      select: {
+        id: true,
+        email: true,
+        nombre: true,
+        celular: true,
+      },
+    });
+    if (!admin) {
+      throw new ForbiddenException('La empresa no tiene usuario administrador para sincronizar');
+    }
+
+    const [firstName, ...rest] = String(admin.nombre || '').trim().split(/\s+/);
+    const lastName = rest.join(' ').trim() || 'Administrador';
+
+    return {
+      mypeEmpresaId: empresa.id,
+      mypeUsuarioId: admin.id,
+      hotelName: empresa.nombreComercial || empresa.razonSocial,
+      tradeName: empresa.nombreComercial || empresa.razonSocial,
+      ruc: empresa.ruc || undefined,
+      address: empresa.direccion || undefined,
+      city: empresa.distrito || undefined,
+      department: empresa.departamento || undefined,
+      phone: admin.celular || undefined,
+      email: admin.email || undefined,
+      adminEmail: admin.email,
+      adminPassword: adminPassword || undefined,
+      adminFirstName: firstName || 'Admin',
+      adminLastName: lastName,
+      adminPhone: admin.celular || undefined,
+      isActive: empresa.estado === 'ACTIVO',
+      producto: 'hotel',
+      plan: mapHotelPlanName(empresa.plan?.nombre),
+      planExpiresAt: empresa.fechaExpiracion ? empresa.fechaExpiracion.toISOString() : undefined,
+    };
+  }
+
+  private async sincronizarEmpresaHotel(empresaId: number, adminPassword?: string) {
+    const payload = await this.buildHotelSyncPayload(empresaId, adminPassword);
+    const synced = await this.callHotelSync(payload);
+
+    await this.prisma.empresa.update({
+      where: { id: empresaId },
+      data: {
+        hotelTenantId: synced.tenantId,
+        hotelAdminUserId: synced.adminUserId,
+        hotelSyncAt: new Date(),
+      },
+    });
+
+    return synced;
+  }
+
+  async crear(
+    data: CreateEmpresaDto,
+    adminSistemaNegocio?: string | null,
+    adminUserId?: number,
+    adminSistemaProducto?: string | null,
+  ) {
     const fechaActivacion = parseDDMMYYYY(data.fechaActivacion);
     const tipoEmpresa = data.tipoEmpresa || 'FORMAL';
     const esPrueba = data.esPrueba || false;
+    const productoEmpresa = adminSistemaProducto
+      ? normalizeProducto(adminSistemaProducto)
+      : normalizeProducto(data.producto || 'facturacion');
 
     const exist = await this.prisma.empresa.findUnique({
       where: { ruc: data.ruc },
@@ -60,7 +209,7 @@ export class EmpresaService {
       // Si es versión de prueba, buscar plan de prueba
       if (esPrueba) {
         const planPrueba = await this.prisma.plan.findFirst({
-          where: { esPrueba: true },
+          where: { esPrueba: true, producto: productoEmpresa },
         });
         if (planPrueba) {
           planId = planPrueba.id;
@@ -75,6 +224,7 @@ export class EmpresaService {
           where: {
             nombre: tipoEmpresa === 'INFORMAL' ? 'Mi Básico Informal' : 'Básico Formal',
             esPrueba: false,
+            producto: productoEmpresa,
           },
         });
         if (plan) {
@@ -82,7 +232,7 @@ export class EmpresaService {
         } else {
           // Si no existe plan específico, usar el primer plan no-prueba disponible
           const firstPlan = await this.prisma.plan.findFirst({
-            where: { esPrueba: false },
+            where: { esPrueba: false, producto: productoEmpresa },
           });
           if (!firstPlan) {
             throw new ForbiddenException(
@@ -101,6 +251,9 @@ export class EmpresaService {
 
     if (!planSeleccionado) {
       throw new ForbiddenException('Plan seleccionado no encontrado');
+    }
+    if (normalizeProducto(planSeleccionado.producto) !== productoEmpresa) {
+      throw new ForbiddenException('El plan seleccionado no pertenece al producto de la empresa');
     }
 
     // Calcular fecha de expiración usando duración del plan
@@ -146,8 +299,9 @@ export class EmpresaService {
         esAgenteRetencion: data.esAgenteRetencion || false,
         usaCodigoBarrasManual: data.usaCodigoBarrasManual,
         brand: adminSistemaNegocio
-          ? adminSistemaNegocio.toLowerCase()
-          : (data.brand || 'falconext'),
+          ? normalizeBrand(adminSistemaNegocio)
+          : normalizeBrand(data.brand || 'falconext'),
+        producto: productoEmpresa,
         usuarioPse: data.usuarioPse || null,
         contrasenaPse: data.contrasenaPse || null,
         usaDemo: data.usaDemo ?? false,
@@ -226,6 +380,56 @@ export class EmpresaService {
         `Plan: ${planSeleccionado.nombre} | Admin: ${data.usuario.email}`, adminUserId);
     }
 
+    if (productoEmpresa === 'hotel') {
+      try {
+        const adminEmpresa = await this.prisma.usuario.findFirst({
+          where: { empresaId: empresa.id, rol: 'ADMIN_EMPRESA' },
+          select: { id: true },
+        });
+
+        const synced = await this.callHotelSync({
+          mypeEmpresaId: empresa.id,
+          mypeUsuarioId: adminEmpresa?.id,
+          hotelName: empresa.nombreComercial || empresa.razonSocial,
+          tradeName: empresa.nombreComercial || empresa.razonSocial,
+          ruc: empresa.ruc || undefined,
+          address: empresa.direccion || undefined,
+          city: empresa.distrito || undefined,
+          department: empresa.departamento || undefined,
+          phone: data.usuario.celular || undefined,
+          email: data.usuario.email || undefined,
+          adminEmail: data.usuario.email,
+          adminPassword: data.usuario.password,
+          adminFirstName: String(data.usuario.nombre || 'Admin').trim().split(/\s+/)[0] || 'Admin',
+          adminLastName: String(data.usuario.nombre || '')
+            .trim()
+            .split(/\s+/)
+            .slice(1)
+            .join(' ')
+            || 'Administrador',
+          adminPhone: data.usuario.celular || undefined,
+          isActive: true,
+          producto: 'hotel',
+          plan: mapHotelPlanName(planSeleccionado.nombre),
+          planExpiresAt: expiracion.toISOString(),
+        });
+
+        await this.prisma.empresa.update({
+          where: { id: empresa.id },
+          data: {
+            hotelTenantId: synced.tenantId,
+            hotelAdminUserId: synced.adminUserId,
+            hotelSyncAt: new Date(),
+          },
+        });
+      } catch (error: any) {
+        try {
+          await this.eliminar(empresa.id);
+        } catch { }
+        throw new ForbiddenException(error?.message || 'No se pudo crear la empresa en Falconext Hotel');
+      }
+    }
+
     return empresa;
   }
 
@@ -238,7 +442,8 @@ export class EmpresaService {
     estado?: 'ACTIVO' | 'INACTIVO' | 'TODOS';
     tipoEmpresa?: 'FORMAL' | 'INFORMAL' | '';
     brand?: string;
-  }, adminSistemaNegocio?: string | null) {
+    producto?: string;
+  }, adminSistemaNegocio?: string | null, adminSistemaProducto?: string | null) {
     const {
       search,
       page = 1,
@@ -248,13 +453,18 @@ export class EmpresaService {
       estado = 'TODOS',
       tipoEmpresa = '',
       brand,
+      producto,
     } = params;
     const skip = (page - 1) * limit;
 
     // Si el admin tiene sistemaNegocio, siempre forzar ese brand (ignora el brand del query)
     const brandFiltro = adminSistemaNegocio
-      ? adminSistemaNegocio.toLowerCase()
-      : brand;
+      ? normalizeBrand(adminSistemaNegocio)
+      : (brand ? normalizeBrand(brand) : undefined);
+
+    const productoFiltro = adminSistemaProducto
+      ? normalizeProducto(adminSistemaProducto)
+      : (producto ? normalizeProducto(producto) : undefined);
 
     let where: any = {};
 
@@ -273,12 +483,17 @@ export class EmpresaService {
       where.brand = brandFiltro;
     }
 
+    if (productoFiltro) {
+      where.producto = productoFiltro;
+    }
+
     if (search) {
       where = {
         AND: [
           ...(estado !== 'TODOS' ? [{ estado }] : []),
           ...(tipoEmpresa ? [{ tipoEmpresa }] : []),
           ...(brandFiltro ? [{ brand: brandFiltro }] : []),
+          ...(productoFiltro ? [{ producto: productoFiltro }] : []),
           {
             OR: [
               { ruc: { contains: search } },
@@ -307,6 +522,11 @@ export class EmpresaService {
           fechaExpiracion: true,
           logo: true,
           slugTienda: true,
+          brand: true,
+          producto: true,
+          hotelTenantId: true,
+          hotelAdminUserId: true,
+          hotelSyncAt: true,
           plan: {
             select: {
               nombre: true,
@@ -340,6 +560,11 @@ export class EmpresaService {
         fechaActivacion: e.fechaActivacion,
         fechaExpiracion: e.fechaExpiracion,
         slugTienda: e.slugTienda,
+        brand: e.brand,
+        producto: e.producto,
+        hotelTenantId: e.hotelTenantId,
+        hotelAdminUserId: e.hotelAdminUserId,
+        hotelSyncAt: e.hotelSyncAt,
         rubro: e.rubro,
         plan: {
           nombre: e.plan.nombre,
@@ -355,11 +580,27 @@ export class EmpresaService {
     };
   }
 
-  async actualizar(dto: UpdateEmpresaDto) {
+  async actualizar(
+    dto: UpdateEmpresaDto,
+    adminSistemaNegocio?: string | null,
+    adminSistemaProducto?: string | null,
+  ) {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: dto.id },
     });
     if (!empresa) throw new NotFoundException('Empresa no encontrada');
+    if (
+      adminSistemaNegocio &&
+      normalizeBrand(empresa.brand) !== normalizeBrand(adminSistemaNegocio)
+    ) {
+      throw new ForbiddenException('No tienes acceso a esta empresa');
+    }
+    if (
+      adminSistemaProducto &&
+      normalizeProducto(empresa.producto) !== normalizeProducto(adminSistemaProducto)
+    ) {
+      throw new ForbiddenException('No tienes acceso a esta empresa');
+    }
 
     try {
       // Preparar datos para actualizar, excluyendo campos undefined
@@ -398,10 +639,36 @@ export class EmpresaService {
       if (dto.yapeQrUrl !== undefined) updateData.yapeQrUrl = dto.yapeQrUrl;
       if (dto.plinNumero !== undefined) updateData.plinNumero = dto.plinNumero;
       if (dto.plinQrUrl !== undefined) updateData.plinQrUrl = dto.plinQrUrl;
-      if (dto.brand !== undefined) updateData.brand = dto.brand;
+      if (adminSistemaNegocio) {
+        updateData.brand = normalizeBrand(adminSistemaNegocio);
+      } else if (dto.brand !== undefined) {
+        updateData.brand = normalizeBrand(dto.brand);
+      }
+      if (adminSistemaProducto) {
+        updateData.producto = normalizeProducto(adminSistemaProducto);
+      } else if (dto.producto !== undefined) {
+        updateData.producto = normalizeProducto(dto.producto);
+      }
       if (dto.usuarioPse !== undefined) updateData.usuarioPse = dto.usuarioPse;
       if (dto.contrasenaPse !== undefined) updateData.contrasenaPse = dto.contrasenaPse;
       if (dto.usaDemo !== undefined) updateData.usaDemo = dto.usaDemo;
+
+      const productoFinal = adminSistemaProducto
+        ? normalizeProducto(adminSistemaProducto)
+        : (dto.producto !== undefined
+          ? normalizeProducto(dto.producto)
+          : normalizeProducto(empresa.producto));
+      const planIdFinal = dto.planId !== undefined ? dto.planId : empresa.planId;
+      if (dto.planId !== undefined || dto.producto !== undefined) {
+        const planFinal = await this.prisma.plan.findUnique({
+          where: { id: planIdFinal },
+          select: { id: true, nombre: true, producto: true },
+        });
+        if (!planFinal) throw new ForbiddenException('Plan seleccionado no encontrado');
+        if (normalizeProducto(planFinal.producto) !== productoFinal) {
+          throw new ForbiddenException('El plan seleccionado no pertenece al producto de la empresa');
+        }
+      }
 
       // Actualizar datos de empresa
       const empresaActualizada = await this.prisma.empresa.update({
@@ -441,6 +708,19 @@ export class EmpresaService {
         }
       }
 
+      if (productoFinal === 'hotel') {
+        await this.sincronizarEmpresaHotel(dto.id, dto.usuario?.password);
+      } else if (empresaActualizada.hotelTenantId || empresaActualizada.hotelAdminUserId) {
+        await this.prisma.empresa.update({
+          where: { id: dto.id },
+          data: {
+            hotelTenantId: null,
+            hotelAdminUserId: null,
+            hotelSyncAt: null,
+          },
+        });
+      }
+
       return empresaActualizada;
     } catch (error: any) {
       if (
@@ -460,6 +740,9 @@ export class EmpresaService {
     const empresa = await this.prisma.empresa.findUnique({ where: { id } });
     if (!empresa) throw new NotFoundException('Empresa no encontrada');
     const result = await this.prisma.empresa.update({ where: { id }, data: { estado } });
+    if (normalizeProducto(empresa.producto) === 'hotel') {
+      await this.sincronizarEmpresaHotel(id);
+    }
     if (userId) {
       await this.registrarLog(id, estado === 'ACTIVO' ? 'ACTIVADA' : 'DESACTIVADA', null, userId);
     }
@@ -578,6 +861,37 @@ export class EmpresaService {
       );
     const empresa = await this.obtenerPorId(empresaId);
     return empresa;
+  }
+
+  async sincronizarHotelDesdeMype(
+    empresaId: number,
+    adminSistemaNegocio?: string | null,
+    adminSistemaProducto?: string | null,
+    adminPassword?: string,
+  ) {
+    const empresa = await this.prisma.empresa.findUnique({ where: { id: empresaId } });
+    if (!empresa) throw new NotFoundException('Empresa no encontrada');
+
+    if (
+      adminSistemaNegocio &&
+      normalizeBrand(empresa.brand) !== normalizeBrand(adminSistemaNegocio)
+    ) {
+      throw new ForbiddenException('No tienes acceso a esta empresa');
+    }
+    if (
+      adminSistemaProducto &&
+      normalizeProducto(empresa.producto) !== normalizeProducto(adminSistemaProducto)
+    ) {
+      throw new ForbiddenException('No tienes acceso a esta empresa');
+    }
+
+    const synced = await this.sincronizarEmpresaHotel(empresaId, adminPassword);
+    return {
+      ok: true,
+      empresaId,
+      hotelTenantId: synced.tenantId,
+      hotelAdminUserId: synced.adminUserId,
+    };
   }
 
   async consultarRuc(ruc: string) {

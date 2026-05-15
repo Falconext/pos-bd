@@ -1,8 +1,13 @@
-import { IsBoolean, IsInt, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString } from 'class-validator';
 
 export class CreateModuloDto {
     @IsString()
     codigo: string;
+
+    @IsString()
+    @IsOptional()
+    @IsIn(['facturacion', 'hotel'])
+    producto?: 'facturacion' | 'hotel';
 
     @IsString()
     nombre: string;

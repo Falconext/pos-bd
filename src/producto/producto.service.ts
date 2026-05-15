@@ -11,6 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import { KardexService } from '../kardex/kardex.service';
 import * as XLSX from 'xlsx';
+import axios from 'axios';
 
 @Injectable()
 export class ProductoService {
@@ -412,11 +413,12 @@ export class ProductoService {
   }
 
   async getByBarcode(empresaId: number, codigoBarras: string) {
+    // 1. Intentar buscar en el catálogo local de la empresa
     const producto = await this.prisma.producto.findFirst({
-      where: { 
-        empresaId, 
-        codigoBarras, 
-        estado: { not: 'PLACEHOLDER' as any } 
+      where: {
+        empresaId,
+        codigoBarras,
+        estado: { not: 'PLACEHOLDER' as any }
       },
       select: {
         id: true,
@@ -428,18 +430,61 @@ export class ProductoService {
         codigoBarras: true,
         imagenUrl: true,
         tipoAfectacionIGV: true,
-        igvPorcentaje: true,
-        preciosMayorista: true,
-        unidadMedida: { select: { id: true, codigo: true, nombre: true } },
-        stocks: { select: { sedeId: true, stock: true } },
-      },
+        unidadMedida: true,
+        categoria: true,
+        marca: true,
+      }
     });
-    if (!producto) throw new NotFoundException('Producto no encontrado con ese código de barras');
-    
-    return {
-      ...producto,
-      costoUnitario: Number(producto.costoPromedio) || 0,
-    };
+
+    if (producto) {
+      return {
+        ...producto,
+        isGlobal: false,
+        costoUnitario: Number((producto as any).costoPromedio) || 0,
+      };
+    }
+
+    // 2. Si no existe localmente, intentar buscar en Open Food Facts (Catálogo Global)
+    console.log(`[BY_BARCODE] Producto ${codigoBarras} no encontrado localmente. Buscando en Open Food Facts...`);
+    const globalProduct = await this.buscarEnOpenFoodFacts(codigoBarras);
+
+    if (globalProduct) {
+      return {
+        ...globalProduct,
+        isGlobal: true, // Indica que es una sugerencia externa
+      };
+    }
+
+    return null;
+  }
+
+  private async buscarEnOpenFoodFacts(barcode: string) {
+    try {
+      const url = `https://world.openfoodfacts.org/api/v2/product/${barcode}.json`;
+      const { data } = await axios.get(url, { timeout: 5000 });
+
+      if (data && data.status === 1 && data.product) {
+        const p = data.product;
+        // Mapear campos de OFF a estructura de Falconext
+        return {
+          id: 0, // ID provisional
+          codigo: `OFF-${barcode}`,
+          descripcion: p.product_name || p.generic_name || 'Producto Desconocido',
+          codigoBarras: barcode,
+          imagenUrl: p.image_url || p.image_front_url || null,
+          precioUnitario: 0,
+          costoUnitario: 0,
+          stock: 0,
+          tipoAfectacionIGV: '10', // Gravado por defecto
+          // Sugerencias de marca/categoría
+          marcaStr: p.brands || null,
+          categoriaStr: p.categories_tags?.[0]?.replace('en:', '') || null,
+        };
+      }
+    } catch (error: any) {
+      console.error(`[OpenFoodFacts] Error buscando barcode ${barcode}:`, error.message);
+    }
+    return null;
   }
 
   async actualizar(data: {

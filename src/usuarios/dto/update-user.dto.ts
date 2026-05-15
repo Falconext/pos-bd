@@ -2,6 +2,7 @@ import {
   IsArray,
   IsEmail,
   IsInt,
+  IsIn,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -43,4 +44,14 @@ export class UpdateUserDto {
   @IsArray()
   @IsOptional()
   subModuloIds?: number[];
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['FALCONEXT', 'KREZKA'])
+  sistemaNegocio?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['FACTURACION', 'HOTEL'])
+  sistemaProducto?: string | null;
 }

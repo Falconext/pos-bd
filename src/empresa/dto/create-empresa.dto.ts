@@ -9,6 +9,7 @@ import {
   IsString,
   ValidateNested,
   IsBoolean,
+  IsIn,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -106,7 +107,13 @@ export class CreateEmpresaDto {
 
   @IsOptional()
   @IsString()
+  @IsIn(['falconext', 'krezka'])
   brand?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['facturacion', 'hotel'])
+  producto?: string;
 
   @IsOptional()
   @IsString()

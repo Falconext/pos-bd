@@ -16,12 +16,12 @@ export class SistemaFinanzasController {
 
     @Get('dashboard')
     getDashboard(@User() user: any) {
-        return this.service.getDashboard(user.sistemaNegocio ?? null);
+        return this.service.getDashboard(user.sistemaNegocio ?? null, user.sistemaProducto ?? null);
     }
 
     @Get('tendencia')
     getTendencia(@User() user: any, @Query('meses') meses?: string) {
-        return this.service.getTendencia(meses ? Number(meses) : 12, user.sistemaNegocio ?? null);
+        return this.service.getTendencia(meses ? Number(meses) : 12, user.sistemaNegocio ?? null, user.sistemaProducto ?? null);
     }
 
     @Get('gastos')

@@ -35,7 +35,7 @@ export class EmpresaController {
     @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const nueva = await this.empresaService.crear(dto, user.sistemaNegocio, user.id);
+    const nueva = await this.empresaService.crear(dto, user.sistemaNegocio, user.id, user.sistemaProducto);
     res.locals.message = 'Empresa creada exitosamente';
     return nueva;
   }
@@ -85,7 +85,7 @@ export class EmpresaController {
     @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const empresas = await this.empresaService.listar(query, user.sistemaNegocio);
+    const empresas = await this.empresaService.listar(query, user.sistemaNegocio, user.sistemaProducto);
     res.locals.message = 'Empresas listadas correctamente';
     return empresas;
   }
@@ -96,10 +96,11 @@ export class EmpresaController {
   async actualizar(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: Omit<UpdateEmpresaDto, 'id'>,
+    @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
     const dto: UpdateEmpresaDto = { id, ...body } as UpdateEmpresaDto;
-    const result = await this.empresaService.actualizar(dto);
+    const result = await this.empresaService.actualizar(dto, user.sistemaNegocio, user.sistemaProducto);
     res.locals.message = 'Empresa actualizada correctamente';
     return result;
   }
@@ -115,6 +116,25 @@ export class EmpresaController {
   ) {
     const result = await this.empresaService.cambiarEstado(id, body.estado, user.id);
     res.locals.message = `Empresa ${body.estado === 'ACTIVO' ? 'activada' : 'desactivada'} correctamente`;
+    return result;
+  }
+
+  @Post(':id/sync-hotel')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  async sincronizarHotel(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { adminPassword?: string },
+    @User() user: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.empresaService.sincronizarHotelDesdeMype(
+      id,
+      user.sistemaNegocio,
+      user.sistemaProducto,
+      body?.adminPassword,
+    );
+    res.locals.message = 'Empresa sincronizada con Falconext Hotel';
     return result;
   }
 

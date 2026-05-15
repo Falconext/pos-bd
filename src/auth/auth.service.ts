@@ -149,6 +149,7 @@ export class AuthService {
       rol: user.rol as string,
       empresaId: user.empresaId ?? null,
       sistemaNegocio: user.sistemaNegocio ?? null,
+      sistemaProducto: user.sistemaProducto ?? null,
     };
     if (sedeIdFinal) payload.sedeId = sedeIdFinal;
 
@@ -195,6 +196,7 @@ export class AuthService {
       empresaId: user.empresaId ?? null,
       sedeId,
       sistemaNegocio: user.sistemaNegocio ?? null,
+      sistemaProducto: user.sistemaProducto ?? null,
     };
 
     const accessToken = await this.jwt.signAsync(payload, {
@@ -252,6 +254,7 @@ export class AuthService {
       rol: user.rol as string,
       empresaId: user.empresaId ?? null,
       sistemaNegocio: (user as any).sistemaNegocio ?? null,
+      sistemaProducto: (user as any).sistemaProducto ?? null,
     };
     if (sedeId) payload.sedeId = sedeId;
 
@@ -291,6 +294,7 @@ export class AuthService {
         estado: true,
         permisos: true,
         sistemaNegocio: true,
+        sistemaProducto: true,
         sedesAsignadas: {
           select: {
             sede: {
@@ -319,6 +323,8 @@ export class AuthService {
             rubro: true,
             slugTienda: true,
             ruc: true,
+            brand: true,
+            producto: true,
             plan: {
               select: {
                 tieneTienda: true,

@@ -10,6 +10,7 @@ datasource db {
 model Plan {
   id                  Int          @id @default(autoincrement())
   nombre              String       @unique
+  producto            String       @default("facturacion")
   descripcion         String?
   limiteUsuarios      Int?
   maxSedes            Int?         @default(1)
@@ -29,6 +30,8 @@ model Plan {
   empresas             Empresa[]
   modulosAsignados     PlanModulo[]
   subModulosAsignados  PlanSubModulo[]
+
+  @@index([producto])
 }
 
 model Ubigeo {
@@ -126,6 +129,10 @@ model Empresa {
   reseller            Reseller?            @relation(fields: [resellerId], references: [id])
   resellerMovimientos ResellerMovimiento[]
   brand               String               @default("falconext")
+  producto            String               @default("facturacion")
+  hotelTenantId       String?
+  hotelAdminUserId    String?
+  hotelSyncAt         DateTime?
   usuarioPse          String?
   contrasenaPse       String?
   usaDemo             Boolean              @default(false)
@@ -135,6 +142,8 @@ model Empresa {
   @@index([providerToken])
   @@index([slugTienda])
   @@index([brand])
+  @@index([producto])
+  @@index([brand, producto])
 }
 
 model Usuario {
@@ -167,6 +176,7 @@ model Usuario {
   resellerId             Int?
   reseller               Reseller?               @relation(fields: [resellerId], references: [id])
   sistemaNegocio         String?
+  sistemaProducto        String?
   sedesAsignadas         UsuarioSede[]
   subModulosAsignados    UsuarioSubModulo[]
   passwordResetToken     String?
@@ -1172,6 +1182,9 @@ model GuiaRemision {
   s3XmlUrl         String?
   s3CdrUrl         String?
   s3PdfUrl         String?
+  sunatRetriesCount Int       @default(0)
+  sunatNextRetryAt  DateTime?
+  sunatLastRetryAt  DateTime?
 
   // Observaciones
   observaciones String?
@@ -1218,7 +1231,8 @@ model DetalleGuiaRemision {
 
 model Modulo {
   id              Int          @id @default(autoincrement())
-  codigo          String       @unique // 'dashboard', 'comprobantes', etc.
+  codigo          String // 'dashboard', 'comprobantes', etc.
+  producto        String       @default("facturacion")
   nombre          String // 'Dashboard', 'Comprobantes', etc.
   descripcion     String?
   icono           String? // Nombre del icono de Iconify
@@ -1228,7 +1242,8 @@ model Modulo {
   subModulos      SubModulo[]
   creadoEn        DateTime     @default(now())
 
-  @@index([codigo])
+  @@unique([codigo, producto])
+  @@index([producto])
   @@index([activo, orden])
 }
 

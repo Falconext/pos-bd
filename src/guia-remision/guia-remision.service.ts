@@ -3,6 +3,7 @@ import {
     NotFoundException,
     BadRequestException,
     ForbiddenException,
+    HttpException,
     Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -15,6 +16,8 @@ import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
 @Injectable()
 export class GuiaRemisionService {
     private readonly logger = new Logger(GuiaRemisionService.name);
+    private readonly MAX_DATA_ERROR_RETRIES = 5;
+    private readonly MAX_INFRA_ERROR_RETRIES = 30;
 
     constructor(
         private prisma: PrismaService,
@@ -450,6 +453,11 @@ export class GuiaRemisionService {
                     sunatCdrZip: resultado.cdrZip || null,
                     sunatErrorMsg: resultado.error || null,
                     documentoId: resultado.documentoId || null,
+                    // Resetear reintentos si hubo éxito
+                    ...(resultado.success && {
+                        sunatRetriesCount: 0,
+                        sunatNextRetryAt: null,
+                    })
                 },
             });
 
@@ -458,16 +466,94 @@ export class GuiaRemisionService {
                 guia: guiaActualizada,
                 message: resultado.message,
             };
-        } catch (error) {
-            await this.prisma.guiaRemision.update({
-                where: { id },
-                data: {
-                    estadoSunat: 'FALLIDO_ENVIO' as any,
-                    sunatErrorMsg: error.message,
-                },
-            });
-            throw error;
+        } catch (error: any) {
+            this.logger.error(`🚫 Error enviando guía ${id} a SUNAT: ${error.message}`);
+
+            try {
+                const current = await this.prisma.guiaRemision.findUnique({
+                    where: { id },
+                    select: { sunatRetriesCount: true },
+                });
+
+                if (current) {
+                    const newRetryCount = (current.sunatRetriesCount || 0) + 1;
+                    const errorType = this.classifyError(error);
+                    const maxRetries = errorType === 'DATOS'
+                        ? this.MAX_DATA_ERROR_RETRIES
+                        : this.MAX_INFRA_ERROR_RETRIES;
+
+                    if (newRetryCount < maxRetries) {
+                        const nextRetry = errorType === 'DATOS'
+                            ? this.calculateDataRetry(newRetryCount)
+                            : this.calculateNetworkRetry(newRetryCount);
+
+                        await this.prisma.guiaRemision.update({
+                            where: { id },
+                            data: {
+                                estadoSunat: 'FALLIDO_ENVIO' as any,
+                                sunatRetriesCount: newRetryCount,
+                                sunatLastRetryAt: new Date(),
+                                sunatNextRetryAt: nextRetry,
+                                sunatErrorMsg: `[${errorType}] (intento ${newRetryCount}/${maxRetries}): ${error.message}`,
+                            },
+                        });
+                        this.logger.log(`📅 Guía ${id} → reintento #${newRetryCount} [${errorType}] en ${nextRetry.toISOString()}`);
+                    } else {
+                        await this.prisma.guiaRemision.update({
+                            where: { id },
+                            data: {
+                                estadoSunat: 'RECHAZADO' as any,
+                                sunatNextRetryAt: null,
+                                sunatErrorMsg: `[${errorType}] Fallido tras ${newRetryCount} intentos: ${error.message}`,
+                            },
+                        });
+                        this.logger.error(`❌ Guía ${id} → RECHAZADO (agotó ${maxRetries} reintentos [${errorType}])`);
+                    }
+                }
+            } catch (dbErr) {
+                this.logger.error(`Error guardando estado de fallo de guía ${id}:`, dbErr);
+            }
+
+            const finalErrorType = this.classifyError(error);
+            if (finalErrorType === 'RED') {
+                return {
+                    success: true,
+                    message: 'Guía guardada correctamente. SUNAT no está disponible en este momento; la confirmación llegará automáticamente cuando el servicio se restablezca.',
+                    estado: 'PENDIENTE',
+                };
+            }
+
+            const rawMsg = error.response?.data?.message || error.message || 'Error al enviar a SUNAT';
+            throw new HttpException(`Error al enviar la guía a SUNAT: ${rawMsg}`, 502);
         }
+    }
+
+    private classifyError(err: any): 'DATOS' | 'RED' {
+        const msg = String(err?.message || '').toLowerCase();
+        const httpStatus = err?.status || err?.response?.status;
+
+        if (msg.includes('qpse rechaz') || msg.includes('rechazó el documento')) return 'DATOS';
+        if (msg.includes('no se puede leer') || msg.includes('parsear') ||
+            msg.includes('xml') || msg.includes('ubl') || msg.includes('cvc-')) return 'DATOS';
+        if (httpStatus && httpStatus >= 400 && httpStatus < 500) return 'DATOS';
+
+        return 'RED';
+    }
+
+    private calculateDataRetry(currentRetryCount: number): Date {
+        const backoffMinutes = [1, 2, 5, 15, 30, 60, 120, 180, 240, 300];
+        const minutes = backoffMinutes[Math.min(currentRetryCount, backoffMinutes.length - 1)];
+        const next = new Date();
+        next.setMinutes(next.getMinutes() + minutes);
+        return next;
+    }
+
+    private calculateNetworkRetry(currentRetryCount: number): Date {
+        const backoffMinutes = [5, 15, 60, 240, 720, 1440];
+        const minutes = backoffMinutes[Math.min(currentRetryCount, backoffMinutes.length - 1)];
+        const next = new Date();
+        next.setMinutes(next.getMinutes() + minutes);
+        return next;
     }
 
     private validateGuiaRemision(dto: CreateGuiaRemisionDto | UpdateGuiaRemisionDto) {

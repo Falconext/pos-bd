@@ -1,9 +1,14 @@
-import { IsBoolean, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreatePlanDto {
     @IsString()
     nombre: string;
+
+    @IsString()
+    @IsOptional()
+    @IsIn(['facturacion', 'hotel'])
+    producto?: 'facturacion' | 'hotel';
 
     @IsString()
     @IsOptional()

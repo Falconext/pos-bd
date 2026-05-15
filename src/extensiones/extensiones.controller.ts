@@ -8,12 +8,17 @@ import {
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { User } from '../common/decorators/user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('extensiones')
 export class ExtensionesController {
   constructor(private readonly prisma: PrismaService) { }
+
+  private normalizeProducto(value?: string | null): 'facturacion' | 'hotel' {
+    return String(value ?? '').trim().toLowerCase() === 'hotel' ? 'hotel' : 'facturacion';
+  }
 
   @Get('unidad-medida')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
@@ -91,12 +96,17 @@ export class ExtensionesController {
 
   @Get('planes')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
-  async listarPlanes() {
+  async listarPlanes(@Query('producto') producto?: string, @User() user?: any) {
+    const productoFiltro = user?.sistemaProducto
+      ? this.normalizeProducto(user.sistemaProducto)
+      : (producto ? this.normalizeProducto(producto) : undefined);
     const planes = await this.prisma.plan.findMany({
+      where: productoFiltro ? { producto: productoFiltro } : undefined,
       orderBy: { id: 'asc' },
       select: {
         id: true,
         nombre: true,
+        producto: true,
         descripcion: true,
         limiteUsuarios: true,
         costo: true,

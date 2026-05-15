@@ -1,4 +1,4 @@
-import { IsBoolean, IsDateString, IsInt, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsDateString, IsIn, IsInt, IsOptional, IsString } from 'class-validator';
 
 export class UpdateEmpresaDto {
   @IsInt()
@@ -110,7 +110,13 @@ export class UpdateEmpresaDto {
 
   @IsOptional()
   @IsString()
+  @IsIn(['falconext', 'krezka'])
   brand?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['facturacion', 'hotel'])
+  producto?: string;
 
   @IsOptional()
   @IsString()

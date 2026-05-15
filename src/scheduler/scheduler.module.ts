@@ -7,12 +7,14 @@ import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 import { ComprobanteModule } from '../comprobante/comprobante.module';
 import { ResellerModule } from '../reseller/reseller.module';
 import { S3Module } from '../s3/s3.module';
+import { GuiaRemisionModule } from '../guia-remision/guia-remision.module';
 
 @Module({
   imports: [
     ScheduleModule.forRoot(),
     NotificacionesModule,
     forwardRef(() => ComprobanteModule),
+    forwardRef(() => GuiaRemisionModule),
     ResellerModule,
     S3Module,
   ],

@@ -10,6 +10,7 @@ datasource db {
 model Plan {
   id              Int       @id @default(autoincrement())
   nombre          String    @unique
+  producto        String    @default("facturacion")
   descripcion     String?
   limiteUsuarios  Int?
   costo           Decimal   @default(0)
@@ -25,6 +26,8 @@ model Plan {
   maxImagenesProducto Int?   @default(1)
   maxComprobantes    Int?    @default(100)
   empresas        Empresa[]
+
+  @@index([producto])
 }
 
 model Ubigeo {
@@ -85,6 +88,11 @@ model Empresa {
   direccionRecojo   String?            
   tiempoPreparacionMin Int?            @default(30) 
   disenoOverride    String?            // Json as String for SQLite
+  brand             String             @default("falconext")
+  producto          String             @default("facturacion")
+  hotelTenantId     String?
+  hotelAdminUserId  String?
+  hotelSyncAt       DateTime?
   categorias        Categoria[]
   clientes          Cliente[]
   comprobantes      Comprobante[]
@@ -107,6 +115,9 @@ model Empresa {
 
   @@index([providerToken])
   @@index([slugTienda])
+  @@index([brand])
+  @@index([producto])
+  @@index([brand, producto])
 }
 
 model Usuario {
@@ -131,6 +142,8 @@ model Usuario {
   whatsappEnvios    WhatsAppEnvio[]
   historialEstadosPedido HistorialEstadoPedido[]
   preferenciasTabla PreferenciaTabla[]
+  sistemaNegocio    String?
+  sistemaProducto   String?
 }
 
 model Categoria {
@@ -818,4 +831,3 @@ model ProductoPlantilla {
   @@index([nombre])
   @@map("producto_plantillas")
 }
-
