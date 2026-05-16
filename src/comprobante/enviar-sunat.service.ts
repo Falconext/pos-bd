@@ -178,6 +178,9 @@ export class EnviarSunatService {
           'cbc:InvoiceTypeCode': {
             _attributes: {
               listID: tipoOperacionListID,
+              listAgencyName: 'PE:SUNAT',
+              listName: 'SUNAT:Identificador de Tipo de Documento',
+              listURI: 'urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo01',
             },
             _text: comp.tipoDoc,
           },
@@ -196,7 +199,14 @@ export class EnviarSunatService {
               _attributes: { languageLocaleID: '2006' },
             }] : [])
           ],
-          'cbc:DocumentCurrencyCode': { _text: comp.tipoMoneda },
+          'cbc:DocumentCurrencyCode': {
+            _attributes: {
+              listID: 'ISO 4217 Alpha',
+              listName: 'Currency',
+              listAgencyName: 'United Nations Economic Commission for Europe',
+            },
+            _text: comp.tipoMoneda,
+          },
           // Placeholders en el orden exacto UBL 2.1 SUNAT.
           // Las asignaciones posteriores actualizan la key en su posición original.
           'cac:Signature': null,
@@ -690,15 +700,52 @@ export class EnviarSunatService {
         throw new Error('SIMULACIÓN: SUNAT no disponible');
       }
 
+      let includeNoteNode = true;
+      let includePaymentDueDateInTerms = true;
       const buildXmlArtifacts = (currentCorrelativo: number) => {
         const padded = currentCorrelativo.toString().padStart(8, '0');
         payload.fileName = `${empresa!.ruc}-${comp.tipoDoc}-${comp.serie}-${padded}`;
         payload.documentBody['cbc:ID'] = { _text: `${comp.serie}-${padded}` };
+        payload.documentBody['cbc:UBLVersionID'] = { _text: '2.1' };
+        payload.documentBody['cbc:CustomizationID'] = { _text: '2.0' };
+
+        const noteNode = payload.documentBody['cbc:Note'];
+        if (!includeNoteNode) {
+          delete payload.documentBody['cbc:Note'];
+        } else if (Array.isArray(noteNode)) {
+          payload.documentBody['cbc:Note'] = noteNode
+            .filter((item: any) => item && item._text !== undefined && item._text !== null && String(item._text).trim() !== '')
+            .map((item: any) => {
+              const attrs = { ...(item?._attributes || {}) };
+              delete attrs.languageLocaleID;
+              return {
+                ...item,
+                _attributes: {
+                  ...attrs,
+                },
+              };
+            });
+        }
+
+        if (!includePaymentDueDateInTerms) {
+          const paymentTermsNode = payload.documentBody['cac:PaymentTerms'];
+          const stripDueDate = (term: any) => {
+            if (!term || typeof term !== 'object') return term;
+            if ('cbc:PaymentDueDate' in term) delete term['cbc:PaymentDueDate'];
+            return term;
+          };
+
+          if (Array.isArray(paymentTermsNode)) {
+            payload.documentBody['cac:PaymentTerms'] = paymentTermsNode.map(stripDueDate);
+          } else if (paymentTermsNode && typeof paymentTermsNode === 'object') {
+            payload.documentBody['cac:PaymentTerms'] = stripDueDate(paymentTermsNode);
+          }
+        }
 
         const xmlFilename = payload.fileName;
         const xmlContent = buildUblXml(this.resolveUblRootName(comp.tipoDoc), payload.documentBody);
 
-        if (['07', '08'].includes(comp.tipoDoc)) {
+        if (['01', '07', '08'].includes(comp.tipoDoc)) {
           console.log(`[XML-DEBUG tipoDoc=${comp.tipoDoc}] primeros 2000 chars:\n`, xmlContent.substring(0, 2000));
         }
 
@@ -769,6 +816,66 @@ export class EnviarSunatService {
 
         if (!signResponse.xml) {
           throw new HttpException('QPSE no devolvió el XML firmado en el reintento', 502);
+        }
+
+        signedXmlBase64 = signResponse.xml;
+        signedXmlContent = this.decodeBase64ToUtf8(signedXmlBase64);
+        initialResponse = await this.qpseClient.enviarXML({
+          accessToken,
+          xmlFilename: xmlArtifacts.xmlFilename,
+          externalId: signResponse.external_id,
+          xmlSignedBase64: signedXmlBase64,
+          usaDemo,
+        });
+      }
+
+      if (this.isSunatUblVersionError(initialResponse) || this.isSunatCustomizationVersionError(initialResponse)) {
+        console.warn(
+          `⚠️ QPSE rechazó versión UBL/Customization (${comp.serie}-${comp.correlativo}). Reintentando solo sin cbc:Note (manteniendo UBL 2.1 / Customization 2.0)...`,
+        );
+
+        includeNoteNode = false;
+
+        xmlArtifacts = buildXmlArtifacts(comp.correlativo);
+        signResponse = await this.qpseClient.firmarXML({
+          accessToken,
+          xmlFilename: xmlArtifacts.xmlFilename,
+          xmlContentBase64: xmlArtifacts.xmlContentBase64,
+          usaDemo,
+        });
+
+        if (!signResponse.xml) {
+          throw new HttpException('QPSE no devolvió el XML firmado en el reintento sin cbc:Note', 502);
+        }
+
+        signedXmlBase64 = signResponse.xml;
+        signedXmlContent = this.decodeBase64ToUtf8(signedXmlBase64);
+        initialResponse = await this.qpseClient.enviarXML({
+          accessToken,
+          xmlFilename: xmlArtifacts.xmlFilename,
+          externalId: signResponse.external_id,
+          xmlSignedBase64: signedXmlBase64,
+          usaDemo,
+        });
+      }
+
+      if (this.isSunatPaymentDueDateInTermsError(initialResponse) && includePaymentDueDateInTerms) {
+        console.warn(
+          `⚠️ QPSE rechazó cbc:PaymentDueDate en cac:PaymentTerms (${comp.serie}-${comp.correlativo}). Reintentando sin PaymentDueDate...`,
+        );
+
+        includePaymentDueDateInTerms = false;
+
+        xmlArtifacts = buildXmlArtifacts(comp.correlativo);
+        signResponse = await this.qpseClient.firmarXML({
+          accessToken,
+          xmlFilename: xmlArtifacts.xmlFilename,
+          xmlContentBase64: xmlArtifacts.xmlContentBase64,
+          usaDemo,
+        });
+
+        if (!signResponse.xml) {
+          throw new HttpException('QPSE no devolvió el XML firmado en el reintento sin PaymentDueDate', 502);
         }
 
         signedXmlBase64 = signResponse.xml;
@@ -1186,6 +1293,37 @@ export class EnviarSunatService {
     );
 
     return code === '1033' || responseText.includes('1033') || responseText.includes('numeraci');
+  }
+
+  private isSunatUblVersionError(response: any): boolean {
+    const text = JSON.stringify(response || {}).toLowerCase();
+    const code = String(response?.code ?? response?.estado ?? '');
+    return (
+      code === '2074' ||
+      text.includes('ublversionid - la versión del ubl no es correcta') ||
+      text.includes('ublversionid - la version del ubl no es correcta') ||
+      text.includes('nodo: "invoice/cbc:ublversionid"')
+    );
+  }
+
+  private isSunatCustomizationVersionError(response: any): boolean {
+    const text = JSON.stringify(response || {}).toLowerCase();
+    const code = String(response?.code ?? response?.estado ?? '');
+    return (
+      code === '2072' ||
+      text.includes('customizationid - la versión del documento no es la correcta') ||
+      text.includes('customizationid - la version del documento no es la correcta') ||
+      text.includes('nodo: "invoice/cbc:customizationid"')
+    );
+  }
+
+  private isSunatPaymentDueDateInTermsError(response: any): boolean {
+    const text = JSON.stringify(response || {}).toLowerCase();
+    return (
+      text.includes('paymentterms') &&
+      text.includes('paymentduedate') &&
+      text.includes('but next item should be end-element')
+    );
   }
 
   private extractQpseMessage(response: any, status?: string): string {
