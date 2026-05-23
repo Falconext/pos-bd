@@ -40,6 +40,41 @@ export class ProductoService {
     return `${prefijo}${siguiente.toString().padStart(3, '0')}`;
   }
 
+  private normalizarPorcentajes(
+    porcentajeVenta?: number,
+    porcentajeProvision?: number,
+  ): { porcentajeVenta: number; porcentajeProvision: number } {
+    const venta = Number.isFinite(porcentajeVenta as number)
+      ? Number(porcentajeVenta)
+      : undefined;
+    const provision = Number.isFinite(porcentajeProvision as number)
+      ? Number(porcentajeProvision)
+      : undefined;
+
+    if (venta !== undefined && (venta < 0 || venta > 100)) {
+      throw new ForbiddenException('El porcentaje de venta debe estar entre 0 y 100');
+    }
+    if (provision !== undefined && (provision < 0 || provision > 100)) {
+      throw new ForbiddenException('El porcentaje de provisión debe estar entre 0 y 100');
+    }
+
+    if (venta !== undefined && provision !== undefined) {
+      if (venta + provision !== 100) {
+        throw new ForbiddenException('La suma de porcentaje de venta y provisión debe ser 100');
+      }
+      return { porcentajeVenta: venta, porcentajeProvision: provision };
+    }
+
+    if (venta !== undefined) {
+      return { porcentajeVenta: venta, porcentajeProvision: 100 - venta };
+    }
+    if (provision !== undefined) {
+      return { porcentajeVenta: 100 - provision, porcentajeProvision: provision };
+    }
+
+    return { porcentajeVenta: 70, porcentajeProvision: 30 };
+  }
+
   async crear(
     data: {
       codigo?: string;
@@ -54,6 +89,9 @@ export class ProductoService {
       stockMinimo?: number;
       stockMaximo?: number;
       imagenUrl?: string;
+      localizacion?: string;
+      porcentajeVenta?: number;
+      porcentajeProvision?: number;
       // Campos Farmacia
       principioActivo?: string;
       concentracion?: string;
@@ -64,6 +102,7 @@ export class ProductoService {
       factorConversion?: number | string;
       codigoBarras?: string;
       codigoDigemid?: string;
+      costoPromedio?: number;
       // Campos Ofertas
       precioOferta?: number;
       fechaInicioOferta?: string | Date;
@@ -86,6 +125,9 @@ export class ProductoService {
       stockMinimo,
       stockMaximo,
       imagenUrl,
+      localizacion,
+      porcentajeVenta,
+      porcentajeProvision,
       // Farmacia/Otros
       principioActivo,
       concentracion,
@@ -96,11 +138,17 @@ export class ProductoService {
       factorConversion,
       codigoBarras,
       codigoDigemid,
+      costoPromedio,
       precioOferta,
       fechaInicioOferta,
       fechaFinOferta,
       preciosMayorista
     } = data;
+
+    const porcentajes = this.normalizarPorcentajes(
+      porcentajeVenta,
+      porcentajeProvision,
+    );
 
     if (!codigo) {
       codigo = await this.generarCodigoProducto(empresaId, 'PR');
@@ -160,6 +208,9 @@ export class ProductoService {
           categoriaId: categoriaId && Number(categoriaId) > 0 ? Number(categoriaId) : undefined,
           marcaId: marcaId && Number(marcaId) > 0 ? Number(marcaId) : undefined,
           imagenUrl: imagenUrl || undefined,
+          localizacion: localizacion || undefined,
+          porcentajeVenta: porcentajes.porcentajeVenta,
+          porcentajeProvision: porcentajes.porcentajeProvision,
           estado: EstadoType.ACTIVO, // Reactivar usando Enum
           publicarEnTienda: true,
           // Campos Farmacia update on restore
@@ -172,6 +223,7 @@ export class ProductoService {
           factorConversion: factorConversion ? Number(factorConversion) : undefined,
           codigoBarras,
           codigoDigemid,
+          costoPromedio: costoPromedio != null ? new Decimal(costoPromedio) : undefined,
           // Campos Ofertas
           precioOferta: precioOferta ? new Decimal(precioOferta) : undefined,
           fechaInicioOferta: fechaInicioOferta ? new Date(fechaInicioOferta) : undefined,
@@ -197,6 +249,9 @@ export class ProductoService {
           marcaId: marcaId && Number(marcaId) > 0 ? Number(marcaId) : undefined,
           empresaId,
           imagenUrl: imagenUrl || undefined,
+          localizacion: localizacion || undefined,
+          porcentajeVenta: porcentajes.porcentajeVenta,
+          porcentajeProvision: porcentajes.porcentajeProvision,
           estado: EstadoType.ACTIVO,
           // Campos Farmacia
           principioActivo,
@@ -208,6 +263,7 @@ export class ProductoService {
           factorConversion: factorConversion ? Number(factorConversion) : 1,
           codigoBarras,
           codigoDigemid,
+          costoPromedio: costoPromedio != null ? new Decimal(costoPromedio) : undefined,
           // Campos Ofertas
           precioOferta: precioOferta ? new Decimal(precioOferta) : undefined,
           fechaInicioOferta: fechaInicioOferta ? new Date(fechaInicioOferta) : undefined,
@@ -317,6 +373,9 @@ export class ProductoService {
           igvPorcentaje: true,
           tipoAfectacionIGV: true,
           estado: true,
+          localizacion: true,
+          porcentajeVenta: true,
+          porcentajeProvision: true,
           categoriaId: true,
           unidadMedidaId: true,
           marcaId: true,
@@ -501,6 +560,9 @@ export class ProductoService {
     stock?: number;
     costoUnitario?: number;
     imagenUrl?: string | null;
+    localizacion?: string;
+    porcentajeVenta?: number;
+    porcentajeProvision?: number;
     stockMinimo?: number;
     stockMaximo?: number;
     // Campos Farmacia
@@ -639,6 +701,13 @@ export class ProductoService {
           data.imagenUrl !== undefined
             ? data.imagenUrl
             : undefined,
+        localizacion:
+          data.localizacion !== undefined
+            ? data.localizacion
+            : undefined,
+        ...(data.porcentajeVenta !== undefined || data.porcentajeProvision !== undefined
+          ? this.normalizarPorcentajes(data.porcentajeVenta, data.porcentajeProvision)
+          : {}),
         costoPromedio:
           data.costoUnitario !== undefined
             ? new Decimal(data.costoUnitario)
@@ -909,36 +978,158 @@ export class ProductoService {
     return buffer;
   }
 
+  private normClave(s: string): string {
+    return s.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  }
+
+  private resolverUmbSunat(raw: string | undefined): string {
+    const alias: Record<string, string> = {
+      KG: 'KGM', KGS: 'KGM', KILO: 'KGM', KILOGRAMO: 'KGM',
+      UN: 'NIU', UND: 'NIU', UNID: 'NIU', UNIDAD: 'NIU', ETIQ: 'NIU', PZA: 'NIU', PZ: 'NIU',
+      LT: 'LTR', LTS: 'LTR', LITRO: 'LTR',
+      MT: 'MTR', MTS: 'MTR', METRO: 'MTR',
+    };
+    if (!raw) return 'NIU';
+    const key = raw.trim().toUpperCase();
+    return alias[key] ?? key;
+  }
+
+  private leerFilasMultiHoja(workbook: XLSX.WorkBook): any[] {
+    const rows: any[] = [];
+
+    const hdrIdx = (filas: any[][], marcas: string[]): number => {
+      for (let i = 0; i < Math.min(filas.length, 5); i++) {
+        if (marcas.some((m) => (filas[i] as any[]).includes(m))) return i;
+      }
+      return -1;
+    };
+
+    const sheetInsumos = workbook.Sheets['INV.INSUM.'];
+    if (sheetInsumos) {
+      const filas = XLSX.utils.sheet_to_json(sheetInsumos, { header: 1 }) as any[][];
+      const hi = hdrIdx(filas, ['SKU', 'NOMBRES']);
+      if (hi >= 0) {
+        const h = filas[hi];
+        const skuI = h.indexOf('SKU');
+        const nomI = h.indexOf('NOMBRES');
+        const precioKgI = h.indexOf('Precio x kg');
+        const costoI = h.indexOf('Costo sin igv');
+        const invI = h.indexOf('Inventario');
+        const familiaI = h.findIndex((x: any) => x && String(x).toUpperCase() === 'FAMILIA');
+        for (let i = hi + 1; i < filas.length; i++) {
+          const f = filas[i];
+          if (!f[skuI] || !f[nomI]) continue;
+          rows.push({
+            'CÓDIGO': String(f[skuI]),
+            'PRODUCTO': String(f[nomI]),
+            'U.M': 'KGM',
+            'AFECT': '10',
+            'PRECIO UNITARIO': precioKgI >= 0 ? (f[precioKgI] ?? 0) : (costoI >= 0 ? (f[costoI] ?? 0) : 0),
+            'PRECIO COSTO': costoI >= 0 ? (f[costoI] ?? 0) : 0,
+            'STOCK': invI >= 0 ? (f[invI] ?? 0) : 0,
+            'CATEGORIA': familiaI >= 0 && f[familiaI] ? String(f[familiaI]) : undefined,
+          });
+        }
+      }
+    }
+
+    const sheetEtiq = workbook.Sheets['INV. ETIQ.'];
+    if (sheetEtiq) {
+      const filas = XLSX.utils.sheet_to_json(sheetEtiq, { header: 1 }) as any[][];
+      const hi = hdrIdx(filas, ['COD.', 'NOMBRES']);
+      if (hi >= 0) {
+        const h = filas[hi];
+        const codI = h.indexOf('COD.');
+        const nomI = h.indexOf('NOMBRES');
+        const costoI = h.indexOf('COSTO SIN IGV');
+        const umbI = h.indexOf('UMB');
+        const invI = h.findIndex((x: any) => x && String(x).toLowerCase().startsWith('inventario'));
+        for (let i = hi + 1; i < filas.length; i++) {
+          const f = filas[i];
+          if (!f[codI] || !f[nomI]) continue;
+          const umbRaw = umbI >= 0 && f[umbI] ? String(f[umbI]).toUpperCase() : undefined;
+          rows.push({
+            'CÓDIGO': String(f[codI]),
+            'PRODUCTO': String(f[nomI]),
+            'U.M': this.resolverUmbSunat(umbRaw),
+            'AFECT': '10',
+            'PRECIO UNITARIO': costoI >= 0 ? (f[costoI] ?? 0) : 0,
+            'STOCK': invI >= 0 ? (f[invI] ?? 0) : 0,
+          });
+        }
+      }
+    }
+
+    const sheetPT = workbook.Sheets['INVE. PT'];
+    if (sheetPT) {
+      const filas = XLSX.utils.sheet_to_json(sheetPT, { header: 1 }) as any[][];
+      const hi = hdrIdx(filas, ['COD.', 'NOMBRES']);
+      if (hi >= 0) {
+        const h = filas[hi];
+        const codI = h.indexOf('COD.');
+        const nomI = h.indexOf('NOMBRES');
+        const costoUniI = h.indexOf('COSTO UNI.');
+        const costoI = h.indexOf('COSTO');
+        const umbI = h.indexOf('UMB');
+        const invI = h.indexOf('Inventario');
+        for (let i = hi + 1; i < filas.length; i++) {
+          const f = filas[i];
+          if (!f[codI] || !f[nomI]) continue;
+          const umbRaw = umbI >= 0 && f[umbI] ? String(f[umbI]).toUpperCase() : undefined;
+          rows.push({
+            'CÓDIGO': String(f[codI]),
+            'PRODUCTO': String(f[nomI]),
+            'U.M': this.resolverUmbSunat(umbRaw),
+            'AFECT': '10',
+            'PRECIO UNITARIO': costoI >= 0 ? (f[costoI] ?? 0) : 0,
+            'PRECIO COSTO': costoUniI >= 0 ? (f[costoUniI] ?? 0) : 0,
+            'STOCK': invI >= 0 ? (f[invI] ?? 0) : 0,
+          });
+        }
+      }
+    }
+
+    // Deduplicar por código (mantener primera aparición)
+    const seen = new Set<string>();
+    return rows.filter((r) => {
+      const cod = String(r['CÓDIGO']).trim();
+      if (!cod || seen.has(cod)) return false;
+      seen.add(cod);
+      return true;
+    });
+  }
+
   async cargaMasiva(fileBuffer: Buffer, empresaId: number) {
     const unidades = await this.prisma.unidadMedida.findMany({
-      select: { id: true, nombre: true },
+      select: { id: true, nombre: true, codigo: true },
     });
-    const unidadMap = new Map(
-      unidades.map((u) => [
-        u.nombre
-          .toUpperCase()
-          .normalize('NFD')
-          .replace(/[\u0300-\u036f]/g, ''),
-        u.id,
-      ]),
-    );
+    const unidadMap = new Map<string, number>();
+    for (const u of unidades) {
+      unidadMap.set(this.normClave(u.nombre), u.id);
+      if (u.codigo) unidadMap.set(this.normClave(u.codigo), u.id);
+    }
 
     const categorias = await this.prisma.categoria.findMany({
       select: { id: true, nombre: true },
     });
     const categoriaMap = new Map(
-      categorias.map((c) => [
-        c.nombre
-          .toUpperCase()
-          .normalize('NFD')
-          .replace(/[\u0300-\u036f]/g, ''),
-        c.id,
-      ]),
+      categorias.map((c) => [this.normClave(c.nombre), c.id]),
     );
 
     const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: null });
+
+    let rows: any[];
+    if (
+      workbook.Sheets['INV.INSUM.'] ||
+      workbook.Sheets['INV. ETIQ.'] ||
+      workbook.Sheets['INVE. PT']
+    ) {
+      rows = this.leerFilasMultiHoja(workbook);
+    } else {
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      rows = XLSX.utils.sheet_to_json(sheet, { defval: null });
+    }
+
     if (rows.length === 0)
       throw new ForbiddenException('El archivo Excel está vacío');
 
@@ -962,6 +1153,8 @@ export class ProductoService {
           row['Precio Unitario'] ??
           row['precioUnitario'] ??
           null;
+        const precioCostoRaw =
+          row['PRECIO COSTO'] ?? row['Precio Costo'] ?? null;
         const igvRaw = row['IGV'] ?? row['igv'] ?? null;
         const stockRaw = row['STOCK'] ?? row['Stock'] ?? row['stock'] ?? null;
         const categoriaRaw =
@@ -1000,37 +1193,69 @@ export class ProductoService {
         }
 
         const precioUnitario = parseFloat(precioUnitarioRaw?.toString());
+        const costoPromedio = precioCostoRaw != null ? parseFloat(precioCostoRaw.toString()) : undefined;
         const stock = parseInt(stockRaw?.toString(), 10);
         const igvPorcentaje = igvRaw ? parseFloat(igvRaw.toString()) : 18;
 
-        const categoriaKey = categoriaRaw
-          ? categoriaRaw
+        // Auto-upsert category: create if it doesn't exist
+        let categoriaId: number | undefined;
+        if (categoriaRaw) {
+          const categoriaKey = categoriaRaw
             .toString()
             .toUpperCase()
             .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '')
-          : null;
-        const categoriaId = categoriaKey
-          ? categoriaMap.get(categoriaKey)
-          : undefined;
-        if (categoriaKey && !categoriaId)
-          throw new ForbiddenException(
-            `Categoría no válida (${categoriaRaw}) en la fila ${index + 1}`,
-          );
+            .replace(/[\u0300-\u036f]/g, '');
+          let id = categoriaMap.get(categoriaKey);
+          if (!id) {
+            const nueva = await this.prisma.categoria.create({
+              data: { nombre: String(categoriaRaw).trim(), empresaId },
+            });
+            id = nueva.id;
+            categoriaMap.set(categoriaKey, id);
+          }
+          categoriaId = id;
+        }
 
-        const producto = await this.crear(
-          {
-            codigo: codigo.toString(),
-            descripcion: descripcion.toString(),
-            unidadMedidaId: Number(unidadMedidaId),
-            tipoAfectacionIGV,
-            precioUnitario,
-            igvPorcentaje,
-            stock,
-            categoriaId: categoriaId ? Number(categoriaId) : undefined,
-          },
-          empresaId,
-        );
+        // Upsert: update if already exists (non-PLACEHOLDER), create if new
+        const codigoStr = codigo.toString();
+        const existe = await this.prisma.producto.findFirst({
+          where: { codigo: codigoStr, empresaId, estado: { not: 'PLACEHOLDER' as any } },
+          select: { id: true },
+        });
+
+        let producto: any;
+        if (existe) {
+          const divisor = 1 + igvPorcentaje / 100;
+          const valorUnitario = parseFloat((precioUnitario / divisor).toFixed(2));
+          producto = await this.prisma.producto.update({
+            where: { id: existe.id },
+            data: {
+              descripcion: descripcion.toString(),
+              unidadMedidaId: Number(unidadMedidaId),
+              tipoAfectacionIGV,
+              precioUnitario: new Decimal(precioUnitario),
+              valorUnitario: new Decimal(valorUnitario),
+              igvPorcentaje: new Decimal(igvPorcentaje),
+              ...(costoPromedio != null ? { costoPromedio: new Decimal(costoPromedio) } : {}),
+              ...(categoriaId != null ? { categoriaId } : {}),
+            },
+          });
+        } else {
+          producto = await this.crear(
+            {
+              codigo: codigoStr,
+              descripcion: descripcion.toString(),
+              unidadMedidaId: Number(unidadMedidaId),
+              tipoAfectacionIGV,
+              precioUnitario,
+              costoPromedio,
+              igvPorcentaje,
+              stock,
+              categoriaId,
+            },
+            empresaId,
+          );
+        }
         resultados.push({ producto });
       } catch (e: any) {
         resultados.push({ error: e?.message || 'Error desconocido' });

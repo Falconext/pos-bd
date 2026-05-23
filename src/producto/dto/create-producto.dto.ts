@@ -60,6 +60,20 @@ export class CreateProductoDto {
   @IsString()
   imagenUrl?: string;
 
+  @IsOptional()
+  @IsString()
+  localizacion?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Type(() => Number)
+  porcentajeVenta?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Type(() => Number)
+  porcentajeProvision?: number;
+
   // 🆕 FARMACIA/BOTICA
   @IsOptional()
   @IsString()

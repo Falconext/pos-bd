@@ -20,9 +20,10 @@ export class SedeService {
             where: { empresaId, activo: true },
         });
 
-        const maxSedes = empresa.plan?.maxSedes || 1; // Default a 1 si no hay plan definido
+        const maxSedes = empresa.plan?.maxSedes ?? 1; // Default a 1 si no hay plan definido
+        const sedesIlimitadas = maxSedes === 0;
 
-        if (sedesCount >= maxSedes) {
+        if (!sedesIlimitadas && sedesCount >= maxSedes) {
             throw new ForbiddenException(
                 `Has alcanzado el límite de sedes permitido por tu plan (${maxSedes}). Actualiza tu plan para agregar más.`
             );

@@ -22,6 +22,14 @@ class DetalleCompraDto {
     @IsOptional()
     @IsDateString()
     fechaVencimiento?: string;
+
+    @IsOptional()
+    @IsString()
+    codigoXml?: string;
+
+    // true = el precioUnitario ya incluye IGV → el costo neto = precio / 1.18
+    @IsOptional()
+    incluyeIgv?: boolean;
 }
 
 export class CrearCompraDto {

@@ -1,298 +1,218 @@
 <!DOCTYPE html>
 <html lang="es">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cotización</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
             font-family: Arial, sans-serif;
             font-size: 11px;
-            padding: 20px;
+            padding: 20px 24px;
             line-height: 1.4;
+            color: #111;
         }
 
+        /* ── HEADER ─────────────────────────────────────────────── */
         .header {
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
-            margin-bottom: 20px;
+            margin-bottom: 18px;
         }
-
         .logo-empresa {
             display: flex;
             align-items: flex-start;
             flex: 1;
         }
-
         .logo-empresa img {
-            width: 100px;
-            height: 100px;
-            margin-right: 15px;
+            width: 90px;
+            height: 90px;
+            margin-right: 14px;
             object-fit: contain;
         }
-
         .empresa-info h1 {
-            font-size: 16px;
+            font-size: 20px;
             font-weight: bold;
-            margin-bottom: 3px;
+            margin-bottom: 4px;
         }
-
         .empresa-info p {
             font-size: 10px;
-            line-height: 1.5;
+            line-height: 1.7;
         }
-
         .documento {
             border: 2px solid #000;
-            padding: 10px 15px;
+            padding: 10px 18px;
             text-align: center;
-            min-width: 180px;
+            min-width: 170px;
         }
+        .documento .ruc { font-size: 11px; margin-bottom: 4px; }
+        .documento .tipo { font-size: 20px; font-weight: bold; margin: 4px 0; }
+        .documento .numero { font-size: 12px; margin-top: 4px; }
 
-        .documento .ruc {
-            font-size: 11px;
-            margin-bottom: 5px;
-        }
-
-        .documento .tipo {
-            font-size: 16px;
-            font-weight: bold;
-            margin: 5px 0;
-        }
-
-        .documento .numero {
-            font-size: 12px;
-            margin-top: 5px;
-        }
-
-        .data-boxes {
+        /* ── DATA BOXES ─────────────────────────────────────────── */
+        .data-section {
             display: flex;
-            justify-content: space-between;
-            margin: 20px 0;
-            gap: 15px;
+            gap: 14px;
+            margin-bottom: 16px;
         }
-
+        .data-col { flex: 1; }
+        .data-col-title {
+            font-weight: bold;
+            font-size: 9.5px;
+            color: #555;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            margin-bottom: 4px;
+            padding-bottom: 3px;
+            border-bottom: 1px solid #ccc;
+        }
         .data-box {
-            flex: 1;
-            border: 2px solid #000;
-            border-radius: 8px;
-            padding: 12px;
+            border: 1.5px solid #000;
+            border-radius: 6px;
+            padding: 10px 12px;
         }
-
-        .data-box-title {
-            font-weight: bold;
-            font-size: 11px;
-            margin-bottom: 8px;
-            text-align: center;
-        }
-
-        .data-box label {
-            display: flex;
+        .data-box table { width: 100%; border-collapse: collapse; }
+        .data-box table td {
             font-size: 10px;
-            margin-top: 5px;
+            padding: 2px 0;
+            vertical-align: top;
         }
-
-        .data-box label div:first-child {
+        .data-box table td:first-child {
             font-weight: bold;
-            min-width: 90px;
+            width: 90px;
+            white-space: nowrap;
         }
 
+        /* ── PRODUCTS TABLE ─────────────────────────────────────── */
         .productos-table {
             width: 100%;
-            border: 2px solid #000;
+            border: 1.5px solid #000;
             border-collapse: collapse;
-            margin-top: 15px;
+            margin-bottom: 14px;
         }
-
         .productos-table thead {
-            background-color: #f0f0f0;
-            border-bottom: 2px solid #000;
+            background-color: #e8e8e8;
+            border-bottom: 1.5px solid #000;
         }
-
         .productos-table th {
-            padding: 8px 5px;
+            padding: 7px 5px;
             font-size: 10px;
             font-weight: bold;
             text-align: center;
-            border-right: 1px solid #ccc;
+            border-right: 1px solid #aaa;
         }
-
-        .productos-table th:last-child {
-            border-right: none;
-        }
-
+        .productos-table th:last-child { border-right: none; }
         .productos-table td {
-            padding: 6px 5px;
+            padding: 5px 5px;
             font-size: 10px;
-            border-bottom: 1px solid #e0e0e0;
-            border-right: 1px solid #e0e0e0;
+            border-bottom: 1px solid #ddd;
+            border-right: 1px solid #ddd;
         }
+        .productos-table td:last-child { border-right: none; }
+        .productos-table tbody tr:last-child td { border-bottom: none; }
+        .col-n    { width: 5%;  text-align: center; }
+        .col-cant { width: 8%;  text-align: center; }
+        .col-um   { width: 9%;  text-align: center; }
+        .col-img  { width: 9%;  text-align: center; }
+        .col-img img { width: 34px; height: 34px; object-fit: cover; }
+        .col-desc { text-align: left; }
+        .col-pu   { width: 10%; text-align: right; }
+        .col-tot  { width: 10%; text-align: right; }
 
-        .productos-table td:last-child {
-            border-right: none;
-        }
-
-        .productos-table tbody tr:last-child td {
-            border-bottom: none;
-        }
-
-        .productos-table .cant {
-            width: 10%;
-            text-align: center;
-        }
-
-        .productos-table .um {
-            width: 10%;
-            text-align: center;
-        }
-
-        .productos-table .desc {
-            width: 50%;
-            text-align: left;
-        }
-
-        .productos-table .pu {
-            width: 15%;
-            text-align: right;
-        }
-
-        .productos-table .total {
-            width: 15%;
-            text-align: right;
-        }
-
+        /* ── SON ────────────────────────────────────────────────── */
         .son-section {
-            border: 2px solid #000;
-            border-radius: 8px;
-            padding: 10px;
-            margin-top: 15px;
-            font-size: 11px;
+            border: 1.5px solid #000;
+            border-radius: 6px;
+            padding: 9px 14px;
+            margin-bottom: 14px;
+            font-size: 12px;
             font-weight: bold;
-            font-style: italic;
             text-align: center;
         }
 
+        /* ── FOOTER SECTION ─────────────────────────────────────── */
         .footer-section {
-            margin-top: 15px;
             display: flex;
-            justify-content: space-between;
-            gap: 15px;
+            gap: 14px;
+            margin-bottom: 16px;
         }
-
         .observaciones-box {
             flex: 1;
-            border: 2px solid #000;
-            border-radius: 8px;
-            padding: 12px;
+            border: 1.5px solid #000;
+            border-radius: 6px;
+            padding: 11px 12px;
         }
-
-        .observaciones-box .title {
-            font-weight: bold;
-            font-size: 11px;
-            margin-bottom: 8px;
-        }
-
-        .observaciones-box p {
-            font-size: 10px;
-            line-height: 1.5;
-        }
+        .obs-title { font-weight: bold; font-size: 11px; margin-bottom: 5px; }
+        .obs-text  { font-size: 10px; line-height: 1.5; }
+        .bank-block { margin-top: 10px; font-size: 10px; line-height: 1.7; }
+        .bank-block .bank-header { font-weight: bold; margin-bottom: 2px; }
 
         .totales-box {
-            width: 250px;
-            border: 2px solid #000;
-            border-radius: 8px;
-            padding: 12px;
+            width: 240px;
+            border: 1.5px solid #000;
+            border-radius: 6px;
+            padding: 11px 12px;
         }
-
         .totales-box .row {
             display: flex;
             justify-content: space-between;
             font-size: 10px;
-            margin-bottom: 5px;
-        }
-
-        .totales-box .row.total-final {
-            font-weight: bold;
-            font-size: 11px;
-            padding-top: 5px;
-            border-top: 2px solid #000;
-            margin-top: 5px;
-        }
-
-        .bank-details {
-            margin-top: 15px;
-            border: 2px solid #000;
-            border-radius: 8px;
-            padding: 12px;
-        }
-
-        .bank-details .title {
-            font-weight: bold;
-            font-size: 11px;
-            margin-bottom: 8px;
-            text-align: center;
-        }
-
-        .bank-details-content {
-            display: flex;
-            justify-content: space-around;
-        }
-
-        .bank-details-content div {
-            text-align: center;
-        }
-
-        .bank-details-content div strong {
-            display: block;
-            font-size: 10px;
             margin-bottom: 3px;
         }
-
-        .bank-details-content div span {
-            font-size: 10px;
+        .totales-box .row.total-final {
+            font-weight: bold;
+            font-size: 12px;
+            padding-top: 5px;
+            border-top: 2px solid #000;
+            margin-top: 4px;
         }
 
+        /* ── GRACIAS ────────────────────────────────────────────── */
         .footer-thanks {
             text-align: center;
-            margin-top: 15px;
-            font-size: 10px;
+            margin-bottom: 12px;
         }
-
         .footer-thanks p {
-            margin: 3px 0;
+            font-size: 10.5px;
+            font-weight: bold;
+            line-height: 1.6;
         }
 
-        .footer-thanks .brand {
-            font-weight: bold;
-            font-size: 11px;
-            margin-top: 8px;
+        /* ── BOTTOM STRIP ───────────────────────────────────────── */
+        .footer-bottom {
+            border-top: 1px solid #bbb;
+            padding-top: 7px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+        .footer-bottom .usuario-label { font-size: 9px; color: #555; }
+        .footer-bottom .marca-label {
+            font-size: 9px;
+            color: #555;
+            font-style: italic;
+            text-align: right;
         }
     </style>
 </head>
 
 <body>
-    <!-- Header con logo, empresa y documento -->
+
+    <!-- ── HEADER ─────────────────────────────────────────────────── -->
     <div class="header">
         <div class="logo-empresa">
-            {{#if logo}}
-            <img src="{{logo}}" alt="Logo">
-            {{/if}}
+            {{#if logo}}<img src="{{logo}}" alt="Logo">{{/if}}
             <div class="empresa-info">
                 <h1>{{nombreComercial}}</h1>
                 <p>
                     <strong>{{direccion}}</strong><br>
                     {{rubro}}<br>
-                    <strong>RAZON SOCIAL:</strong> {{razonSocial}}<br>
-                    <strong>CELULAR:</strong> {{celular}}<br>
-                    <strong>EMAIL:</strong> {{email}}
+                    RAZON SOCIAL: {{razonSocial}}<br>
+                    CELULAR: {{celular}}<br>
+                    EMAIL: {{email}}
                 </p>
             </div>
         </div>
@@ -303,123 +223,99 @@
         </div>
     </div>
 
-    <!-- Data boxes: Cliente y Cotización -->
-    <div class="data-boxes">
-        <div class="data-box">
-            <div class="data-box-title">DATOS DEL CLIENTE</div>
-            <label>
-                <div>CLIENTE:</div>
-                <div>{{clienteNombre}}</div>
-            </label>
-            <label>
-                <div>RUC:</div>
-                <div>{{clienteNumDoc}}</div>
-            </label>
-            <label>
-                <div>EMAIL:</div>
-                <div>{{clienteEmail}}</div>
-            </label>
-            <label>
-                <div>TELF:</div>
-                <div>{{clienteTelefono}}</div>
-            </label>
-            <label>
-                <div>DIR:</div>
-                <div>{{clienteDireccion}}</div>
-            </label>
+    <!-- ── DATA BOXES ─────────────────────────────────────────────── -->
+    <div class="data-section">
+        <div class="data-col">
+            <div class="data-col-title">Datos del Cliente</div>
+            <div class="data-box">
+                <table>
+                    <tr><td>CLIENTE:</td><td>{{clienteNombre}}</td></tr>
+                    <tr><td>RUC:</td><td>{{clienteNumDoc}}</td></tr>
+                    <tr><td>EMAIL:</td><td>{{clienteEmail}}</td></tr>
+                    <tr><td>TELF:</td><td>{{clienteTelefono}}</td></tr>
+                    <tr><td>DIR:</td><td>{{clienteDireccion}}</td></tr>
+                </table>
+            </div>
         </div>
-        <div class="data-box">
-            <div class="data-box-title">DATOS DE LA COTIZACIÓN</div>
-            <label>
-                <div>FECHA EMISIÓN:</div>
-                <div>{{fecha}}</div>
-            </label>
-            <label>
-                <div>CONDICIÓN:</div>
-                <div>{{formaPago}}</div>
-            </label>
-            <label>
-                <div>VALIDEZ:</div>
-                <div>{{validez}}</div>
-            </label>
-            <label>
-                <div>MONEDA:</div>
-                <div>SOLES</div>
-            </label>
+        <div class="data-col">
+            <div class="data-col-title">Datos de la Cotización</div>
+            <div class="data-box">
+                <table>
+                    <tr><td>FECHA EMISIÓN:</td><td>{{fecha}}</td></tr>
+                    <tr><td>CONDICIÓN:</td><td>{{formaPago}}</td></tr>
+                    <tr><td>VALIDEZ:</td><td>{{validez}}</td></tr>
+                    <tr><td>MONEDA:</td><td>SOLES</td></tr>
+                </table>
+            </div>
         </div>
     </div>
 
-    <!-- Tabla de productos -->
+    <!-- ── PRODUCTS TABLE ──────────────────────────────────────────── -->
     <table class="productos-table">
         <thead>
             <tr>
-                <th class="cant">N°</th>
-                <th class="cant">CANT.</th>
-                <th class="um">UNIDAD</th>
-                <th class="desc">DESCRIPCIÓN</th>
-                <th class="pu">P.UNIT.</th>
-                <th class="total">TOTAL</th>
+                <th class="col-n">N°</th>
+                <th class="col-cant">CANT.</th>
+                <th class="col-um">UNIDAD</th>
+                {{#if includeProductImages}}<th class="col-img">IMAGEN</th>{{/if}}
+                <th class="col-desc">DESCRIPCIÓN</th>
+                <th class="col-pu">P.UNIT.</th>
+                <th class="col-tot">TOTAL</th>
             </tr>
         </thead>
         <tbody>
             {{#each productos}}
             <tr>
-                <td class="cant">{{@index}}</td>
-                <td class="cant">{{cantidad}}</td>
-                <td class="um">{{unidadMedida}}</td>
-                <td class="desc">{{descripcion}}</td>
-                <td class="pu">{{precioUnitario}}</td>
-                <td class="total">{{total}}</td>
+                <td class="col-n">{{inc @index}}</td>
+                <td class="col-cant">{{cantidad}}</td>
+                <td class="col-um">{{unidadMedida}}</td>
+                {{#if ../includeProductImages}}
+                <td class="col-img">{{#if imagenUrl}}<img src="{{imagenUrl}}" alt="" />{{else}}-{{/if}}</td>
+                {{/if}}
+                <td class="col-desc">{{descripcion}}</td>
+                <td class="col-pu">{{precioUnitario}}</td>
+                <td class="col-tot">{{total}}</td>
             </tr>
             {{/each}}
         </tbody>
     </table>
 
-    <!-- SON (Total en letras) -->
-    <div class="son-section">
-        SON: {{totalEnLetras}}
-    </div>
+    <!-- ── SON ────────────────────────────────────────────────────── -->
+    <div class="son-section">SON: {{totalEnLetras}}</div>
 
-    <!-- Footer: Observaciones y Totales -->
+    <!-- ── FOOTER SECTION ─────────────────────────────────────────── -->
     <div class="footer-section">
         <div class="observaciones-box">
-            <div class="title">OBSERVACIONES:</div>
-            <p>{{observaciones}}</p>
+            <div class="obs-title">OBSERVACIONES:</div>
+            <p class="obs-text">{{observaciones}}</p>
             {{#if cotizTerminos}}
-            <p style="margin-top: 8px;"><strong>TÉRMINOS:</strong> {{cotizTerminos}}</p>
+            <p class="obs-text" style="margin-top:6px;"><strong>TÉRMINOS:</strong> {{cotizTerminos}}</p>
+            {{/if}}
+            {{#if bancoNombre}}
+            <div class="bank-block">
+                <div class="bank-header">DEPOSITAR A NOMBRE DE {{razonSocial}}</div>
+                <p>
+                    BANCO {{bancoNombre}}<br>
+                    MONEDA {{monedaCuenta}}<br>
+                    N° CUENTA<br>
+                    {{numeroCuenta}}<br>
+                    CCI<br>
+                    {{cci}}
+                </p>
+            </div>
             {{/if}}
         </div>
+
         <div class="totales-box">
-            <div class="row">
-                <span><strong>OP. GRAVADAS:</strong></span>
-                <span>S/ {{mtoOperGravadas}}</span>
-            </div>
-            <div class="row">
-                <span><strong>OP. EXONERADAS:</strong></span>
-                <span>S/ 0.00</span>
-            </div>
-            <div class="row">
-                <span><strong>OP. INAFECTAS:</strong></span>
-                <span>S/ 0.00</span>
-            </div>
-            <div class="row">
-                <span><strong>OP. GRATUITAS:</strong></span>
-                <span>S/ 0.00</span>
-            </div>
-            <div class="row">
-                <span><strong>SUB TOTAL:</strong></span>
-                <span>S/ {{subTotal}}</span>
-            </div>
+            <div class="row"><span><strong>OP. GRAVADAS:</strong></span><span>S/ {{mtoOperGravadas}}</span></div>
+            <div class="row"><span><strong>OP. EXONERADAS:</strong></span><span>S/ 0.00</span></div>
+            <div class="row"><span><strong>OP. INAFECTAS:</strong></span><span>S/ 0.00</span></div>
+            <div class="row"><span><strong>OP. GRATUITAS:</strong></span><span>S/ 0.00</span></div>
+            <div class="row"><span><strong>SUB TOTAL:</strong></span><span>S/ {{subTotal}}</span></div>
             {{#if descuento}}
-            <div class="row">
-                <span><strong>DESCUENTOS TOTAL:</strong></span>
-                <span>S/ {{descuento}}</span>
-            </div>
+            <div class="row"><span><strong>DESCUENTOS TOTAL:</strong></span><span>S/ {{descuento}}</span></div>
             {{/if}}
-            <div class="row">
-                <span><strong>IGV 18%:</strong></span>
-                <span>S/ {{mtoIGV}}</span>
-            </div>
+            <div class="row"><span><strong>IGV 18%:</strong></span><span>S/ {{mtoIGV}}</span></div>
             <div class="row total-final">
                 <span><strong>MONTO TOTAL:</strong></span>
                 <span>S/ {{mtoImpVenta}}</span>
@@ -427,64 +323,20 @@
         </div>
     </div>
 
-    <!-- Detalles bancarios -->
-    {{#if bancoNombre}}
-    <div class="bank-details">
-        <div class="title">DEPOSITAR A NOMBRE DE {{nombreComercial}}</div>
-        <div class="bank-details-content">
-            <div>
-                <strong>BANCO {{bancoNombre}}</strong>
-            </div>
-            <div>
-                <strong>MONEDA SOLES</strong>
-            </div>
-            <div>
-                <strong>N° CUENTA</strong>
-                <span>{{numeroCuenta}}</span>
-            </div>
-            <div>
-                <strong>CCI</strong>
-                <span>{{cci}}</span>
-            </div>
-        </div>
-    </div>
-    {{/if}}
-
-    {{#if yapeNumero}}
-    <div style="margin-top: 15px; border: 2px solid #000; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; align-items: center;">
-        <div style="font-weight: bold; font-size: 11px; margin-bottom: 8px; text-align: center; width: 100%;">PAGAR CON YAPE / PLIN</div>
-        <div style="display: flex; gap: 30px; justify-content: center; width: 100%;">
-            {{#if yapeNumero}}
-            <div style="text-align: center;">
-                <div style="font-weight: bold; font-size: 10px; margin-bottom: 4px;">YAPE</div>
-                {{#if yapeQrUrl}}
-                <img src="{{yapeQrUrl}}" style="width: 100px; height: 100px; border: 1px solid #ccc; padding: 3px;" />
-                {{/if}}
-                <div style="margin-top: 4px; font-weight: bold; font-size: 10px;">{{yapeNumero}}</div>
-            </div>
-            {{/if}}
-            {{#if plinNumero}}
-            <div style="text-align: center;">
-                <div style="font-weight: bold; font-size: 10px; margin-bottom: 4px;">PLIN</div>
-                {{#if plinQrUrl}}
-                <img src="{{plinQrUrl}}" style="width: 100px; height: 100px; border: 1px solid #ccc; padding: 3px;" />
-                {{/if}}
-                <div style="margin-top: 4px; font-weight: bold; font-size: 10px;">{{plinNumero}}</div>
-            </div>
-            {{/if}}
-        </div>
-    </div>
-    {{/if}}
-
-    <!-- Footer final -->
+    <!-- ── GRACIAS ─────────────────────────────────────────────────── -->
     <div class="footer-thanks">
-        <p><strong>GRACIAS POR ELEGIR {{nombreComercial}} PARA CUBRIR SUS REQUERIMIENTOS DE {{rubro}}</strong></p>
-        <p><strong>VUELVA PRONTO</strong></p>
-        <div class="brand">
-            <p>USUARIO: {{usuario}} {{fecha}} {{hora}}</p>
-            <p>Comprobante emitido a través de www.falconext.pe</p>
+        <p>GRACIAS POR ELEGIR {{nombreComercial}} PARA CUBRIR SUS REQUERIMIENTOS DE {{rubro}}</p>
+        <p>VUELVA PRONTO</p>
+    </div>
+
+    <!-- ── BOTTOM STRIP ────────────────────────────────────────────── -->
+    <div class="footer-bottom">
+        <div class="usuario-label">USUARIO: {{usuario}}</div>
+        <div class="marca-label">
+            {{sistemaNombre}} ™<br>
+            Comprobante emitido a través de {{sistemaUrl}}
         </div>
     </div>
-</body>
 
+</body>
 </html>

@@ -61,6 +61,11 @@ model Empresa {
   provincia         String?
   ubigeo            String?
   providerToken     String?
+  billingProvider   BillingProvider     @default(QPSE)
+  billingApiBaseUrl String?
+  billingApiToken   String?
+  billingApiUser    String?
+  billingApiPassword String?
   tokenCreatedAt    DateTime?
   tokenUpdatedAt    DateTime?
   empresaUbigeo     String?
@@ -93,6 +98,7 @@ model Empresa {
   hotelTenantId     String?
   hotelAdminUserId  String?
   hotelSyncAt       DateTime?
+  metodoSalidaLotes String             @default("LIFO")
   categorias        Categoria[]
   clientes          Cliente[]
   comprobantes      Comprobante[]
@@ -112,6 +118,10 @@ model Empresa {
   combos            Combo[]            
   preferenciasTabla PreferenciaTabla[]
   gruposModificadores GrupoModificador[] 
+  recetasProduccion RecetaProduccion[]
+  ordenesProduccion OrdenProduccion[]
+  movimientosProduccion MovimientoProduccion[]
+  reservas          Reserva[]
 
   @@index([providerToken])
   @@index([slugTienda])
@@ -144,6 +154,8 @@ model Usuario {
   preferenciasTabla PreferenciaTabla[]
   sistemaNegocio    String?
   sistemaProducto   String?
+  ordenesProduccion OrdenProduccion[]
+  movimientosProduccion MovimientoProduccion[]
 }
 
 model Categoria {
@@ -194,6 +206,9 @@ model Producto {
   imagenesExtra       String?              
   descripcionLarga    String?              
   destacado           Boolean              @default(false) 
+  localizacion        String?
+  porcentajeVenta     Int                  @default(70)
+  porcentajeProvision Int                  @default(30)
   ratingAvg           Decimal?             @default(0) 
   ratingCount         Int?                 @default(0) 
   detalleComprobantes DetalleComprobante[]
@@ -206,10 +221,158 @@ model Producto {
   galeria             GaleriaProducto[]    
   comboItems          ComboItem[]          
   gruposModificadores ProductoGrupoModificador[] 
+  recetasComoProductoFinal RecetaProduccion[]      @relation("RecetaProductoFinal")
+  recetasComoInsumo        RecetaComponente[]      @relation("RecetaProductoInsumo")
+  ordenesComoProductoFinal OrdenProduccion[]       @relation("OrdenProductoFinal")
+  componentesProduccion    OrdenProduccionComponente[] @relation("OrdenProductoInsumo")
+  movimientosProduccion    MovimientoProduccion[]
+  reservas                Reserva[]
 
   @@unique([empresaId, codigo])
   @@index([empresaId, publicarEnTienda])
   @@index([marcaId])
+}
+
+model Reserva {
+  id               Int      @id @default(autoincrement())
+  empresaId        Int
+  sedeId           Int
+  productoId       Int
+  cantidad         Int
+  motivo           String?
+  estado           String   @default("PENDIENTE")
+  fechaVencimiento DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  empresa  Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  producto Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
+
+  @@index([empresaId, sedeId, estado])
+  @@index([productoId])
+}
+
+model RecetaProduccion {
+  id                      Int                @id @default(autoincrement())
+  empresaId               Int
+  productoFinalId         Int
+  codigo                  String
+  nombre                  String
+  version                 Int                @default(1)
+  rendimientoObjetivo     Decimal
+  unidadRendimiento       String
+  mermaObjetivoPorcentaje Decimal?           @default(0)
+  activo                  Boolean            @default(true)
+  observaciones           String?
+  creadoEn                DateTime           @default(now())
+  actualizadoEn           DateTime           @updatedAt
+  empresa                 Empresa            @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  productoFinal           Producto           @relation("RecetaProductoFinal", fields: [productoFinalId], references: [id], onDelete: Cascade)
+  componentes             RecetaComponente[]
+  ordenes                 OrdenProduccion[]
+
+  @@unique([empresaId, codigo, version])
+  @@index([empresaId, activo])
+  @@index([productoFinalId])
+}
+
+model RecetaComponente {
+  id                      Int               @id @default(autoincrement())
+  recetaId                Int
+  productoInsumoId        Int
+  orden                   Int               @default(0)
+  cantidadBase            Decimal
+  unidadBase              String
+  mermaEsperadaPorcentaje Decimal?          @default(0)
+  esOpcional              Boolean           @default(false)
+  creadoEn                DateTime          @default(now())
+  actualizadoEn           DateTime          @updatedAt
+  receta                  RecetaProduccion  @relation(fields: [recetaId], references: [id], onDelete: Cascade)
+  productoInsumo          Producto          @relation("RecetaProductoInsumo", fields: [productoInsumoId], references: [id], onDelete: Cascade)
+
+  @@unique([recetaId, productoInsumoId, orden])
+  @@index([recetaId])
+  @@index([productoInsumoId])
+}
+
+model OrdenProduccion {
+  id                   Int                         @id @default(autoincrement())
+  empresaId            Int
+  recetaId             Int?
+  productoFinalId      Int
+  loteProduccion       String
+  fechaProgramada      DateTime?
+  fechaInicio          DateTime?
+  fechaFin             DateTime?
+  cantidadObjetivo     Decimal
+  cantidadProducida    Decimal                     @default(0)
+  mermaTotal           Decimal                     @default(0)
+  estado               EstadoProduccion            @default(BORRADOR)
+  observaciones        String?
+  usuarioResponsableId Int?
+  creadoEn             DateTime                    @default(now())
+  actualizadoEn        DateTime                    @updatedAt
+  empresa              Empresa                     @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  receta               RecetaProduccion?           @relation(fields: [recetaId], references: [id], onDelete: SetNull)
+  productoFinal        Producto                    @relation("OrdenProductoFinal", fields: [productoFinalId], references: [id], onDelete: Cascade)
+  usuarioResponsable   Usuario?                    @relation(fields: [usuarioResponsableId], references: [id], onDelete: SetNull)
+  componentes          OrdenProduccionComponente[]
+  movimientos          MovimientoProduccion[]
+
+  @@unique([empresaId, loteProduccion])
+  @@index([empresaId, estado])
+  @@index([productoFinalId, fechaInicio])
+  @@index([usuarioResponsableId])
+}
+
+model OrdenProduccionComponente {
+  id                Int             @id @default(autoincrement())
+  ordenProduccionId Int
+  productoInsumoId  Int
+  cantidadTeorica   Decimal
+  cantidadConsumida Decimal         @default(0)
+  mermaCantidad     Decimal         @default(0)
+  unidad            String
+  costoUnitario     Decimal?        @default(0)
+  costoTotal        Decimal?        @default(0)
+  observacion       String?
+  creadoEn          DateTime        @default(now())
+  actualizadoEn     DateTime        @updatedAt
+  ordenProduccion   OrdenProduccion @relation(fields: [ordenProduccionId], references: [id], onDelete: Cascade)
+  productoInsumo    Producto        @relation("OrdenProductoInsumo", fields: [productoInsumoId], references: [id], onDelete: Cascade)
+
+  @@unique([ordenProduccionId, productoInsumoId])
+  @@index([ordenProduccionId])
+  @@index([productoInsumoId])
+}
+
+model MovimientoProduccion {
+  id                 Int                    @id @default(autoincrement())
+  ordenProduccionId  Int
+  empresaId          Int
+  productoId         Int
+  tipoMovimiento     TipoMovimientoProduccion
+  cantidad           Decimal
+  unidad             String
+  costoUnitario      Decimal?               @default(0)
+  costoTotal         Decimal?               @default(0)
+  mermaCantidad      Decimal?               @default(0)
+  loteReferencia     String?
+  fecha              DateTime               @default(now())
+  usuarioId          Int?
+  observacion        String?
+  movimientoKardexId Int?
+  ordenProduccion    OrdenProduccion        @relation(fields: [ordenProduccionId], references: [id], onDelete: Cascade)
+  empresa            Empresa                @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  producto           Producto               @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  usuario            Usuario?               @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
+  movimientoKardex   MovimientoKardex?      @relation(fields: [movimientoKardexId], references: [id], onDelete: SetNull)
+
+  @@index([ordenProduccionId, fecha])
+  @@index([empresaId, fecha])
+  @@index([productoId])
+  @@index([usuarioId])
+  @@index([movimientoKardexId])
 }
 
 model TipoDocumento {
@@ -283,6 +446,7 @@ model Comprobante {
   tipoOperacionId    Int?
   motivoId           Int?
   mtoOperInafectas   Float                @default(0)
+  mtoOperExoneradas  Float                @default(0)
   mtoDescuentoGlobal Float                @default(0)
   sunatCdrResponse   String? 
   sunatCdrZip        String?
@@ -385,6 +549,7 @@ model MovimientoKardex {
   empresa          Empresa        @relation(fields: [empresaId], references: [id])
   producto         Producto       @relation(fields: [productoId], references: [id])
   usuario          Usuario?       @relation(fields: [usuarioId], references: [id])
+  movimientosProduccion MovimientoProduccion[]
 
   @@index([productoId, fecha])
   @@index([empresaId, fecha])
@@ -565,6 +730,13 @@ enum Rol {
   ADMIN_SISTEMA
   ADMIN_EMPRESA
   USUARIO_EMPRESA
+  RESELLER
+}
+
+enum BillingProvider {
+  QPSE
+  APISUNAT
+  JAMBLE
 }
 
 enum PersonaType {
@@ -601,6 +773,21 @@ enum TipoMovimiento {
   SALIDA
   AJUSTE
   TRANSFERENCIA
+}
+
+enum EstadoProduccion {
+  BORRADOR
+  PLANIFICADA
+  EN_PROCESO
+  FINALIZADA
+  ANULADA
+}
+
+enum TipoMovimientoProduccion {
+  CONSUMO_INSUMO
+  INGRESO_PRODUCTO_FINAL
+  MERMA
+  AJUSTE
 }
 
 enum MetodoCosteo {

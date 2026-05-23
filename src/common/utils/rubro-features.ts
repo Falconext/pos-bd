@@ -4,89 +4,107 @@
  */
 
 export interface RubroFeatures {
-    gestionLotes: boolean;           // Farmacia/Botica
-    requiereVencimientos: boolean;   // Farmacia/Alimentos
-    usaCodigoBarras: boolean;        // Bodega/Supermarket
-    permiteFraccionamiento: boolean; // Farmacia
-    gestionOfertas: boolean;         // Supermarket
-    controlStock: boolean;           // Todos (siempre true)
+  gestionLotes: boolean; // Farmacia/Botica
+  requiereVencimientos: boolean; // Farmacia/Alimentos
+  usaCodigoBarras: boolean; // Bodega/Supermarket
+  permiteFraccionamiento: boolean; // Farmacia
+  gestionOfertas: boolean; // Supermarket
+  controlStock: boolean; // Todos (siempre true)
 }
 
 type FeatureOverrides = {
-    usaCodigoBarrasManual?: boolean | null;
+  usaCodigoBarrasManual?: boolean | null;
 };
 
 /**
  * Detecta automáticamente las funcionalidades según el nombre del rubro
  */
 export function detectarFuncionesRubro(
-    nombreRubro: string,
-    overrides?: FeatureOverrides,
+  nombreRubro: string,
+  overrides?: FeatureOverrides,
 ): RubroFeatures {
-    const nombre = nombreRubro.toLowerCase();
+  const nombre = nombreRubro.toLowerCase();
 
-    // FARMACIA / BOTICA
-    const esFarmacia = nombre.includes('farmacia') || nombre.includes('botica');
+  // FARMACIA / BOTICA
+  const esFarmacia = nombre.includes('farmacia') || nombre.includes('botica');
 
-    // BODEGA / SUPERMARKET / MINIMARKET  
-    const esBodega =
-        nombre.includes('bodega') ||
-        nombre.includes('supermarket') ||
-        nombre.includes('supermercado') ||
-        nombre.includes('minimarket') ||
-        nombre.includes('abarrotes');
+  // BODEGA / SUPERMARKET / MINIMARKET
+  const esBodega =
+    nombre.includes('bodega') ||
+    nombre.includes('supermarket') ||
+    nombre.includes('supermercado') ||
+    nombre.includes('minimarket') ||
+    nombre.includes('abarrotes');
 
-    // ALIMENTOS (restaurante, panadería, etc.)
-    const esAlimentos =
-        nombre.includes('restaurante') ||
-        nombre.includes('panadería') ||
-        nombre.includes('panaderia') ||
-        nombre.includes('pastelería') ||
-        nombre.includes('pasteleria');
+  // ALIMENTOS (restaurante, panadería, etc.)
+  const esAlimentos =
+    nombre.includes('restaurante') ||
+    nombre.includes('panadería') ||
+    nombre.includes('panaderia') ||
+    nombre.includes('pastelería') ||
+    nombre.includes('pasteleria');
 
-    const usaCodigoBarras =
-        typeof overrides?.usaCodigoBarrasManual === 'boolean'
-            ? overrides.usaCodigoBarrasManual
-            : esBodega;
+  // FABRICACIÓN / MANUFACTURA
+  const esFabricacion =
+    nombre.includes('fabricación') ||
+    nombre.includes('fabricacion') ||
+    nombre.includes('manufactura') ||
+    nombre.includes('industria') ||
+    nombre.includes('producción') ||
+    nombre.includes('produccion');
 
-    return {
-        // Lotes: Farmacia principalmente (pero también alimentos si quieren)
-        gestionLotes: esFarmacia,
+  const usaCodigoBarras =
+    typeof overrides?.usaCodigoBarrasManual === 'boolean'
+      ? overrides.usaCodigoBarrasManual
+      : esBodega;
 
-        // Vencimientos: Farmacia y alimentos
-        requiereVencimientos: esFarmacia || esAlimentos,
+  return {
+    // Lotes: Farmacia y fabricación (insumos/componentes)
+    gestionLotes: esFarmacia || esFabricacion,
 
-        // Código de barras: Bodega/Supermarket
-        usaCodigoBarras,
+    // Vencimientos: Farmacia y alimentos
+    requiereVencimientos: esFarmacia || esAlimentos,
 
-        // Fraccionamiento (venta por unidad de caja): Farmacia
-        permiteFraccionamiento: esFarmacia,
+    // Código de barras: Bodega/Supermarket
+    usaCodigoBarras,
 
-        // Ofertas/Promociones: Supermarket
-        gestionOfertas: esBodega,
+    // Fraccionamiento (venta por unidad de caja): Farmacia
+    permiteFraccionamiento: esFarmacia,
 
-        // Control de stock: TODOS
-        controlStock: true,
-    };
+    // Ofertas/Promociones: Supermarket
+    gestionOfertas: esBodega,
+
+    // Control de stock: TODOS
+    controlStock: true,
+  };
 }
 
 /**
  * Versión simplificada para saber si usa lotes
  */
 export function usaLotes(nombreRubro: string): boolean {
-    const nombre = nombreRubro.toLowerCase();
-    return nombre.includes('farmacia') || nombre.includes('botica');
+  const nombre = nombreRubro.toLowerCase();
+  return (
+    nombre.includes('farmacia') ||
+    nombre.includes('botica') ||
+    nombre.includes('fabricación') ||
+    nombre.includes('fabricacion') ||
+    nombre.includes('manufactura') ||
+    nombre.includes('industria') ||
+    nombre.includes('producción') ||
+    nombre.includes('produccion')
+  );
 }
 
 /**
  * Versión simplificada para saber si usa código de barras
  */
 export function usaCodigoBarras(nombreRubro: string): boolean {
-    const nombre = nombreRubro.toLowerCase();
-    return (
-        nombre.includes('bodega') ||
-        nombre.includes('supermarket') ||
-        nombre.includes('supermercado') ||
-        nombre.includes('minimarket')
-    );
+  const nombre = nombreRubro.toLowerCase();
+  return (
+    nombre.includes('bodega') ||
+    nombre.includes('supermarket') ||
+    nombre.includes('supermercado') ||
+    nombre.includes('minimarket')
+  );
 }

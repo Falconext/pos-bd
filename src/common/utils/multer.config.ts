@@ -39,3 +39,19 @@ export const imageUploadOptions = {
   fileFilter: imageFilter,
   limits: { fileSize: 5 * 1024 * 1024 },
 } as const;
+
+// XML SUNAT en memoria
+const xmlFilter = (req: any, file: any, cb: any) => {
+  const isXmlMime = ['text/xml', 'application/xml'].includes(file.mimetype);
+  const isXmlExt = file.originalname?.toLowerCase().endsWith('.xml');
+  if (!isXmlMime && !isXmlExt) {
+    return cb(new BadRequestException('Solo se permiten archivos XML'));
+  }
+  cb(null, true);
+};
+
+export const xmlUploadOptions = {
+  storage: multer.memoryStorage(),
+  fileFilter: xmlFilter,
+  limits: { fileSize: 5 * 1024 * 1024 },
+} as const;

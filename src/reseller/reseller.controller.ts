@@ -11,7 +11,7 @@ export class ResellerController {
 
     @Roles('ADMIN_SISTEMA')
     @Post()
-    create(@Body() createDto: { nombre: string; email: string; codigo: string; telefono?: string }) {
+    create(@Body() createDto: any) {
         return this.resellerService.create(createDto);
     }
 
@@ -113,5 +113,17 @@ export class ResellerController {
     ) {
         await this.resellerService.validateResellerAccess(req.user.id, req.user.rol, id);
         return this.resellerService.toggleClientStatus(id, clienteId, body.estado);
+    }
+
+    @Roles('ADMIN_SISTEMA', 'RESELLER')
+    @Patch(':id/clientes/:clienteId/config')
+    async updateClientConfig(
+        @Param('id', ParseIntPipe) id: number,
+        @Param('clienteId', ParseIntPipe) clienteId: number,
+        @Body() body: any,
+        @Request() req: any,
+    ) {
+        await this.resellerService.validateResellerAccess(req.user.id, req.user.rol, id);
+        return this.resellerService.updateClientConfig(id, clienteId, body);
     }
 }

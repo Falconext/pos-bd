@@ -4,6 +4,7 @@ import { EnviarSunatService } from '../../comprobante/enviar-sunat.service';
 import { GuiaRemisionService } from '../../guia-remision/guia-remision.service';
 import { QpseClient, QpseSendResponse } from '../../common/utils/qpse.client';
 import { S3Service } from '../../s3/s3.service';
+import { isQpseProvider, resolveBillingProvider } from '../../common/utils/billing-provider';
 
 @Injectable()
 export class VerificarPendientesSunatService {
@@ -70,10 +71,19 @@ export class VerificarPendientesSunatService {
             select: {
               usuarioPse: true,
               contrasenaPse: true,
+              billingProvider: true,
+              usaDemo: true,
             },
           },
         },
-      }) as (any & { empresa: { usuarioPse: string | null; contrasenaPse: string | null } | null })[];
+      }) as (any & {
+        empresa: {
+          usuarioPse: string | null;
+          contrasenaPse: string | null;
+          billingProvider: string | null;
+          usaDemo: boolean;
+        } | null
+      })[];
 
       this.logger.log(
         `[Job 1] Encontrados ${pendientes.length} comprobantes PENDIENTES con documentoId`,
@@ -85,6 +95,16 @@ export class VerificarPendientesSunatService {
 
       for (const comprobante of pendientes) {
         try {
+          const billingProvider = resolveBillingProvider(comprobante.empresa);
+
+          if (!isQpseProvider(billingProvider)) {
+            this.logger.log(
+              `[Job 1] Proveedor ${billingProvider} en comprobante ${comprobante.id} → revalidando con flujo principal`,
+            );
+            await this.enviarSunat.execute(comprobante.id);
+            continue;
+          }
+
           const qpseUsername = comprobante.empresa?.usuarioPse;
           const qpsePassword = comprobante.empresa?.contrasenaPse;
           if (!qpseUsername || !qpsePassword) {

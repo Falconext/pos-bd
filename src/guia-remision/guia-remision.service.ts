@@ -377,8 +377,19 @@ export class GuiaRemisionService {
         // Obtener credenciales QPSE de la empresa
         const empresa = await (this.prisma.empresa as any).findUnique({
             where: { id: empresaId },
-            select: { usuarioPse: true, contrasenaPse: true, usaDemo: true },
-        }) as { usuarioPse: string | null; contrasenaPse: string | null; usaDemo: boolean } | null;
+            select: {
+                usuarioPse: true,
+                contrasenaPse: true,
+                usaDemo: true,
+            },
+        }) as {
+            usuarioPse: string | null;
+            contrasenaPse: string | null;
+            usaDemo: boolean;
+        } | null;
+        if (!empresa) {
+            throw new NotFoundException('Empresa no encontrada');
+        }
         const usaDemo = empresa?.usaDemo ?? false;
 
         if (!empresa?.usuarioPse || !empresa?.contrasenaPse) {
@@ -399,8 +410,8 @@ export class GuiaRemisionService {
             let guiaParaEnviar = guia;
             let resultado = await this.sunatGuiaService.enviarGuia(
                 guiaParaEnviar,
-                empresa.usuarioPse,
-                empresa.contrasenaPse,
+                empresa.usuarioPse || '',
+                empresa.contrasenaPse || '',
                 usaDemo,
             );
 
@@ -432,8 +443,8 @@ export class GuiaRemisionService {
                 guiaParaEnviar = guiaConNuevoCorrelativo as any;
                 resultado = await this.sunatGuiaService.enviarGuia(
                     guiaParaEnviar,
-                    empresa.usuarioPse,
-                    empresa.contrasenaPse,
+                    empresa.usuarioPse || '',
+                    empresa.contrasenaPse || '',
                     usaDemo,
                 );
             }
@@ -532,7 +543,11 @@ export class GuiaRemisionService {
         const msg = String(err?.message || '').toLowerCase();
         const httpStatus = err?.status || err?.response?.status;
 
-        if (msg.includes('qpse rechaz') || msg.includes('rechazó el documento')) return 'DATOS';
+        if (
+            msg.includes('qpse rechaz') ||
+            msg.includes('apisunat rechaz') ||
+            msg.includes('rechazó el documento')
+        ) return 'DATOS';
         if (msg.includes('no se puede leer') || msg.includes('parsear') ||
             msg.includes('xml') || msg.includes('ubl') || msg.includes('cvc-')) return 'DATOS';
         if (httpStatus && httpStatus >= 400 && httpStatus < 500) return 'DATOS';

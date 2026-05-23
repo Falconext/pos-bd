@@ -586,10 +586,21 @@ export class TiendaService {
         }
       }
 
-      console.log('wherePublicados count', JSON.stringify(wherePublicados));
       const countPublicados = await this.prisma.producto.count({ where: wherePublicados });
+      const hasCatalogFilters =
+        !!term ||
+        !!category?.trim() ||
+        !!brand?.trim() ||
+        minPrice !== undefined ||
+        maxPrice !== undefined ||
+        wholesale;
+      const pageNumber = Number(page) || 1;
+      const MIN_HOME_PRODUCTS = 12;
+      const shouldFallbackToActivos =
+        countPublicados === 0 ||
+        (!hasCatalogFilters && pageNumber === 1 && countPublicados < MIN_HOME_PRODUCTS);
 
-      if (countPublicados > 0) {
+      if (countPublicados > 0 && !shouldFallbackToActivos) {
         const itemsRaw = await this.prisma.producto.findMany({
           where: wherePublicados,
           select,
@@ -606,11 +617,12 @@ export class TiendaService {
               : p.imagenesExtra,
           }))
         );
-        return { data: items, total: countPublicados, page: Number(page) || 1, limit: take };
+        return { data: items, total: countPublicados, page: pageNumber, limit: take };
       }
 
       // Fallback: activos con stock>0
-      console.log('obtenerProductosTienda fallback active');
+      // - Cuando no hay publicados
+      // - O cuando en Home hay muy pocos publicados (evita secciones vacías en producción)
       const whereActivos: any = {
         empresaId: empresa.id,
         estado: 'ACTIVO' as const,
@@ -703,7 +715,7 @@ export class TiendaService {
         }))
       );
 
-      return { data: items, total, page: Number(page) || 1, limit: take };
+      return { data: items, total, page: pageNumber, limit: take };
 
     } catch (e: any) {
       console.error('Error in obtenerProductosTienda:', e);

@@ -23,6 +23,7 @@ async function bootstrap() {
     'http://localhost:5173',
     'http://localhost:5174',
     'http://localhost:3000',
+    'http://app.jamble.peru:5174',
     'http://192.168.100.16:4000',
     'tauri://localhost',  // Desktop app
     'https://tauri.localhost',  // Desktop app (Windows)

@@ -296,6 +296,11 @@ export class EmpresaService {
         estado: 'ACTIVO',
         providerToken: data.providerToken || null,
         providerId: data.providerId || null,
+        billingProvider: data.billingProvider === 'JAMBLE' ? 'JAMBLE' : 'QPSE',
+        billingApiBaseUrl: data.billingApiBaseUrl || null,
+        billingApiToken: data.billingApiToken || null,
+        billingApiUser: data.billingApiUser || null,
+        billingApiPassword: data.billingApiPassword || null,
         esAgenteRetencion: data.esAgenteRetencion || false,
         usaCodigoBarrasManual: data.usaCodigoBarrasManual,
         brand: adminSistemaNegocio
@@ -627,6 +632,13 @@ export class EmpresaService {
       if (dto.providerToken !== undefined)
         updateData.providerToken = dto.providerToken;
       if (dto.providerId !== undefined) updateData.providerId = dto.providerId;
+      if (dto.billingProvider !== undefined) {
+        updateData.billingProvider = dto.billingProvider === 'JAMBLE' ? 'JAMBLE' : 'QPSE';
+      }
+      if (dto.billingApiBaseUrl !== undefined) updateData.billingApiBaseUrl = dto.billingApiBaseUrl;
+      if (dto.billingApiToken !== undefined) updateData.billingApiToken = dto.billingApiToken;
+      if (dto.billingApiUser !== undefined) updateData.billingApiUser = dto.billingApiUser;
+      if (dto.billingApiPassword !== undefined) updateData.billingApiPassword = dto.billingApiPassword;
       if (dto.esAgenteRetencion !== undefined) updateData.esAgenteRetencion = dto.esAgenteRetencion;
       if (dto.usaCodigoBarrasManual !== undefined)
         updateData.usaCodigoBarrasManual = dto.usaCodigoBarrasManual;

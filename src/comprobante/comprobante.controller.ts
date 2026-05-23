@@ -292,7 +292,7 @@ export class ComprobanteController {
       comp = await this.service.crearFormal(dto, user.empresaId, '03', user.id, effectiveSedeId);
       console.log('[crearBoleta] Comprobante created:', comp.id, '- Sending to SUNAT...');
       const sunatResp = await this.enviarSunat.execute(comp.id);
-      console.log('[crearBoleta] SUNAT response:', JSON.stringify(sunatResp));
+      console.log('[crearBoleta] SUNAT response:', this.summarizeSunatResponse(sunatResp));
       return sunatResp;
     } catch (error: any) {
       console.error('[crearBoleta] ERROR:', error.message);
@@ -327,7 +327,7 @@ export class ComprobanteController {
       comp = await this.service.crearFormal(dto, user.empresaId, '01', user.id, effectiveSedeId);
       console.log('[crearFactura] Comprobante created:', comp.id, '- Sending to SUNAT...');
       const sunatResp = await this.enviarSunat.execute(comp.id);
-      console.log('[crearFactura] SUNAT response:', JSON.stringify(sunatResp));
+      console.log('[crearFactura] SUNAT response:', this.summarizeSunatResponse(sunatResp));
       return sunatResp;
     } catch (error: any) {
       console.error('[crearFactura] ERROR:', error.message);
@@ -363,6 +363,20 @@ export class ComprobanteController {
       throw error;
     }
   }
+
+  private summarizeSunatResponse(resp: any): Record<string, any> {
+    return {
+      status: resp?.status ?? null,
+      message: resp?.message ?? null,
+      documentId: resp?.documentId ?? resp?.data?.id ?? null,
+      externalId: resp?.externalId ?? resp?.data?.external_id ?? null,
+      numberFull: resp?.number_full ?? resp?.data?.number_full ?? null,
+      hasLinks: Boolean(resp?.links),
+      hasXml: Boolean(resp?.links?.xml),
+      hasPdf: Boolean(resp?.links?.pdf),
+      hasCdr: Boolean(resp?.links?.cdr),
+    };
+  }
   @Post('nota-debito')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async crearNotaDebito(@User() user: any, @Body() dto: CrearComprobanteDto) {
@@ -396,12 +410,10 @@ export class ComprobanteController {
     return this.service.crearOT(dto, user.empresaId, user.id, effectiveSedeId);
   }
 
-  // Enviar comprobante existente a SUNAT
   @Post(':id/generar-pdf')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
   async generarPdf(@Param('id', ParseIntPipe) id: number) {
-    // Devuelve una URL pública con token HMAC — no sube nada a S3
-    const pdfUrl = this.service.generarUrlPdfPublico(id);
+    const pdfUrl = await this.service.generarYSubirPdf(id);
     return { pdfUrl };
   }
 

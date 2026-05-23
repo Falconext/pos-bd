@@ -6,7 +6,7 @@ import {
   forwardRef,
   Logger,
 } from '@nestjs/common';
-import { Prisma, EstadoSunat, EstadoType } from '@prisma/client';
+import { Prisma, EstadoReserva, EstadoSunat, EstadoType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { KardexService } from '../kardex/kardex.service';
 import { InventarioNotificacionesService } from '../notificaciones/inventario-notificaciones.service';
@@ -15,10 +15,29 @@ import { PdfGeneratorService } from './pdf-generator.service';
 import { numeroALetras } from './utils/numero-a-letras';
 import { ProductoLoteService } from '../producto/producto-lote.service';
 import { EnviarSunatService } from './enviar-sunat.service';
+import { isJambleProvider, resolveBillingProvider } from '../common/utils/billing-provider';
 
 @Injectable()
 export class ComprobanteService {
   private readonly logger = new Logger(ComprobanteService.name);
+
+  private getJambleCorrelativoFloor(empresaId: number, serie: string): number | null {
+    // Format:
+    // JAMBLE_CORRELATIVO_FLOOR="43:B001:60,43:F001:16,50:B001:120"
+    const raw = String(process.env.JAMBLE_CORRELATIVO_FLOOR || '').trim();
+    if (!raw) return null;
+
+    const entries = raw.split(',').map((v) => v.trim()).filter(Boolean);
+    for (const entry of entries) {
+      const [empresa, serieCfg, floor] = entry.split(':').map((v) => String(v || '').trim());
+      if (!empresa || !serieCfg || !floor) continue;
+      if (Number(empresa) !== empresaId) continue;
+      if (serieCfg.toUpperCase() !== String(serie || '').toUpperCase()) continue;
+      const value = Number(floor);
+      if (!Number.isNaN(value) && value > 0) return value;
+    }
+    return null;
+  }
 
   constructor(
     private readonly prisma: PrismaService,
@@ -560,13 +579,20 @@ export class ComprobanteService {
     console.log('[obtenerSerieYCorrelativo] tipoDoc:', tipoDoc, 'tipDocAfectado:', tipDocAfectado, 'empresaId:', empresaId);
 
     try {
+      const empresaProvider = await this.prisma.empresa.findUnique({
+        where: { id: empresaId },
+        select: { billingProvider: true, usaDemo: true },
+      });
+      const billingProvider = resolveBillingProvider(empresaProvider as any);
+      const useJambleSeries = isJambleProvider(billingProvider);
+
       let serie: string;
       switch (tipoDoc) {
         case '01':
-          serie = 'F0A1';
+          serie = useJambleSeries ? 'F001' : 'F0A1';
           break;
         case '03':
-          serie = 'B0A1';
+          serie = useJambleSeries ? 'B001' : 'B0A1';
           break;
         case '07':
           if (tipDocAfectado === '01') serie = 'FCA1';
@@ -615,7 +641,14 @@ export class ComprobanteService {
         where: { empresaId, tipoDoc, serie },
         orderBy: { correlativo: 'desc' },
       });
-      const correlativo = ultimo ? Number(ultimo.correlativo) + 1 : 1;
+      let correlativo = ultimo ? Number(ultimo.correlativo) + 1 : 1;
+
+      if (useJambleSeries && (serie === 'B001' || serie === 'F001')) {
+        const floor = this.getJambleCorrelativoFloor(empresaId, serie);
+        if (floor && correlativo < floor) {
+          correlativo = floor;
+        }
+      }
 
       console.log('[obtenerSerieYCorrelativo] Success - ultimo:', ultimo?.id, 'nuevo correlativo:', correlativo);
 
@@ -669,24 +702,52 @@ export class ComprobanteService {
       }
     }
     let mtoOperGravadas = 0;
+    let mtoOpExoneradas = 0;
+    let mtoOpInafectas = 0;
     let totalIGV = 0;
     const detalleFinal = detalles.map((item: any) => {
       const prod = productos.find((p) => p.id === item.productoId)!;
       const cantidad = item.cantidad;
       const descripcion = item.descripcion ?? (prod as any).descripcion;
-      const descuentoPct = parseFloat(item.descuento ?? 0) || 0;
       const precioConIgv =
         item.nuevoValorUnitario != null
           ? item.nuevoValorUnitario
           : Number((prod as any).precioUnitario);
-      const igvPct = Number((prod as any).igvPorcentaje);
-      const valorUnitario = precioConIgv / (1 + igvPct / 100);
+      const tipAfeIgv = parseInt((prod as any).tipoAfectacionIGV ?? '10', 10);
+
+      let valorUnitario: number;
+      let igvMonto: number;
+      let igvPct: number;
+
+      if (tipAfeIgv === 10) {
+        // Gravado — extraer IGV incluido en precioUnitario
+        igvPct = Number((prod as any).igvPorcentaje);
+        valorUnitario = precioConIgv / (1 + igvPct / 100);
+        igvMonto = precioConIgv * cantidad - valorUnitario * cantidad;
+        mtoOperGravadas += valorUnitario * cantidad;
+        totalIGV += igvMonto;
+      } else if (tipAfeIgv === 20) {
+        // Exonerado — sin IGV
+        igvPct = 0;
+        valorUnitario = precioConIgv;
+        igvMonto = 0;
+        mtoOpExoneradas += precioConIgv * cantidad;
+      } else if (tipAfeIgv === 30) {
+        // Inafecto — sin IGV
+        igvPct = 0;
+        valorUnitario = precioConIgv;
+        igvMonto = 0;
+        mtoOpInafectas += precioConIgv * cantidad;
+      } else {
+        // Fallback: tratar como gravado
+        igvPct = Number((prod as any).igvPorcentaje);
+        valorUnitario = precioConIgv / (1 + igvPct / 100);
+        igvMonto = precioConIgv * cantidad - valorUnitario * cantidad;
+        mtoOperGravadas += valorUnitario * cantidad;
+        totalIGV += igvMonto;
+      }
+
       const mtoValorVenta = valorUnitario * cantidad;
-      const igvMonto = precioConIgv * cantidad - mtoValorVenta;
-      const montoDescuento = precioConIgv * cantidad * (descuentoPct / 100);
-      const mtoTotalVenta = precioConIgv * cantidad - montoDescuento;
-      mtoOperGravadas += mtoValorVenta;
-      totalIGV += igvMonto;
       return {
         productoId: (prod as any).id,
         unidad: (prod as any).unidadMedida.codigo,
@@ -698,7 +759,7 @@ export class ComprobanteService {
         mtoBaseIgv: this.round2(mtoValorVenta),
         porcentajeIgv: igvPct,
         igv: this.round2(igvMonto),
-        tipAfeIgv: 10,
+        tipAfeIgv,
         totalImpuestos: this.round2(igvMonto),
       };
     });
@@ -706,6 +767,8 @@ export class ComprobanteService {
       productos,
       detalleFinal,
       mtoOperGravadas: this.round2(mtoOperGravadas),
+      mtoOpExoneradas: this.round2(mtoOpExoneradas),
+      mtoOpInafectas: this.round2(mtoOpInafectas),
       totalIGV: this.round2(totalIGV),
     };
   }
@@ -747,6 +810,30 @@ export class ComprobanteService {
         select: { stock: true, costoPromedio: true },
       });
       if (!producto) continue;
+
+      const stockSede = await this.prisma.productoStock.findUnique({
+        where: { productoId_sedeId: { productoId: item.productoId, sedeId } },
+        select: { stock: true },
+      });
+
+      const stockBase = stockSede?.stock ?? producto.stock ?? 0;
+      const reservasActivas = await this.prisma.reserva.aggregate({
+        _sum: { cantidad: true },
+        where: {
+          empresaId: data?.empresaId,
+          sedeId,
+          productoId: item.productoId,
+          estado: { in: [EstadoReserva.PENDIENTE, EstadoReserva.CONFIRMADA] },
+        },
+      });
+      const reservado = reservasActivas._sum.cantidad ?? 0;
+      const disponibleVenta = stockBase - reservado;
+
+      if (disponibleVenta < Number(item.cantidad || 0)) {
+        throw new BadRequestException(
+          `Stock no disponible para venta en producto ${item.productoId}. Disponible para venta: ${disponibleVenta}, solicitado: ${item.cantidad}.`,
+        );
+      }
 
       // Registrar movimiento de kardex si se proporcionan los datos
       if (data && this.kardexService) {
@@ -955,7 +1042,7 @@ export class ComprobanteService {
       throw new BadRequestException('clienteId es requerido');
     }
 
-    const { detalleFinal, mtoOperGravadas, totalIGV } =
+    const { detalleFinal, mtoOperGravadas, mtoOpExoneradas, mtoOpInafectas, totalIGV } =
       await this.cargarProductosYDetalles(detalles, empresaId);
 
     // Validar cliente si viene explícito
@@ -983,7 +1070,8 @@ export class ComprobanteService {
       }
     }
 
-    const subTotal = this.round2(mtoOperGravadas + totalIGV);
+    const valorVenta = this.round2(mtoOperGravadas + mtoOpExoneradas + mtoOpInafectas);
+    const subTotal = this.round2(valorVenta + totalIGV);
     const mtoImpVenta = subTotal;
 
     const fecha = new Date(fechaEmision);
@@ -1029,9 +1117,11 @@ export class ComprobanteService {
       sedeId,
       usuarioId: usuarioId ?? undefined,
       mtoOperGravadas,
+      mtoOperInafectas: mtoOpInafectas,
+      mtoOperExoneradas: mtoOpExoneradas,
       medioPago,
       mtoIGV: totalIGV,
-      valorVenta: mtoOperGravadas,
+      valorVenta,
       totalImpuestos: totalIGV,
       subTotal,
       mtoImpVenta,
@@ -1577,9 +1667,10 @@ export class ComprobanteService {
     } else if (!finalClienteId) {
       throw new BadRequestException('clienteId es requerido');
     }
-    const { detalleFinal, mtoOperGravadas, totalIGV } =
+    const { detalleFinal, mtoOperGravadas, mtoOpExoneradas, mtoOpInafectas, totalIGV } =
       await this.cargarProductosYDetalles(detalles, empresaId);
-    const subTotal = this.round2(mtoOperGravadas + totalIGV);
+    const valorVenta = this.round2(mtoOperGravadas + mtoOpExoneradas + mtoOpInafectas);
+    const subTotal = this.round2(valorVenta + totalIGV);
     const mtoImpVenta = subTotal;
     const fecha = new Date(fechaEmision);
 
@@ -1673,9 +1764,11 @@ export class ComprobanteService {
       sedeId: finalSedeId,
       usuarioId: usuarioId ?? undefined,
       mtoOperGravadas,
+      mtoOperInafectas: mtoOpInafectas,
+      mtoOperExoneradas: mtoOpExoneradas,
       medioPago: medioPagoValido,
       mtoIGV: totalIGV,
-      valorVenta: mtoOperGravadas,
+      valorVenta,
       totalImpuestos: totalIGV,
       subTotal,
       mtoImpVenta,
@@ -1766,8 +1859,9 @@ export class ComprobanteService {
       throw new BadRequestException('clienteId es requerido');
     }
 
-    const { detalleFinal, mtoOperGravadas, totalIGV } = await this.cargarProductosYDetalles(detalles, empresaId);
-    const subTotal = this.round2(mtoOperGravadas + totalIGV);
+    const { detalleFinal, mtoOperGravadas, mtoOpExoneradas, mtoOpInafectas, totalIGV } = await this.cargarProductosYDetalles(detalles, empresaId);
+    const valorVenta = this.round2(mtoOperGravadas + mtoOpExoneradas + mtoOpInafectas);
+    const subTotal = this.round2(valorVenta + totalIGV);
     const mtoImpVenta = subTotal;
     const fecha = new Date(fechaEmision);
 
@@ -1792,8 +1886,10 @@ export class ComprobanteService {
             ],
           },
           mtoOperGravadas,
+          mtoOperInafectas: mtoOpInafectas,
+          mtoOperExoneradas: mtoOpExoneradas,
           mtoIGV: totalIGV,
-          valorVenta: mtoOperGravadas,
+          valorVenta,
           totalImpuestos: totalIGV,
           subTotal,
           mtoImpVenta,
@@ -2058,21 +2154,23 @@ export class ComprobanteService {
 
     const comprobantesEmitidos = facturasYBoletas + guiasRemision;
 
-    const porcentajeUso = limiteMaximo > 0 ? Math.round((comprobantesEmitidos / limiteMaximo) * 100) : 0;
-    const puedeEmitir = comprobantesEmitidos < limiteMaximo;
-    const restantes = Math.max(0, limiteMaximo - comprobantesEmitidos);
+    const esIlimitado = limiteMaximo === 0;
+    const porcentajeUso = esIlimitado ? 0 : Math.round((comprobantesEmitidos / limiteMaximo) * 100);
+    const puedeEmitir = esIlimitado || comprobantesEmitidos < limiteMaximo;
+    const restantes = esIlimitado ? null : Math.max(0, limiteMaximo - comprobantesEmitidos);
 
     return {
       comprobantesEmitidos,
       facturasYBoletas,
       guiasRemision,
-      limiteMaximo,
+      limiteMaximo: esIlimitado ? null : limiteMaximo,
+      esIlimitado,
       porcentajeUso,
       puedeEmitir,
       restantes,
       mesActual: inicioMes.toISOString().slice(0, 7),
-      alerta80: porcentajeUso >= 80 && porcentajeUso < 100,
-      limiteAlcanzado: porcentajeUso >= 100,
+      alerta80: !esIlimitado && porcentajeUso >= 80 && porcentajeUso < 100,
+      limiteAlcanzado: !esIlimitado && porcentajeUso >= 100,
       plan: empresa.plan?.nombre || 'Sin plan'
     };
   }
@@ -2085,9 +2183,10 @@ export class ComprobanteService {
       include: {
         cliente: { include: { tipoDocumento: true } },
         empresa: { include: { ubicacion: true, rubro: true } },
-        detalles: true,
+        detalles: { include: { producto: { select: { imagenUrl: true } } } },
         tipoDetraccion: true,
         medioPagoDetraccion: true,
+        usuario: { select: { nombre: true, celular: true, email: true } },
       },
     });
   }
@@ -2119,6 +2218,7 @@ export class ComprobanteService {
       descripcion: (d.descripcion || '').toUpperCase(),
       precioUnitario: Number(d.mtoPrecioUnitario || 0).toFixed(2),
       total: Number((d.mtoPrecioUnitario || 0) * d.cantidad).toFixed(2),
+      imagenUrl: buildLogoDataUrl(d.producto?.imagenUrl || d.imagenUrl),
       lotes: d.lotes?.map((l: any) => ({
         lote: l.lote,
         fechaVencimiento: l.fechaVencimiento
@@ -2196,8 +2296,20 @@ export class ComprobanteService {
 
     let buffer: Buffer;
     if (full.tipoDoc === 'COT') {
+      const usuarioNombre = (full as any).usuario?.nombre || '';
       const cotizacionData = {
         ...pdfData,
+        celular: (full as any).usuario?.celular || '',
+        email: (full as any).usuario?.email || '',
+        formaPago: (() => {
+          const tipo = (full as any).cotizTipoPago || 'CONTADO';
+          const adelanto = (full as any).cotizAdelanto || 0;
+          const map: Record<string, string> = {
+            CONTADO: 'CONTADO', CREDITO_30: 'CRÉDITO 30 DÍAS',
+            CREDITO_60: 'CRÉDITO 60 DÍAS', CREDITO_90: 'CRÉDITO 90 DÍAS',
+          };
+          return tipo === 'ADELANTO' ? `ADELANTO ${adelanto}%` : (map[tipo] || tipo);
+        })(),
         subTotal: Number(full.subTotal || 0).toFixed(2),
         descuento: full.mtoDescuentoGlobal ? Number(full.mtoDescuentoGlobal).toFixed(2) : undefined,
         validez: full.cotizVigencia ? `${full.cotizVigencia} días` : '7 días',
@@ -2208,7 +2320,10 @@ export class ComprobanteService {
         numeroCuenta: (full.empresa as any).numeroCuenta || undefined,
         cci: (full.empresa as any).cci || undefined,
         monedaCuenta: (full.empresa as any).monedaCuenta || 'SOLES',
-        usuario: 'ADMIN',
+        includeProductImages: !!(full as any).cotizIncluirImagenes,
+        usuario: usuarioNombre ? `${usuarioNombre} ${fechaImpresion}` : fechaImpresion,
+        sistemaUrl: process.env.APP_URL || process.env.FRONTEND_URL || 'https://falconext.pe',
+        sistemaNombre: process.env.APP_NAME || 'Falconext',
       };
       buffer = await this.pdfGenerator.generarPDFCotizacion(cotizacionData);
     } else {
@@ -2224,6 +2339,23 @@ export class ComprobanteService {
   // ─── Wrapper público para el controller público ───────────────────────────
   async generarBufferPdf(id: number): Promise<{ buffer: Buffer; key: string }> {
     return this.buildPdfBufferInformal(id);
+  }
+
+  // ─── Genera PDF, sube a S3 y devuelve URL permanente ─────────────────────
+  async generarYSubirPdf(id: number): Promise<string> {
+    const { buffer, key } = await this.buildPdfBufferInformal(id);
+
+    if (this.s3Service.isEnabled()) {
+      try {
+        const url = await this.s3Service.uploadPDF(buffer, key);
+        await this.prisma.comprobante.update({ where: { id }, data: { s3PdfUrl: url } });
+        return url;
+      } catch (error) {
+        this.logger.warn(`No se pudo subir PDF a S3: ${error.message}. Usando URL temporal.`);
+      }
+    }
+
+    return this.generarUrlPdfPublico(id);
   }
 
   async obtenerXmlComprobante(
@@ -2485,9 +2617,32 @@ export class ComprobanteService {
     const productos = (comp.detalles ?? []).map((item: any) => ({
       descripcion: item.descripcion,
       cantidad: Number(item.cantidad),
-      precioUnitario: Number(item.mtoValorUnitario || 0).toFixed(2),
+      unidad: item.unidad || undefined,
+      precioUnitario: Number(item.mtoPrecioUnitario || item.mtoValorUnitario || 0).toFixed(2),
       total: Number(item.mtoValorVenta || 0).toFixed(2),
     }));
+
+    const formaPago = (() => {
+      if (comp.tipoDoc === 'COT') {
+        const tipo = (comp as any).cotizTipoPago || 'CONTADO';
+        const adelanto = (comp as any).cotizAdelanto || 0;
+        const map: Record<string, string> = {
+          CONTADO: 'Contado', CREDITO_30: 'Crédito 30 días',
+          CREDITO_60: 'Crédito 60 días', CREDITO_90: 'Crédito 90 días',
+        };
+        return tipo === 'ADELANTO' ? `Adelanto ${adelanto}%` : (map[tipo] || tipo);
+      }
+      return (comp as any).medioPago || undefined;
+    })();
+
+    const mtoOperGravadas = comp.mtoOperGravadas ? Number(comp.mtoOperGravadas).toFixed(2) : undefined;
+    const mtoIGV = comp.mtoIGV ? Number(comp.mtoIGV).toFixed(2) : undefined;
+    const descuento = comp.mtoDescuentoGlobal && Number(comp.mtoDescuentoGlobal) > 0
+      ? Number(comp.mtoDescuentoGlobal).toFixed(2)
+      : undefined;
+    const empresaEmail = (comp as any).usuario?.email || (comp.empresa as any).email || undefined;
+    const sistemaUrl = process.env.APP_URL || process.env.FRONTEND_URL || 'https://falconext.pe';
+    const sistemaNombre = process.env.APP_NAME || 'Falconext';
 
     const { Resend } = await import('resend');
     const { render } = await import('@react-email/render');
@@ -2498,6 +2653,7 @@ export class ComprobanteService {
         empresaNombre,
         empresaRuc,
         empresaDireccion,
+        empresaEmail,
         tipoPretty,
         serie,
         correlativo,
@@ -2506,11 +2662,17 @@ export class ComprobanteService {
         monto,
         pdfUrl,
         productos,
+        formaPago,
+        mtoOperGravadas,
+        mtoIGV,
+        descuento,
+        sistemaUrl,
+        sistemaNombre,
       }),
     );
 
     const resend = new Resend(resendKey);
-    const fromEmail = process.env.MAIL_FROM || 'facturacion@falconext.pe';
+    const fromEmail = process.env.RESEND_FROM_EMAIL || process.env.MAIL_FROM || 'facturacion@falconext.pe';
     const { error } = await resend.emails.send({
       from: `${empresaNombre} <${fromEmail}>`,
       to: destinatario,

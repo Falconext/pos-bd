@@ -1,6 +1,7 @@
 import { Injectable, Logger, HttpException } from '@nestjs/common';
 import { QpseClient, QpseSendResponse } from '../common/utils/qpse.client';
 import { buildUblXml } from '../common/utils/ubl-xml';
+import axios from 'axios';
 
 @Injectable()
 export class SunatGuiaService {
@@ -8,9 +9,16 @@ export class SunatGuiaService {
     private readonly maxRetries = 12;
     private readonly retryInterval = 5000;
 
-    constructor(private readonly qpseClient: QpseClient) {}
+    constructor(
+        private readonly qpseClient: QpseClient,
+    ) {}
 
-    async enviarGuia(guia: any, usuarioPse: string, contrasenaPse: string, usaDemo?: boolean) {
+    async enviarGuia(
+        guia: any,
+        usuarioPse: string,
+        contrasenaPse: string,
+        usaDemo?: boolean,
+    ) {
         const tipoDocCodigo = guia.tipoGuia === 'TRANSPORTISTA' ? '31' : '09';
         const rucEmisor = String(guia.remitenteRuc || '').trim();
         const paddedCorrelativo = String(guia.correlativo).padStart(8, '0');
@@ -20,6 +28,8 @@ export class SunatGuiaService {
 
         const xmlContent = buildUblXml('DespatchAdvice', documentBody);
         const xmlContentBase64 = Buffer.from(xmlContent, 'utf8').toString('base64');
+
+        // APISUNAT temporalmente desactivado (rollback rápido pendiente si se requiere reactivar).
 
         this.logger.log(`Enviando guía ${xmlFilename} a SUNAT vía QPSE`);
 
@@ -148,6 +158,13 @@ export class SunatGuiaService {
         return 'RECHAZADO';
     }
 
+    private normalizeApisunatStatus(response: any): 'ACEPTADO' | 'PENDIENTE' | 'RECHAZADO' {
+        const status = String(response?.status || '').toUpperCase();
+        if (status === 'ACEPTADO') return 'ACEPTADO';
+        if (status === 'PENDIENTE') return 'PENDIENTE';
+        return 'RECHAZADO';
+    }
+
     private isNumeracionRepetida(response: any): boolean {
         const text = JSON.stringify(response || {}).toLowerCase();
         const code = String(response?.code ?? response?.error?.code ?? '');
@@ -164,6 +181,33 @@ export class SunatGuiaService {
             response?.observaciones?.join(' | ') ||
             'Error desconocido'
         );
+    }
+
+    private extractApisunatMessage(response: any): string {
+        const faults = Array.isArray(response?.faults) ? response.faults.join(' | ') : response?.faults;
+        const notes = Array.isArray(response?.notes) ? response.notes.join(' | ') : response?.notes;
+        const nestedError =
+            response?.error?.message ||
+            response?.error?.descripcion ||
+            response?.error?.detail ||
+            (typeof response?.error === 'string' ? response.error : null);
+        return (
+            response?.message ||
+            nestedError ||
+            faults ||
+            notes ||
+            'Error desconocido'
+        );
+    }
+
+    private async downloadTextFromUrl(url: string): Promise<string> {
+        const resp = await axios.get(url, { responseType: 'text', timeout: 30000 });
+        return String(resp.data || '');
+    }
+
+    private async downloadBinaryAsBase64(url: string): Promise<string> {
+        const resp = await axios.get<ArrayBuffer>(url, { responseType: 'arraybuffer', timeout: 30000 });
+        return Buffer.from(resp.data as any).toString('base64');
     }
 
     // ─── Document dispatcher ───────────────────────────────────────────────────

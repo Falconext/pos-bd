@@ -6,6 +6,9 @@ import { numeroALetras } from './utils/numero-a-letras';
 import axios from 'axios';
 import { QpseClient, QpseSendResponse } from '../common/utils/qpse.client';
 import { buildUblXml } from '../common/utils/ubl-xml';
+import { ApisPeruClient } from '../common/utils/apis-peru.client';
+import { JambleClient } from '../common/utils/jamble.client';
+import { isApisunatProvider, isJambleProvider, resolveBillingProvider } from '../common/utils/billing-provider';
 
 /**
  * Error de datos: el payload no pudo armarse por datos incorrectos del comprobante.
@@ -77,11 +80,28 @@ export class EnviarSunatService {
   // Debug: Set to true to simulate SUNAT failure for testing
   public simulateSunatFailure = false;
 
+  private getJambleCorrelativoFloor(empresaId: number, serie: string): number | null {
+    const raw = String(process.env.JAMBLE_CORRELATIVO_FLOOR || '').trim();
+    if (!raw) return null;
+    const entries = raw.split(',').map((v) => v.trim()).filter(Boolean);
+    for (const entry of entries) {
+      const [empresa, serieCfg, floor] = entry.split(':').map((v) => String(v || '').trim());
+      if (!empresa || !serieCfg || !floor) continue;
+      if (Number(empresa) !== empresaId) continue;
+      if (serieCfg.toUpperCase() !== String(serie || '').toUpperCase()) continue;
+      const value = Number(floor);
+      if (!Number.isNaN(value) && value > 0) return value;
+    }
+    return null;
+  }
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly s3Service: S3Service,
     private readonly pdfGenerator: PdfGeneratorService,
     private readonly qpseClient: QpseClient,
+    private readonly apisPeruClient: ApisPeruClient,
+    private readonly jambleClient: JambleClient,
   ) { }
 
   async execute(comprobanteId: number) {
@@ -102,12 +122,64 @@ export class EnviarSunatService {
 
     const empresa = await (this.prisma.empresa as any).findUnique({
       where: { id: comp.empresaId },
-      select: { ruc: true, usuarioPse: true, contrasenaPse: true, usaDemo: true },
-    }) as { ruc: string | null; usuarioPse: string | null; contrasenaPse: string | null; usaDemo: boolean } | null;
+      select: {
+        ruc: true,
+        usuarioPse: true,
+        contrasenaPse: true,
+        usaDemo: true,
+        providerId: true,
+        providerToken: true,
+        billingProvider: true,
+        billingApiBaseUrl: true,
+        billingApiToken: true,
+        billingApiUser: true,
+        billingApiPassword: true,
+      },
+    }) as {
+      ruc: string | null;
+      usuarioPse: string | null;
+      contrasenaPse: string | null;
+      usaDemo: boolean;
+      providerId: string | null;
+      providerToken: string | null;
+      billingProvider: string | null;
+      billingApiBaseUrl: string | null;
+      billingApiToken: string | null;
+      billingApiUser: string | null;
+      billingApiPassword: string | null;
+    } | null;
     const qpseUsername = empresa?.usuarioPse;
     const qpsePassword = empresa?.contrasenaPse;
+    const providerId = String(empresa?.providerId || '').trim();
+    const providerToken = String(empresa?.providerToken || '').trim();
+    const billingProvider = resolveBillingProvider(empresa);
     const usaDemo = empresa?.usaDemo ?? false;
-    if (!qpseUsername || !qpsePassword) {
+    const jambleBaseUrl = String(empresa?.billingApiBaseUrl || '').trim();
+    const jambleToken = String(empresa?.billingApiToken || '').trim();
+    const jambleUser = String(empresa?.billingApiUser || '').trim();
+    const jamblePassword = String(empresa?.billingApiPassword || '').trim();
+
+    if (isApisunatProvider(billingProvider)) {
+      if (!providerId || !providerToken) {
+        throw new HttpException(
+          'Proveedor APISUNAT: faltan credenciales. Configura providerId (personaId) y providerToken en la empresa.',
+          400,
+        );
+      }
+    } else if (isJambleProvider(billingProvider)) {
+      if (!jambleBaseUrl) {
+        throw new HttpException(
+          'Proveedor JAMBLE: falta billingApiBaseUrl en la empresa.',
+          400,
+        );
+      }
+      if (!jambleToken && !(jambleUser && jamblePassword)) {
+        throw new HttpException(
+          'Proveedor JAMBLE: configura billingApiToken o billingApiUser + billingApiPassword en la empresa.',
+          400,
+        );
+      }
+    } else if (!qpseUsername || !qpsePassword) {
       throw new HttpException(
         'Credenciales QPSE no configuradas. Configure usuarioPse y contrasenaPse en la empresa.',
         400,
@@ -469,7 +541,6 @@ export class EnviarSunatService {
       } else if (comp.tipoDoc === '03') {
         payload.documentBody['cac:PaymentTerms'] = {
           'cbc:PaymentMeansID': { _text: comp.formaPagoTipo || 'Contado' },
-          'cbc:PaymentDueDate': { _text: issueDate },
         };
       }
 
@@ -743,7 +814,8 @@ export class EnviarSunatService {
         }
 
         const xmlFilename = payload.fileName;
-        const xmlContent = buildUblXml(this.resolveUblRootName(comp.tipoDoc), payload.documentBody);
+        const documentBody = this.sanitizeUblNode(payload.documentBody) || {};
+        const xmlContent = buildUblXml(this.resolveUblRootName(comp.tipoDoc), documentBody);
 
         if (['01', '07', '08'].includes(comp.tipoDoc)) {
           console.log(`[XML-DEBUG tipoDoc=${comp.tipoDoc}] primeros 2000 chars:\n`, xmlContent.substring(0, 2000));
@@ -753,176 +825,413 @@ export class EnviarSunatService {
           xmlFilename,
           xmlContent,
           xmlContentBase64: Buffer.from(xmlContent, 'utf8').toString('base64'),
+          documentBody,
         };
       };
 
       let xmlArtifacts = buildXmlArtifacts(comp.correlativo);
-      const qpseAccess = await this.qpseClient.obtenerTokenAcceso({
-        username: qpseUsername,
-        password: qpsePassword,
-        usaDemo,
-      });
-      const accessToken = qpseAccess.token_acceso;
-      if (!accessToken) {
-        throw new HttpException('No se pudo obtener el token de acceso de QPSE', 502);
-      }
+      let signedXmlContent = xmlArtifacts.xmlContent;
+      let cdrBase64OrNull: string | null = null;
+      let providerPdfBuffer: Buffer | null = null;
+      let documentId: string | null = null;
+      let status: 'ACEPTADO' | 'PENDIENTE' | 'RECHAZADO' = 'PENDIENTE';
 
-      let signResponse = await this.qpseClient.firmarXML({
-        accessToken,
-        xmlFilename: xmlArtifacts.xmlFilename,
-        xmlContentBase64: xmlArtifacts.xmlContentBase64,
-        usaDemo,
-      });
+      if (isApisunatProvider(billingProvider)) {
+        console.log(`🧪 Proveedor APISUNAT para ${comp.serie}-${comp.correlativo}`);
 
-      if (!signResponse.xml) {
-        throw new HttpException('QPSE no devolvió el XML firmado', 502);
-      }
-
-      let signedXmlBase64 = signResponse.xml;
-      let signedXmlContent = this.decodeBase64ToUtf8(signedXmlBase64);
-      let initialResponse = await this.qpseClient.enviarXML({
-        accessToken,
-        xmlFilename: xmlArtifacts.xmlFilename,
-        externalId: signResponse.external_id,
-        xmlSignedBase64: signedXmlBase64,
-        usaDemo,
-      });
-
-      if (this.isSunatNumeracionRepetida(initialResponse)) {
-        console.warn(
-          `⚠️ QPSE reportó numeración repetida (${comp.serie}-${comp.correlativo}). Buscando siguiente correlativo disponible...`,
-        );
-
-        const ultimoComp = await this.prisma.comprobante.findFirst({
-          where: { empresaId: comp.empresaId, serie: comp.serie, tipoDoc: comp.tipoDoc },
-          orderBy: { correlativo: 'desc' },
-          select: { correlativo: true },
+        const sendResponse = await this.apisPeruClient.sendBill({
+          personaId: providerId,
+          personaToken: providerToken,
+          fileName: xmlArtifacts.xmlFilename,
+          documentBody: xmlArtifacts.documentBody,
+          customerEmail: comp.cliente?.email || undefined,
         });
-        const nuevoCorrelativo = (ultimoComp?.correlativo ?? 0) + 1;
+
+        finalResponse = sendResponse;
+        documentId = sendResponse?.documentId ? String(sendResponse.documentId) : null;
+        status = this.normalizeApisunatStatus(sendResponse);
+
+        if (!documentId || status === 'RECHAZADO') {
+          const detail = this.extractApisunatMessage(sendResponse);
+          throw new HttpException(`APISUNAT rechazó el documento: ${detail}`, 502);
+        }
 
         await this.prisma.comprobante.update({
           where: { id: comprobanteId },
-          data: { correlativo: nuevoCorrelativo },
+          data: {
+            documentoId: documentId,
+            estadoEnvioSunat: 'PENDIENTE',
+          },
         });
 
-        comp.correlativo = nuevoCorrelativo;
-        xmlArtifacts = buildXmlArtifacts(nuevoCorrelativo);
-        signResponse = await this.qpseClient.firmarXML({
-          accessToken,
-          xmlFilename: xmlArtifacts.xmlFilename,
-          xmlContentBase64: xmlArtifacts.xmlContentBase64,
-          usaDemo,
-        });
-
-        if (!signResponse.xml) {
-          throw new HttpException('QPSE no devolvió el XML firmado en el reintento', 502);
-        }
-
-        signedXmlBase64 = signResponse.xml;
-        signedXmlContent = this.decodeBase64ToUtf8(signedXmlBase64);
-        initialResponse = await this.qpseClient.enviarXML({
-          accessToken,
-          xmlFilename: xmlArtifacts.xmlFilename,
-          externalId: signResponse.external_id,
-          xmlSignedBase64: signedXmlBase64,
-          usaDemo,
-        });
-      }
-
-      if (this.isSunatUblVersionError(initialResponse) || this.isSunatCustomizationVersionError(initialResponse)) {
-        console.warn(
-          `⚠️ QPSE rechazó versión UBL/Customization (${comp.serie}-${comp.correlativo}). Reintentando solo sin cbc:Note (manteniendo UBL 2.1 / Customization 2.0)...`,
-        );
-
-        includeNoteNode = false;
-
-        xmlArtifacts = buildXmlArtifacts(comp.correlativo);
-        signResponse = await this.qpseClient.firmarXML({
-          accessToken,
-          xmlFilename: xmlArtifacts.xmlFilename,
-          xmlContentBase64: xmlArtifacts.xmlContentBase64,
-          usaDemo,
-        });
-
-        if (!signResponse.xml) {
-          throw new HttpException('QPSE no devolvió el XML firmado en el reintento sin cbc:Note', 502);
-        }
-
-        signedXmlBase64 = signResponse.xml;
-        signedXmlContent = this.decodeBase64ToUtf8(signedXmlBase64);
-        initialResponse = await this.qpseClient.enviarXML({
-          accessToken,
-          xmlFilename: xmlArtifacts.xmlFilename,
-          externalId: signResponse.external_id,
-          xmlSignedBase64: signedXmlBase64,
-          usaDemo,
-        });
-      }
-
-      if (this.isSunatPaymentDueDateInTermsError(initialResponse) && includePaymentDueDateInTerms) {
-        console.warn(
-          `⚠️ QPSE rechazó cbc:PaymentDueDate en cac:PaymentTerms (${comp.serie}-${comp.correlativo}). Reintentando sin PaymentDueDate...`,
-        );
-
-        includePaymentDueDateInTerms = false;
-
-        xmlArtifacts = buildXmlArtifacts(comp.correlativo);
-        signResponse = await this.qpseClient.firmarXML({
-          accessToken,
-          xmlFilename: xmlArtifacts.xmlFilename,
-          xmlContentBase64: xmlArtifacts.xmlContentBase64,
-          usaDemo,
-        });
-
-        if (!signResponse.xml) {
-          throw new HttpException('QPSE no devolvió el XML firmado en el reintento sin PaymentDueDate', 502);
-        }
-
-        signedXmlBase64 = signResponse.xml;
-        signedXmlContent = this.decodeBase64ToUtf8(signedXmlBase64);
-        initialResponse = await this.qpseClient.enviarXML({
-          accessToken,
-          xmlFilename: xmlArtifacts.xmlFilename,
-          externalId: signResponse.external_id,
-          xmlSignedBase64: signedXmlBase64,
-          usaDemo,
-        });
-      }
-
-      finalResponse = initialResponse;
-
-      const qpseTicket = initialResponse.ticket;
-      const documentId = String(qpseTicket || xmlArtifacts.xmlFilename);
-      let status = this.normalizeQpseStatus(initialResponse);
-
-      await this.prisma.comprobante.update({
-        where: { id: comprobanteId },
-        data: {
-          documentoId: documentId,
-          estadoEnvioSunat: status === 'PENDIENTE' ? 'PENDIENTE' : 'RECHAZADO',
-        },
-      });
-
-      // Solo Factura (01) y similares retornan ticket para polling asíncrono.
-      // Boleta (03) es síncrona: la respuesta de enviarXML ya es definitiva.
-      if (qpseTicket && status === 'PENDIENTE') {
         let retries = 0;
-        console.log(`🔄 Estado inicial QPSE: ${status}, iniciando polling por ticket ${qpseTicket}...`);
-
         while (status === 'PENDIENTE' && retries < this.maxRetries) {
           await new Promise((r) => setTimeout(r, this.retryInterval));
-
-          finalResponse = await this.qpseClient.consultarTicket(qpseTicket, accessToken, usaDemo);
-          status = this.normalizeQpseStatus(finalResponse);
+          const doc = await this.apisPeruClient.getDocumentById(documentId);
+          finalResponse = doc;
+          status = this.normalizeApisunatStatus(doc);
           retries++;
 
-          console.log(`📊 Estado actual QPSE: ${status}`, {
+          console.log(`📊 Estado actual APISUNAT: ${status}`, {
             intento: retries,
-            response: finalResponse,
+            documentId,
+            response: doc,
+          });
+
+          if (status !== 'PENDIENTE') {
+            const xmlUrl = typeof doc?.xml === 'string' ? doc.xml : '';
+            if (xmlUrl) {
+              signedXmlContent = await this.downloadTextFromUrl(xmlUrl);
+            }
+            const cdrUrl = typeof doc?.cdr === 'string' ? doc.cdr : '';
+            if (cdrUrl) {
+              cdrBase64OrNull = await this.downloadBinaryAsBase64(cdrUrl);
+            }
+          }
+        }
+      } else if (isJambleProvider(billingProvider)) {
+        console.log(`🧪 Proveedor JAMBLE para ${comp.serie}-${comp.correlativo}`);
+
+        const floor = this.getJambleCorrelativoFloor(comp.empresaId, comp.serie);
+        if (floor && Number(comp.correlativo || 0) < floor) {
+          await this.prisma.comprobante.update({
+            where: { id: comprobanteId },
+            data: { correlativo: floor },
+          });
+          comp.correlativo = floor;
+          console.log(`⏫ JAMBLE correlativo ajustado por floor empresa ${comp.empresaId}: ${comp.serie}-${comp.correlativo}`);
+        }
+
+        const remoteNext = await this.jambleClient.obtenerSiguienteCorrelativo(
+          {
+            baseUrl: jambleBaseUrl,
+            token: jambleToken || null,
+            username: jambleUser || null,
+            password: jamblePassword || null,
+          },
+          comp.serie,
+          comp.tipoDoc,
+        );
+        if (remoteNext && remoteNext > Number(comp.correlativo || 0)) {
+          await this.prisma.comprobante.update({
+            where: { id: comprobanteId },
+            data: { correlativo: remoteNext },
+          });
+          comp.correlativo = remoteNext;
+          console.log(`⏩ JAMBLE correlativo alineado con remoto: ${comp.serie}-${comp.correlativo}`);
+        }
+
+        let registerResponse: any;
+        let jambleRetryByDuplicate = 0;
+        const jambleMaxRetryByDuplicate = Math.max(
+          8,
+          Number(process.env.JAMBLE_MAX_DUPLICATE_RETRIES || 80),
+        );
+        while (true) {
+          const jamblePayload = this.buildJamblePayload(comp);
+          console.log(
+            `📦 JAMBLE payload (${comp.tipoDoc === '01' ? 'FACTURA' : comp.tipoDoc === '03' ? 'BOLETA' : `TIPO-${comp.tipoDoc}`}) ${comp.serie}-${comp.correlativo}:`,
+            JSON.stringify(jamblePayload, null, 2),
+          );
+          try {
+            registerResponse = await this.jambleClient.emitirDocumento(
+              {
+                baseUrl: jambleBaseUrl,
+                token: jambleToken || null,
+                username: jambleUser || null,
+                password: jamblePassword || null,
+              },
+              jamblePayload,
+            );
+            break;
+          } catch (error) {
+            if (
+              jambleRetryByDuplicate < jambleMaxRetryByDuplicate &&
+              this.isJambleNumeracionRepetidaError(error)
+            ) {
+              const remote = this.extractJambleSerieCorrelativoFromError(error);
+              const ultimoLocal = await this.prisma.comprobante.findFirst({
+                where: { empresaId: comp.empresaId, tipoDoc: comp.tipoDoc, serie: comp.serie },
+                orderBy: { correlativo: 'desc' },
+                select: { correlativo: true },
+              });
+
+              const localNext = (ultimoLocal?.correlativo ?? comp.correlativo ?? 0) + 1;
+              const remoteNext = remote ? remote.correlativo + 1 : localNext;
+
+              // When JAMBLE has many hidden/filtered numbers already taken,
+              // advancing one-by-one is too slow. Jump by blocks after a few retries.
+              const jump =
+                jambleRetryByDuplicate >= 30 ? 200 :
+                jambleRetryByDuplicate >= 15 ? 100 :
+                jambleRetryByDuplicate >= 5 ? 25 :
+                1;
+
+              const nuevoCorrelativo = Math.max(localNext, remoteNext + jump);
+
+              await this.prisma.comprobante.update({
+                where: { id: comprobanteId },
+                data: { correlativo: nuevoCorrelativo },
+              });
+              comp.correlativo = nuevoCorrelativo;
+              jambleRetryByDuplicate++;
+              console.warn(`♻️ JAMBLE numeración repetida. Reintentando ${comp.serie}-${comp.correlativo} (intento ${jambleRetryByDuplicate}/${jambleMaxRetryByDuplicate})`);
+              continue;
+            }
+            throw error;
+          }
+        }
+
+        finalResponse = registerResponse;
+        documentId = this.extractJambleDocumentId(registerResponse, xmlArtifacts.xmlFilename);
+        const jambleInternalId = this.extractJambleInternalId(registerResponse);
+        status = this.normalizeJambleStatus(registerResponse);
+        console.log('🧾 JAMBLE register result:', this.summarizeJambleResponse(registerResponse, status, documentId));
+
+        // QPOS/Jamble flow: first registers document, then explicitly sends to SUNAT
+        if (documentId && this.shouldTriggerJambleSunat(registerResponse, status)) {
+          try {
+            console.log(`📤 JAMBLE dispatch request for ${comp.serie}-${comp.correlativo}`, {
+              externalId: documentId,
+              internalId: jambleInternalId || null,
+            });
+            const dispatchResponse = await this.jambleClient.enviarDocumentoSunat(
+              {
+                baseUrl: jambleBaseUrl,
+                token: jambleToken || null,
+                username: jambleUser || null,
+                password: jamblePassword || null,
+              },
+              documentId,
+              jambleInternalId,
+            );
+            finalResponse = dispatchResponse;
+            status = this.normalizeJambleStatus(dispatchResponse);
+            console.log('📨 JAMBLE dispatch result:', this.summarizeJambleResponse(dispatchResponse, status, documentId));
+          } catch (error) {
+            // Keep current response and continue with polling.
+            // Some tenants process dispatch asynchronously and return non-blocking errors.
+            const detail =
+              (error as any)?.response?.data?.message ||
+              (error as any)?.response?.data?.error ||
+              (error as any)?.message ||
+              'Error sin detalle';
+            console.warn(`⚠️ JAMBLE dispatch to SUNAT failed, continuing polling (${comp.serie}-${comp.correlativo})`, {
+              detail,
+            });
+          }
+        }
+
+        let retries = 0;
+        while (status === 'PENDIENTE' && documentId && retries < this.maxRetries) {
+          await new Promise((r) => setTimeout(r, this.retryInterval));
+          const doc = await this.jambleClient.consultarDocumento(
+            {
+              baseUrl: jambleBaseUrl,
+              token: jambleToken || null,
+              username: jambleUser || null,
+              password: jamblePassword || null,
+            },
+            documentId,
+          );
+          finalResponse = doc;
+          status = this.normalizeJambleStatus(doc);
+          retries++;
+          console.log(`🔎 JAMBLE polling #${retries}:`, this.summarizeJambleResponse(doc, status, documentId));
+        }
+
+        const xmlUrl = this.extractJambleLink(finalResponse, 'xml');
+        if (xmlUrl) {
+          signedXmlContent = await this.downloadTextFromUrl(xmlUrl);
+        }
+
+        const cdrUrl = this.extractJambleLink(finalResponse, 'cdr');
+        if (cdrUrl) {
+          cdrBase64OrNull = await this.downloadBinaryAsBase64(cdrUrl);
+        }
+
+        const pdfUrl = this.extractJambleLink(finalResponse, 'pdf');
+        if (pdfUrl) {
+          providerPdfBuffer = await this.downloadBinaryAsBuffer(pdfUrl);
+        }
+
+        if (documentId) {
+          await this.prisma.comprobante.update({
+            where: { id: comprobanteId },
+            data: {
+              documentoId: documentId,
+              estadoEnvioSunat: status === 'PENDIENTE' ? 'PENDIENTE' : 'EMITIDO',
+            },
           });
         }
-      } else if (!qpseTicket) {
-        console.log(`✅ QPSE respuesta síncrona (sin ticket): ${status}`);
+        console.log(`✅ JAMBLE final status ${comp.serie}-${comp.correlativo}:`, this.summarizeJambleResponse(finalResponse, status, documentId));
+      } else {
+        const qpseAccess = await this.qpseClient.obtenerTokenAcceso({
+          username: qpseUsername!,
+          password: qpsePassword!,
+          usaDemo,
+        });
+        const accessToken = qpseAccess.token_acceso;
+        if (!accessToken) {
+          throw new HttpException('No se pudo obtener el token de acceso de QPSE', 502);
+        }
+
+        let signResponse = await this.qpseClient.firmarXML({
+          accessToken,
+          xmlFilename: xmlArtifacts.xmlFilename,
+          xmlContentBase64: xmlArtifacts.xmlContentBase64,
+          usaDemo,
+        });
+
+        if (!signResponse.xml) {
+          throw new HttpException('QPSE no devolvió el XML firmado', 502);
+        }
+
+        let signedXmlBase64 = signResponse.xml;
+        signedXmlContent = this.decodeBase64ToUtf8(signedXmlBase64);
+        let initialResponse = await this.qpseClient.enviarXML({
+          accessToken,
+          xmlFilename: xmlArtifacts.xmlFilename,
+          externalId: signResponse.external_id,
+          xmlSignedBase64: signedXmlBase64,
+          usaDemo,
+        });
+
+        if (this.isSunatNumeracionRepetida(initialResponse)) {
+          console.warn(
+            `⚠️ QPSE reportó numeración repetida (${comp.serie}-${comp.correlativo}). Buscando siguiente correlativo disponible...`,
+          );
+
+          const ultimoComp = await this.prisma.comprobante.findFirst({
+            where: { empresaId: comp.empresaId, serie: comp.serie, tipoDoc: comp.tipoDoc },
+            orderBy: { correlativo: 'desc' },
+            select: { correlativo: true },
+          });
+          const nuevoCorrelativo = (ultimoComp?.correlativo ?? 0) + 1;
+
+          await this.prisma.comprobante.update({
+            where: { id: comprobanteId },
+            data: { correlativo: nuevoCorrelativo },
+          });
+
+          comp.correlativo = nuevoCorrelativo;
+          xmlArtifacts = buildXmlArtifacts(nuevoCorrelativo);
+          signResponse = await this.qpseClient.firmarXML({
+            accessToken,
+            xmlFilename: xmlArtifacts.xmlFilename,
+            xmlContentBase64: xmlArtifacts.xmlContentBase64,
+            usaDemo,
+          });
+
+          if (!signResponse.xml) {
+            throw new HttpException('QPSE no devolvió el XML firmado en el reintento', 502);
+          }
+
+          signedXmlBase64 = signResponse.xml;
+          signedXmlContent = this.decodeBase64ToUtf8(signedXmlBase64);
+          initialResponse = await this.qpseClient.enviarXML({
+            accessToken,
+            xmlFilename: xmlArtifacts.xmlFilename,
+            externalId: signResponse.external_id,
+            xmlSignedBase64: signedXmlBase64,
+            usaDemo,
+          });
+        }
+
+        if (this.isSunatUblVersionError(initialResponse) || this.isSunatCustomizationVersionError(initialResponse)) {
+          console.warn(
+            `⚠️ QPSE rechazó versión UBL/Customization (${comp.serie}-${comp.correlativo}). Reintentando solo sin cbc:Note (manteniendo UBL 2.1 / Customization 2.0)...`,
+          );
+
+          includeNoteNode = false;
+
+          xmlArtifacts = buildXmlArtifacts(comp.correlativo);
+          signResponse = await this.qpseClient.firmarXML({
+            accessToken,
+            xmlFilename: xmlArtifacts.xmlFilename,
+            xmlContentBase64: xmlArtifacts.xmlContentBase64,
+            usaDemo,
+          });
+
+          if (!signResponse.xml) {
+            throw new HttpException('QPSE no devolvió el XML firmado en el reintento sin cbc:Note', 502);
+          }
+
+          signedXmlBase64 = signResponse.xml;
+          signedXmlContent = this.decodeBase64ToUtf8(signedXmlBase64);
+          initialResponse = await this.qpseClient.enviarXML({
+            accessToken,
+            xmlFilename: xmlArtifacts.xmlFilename,
+            externalId: signResponse.external_id,
+            xmlSignedBase64: signedXmlBase64,
+            usaDemo,
+          });
+        }
+
+        if (this.isSunatPaymentDueDateInTermsError(initialResponse) && includePaymentDueDateInTerms) {
+          console.warn(
+            `⚠️ QPSE rechazó cbc:PaymentDueDate en cac:PaymentTerms (${comp.serie}-${comp.correlativo}). Reintentando sin PaymentDueDate...`,
+          );
+
+          includePaymentDueDateInTerms = false;
+
+          xmlArtifacts = buildXmlArtifacts(comp.correlativo);
+          signResponse = await this.qpseClient.firmarXML({
+            accessToken,
+            xmlFilename: xmlArtifacts.xmlFilename,
+            xmlContentBase64: xmlArtifacts.xmlContentBase64,
+            usaDemo,
+          });
+
+          if (!signResponse.xml) {
+            throw new HttpException('QPSE no devolvió el XML firmado en el reintento sin PaymentDueDate', 502);
+          }
+
+          signedXmlBase64 = signResponse.xml;
+          signedXmlContent = this.decodeBase64ToUtf8(signedXmlBase64);
+          initialResponse = await this.qpseClient.enviarXML({
+            accessToken,
+            xmlFilename: xmlArtifacts.xmlFilename,
+            externalId: signResponse.external_id,
+            xmlSignedBase64: signedXmlBase64,
+            usaDemo,
+          });
+        }
+
+        finalResponse = initialResponse;
+        const qpseTicket = initialResponse.ticket;
+        documentId = String(qpseTicket || xmlArtifacts.xmlFilename);
+        status = this.normalizeQpseStatus(initialResponse);
+
+        await this.prisma.comprobante.update({
+          where: { id: comprobanteId },
+          data: {
+            documentoId: documentId,
+            estadoEnvioSunat: status === 'PENDIENTE' ? 'PENDIENTE' : 'RECHAZADO',
+          },
+        });
+
+        // Solo Factura (01) y similares retornan ticket para polling asíncrono.
+        // Boleta (03) es síncrona: la respuesta de enviarXML ya es definitiva.
+        if (qpseTicket && status === 'PENDIENTE') {
+          let retries = 0;
+          console.log(`🔄 Estado inicial QPSE: ${status}, iniciando polling por ticket ${qpseTicket}...`);
+
+          while (status === 'PENDIENTE' && retries < this.maxRetries) {
+            await new Promise((r) => setTimeout(r, this.retryInterval));
+
+            finalResponse = await this.qpseClient.consultarTicket(qpseTicket, accessToken, usaDemo);
+            status = this.normalizeQpseStatus(finalResponse);
+            retries++;
+
+            console.log(`📊 Estado actual QPSE: ${status}`, {
+              intento: retries,
+              response: finalResponse,
+            });
+          }
+        } else if (!qpseTicket) {
+          console.log(`✅ QPSE respuesta síncrona (sin ticket): ${status}`);
+        }
       }
 
       let s3XmlUrl: string | null = null;
@@ -938,8 +1247,8 @@ export class EnviarSunatService {
           );
           s3XmlUrl = await this.s3Service.uploadXML(Buffer.from(signedXmlContent, 'utf8'), xmlKey);
 
-          if (finalResponse?.cdr) {
-            const cdrBuffer = this.decodeBase64ToBuffer(finalResponse.cdr);
+          if (cdrBase64OrNull || finalResponse?.cdr) {
+            const cdrBuffer = this.decodeBase64ToBuffer(cdrBase64OrNull || finalResponse.cdr);
             const cdrKey = this.buildCdrStorageKey(comp.empresaId, comp.tipoDoc, comp.serie, comp.correlativo, cdrBuffer);
             s3CdrUrl = cdrBuffer.toString('utf8').trim().startsWith('<')
               ? await this.s3Service.uploadXML(cdrBuffer, cdrKey)
@@ -955,13 +1264,27 @@ export class EnviarSunatService {
 
       if (this.s3Service.isEnabled() && status === 'ACEPTADO') {
         try {
-          // Generar PDF personalizado del sistema
-          const tipoDocMap: Record<string, string> = {
-            '01': 'FACTURA',
-            '03': 'BOLETA',
-            '07': 'NOTA DE CRÉDITO',
-            '08': 'NOTA DE DÉBITO',
-          };
+          if (providerPdfBuffer) {
+            const providerPdfKey = this.s3Service.generateComprobanteKey(
+              comp.empresaId,
+              comp.tipoDoc,
+              comp.serie,
+              comp.correlativo,
+              'pdf',
+            );
+            s3PdfUrl = await this.s3Service.uploadPDF(providerPdfBuffer, providerPdfKey);
+            console.log(`📤 PDF del proveedor subido a S3: ${s3PdfUrl}`);
+          }
+
+          if (!s3PdfUrl) {
+            // Si no vino PDF oficial del proveedor, generar PDF interno.
+
+            const tipoDocMap: Record<string, string> = {
+              '01': 'FACTURA',
+              '03': 'BOLETA',
+              '07': 'NOTA DE CRÉDITO',
+              '08': 'NOTA DE DÉBITO',
+            };
 
           const buildLogoDataUrl = (raw?: string | null): string | undefined => {
             if (!raw) return undefined;
@@ -1078,26 +1401,27 @@ export class EnviarSunatService {
               : undefined,
           };
 
-          const pdfBuffer = await this.pdfGenerator.generarPDFComprobante(pdfData);
+            const pdfBuffer = await this.pdfGenerator.generarPDFComprobante(pdfData);
 
-          const pdfKey = this.s3Service.generateComprobanteKey(
-            comp.empresaId,
-            comp.tipoDoc,
-            comp.serie,
-            comp.correlativo,
-            'pdf',
-          );
-          s3PdfUrl = await this.s3Service.uploadPDF(pdfBuffer, pdfKey);
-          console.log(`📤 PDF personalizado subido a S3: ${s3PdfUrl}`);
+            const pdfKey = this.s3Service.generateComprobanteKey(
+              comp.empresaId,
+              comp.tipoDoc,
+              comp.serie,
+              comp.correlativo,
+              'pdf',
+            );
+            s3PdfUrl = await this.s3Service.uploadPDF(pdfBuffer, pdfKey);
+            console.log(`📤 PDF personalizado subido a S3: ${s3PdfUrl}`);
+          }
 
-        } catch (s3Error) {
+        } catch (s3Error: any) {
           console.error('⚠️ Error subiendo archivos a S3:', s3Error.message);
           // No fallar el proceso si S3 falla, solo loguear
         }
       }
 
       if (status !== 'ACEPTADO') {
-        console.error("❌ SUNAT Full Response:", JSON.stringify(finalResponse, null, 2));
+        console.error('❌ SUNAT Full Response:', JSON.stringify(this.sanitizeLogPayload(finalResponse), null, 2));
       }
 
       // Mapear el estado de SUNAT al estado interno del comprobante
@@ -1111,11 +1435,15 @@ export class EnviarSunatService {
         data: {
           estadoEnvioSunat: estadoFinal as any,
           sunatXml: signedXmlContent || null,
-          sunatCdrZip: finalResponse.cdr || null,
+          sunatCdrZip: cdrBase64OrNull || finalResponse?.cdr || null,
           sunatCdrResponse: JSON.stringify(finalResponse),
           sunatErrorMsg:
             estadoFinal !== 'EMITIDO'
-              ? this.extractQpseMessage(finalResponse, status)
+              ? (isApisunatProvider(billingProvider)
+                ? this.extractApisunatMessage(finalResponse, status)
+                : isJambleProvider(billingProvider)
+                  ? this.extractJambleMessage(finalResponse, status)
+                  : this.extractQpseMessage(finalResponse, status))
               : null,
           s3PdfUrl,
           s3XmlUrl,
@@ -1128,7 +1456,11 @@ export class EnviarSunatService {
         return {
           status: 'PENDIENTE',
           documentId,
-          message: this.extractQpseMessage(finalResponse, status) || 'El documento está pendiente de procesamiento por SUNAT.',
+          message: isApisunatProvider(billingProvider)
+            ? this.extractApisunatMessage(finalResponse, status) || 'El documento está pendiente de procesamiento por SUNAT.'
+            : isJambleProvider(billingProvider)
+              ? this.extractJambleMessage(finalResponse, status) || 'El documento está pendiente de procesamiento por SUNAT.'
+              : this.extractQpseMessage(finalResponse, status) || 'El documento está pendiente de procesamiento por SUNAT.',
         };
       }
 
@@ -1136,10 +1468,16 @@ export class EnviarSunatService {
         console.error('❌ SUNAT rechazó el documento:', {
           status,
           error: finalResponse.error,
-          fullResponse: finalResponse,
+          fullResponse: this.sanitizeLogPayload(finalResponse),
         });
+        const provider = billingProvider;
+        const detail = isApisunatProvider(billingProvider)
+          ? this.extractApisunatMessage(finalResponse, status)
+          : isJambleProvider(billingProvider)
+            ? this.extractJambleMessage(finalResponse, status)
+            : this.extractQpseMessage(finalResponse, status);
         throw new HttpException(
-          `QPSE rechazó el documento: ${this.extractQpseMessage(finalResponse, status) || 'Error desconocido'}`,
+          `${provider} rechazó el documento: ${detail || 'Error desconocido'}`,
           502,
         );
       }
@@ -1158,7 +1496,7 @@ export class EnviarSunatService {
       console.error('🚫 Error crítico enviando a SUNAT:', {
         comprobanteId,
         error: err.message,
-        response: err.response?.data,
+        response: this.sanitizeLogPayload(err.response?.data),
         status: err.response?.status,
       });
 
@@ -1233,6 +1571,244 @@ export class EnviarSunatService {
     return 'Invoice';
   }
 
+  private sanitizeUblNode(node: any): any {
+    if (node === null || node === undefined) return undefined;
+    if (Array.isArray(node)) {
+      const arr = node
+        .map((item) => this.sanitizeUblNode(item))
+        .filter((item) => item !== undefined);
+      return arr.length > 0 ? arr : undefined;
+    }
+    if (typeof node === 'object') {
+      const result: any = {};
+      for (const [key, value] of Object.entries(node)) {
+        const sanitized = this.sanitizeUblNode(value);
+        if (sanitized !== undefined) {
+          result[key] = sanitized;
+        }
+      }
+      return Object.keys(result).length > 0 ? result : undefined;
+    }
+    return node;
+  }
+
+  private normalizeApisunatStatus(response: any): 'ACEPTADO' | 'PENDIENTE' | 'RECHAZADO' {
+    const status = String(response?.status || '').toUpperCase();
+    if (status === 'ACEPTADO') return 'ACEPTADO';
+    if (status === 'PENDIENTE') return 'PENDIENTE';
+    return 'RECHAZADO';
+  }
+
+  private normalizeJambleStatus(response: any): 'ACEPTADO' | 'PENDIENTE' | 'RECHAZADO' {
+    const stateTypeId = String(response?.data?.state_type_id || '').trim();
+    const stateLabel = String(response?.data?.state_type_description || response?.state_type_description || '').toLowerCase();
+    const message = String(response?.message || response?.data?.message || response?.data?.message_text || '').toLowerCase();
+    const numberFull = String(response?.data?.number_full || response?.number_full || '').trim();
+    const externalId = String(response?.data?.external_id || response?.external_id || '').trim();
+    const code =
+      String(
+        response?.response?.code ??
+          response?.code ??
+          response?.data?.code ??
+          '',
+      ).trim();
+    const success = response?.success === true;
+
+    if (
+      code === '0' ||
+      stateTypeId === '01' ||
+      stateTypeId === '05' ||
+      stateLabel.includes('registrad') ||
+      stateLabel.includes('aceptad') ||
+      stateLabel.includes('observad')
+    ) {
+      return 'ACEPTADO';
+    }
+
+    // En JAMBLE/QPOS el alta del comprobante puede ser el flujo final exitoso.
+    // Si ya devolvió "registrado con éxito" + IDs, no forzar envío adicional.
+    if (
+      success &&
+      (message.includes('registrado con éxito') || message.includes('registrado con exito')) &&
+      (Boolean(numberFull) || Boolean(externalId))
+    ) {
+      return 'ACEPTADO';
+    }
+
+    if (stateLabel.includes('pendient') || stateTypeId === '03' || stateTypeId === '04') {
+      return 'PENDIENTE';
+    }
+
+    if (!success && (code || stateLabel)) {
+      return 'RECHAZADO';
+    }
+
+    return success ? 'PENDIENTE' : 'RECHAZADO';
+  }
+
+  private buildJamblePayload(comp: any): any {
+    const fecha = new Date(comp.fechaEmision || new Date());
+    const yyyy = fecha.getFullYear();
+    const mm = String(fecha.getMonth() + 1).padStart(2, '0');
+    const dd = String(fecha.getDate()).padStart(2, '0');
+    const HH = String(fecha.getHours()).padStart(2, '0');
+    const MM = String(fecha.getMinutes()).padStart(2, '0');
+    const SS = String(fecha.getSeconds()).padStart(2, '0');
+    const fechaIso = `${yyyy}-${mm}-${dd}`;
+    const hora = `${HH}:${MM}:${SS}`;
+
+    const tipoDocIdentidad = comp.cliente?.tipoDocumento?.codigo || '0';
+    const numeroDocCliente = comp.cliente?.nroDoc || (tipoDocIdentidad === '6' ? '20100070970' : '99999999');
+
+    const items = (comp.detalles || []).map((item: any) => ({
+      codigo_interno: item?.producto?.codigo || item.codigo || null,
+      descripcion: item.descripcion,
+      codigo_producto_sunat: null,
+      unidad_de_medida: item.unidadMedida || item.unidad || 'NIU',
+      cantidad: Number(item.cantidad || 0),
+      valor_unitario: Number(item.mtoValorUnitario || 0),
+      codigo_tipo_precio: '01',
+      precio_unitario: Number(item.mtoPrecioUnitario || 0),
+      codigo_tipo_afectacion_igv: String(item.tipAfeIgv || '10'),
+      total_base_igv: Number(item.mtoBaseIgv || 0),
+      porcentaje_igv: Number(item.porcentajeIgv || 18),
+      total_igv: Number(item.igv || 0),
+      total_impuestos: Number(item.totalImpuestos || item.igv || 0),
+      total_valor_item: Number(item.mtoValorVenta || 0),
+      total_item: Number((item.mtoPrecioUnitario || 0) * (item.cantidad || 0)),
+      datos_adicionales: [],
+    }));
+
+    const payload: any = {
+      serie_documento: comp.serie,
+      numero_documento: String(comp.correlativo),
+      fecha_de_emision: fechaIso,
+      hora_de_emision: hora,
+      fecha_de_vencimiento: fechaIso,
+      codigo_tipo_operacion: comp?.tipoOperacion?.codigo || '0101',
+      codigo_tipo_documento: comp.tipoDoc,
+      codigo_tipo_moneda: comp.tipoMoneda || 'PEN',
+      numero_orden_de_compra: null,
+      datos_del_cliente_o_receptor: {
+        codigo_tipo_documento_identidad: String(tipoDocIdentidad),
+        numero_documento: String(numeroDocCliente),
+        apellidos_y_nombres_o_razon_social: comp.cliente?.nombre || 'CLIENTES VARIOS',
+        codigo_pais: 'PE',
+        ubigeo: comp.cliente?.ubigeo || comp.empresa?.ubigeo || '150101',
+        direccion: comp.cliente?.direccion || '-',
+        correo_electronico: comp.cliente?.email || null,
+        telefono: comp.cliente?.celular || null,
+      },
+      codigo_condicion_de_pago: comp.formaPagoTipo === 'Credito' ? '02' : '01',
+      totales: {
+        total_exportacion: 0,
+        total_operaciones_gravadas: Number(comp.mtoOperGravadas || 0),
+        total_operaciones_inafectas: Number(comp.mtoOperInafectas || 0),
+        total_operaciones_exoneradas: Number(comp.mtoOperExoneradas || 0),
+        total_operaciones_gratuitas: Number(comp.mtoOperGratuitas || 0),
+        total_igv: Number(comp.mtoIGV || 0),
+        total_impuestos: Number(comp.totalImpuestos || comp.mtoIGV || 0),
+        total_valor: Number(comp.valorVenta || comp.mtoOperGravadas || 0),
+        total_venta: Number(comp.mtoImpVenta || 0),
+      },
+      items,
+    };
+
+    if (comp.tipoDoc === '07' || comp.tipoDoc === '08') {
+      const afectado = this.parseAfectadoReference(comp.numDocAfectado);
+      payload.codigo_tipo_nota = String(comp.motivo?.codigo || '01');
+      payload.motivo_o_sustento_de_nota = String(
+        comp.motivo?.descripcion || comp.motivo?.nombre || 'Error al emitir comprobante',
+      );
+      payload.documento_afectado = {
+        serie_documento: afectado.serie || '',
+        numero_documento: afectado.numero || '',
+        codigo_tipo_documento: String(comp.tipDocAfectado || ''),
+      };
+
+      delete payload.codigo_tipo_operacion;
+      delete payload.codigo_condicion_de_pago;
+    }
+
+    return payload;
+  }
+
+  private parseAfectadoReference(numDocAfectado?: string | null): { serie: string; numero: string } {
+    const raw = String(numDocAfectado || '').trim();
+    if (!raw) return { serie: '', numero: '' };
+
+    const [serie, ...numeroPartes] = raw.split('-');
+    const numeroRaw = numeroPartes.join('-').trim();
+    if (!numeroRaw) return { serie: serie?.trim() || '', numero: '' };
+
+    const numeroNormalizado = numeroRaw.replace(/^0+(?=\d)/, '');
+    return {
+      serie: serie?.trim() || '',
+      numero: numeroNormalizado || numeroRaw,
+    };
+  }
+
+  private extractJambleDocumentId(response: any, fallback: string): string {
+    const id =
+      response?.data?.external_id ||
+      response?.data?.id ||
+      response?.external_id ||
+      response?.id ||
+      fallback;
+    return String(id);
+  }
+
+  private extractJambleInternalId(response: any): string | null {
+    const internalId = response?.data?.id ?? response?.id ?? null;
+    if (internalId === null || internalId === undefined) return null;
+    const text = String(internalId).trim();
+    return text || null;
+  }
+
+  private summarizeJambleResponse(
+    response: any,
+    status: 'ACEPTADO' | 'PENDIENTE' | 'RECHAZADO',
+    documentId?: string | null,
+  ): Record<string, any> {
+    return {
+      status,
+      externalId: documentId || this.extractJambleDocumentId(response, ''),
+      internalId: this.extractJambleInternalId(response),
+      stateTypeId: String(response?.data?.state_type_id || '').trim() || null,
+      stateTypeDescription:
+        String(response?.data?.state_type_description || response?.state_type_description || '').trim() || null,
+      responseCode: String(response?.response?.code ?? response?.code ?? '').trim() || null,
+      message: this.extractJambleMessage(response, status),
+      hasXml: Boolean(this.extractJambleLink(response, 'xml')),
+      hasCdr: Boolean(this.extractJambleLink(response, 'cdr')),
+      hasPdf: Boolean(this.extractJambleLink(response, 'pdf')),
+      sendSunat: response?.data?.send_sunat ?? null,
+    };
+  }
+
+  private shouldTriggerJambleSunat(response: any, currentStatus: 'ACEPTADO' | 'PENDIENTE' | 'RECHAZADO'): boolean {
+    if (currentStatus === 'ACEPTADO') return false;
+
+    // Nuevo comportamiento por defecto: JAMBLE suele completar correctamente en /documents.
+    // Solo disparamos /documents/send cuando se habilite explícitamente.
+    const forceDispatch = ['1', 'true', 'yes'].includes(String(process.env.JAMBLE_FORCE_DISPATCH || '').toLowerCase());
+    if (!forceDispatch) return false;
+
+    const sendSunat = response?.data?.send_sunat;
+    if (sendSunat === false) return true;
+
+    const stateTypeId = String(response?.data?.state_type_id || '').trim();
+    if (!stateTypeId) return true;
+
+    return currentStatus === 'PENDIENTE';
+  }
+
+  private extractJambleLink(response: any, key: 'xml' | 'cdr' | 'pdf' | 'xml_unsigned'): string | null {
+    const value = response?.links?.[key];
+    if (!value || typeof value !== 'string') return null;
+    return value.trim() || null;
+  }
+
   private normalizeQpseStatus(response: QpseSendResponse | null | undefined): 'ACEPTADO' | 'PENDIENTE' | 'RECHAZADO' {
     const stateLabel = String(response?.state_label || '').toLowerCase();
     const code = String(response?.code ?? '');
@@ -1295,6 +1871,39 @@ export class EnviarSunatService {
     return code === '1033' || responseText.includes('1033') || responseText.includes('numeraci');
   }
 
+  private isJambleNumeracionRepetidaError(error: any): boolean {
+    const text = JSON.stringify(
+      error?.response?.data ||
+      error?.message ||
+      error ||
+      '',
+    ).toLowerCase();
+
+    return (
+      text.includes('ya se encuentra registrado') ||
+      text.includes('documento ya existe') ||
+      (text.includes('documento') && text.includes('registrado'))
+    );
+  }
+
+  private extractJambleSerieCorrelativoFromError(error: any): { serie: string; correlativo: number } | null {
+    const text = String(
+      error?.response?.data?.message ||
+      error?.response?.data?.error ||
+      error?.message ||
+      '',
+    );
+
+    const match = text.match(/([A-Z]\d{3})-(\d{1,10})/i);
+    if (!match) return null;
+    const correlativo = Number(match[2]);
+    if (Number.isNaN(correlativo)) return null;
+    return {
+      serie: match[1].toUpperCase(),
+      correlativo,
+    };
+  }
+
   private isSunatUblVersionError(response: any): boolean {
     const text = JSON.stringify(response || {}).toLowerCase();
     const code = String(response?.code ?? response?.estado ?? '');
@@ -1337,6 +1946,95 @@ export class EnviarSunatService {
     ].filter(Boolean);
 
     return messages[0] || (status ? `SUNAT devolvió estado: ${status}` : 'Respuesta sin detalle de QPSE');
+  }
+
+  private extractApisunatMessage(response: any, status?: string): string {
+    const faults = Array.isArray(response?.faults) ? response.faults.join(' | ') : response?.faults;
+    const notes = Array.isArray(response?.notes) ? response.notes.join(' | ') : response?.notes;
+    const errors = Array.isArray(response?.errors) ? response.errors.join(' | ') : response?.errors;
+    const nestedError =
+      response?.error?.message ||
+      response?.error?.descripcion ||
+      response?.error?.detail ||
+      (typeof response?.error === 'string' ? response.error : null);
+
+    const messages = [
+      response?.message,
+      nestedError,
+      faults,
+      notes,
+      errors,
+    ].filter(Boolean);
+
+    return messages[0] || (status ? `SUNAT devolvió estado: ${status}` : 'Respuesta sin detalle de APISUNAT');
+  }
+
+  private extractJambleMessage(response: any, status?: string): string {
+    const messages = [
+      response?.response?.description,
+      response?.message,
+      response?.description,
+      response?.error?.message,
+      response?.error?.descripcion,
+      Array.isArray(response?.response?.notes) ? response.response.notes.join(' | ') : response?.response?.notes,
+      Array.isArray(response?.errors) ? response.errors.join(' | ') : response?.errors,
+    ].filter(Boolean);
+
+    return messages[0] || (status ? `SUNAT devolvió estado: ${status}` : 'Respuesta sin detalle de JAMBLE');
+  }
+
+  private sanitizeLogPayload(payload: any): any {
+    const LIMIT = 240;
+    const HIDDEN_KEYS = new Set([
+      'logo',
+      'image',
+      'imagen',
+      'base64',
+      'xml',
+      'xml_unsigned',
+      'cdr',
+      'pdf_base64',
+      'qr',
+    ]);
+
+    const walk = (value: any, key = ''): any => {
+      if (value === null || value === undefined) return value;
+      if (Array.isArray(value)) return value.map((item) => walk(item));
+      if (typeof value === 'object') {
+        const out: Record<string, any> = {};
+        for (const [k, v] of Object.entries(value)) {
+          out[k] = walk(v, k);
+        }
+        return out;
+      }
+      if (typeof value === 'string') {
+        const lowerKey = String(key || '').toLowerCase();
+        if (HIDDEN_KEYS.has(lowerKey)) {
+          return `[hidden:${lowerKey}:len=${value.length}]`;
+        }
+        if (value.length > LIMIT) {
+          return `${value.slice(0, LIMIT)}...[truncated:${value.length - LIMIT}]`;
+        }
+      }
+      return value;
+    };
+
+    return walk(payload);
+  }
+
+  private async downloadTextFromUrl(url: string): Promise<string> {
+    const resp = await axios.get(url, { responseType: 'text', timeout: 30000 });
+    return String(resp.data || '');
+  }
+
+  private async downloadBinaryAsBase64(url: string): Promise<string> {
+    const resp = await axios.get<ArrayBuffer>(url, { responseType: 'arraybuffer', timeout: 30000 });
+    return Buffer.from(resp.data as any).toString('base64');
+  }
+
+  private async downloadBinaryAsBuffer(url: string): Promise<Buffer> {
+    const resp = await axios.get<ArrayBuffer>(url, { responseType: 'arraybuffer', timeout: 30000 });
+    return Buffer.from(resp.data as any);
   }
 
   private decodeBase64ToUtf8(value: string): string {
@@ -1687,7 +2385,11 @@ export class EnviarSunatService {
     const httpStatus = err?.status || err?.response?.status;
 
     // HttpException lanzada por nosotros al detectar rechazo explícito de SUNAT/QPSE
-    if (msg.includes('qpse rechaz') || msg.includes('rechazó el documento')) return 'DATOS';
+    if (
+      msg.includes('qpse rechaz') ||
+      msg.includes('apisunat rechaz') ||
+      msg.includes('rechazó el documento')
+    ) return 'DATOS';
 
     // Errores de validación XML / UBL
     if (msg.includes('no se puede leer') || msg.includes('parsear') ||
@@ -1704,17 +2406,40 @@ export class EnviarSunatService {
     try {
       const empresaCreds = await (this.prisma.empresa as any).findUnique({
         where: { id: empresaId },
-        select: { usuarioPse: true, contrasenaPse: true, usaDemo: true },
-      }) as { usuarioPse: string | null; contrasenaPse: string | null; usaDemo: boolean } | null;
+        select: {
+          usuarioPse: true,
+          contrasenaPse: true,
+          usaDemo: true,
+          providerId: true,
+          providerToken: true,
+          billingProvider: true,
+          billingApiBaseUrl: true,
+          billingApiToken: true,
+          billingApiUser: true,
+          billingApiPassword: true,
+        },
+      }) as {
+        usuarioPse: string | null;
+        contrasenaPse: string | null;
+        usaDemo: boolean;
+        providerId: string | null;
+        providerToken: string | null;
+        billingProvider: string | null;
+        billingApiBaseUrl: string | null;
+        billingApiToken: string | null;
+        billingApiUser: string | null;
+        billingApiPassword: string | null;
+      } | null;
       const qpseUsername = empresaCreds?.usuarioPse;
       const qpsePassword = empresaCreds?.contrasenaPse;
+      const providerId = String(empresaCreds?.providerId || '').trim();
+      const providerToken = String(empresaCreds?.providerToken || '').trim();
+      const billingProvider = resolveBillingProvider(empresaCreds);
       const usaDemo = empresaCreds?.usaDemo ?? false;
-      if (!qpseUsername || !qpsePassword) {
-        throw new HttpException(
-          'Credenciales QPSE no configuradas. Configure usuarioPse y contrasenaPse en la empresa.',
-          400,
-        );
-      }
+      const jambleBaseUrl = String(empresaCreds?.billingApiBaseUrl || '').trim();
+      const jambleToken = String(empresaCreds?.billingApiToken || '').trim();
+      const jambleUser = String(empresaCreds?.billingApiUser || '').trim();
+      const jamblePassword = String(empresaCreds?.billingApiPassword || '').trim();
 
       const comprobante = await this.prisma.comprobante.findFirst({
         where: { empresaId, documentoId: documentId },
@@ -1722,6 +2447,55 @@ export class EnviarSunatService {
       });
 
       const externalId = comprobante?.documentoId || documentId;
+      if (isApisunatProvider(billingProvider)) {
+        if (!providerId || !providerToken) {
+          throw new HttpException(
+            'Proveedor APISUNAT: faltan credenciales. Configura providerId (personaId) y providerToken en la empresa.',
+            400,
+          );
+        }
+
+        console.log(`🚀 Enviando anulación a APISUNAT para el documento: ${externalId}`);
+        const response = await this.apisPeruClient.voidBill({
+          personaId: providerId,
+          personaToken: providerToken,
+          documentId: externalId,
+          reason: motivo.substring(0, 100),
+        });
+        return response;
+      }
+
+      if (isJambleProvider(billingProvider)) {
+        if (!jambleBaseUrl) {
+          throw new HttpException('Proveedor JAMBLE: falta billingApiBaseUrl en la empresa.', 400);
+        }
+        if (!jambleToken && !(jambleUser && jamblePassword)) {
+          throw new HttpException(
+            'Proveedor JAMBLE: configura billingApiToken o billingApiUser + billingApiPassword en la empresa.',
+            400,
+          );
+        }
+
+        const response = await this.jambleClient.anularDocumento(
+          {
+            baseUrl: jambleBaseUrl,
+            token: jambleToken || null,
+            username: jambleUser || null,
+            password: jamblePassword || null,
+          },
+          externalId,
+          motivo.substring(0, 100),
+        );
+        return response;
+      }
+
+      if (!qpseUsername || !qpsePassword) {
+        throw new HttpException(
+          'Credenciales QPSE no configuradas. Configure usuarioPse y contrasenaPse en la empresa.',
+          400,
+        );
+      }
+
       const qpseAccess = await this.qpseClient.obtenerTokenAcceso({
         username: qpseUsername,
         password: qpsePassword,
@@ -1744,8 +2518,13 @@ export class EnviarSunatService {
         documentId,
         error: err.response?.data || err.message,
       });
+      const empresaCreds = await (this.prisma.empresa as any).findUnique({
+        where: { id: empresaId },
+        select: { usaDemo: true, billingProvider: true },
+      }) as { usaDemo: boolean; billingProvider: string | null } | null;
+      const provider = resolveBillingProvider(empresaCreds);
       throw new HttpException(
-        `QPSE rechazó la anulación: ${err.response?.data?.message || err.message || 'Error desconocido'}`,
+        `${provider} rechazó la anulación: ${err.response?.data?.message || err.message || 'Error desconocido'}`,
         502,
       );
     }

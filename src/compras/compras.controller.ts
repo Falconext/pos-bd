@@ -1,12 +1,21 @@
-import { Controller, Get, Post, Body, Param, Query, UseGuards, Request, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, UseGuards, Request, ParseIntPipe, BadRequestException, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { ComprasService } from './compras.service';
 import { CrearCompraDto } from './dto/crear-compra.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { xmlUploadOptions } from '../common/utils/multer.config';
 
 @Controller('compras')
 @UseGuards(JwtAuthGuard)
 export class ComprasController {
     constructor(private readonly comprasService: ComprasService) { }
+
+    @Post('parse-xml')
+    @UseInterceptors(FileInterceptor('file', xmlUploadOptions))
+    async parseXml(@Request() req, @UploadedFile() file: Express.Multer.File) {
+        if (!file) throw new BadRequestException('No se proporcionó ningún archivo XML');
+        return this.comprasService.parseXmlSunat(req.user.empresaId, file.buffer);
+    }
 
     @Post()
     async crear(@Request() req, @Body() body: CrearCompraDto) {

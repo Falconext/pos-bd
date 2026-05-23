@@ -294,7 +294,10 @@ export class PdfGeneratorService {
       descripcion: string;
       precioUnitario: string;
       total: string;
+      imagenUrl?: string;
     }>;
+
+    includeProductImages?: boolean;
 
     // Totales
     mtoOperGravadas: string;
@@ -316,14 +319,10 @@ export class PdfGeneratorService {
     cci?: string;
     monedaCuenta?: string;
 
-    // Usuario
+    // Usuario y marca
     usuario?: string;
-
-    // Pagos digitales
-    yapeNumero?: string;
-    yapeQrUrl?: string;
-    plinNumero?: string;
-    plinQrUrl?: string;
+    sistemaUrl?: string;
+    sistemaNombre?: string;
   }): Promise<Buffer> {
     try {
       // Usar template de cotización si existe, sino el genérico

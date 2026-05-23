@@ -94,8 +94,29 @@ export class CreateEmpresaDto {
   providerToken?: string;
 
   @IsOptional()
-  @IsOptional()
+  @IsString()
   providerId?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['QPSE', 'APISUNAT', 'JAMBLE'])
+  billingProvider?: 'QPSE' | 'APISUNAT' | 'JAMBLE';
+
+  @IsOptional()
+  @IsString()
+  billingApiBaseUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  billingApiToken?: string;
+
+  @IsOptional()
+  @IsString()
+  billingApiUser?: string;
+
+  @IsOptional()
+  @IsString()
+  billingApiPassword?: string;
 
   @IsOptional()
   @IsBoolean()

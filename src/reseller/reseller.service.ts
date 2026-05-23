@@ -1,8 +1,11 @@
 import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Reseller, ResellerRecarga, ResellerMovimiento, EstadoType, Prisma } from '@prisma/client'; // Import EstadoType
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { NotificacionesService } from 'src/notificaciones/notificaciones.service';
 import { SedeService } from 'src/sede/sede.service';
+import * as bcrypt from 'bcrypt';
+import { resolveBillingProvider } from 'src/common/utils/billing-provider';
 
 @Injectable()
 export class ResellerService {
@@ -72,10 +75,39 @@ export class ResellerService {
     }
 
 
-    async create(data: { nombre: string; email: string; codigo: string; telefono?: string; representante?: string }) {
+    async create(data: {
+        nombre: string;
+        email: string;
+        codigo: string;
+        telefono?: string;
+        representante?: string;
+        dominioPersonalizado?: string;
+        whiteLabelNombre?: string;
+        whiteLabelLogoUrl?: string;
+        whiteLabelLogoWhiteUrl?: string;
+        whiteLabelFaviconUrl?: string;
+        whiteLabelColorPrimario?: string;
+        whiteLabelColorSecundario?: string;
+        whiteLabelWebsite?: string;
+        whiteLabelEmail?: string;
+        whiteLabelTelefono?: string;
+        whiteLabelWhatsapp?: string;
+    }) {
+        const dominioPersonalizado = String(data.dominioPersonalizado || '')
+            .trim()
+            .toLowerCase()
+            .replace(/^https?:\/\//, '')
+            .replace(/^www\./, '')
+            .split('/')[0]
+            .split(':')[0];
+
         const existing = await this.prisma.reseller.findFirst({
             where: {
-                OR: [{ email: data.email }, { codigo: data.codigo }],
+                OR: [
+                    { email: data.email },
+                    { codigo: data.codigo },
+                    ...(dominioPersonalizado ? [{ dominioPersonalizado }] : []),
+                ],
             },
         });
 
@@ -86,7 +118,10 @@ export class ResellerService {
         // Transaction to create Reseller AND User
         return this.prisma.$transaction(async (tx) => {
             const reseller = await tx.reseller.create({
-                data,
+                data: {
+                    ...data,
+                    dominioPersonalizado: dominioPersonalizado || null,
+                },
             });
 
             // Create User for Login
@@ -100,7 +135,7 @@ export class ResellerService {
             }
 
             // Generate temp password (or default) - In production use email service
-            const hashedPassword = await import('bcrypt').then(m => m.hash('123456', 10));
+            const hashedPassword = await bcrypt.hash('123456', 10);
 
             await tx.usuario.create({
                 data: {
@@ -137,6 +172,18 @@ export class ResellerService {
 
             const nextEmail = typeof data?.email === 'string' ? data.email.trim() : undefined;
             const shouldUpdateUserEmail = !!nextEmail && nextEmail !== reseller.email;
+            const nextDomainRaw = typeof data?.dominioPersonalizado === 'string'
+                ? data.dominioPersonalizado
+                : undefined;
+            const nextDomain = nextDomainRaw
+                ? nextDomainRaw
+                    .trim()
+                    .toLowerCase()
+                    .replace(/^https?:\/\//, '')
+                    .replace(/^www\./, '')
+                    .split('/')[0]
+                    .split(':')[0]
+                : undefined;
 
             if (shouldUpdateUserEmail) {
                 const existingUser = await tx.usuario.findFirst({
@@ -155,6 +202,20 @@ export class ResellerService {
                     where: { resellerId: id, rol: 'RESELLER' },
                     data: { email: nextEmail },
                 });
+            }
+
+            if (nextDomain !== undefined) {
+                const existingDomain = await tx.reseller.findFirst({
+                    where: {
+                        dominioPersonalizado: nextDomain || null,
+                        NOT: { id },
+                    },
+                    select: { id: true },
+                });
+                if (existingDomain) {
+                    throw new BadRequestException('El dominio personalizado ya está en uso por otro reseller.');
+                }
+                data.dominioPersonalizado = nextDomain || null;
             }
 
             return tx.reseller.update({
@@ -265,13 +326,49 @@ export class ResellerService {
         });
     }
 
-    async createClient(resellerId: number, data: { rut: string; razonSocial: string; email: string; password?: string; representa?: string; celular?: string; planId?: number | string }) {
+    async createClient(
+        resellerId: number,
+        data: {
+            rut: string;
+            razonSocial: string;
+            email: string;
+            password?: string;
+            representa?: string;
+            celular?: string;
+            planId?: number | string;
+            billingProvider?: 'QPSE' | 'APISUNAT' | 'JAMBLE';
+            billingApiBaseUrl?: string;
+            billingApiToken?: string;
+            billingApiUser?: string;
+            billingApiPassword?: string;
+            providerId?: string;
+            providerToken?: string;
+            usuarioPse?: string;
+            contrasenaPse?: string;
+        },
+    ) {
+        const inputRuc = String(data.rut || '').trim();
+        const inputEmail = String(data.email || '').trim().toLowerCase();
+        if (!inputRuc) throw new BadRequestException('El RUC es obligatorio.');
+        if (!inputEmail) throw new BadRequestException('El email es obligatorio.');
+
         const empresa = await this.prisma.$transaction(async (tx) => {
             // 1. Fetch Reseller & Check Balance (Locked for safety?)
             const reseller = await tx.reseller.findUnique({ where: { id: resellerId } });
             if (!reseller) throw new NotFoundException('Reseller no encontrado');
             if (!reseller.activo) {
                 throw new BadRequestException('El distribuidor está inactivo y no puede registrar nuevos clientes.');
+            }
+
+            const [existingEmpresa, existingUser] = await Promise.all([
+                tx.empresa.findUnique({ where: { ruc: inputRuc }, select: { id: true } }),
+                tx.usuario.findUnique({ where: { email: inputEmail }, select: { id: true } }),
+            ]);
+            if (existingEmpresa) {
+                throw new BadRequestException('Ya existe una empresa registrada con ese RUC.');
+            }
+            if (existingUser) {
+                throw new BadRequestException('Ya existe un usuario registrado con ese email.');
             }
 
             // 2. Determine Plan
@@ -317,10 +414,39 @@ export class ResellerService {
                 throw new BadRequestException('No hay unidades de medida disponibles en el sistema');
             }
 
+            const requestedProvider = String(data.billingProvider || '').toUpperCase();
+            const billingProvider = (
+                requestedProvider === 'QPSE' ||
+                requestedProvider === 'APISUNAT' ||
+                requestedProvider === 'JAMBLE'
+            ) ? requestedProvider : 'QPSE';
+
+            if (billingProvider === 'APISUNAT') {
+                if (!data.providerId || !data.providerToken) {
+                    throw new BadRequestException('Para APISUNAT debes enviar providerId y providerToken.');
+                }
+            }
+
+            if (billingProvider === 'QPSE') {
+                if (!data.usuarioPse || !data.contrasenaPse) {
+                    throw new BadRequestException('Para QPSE debes enviar usuarioPse y contrasenaPse.');
+                }
+            }
+
+            if (billingProvider === 'JAMBLE') {
+                const hasToken = !!String(data.billingApiToken || '').trim();
+                const hasBasicAuth = !!String(data.billingApiUser || '').trim() && !!String(data.billingApiPassword || '').trim();
+                if (!data.billingApiBaseUrl || (!hasToken && !hasBasicAuth)) {
+                    throw new BadRequestException(
+                        'Para JAMBLE debes enviar billingApiBaseUrl y token o usuario/clave API.',
+                    );
+                }
+            }
+
             // 5. Create Empresa
             const empresa = await tx.empresa.create({
                 data: {
-                    ruc: data.rut, // RUC logic
+                    ruc: inputRuc, // RUC logic
                     razonSocial: data.razonSocial,
                     nombreComercial: data.razonSocial,
                     direccion: '-',
@@ -328,7 +454,17 @@ export class ResellerService {
                     fechaExpiracion: new Date(new Date().setDate(new Date().getDate() + 30)), // 30 days
                     planId: plan.id,
                     resellerId: resellerId,
-                    slugTienda: data.rut + Math.floor(Math.random() * 1000), // Temp slug
+                    billingProvider: billingProvider as any,
+                    billingApiBaseUrl: data.billingApiBaseUrl || null,
+                    billingApiToken: data.billingApiToken || null,
+                    billingApiUser: data.billingApiUser || null,
+                    billingApiPassword: data.billingApiPassword || null,
+                    providerId: data.providerId || null,
+                    providerToken: data.providerToken || null,
+                    usuarioPse: data.usuarioPse || null,
+                    contrasenaPse: data.contrasenaPse || null,
+                    usaDemo: billingProvider === 'APISUNAT',
+                    slugTienda: inputRuc + Math.floor(Math.random() * 1000), // Temp slug
                     costoActivacionReseller: costoFinal,
                     clientes: {
                         create: {
@@ -379,11 +515,11 @@ export class ResellerService {
             });
 
             // 6. Create User (Admin Empresa)
-            const hashedPassword = await import('bcrypt').then(m => m.hash(data.password || '123456', 10));
+            const hashedPassword = await bcrypt.hash(data.password || '123456', 10);
             await tx.usuario.create({
                 data: {
                     nombre: data.representa || 'Administrador',
-                    email: data.email,
+                    email: inputEmail,
                     password: hashedPassword,
                     rol: 'ADMIN_EMPRESA',
                     empresaId: empresa.id,
@@ -393,6 +529,11 @@ export class ResellerService {
             });
 
             return empresa;
+        }).catch((error: unknown) => {
+            if (error instanceof PrismaClientKnownRequestError && error.code === 'P2002') {
+                throw new BadRequestException('No se pudo crear el cliente porque ya existe un dato único (RUC, email o slug).');
+            }
+            throw error;
         });
 
         await this.sedeService.create({
@@ -764,6 +905,112 @@ export class ResellerService {
         return this.prisma.empresa.update({
             where: { id: empresaId },
             data: { estado: nuevoEstado as EstadoType }
+        });
+    }
+
+    async updateClientConfig(
+        resellerId: number,
+        empresaId: number,
+        data: {
+            billingProvider?: 'QPSE' | 'APISUNAT' | 'JAMBLE';
+            billingApiBaseUrl?: string | null;
+            billingApiToken?: string | null;
+            billingApiUser?: string | null;
+            billingApiPassword?: string | null;
+            providerId?: string | null;
+            providerToken?: string | null;
+            usuarioPse?: string | null;
+            contrasenaPse?: string | null;
+            adminNombre?: string;
+            adminEmail?: string;
+            adminCelular?: string;
+            adminPassword?: string;
+        },
+    ) {
+        const empresa = await this.prisma.empresa.findFirst({
+            where: { id: empresaId, resellerId },
+            include: {
+                usuarios: {
+                    where: { rol: 'ADMIN_EMPRESA' },
+                    take: 1,
+                },
+            },
+        });
+
+        if (!empresa) {
+            throw new NotFoundException('Cliente no encontrado o no pertenece a este distribuidor');
+        }
+
+        return this.prisma.$transaction(async (tx) => {
+            const updateEmpresa: Prisma.EmpresaUpdateInput = {};
+
+            if (data.billingProvider !== undefined) {
+                const provider = String(data.billingProvider || '').toUpperCase();
+                if (!['QPSE', 'APISUNAT', 'JAMBLE'].includes(provider)) {
+                    throw new BadRequestException('billingProvider inválido.');
+                }
+                updateEmpresa.billingProvider = provider as any;
+                updateEmpresa.usaDemo = provider === 'APISUNAT';
+            }
+
+            if (data.billingApiBaseUrl !== undefined) updateEmpresa.billingApiBaseUrl = data.billingApiBaseUrl || null;
+            if (data.billingApiToken !== undefined) updateEmpresa.billingApiToken = data.billingApiToken || null;
+            if (data.billingApiUser !== undefined) updateEmpresa.billingApiUser = data.billingApiUser || null;
+            if (data.billingApiPassword !== undefined) updateEmpresa.billingApiPassword = data.billingApiPassword || null;
+            if (data.providerId !== undefined) updateEmpresa.providerId = data.providerId || null;
+            if (data.providerToken !== undefined) updateEmpresa.providerToken = data.providerToken || null;
+            if (data.usuarioPse !== undefined) updateEmpresa.usuarioPse = data.usuarioPse || null;
+            if (data.contrasenaPse !== undefined) updateEmpresa.contrasenaPse = data.contrasenaPse || null;
+
+            const updatedEmpresa = Object.keys(updateEmpresa).length
+                ? await tx.empresa.update({
+                    where: { id: empresaId },
+                    data: updateEmpresa,
+                })
+                : empresa;
+
+            const admin = empresa.usuarios?.[0];
+            if (admin && (data.adminNombre !== undefined || data.adminEmail !== undefined || data.adminCelular !== undefined || data.adminPassword)) {
+                const updateAdmin: Prisma.UsuarioUpdateInput = {};
+                if (data.adminNombre !== undefined) updateAdmin.nombre = data.adminNombre;
+                if (data.adminEmail !== undefined) updateAdmin.email = data.adminEmail;
+                if (data.adminCelular !== undefined) updateAdmin.celular = data.adminCelular;
+                if (data.adminPassword) updateAdmin.password = await bcrypt.hash(data.adminPassword, 10);
+
+                await tx.usuario.update({
+                    where: { id: admin.id },
+                    data: updateAdmin,
+                });
+            }
+
+            const finalProvider = resolveBillingProvider(updatedEmpresa as any);
+            if (finalProvider === 'APISUNAT' && (!updatedEmpresa.providerId || !updatedEmpresa.providerToken)) {
+                throw new BadRequestException('APISUNAT requiere providerId y providerToken.');
+            }
+            if (finalProvider === 'QPSE' && (!updatedEmpresa.usuarioPse || !updatedEmpresa.contrasenaPse)) {
+                throw new BadRequestException('QPSE requiere usuarioPse y contrasenaPse.');
+            }
+            if (
+                finalProvider === 'JAMBLE' &&
+                (
+                    !updatedEmpresa.billingApiBaseUrl ||
+                    (!updatedEmpresa.billingApiToken && !(updatedEmpresa.billingApiUser && updatedEmpresa.billingApiPassword))
+                )
+            ) {
+                throw new BadRequestException('JAMBLE requiere billingApiBaseUrl y token o usuario/clave.');
+            }
+
+            return tx.empresa.findUnique({
+                where: { id: empresaId },
+                include: {
+                    plan: true,
+                    usuarios: {
+                        where: { rol: 'ADMIN_EMPRESA' },
+                        take: 1,
+                        select: { id: true, nombre: true, email: true, celular: true },
+                    },
+                },
+            });
         });
     }
 }

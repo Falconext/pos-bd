@@ -38,6 +38,9 @@ import { ResellerModule } from './reseller/reseller.module';
 import { SedeModule } from './sede/sede.module';
 import { StoreCatalogModule } from './store-catalog/store-catalog.module';
 import { SistemaFinanzasModule } from './sistema-finanzas/sistema-finanzas.module';
+import { ProduccionModule } from './produccion/produccion.module';
+import { BrandingModule } from './branding/branding.module';
+import { ReservaModule } from './reserva/reserva.module';
 
 @Module({
   imports: [
@@ -78,8 +81,11 @@ import { SistemaFinanzasModule } from './sistema-finanzas/sistema-finanzas.modul
     SedeModule,
     StoreCatalogModule,
     SistemaFinanzasModule,
+    ProduccionModule,
+    BrandingModule,
+    ReservaModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule { }
+export class AppModule {}

@@ -1,16 +1,11 @@
 import * as React from 'react';
 import {
   Body,
-  Button,
   Container,
-  Column,
   Head,
-  Heading,
   Hr,
   Html,
-  Img,
   Preview,
-  Row,
   Section,
   Text,
 } from '@react-email/components';
@@ -19,6 +14,8 @@ export interface ComprobanteEmailProps {
   empresaNombre: string;
   empresaRuc: string;
   empresaDireccion?: string;
+  empresaEmail?: string;
+  logoUrl?: string;
   tipoPretty: string;
   serie: string;
   correlativo: string;
@@ -26,179 +23,225 @@ export interface ComprobanteEmailProps {
   clienteNombre: string;
   monto: string;
   pdfUrl?: string;
-  productos?: Array<{ descripcion: string; cantidad: number; precioUnitario: string; total: string }>;
+  productos?: Array<{
+    descripcion: string;
+    cantidad: number;
+    unidad?: string;
+    precioUnitario: string;
+    total: string;
+  }>;
   formaPago?: string;
-  medioPago?: string;
+  mtoOperGravadas?: string;
+  mtoIGV?: string;
+  descuento?: string;
+  sistemaUrl?: string;
+  sistemaNombre?: string;
 }
 
+/* ── styles ───────────────────────────────────────────────────────────────── */
+
 const main: React.CSSProperties = {
-  backgroundColor: '#f8fafc',
-  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  backgroundColor: '#111111',
+  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  margin: 0,
+  padding: 0,
 };
 
-const container: React.CSSProperties = {
+const outer: React.CSSProperties = {
   margin: '0 auto',
-  padding: '40px 20px',
-  maxWidth: '600px',
+  padding: '40px 16px 48px',
+  maxWidth: '560px',
 };
 
+/* top brand bar */
+const brandRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  marginBottom: '28px',
+};
+const brandName: React.CSSProperties = {
+  color: '#ffffff',
+  fontSize: '16px',
+  fontWeight: '600',
+  margin: '0 0 24px 0',
+};
+
+/* white card */
 const card: React.CSSProperties = {
   backgroundColor: '#ffffff',
-  borderRadius: '16px',
+  borderRadius: '14px',
   overflow: 'hidden',
-  boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+  marginBottom: '16px',
 };
 
-const header: React.CSSProperties = {
-  backgroundColor: '#7c3aed',
-  padding: '32px 40px',
+const cardPad: React.CSSProperties = {
+  padding: '28px 32px',
 };
 
-const headerTitle: React.CSSProperties = {
-  color: '#ffffff',
-  fontSize: '22px',
-  fontWeight: '700',
-  margin: '0 0 4px 0',
-};
-
-const headerSubtitle: React.CSSProperties = {
-  color: 'rgba(255,255,255,0.75)',
+/* Card 1 — summary */
+const receiptFrom: React.CSSProperties = {
   fontSize: '13px',
-  margin: '0',
-};
-
-const badge: React.CSSProperties = {
-  display: 'inline-block',
-  backgroundColor: 'rgba(255,255,255,0.2)',
-  color: '#ffffff',
-  fontSize: '11px',
-  fontWeight: '700',
-  padding: '4px 12px',
-  borderRadius: '99px',
-  marginBottom: '12px',
-  letterSpacing: '0.05em',
-  textTransform: 'uppercase' as const,
-};
-
-const body: React.CSSProperties = {
-  padding: '32px 40px',
-};
-
-const greeting: React.CSSProperties = {
-  fontSize: '15px',
-  color: '#374151',
-  margin: '0 0 24px 0',
-  lineHeight: '1.6',
-};
-
-const infoBox: React.CSSProperties = {
-  backgroundColor: '#f8fafc',
-  borderRadius: '12px',
-  padding: '20px 24px',
-  marginBottom: '24px',
-  border: '1px solid #e5e7eb',
-};
-
-const infoLabel: React.CSSProperties = {
-  fontSize: '11px',
-  color: '#9ca3af',
-  fontWeight: '700',
-  textTransform: 'uppercase' as const,
-  letterSpacing: '0.06em',
-  margin: '0 0 4px 0',
-};
-
-const infoValue: React.CSSProperties = {
-  fontSize: '14px',
-  color: '#111827',
-  fontWeight: '600',
-  margin: '0 0 16px 0',
-};
-
-const totalBox: React.CSSProperties = {
-  backgroundColor: '#7c3aed',
-  borderRadius: '12px',
-  padding: '20px 24px',
-  marginBottom: '28px',
-  textAlign: 'center' as const,
-};
-
-const totalLabel: React.CSSProperties = {
-  fontSize: '12px',
-  color: 'rgba(255,255,255,0.75)',
-  fontWeight: '600',
-  textTransform: 'uppercase' as const,
-  letterSpacing: '0.06em',
+  color: '#6b7280',
   margin: '0 0 6px 0',
 };
 
-const totalAmount: React.CSSProperties = {
-  fontSize: '32px',
-  color: '#ffffff',
+const amountText: React.CSSProperties = {
+  fontSize: '40px',
   fontWeight: '800',
-  margin: '0',
-  letterSpacing: '-0.5px',
+  color: '#111827',
+  margin: '0 0 6px 0',
+  letterSpacing: '-1px',
+  lineHeight: '1',
 };
 
-const tableHeader: React.CSSProperties = {
-  fontSize: '11px',
-  color: '#9ca3af',
-  fontWeight: '700',
-  textTransform: 'uppercase' as const,
-  letterSpacing: '0.06em',
-  padding: '0 0 8px 0',
-  borderBottom: '1.5px solid #e5e7eb',
+const dateText: React.CSSProperties = {
+  fontSize: '14px',
+  color: '#6b7280',
+  margin: '0 0 20px 0',
 };
 
-const tableRow: React.CSSProperties = {
-  borderBottom: '1px solid #f3f4f6',
-};
-
-const tableCell: React.CSSProperties = {
+const downloadLink: React.CSSProperties = {
   fontSize: '13px',
   color: '#374151',
-  padding: '10px 0',
-  verticalAlign: 'top' as const,
-};
-
-const button: React.CSSProperties = {
-  backgroundColor: '#7c3aed',
-  borderRadius: '10px',
-  color: '#ffffff',
-  display: 'block',
-  fontSize: '15px',
-  fontWeight: '700',
-  textAlign: 'center' as const,
-  padding: '14px 28px',
   textDecoration: 'none',
-  margin: '0 0 24px 0',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '4px',
+  marginRight: '20px',
 };
 
-const hr: React.CSSProperties = {
+const metaLabel: React.CSSProperties = {
+  fontSize: '13px',
+  color: '#6b7280',
+  margin: '0',
+  padding: '10px 0',
+};
+
+const metaValue: React.CSSProperties = {
+  fontSize: '13px',
+  color: '#111827',
+  fontWeight: '500',
+  margin: '0',
+  padding: '10px 0',
+  textAlign: 'right' as const,
+};
+
+const divider: React.CSSProperties = {
   border: 'none',
   borderTop: '1px solid #e5e7eb',
-  margin: '24px 0',
+  margin: '0',
 };
 
-const footer: React.CSSProperties = {
+/* Card 2 — detail */
+const detailTitle: React.CSSProperties = {
+  fontSize: '16px',
+  fontWeight: '700',
+  color: '#111827',
+  margin: '0 0 6px 0',
+};
+
+const detailDate: React.CSSProperties = {
+  fontSize: '13px',
+  color: '#6b7280',
+  margin: '0 0 20px 0',
+};
+
+const itemName: React.CSSProperties = {
+  fontSize: '14px',
+  fontWeight: '600',
+  color: '#111827',
+  margin: '0 0 2px 0',
+};
+
+const itemSub: React.CSSProperties = {
   fontSize: '12px',
   color: '#9ca3af',
-  textAlign: 'center' as const,
-  lineHeight: '1.6',
+  margin: '0',
 };
 
-const footerBrand: React.CSSProperties = {
-  fontSize: '13px',
+const itemTotal: React.CSSProperties = {
+  fontSize: '14px',
   fontWeight: '700',
-  color: '#7c3aed',
-  textAlign: 'center' as const,
-  margin: '16px 0 4px 0',
+  color: '#111827',
+  margin: '0 0 2px 0',
+  textAlign: 'right' as const,
 };
+
+const itemSubRight: React.CSSProperties = {
+  fontSize: '12px',
+  color: '#9ca3af',
+  margin: '0',
+  textAlign: 'right' as const,
+};
+
+const summaryLabel: React.CSSProperties = {
+  fontSize: '14px',
+  color: '#374151',
+  margin: '0',
+  padding: '10px 0',
+};
+
+const summaryValue: React.CSSProperties = {
+  fontSize: '14px',
+  color: '#374151',
+  margin: '0',
+  padding: '10px 0',
+  textAlign: 'right' as const,
+};
+
+const totalLabel: React.CSSProperties = {
+  fontSize: '15px',
+  fontWeight: '700',
+  color: '#111827',
+  margin: '0',
+  padding: '12px 0',
+};
+
+const totalValue: React.CSSProperties = {
+  fontSize: '15px',
+  fontWeight: '700',
+  color: '#111827',
+  margin: '0',
+  padding: '12px 0',
+  textAlign: 'right' as const,
+};
+
+const discountLabel: React.CSSProperties = {
+  fontSize: '13px',
+  color: '#9ca3af',
+  margin: '0',
+  padding: '10px 0',
+};
+
+const discountValue: React.CSSProperties = {
+  fontSize: '13px',
+  color: '#9ca3af',
+  margin: '0',
+  padding: '10px 0',
+  textAlign: 'right' as const,
+};
+
+/* footer */
+const footerText: React.CSSProperties = {
+  fontSize: '13px',
+  color: '#6b7280',
+  textAlign: 'center' as const,
+  lineHeight: '1.6',
+  margin: '20px 0 4px 0',
+};
+
+const footerLink: React.CSSProperties = {
+  color: '#6366f1',
+  textDecoration: 'underline',
+};
+
+/* ── component ──────────────────────────────────────────────────────────────── */
 
 export const ComprobanteEmail: React.FC<ComprobanteEmailProps> = ({
   empresaNombre,
   empresaRuc,
   empresaDireccion,
+  empresaEmail,
   tipoPretty,
   serie,
   correlativo,
@@ -208,97 +251,153 @@ export const ComprobanteEmail: React.FC<ComprobanteEmailProps> = ({
   pdfUrl,
   productos = [],
   formaPago,
-  medioPago,
+  mtoOperGravadas,
+  mtoIGV,
+  descuento,
+  sistemaUrl = 'https://falconext.pe',
+  sistemaNombre = 'Falconext',
 }) => {
-  const previewText = `${tipoPretty} ${serie}-${correlativo} — ${monto} | ${empresaNombre}`;
+  const docNumber = `${serie}-${correlativo}`;
+  const previewText = `${tipoPretty} ${docNumber} — ${monto} | ${empresaNombre}`;
 
   return (
     <Html lang="es">
       <Head />
       <Preview>{previewText}</Preview>
       <Body style={main}>
-        <Container style={container}>
+        <Container style={outer}>
+
+          {/* ── Brand bar ───────────────────────────────────────────── */}
+          <div style={brandRow}>
+            <p style={brandName}>{empresaNombre}</p>
+          </div>
+
+          {/* ── Card 1: Summary ─────────────────────────────────────── */}
           <div style={card}>
-            {/* ── Header ─────────────────────────────────── */}
-            <div style={header}>
-              <p style={badge}>{tipoPretty}</p>
-              <p style={headerTitle}>{empresaNombre}</p>
-              <p style={headerSubtitle}>RUC: {empresaRuc}{empresaDireccion ? ` · ${empresaDireccion}` : ''}</p>
-            </div>
+            <div style={cardPad}>
+              <p style={receiptFrom}>{tipoPretty} de {empresaNombre}</p>
+              <p style={amountText}>{monto}</p>
+              <p style={dateText}>Emitido el {fecha}</p>
 
-            {/* ── Body ───────────────────────────────────── */}
-            <div style={body}>
-              <Text style={greeting}>
-                Hola <strong>{clienteNombre}</strong>, adjunto encontrarás tu comprobante de pago.
-                Puedes descargarlo desde el botón de abajo o revisarlo directamente en este correo.
-              </Text>
+              <Hr style={divider} />
 
-              {/* Info del comprobante */}
-              <div style={infoBox}>
-                <Row>
-                  <Column style={{ width: '50%', paddingRight: '12px' }}>
-                    <p style={infoLabel}>Comprobante</p>
-                    <p style={infoValue}>{serie}-{correlativo}</p>
-                    <p style={infoLabel}>Fecha de emisión</p>
-                    <p style={{ ...infoValue, marginBottom: 0 }}>{fecha}</p>
-                  </Column>
-                  <Column style={{ width: '50%', paddingLeft: '12px' }}>
-                    {formaPago && (
-                      <>
-                        <p style={infoLabel}>Forma de pago</p>
-                        <p style={infoValue}>{formaPago}</p>
-                      </>
-                    )}
-                    {medioPago && (
-                      <>
-                        <p style={infoLabel}>Medio de pago</p>
-                        <p style={{ ...infoValue, marginBottom: 0 }}>{medioPago}</p>
-                      </>
-                    )}
-                  </Column>
-                </Row>
-              </div>
-
-              {/* Monto total */}
-              <div style={totalBox}>
-                <p style={totalLabel}>Total a pagar</p>
-                <p style={totalAmount}>{monto}</p>
-              </div>
-
-              {/* Detalle de productos */}
-              {productos.length > 0 && (
-                <Section style={{ marginBottom: '24px' }}>
-                  <Heading as="h3" style={{ fontSize: '13px', fontWeight: '700', color: '#374151', margin: '0 0 12px 0' }}>
-                    Detalle del comprobante
-                  </Heading>
-                  <Row>
-                    <Column style={{ ...tableHeader, width: '45%' }}>Descripción</Column>
-                    <Column style={{ ...tableHeader, width: '15%', textAlign: 'center' as const }}>Cant.</Column>
-                    <Column style={{ ...tableHeader, width: '20%', textAlign: 'right' as const }}>P. Unit.</Column>
-                    <Column style={{ ...tableHeader, width: '20%', textAlign: 'right' as const }}>Total</Column>
-                  </Row>
-                  {productos.map((p, i) => (
-                    <Row key={i} style={tableRow}>
-                      <Column style={{ ...tableCell, width: '45%' }}>{p.descripcion}</Column>
-                      <Column style={{ ...tableCell, width: '15%', textAlign: 'center' as const }}>{p.cantidad}</Column>
-                      <Column style={{ ...tableCell, width: '20%', textAlign: 'right' as const }}>S/ {p.precioUnitario}</Column>
-                      <Column style={{ ...tableCell, width: '20%', textAlign: 'right' as const, fontWeight: '600' as const }}>S/ {p.total}</Column>
-                    </Row>
-                  ))}
-                </Section>
+              {/* Download link */}
+              {pdfUrl && (
+                <div style={{ padding: '14px 0' }}>
+                  <a href={pdfUrl} style={downloadLink} target="_blank" rel="noreferrer">
+                    ↓ Descargar PDF
+                  </a>
+                </div>
               )}
 
-              <Hr style={hr} />
+              <Hr style={divider} />
 
-              {/* Footer */}
-              <Text style={footer}>
-                Este correo fue enviado por <strong>{empresaNombre}</strong> a través de Falconext MyPE.
-                Si tienes alguna pregunta, comunícate directamente con el negocio.
-              </Text>
-              <p style={footerBrand}>Falconext MyPE</p>
-              <Text style={footer}>La plataforma de gestión para tu negocio</Text>
+              {/* Meta rows */}
+              <table width="100%" cellPadding={0} cellSpacing={0} style={{ borderCollapse: 'collapse' }}>
+                <tbody>
+                  <tr>
+                    <td style={metaLabel}>N° de comprobante</td>
+                    <td style={metaValue}>{docNumber}</td>
+                  </tr>
+                  <tr style={{ borderTop: '1px solid #f3f4f6' }}>
+                    <td style={metaLabel}>Cliente</td>
+                    <td style={metaValue}>{clienteNombre}</td>
+                  </tr>
+                  {formaPago && (
+                    <tr style={{ borderTop: '1px solid #f3f4f6' }}>
+                      <td style={metaLabel}>Condición de pago</td>
+                      <td style={metaValue}>{formaPago}</td>
+                    </tr>
+                  )}
+                  <tr style={{ borderTop: '1px solid #f3f4f6' }}>
+                    <td style={metaLabel}>RUC emisor</td>
+                    <td style={metaValue}>{empresaRuc}</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
+
+          {/* ── Card 2: Line items + totals ─────────────────────────── */}
+          {productos.length > 0 && (
+            <div style={card}>
+              <div style={cardPad}>
+                <p style={detailTitle}>Detalle — {docNumber}</p>
+                <p style={detailDate}>{fecha}</p>
+
+                {/* Items */}
+                {productos.map((p, i) => (
+                  <div key={i}>
+                    {i > 0 && <Hr style={{ ...divider, margin: '0' }} />}
+                    <table width="100%" cellPadding={0} cellSpacing={0} style={{ borderCollapse: 'collapse' }}>
+                      <tbody>
+                        <tr>
+                          <td style={{ padding: '12px 0 2px 0', verticalAlign: 'top', width: '60%' }}>
+                            <p style={itemName}>{p.descripcion}</p>
+                            <p style={itemSub}>Cant: {Number(p.cantidad).toFixed(3)}{p.unidad ? ` ${p.unidad}` : ''}</p>
+                          </td>
+                          <td style={{ padding: '12px 0 2px 0', verticalAlign: 'top', width: '40%' }}>
+                            <p style={itemTotal}>S/ {p.total}</p>
+                            <p style={itemSubRight}>S/ {p.precioUnitario} c/u</p>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                ))}
+
+                <Hr style={{ ...divider, margin: '8px 0 0 0' }} />
+
+                {/* Totals summary */}
+                <table width="100%" cellPadding={0} cellSpacing={0} style={{ borderCollapse: 'collapse' }}>
+                  <tbody>
+                    {mtoOperGravadas && (
+                      <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
+                        <td style={summaryLabel}>Op. Gravadas</td>
+                        <td style={summaryValue}>S/ {mtoOperGravadas}</td>
+                      </tr>
+                    )}
+                    {descuento && parseFloat(descuento) > 0 && (
+                      <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
+                        <td style={discountLabel}>Descuento</td>
+                        <td style={discountValue}>-S/ {descuento}</td>
+                      </tr>
+                    )}
+                    {mtoIGV && (
+                      <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
+                        <td style={summaryLabel}>IGV 18%</td>
+                        <td style={summaryValue}>S/ {mtoIGV}</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+
+                <Hr style={divider} />
+
+                <table width="100%" cellPadding={0} cellSpacing={0} style={{ borderCollapse: 'collapse' }}>
+                  <tbody>
+                    <tr>
+                      <td style={totalLabel}>Total</td>
+                      <td style={totalValue}>{monto}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* ── Footer ──────────────────────────────────────────────── */}
+          <Section>
+            <Hr style={{ ...divider, borderColor: '#333', margin: '8px 0 16px' }} />
+            <Text style={footerText}>
+              ¿Tienes alguna pregunta?{empresaEmail ? <> Contáctanos en <a href={`mailto:${empresaEmail}`} style={footerLink}>{empresaEmail}</a>.</> : ' Comunícate directamente con el negocio.'}
+            </Text>
+            <Text style={{ ...footerText, marginTop: '4px' }}>
+              Comprobante emitido a través de{' '}
+              <a href={sistemaUrl} style={footerLink}>{sistemaNombre}</a>
+            </Text>
+          </Section>
+
         </Container>
       </Body>
     </Html>

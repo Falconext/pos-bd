@@ -69,54 +69,137 @@ export class ProductoController {
   @Post('ia/generar-imagen')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async generarImagenIA(@Body() body: { nombre: string }) {
+    const nombre = String(body?.nombre || '').trim();
+    if (!nombre) {
+      return { success: false, message: 'Nombre de producto requerido' };
+    }
+
+    const meaningfulTokens = nombre
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .split(/\s+/)
+      .filter((t) => t.length >= 3 && !['de', 'con', 'sin', 'para', 'por', 'the', 'and'].includes(t));
+
+    if (meaningfulTokens.length < 2) {
+      return {
+        success: false,
+        message: 'Descripción muy corta. Usa al menos 2 palabras para buscar imagen relevante.',
+      };
+    }
+
+    const normalize = (text: string) =>
+      text
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const tokenSet = new Set(normalize(nombre).split(' ').filter((t) => t.length >= 3));
+    const bannedWords = [
+      'logo', 'icon', 'svg', 'vector', 'clipart', 'sticker', 'wallpaper', 'banner',
+      'facebook', 'instagram', 'tiktok', 'pinterest', 'youtube',
+    ];
+
+    type ImageResult = {
+      url?: string;
+      title?: string;
+      alt?: string;
+      width?: number;
+      height?: number;
+    };
+
+    const scoreImage = (img: ImageResult): { score: number; tokenMatches: number } => {
+      const sourceText = normalize(`${img.title || ''} ${img.alt || ''} ${img.url || ''}`);
+      if (!sourceText) return { score: -1000, tokenMatches: 0 };
+
+      let score = 0;
+      let tokenMatches = 0;
+      for (const token of tokenSet) {
+        if (sourceText.includes(token)) {
+          score += 5;
+          tokenMatches += 1;
+        }
+      }
+      for (const banned of bannedWords) {
+        if (sourceText.includes(banned)) score -= 12;
+      }
+
+      const lowerUrl = String(img.url || '').toLowerCase();
+      if (lowerUrl.endsWith('.svg')) score -= 20;
+      if (lowerUrl.includes('logo') || lowerUrl.includes('icon')) score -= 10;
+
+      if ((img.width || 0) >= 400 && (img.height || 0) >= 400) score += 4;
+      if ((img.width || 0) < 180 || (img.height || 0) < 180) score -= 8;
+
+      return { score, tokenMatches };
+    };
+
     try {
       // Dynamic import to avoid build issues if lib is commonjs
       const { GOOGLE_IMG_SCRAP } = await import('google-img-scrap');
-      const results = await GOOGLE_IMG_SCRAP({
-        search: body.nombre,
-        limit: 8,
-        safeSearch: false,
-        // @ts-ignore
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      });
+      const queries = [
+        `"${nombre}" producto`,
+        `${nombre} producto`,
+        `${nombre} packshot`,
+        `${nombre} foto producto`,
+      ];
 
-      if (results && results.result && Array.isArray(results.result) && results.result.length > 0) {
-        // Prefer https
-        const image = results.result.find((img: any) => img.url && img.url.startsWith('https')) || results.result.find((img: any) => img.url && img.url.startsWith('http'));
-
-        if (image && image.url) {
-          return { success: true, url: image.url };
-        }
-      }
-      throw new Error('No images found via Google');
-    } catch (e: any) {
-      console.warn('Google Image Search failed, trying Bing fallback...', e.message);
-
-      try {
-        // Fallback: Bing Images
-        const axios = (await import('axios')).default;
-        const query = encodeURIComponent(body.nombre);
-        const { data } = await axios.get(`https://www.bing.com/images/search?q=${query}&first=1`, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          }
+      for (const query of queries) {
+        const results = await GOOGLE_IMG_SCRAP({
+          search: query,
+          limit: 12,
+          safeSearch: true,
+          // @ts-ignore
+          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         });
 
-        // Extract image URLs from Bing HTML (looking for murl)
-        const matches = data.match(/murl&quot;:&quot;(http.*?)&quot;/g);
-        if (matches && matches.length > 0) {
-          // Extract URL from the first match: murl&quot;:&quot;URL&quot;
-          const firstMatch = matches[0];
-          const rawUrl = firstMatch.replace('murl&quot;:&quot;', '').replace('&quot;', '');
-          if (rawUrl) {
-            return { success: true, url: rawUrl };
+        if (results && results.result && Array.isArray(results.result) && results.result.length > 0) {
+          const candidates = (results.result as ImageResult[])
+            .filter((img) => !!img?.url && /^https?:\/\//i.test(String(img.url)))
+            .map((img) => {
+              const ranking = scoreImage(img);
+              return { img, score: ranking.score, tokenMatches: ranking.tokenMatches };
+            })
+            .sort((a, b) => b.score - a.score);
+
+          const curatedCandidates = candidates
+            .filter((c) => c.score > 0 && c.tokenMatches >= 1 && c.img.url)
+            .slice(0, 4)
+            .map((c) => String(c.img.url));
+
+          const best = candidates[0];
+          if (best && best.score >= 10 && best.tokenMatches >= 2 && best.img.url) {
+            return {
+              success: true,
+              url: best.img.url,
+              confidence: best.score,
+              candidates: curatedCandidates.length > 0 ? curatedCandidates : [String(best.img.url)],
+            };
+          }
+
+          if (curatedCandidates.length > 0) {
+            return {
+              success: false,
+              message: 'No se encontró una coincidencia alta; revisa opciones sugeridas.',
+              candidates: curatedCandidates,
+            };
           }
         }
-      } catch (bingError) {
-        console.error('Bing fallback also failed:', bingError);
       }
 
-      return { success: false, message: e.message || 'Error interno al buscar imagen' };
+      throw new Error(
+        'No encontré una imagen suficientemente relacionada. Prueba con una descripción más específica (marca + modelo + tipo de producto).',
+      );
+    } catch (e: any) {
+      return {
+        success: false,
+        message:
+          e.message ||
+          'No se encontró una imagen suficientemente relacionada. Prueba con una descripción más específica.',
+      };
     }
   }
 

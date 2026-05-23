@@ -241,9 +241,73 @@ async function main() {
     },
   ];
 
+  // =============================================
+  // NUEVOS PLANES SIMPLIFICADOS
+  // =============================================
+  const planesNuevos = [
+    {
+      nombre: 'EMPRENDEDOR',
+      descripcion: 'Plan Emprendedor — Ideal para negocios que inician',
+      costo: 39.90,
+      esPrueba: false,
+      limiteUsuarios: 2,
+      duracionDias: 30,
+      tipoFacturacion: 'MENSUAL',
+      tieneTienda: false,
+      tieneBanners: false,
+      tieneGaleria: false,
+      tieneCulqi: false,
+      tieneDeliveryGPS: false,
+      tieneTicketera: false,
+      maxComprobantes: 0,
+      maxSedes: 1,
+      maxImagenesProducto: 3,
+      maxBanners: 0,
+    },
+    {
+      nombre: 'NEGOCIO',
+      descripcion: 'Plan Negocio — Para negocios en crecimiento',
+      costo: 69.90,
+      esPrueba: false,
+      limiteUsuarios: 5,
+      duracionDias: 30,
+      tipoFacturacion: 'MENSUAL',
+      tieneTienda: true,
+      tieneBanners: true,
+      tieneGaleria: true,
+      tieneCulqi: false,
+      tieneDeliveryGPS: false,
+      tieneTicketera: true,
+      maxComprobantes: 0,
+      maxSedes: 2,
+      maxImagenesProducto: 5,
+      maxBanners: 5,
+    },
+    {
+      nombre: 'CORPORATIVO',
+      descripcion: 'Plan Corporativo — Control total para empresas establecidas',
+      costo: 99.90,
+      esPrueba: false,
+      limiteUsuarios: 15,
+      duracionDias: 30,
+      tipoFacturacion: 'MENSUAL',
+      tieneTienda: true,
+      tieneBanners: true,
+      tieneGaleria: true,
+      tieneCulqi: true,
+      tieneDeliveryGPS: true,
+      tieneTicketera: true,
+      maxComprobantes: 0,
+      maxSedes: 0,
+      maxImagenesProducto: 10,
+      maxBanners: 20,
+    },
+  ];
+
   // Combinar todos los planes
   const planes = [
     ...planPrueba,
+    ...planesNuevos,
     ...planesFormalMensual,
     ...planesFormalAnual,
     ...planesInformalMensual,
@@ -251,17 +315,28 @@ async function main() {
     ...addonTiendaVirtual,
   ];
 
+  // Planes simplificados que siempre se sincronizan (upsert)
+  const nombresNuevos = new Set(planesNuevos.map((p) => p.nombre));
+
   for (const plan of planes) {
-    const existente = await prisma.plan.findUnique({
-      where: { nombre: plan.nombre },
-    });
-    if (!existente) {
-      const created = await prisma.plan.create({
-        data: plan,
+    if (nombresNuevos.has(plan.nombre)) {
+      // Upsert: crea o actualiza precio/límites
+      const result = await prisma.plan.upsert({
+        where: { nombre: plan.nombre },
+        update: plan,
+        create: plan,
       });
-      console.log(`✓ Plan creado: ${created.nombre} - S/ ${created.costo}`);
+      console.log(`✓ Plan sincronizado: ${result.nombre} - S/ ${result.costo}`);
     } else {
-      console.log(`✓ Plan ya existe: ${plan.nombre}`);
+      const existente = await prisma.plan.findUnique({
+        where: { nombre: plan.nombre },
+      });
+      if (!existente) {
+        const created = await prisma.plan.create({ data: plan });
+        console.log(`✓ Plan creado: ${created.nombre} - S/ ${created.costo}`);
+      } else {
+        console.log(`✓ Plan ya existe: ${plan.nombre}`);
+      }
     }
   }
 

@@ -59,6 +59,20 @@ export class UpdateProductoDto {
   imagenUrl?: string | null;
 
   @IsOptional()
+  @IsString()
+  localizacion?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Type(() => Number)
+  porcentajeVenta?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Type(() => Number)
+  porcentajeProvision?: number;
+
+  @IsOptional()
   @IsInt()
   @Type(() => Number)
   stockMinimo?: number;

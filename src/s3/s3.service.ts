@@ -241,7 +241,7 @@ export class S3Service implements OnModuleInit {
     correlativo: number,
     extension: 'pdf' | 'xml' | 'zip',
   ): string {
-    const tipo = tipoDoc === '01' ? 'factura' : tipoDoc === '03' ? 'boleta' : 'nota';
+    const tipo = tipoDoc === '01' ? 'factura' : tipoDoc === '03' ? 'boleta' : tipoDoc === 'COT' ? 'cotizacion' : 'nota';
     const numero = String(correlativo).padStart(8, '0');
     return `comprobantes/empresa-${empresaId}/${tipo}/${serie}-${numero}.${extension}`;
   }

@@ -125,6 +125,7 @@ async function seedDesktop() {
         { nombre: 'Bodega', descripcion: 'Abarrotes y productos de primera necesidad' },
         { nombre: 'Ferretería', descripcion: 'Materiales de construcción y herramientas' },
         { nombre: 'Farmacia', descripcion: 'Productos farmacéuticos y de salud' },
+        { nombre: 'Fabricación y producción', descripcion: 'Producción con consumo de insumos y control de merma' },
         { nombre: 'Restaurante', descripcion: 'Servicios de alimentación' },
         { nombre: 'Librería', descripcion: 'Útiles escolares y de oficina' },
         { nombre: 'Lavandería', descripcion: 'Servicios de lavado y planchado' },
