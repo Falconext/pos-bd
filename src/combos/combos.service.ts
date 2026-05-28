@@ -1,10 +1,14 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateComboDto, UpdateComboDto } from './dto';
+import { S3Service } from '../s3/s3.service';
 
 @Injectable()
 export class CombosService {
-    constructor(private prisma: PrismaService) { }
+    constructor(
+        private prisma: PrismaService,
+        private readonly s3: S3Service,
+    ) { }
 
     async create(empresaId: number, dto: CreateComboDto) {
         // 1. Validar que todos los productos existan y pertenezcan a la empresa
@@ -292,5 +296,77 @@ export class CombosService {
     async validateStock(comboId: number, cantidad: number): Promise<boolean> {
         const stockDisponible = await this.checkStock(comboId);
         return stockDisponible >= cantidad;
+    }
+
+    async subirImagenPrincipal(
+        empresaId: number,
+        comboId: number,
+        file: { buffer: Buffer; mimetype?: string },
+    ) {
+        const combo = await this.prisma.combo.findFirst({ where: { id: comboId, empresaId } });
+        if (!combo) throw new NotFoundException('Kit/Pack no encontrado');
+        if (!file || !file.buffer) throw new ForbiddenException('Archivo no proporcionado');
+
+        const ct = file.mimetype || 'image/jpeg';
+        if (!/^image\//i.test(ct)) throw new ForbiddenException('El archivo debe ser una imagen');
+
+        const ts = Date.now();
+        const s3Key = `combos/empresa-${empresaId}/combo-${comboId}/${ts}.webp`;
+        const url = await this.s3.uploadImage(file.buffer, s3Key, ct);
+
+        await this.prisma.combo.update({
+            where: { id: comboId },
+            data: { imagenUrl: url },
+        });
+
+        const idx = url.indexOf('amazonaws.com/');
+        const objKey = idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
+        const signedUrl = objKey ? await this.s3.getSignedGetUrl(objKey, 600) : url;
+        return { url, signedUrl };
+    }
+
+    async actualizarImagenDesdeUrl(
+        empresaId: number,
+        comboId: number,
+        imagenUrl: string,
+    ) {
+        const combo = await this.prisma.combo.findFirst({ where: { id: comboId, empresaId } });
+        if (!combo) throw new NotFoundException('Kit/Pack no encontrado');
+        if (!imagenUrl || typeof imagenUrl !== 'string') {
+            throw new BadRequestException('imagenUrl es requerido');
+        }
+
+        await this.prisma.combo.update({
+            where: { id: comboId },
+            data: { imagenUrl },
+        });
+
+        return { url: imagenUrl, signedUrl: imagenUrl };
+    }
+
+    async subirImagenDesdeBase64(
+        empresaId: number,
+        comboId: number,
+        imagenBase64: string,
+    ) {
+        const combo = await this.prisma.combo.findFirst({ where: { id: comboId, empresaId } });
+        if (!combo) throw new NotFoundException('Kit/Pack no encontrado');
+        if (!imagenBase64 || typeof imagenBase64 !== 'string') {
+            throw new BadRequestException('imagenBase64 es requerido');
+        }
+
+        const match = imagenBase64.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
+        if (!match) {
+            throw new BadRequestException('Formato base64 inválido. Use data:image/...;base64,...');
+        }
+
+        const mimetype = match[1];
+        const base64Data = match[2];
+        const buffer = Buffer.from(base64Data, 'base64');
+        if (!buffer.length) {
+            throw new BadRequestException('Imagen base64 vacía');
+        }
+
+        return this.subirImagenPrincipal(empresaId, comboId, { buffer, mimetype });
     }
 }

@@ -81,32 +81,45 @@ export class AuthService {
     }
 
     // ── Multi-sede logic ──────────────────────────────────────────
-    // ADMIN_EMPRESA y ADMIN_SISTEMA entran sin restricción de sede
-    const isAdmin = user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA' || user.rol === 'RESELLER';
+    // Solo ADMIN_SISTEMA y RESELLER pueden operar sin sede fija.
+    const isSuperAdmin = user.rol === 'ADMIN_SISTEMA' || user.rol === 'RESELLER';
 
     let sedeIdFinal: number | null = null;
     let requiresSedeSelection = false;
     let sedesDisponibles: any[] = [];
 
-    if (!isAdmin) {
-      // Obtener sedes asignadas al usuario
-      const usuarioSedes = await this.prisma.usuarioSede.findMany({
-        where: { usuarioId: user.id },
-        include: {
-          sede: {
-            select: { id: true, nombre: true, codigo: true, esPrincipal: true, activo: true }
-          }
-        },
-      });
+    if (!isSuperAdmin) {
+      let sedesActivas: Array<{
+        id: number;
+        nombre: string;
+        codigo: string | null;
+        esPrincipal: boolean;
+        activo: boolean;
+      }> = [];
 
-      // Solo sedes activas
-      const sedesActivas = usuarioSedes
-        .filter(us => us.sede.activo)
-        .map(us => us.sede);
+      if (user.rol === 'ADMIN_EMPRESA') {
+        // Admin de empresa: usar todas las sedes activas de su empresa.
+        sedesActivas = await this.prisma.sede.findMany({
+          where: { empresaId: user.empresaId, activo: true },
+          select: { id: true, nombre: true, codigo: true, esPrincipal: true, activo: true },
+          orderBy: [{ esPrincipal: 'desc' }, { id: 'asc' }],
+        });
+      } else {
+        // Usuario de empresa: usar sedes asignadas al usuario.
+        const usuarioSedes = await this.prisma.usuarioSede.findMany({
+          where: { usuarioId: user.id },
+          include: {
+            sede: {
+              select: { id: true, nombre: true, codigo: true, esPrincipal: true, activo: true },
+            },
+          },
+        });
+        sedesActivas = usuarioSedes.filter(us => us.sede.activo).map(us => us.sede);
+      }
 
       if (sedesActivas.length === 0) {
         throw new ForbiddenException(
-          'No tienes sedes asignadas. Contacta al administrador de tu empresa.'
+          'No tienes sedes activas disponibles. Contacta al administrador de tu empresa.',
         );
       }
 
@@ -318,6 +331,7 @@ export class AuthService {
             logo: true,
             esAgenteRetencion: true,
             usaCodigoBarrasManual: true,
+            usarPrecioLoteFefo: true,
             tipoEmpresa: true,
             rubroId: true,
             rubro: true,
@@ -327,7 +341,9 @@ export class AuthService {
             producto: true,
             plan: {
               select: {
+                nombre: true,
                 tieneTienda: true,
+                tieneGestionLotes: true,
                 maxSedes: true,
                 modulosAsignados: {
                   include: { modulo: true }
@@ -345,6 +361,13 @@ export class AuthService {
             numeroCuenta: true,
             cci: true,
             monedaCuenta: true,
+            reseller: {
+              select: {
+                nombre: true,
+                whiteLabelNombre: true,
+                whiteLabelWebsite: true,
+              },
+            },
           },
         },
       },
@@ -395,6 +418,7 @@ export class AuthService {
             logo: true,
             esAgenteRetencion: true,
             usaCodigoBarrasManual: true,
+            usarPrecioLoteFefo: true,
             ruc: true,
             fechaActivacion: true,
             fechaExpiracion: true,
@@ -432,6 +456,13 @@ export class AuthService {
             numeroCuenta: true,
             cci: true,
             monedaCuenta: true,
+            reseller: {
+              select: {
+                nombre: true,
+                whiteLabelNombre: true,
+                whiteLabelWebsite: true,
+              },
+            },
           },
         },
       },

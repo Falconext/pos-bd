@@ -349,6 +349,42 @@ export class ProductoLoteService {
     }
 
     /**
+     * Actualizar metadatos de un lote (código, vencimiento, costo, proveedor)
+     */
+    async actualizarLote(
+        loteId: number,
+        empresaId: number,
+        data: {
+            lote?: string;
+            fechaVencimiento?: Date;
+            costoUnitario?: number;
+            proveedor?: string;
+        },
+    ) {
+        const lote = await this.prisma.productoLote.findUnique({
+            where: { id: loteId },
+            include: { producto: true },
+        });
+
+        if (!lote) throw new NotFoundException('Lote no encontrado');
+        if (lote.producto.empresaId !== empresaId) {
+            throw new BadRequestException('No tienes permisos para este lote');
+        }
+
+        if (data.lote && data.lote !== lote.lote) {
+            const existe = await this.prisma.productoLote.findFirst({
+                where: { productoId: lote.productoId, lote: data.lote, id: { not: loteId } },
+            });
+            if (existe) throw new BadRequestException(`Ya existe un lote con código "${data.lote}" para este producto`);
+        }
+
+        return this.prisma.productoLote.update({
+            where: { id: loteId },
+            data,
+        });
+    }
+
+    /**
      * Desactivar lote (no eliminar físicamente)
      */
     async desactivarLote(loteId: number, empresaId: number, usuarioId: number) {

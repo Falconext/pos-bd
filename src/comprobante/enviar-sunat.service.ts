@@ -891,6 +891,19 @@ export class EnviarSunatService {
         }
       } else if (isJambleProvider(billingProvider)) {
         console.log(`🧪 Proveedor JAMBLE para ${comp.serie}-${comp.correlativo}`);
+        console.log('🧭 JAMBLE contexto emisión:', {
+          comprobanteId,
+          empresaId: comp.empresaId,
+          tipoDoc: comp.tipoDoc,
+          serie: comp.serie,
+          correlativo: comp.correlativo,
+          baseUrlHost: this.extractHost(jambleBaseUrl),
+          authMode: jambleToken ? 'TOKEN' : (jambleUser && jamblePassword ? 'LOGIN' : 'NONE'),
+          loginUser: this.maskJambleUser(jambleUser || null),
+          forceDispatch: ['1', 'true', 'yes'].includes(
+            String(process.env.JAMBLE_FORCE_DISPATCH || '').toLowerCase(),
+          ),
+        });
 
         const floor = this.getJambleCorrelativoFloor(comp.empresaId, comp.serie);
         if (floor && Number(comp.correlativo || 0) < floor) {
@@ -921,6 +934,19 @@ export class EnviarSunatService {
           console.log(`⏩ JAMBLE correlativo alineado con remoto: ${comp.serie}-${comp.correlativo}`);
         }
 
+        const jambleLoginContext = await this.jambleClient.obtenerContextoDesdeLogin({
+          baseUrl: jambleBaseUrl,
+          token: jambleToken || null,
+          username: jambleUser || null,
+          password: jamblePassword || null,
+        });
+        if (jambleLoginContext) {
+          console.log('🪪 JAMBLE contexto login detectado:', {
+            userId: jambleLoginContext.userId,
+            establishmentId: jambleLoginContext.establishmentId,
+          });
+        }
+
         let registerResponse: any;
         let jambleRetryByDuplicate = 0;
         const jambleMaxRetryByDuplicate = Math.max(
@@ -928,7 +954,7 @@ export class EnviarSunatService {
           Number(process.env.JAMBLE_MAX_DUPLICATE_RETRIES || 80),
         );
         while (true) {
-          const jamblePayload = this.buildJamblePayload(comp);
+          const jamblePayload = this.buildJamblePayload(comp, jambleLoginContext || undefined);
           console.log(
             `📦 JAMBLE payload (${comp.tipoDoc === '01' ? 'FACTURA' : comp.tipoDoc === '03' ? 'BOLETA' : `TIPO-${comp.tipoDoc}`}) ${comp.serie}-${comp.correlativo}:`,
             JSON.stringify(jamblePayload, null, 2),
@@ -987,6 +1013,54 @@ export class EnviarSunatService {
         const jambleInternalId = this.extractJambleInternalId(registerResponse);
         status = this.normalizeJambleStatus(registerResponse);
         console.log('🧾 JAMBLE register result:', this.summarizeJambleResponse(registerResponse, status, documentId));
+
+        // Intentar sincronizar numeración real del proveedor (ej: B001-35)
+        // para evitar que el correlativo local se desalinee.
+        let jambleNumberFull =
+          String(
+            registerResponse?.data?.number_full ||
+              registerResponse?.number_full ||
+              registerResponse?.data?.numero_completo ||
+              registerResponse?.numero_completo ||
+              '',
+          ).trim() || null;
+
+        if (!jambleNumberFull && documentId) {
+          jambleNumberFull = await this.jambleClient.buscarNumeroCompletoPorExternalId(
+            {
+              baseUrl: jambleBaseUrl,
+              token: jambleToken || null,
+              username: jambleUser || null,
+              password: jamblePassword || null,
+            },
+            documentId,
+          );
+        }
+
+        const parsedNumber = this.parseSerieCorrelativo(jambleNumberFull);
+        if (parsedNumber) {
+          await this.prisma.comprobante.update({
+            where: { id: comprobanteId },
+            data: {
+              serie: parsedNumber.serie,
+              correlativo: parsedNumber.correlativo,
+            },
+          });
+          comp.serie = parsedNumber.serie;
+          comp.correlativo = parsedNumber.correlativo;
+        }
+        console.log('📌 JAMBLE trazabilidad:', {
+          comprobanteId,
+          empresaId: comp.empresaId,
+          serie: comp.serie,
+          correlativo: comp.correlativo,
+          numberFull: jambleNumberFull,
+          externalId: documentId || null,
+          internalId: jambleInternalId || null,
+          status,
+          baseUrlHost: this.extractHost(jambleBaseUrl),
+          loginUser: this.maskJambleUser(jambleUser || null),
+        });
 
         // QPOS/Jamble flow: first registers document, then explicitly sends to SUNAT
         if (documentId && this.shouldTriggerJambleSunat(registerResponse, status)) {
@@ -1310,7 +1384,7 @@ export class EnviarSunatService {
               productoId: true,
               lote: true,
               fechaVencimiento: true,
-              movimientoLote: {
+              movimientoLotes: {
                 select: {
                   lote: { select: { lote: true, fechaVencimiento: true } },
                 },
@@ -1323,11 +1397,13 @@ export class EnviarSunatService {
             const m = movimientos.find((mov) => mov.productoId === det.productoId);
             const lotesParsed: any[] = [];
             if (m) {
-              if (m.movimientoLote?.lote) {
+              if (m.movimientoLotes.length > 0) {
+                const primerLote = m.movimientoLotes[0]?.lote;
+                if (!primerLote) return { ...det, lotes: [] };
                 lotesParsed.push({
-                  lote: m.movimientoLote.lote.lote,
-                  fechaVencimiento: m.movimientoLote.lote.fechaVencimiento
-                    ? new Date(m.movimientoLote.lote.fechaVencimiento).toLocaleDateString('es-PE')
+                  lote: primerLote.lote,
+                  fechaVencimiento: primerLote.fechaVencimiento
+                    ? new Date(primerLote.fechaVencimiento).toLocaleDateString('es-PE')
                     : '',
                 });
               } else if (m.lote) {
@@ -1456,6 +1532,9 @@ export class EnviarSunatService {
         return {
           status: 'PENDIENTE',
           documentId,
+          comprobanteId,
+          serie: comp.serie,
+          correlativo: comp.correlativo,
           message: isApisunatProvider(billingProvider)
             ? this.extractApisunatMessage(finalResponse, status) || 'El documento está pendiente de procesamiento por SUNAT.'
             : isJambleProvider(billingProvider)
@@ -1491,7 +1570,7 @@ export class EnviarSunatService {
       // Actualizar estado del comprobante afectado si es nota de crédito/débito
       await this.procesarEfectoEnComprobanteAfectado(comp, status);
 
-      return finalResponse;
+      return { ...finalResponse, serie: comp.serie, correlativo: comp.correlativo, comprobanteId };
     } catch (err: any) {
       console.error('🚫 Error crítico enviando a SUNAT:', {
         comprobanteId,
@@ -1555,6 +1634,9 @@ export class EnviarSunatService {
         return {
           status: 'PENDIENTE',
           documentId: comprobanteId,
+          comprobanteId,
+          serie: comp?.serie,
+          correlativo: comp?.correlativo,
           message: 'Comprobante registrado correctamente. SUNAT no está disponible en este momento; la confirmación llegará automáticamente cuando el servicio se restablezca.',
         };
       }
@@ -1646,7 +1728,10 @@ export class EnviarSunatService {
     return success ? 'PENDIENTE' : 'RECHAZADO';
   }
 
-  private buildJamblePayload(comp: any): any {
+  private buildJamblePayload(
+    comp: any,
+    loginCtx?: { userId: number | null; establishmentId: number | null } | null,
+  ): any {
     const fecha = new Date(comp.fechaEmision || new Date());
     const yyyy = fecha.getFullYear();
     const mm = String(fecha.getMonth() + 1).padStart(2, '0');
@@ -1681,7 +1766,9 @@ export class EnviarSunatService {
 
     const payload: any = {
       serie_documento: comp.serie,
-      numero_documento: String(comp.correlativo),
+      // En JAMBLE/QPOS conviene delegar numeración al proveedor para evitar
+      // desalineaciones entre correlativo local y correlativo remoto.
+      numero_documento: '#',
       fecha_de_emision: fechaIso,
       hora_de_emision: hora,
       fecha_de_vencimiento: fechaIso,
@@ -1713,6 +1800,13 @@ export class EnviarSunatService {
       },
       items,
     };
+
+    if (loginCtx?.establishmentId) {
+      payload.establishment_id = loginCtx.establishmentId;
+    }
+    if (loginCtx?.userId) {
+      payload.seller_id = loginCtx.userId;
+    }
 
     if (comp.tipoDoc === '07' || comp.tipoDoc === '08') {
       const afectado = this.parseAfectadoReference(comp.numDocAfectado);
@@ -1746,6 +1840,16 @@ export class EnviarSunatService {
       serie: serie?.trim() || '',
       numero: numeroNormalizado || numeroRaw,
     };
+  }
+
+  private parseSerieCorrelativo(numberFull?: string | null): { serie: string; correlativo: number } | null {
+    const raw = String(numberFull || '').trim().toUpperCase();
+    if (!raw) return null;
+    const match = raw.match(/^([A-Z0-9]{1,6})-(\d{1,12})$/);
+    if (!match) return null;
+    const correlativo = Number(match[2]);
+    if (!Number.isFinite(correlativo) || correlativo <= 0) return null;
+    return { serie: match[1], correlativo };
   }
 
   private extractJambleDocumentId(response: any, fallback: string): string {
@@ -2528,6 +2632,27 @@ export class EnviarSunatService {
         502,
       );
     }
+  }
+
+  private extractHost(url: string | null | undefined): string | null {
+    const raw = String(url || '').trim();
+    if (!raw) return null;
+    try {
+      return new URL(raw).host || null;
+    } catch {
+      return raw.replace(/^https?:\/\//i, '').split('/')[0] || null;
+    }
+  }
+
+  private maskJambleUser(user: string | null | undefined): string | null {
+    const raw = String(user || '').trim();
+    if (!raw) return null;
+    const at = raw.indexOf('@');
+    if (at > 1) {
+      return `${raw.slice(0, 2)}***${raw.slice(at - 1)}`;
+    }
+    if (raw.length <= 3) return `${raw[0]}**`;
+    return `${raw.slice(0, 2)}***${raw.slice(-1)}`;
   }
 
   async debugPayload(comprobanteId: number) {

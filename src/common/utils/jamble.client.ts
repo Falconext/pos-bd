@@ -8,10 +8,16 @@ type JambleAuthConfig = {
   password?: string | null;
 };
 
+type JambleLoginContext = {
+  userId: number | null;
+  establishmentId: number | null;
+};
+
 @Injectable()
 export class JambleClient {
   private readonly logger = new Logger(JambleClient.name);
   private readonly tokenCache = new Map<string, string>();
+  private readonly loginContextCache = new Map<string, JambleLoginContext>();
   private readonly preferLoginToken = !['0', 'false', 'no'].includes(
     String(process.env.JAMBLE_PREFER_LOGIN_TOKEN || 'true').toLowerCase(),
   );
@@ -247,6 +253,113 @@ export class JambleClient {
     return null;
   }
 
+  async buscarNumeroCompletoPorExternalId(
+    auth: JambleAuthConfig,
+    externalId: string,
+  ): Promise<string | null> {
+    const normalizedAuth = await this.resolvePreferredAuth(this.normalizeAuth(auth));
+    const url = this.normalizeBaseUrl(auth.baseUrl);
+    const externalIdText = String(externalId || '').trim();
+    if (!externalIdText) return null;
+
+    const now = new Date();
+    const dateEnd = now.toISOString().slice(0, 10);
+    const dateStart = new Date(now.getTime() - 1000 * 60 * 60 * 24 * 365).toISOString().slice(0, 10);
+
+    let lastError: unknown = null;
+    for (const template of this.listPaths) {
+      const path = template
+        .replace('{date_ini}', encodeURIComponent(dateStart))
+        .replace('{date_end}', encodeURIComponent(dateEnd));
+      try {
+        const { data } = await axios.get(`${url}${path}`, this.buildRequestConfig(normalizedAuth));
+        const records = this.extractDocumentRecords(data);
+        if (!records.length) continue;
+
+        for (const row of records) {
+          const rowExternalId = String(row?.external_id || row?.externalId || row?.uuid || '').trim();
+          const rowId = String(row?.id ?? '').trim();
+          if (rowExternalId !== externalIdText && rowId !== externalIdText) continue;
+
+          const numberFull = String(
+            row?.number_full ??
+            row?.full_number ??
+            row?.numero_completo ??
+            '',
+          ).trim();
+          if (numberFull) return numberFull;
+
+          const serie = String(row?.series ?? row?.serie ?? '').trim().toUpperCase();
+          const number = String(row?.number ?? row?.numero ?? row?.correlativo ?? '').trim();
+          if (serie && number) return `${serie}-${number}`;
+        }
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (this.isUnauthorized(lastError) && normalizedAuth.username && normalizedAuth.password) {
+      const fetchedToken = await this.obtenerTokenDesdeLogin(normalizedAuth).catch(() => null);
+      if (fetchedToken) {
+        return this.buscarNumeroCompletoPorExternalId(
+          { ...normalizedAuth, token: fetchedToken },
+          externalIdText,
+        );
+      }
+    }
+
+    return null;
+  }
+
+  async obtenerContextoDesdeLogin(auth: JambleAuthConfig): Promise<JambleLoginContext | null> {
+    const normalizedAuth = this.normalizeAuth(auth);
+    const username = String(normalizedAuth.username || '').trim();
+    const password = String(normalizedAuth.password || '').trim();
+    const cacheKey = this.getTokenCacheKey(normalizedAuth.baseUrl, username);
+    if (cacheKey && this.loginContextCache.has(cacheKey)) {
+      return this.loginContextCache.get(cacheKey) || null;
+    }
+    if (!username || !password) return null;
+
+    const url = this.normalizeBaseUrl(normalizedAuth.baseUrl);
+    const payloads = [
+      { email: username, password },
+      { username, password },
+      { user: username, password },
+    ];
+
+    for (const path of this.loginPaths) {
+      for (const body of payloads) {
+        try {
+          const { data } = await axios.post(
+            `${url}${path}`,
+            body,
+            {
+              headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+              },
+              timeout: 30000,
+            },
+          );
+
+          const userIdRaw = data?.user_id ?? data?.user?.id ?? data?.data?.user_id ?? null;
+          const establishmentIdRaw =
+            data?.establishment_id ?? data?.establishment?.id ?? data?.data?.establishment_id ?? null;
+          const ctx: JambleLoginContext = {
+            userId: Number.isFinite(Number(userIdRaw)) ? Number(userIdRaw) : null,
+            establishmentId: Number.isFinite(Number(establishmentIdRaw)) ? Number(establishmentIdRaw) : null,
+          };
+          if (cacheKey) this.loginContextCache.set(cacheKey, ctx);
+          return ctx;
+        } catch {
+          // try next
+        }
+      }
+    }
+    return null;
+  }
+
   private normalizeBaseUrl(baseUrl: string): string {
     const raw = String(baseUrl || '').trim().replace(/\/+$/, '');
     if (!raw) return raw;
@@ -393,6 +506,13 @@ export class JambleClient {
             const normalized = token.trim().replace(/^bearer\s+/i, '').trim();
             const cacheKey = this.getTokenCacheKey(auth.baseUrl, username);
             if (cacheKey) this.tokenCache.set(cacheKey, normalized);
+            if (cacheKey) {
+              const ctx: JambleLoginContext = {
+                userId: Number.isFinite(Number(data?.user_id)) ? Number(data.user_id) : null,
+                establishmentId: Number.isFinite(Number(data?.establishment_id)) ? Number(data.establishment_id) : null,
+              };
+              this.loginContextCache.set(cacheKey, ctx);
+            }
             return normalized;
           }
         } catch {

@@ -319,20 +319,36 @@ async function main() {
   const nombresNuevos = new Set(planesNuevos.map((p) => p.nombre));
 
   for (const plan of planes) {
+    const plataforma = String((plan as any).plataforma || 'falconext').toLowerCase();
+    const producto = String((plan as any).producto || 'facturacion').toLowerCase();
+    const planData = { ...plan, plataforma, producto } as any;
+
     if (nombresNuevos.has(plan.nombre)) {
       // Upsert: crea o actualiza precio/límites
       const result = await prisma.plan.upsert({
-        where: { nombre: plan.nombre },
-        update: plan,
-        create: plan,
+        where: {
+          nombre_plataforma_producto: {
+            nombre: plan.nombre,
+            plataforma,
+            producto,
+          },
+        },
+        update: planData,
+        create: planData,
       });
       console.log(`✓ Plan sincronizado: ${result.nombre} - S/ ${result.costo}`);
     } else {
       const existente = await prisma.plan.findUnique({
-        where: { nombre: plan.nombre },
+        where: {
+          nombre_plataforma_producto: {
+            nombre: plan.nombre,
+            plataforma,
+            producto,
+          },
+        },
       });
       if (!existente) {
-        const created = await prisma.plan.create({ data: plan });
+        const created = await prisma.plan.create({ data: planData });
         console.log(`✓ Plan creado: ${created.nombre} - S/ ${created.costo}`);
       } else {
         console.log(`✓ Plan ya existe: ${plan.nombre}`);

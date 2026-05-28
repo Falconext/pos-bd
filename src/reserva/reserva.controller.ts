@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -22,15 +23,35 @@ import { EstadoReserva } from '@prisma/client';
 export class ReservaController {
   constructor(private readonly reservaService: ReservaService) {}
 
+  private getTenantContext(user: any) {
+    const empresaId = Number(user?.empresaId);
+    const sedeId = Number(user?.sedeId);
+
+    if (!Number.isFinite(empresaId) || empresaId <= 0) {
+      throw new BadRequestException(
+        'Contexto inválido: empresa no identificada en la sesión.',
+      );
+    }
+
+    if (!Number.isFinite(sedeId) || sedeId <= 0) {
+      throw new BadRequestException(
+        'Debes seleccionar una sede activa antes de gestionar reservas.',
+      );
+    }
+
+    return { empresaId, sedeId };
+  }
+
   @Get()
   async listar(
     @User() user: any,
     @Query('productoId') productoId?: string,
     @Query('estado') estado?: EstadoReserva,
   ) {
+    const ctx = this.getTenantContext(user);
     return this.reservaService.listar({
-      empresaId: user.empresaId,
-      sedeId: user.sedeId,
+      empresaId: ctx.empresaId,
+      sedeId: ctx.sedeId,
       ...(productoId ? { productoId: Number(productoId) } : {}),
       ...(estado ? { estado } : {}),
     });
@@ -38,12 +59,14 @@ export class ReservaController {
 
   @Get(':id')
   async obtenerPorId(@Param('id', ParseIntPipe) id: number, @User() user: any) {
-    return this.reservaService.obtenerPorId(id, user.empresaId, user.sedeId);
+    const ctx = this.getTenantContext(user);
+    return this.reservaService.obtenerPorId(id, ctx.empresaId, ctx.sedeId);
   }
 
   @Post()
   async crear(@Body() dto: CreateReservaDto, @User() user: any) {
-    return this.reservaService.crear(dto, user.empresaId, user.sedeId);
+    const ctx = this.getTenantContext(user);
+    return this.reservaService.crear(dto, ctx.empresaId, ctx.sedeId);
   }
 
   @Patch(':id')
@@ -52,11 +75,13 @@ export class ReservaController {
     @Body() dto: UpdateReservaDto,
     @User() user: any,
   ) {
-    return this.reservaService.actualizar(id, dto, user.empresaId, user.sedeId);
+    const ctx = this.getTenantContext(user);
+    return this.reservaService.actualizar(id, dto, ctx.empresaId, ctx.sedeId);
   }
 
   @Delete(':id')
   async eliminar(@Param('id', ParseIntPipe) id: number, @User() user: any) {
-    return this.reservaService.eliminar(id, user.empresaId, user.sedeId);
+    const ctx = this.getTenantContext(user);
+    return this.reservaService.eliminar(id, ctx.empresaId, ctx.sedeId);
   }
 }

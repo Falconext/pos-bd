@@ -381,7 +381,7 @@ export class ComprobanteService {
         productoId: true,
         lote: true,             // Legacy / Simple
         fechaVencimiento: true, // Legacy / Simple
-        movimientoLote: {       // Sistema de Lotes Complejo
+        movimientoLotes: {       // Sistema de Lotes Complejo
           select: {
             lote: {
               select: {
@@ -400,10 +400,12 @@ export class ComprobanteService {
         .filter((m) => m.productoId === detalle.productoId)
         .map((m) => {
           // Prioridad: Relación > Campo Plano
-          if (m.movimientoLote?.lote) {
+          if (m.movimientoLotes.length > 0) {
+            const primerLote = m.movimientoLotes[0]?.lote;
+            if (!primerLote) return null;
             return {
-              lote: m.movimientoLote.lote.lote,
-              fechaVencimiento: m.movimientoLote.lote.fechaVencimiento,
+              lote: primerLote.lote,
+              fechaVencimiento: primerLote.fechaVencimiento,
             };
           } else if (m.lote) {
             return {
@@ -837,42 +839,40 @@ export class ComprobanteService {
 
       // Registrar movimiento de kardex si se proporcionan los datos
       if (data && this.kardexService) {
+        // Usar el costo promedio del producto en lugar del precio de venta
+        const costoUnitario = Number(producto.costoPromedio) || 0;
+
+        const movimiento = await this.kardexService.registrarMovimiento({
+          productoId: item.productoId,
+          empresaId: data.empresaId,
+          tipoMovimiento: 'SALIDA',
+          concepto: data.concepto,
+          cantidad: item.cantidad,
+          comprobanteId: data.comprobanteId,
+          costoUnitario: costoUnitario,
+          usuarioId: data.usuarioId,
+          sedeId: sedeId!, // Pass resolved sedeId (non-null asserted because of check above)
+        });
+
+        // Integración Lotes (FEFO) - ESTRICTA:
+        // Si el producto trabaja con lotes y no hay stock de lotes suficiente, debe fallar la emisión.
+        if (this.loteService) {
+          await this.loteService.descontarStockLote(
+            item.productoId,
+            item.cantidad,
+            movimiento.id
+          );
+        }
+
+        // Notificación no bloqueante: si falla, no tumbamos la emisión
         try {
-          // Usar el costo promedio del producto en lugar del precio de venta
-          const costoUnitario = Number(producto.costoPromedio) || 0;
-
-          const movimiento = await this.kardexService.registrarMovimiento({
-            productoId: item.productoId,
-            empresaId: data.empresaId,
-            tipoMovimiento: 'SALIDA',
-            concepto: data.concepto,
-            cantidad: item.cantidad,
-            comprobanteId: data.comprobanteId,
-            costoUnitario: costoUnitario,
-            usuarioId: data.usuarioId,
-            sedeId: sedeId!, // Pass resolved sedeId (non-null asserted because of check above)
-          });
-
-          // Integración Lotes (FEFO) - Intentar descontar
-          if (this.loteService) {
-            // Si el producto no tiene lotes, retorna [] y no hace nada.
-            // Si tiene lotes y falta stock, lanzará error (capturado abajo).
-            await this.loteService.descontarStockLote(
-              item.productoId,
-              item.cantidad,
-              movimiento.id
-            );
-          }
-
-          // Notificar inmediatamente si el producto quedó en 0 o bajo mínimo
           await this.inventarioNotificaciones.verificarProductoDespuesVenta(
             item.productoId,
             data.empresaId,
             sedeId,
           );
         } catch (error) {
-          // Log el error pero no fallar la operación principal
-          console.error('Error al registrar movimiento de kardex:', error);
+          console.error('Error al notificar inventario después de venta:', error);
         }
       }
     }
@@ -2196,6 +2196,7 @@ export class ComprobanteService {
     if (!full) throw new NotFoundException('Comprobante no encontrado');
 
     const tipoDocMap: Record<string, string> = {
+      '01': 'FACTURA', '03': 'BOLETA', '07': 'NOTA DE CRÉDITO', '08': 'NOTA DE DÉBITO',
       TICKET: 'TICKET', NV: 'NOTA DE VENTA', RH: 'RECIBO POR HONORARIOS',
       CP: 'COMPROBANTE DE PAGO', NP: 'NOTA DE PEDIDO', OT: 'ORDEN DE TRABAJO', COT: 'COTIZACIÓN',
     };

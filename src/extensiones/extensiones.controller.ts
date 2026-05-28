@@ -20,6 +20,10 @@ export class ExtensionesController {
     return String(value ?? '').trim().toLowerCase() === 'hotel' ? 'hotel' : 'facturacion';
   }
 
+  private normalizePlataforma(value?: string | null): 'falconext' | 'krezka' {
+    return String(value ?? '').trim().toLowerCase() === 'krezka' ? 'krezka' : 'falconext';
+  }
+
   @Get('unidad-medida')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
   async listarUnidadMedida() {
@@ -96,16 +100,27 @@ export class ExtensionesController {
 
   @Get('planes')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
-  async listarPlanes(@Query('producto') producto?: string, @User() user?: any) {
+  async listarPlanes(
+    @Query('producto') producto?: string,
+    @Query('plataforma') plataforma?: string,
+    @User() user?: any,
+  ) {
     const productoFiltro = user?.sistemaProducto
       ? this.normalizeProducto(user.sistemaProducto)
       : (producto ? this.normalizeProducto(producto) : undefined);
+    const plataformaFiltro = user?.sistemaNegocio
+      ? this.normalizePlataforma(user.sistemaNegocio)
+      : (plataforma ? this.normalizePlataforma(plataforma) : undefined);
     const planes = await this.prisma.plan.findMany({
-      where: productoFiltro ? { producto: productoFiltro } : undefined,
+      where: {
+        ...(productoFiltro ? { producto: productoFiltro } : {}),
+        ...(plataformaFiltro ? { plataforma: plataformaFiltro } : {}),
+      },
       orderBy: { id: 'asc' },
       select: {
         id: true,
         nombre: true,
+        plataforma: true,
         producto: true,
         descripcion: true,
         limiteUsuarios: true,

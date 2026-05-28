@@ -69,6 +69,10 @@ export class UpdateEmpresaDto {
   usaCodigoBarrasManual?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  usarPrecioLoteFefo?: boolean;
+
+  @IsOptional()
   @IsString()
   providerId?: string;
 

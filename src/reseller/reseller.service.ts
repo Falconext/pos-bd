@@ -7,6 +7,23 @@ import { SedeService } from 'src/sede/sede.service';
 import * as bcrypt from 'bcrypt';
 import { resolveBillingProvider } from 'src/common/utils/billing-provider';
 
+// Falconext volume-based reseller pricing (cost the platform charges the reseller per active client/month).
+// Tiers: [1-5 clients, 6-15 clients, 16-30 clients, 31+ clients]
+const FALCONEXT_VOLUME_PRICING: Record<string, [number, number, number, number]> = {
+    'Emprendedor': [14.90, 13.90, 12.90, 11.90],
+    'Negocio':     [34.90, 32.90, 29.90, 27.90],
+    'Corporativo': [59.90, 56.90, 52.90, 49.90],
+};
+
+function getVolumeTierPrice(planNombre: string, clientesActivos: number): number | null {
+    const prices = FALCONEXT_VOLUME_PRICING[planNombre];
+    if (!prices) return null;
+    if (clientesActivos <= 5)  return prices[0];
+    if (clientesActivos <= 15) return prices[1];
+    if (clientesActivos <= 30) return prices[2];
+    return prices[3];
+}
+
 @Injectable()
 export class ResellerService {
     constructor(
@@ -17,6 +34,21 @@ export class ResellerService {
 
     private calculatePlanCostWithDiscount(planCost: number, discount: number) {
         return planCost * (1 - discount / 100);
+    }
+
+    private resolveClientCost(planNombre: string, planCosto: number, porcentajeDescuento: number, clientesActivos: number): number {
+        if (process.env.RESELLER_PRICING_MODEL === 'VOLUMEN') {
+            const tierPrice = getVolumeTierPrice(planNombre, clientesActivos);
+            if (tierPrice !== null) return tierPrice;
+        }
+        return this.calculatePlanCostWithDiscount(planCosto, porcentajeDescuento);
+    }
+
+    private getTierLabel(clientesActivos: number): string {
+        if (clientesActivos <= 5)  return '1-5 clientes';
+        if (clientesActivos <= 15) return '6-15 clientes';
+        if (clientesActivos <= 30) return '16-30 clientes';
+        return '31+ clientes';
     }
 
     private getRenewalPolicy() {
@@ -383,12 +415,12 @@ export class ResellerService {
                 if (!plan) throw new NotFoundException('Plan no encontrado');
             }
 
-            // 3. Calculate Cost
-            // Cost = Plan.costo * (1 - porcentajeDescuento / 100)
-            // Default Plan Costo is Decimal. Reseller Discount is Decimal.
+            // 3. Calculate Cost (volume-based for Falconext, percentage-based otherwise)
             const planCosto = Number(plan.costo);
             const descuento = Number((reseller as any).porcentajeDescuento) || 0;
-            const costoFinal = this.calculatePlanCostWithDiscount(planCosto, descuento);
+            const clientesActuales = await tx.empresa.count({ where: { resellerId, estado: 'ACTIVO' } });
+            const clientesConNuevo = clientesActuales + 1;
+            const costoFinal = this.resolveClientCost(plan.nombre, planCosto, descuento, clientesConNuevo);
 
             if (Number(reseller.saldo) < costoFinal) {
                 throw new BadRequestException(`Saldo insuficiente. El plan cuesta S/${costoFinal.toFixed(2)} y tienes S/${Number(reseller.saldo).toFixed(2)}`);
@@ -400,12 +432,16 @@ export class ResellerService {
                 data: { saldo: { decrement: costoFinal } }
             });
 
+            const descripcionActivacion = process.env.RESELLER_PRICING_MODEL === 'VOLUMEN'
+                ? `Activación cliente: ${data.razonSocial} - Plan: ${plan.nombre} (Tier ${this.getTierLabel(clientesConNuevo)})`
+                : `Activación cliente: ${data.razonSocial} - Plan: ${plan.nombre} (${descuento}% Off)`;
+
             await tx.resellerMovimiento.create({
                 data: {
                     resellerId,
                     tipo: 'ACTIVACION',
                     monto: -costoFinal,
-                    descripcion: `Activación cliente: ${data.razonSocial} - Plan: ${plan.nombre} (${descuento}% Off)`,
+                    descripcion: descripcionActivacion,
                 }
             });
 
@@ -697,7 +733,8 @@ export class ResellerService {
 
                 const planCosto = Number(empresa.plan.costo);
                 const descuento = Number(reseller.porcentajeDescuento) || 0;
-                const costoFinal = this.calculatePlanCostWithDiscount(planCosto, descuento);
+                const clientesActivos = await tx.empresa.count({ where: { resellerId: reseller.id, estado: 'ACTIVO' } });
+                const costoFinal = this.resolveClientCost(empresa.plan.nombre, planCosto, descuento, clientesActivos);
                 const saldoActual = Number(reseller.saldo);
                 const diasVencida = Math.max(0, Math.floor((now.getTime() - empresa.fechaExpiracion.getTime()) / (1000 * 60 * 60 * 24)));
                 const enGracia = diasVencida <= graceDays;
@@ -728,7 +765,9 @@ export class ResellerService {
                             monto: -costoFinal,
                             estado: 'APLICADO',
                             intento: intentoActual,
-                            descripcion: `Renovación mensual cliente: ${empresa.razonSocial} - Plan: ${empresa.plan.nombre} (${descuento}% Off)`,
+                            descripcion: process.env.RESELLER_PRICING_MODEL === 'VOLUMEN'
+                                ? `Renovación mensual cliente: ${empresa.razonSocial} - Plan: ${empresa.plan.nombre} (Tier ${this.getTierLabel(clientesActivos)})`
+                                : `Renovación mensual cliente: ${empresa.razonSocial} - Plan: ${empresa.plan.nombre} (${descuento}% Off)`,
                         }
                     });
 

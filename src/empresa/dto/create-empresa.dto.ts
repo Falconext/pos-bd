@@ -127,6 +127,10 @@ export class CreateEmpresaDto {
   usaCodigoBarrasManual?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  usarPrecioLoteFefo?: boolean;
+
+  @IsOptional()
   @IsString()
   @IsIn(['falconext', 'krezka'])
   brand?: string;

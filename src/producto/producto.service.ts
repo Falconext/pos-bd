@@ -1,11 +1,12 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
   Inject,
   forwardRef,
 } from '@nestjs/common';
-import { Prisma, EstadoType } from '@prisma/client';
+import { Prisma, EstadoReserva, EstadoType } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
@@ -20,7 +21,7 @@ export class ProductoService {
     @Inject(forwardRef(() => KardexService))
     private readonly kardexService: KardexService,
     private readonly s3: S3Service,
-  ) { }
+  ) {}
 
   private async generarCodigoProducto(empresaId: number, prefijo = 'PR') {
     const productos = await this.prisma.producto.findMany({
@@ -52,15 +53,21 @@ export class ProductoService {
       : undefined;
 
     if (venta !== undefined && (venta < 0 || venta > 100)) {
-      throw new ForbiddenException('El porcentaje de venta debe estar entre 0 y 100');
+      throw new ForbiddenException(
+        'El porcentaje de venta debe estar entre 0 y 100',
+      );
     }
     if (provision !== undefined && (provision < 0 || provision > 100)) {
-      throw new ForbiddenException('El porcentaje de provisión debe estar entre 0 y 100');
+      throw new ForbiddenException(
+        'El porcentaje de provisión debe estar entre 0 y 100',
+      );
     }
 
     if (venta !== undefined && provision !== undefined) {
       if (venta + provision !== 100) {
-        throw new ForbiddenException('La suma de porcentaje de venta y provisión debe ser 100');
+        throw new ForbiddenException(
+          'La suma de porcentaje de venta y provisión debe ser 100',
+        );
       }
       return { porcentajeVenta: venta, porcentajeProvision: provision };
     }
@@ -69,7 +76,10 @@ export class ProductoService {
       return { porcentajeVenta: venta, porcentajeProvision: 100 - venta };
     }
     if (provision !== undefined) {
-      return { porcentajeVenta: 100 - provision, porcentajeProvision: provision };
+      return {
+        porcentajeVenta: 100 - provision,
+        porcentajeProvision: provision,
+      };
     }
 
     return { porcentajeVenta: 70, porcentajeProvision: 30 };
@@ -142,7 +152,7 @@ export class ProductoService {
       precioOferta,
       fechaInicioOferta,
       fechaFinOferta,
-      preciosMayorista
+      preciosMayorista,
     } = data;
 
     const porcentajes = this.normalizarPorcentajes(
@@ -167,10 +177,16 @@ export class ProductoService {
     // 2. Validar unicidad de Código de Barras (si se proporciona)
     if (codigoBarras) {
       const existeBarras = await this.prisma.producto.findFirst({
-        where: { empresaId, codigoBarras, estado: { not: 'PLACEHOLDER' as any } },
+        where: {
+          empresaId,
+          codigoBarras,
+          estado: { not: 'PLACEHOLDER' as any },
+        },
       });
       if (existeBarras) {
-        throw new ForbiddenException(`El código de barras "${codigoBarras}" ya está asignado a otro producto: ${existeBarras.descripcion}`);
+        throw new ForbiddenException(
+          `El código de barras "${codigoBarras}" ya está asignado a otro producto: ${existeBarras.descripcion}`,
+        );
       }
     }
 
@@ -205,7 +221,10 @@ export class ProductoService {
           stock,
           stockMinimo: stockMinimo != null ? stockMinimo : undefined,
           stockMaximo: stockMaximo != null ? stockMaximo : undefined,
-          categoriaId: categoriaId && Number(categoriaId) > 0 ? Number(categoriaId) : undefined,
+          categoriaId:
+            categoriaId && Number(categoriaId) > 0
+              ? Number(categoriaId)
+              : undefined,
           marcaId: marcaId && Number(marcaId) > 0 ? Number(marcaId) : undefined,
           imagenUrl: imagenUrl || undefined,
           localizacion: localizacion || undefined,
@@ -220,16 +239,21 @@ export class ProductoService {
           laboratorio,
           unidadCompra,
           unidadVenta,
-          factorConversion: factorConversion ? Number(factorConversion) : undefined,
+          factorConversion: factorConversion
+            ? Number(factorConversion)
+            : undefined,
           codigoBarras,
           codigoDigemid,
-          costoPromedio: costoPromedio != null ? new Decimal(costoPromedio) : undefined,
+          costoPromedio:
+            costoPromedio != null ? new Decimal(costoPromedio) : undefined,
           // Campos Ofertas
           precioOferta: precioOferta ? new Decimal(precioOferta) : undefined,
-          fechaInicioOferta: fechaInicioOferta ? new Date(fechaInicioOferta) : undefined,
+          fechaInicioOferta: fechaInicioOferta
+            ? new Date(fechaInicioOferta)
+            : undefined,
           fechaFinOferta: fechaFinOferta ? new Date(fechaFinOferta) : undefined,
           preciosMayorista: preciosMayorista ?? undefined,
-        }
+        },
       });
     } else {
       // Crear nuevo
@@ -245,7 +269,10 @@ export class ProductoService {
           stock,
           stockMinimo: stockMinimo != null ? stockMinimo : undefined,
           stockMaximo: stockMaximo != null ? stockMaximo : undefined,
-          categoriaId: categoriaId && Number(categoriaId) > 0 ? Number(categoriaId) : undefined,
+          categoriaId:
+            categoriaId && Number(categoriaId) > 0
+              ? Number(categoriaId)
+              : undefined,
           marcaId: marcaId && Number(marcaId) > 0 ? Number(marcaId) : undefined,
           empresaId,
           imagenUrl: imagenUrl || undefined,
@@ -263,10 +290,13 @@ export class ProductoService {
           factorConversion: factorConversion ? Number(factorConversion) : 1,
           codigoBarras,
           codigoDigemid,
-          costoPromedio: costoPromedio != null ? new Decimal(costoPromedio) : undefined,
+          costoPromedio:
+            costoPromedio != null ? new Decimal(costoPromedio) : undefined,
           // Campos Ofertas
           precioOferta: precioOferta ? new Decimal(precioOferta) : undefined,
-          fechaInicioOferta: fechaInicioOferta ? new Date(fechaInicioOferta) : undefined,
+          fechaInicioOferta: fechaInicioOferta
+            ? new Date(fechaInicioOferta)
+            : undefined,
           fechaFinOferta: fechaFinOferta ? new Date(fechaFinOferta) : undefined,
           preciosMayorista: preciosMayorista ?? undefined,
         },
@@ -275,19 +305,21 @@ export class ProductoService {
       // Inicializar el registro de stock por sede. Solo la sede que crea el producto
       // (o la principal si no se conoce la sede) recibe el stock inicial. Las demás
       // arrancan en 0 para que los traslados partan de valores reales y no inflados.
-      const sedes = await this.prisma.sede.findMany({ where: { empresaId, activo: true } });
+      const sedes = await this.prisma.sede.findMany({
+        where: { empresaId, activo: true },
+      });
       if (sedes.length > 0) {
-        const sedePrincipalId = sedes.find(s => s.esPrincipal)?.id;
+        const sedePrincipalId = sedes.find((s) => s.esPrincipal)?.id;
         // La sede que recibe el stock inicial: la del usuario actual, o la principal como fallback.
         const sedeConStock = sedeId ?? sedePrincipalId;
         await this.prisma.productoStock.createMany({
-          data: sedes.map(s => ({
+          data: sedes.map((s) => ({
             productoId: nuevo.id,
             sedeId: s.id,
             stock: s.id === sedeConStock ? (stock ?? 0) : 0,
             stockMinimo: stockMinimo ?? 0,
             stockMaximo: stockMaximo ?? null,
-          }))
+          })),
         });
       }
     }
@@ -337,13 +369,13 @@ export class ProductoService {
       categoriaId: categoriaId ? Number(categoriaId) : undefined,
       OR: searchTerm
         ? [
-          { descripcion: { contains: searchTerm, mode: 'insensitive' } },
-          { codigo: { contains: searchTerm, mode: 'insensitive' } },
-          { principioActivo: { contains: searchTerm, mode: 'insensitive' } },
-          { codigoBarras: { contains: searchTerm, mode: 'insensitive' } },
-          { codigoDigemid: { contains: searchTerm, mode: 'insensitive' } },
-          { laboratorio: { contains: searchTerm, mode: 'insensitive' } },
-        ]
+            { descripcion: { contains: searchTerm, mode: 'insensitive' } },
+            { codigo: { contains: searchTerm, mode: 'insensitive' } },
+            { principioActivo: { contains: searchTerm, mode: 'insensitive' } },
+            { codigoBarras: { contains: searchTerm, mode: 'insensitive' } },
+            { codigoDigemid: { contains: searchTerm, mode: 'insensitive' } },
+            { laboratorio: { contains: searchTerm, mode: 'insensitive' } },
+          ]
         : undefined,
     };
 
@@ -363,9 +395,14 @@ export class ProductoService {
           stockMaximo: true,
           stocks: {
             where: {
-              ...(params.sedeId ? { sedeId: params.sedeId } : {})
+              ...(params.sedeId ? { sedeId: params.sedeId } : {}),
             },
-            select: { stock: true, stockMinimo: true, stockMaximo: true, sedeId: true }
+            select: {
+              stock: true,
+              stockMinimo: true,
+              stockMaximo: true,
+              sedeId: true,
+            },
           },
           costoPromedio: true,
           precioUnitario: true,
@@ -404,21 +441,42 @@ export class ProductoService {
           lotes: {
             where: {
               activo: true,
-              stockActual: { gt: 0 }
+              stockActual: { gt: 0 },
             },
             select: {
               lote: true,
               fechaVencimiento: true,
-              stockActual: true
+              stockActual: true,
+              costoUnitario: true,
             },
             orderBy: {
-              fechaVencimiento: 'asc'
-            }
-          }
+              fechaVencimiento: 'asc',
+            },
+          },
         },
       }),
       this.prisma.producto.count({ where }),
     ]);
+
+    const productoIds = productosRaw.map((p) => p.id);
+    const reservasAgrupadas =
+      productoIds.length > 0
+        ? await this.prisma.reserva.groupBy({
+            by: ['productoId'],
+            where: {
+              empresaId,
+              ...(params.sedeId ? { sedeId: params.sedeId } : {}),
+              productoId: { in: productoIds },
+              estado: {
+                in: [EstadoReserva.PENDIENTE, EstadoReserva.CONFIRMADA],
+              },
+            },
+            _sum: { cantidad: true },
+          })
+        : [];
+    const reservadoPorProducto = new Map<number, number>(
+      reservasAgrupadas.map((r) => [r.productoId, r._sum.cantidad ?? 0]),
+    );
 
     // Firmar imagenes si son de S3
     const signIfS3 = async (url?: string | null) => {
@@ -437,23 +495,45 @@ export class ProductoService {
 
     const productos = await Promise.all(
       productosRaw.map(async (p) => {
-        // Calcular stock total (suma de todas las sedes).
-        // Si no hay entradas en ProductoStock, usar el campo legacy Producto.stock como fallback.
-        const stockTotal = p.stocks.length > 0
-          ? p.stocks.reduce((sum, s) => sum + s.stock, 0)
-          : ((p as any).stock ?? 0);
-        const stockMinimo = p.stocks.length > 0
-          ? p.stocks.reduce((sum, s) => sum + (s.stockMinimo || 0), 0)
-          : ((p as any).stockMinimo ?? 0);
+        const stockDesdeLotes = (p.lotes || []).reduce(
+          (acc, lote) => acc + Number(lote.stockActual || 0),
+          0,
+        );
+        const usaStockLotes = stockDesdeLotes > 0;
+        const loteFefoActual = usaStockLotes ? p.lotes[0] : null;
+
+        // Si se pide una sede específica, usar SOLO ese stock.
+        // Si no se pide sede, usar suma total como comportamiento histórico.
+        const stockTotalBase = params.sedeId
+          ? (p.stocks[0]?.stock ?? (p as any).stock ?? 0)
+          : p.stocks.length > 0
+            ? p.stocks.reduce((sum, s) => sum + s.stock, 0)
+            : ((p as any).stock ?? 0);
+        const stockTotal = usaStockLotes ? stockDesdeLotes : stockTotalBase;
+        const stockMinimo = params.sedeId
+          ? (p.stocks[0]?.stockMinimo ?? (p as any).stockMinimo ?? 0)
+          : p.stocks.length > 0
+            ? p.stocks.reduce((sum, s) => sum + (s.stockMinimo || 0), 0)
+            : ((p as any).stockMinimo ?? 0);
+        const reservado = reservadoPorProducto.get(p.id) ?? 0;
+        const stockDisponibleVenta = Math.max(0, stockTotal - reservado);
 
         return {
           ...p,
-          stock: stockTotal,
+          stock: stockDisponibleVenta,
+          stockBase: stockTotal,
+          stockReservado: reservado,
+          stockDisponibleVenta,
           stockMinimo: stockMinimo,
           costoUnitario: Number(p.costoPromedio) || 0,
+          loteFefoCodigo: loteFefoActual?.lote || null,
+          loteFefoVencimiento: loteFefoActual?.fechaVencimiento || null,
+          loteFefoCostoUnitario: loteFefoActual?.costoUnitario
+            ? Number(loteFefoActual.costoUnitario)
+            : null,
           imagenUrl: await signIfS3((p as any).imagenUrl as any),
         };
-      })
+      }),
     );
 
     return { productos, total, page, limit };
@@ -477,7 +557,7 @@ export class ProductoService {
       where: {
         empresaId,
         codigoBarras,
-        estado: { not: 'PLACEHOLDER' as any }
+        estado: { not: 'PLACEHOLDER' as any },
       },
       select: {
         id: true,
@@ -486,25 +566,65 @@ export class ProductoService {
         costoPromedio: true,
         precioUnitario: true,
         stock: true,
+        stocks: {
+          select: {
+            stock: true,
+          },
+        },
+        lotes: {
+          where: {
+            activo: true,
+            stockActual: { gt: 0 },
+          },
+          select: {
+            lote: true,
+            fechaVencimiento: true,
+            stockActual: true,
+            costoUnitario: true,
+          },
+          orderBy: {
+            fechaVencimiento: 'asc',
+          },
+        },
         codigoBarras: true,
         imagenUrl: true,
         tipoAfectacionIGV: true,
         unidadMedida: true,
         categoria: true,
         marca: true,
-      }
+      },
     });
 
     if (producto) {
+      const stockDesdeLotes = (producto.lotes || []).reduce(
+        (acc, lote) => acc + Number(lote.stockActual || 0),
+        0,
+      );
+      const usaStockLotes = stockDesdeLotes > 0;
+      const loteFefoActual = usaStockLotes ? producto.lotes[0] : null;
+      const stockBase = producto.stocks?.length
+        ? producto.stocks.reduce((sum, s) => sum + Number(s.stock || 0), 0)
+        : Number((producto as any).stock || 0);
+      const stockTotal = usaStockLotes ? stockDesdeLotes : stockBase;
+
       return {
         ...producto,
+        stock: stockTotal,
+        stockBase: stockTotal,
+        loteFefoCodigo: loteFefoActual?.lote || null,
+        loteFefoVencimiento: loteFefoActual?.fechaVencimiento || null,
+        loteFefoCostoUnitario: loteFefoActual?.costoUnitario
+          ? Number(loteFefoActual.costoUnitario)
+          : null,
         isGlobal: false,
         costoUnitario: Number((producto as any).costoPromedio) || 0,
       };
     }
 
     // 2. Si no existe localmente, intentar buscar en Open Food Facts (Catálogo Global)
-    console.log(`[BY_BARCODE] Producto ${codigoBarras} no encontrado localmente. Buscando en Open Food Facts...`);
+    console.log(
+      `[BY_BARCODE] Producto ${codigoBarras} no encontrado localmente. Buscando en Open Food Facts...`,
+    );
     const globalProduct = await this.buscarEnOpenFoodFacts(codigoBarras);
 
     if (globalProduct) {
@@ -528,7 +648,8 @@ export class ProductoService {
         return {
           id: 0, // ID provisional
           codigo: `OFF-${barcode}`,
-          descripcion: p.product_name || p.generic_name || 'Producto Desconocido',
+          descripcion:
+            p.product_name || p.generic_name || 'Producto Desconocido',
           codigoBarras: barcode,
           imagenUrl: p.image_url || p.image_front_url || null,
           precioUnitario: 0,
@@ -541,48 +662,54 @@ export class ProductoService {
         };
       }
     } catch (error: any) {
-      console.error(`[OpenFoodFacts] Error buscando barcode ${barcode}:`, error.message);
+      console.error(
+        `[OpenFoodFacts] Error buscando barcode ${barcode}:`,
+        error.message,
+      );
     }
     return null;
   }
 
-  async actualizar(data: {
-    id: number;
-    empresaId: number;
-    descripcion?: string;
-    categoriaId?: number | null;
-    marcaId?: number | null;
-    unidadMedidaId?: number;
-    tipoAfectacionIGV?: string;
-    valorUnitario?: number;
-    igvPorcentaje?: number;
-    precioUnitario?: number;
-    stock?: number;
-    costoUnitario?: number;
-    imagenUrl?: string | null;
-    localizacion?: string;
-    porcentajeVenta?: number;
-    porcentajeProvision?: number;
-    stockMinimo?: number;
-    stockMaximo?: number;
-    // Campos Farmacia
-    principioActivo?: string;
-    concentracion?: string;
-    presentacion?: string;
-    laboratorio?: string;
-    unidadCompra?: string;
-    unidadVenta?: string;
-    factorConversion?: number | string;
-    codigoBarras?: string;
-    codigoDigemid?: string;
-    // Campos Ofertas
-    precioOferta?: number;
-    fechaInicioOferta?: string | Date;
-    fechaFinOferta?: string | Date;
-    preciosMayorista?: { cantidadMinima: number; precio: number }[];
+  async actualizar(
+    data: {
+      id: number;
+      empresaId: number;
+      descripcion?: string;
+      categoriaId?: number | null;
+      marcaId?: number | null;
+      unidadMedidaId?: number;
+      tipoAfectacionIGV?: string;
+      valorUnitario?: number;
+      igvPorcentaje?: number;
+      precioUnitario?: number;
+      stock?: number;
+      costoUnitario?: number;
+      imagenUrl?: string | null;
+      localizacion?: string;
+      porcentajeVenta?: number;
+      porcentajeProvision?: number;
+      stockMinimo?: number;
+      stockMaximo?: number;
+      // Campos Farmacia
+      principioActivo?: string;
+      concentracion?: string;
+      presentacion?: string;
+      laboratorio?: string;
+      unidadCompra?: string;
+      unidadVenta?: string;
+      factorConversion?: number | string;
+      codigoBarras?: string;
+      codigoDigemid?: string;
+      // Campos Ofertas
+      precioOferta?: number;
+      fechaInicioOferta?: string | Date;
+      fechaFinOferta?: string | Date;
+      preciosMayorista?: { cantidadMinima: number; precio: number }[];
 
-    sedeId?: number; // Nueva propiedad opcional para identificar dónde se ajusta el stock
-  }, usuarioId?: number) {
+      sedeId?: number; // Nueva propiedad opcional para identificar dónde se ajusta el stock
+    },
+    usuarioId?: number,
+  ) {
     const producto = await this.prisma.producto.findFirst({
       where: { id: data.id, empresaId: data.empresaId },
     });
@@ -591,15 +718,17 @@ export class ProductoService {
     // Validar unicidad de Código de Barras (si cambió)
     if (data.codigoBarras && data.codigoBarras !== producto.codigoBarras) {
       const existeBarras = await this.prisma.producto.findFirst({
-        where: { 
-          empresaId: data.empresaId, 
+        where: {
+          empresaId: data.empresaId,
           codigoBarras: data.codigoBarras,
           id: { not: data.id },
-          estado: { not: 'PLACEHOLDER' as any }
+          estado: { not: 'PLACEHOLDER' as any },
         },
       });
       if (existeBarras) {
-        throw new ForbiddenException(`El código de barras "${data.codigoBarras}" ya está asignado a otro producto: ${existeBarras.descripcion}`);
+        throw new ForbiddenException(
+          `El código de barras "${data.codigoBarras}" ya está asignado a otro producto: ${existeBarras.descripcion}`,
+        );
       }
     }
 
@@ -607,7 +736,63 @@ export class ProductoService {
     if (data.precioUnitario !== undefined) {
       const igv = data.igvPorcentaje ?? 18;
       // valorUnitario = precioUnitario / (1 + IGV%)
-      data.valorUnitario = +(Number(data.precioUnitario) / (1 + igv / 100)).toFixed(6);
+      data.valorUnitario = +(
+        Number(data.precioUnitario) /
+        (1 + igv / 100)
+      ).toFixed(6);
+    }
+
+    // Si se actualizan porcentajes, validar que no rompan reservas ya existentes.
+    if (
+      data.porcentajeVenta !== undefined ||
+      data.porcentajeProvision !== undefined
+    ) {
+      const porcentajesNuevos = this.normalizarPorcentajes(
+        data.porcentajeVenta,
+        data.porcentajeProvision,
+      );
+
+      let sedeValidacionId = data.sedeId;
+      if (!sedeValidacionId) {
+        const sedePrincipal = await this.prisma.sede.findFirst({
+          where: { empresaId: data.empresaId, esPrincipal: true },
+          select: { id: true },
+        });
+        sedeValidacionId = sedePrincipal?.id;
+      }
+
+      if (sedeValidacionId) {
+        const stockSede = await this.prisma.productoStock.findUnique({
+          where: {
+            productoId_sedeId: {
+              productoId: data.id,
+              sedeId: sedeValidacionId,
+            },
+          },
+          select: { stock: true },
+        });
+
+        const stockBase = stockSede?.stock ?? producto.stock ?? 0;
+        const reservasActivas = await this.prisma.reserva.aggregate({
+          where: {
+            empresaId: data.empresaId,
+            sedeId: sedeValidacionId,
+            productoId: data.id,
+            estado: { in: [EstadoReserva.PENDIENTE, EstadoReserva.CONFIRMADA] },
+          },
+          _sum: { cantidad: true },
+        });
+        const reservado = reservasActivas._sum.cantidad ?? 0;
+        const cupoProvision = Math.floor(
+          (stockBase * porcentajesNuevos.porcentajeProvision) / 100,
+        );
+
+        if (reservado > cupoProvision) {
+          throw new BadRequestException(
+            `No se puede guardar: reservas activas (${reservado}) superan el nuevo cupo de provisión (${cupoProvision}). Ajusta reservas o porcentajes.`,
+          );
+        }
+      }
     }
 
     // Si cambió el stock, registrar movimiento de kardex
@@ -616,14 +801,18 @@ export class ProductoService {
       // Obtener sede principal por defecto si no viene en data
       let targetSedeId = data.sedeId;
       if (!targetSedeId) {
-        const sedePrincipal = await this.prisma.sede.findFirst({ where: { empresaId: data.empresaId, esPrincipal: true } });
+        const sedePrincipal = await this.prisma.sede.findFirst({
+          where: { empresaId: data.empresaId, esPrincipal: true },
+        });
         targetSedeId = sedePrincipal?.id;
       }
 
       if (targetSedeId) {
         // Obtener stock actual en esa sede
         const currentStock = await this.prisma.productoStock.findUnique({
-          where: { productoId_sedeId: { productoId: data.id, sedeId: targetSedeId } }
+          where: {
+            productoId_sedeId: { productoId: data.id, sedeId: targetSedeId },
+          },
         });
 
         if (currentStock && currentStock.stock !== data.stock) {
@@ -644,17 +833,26 @@ export class ProductoService {
               observacion: `Stock anterior: ${currentStock.stock}, Stock nuevo: ${data.stock}`,
             });
           } catch (error) {
-            console.error('Error al registrar movimiento de kardex desde edición de producto:', error);
+            console.error(
+              'Error al registrar movimiento de kardex desde edición de producto:',
+              error,
+            );
           }
         }
 
         // Always update the actual stock in productoStock for this sede
         await this.prisma.productoStock.upsert({
-          where: { productoId_sedeId: { productoId: data.id, sedeId: targetSedeId } },
+          where: {
+            productoId_sedeId: { productoId: data.id, sedeId: targetSedeId },
+          },
           update: {
             stock: data.stock,
-            ...(data.stockMinimo !== undefined ? { stockMinimo: data.stockMinimo } : {}),
-            ...(data.stockMaximo !== undefined ? { stockMaximo: data.stockMaximo } : {}),
+            ...(data.stockMinimo !== undefined
+              ? { stockMinimo: data.stockMinimo }
+              : {}),
+            ...(data.stockMaximo !== undefined
+              ? { stockMaximo: data.stockMaximo }
+              : {}),
           },
           create: {
             productoId: data.id,
@@ -683,7 +881,9 @@ export class ProductoService {
             : data.marcaId !== undefined && Number(data.marcaId) > 0
               ? Number(data.marcaId)
               : undefined,
-        unidadMedidaId: data.unidadMedidaId ? Number(data.unidadMedidaId) : undefined,
+        unidadMedidaId: data.unidadMedidaId
+          ? Number(data.unidadMedidaId)
+          : undefined,
         tipoAfectacionIGV: data.tipoAfectacionIGV,
         valorUnitario:
           data.valorUnitario !== undefined
@@ -697,16 +897,15 @@ export class ProductoService {
           data.precioUnitario !== undefined
             ? new Decimal(data.precioUnitario)
             : undefined,
-        imagenUrl:
-          data.imagenUrl !== undefined
-            ? data.imagenUrl
-            : undefined,
+        imagenUrl: data.imagenUrl !== undefined ? data.imagenUrl : undefined,
         localizacion:
-          data.localizacion !== undefined
-            ? data.localizacion
-            : undefined,
-        ...(data.porcentajeVenta !== undefined || data.porcentajeProvision !== undefined
-          ? this.normalizarPorcentajes(data.porcentajeVenta, data.porcentajeProvision)
+          data.localizacion !== undefined ? data.localizacion : undefined,
+        ...(data.porcentajeVenta !== undefined ||
+        data.porcentajeProvision !== undefined
+          ? this.normalizarPorcentajes(
+              data.porcentajeVenta,
+              data.porcentajeProvision,
+            )
           : {}),
         costoPromedio:
           data.costoUnitario !== undefined
@@ -724,14 +923,25 @@ export class ProductoService {
         laboratorio: data.laboratorio,
         unidadCompra: data.unidadCompra,
         unidadVenta: data.unidadVenta,
-        factorConversion: data.factorConversion ? Number(data.factorConversion) : undefined,
+        factorConversion: data.factorConversion
+          ? Number(data.factorConversion)
+          : undefined,
         codigoBarras: data.codigoBarras,
         codigoDigemid: data.codigoDigemid,
         // Campos Ofertas
-        precioOferta: data.precioOferta ? new Decimal(data.precioOferta) : undefined,
-        fechaInicioOferta: data.fechaInicioOferta ? new Date(data.fechaInicioOferta) : undefined,
-        fechaFinOferta: data.fechaFinOferta ? new Date(data.fechaFinOferta) : undefined,
-        preciosMayorista: data.preciosMayorista !== undefined ? data.preciosMayorista : undefined,
+        precioOferta: data.precioOferta
+          ? new Decimal(data.precioOferta)
+          : undefined,
+        fechaInicioOferta: data.fechaInicioOferta
+          ? new Date(data.fechaInicioOferta)
+          : undefined,
+        fechaFinOferta: data.fechaFinOferta
+          ? new Date(data.fechaFinOferta)
+          : undefined,
+        preciosMayorista:
+          data.preciosMayorista !== undefined
+            ? data.preciosMayorista
+            : undefined,
       },
     });
 
@@ -748,19 +958,32 @@ export class ProductoService {
     productoId: number,
     file: { buffer: Buffer; mimetype?: string },
   ) {
-    const producto = await this.prisma.producto.findFirst({ where: { id: productoId, empresaId } });
+    const producto = await this.prisma.producto.findFirst({
+      where: { id: productoId, empresaId },
+    });
     if (!producto) throw new NotFoundException('Producto no encontrado');
-    if (!file || !file.buffer) throw new ForbiddenException('Archivo no proporcionado');
+    if (!file || !file.buffer)
+      throw new ForbiddenException('Archivo no proporcionado');
     const ct = file.mimetype || 'image/jpeg';
-    if (!/^image\//i.test(ct)) throw new ForbiddenException('El archivo debe ser una imagen');
+    if (!/^image\//i.test(ct))
+      throw new ForbiddenException('El archivo debe ser una imagen');
 
-    const s3Key = this.s3.generateProductoImageKey(empresaId, productoId, ct, false);
+    const s3Key = this.s3.generateProductoImageKey(
+      empresaId,
+      productoId,
+      ct,
+      false,
+    );
     const url = await this.s3.uploadImage(file.buffer, s3Key, ct);
 
-    await this.prisma.producto.update({ where: { id: productoId }, data: { imagenUrl: url } });
+    await this.prisma.producto.update({
+      where: { id: productoId },
+      data: { imagenUrl: url },
+    });
     // Devolver también URL firmada para previsualización inmediata en admin
     const idx = url.indexOf('amazonaws.com/');
-    const objKey = idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
+    const objKey =
+      idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
     const signedUrl = objKey ? await this.s3.getSignedGetUrl(objKey, 600) : url;
     return { url, signedUrl };
   }
@@ -770,20 +993,35 @@ export class ProductoService {
     productoId: number,
     file: { buffer: Buffer; mimetype?: string },
   ) {
-    const producto = await this.prisma.producto.findFirst({ where: { id: productoId, empresaId } });
+    const producto = await this.prisma.producto.findFirst({
+      where: { id: productoId, empresaId },
+    });
     if (!producto) throw new NotFoundException('Producto no encontrado');
-    if (!file || !file.buffer) throw new ForbiddenException('Archivo no proporcionado');
+    if (!file || !file.buffer)
+      throw new ForbiddenException('Archivo no proporcionado');
     const ct = file.mimetype || 'image/jpeg';
-    if (!/^image\//i.test(ct)) throw new ForbiddenException('El archivo debe ser una imagen');
+    if (!/^image\//i.test(ct))
+      throw new ForbiddenException('El archivo debe ser una imagen');
 
-    const key = this.s3.generateProductoImageKey(empresaId, productoId, ct, true);
+    const key = this.s3.generateProductoImageKey(
+      empresaId,
+      productoId,
+      ct,
+      true,
+    );
     const url = await this.s3.uploadImage(file.buffer, key, ct);
 
-    const actuales: string[] = Array.isArray((producto as any).imagenesExtra) ? (producto as any).imagenesExtra : [];
+    const actuales: string[] = Array.isArray((producto as any).imagenesExtra)
+      ? (producto as any).imagenesExtra
+      : [];
     const nuevas = [...actuales, url];
-    await this.prisma.producto.update({ where: { id: productoId }, data: { imagenesExtra: nuevas as any } });
+    await this.prisma.producto.update({
+      where: { id: productoId },
+      data: { imagenesExtra: nuevas as any },
+    });
     const idx = url.indexOf('amazonaws.com/');
-    const objKey = idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
+    const objKey =
+      idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
     const signedUrl = objKey ? await this.s3.getSignedGetUrl(objKey, 600) : url;
     return { url, signedUrl };
   }
@@ -793,7 +1031,9 @@ export class ProductoService {
     productoId: number,
     externalUrl: string,
   ) {
-    const producto = await this.prisma.producto.findFirst({ where: { id: productoId, empresaId } });
+    const producto = await this.prisma.producto.findFirst({
+      where: { id: productoId, empresaId },
+    });
     if (!producto) throw new NotFoundException('Producto no encontrado');
     if (!externalUrl) throw new ForbiddenException('URL no proporcionada');
 
@@ -804,8 +1044,9 @@ export class ProductoService {
         responseType: 'arraybuffer',
         timeout: 10000,
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
       });
 
       const buffer = Buffer.from(response.data);
@@ -816,21 +1057,37 @@ export class ProductoService {
       }
 
       // Upload to S3
-      const s3Key = this.s3.generateProductoImageKey(empresaId, productoId, contentType, false);
+      const s3Key = this.s3.generateProductoImageKey(
+        empresaId,
+        productoId,
+        contentType,
+        false,
+      );
       const s3Url = await this.s3.uploadImage(buffer, s3Key, contentType);
 
       // Update product with S3 URL
-      await this.prisma.producto.update({ where: { id: productoId }, data: { imagenUrl: s3Url } });
+      await this.prisma.producto.update({
+        where: { id: productoId },
+        data: { imagenUrl: s3Url },
+      });
 
       // Return signed URL for immediate use
       const idx = s3Url.indexOf('amazonaws.com/');
-      const objKey = idx !== -1 ? s3Url.substring(idx + 'amazonaws.com/'.length) : '';
-      const signedUrl = objKey ? await this.s3.getSignedGetUrl(objKey, 600) : s3Url;
+      const objKey =
+        idx !== -1 ? s3Url.substring(idx + 'amazonaws.com/'.length) : '';
+      const signedUrl = objKey
+        ? await this.s3.getSignedGetUrl(objKey, 600)
+        : s3Url;
 
       return { url: s3Url, signedUrl };
     } catch (error: any) {
-      console.error('Error downloading/uploading image from URL:', error.message);
-      throw new ForbiddenException('Error al procesar la imagen desde la URL: ' + error.message);
+      console.error(
+        'Error downloading/uploading image from URL:',
+        error.message,
+      );
+      throw new ForbiddenException(
+        'Error al procesar la imagen desde la URL: ' + error.message,
+      );
     }
   }
 
@@ -842,8 +1099,14 @@ export class ProductoService {
     return this.prisma.producto.update({ where: { id }, data: { estado } });
   }
 
-  async togglePublicarEnTienda(id: number, empresaId: number, publicar: boolean) {
-    const producto = await this.prisma.producto.findFirst({ where: { id, empresaId } });
+  async togglePublicarEnTienda(
+    id: number,
+    empresaId: number,
+    publicar: boolean,
+  ) {
+    const producto = await this.prisma.producto.findFirst({
+      where: { id, empresaId },
+    });
     if (!producto) throw new NotFoundException('Producto no encontrado');
     return this.prisma.producto.update({
       where: { id },
@@ -853,7 +1116,9 @@ export class ProductoService {
   }
 
   async eliminar(id: number, empresaId: number) {
-    const producto = await this.prisma.producto.findFirst({ where: { id, empresaId } });
+    const producto = await this.prisma.producto.findFirst({
+      where: { id, empresaId },
+    });
     if (!producto) throw new NotFoundException('Producto no encontrado');
     return this.prisma.producto.update({
       where: { id },
@@ -893,7 +1158,10 @@ export class ProductoService {
       if (huerfanos.length > 0) {
         const res = await this.prisma.producto.updateMany({
           where: { id: { in: huerfanos.map((p) => p.id) } },
-          data: { estado: 'PLACEHOLDER' as any, publicarEnTienda: false as any },
+          data: {
+            estado: 'PLACEHOLDER' as any,
+            publicarEnTienda: false as any,
+          },
         });
         count = res.count;
       }
@@ -922,9 +1190,148 @@ export class ProductoService {
 
   async getSedePrincipalId(empresaId: number): Promise<number> {
     const sede = await this.prisma.sede.findFirst({
-      where: { empresaId, esPrincipal: true }
+      where: { empresaId, esPrincipal: true },
     });
     return sede?.id || 0; // Return 0 or handle error if no sede found (though database should have one)
+  }
+
+  private normalizarTextoImagen(texto?: string): string {
+    const raw = String(texto || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const aliases: Record<string, string> = {
+      qatey: 'oatey',
+    };
+
+    return raw
+      .split(' ')
+      .map((t) => aliases[t] || t)
+      .filter((t) => t.length >= 2)
+      .join(' ');
+  }
+
+  private construirClavesBusquedaImagen(
+    nombre: string,
+    marca?: string,
+    categoria?: string,
+  ): string[] {
+    const nombreNorm = this.normalizarTextoImagen(nombre);
+    const marcaNorm = this.normalizarTextoImagen(marca);
+    const categoriaNorm = this.normalizarTextoImagen(categoria);
+
+    if (!nombreNorm) return [];
+
+    const claves = [
+      [nombreNorm, marcaNorm, categoriaNorm].filter(Boolean).join('|'),
+      [nombreNorm, marcaNorm].filter(Boolean).join('|'),
+      [nombreNorm, categoriaNorm].filter(Boolean).join('|'),
+      nombreNorm,
+    ].filter(Boolean);
+
+    return Array.from(new Set(claves));
+  }
+
+  async buscarImagenMemorizada(
+    empresaId: number,
+    nombre: string,
+    marca?: string,
+    categoria?: string,
+  ): Promise<{ url: string; clave: string } | null> {
+    const claves = this.construirClavesBusquedaImagen(nombre, marca, categoria);
+    if (claves.length === 0) return null;
+
+    for (const claveBusqueda of claves) {
+      const match = await this.prisma.imagenProductoAprobadaIa.findUnique({
+        where: {
+          empresaId_claveBusqueda: {
+            empresaId,
+            claveBusqueda,
+          },
+        },
+      });
+
+      if (match?.imagenUrl) {
+        await this.prisma.imagenProductoAprobadaIa.update({
+          where: { id: match.id },
+          data: {
+            vecesUsada: { increment: 1 },
+            ultimoUsoEn: new Date(),
+          },
+        });
+        return { url: match.imagenUrl, clave: claveBusqueda };
+      }
+    }
+
+    return null;
+  }
+
+  async guardarImagenMemorizada(params: {
+    empresaId: number;
+    nombre: string;
+    marca?: string;
+    categoria?: string;
+    url: string;
+  }) {
+    const url = String(params.url || '').trim();
+    if (!/^https?:\/\//i.test(url)) {
+      throw new BadRequestException('La URL de imagen no es válida.');
+    }
+
+    const nombreNorm = this.normalizarTextoImagen(params.nombre);
+    if (!nombreNorm) {
+      throw new BadRequestException(
+        'El nombre del producto es obligatorio para memorizar imagen.',
+      );
+    }
+
+    const marcaNorm = this.normalizarTextoImagen(params.marca);
+    const categoriaNorm = this.normalizarTextoImagen(params.categoria);
+    const claves = this.construirClavesBusquedaImagen(
+      params.nombre,
+      params.marca,
+      params.categoria,
+    );
+
+    let principal: Prisma.ImagenProductoAprobadaIaGetPayload<
+      Record<string, never>
+    > | null = null;
+    for (const claveBusqueda of claves) {
+      const saved = await this.prisma.imagenProductoAprobadaIa.upsert({
+        where: {
+          empresaId_claveBusqueda: {
+            empresaId: params.empresaId,
+            claveBusqueda,
+          },
+        },
+        create: {
+          empresaId: params.empresaId,
+          claveBusqueda,
+          nombreNorm,
+          marcaNorm: marcaNorm || null,
+          categoriaNorm: categoriaNorm || null,
+          imagenUrl: url,
+          vecesUsada: 1,
+          ultimoUsoEn: new Date(),
+        },
+        update: {
+          imagenUrl: url,
+          nombreNorm,
+          marcaNorm: marcaNorm || null,
+          categoriaNorm: categoriaNorm || null,
+          ultimoUsoEn: new Date(),
+          vecesUsada: { increment: 1 },
+        },
+      });
+
+      if (!principal) principal = saved;
+    }
+
+    return principal;
   }
 
   async exportar(empresaId: number, search?: string): Promise<Buffer> {
@@ -936,9 +1343,9 @@ export class ProductoService {
       codigo: { notIn: productosDelSistema },
       OR: search
         ? [
-          { descripcion: { contains: search, mode: 'insensitive' } },
-          { codigo: { contains: search, mode: 'insensitive' } },
-        ]
+            { descripcion: { contains: search, mode: 'insensitive' } },
+            { codigo: { contains: search, mode: 'insensitive' } },
+          ]
         : undefined,
     };
 
@@ -979,15 +1386,31 @@ export class ProductoService {
   }
 
   private normClave(s: string): string {
-    return s.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    return s
+      .toUpperCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
   }
 
   private resolverUmbSunat(raw: string | undefined): string {
     const alias: Record<string, string> = {
-      KG: 'KGM', KGS: 'KGM', KILO: 'KGM', KILOGRAMO: 'KGM',
-      UN: 'NIU', UND: 'NIU', UNID: 'NIU', UNIDAD: 'NIU', ETIQ: 'NIU', PZA: 'NIU', PZ: 'NIU',
-      LT: 'LTR', LTS: 'LTR', LITRO: 'LTR',
-      MT: 'MTR', MTS: 'MTR', METRO: 'MTR',
+      KG: 'KGM',
+      KGS: 'KGM',
+      KILO: 'KGM',
+      KILOGRAMO: 'KGM',
+      UN: 'NIU',
+      UND: 'NIU',
+      UNID: 'NIU',
+      UNIDAD: 'NIU',
+      ETIQ: 'NIU',
+      PZA: 'NIU',
+      PZ: 'NIU',
+      LT: 'LTR',
+      LTS: 'LTR',
+      LITRO: 'LTR',
+      MT: 'MTR',
+      MTS: 'MTR',
+      METRO: 'MTR',
     };
     if (!raw) return 'NIU';
     const key = raw.trim().toUpperCase();
@@ -1006,7 +1429,9 @@ export class ProductoService {
 
     const sheetInsumos = workbook.Sheets['INV.INSUM.'];
     if (sheetInsumos) {
-      const filas = XLSX.utils.sheet_to_json(sheetInsumos, { header: 1 }) as any[][];
+      const filas = XLSX.utils.sheet_to_json(sheetInsumos, {
+        header: 1,
+      }) as any[][];
       const hi = hdrIdx(filas, ['SKU', 'NOMBRES']);
       if (hi >= 0) {
         const h = filas[hi];
@@ -1015,19 +1440,27 @@ export class ProductoService {
         const precioKgI = h.indexOf('Precio x kg');
         const costoI = h.indexOf('Costo sin igv');
         const invI = h.indexOf('Inventario');
-        const familiaI = h.findIndex((x: any) => x && String(x).toUpperCase() === 'FAMILIA');
+        const familiaI = h.findIndex(
+          (x: any) => x && String(x).toUpperCase() === 'FAMILIA',
+        );
         for (let i = hi + 1; i < filas.length; i++) {
           const f = filas[i];
           if (!f[skuI] || !f[nomI]) continue;
           rows.push({
-            'CÓDIGO': String(f[skuI]),
-            'PRODUCTO': String(f[nomI]),
+            CÓDIGO: String(f[skuI]),
+            PRODUCTO: String(f[nomI]),
             'U.M': 'KGM',
-            'AFECT': '10',
-            'PRECIO UNITARIO': precioKgI >= 0 ? (f[precioKgI] ?? 0) : (costoI >= 0 ? (f[costoI] ?? 0) : 0),
+            AFECT: '10',
+            'PRECIO UNITARIO':
+              precioKgI >= 0
+                ? (f[precioKgI] ?? 0)
+                : costoI >= 0
+                  ? (f[costoI] ?? 0)
+                  : 0,
             'PRECIO COSTO': costoI >= 0 ? (f[costoI] ?? 0) : 0,
-            'STOCK': invI >= 0 ? (f[invI] ?? 0) : 0,
-            'CATEGORIA': familiaI >= 0 && f[familiaI] ? String(f[familiaI]) : undefined,
+            STOCK: invI >= 0 ? (f[invI] ?? 0) : 0,
+            CATEGORIA:
+              familiaI >= 0 && f[familiaI] ? String(f[familiaI]) : undefined,
           });
         }
       }
@@ -1035,7 +1468,9 @@ export class ProductoService {
 
     const sheetEtiq = workbook.Sheets['INV. ETIQ.'];
     if (sheetEtiq) {
-      const filas = XLSX.utils.sheet_to_json(sheetEtiq, { header: 1 }) as any[][];
+      const filas = XLSX.utils.sheet_to_json(sheetEtiq, {
+        header: 1,
+      }) as any[][];
       const hi = hdrIdx(filas, ['COD.', 'NOMBRES']);
       if (hi >= 0) {
         const h = filas[hi];
@@ -1043,18 +1478,21 @@ export class ProductoService {
         const nomI = h.indexOf('NOMBRES');
         const costoI = h.indexOf('COSTO SIN IGV');
         const umbI = h.indexOf('UMB');
-        const invI = h.findIndex((x: any) => x && String(x).toLowerCase().startsWith('inventario'));
+        const invI = h.findIndex(
+          (x: any) => x && String(x).toLowerCase().startsWith('inventario'),
+        );
         for (let i = hi + 1; i < filas.length; i++) {
           const f = filas[i];
           if (!f[codI] || !f[nomI]) continue;
-          const umbRaw = umbI >= 0 && f[umbI] ? String(f[umbI]).toUpperCase() : undefined;
+          const umbRaw =
+            umbI >= 0 && f[umbI] ? String(f[umbI]).toUpperCase() : undefined;
           rows.push({
-            'CÓDIGO': String(f[codI]),
-            'PRODUCTO': String(f[nomI]),
+            CÓDIGO: String(f[codI]),
+            PRODUCTO: String(f[nomI]),
             'U.M': this.resolverUmbSunat(umbRaw),
-            'AFECT': '10',
+            AFECT: '10',
             'PRECIO UNITARIO': costoI >= 0 ? (f[costoI] ?? 0) : 0,
-            'STOCK': invI >= 0 ? (f[invI] ?? 0) : 0,
+            STOCK: invI >= 0 ? (f[invI] ?? 0) : 0,
           });
         }
       }
@@ -1075,15 +1513,16 @@ export class ProductoService {
         for (let i = hi + 1; i < filas.length; i++) {
           const f = filas[i];
           if (!f[codI] || !f[nomI]) continue;
-          const umbRaw = umbI >= 0 && f[umbI] ? String(f[umbI]).toUpperCase() : undefined;
+          const umbRaw =
+            umbI >= 0 && f[umbI] ? String(f[umbI]).toUpperCase() : undefined;
           rows.push({
-            'CÓDIGO': String(f[codI]),
-            'PRODUCTO': String(f[nomI]),
+            CÓDIGO: String(f[codI]),
+            PRODUCTO: String(f[nomI]),
             'U.M': this.resolverUmbSunat(umbRaw),
-            'AFECT': '10',
+            AFECT: '10',
             'PRECIO UNITARIO': costoI >= 0 ? (f[costoI] ?? 0) : 0,
             'PRECIO COSTO': costoUniI >= 0 ? (f[costoUniI] ?? 0) : 0,
-            'STOCK': invI >= 0 ? (f[invI] ?? 0) : 0,
+            STOCK: invI >= 0 ? (f[invI] ?? 0) : 0,
           });
         }
       }
@@ -1193,7 +1632,10 @@ export class ProductoService {
         }
 
         const precioUnitario = parseFloat(precioUnitarioRaw?.toString());
-        const costoPromedio = precioCostoRaw != null ? parseFloat(precioCostoRaw.toString()) : undefined;
+        const costoPromedio =
+          precioCostoRaw != null
+            ? parseFloat(precioCostoRaw.toString())
+            : undefined;
         const stock = parseInt(stockRaw?.toString(), 10);
         const igvPorcentaje = igvRaw ? parseFloat(igvRaw.toString()) : 18;
 
@@ -1219,14 +1661,20 @@ export class ProductoService {
         // Upsert: update if already exists (non-PLACEHOLDER), create if new
         const codigoStr = codigo.toString();
         const existe = await this.prisma.producto.findFirst({
-          where: { codigo: codigoStr, empresaId, estado: { not: 'PLACEHOLDER' as any } },
+          where: {
+            codigo: codigoStr,
+            empresaId,
+            estado: { not: 'PLACEHOLDER' as any },
+          },
           select: { id: true },
         });
 
         let producto: any;
         if (existe) {
           const divisor = 1 + igvPorcentaje / 100;
-          const valorUnitario = parseFloat((precioUnitario / divisor).toFixed(2));
+          const valorUnitario = parseFloat(
+            (precioUnitario / divisor).toFixed(2),
+          );
           producto = await this.prisma.producto.update({
             where: { id: existe.id },
             data: {
@@ -1236,7 +1684,9 @@ export class ProductoService {
               precioUnitario: new Decimal(precioUnitario),
               valorUnitario: new Decimal(valorUnitario),
               igvPorcentaje: new Decimal(igvPorcentaje),
-              ...(costoPromedio != null ? { costoPromedio: new Decimal(costoPromedio) } : {}),
+              ...(costoPromedio != null
+                ? { costoPromedio: new Decimal(costoPromedio) }
+                : {}),
               ...(categoriaId != null ? { categoriaId } : {}),
             },
           });

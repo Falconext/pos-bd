@@ -52,6 +52,15 @@ function mapHotelPlanName(planNombre?: string | null): string {
   return raw.replace(/\s+/g, '_');
 }
 
+function esPlanPermitidoParaPrecioFefo(planNombre?: string | null): boolean {
+  const raw = String(planNombre ?? '')
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+  return raw.includes('NEGOCIO') || raw.includes('CORPORAT');
+}
+
 interface HotelSyncPayload {
   mypeEmpresaId: number;
   mypeUsuarioId?: number;
@@ -80,6 +89,28 @@ export class EmpresaService {
     private readonly prisma: PrismaService,
     private readonly sedeService: SedeService,
   ) { }
+
+  private async asegurarSedePrincipalPorDefecto(empresaId: number, direccion?: string | null) {
+    const principal = await this.prisma.sede.findFirst({
+      where: { empresaId, esPrincipal: true },
+      select: { id: true },
+    });
+
+    if (principal) return principal;
+
+    // Self-healing: si por algún flujo externo no existe sede principal, crearla.
+    return this.prisma.sede.create({
+      data: {
+        empresaId,
+        nombre: 'Sede Principal',
+        direccion: direccion ?? null,
+        codigo: '001',
+        esPrincipal: true,
+        activo: true,
+      },
+      select: { id: true },
+    });
+  }
 
   private getHotelSyncConfig() {
     const baseUrl = (process.env.HOTEL_BACKEND_SYNC_URL || '').trim();
@@ -303,6 +334,9 @@ export class EmpresaService {
         billingApiPassword: data.billingApiPassword || null,
         esAgenteRetencion: data.esAgenteRetencion || false,
         usaCodigoBarrasManual: data.usaCodigoBarrasManual,
+        usarPrecioLoteFefo:
+          (data.usarPrecioLoteFefo ?? false) &&
+          esPlanPermitidoParaPrecioFefo(planSeleccionado.nombre),
         brand: adminSistemaNegocio
           ? normalizeBrand(adminSistemaNegocio)
           : normalizeBrand(data.brand || 'falconext'),
@@ -371,13 +405,17 @@ export class EmpresaService {
       include: { plan: true, productos: true, clientes: true },
     });
 
-    // Crear Sede Principal automáticamente
-    await this.sedeService.create({
-      nombre: 'Sede Principal',
-      direccion: data.direccion,
-      codigo: '001',
-      esPrincipal: true,
-    }, empresa.id);
+    // Crear/asegurar Sede Principal automáticamente
+    await this.sedeService.create(
+      {
+        nombre: 'Sede Principal',
+        direccion: data.direccion,
+        codigo: '001',
+        esPrincipal: true,
+      },
+      empresa.id,
+    );
+    await this.asegurarSedePrincipalPorDefecto(empresa.id, data.direccion);
 
     // Log creación
     if (adminUserId) {
@@ -642,6 +680,8 @@ export class EmpresaService {
       if (dto.esAgenteRetencion !== undefined) updateData.esAgenteRetencion = dto.esAgenteRetencion;
       if (dto.usaCodigoBarrasManual !== undefined)
         updateData.usaCodigoBarrasManual = dto.usaCodigoBarrasManual;
+      if (dto.usarPrecioLoteFefo !== undefined)
+        updateData.usarPrecioLoteFefo = dto.usarPrecioLoteFefo;
       if (dto.logo !== undefined) updateData.logo = dto.logo;
       if (dto.bancoNombre !== undefined) updateData.bancoNombre = dto.bancoNombre;
       if (dto.numeroCuenta !== undefined) updateData.numeroCuenta = dto.numeroCuenta;
@@ -679,6 +719,18 @@ export class EmpresaService {
         if (!planFinal) throw new ForbiddenException('Plan seleccionado no encontrado');
         if (normalizeProducto(planFinal.producto) !== productoFinal) {
           throw new ForbiddenException('El plan seleccionado no pertenece al producto de la empresa');
+        }
+      }
+
+      if (dto.usarPrecioLoteFefo === true) {
+        const planParaValidar = await this.prisma.plan.findUnique({
+          where: { id: planIdFinal },
+          select: { nombre: true },
+        });
+        if (!esPlanPermitidoParaPrecioFefo(planParaValidar?.nombre)) {
+          throw new ForbiddenException(
+            'Esta opción está disponible solo para planes Negocio y Corporativo',
+          );
         }
       }
 

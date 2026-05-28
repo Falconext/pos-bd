@@ -28,14 +28,28 @@ async function seedPlanes() {
 
   for (const planData of planes) {
     try {
+      const plataforma = 'falconext' as const;
+      const producto = 'facturacion' as const;
       const plan = await prisma.plan.upsert({
-        where: { nombre: planData.nombre },
+        where: {
+          nombre_plataforma_producto: {
+            nombre: planData.nombre,
+            plataforma,
+            producto,
+          },
+        },
         update: {
           descripcion: planData.descripcion,
           limiteUsuarios: planData.limiteUsuarios,
-          costo: planData.costo
+          costo: planData.costo,
+          plataforma,
+          producto,
         },
-        create: planData
+        create: {
+          ...planData,
+          plataforma,
+          producto,
+        }
       });
       
       console.log(`✅ Plan ${plan.nombre} - S/ ${plan.costo} (${plan.limiteUsuarios} usuarios)`);

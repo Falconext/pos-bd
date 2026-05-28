@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePlanDto } from './dto/create-plan.dto';
 import { UpdatePlanDto } from './dto/update-plan.dto';
@@ -26,6 +27,10 @@ export class PlanService {
 
     private normalizeProducto(value?: string | null): 'facturacion' | 'hotel' {
         return String(value ?? '').trim().toLowerCase() === 'hotel' ? 'hotel' : 'facturacion';
+    }
+
+    private normalizePlataforma(value?: string | null): 'falconext' | 'krezka' {
+        return String(value ?? '').trim().toLowerCase() === 'krezka' ? 'krezka' : 'falconext';
     }
 
     private async validateProductAssignments(
@@ -79,28 +84,41 @@ export class PlanService {
     async create(dto: CreatePlanDto) {
         const { moduloIds, subModuloIds, ...planData } = dto;
         const producto = this.normalizeProducto(dto.producto);
+        const plataforma = this.normalizePlataforma(dto.plataforma);
 
         await this.validateProductAssignments(producto, moduloIds, subModuloIds);
 
-        return this.prisma.plan.create({
-            data: {
-                ...planData,
-                producto,
-                modulosAsignados: moduloIds?.length
-                    ? { create: moduloIds.map(moduloId => ({ moduloId })) }
-                    : undefined,
-                subModulosAsignados: subModuloIds?.length
-                    ? { create: subModuloIds.map(subModuloId => ({ subModuloId })) }
-                    : undefined,
-            },
-            include: PLAN_INCLUDE,
-        });
+        try {
+            return await this.prisma.plan.create({
+                data: {
+                    ...planData,
+                    producto,
+                    plataforma,
+                    modulosAsignados: moduloIds?.length
+                        ? { create: moduloIds.map(moduloId => ({ moduloId })) }
+                        : undefined,
+                    subModulosAsignados: subModuloIds?.length
+                        ? { create: subModuloIds.map(subModuloId => ({ subModuloId })) }
+                        : undefined,
+                },
+                include: PLAN_INCLUDE,
+            });
+        } catch (error) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+                throw new BadRequestException(`Ya existe un plan "${dto.nombre}" para ${plataforma}/${producto}`);
+            }
+            throw error;
+        }
     }
 
-    async findAll(producto?: string) {
+    async findAll(producto?: string, plataforma?: string) {
         const productoFiltro = producto ? this.normalizeProducto(producto) : undefined;
+        const plataformaFiltro = plataforma ? this.normalizePlataforma(plataforma) : undefined;
         return this.prisma.plan.findMany({
-            where: productoFiltro ? { producto: productoFiltro } : undefined,
+            where: {
+                ...(productoFiltro ? { producto: productoFiltro } : {}),
+                ...(plataformaFiltro ? { plataforma: plataformaFiltro } : {}),
+            },
             orderBy: { costo: 'asc' },
             include: PLAN_INCLUDE,
         });
@@ -125,6 +143,9 @@ export class PlanService {
         const producto = dto.producto !== undefined
             ? this.normalizeProducto(dto.producto)
             : this.normalizeProducto(currentPlan.producto);
+        const plataforma = dto.plataforma !== undefined
+            ? this.normalizePlataforma(dto.plataforma)
+            : undefined;
 
         await this.validateProductAssignments(producto, moduloIds, subModuloIds);
 
@@ -147,14 +168,22 @@ export class PlanService {
                 }
             }
 
-            return prisma.plan.update({
-                where: { id },
-                data: {
-                    ...planData,
-                    producto,
-                },
-                include: PLAN_INCLUDE,
-            });
+            try {
+                return await prisma.plan.update({
+                    where: { id },
+                    data: {
+                        ...planData,
+                        producto,
+                        ...(plataforma !== undefined ? { plataforma } : {}),
+                    },
+                    include: PLAN_INCLUDE,
+                });
+            } catch (error) {
+                if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+                    throw new BadRequestException(`Ya existe un plan "${dto.nombre || ''}" con esa plataforma/producto`);
+                }
+                throw error;
+            }
         });
     }
 

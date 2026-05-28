@@ -144,10 +144,18 @@ async function seedDesktop() {
     // =============================================
     console.log('📦 Creando Plan Desktop...');
     await prisma.plan.upsert({
-        where: { nombre: 'DESKTOP_LOCAL' },
+        where: {
+            nombre_plataforma_producto: {
+                nombre: 'DESKTOP_LOCAL',
+                plataforma: 'falconext',
+                producto: 'facturacion',
+            },
+        },
         update: {},
         create: {
             nombre: 'DESKTOP_LOCAL',
+            plataforma: 'falconext',
+            producto: 'facturacion',
             descripcion: 'Plan Desktop - Uso local ilimitado',
             costo: 0,
             esPrueba: false,
@@ -165,7 +173,15 @@ async function seedDesktop() {
     // =============================================
     console.log('🏢 Creando Empresa y Usuario por defecto...');
 
-    const planDesktop = await prisma.plan.findUnique({ where: { nombre: 'DESKTOP_LOCAL' } });
+    const planDesktop = await prisma.plan.findUnique({
+        where: {
+            nombre_plataforma_producto: {
+                nombre: 'DESKTOP_LOCAL',
+                plataforma: 'falconext',
+                producto: 'facturacion',
+            },
+        },
+    });
     const rubroDefault = await prisma.rubro.findFirst({ where: { nombre: 'Comercio General' } });
 
     let empresa = await prisma.empresa.findFirst({ where: { ruc: '00000000000' } });

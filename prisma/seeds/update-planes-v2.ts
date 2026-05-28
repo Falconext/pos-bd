@@ -70,10 +70,26 @@ async function main() {
   console.log('Actualizando planes v2...\n');
 
   for (const plan of planesV2) {
+    const plataforma = 'falconext' as const;
+    const producto = 'facturacion' as const;
     const result = await prisma.plan.upsert({
-      where: { nombre: plan.nombre },
-      update: plan,
-      create: plan,
+      where: {
+        nombre_plataforma_producto: {
+          nombre: plan.nombre,
+          plataforma,
+          producto,
+        },
+      },
+      update: {
+        ...plan,
+        plataforma,
+        producto,
+      },
+      create: {
+        ...plan,
+        plataforma,
+        producto,
+      },
     });
     console.log(`✓ ${result.nombre}: S/ ${result.costo} | maxComprobantes=${result.maxComprobantes} | maxSedes=${result.maxSedes} | limiteUsuarios=${result.limiteUsuarios}`);
   }

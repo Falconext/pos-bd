@@ -41,10 +41,18 @@ async function main() {
 
       // Crear plan formal
       const planFormal = await prisma.plan.upsert({
-        where: { nombre: 'Plan Empresarial' },
+        where: {
+          nombre_plataforma_producto: {
+            nombre: 'Plan Empresarial',
+            plataforma: 'falconext',
+            producto: 'facturacion'
+          }
+        },
         update: {},
         create: {
           nombre: 'Plan Empresarial',
+          plataforma: 'falconext',
+          producto: 'facturacion',
           descripcion: 'Plan para empresas formales con facturación SUNAT',
           limiteUsuarios: 10,
           costo: 50.00,
@@ -56,10 +64,18 @@ async function main() {
 
       // Crear plan informal
       const planInformal = await prisma.plan.upsert({
-        where: { nombre: 'Plan Básico' },
+        where: {
+          nombre_plataforma_producto: {
+            nombre: 'Plan Básico',
+            plataforma: 'falconext',
+            producto: 'facturacion'
+          }
+        },
         update: {},
         create: {
           nombre: 'Plan Básico',
+          plataforma: 'falconext',
+          producto: 'facturacion',
           descripcion: 'Plan para empresas informales',
           limiteUsuarios: 5,
           costo: 20.00,

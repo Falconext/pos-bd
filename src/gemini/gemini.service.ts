@@ -240,4 +240,92 @@ RESPUESTA (Texto plano, sin markdown de código a menos que sea necesario):`;
             throw new Error('Error generando productos: ' + error.message);
         }
     }
+
+    /**
+     * Selecciona la mejor imagen para un producto entre candidatas externas.
+     * Devuelve URL elegida o null si Gemini no pudo decidir con confianza.
+     */
+    async seleccionarMejorImagenProducto(params: {
+        nombre: string;
+        marca?: string;
+        categoria?: string;
+        candidatas: Array<{
+            url: string;
+            title?: string;
+            alt?: string;
+            width?: number;
+            height?: number;
+        }>;
+    }): Promise<{ url: string; confidence: number; reason?: string } | null> {
+        if (!this.model) return null;
+
+        const candidatas = (params.candidatas || [])
+            .filter((c) => typeof c.url === 'string' && /^https?:\/\//i.test(c.url))
+            .slice(0, 12);
+
+        if (candidatas.length === 0) return null;
+
+        const prompt = `
+Eres un asistente experto en selección de imágenes de producto para ecommerce.
+Producto objetivo:
+- Nombre: "${params.nombre}"
+- Marca: "${params.marca || 'No especificada'}"
+- Categoría: "${params.categoria || 'No especificada'}"
+
+Tu tarea:
+1) Elegir SOLO una candidata (por índice) que represente mejor el producto.
+2) Evitar logos, banners, fanart, ilustraciones no relacionadas o imágenes ambiguas.
+3) Priorizar fotos reales de producto (packshot), nítidas y comerciales.
+
+Candidatas:
+${candidatas
+  .map(
+    (c, i) =>
+      `- index=${i}; title="${(c.title || '').replace(/"/g, "'")}"; alt="${(c.alt || '').replace(/"/g, "'")}"; size=${c.width || 0}x${c.height || 0}; url="${c.url}"`,
+  )
+  .join('\n')}
+
+Responde SOLO JSON válido (sin markdown):
+{"index": 0, "confidence": 0-100, "reason": "breve explicación"}
+`;
+
+        try {
+            const result = await this.model.generateContent(prompt);
+            const text = result.response.text().trim();
+            const cleaned = text
+                .replace(/```json\n?/g, '')
+                .replace(/```\n?/g, '')
+                .trim();
+
+            const parsed = JSON.parse(cleaned) as {
+                index?: number;
+                confidence?: number;
+                reason?: string;
+            };
+
+            if (
+                typeof parsed.index !== 'number' ||
+                parsed.index < 0 ||
+                parsed.index >= candidatas.length
+            ) {
+                return null;
+            }
+
+            const confidenceRaw = Number(parsed.confidence ?? 0);
+            const confidence = Number.isFinite(confidenceRaw)
+                ? Math.max(0, Math.min(100, confidenceRaw))
+                : 0;
+
+            return {
+                url: candidatas[parsed.index].url,
+                confidence,
+                reason: parsed.reason || undefined,
+            };
+        } catch (error: any) {
+            this.logger.warn(
+                `Gemini no pudo seleccionar imagen candidata: ${error?.message || 'error desconocido'}`,
+            );
+            return null;
+        }
+    }
 }

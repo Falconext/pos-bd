@@ -1,0 +1,2 @@
+ALTER TABLE "Empresa"
+ADD COLUMN IF NOT EXISTS "usarPrecioLoteFefo" BOOLEAN NOT NULL DEFAULT false;

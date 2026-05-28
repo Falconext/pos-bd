@@ -293,7 +293,7 @@ export class ComprobanteController {
       console.log('[crearBoleta] Comprobante created:', comp.id, '- Sending to SUNAT...');
       const sunatResp = await this.enviarSunat.execute(comp.id);
       console.log('[crearBoleta] SUNAT response:', this.summarizeSunatResponse(sunatResp));
-      return sunatResp;
+      return { ...sunatResp, comprobanteId: comp.id };
     } catch (error: any) {
       console.error('[crearBoleta] ERROR:', error.message);
       if (comp?.id) {
@@ -328,7 +328,7 @@ export class ComprobanteController {
       console.log('[crearFactura] Comprobante created:', comp.id, '- Sending to SUNAT...');
       const sunatResp = await this.enviarSunat.execute(comp.id);
       console.log('[crearFactura] SUNAT response:', this.summarizeSunatResponse(sunatResp));
-      return sunatResp;
+      return { ...sunatResp, comprobanteId: comp.id };
     } catch (error: any) {
       console.error('[crearFactura] ERROR:', error.message);
       if (comp?.id) {

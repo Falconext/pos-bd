@@ -48,6 +48,8 @@ async function main() {
         // Excluimos explícitamente 'id' para que Postgres genere uno nuevo en 'create'
         // y no intente sobrescribirlo en 'update'.
         const { id, empresas, ...planData } = plan;
+        const plataforma = String((planData as any).plataforma || 'falconext').toLowerCase();
+        const producto = String((planData as any).producto || 'facturacion').toLowerCase();
 
         // Asegurar tipos correctos (Decimales vienen como strings en el JSON a veces)
         /* 
@@ -57,12 +59,22 @@ async function main() {
          */
 
         await prisma.plan.upsert({
-            where: { nombre: plan.nombre }, // Usamos el nombre como clave única para sincronizar
+            where: {
+                nombre_plataforma_producto: {
+                    nombre: plan.nombre,
+                    plataforma,
+                    producto,
+                }
+            },
             update: {
                 ...planData,
+                plataforma,
+                producto,
             },
             create: {
                 ...planData,
+                plataforma,
+                producto,
             },
         });
     }

@@ -12,6 +12,11 @@ export class CreatePlanDto {
 
     @IsString()
     @IsOptional()
+    @IsIn(['falconext', 'krezka'])
+    plataforma?: 'falconext' | 'krezka';
+
+    @IsString()
+    @IsOptional()
     descripcion?: string;
 
     @IsNumber()
@@ -71,6 +76,10 @@ export class CreatePlanDto {
     @IsBoolean()
     @IsOptional()
     tieneTicketera?: boolean;
+
+    @IsBoolean()
+    @IsOptional()
+    tieneGestionLotes?: boolean;
 
     // Módulos asignados
     @IsOptional()

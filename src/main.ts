@@ -18,12 +18,18 @@ async function bootstrap() {
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+  const extraCorsOrigins = String(process.env.CORS_EXTRA_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
   // CORS configuration - supports both local and production environments
   const allowedOrigins = [
     'http://localhost:5173',
     'http://localhost:5174',
     'http://localhost:3000',
     'http://app.jamble.peru:5174',
+    'https://app.jamble.peru',
     'http://192.168.100.16:4000',
     'tauri://localhost',  // Desktop app
     'https://tauri.localhost',  // Desktop app (Windows)
@@ -35,6 +41,7 @@ async function bootstrap() {
     'https://app.krezka.com',
     'https://www.krezka.com',
     process.env.FRONTEND_URL,
+    ...extraCorsOrigins,
   ].filter(Boolean);
 
   app.enableCors({

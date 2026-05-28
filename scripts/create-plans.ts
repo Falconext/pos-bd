@@ -106,12 +106,22 @@ async function createPlans() {
 
     for (const planData of planes) {
       try {
+        const plataforma = String((planData as any).plataforma || 'falconext').toLowerCase();
+        const producto = String((planData as any).producto || 'facturacion').toLowerCase();
+        const payload = { ...planData, plataforma, producto } as any;
+
         const existingPlan = await prisma.plan.findUnique({
-          where: { nombre: planData.nombre }
+          where: {
+            nombre_plataforma_producto: {
+              nombre: planData.nombre,
+              plataforma,
+              producto,
+            }
+          }
         });
 
         if (!existingPlan) {
-          await prisma.plan.create({ data: planData });
+          await prisma.plan.create({ data: payload });
           console.log(`✅ Plan creado: ${planData.nombre} - $${planData.costo} soles (${planData.tipoFacturacion})`);
           createdCount++;
         } else {

@@ -13,6 +13,16 @@ export class ComprasService {
     ) { }
 
     async crear(empresaId: number, usuarioId: number, data: CrearCompraDto, reqSedeId?: number) {
+        const duplicado = await this.prisma.compra.findFirst({
+            where: { empresaId, serie: data.serie, numero: data.numero },
+            select: { id: true },
+        });
+        if (duplicado) {
+            throw new BadRequestException(
+                `Ya existe una compra registrada con la serie ${data.serie} y número ${data.numero}.`,
+            );
+        }
+
         let subtotal = 0;
 
         // Usar la sede del token; si el usuario es admin sin sede asignada, usar la sede principal
