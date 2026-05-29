@@ -116,8 +116,12 @@ export class PlanService {
         const plataformaFiltro = plataforma ? this.normalizePlataforma(plataforma) : undefined;
         return this.prisma.plan.findMany({
             where: {
-                ...(productoFiltro ? { producto: productoFiltro } : {}),
-                ...(plataformaFiltro ? { plataforma: plataformaFiltro } : {}),
+                ...(productoFiltro
+                    ? { producto: { equals: productoFiltro, mode: 'insensitive' } }
+                    : {}),
+                ...(plataformaFiltro
+                    ? { plataforma: { equals: plataformaFiltro, mode: 'insensitive' } }
+                    : {}),
             },
             orderBy: { costo: 'asc' },
             include: PLAN_INCLUDE,
@@ -130,8 +134,8 @@ export class PlanService {
 
         const plans = await this.prisma.plan.findMany({
             where: {
-                producto: productoFiltro,
-                plataforma: plataformaFiltro,
+                producto: { equals: productoFiltro, mode: 'insensitive' },
+                plataforma: { equals: plataformaFiltro, mode: 'insensitive' },
                 esPrueba: false,
             },
             orderBy: { costo: 'asc' },
