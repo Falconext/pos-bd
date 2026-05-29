@@ -40,11 +40,10 @@ export class UsersService {
 
     const maxUsuarios = empresa.plan.limiteUsuarios;
     const totalUsuariosActivos = empresa.usuarios.length;
-    if (
-      maxUsuarios !== null &&
-      maxUsuarios !== undefined &&
-      totalUsuariosActivos >= maxUsuarios
-    ) {
+    const usuariosIlimitados =
+      maxUsuarios === null || maxUsuarios === undefined || maxUsuarios === 0;
+
+    if (!usuariosIlimitados && totalUsuariosActivos >= maxUsuarios) {
       throw new ForbiddenException(
         `Has alcanzado el límite de ${maxUsuarios} usuarios permitidos por tu plan (${empresa.plan.nombre}), sube de plan para poder crear más usuarios`,
       );

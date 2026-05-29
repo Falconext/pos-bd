@@ -86,6 +86,29 @@ export class ResellerController {
     }
 
     @Roles('ADMIN_SISTEMA', 'RESELLER')
+    @Get(':id/estado-cuenta')
+    async getEstadoCuenta(
+        @Param('id', ParseIntPipe) id: number,
+        @Query('desde') desde: string | undefined,
+        @Query('hasta') hasta: string | undefined,
+        @Query('tipo') tipo: string | undefined,
+        @Query('estado') estado: string | undefined,
+        @Query('page') page: string | undefined,
+        @Query('limit') limit: string | undefined,
+        @Request() req: any,
+    ) {
+        await this.resellerService.validateResellerAccess(req.user.id, req.user.rol, id);
+        return this.resellerService.getEstadoCuenta(id, {
+            desde,
+            hasta,
+            tipo,
+            estado,
+            page: Number(page ?? 1),
+            limit: Number(limit ?? 50),
+        });
+    }
+
+    @Roles('ADMIN_SISTEMA', 'RESELLER')
     @Post(':id/clientes')
     async createClient(@Param('id', ParseIntPipe) id: number, @Body() body: any, @Request() req: any) {
         await this.resellerService.validateResellerAccess(req.user.id, req.user.rol, id);
@@ -113,6 +136,18 @@ export class ResellerController {
     ) {
         await this.resellerService.validateResellerAccess(req.user.id, req.user.rol, id);
         return this.resellerService.toggleClientStatus(id, clienteId, body.estado);
+    }
+
+    @Roles('ADMIN_SISTEMA', 'RESELLER')
+    @Patch(':id/clientes/:clienteId')
+    async updateClient(
+        @Param('id', ParseIntPipe) id: number,
+        @Param('clienteId', ParseIntPipe) clienteId: number,
+        @Body() body: any,
+        @Request() req: any,
+    ) {
+        await this.resellerService.validateResellerAccess(req.user.id, req.user.rol, id);
+        return this.resellerService.updateClient(id, clienteId, body);
     }
 
     @Roles('ADMIN_SISTEMA', 'RESELLER')

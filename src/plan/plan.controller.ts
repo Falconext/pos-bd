@@ -11,6 +11,14 @@ import { User } from '../common/decorators/user.decorator';
 export class PlanController {
     constructor(private readonly planService: PlanService) { }
 
+    @Get('public')
+    findPublic(
+        @Query('producto') producto?: string,
+        @Query('plataforma') plataforma?: string,
+    ) {
+        return this.planService.findPublicPlans(producto, plataforma);
+    }
+
     @Get()
     findAll(
         @Query('producto') producto?: string,

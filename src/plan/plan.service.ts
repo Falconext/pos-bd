@@ -124,6 +124,45 @@ export class PlanService {
         });
     }
 
+    async findPublicPlans(producto?: string, plataforma?: string) {
+        const productoFiltro = producto ? this.normalizeProducto(producto) : 'facturacion';
+        const plataformaFiltro = plataforma ? this.normalizePlataforma(plataforma) : 'falconext';
+
+        const plans = await this.prisma.plan.findMany({
+            where: {
+                producto: productoFiltro,
+                plataforma: plataformaFiltro,
+                esPrueba: false,
+            },
+            orderBy: { costo: 'asc' },
+            select: {
+                id: true,
+                nombre: true,
+                descripcion: true,
+                costo: true,
+                duracionDias: true,
+                maxComprobantes: true,
+                limiteUsuarios: true,
+                maxSedes: true,
+                tieneTienda: true,
+                tieneBanners: true,
+                tieneGaleria: true,
+                tieneCulqi: true,
+                tieneDeliveryGPS: true,
+                tieneTicketera: true,
+                tieneGestionLotes: true,
+            },
+        });
+
+        return plans.map((plan) => ({
+            ...plan,
+            costo: Number(plan.costo),
+            maxComprobantes: plan.maxComprobantes ?? null,
+            limiteUsuarios: plan.limiteUsuarios ?? null,
+            maxSedes: plan.maxSedes ?? null,
+        }));
+    }
+
     async findOne(id: number) {
         const plan = await this.prisma.plan.findUnique({
             where: { id },

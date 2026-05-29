@@ -293,6 +293,11 @@ export class ResellerService {
                 empresas: {
                     include: {
                         plan: true,
+                        usuarios: {
+                            where: { rol: 'ADMIN_EMPRESA' },
+                            take: 1,
+                            select: { id: true, email: true, nombre: true },
+                        },
                     },
                 },
                 recargas: {
@@ -916,6 +921,205 @@ export class ResellerService {
         };
     }
 
+    async getEstadoCuenta(
+        resellerId: number,
+        filtros?: {
+            desde?: string;
+            hasta?: string;
+            tipo?: string;
+            estado?: string;
+            page?: number;
+            limit?: number;
+        },
+    ) {
+        const reseller = await this.prisma.reseller.findUnique({
+            where: { id: resellerId },
+            select: {
+                id: true,
+                nombre: true,
+                codigo: true,
+                saldo: true,
+            },
+        });
+
+        if (!reseller) throw new NotFoundException('Reseller no encontrado');
+
+        const now = new Date();
+        const desdeDate = filtros?.desde ? new Date(`${filtros.desde}T00:00:00.000Z`) : new Date(now.getFullYear(), now.getMonth(), 1);
+        const hastaDate = filtros?.hasta ? new Date(`${filtros.hasta}T23:59:59.999Z`) : now;
+        if (Number.isNaN(desdeDate.getTime()) || Number.isNaN(hastaDate.getTime())) {
+            throw new BadRequestException('Rango de fechas inválido.');
+        }
+
+        const page = Number.isFinite(Number(filtros?.page)) && Number(filtros?.page) > 0 ? Number(filtros?.page) : 1;
+        const limitRaw = Number.isFinite(Number(filtros?.limit)) && Number(filtros?.limit) > 0 ? Number(filtros?.limit) : 50;
+        const limit = Math.min(limitRaw, 200);
+        const skip = (page - 1) * limit;
+
+        const allowedTypes = new Set(['RECARGA', 'ACTIVACION', 'MENSUALIDAD', 'DEVOLUCION']);
+        const allowedStatus = new Set(['APLICADO', 'PENDIENTE', 'RECHAZADO']);
+        const tipo = String(filtros?.tipo || '').toUpperCase();
+        const estado = String(filtros?.estado || '').toUpperCase();
+
+        const whereMov: Prisma.ResellerMovimientoWhereInput = {
+            resellerId,
+            fecha: {
+                gte: desdeDate,
+                lte: hastaDate,
+            },
+        };
+
+        if (tipo && allowedTypes.has(tipo)) whereMov.tipo = tipo;
+        if (estado && allowedStatus.has(estado)) whereMov.estado = estado;
+
+        const [movimientos, totalMovimientos, recargas, resumenRaw] = await Promise.all([
+            this.prisma.resellerMovimiento.findMany({
+                where: whereMov,
+                include: {
+                    empresa: {
+                        select: {
+                            id: true,
+                            ruc: true,
+                            razonSocial: true,
+                            estado: true,
+                            plan: {
+                                select: {
+                                    id: true,
+                                    nombre: true,
+                                },
+                            },
+                        },
+                    },
+                },
+                orderBy: { fecha: 'desc' },
+                skip,
+                take: limit,
+            }),
+            this.prisma.resellerMovimiento.count({ where: whereMov }),
+            this.prisma.resellerRecarga.findMany({
+                where: {
+                    resellerId,
+                    fecha: {
+                        gte: desdeDate,
+                        lte: hastaDate,
+                    },
+                },
+                orderBy: { fecha: 'desc' },
+                take: 200,
+            }),
+            this.prisma.resellerMovimiento.groupBy({
+                by: ['tipo', 'estado'],
+                where: {
+                    resellerId,
+                    fecha: {
+                        gte: desdeDate,
+                        lte: hastaDate,
+                    },
+                },
+                _sum: {
+                    monto: true,
+                },
+                _count: {
+                    _all: true,
+                },
+            }),
+        ]);
+
+        const resumen = {
+            recargas: {
+                total: 0,
+                cantidad: 0,
+            },
+            activaciones: {
+                cobrado: 0,
+                cantidad: 0,
+            },
+            mensualidades: {
+                cobrado: 0,
+                aplicadas: 0,
+                pendientes: 0,
+                rechazadas: 0,
+            },
+            devoluciones: {
+                total: 0,
+                cantidad: 0,
+            },
+        };
+
+        for (const row of resumenRaw) {
+            const sum = Number(row._sum.monto || 0);
+            const count = Number(row._count._all || 0);
+            if (row.tipo === 'RECARGA') {
+                resumen.recargas.total += sum;
+                resumen.recargas.cantidad += count;
+            }
+            if (row.tipo === 'ACTIVACION') {
+                resumen.activaciones.cobrado += Math.abs(sum);
+                resumen.activaciones.cantidad += count;
+            }
+            if (row.tipo === 'MENSUALIDAD') {
+                if (row.estado === 'APLICADO') {
+                    resumen.mensualidades.cobrado += Math.abs(sum);
+                    resumen.mensualidades.aplicadas += count;
+                } else if (row.estado === 'PENDIENTE') {
+                    resumen.mensualidades.pendientes += count;
+                } else if (row.estado === 'RECHAZADO') {
+                    resumen.mensualidades.rechazadas += count;
+                }
+            }
+            if (row.tipo === 'DEVOLUCION') {
+                resumen.devoluciones.total += sum;
+                resumen.devoluciones.cantidad += count;
+            }
+        }
+
+        const totalCobrado = resumen.activaciones.cobrado + resumen.mensualidades.cobrado;
+        const flujoNeto = resumen.recargas.total + resumen.devoluciones.total - totalCobrado;
+
+        return {
+            reseller: {
+                id: reseller.id,
+                nombre: reseller.nombre,
+                codigo: reseller.codigo,
+                saldoActual: Number(reseller.saldo),
+            },
+            periodo: {
+                desde: desdeDate,
+                hasta: hastaDate,
+            },
+            resumen: {
+                ...resumen,
+                totalCobrado,
+                flujoNeto,
+            },
+            paginacion: {
+                page,
+                limit,
+                total: totalMovimientos,
+                totalPages: Math.max(1, Math.ceil(totalMovimientos / limit)),
+            },
+            movimientos: movimientos.map((mov) => ({
+                id: mov.id,
+                tipo: mov.tipo,
+                estado: mov.estado,
+                monto: Number(mov.monto),
+                fecha: mov.fecha,
+                intento: mov.intento,
+                motivo: mov.motivo,
+                descripcion: mov.descripcion,
+                empresa: mov.empresa,
+            })),
+            recargas: recargas.map((recarga) => ({
+                id: recarga.id,
+                fecha: recarga.fecha,
+                monto: Number(recarga.monto),
+                medioPago: recarga.medioPago,
+                referencia: recarga.referencia,
+                observacion: recarga.observacion,
+            })),
+        };
+    }
+
     async getClientDetails(resellerId: number, empresaId: number) {
         // Verify ownership
         const empresa = await this.prisma.empresa.findFirst({
@@ -1049,6 +1253,51 @@ export class ResellerService {
                         select: { id: true, nombre: true, email: true, celular: true },
                     },
                 },
+            });
+        });
+    }
+
+    async updateClient(
+        resellerId: number,
+        empresaId: number,
+        data: {
+            planId?: number;
+            telefono?: string;
+            razonSocial?: string;
+            adminEmail?: string;
+            adminPassword?: string;
+        },
+    ) {
+        const empresa = await this.prisma.empresa.findFirst({
+            where: { id: empresaId, resellerId },
+            include: { plan: true, usuarios: { where: { rol: 'ADMIN_EMPRESA' }, take: 1 } },
+        });
+        if (!empresa) throw new NotFoundException('Cliente no encontrado o no pertenece a este distribuidor');
+
+        return this.prisma.$transaction(async (tx) => {
+            const updateEmpresa: Prisma.EmpresaUpdateInput = {};
+            if (data.planId && data.planId !== empresa.planId) updateEmpresa.plan = { connect: { id: data.planId } };
+            if (data.razonSocial !== undefined) updateEmpresa.razonSocial = data.razonSocial;
+            if (data.telefono !== undefined) updateEmpresa.whatsappTienda = data.telefono;
+
+            if (Object.keys(updateEmpresa).length) {
+                await tx.empresa.update({ where: { id: empresaId }, data: updateEmpresa });
+            }
+
+            const admin = empresa.usuarios?.[0];
+            if (admin) {
+                const updateAdmin: Prisma.UsuarioUpdateInput = {};
+                if (data.adminEmail !== undefined) updateAdmin.email = data.adminEmail;
+                if (data.telefono !== undefined) updateAdmin.celular = data.telefono;
+                if (data.adminPassword) updateAdmin.password = await bcrypt.hash(data.adminPassword, 10);
+                if (Object.keys(updateAdmin).length) {
+                    await tx.usuario.update({ where: { id: admin.id }, data: updateAdmin });
+                }
+            }
+
+            return tx.empresa.findUnique({
+                where: { id: empresaId },
+                include: { plan: true, usuarios: { where: { rol: 'ADMIN_EMPRESA' }, take: 1, select: { id: true, nombre: true, email: true } } },
             });
         });
     }
