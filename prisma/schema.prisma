@@ -94,6 +94,11 @@ model Empresa {
   slugTienda              String?                       @unique
   tiktokUrl               String?
   whatsappTienda          String?
+  whatsappProvider        WhatsAppProvider             @default(PLATFORM)
+  whatsappApiToken        String?
+  whatsappPhoneNumberId   String?
+  whatsappBusinessId      String?
+  whatsappActivo          Boolean                      @default(true)
   yapeNumero              String?
   yapeQrUrl               String?
   aceptaEnvio             Boolean                       @default(true)
@@ -108,6 +113,7 @@ model Empresa {
   direccionRecojo         String?
   tiempoPreparacionMin    Int?                          @default(30)
   disenoOverride          String?
+  directorTecnico         String?
   banners                 Banner[]
   categorias              Categoria[]
   clientes                Cliente[]
@@ -162,6 +168,7 @@ model Empresa {
   @@index([brand])
   @@index([producto])
   @@index([brand, producto])
+  @@index([whatsappProvider])
 }
 
 model Usuario {
@@ -256,7 +263,7 @@ model Producto {
   ratingAvg                Decimal?                      @default(0)
   ratingCount              Int?                          @default(0)
   codigoBarras             String?
-  codigoDigemid            String?                       @unique
+  codigoDigemid            String?
   concentracion            String?
   controlado               Boolean                       @default(false)
   factorConversion         Int                           @default(1)
@@ -300,6 +307,7 @@ model Producto {
   reservas                 Reserva[]
 
   @@unique([empresaId, codigo])
+  @@unique([empresaId, codigoDigemid])
   @@index([empresaId, publicarEnTienda])
   @@index([marcaId])
   @@index([empresaId, codigoBarras])
@@ -567,10 +575,11 @@ model Comprobante {
   movimientosKardex     MovimientoKardex[]
   pagos                 Pago[]
   whatsappEnvios        WhatsAppEnvio[]
+  envioDespacho         EnvioDespacho?
 }
 
 model DetalleComprobante {
-  id                Int         @id @default(autoincrement())
+  id                Int           @id @default(autoincrement())
   comprobanteId     Int
   productoId        Int?
   unidad            String
@@ -584,8 +593,16 @@ model DetalleComprobante {
   tipAfeIgv         Int
   totalImpuestos    Float
   mtoPrecioUnitario Float
-  comprobante       Comprobante @relation(fields: [comprobanteId], references: [id])
-  producto          Producto?   @relation(fields: [productoId], references: [id])
+  // Farmacia: trazabilidad de lote dispensado
+  loteId            Int?
+  // Farmacia: datos de receta médica y medicamentos controlados
+  numeroReceta      String?
+  dniPaciente       String?
+  nombrePaciente    String?
+  medicoNombre      String?
+  comprobante       Comprobante   @relation(fields: [comprobanteId], references: [id])
+  producto          Producto?     @relation(fields: [productoId], references: [id])
+  lote              ProductoLote? @relation(fields: [loteId], references: [id])
 }
 
 model Leyenda {
@@ -705,7 +722,12 @@ model PedidoTienda {
   igv               Decimal                 @default(0)
   total             Decimal
   estado            EstadoPedidoTienda      @default(PENDIENTE)
+  estadoEntrega     String                  @default("PENDIENTE")
+  agenciaEnvio      String?
+  estadoEnvio       String                  @default("SIN_ASIGNAR")
   medioPago         MedioPagoTienda         @default(YAPE)
+  montoPagado       Decimal                 @default(0)
+  saldoPendiente    Decimal                 @default(0)
   observaciones     String?
   referenciaTransf  String?
   creadoEn          DateTime                @default(now())
@@ -716,6 +738,9 @@ model PedidoTienda {
   codigoSeguimiento String                  @unique
   costoEnvio        Decimal                 @default(0)
   notasInternas     String?
+  vendedorId        Int?
+  vendedorNombre    String?
+  numeroTracking    String?
   tipoEntrega       TipoEntrega             @default(RECOJO)
   historialEstados  HistorialEstadoPedido[]
   items             ItemPedidoTienda[]
@@ -725,6 +750,8 @@ model PedidoTienda {
   sede   Sede? @relation(fields: [sedeId], references: [id])
 
   @@index([empresaId, estado])
+  @@index([empresaId, estadoEntrega])
+  @@index([empresaId, estadoEnvio])
   @@index([creadoEn])
   @@index([codigoSeguimiento])
 }
@@ -990,8 +1017,9 @@ model ProductoLote {
   activo            Boolean                @default(true)
   creadoEn          DateTime               @default(now())
   actualizadoEn     DateTime               @updatedAt
-  movimientosKardex MovimientoKardexLote[]
-  producto          Producto               @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  movimientosKardex   MovimientoKardexLote[]
+  detallesComprobante DetalleComprobante[]
+  producto            Producto               @relation(fields: [productoId], references: [id], onDelete: Cascade)
 
   @@unique([productoId, lote])
   @@index([productoId, fechaVencimiento])
@@ -1336,6 +1364,12 @@ enum EstadoWhatsApp {
   FALLIDO
 }
 
+enum WhatsAppProvider {
+  PLATFORM
+  EMPRESA
+  DISABLED
+}
+
 enum EstadoCompra {
   REGISTRADO
   ANULADO
@@ -1344,6 +1378,44 @@ enum EstadoCompra {
 enum TipoGuiaRemision {
   REMITENTE // GRE-R: Guía de Remisión Remitente (código 09)
   TRANSPORTISTA // GRE-T: Guía de Remisión Transportista (código 31)
+}
+
+enum EstadoDespacho {
+  PREPARANDO
+  EN_CAMINO
+  EN_DESTINO
+  ENTREGADO
+  DEVUELTO
+}
+
+model EnvioDespacho {
+  id               Int            @id @default(autoincrement())
+  comprobanteId    Int            @unique
+  comprobante      Comprobante    @relation(fields: [comprobanteId], references: [id], onDelete: Cascade)
+  transportista    String?
+  codigoGuia       String?
+  estado           EstadoDespacho @default(PREPARANDO)
+  observaciones    String?
+  direccionDestino String?
+  fechaEstimada    DateTime?
+  historial        Json?
+  // Coordinación de envío nacional
+  tipoEnvio        String?        // AGENCIA | DOMICILIO
+  agenciaDestino   String?        // Nombre de agencia destino (ej: "Shalom Cusco Centro")
+  celularDest      String?        // Celular del destinatario
+  nroPaquetes      Int?           @default(1)
+  turnoEnvio       String?        // MANANA | TARDE | NOCHE
+  tipoMercaderia   String?        // Clasificación para el courier (Shalom)
+  claveEnvio       String?
+  nroOrden         String?
+  claveOrden       String?
+  establecimiento  String?        // Local/sucursal desde donde despacha
+  repartidor       String?        // Nombre del repartidor (reparto propio)
+  empaquetador     String?        // Nombre del empaquetador
+  creadoEn         DateTime       @default(now())
+  actualizadoEn    DateTime       @updatedAt
+
+  @@index([comprobanteId])
 }
 
 model GuiaRemision {
@@ -1668,4 +1740,25 @@ model IngresoSistema {
 
   @@index([fecha])
   @@index([tipo])
+}
+
+model DigemidProducto {
+  id                Int      @id @default(autoincrement())
+  nombreComercial   String
+  principioActivo   String?
+  formaFarmaceutica String?
+  concentracion     String?
+  presentacion      String?
+  laboratorio       String?
+  registroSanitario String?
+  condicionVenta    String?
+  estado            String?
+  codigoBarras      String?
+  creadoEn          DateTime @default(now())
+
+  @@index([nombreComercial])
+  @@index([principioActivo])
+  @@index([codigoBarras])
+  @@index([estado])
+  @@map("digemid_productos")
 }

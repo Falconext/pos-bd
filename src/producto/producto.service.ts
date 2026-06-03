@@ -11,6 +11,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import { KardexService } from '../kardex/kardex.service';
+import { DigemidService } from '../digemid/digemid.service';
 import * as XLSX from 'xlsx';
 import axios from 'axios';
 
@@ -21,6 +22,7 @@ export class ProductoService {
     @Inject(forwardRef(() => KardexService))
     private readonly kardexService: KardexService,
     private readonly s3: S3Service,
+    private readonly digemidService: DigemidService,
   ) {}
 
   private async generarCodigoProducto(empresaId: number, prefijo = 'PR') {
@@ -89,7 +91,7 @@ export class ProductoService {
     data: {
       codigo?: string;
       descripcion: string;
-      unidadMedidaId: number;
+      unidadMedidaId?: number;
       tipoAfectacionIGV: string;
       precioUnitario: number;
       igvPorcentaje?: number;
@@ -188,6 +190,14 @@ export class ProductoService {
           `El código de barras "${codigoBarras}" ya está asignado a otro producto: ${existeBarras.descripcion}`,
         );
       }
+    }
+
+    if (!unidadMedidaId) {
+      const niuUnidad = await this.prisma.unidadMedida.findFirst({
+        where: { codigo: 'NIU' },
+      });
+      if (!niuUnidad) throw new ForbiddenException('No se encontró unidad de medida por defecto');
+      unidadMedidaId = niuUnidad.id;
     }
 
     const unidad = await this.prisma.unidadMedida.findUnique({
@@ -516,7 +526,8 @@ export class ProductoService {
             ? p.stocks.reduce((sum, s) => sum + (s.stockMinimo || 0), 0)
             : ((p as any).stockMinimo ?? 0);
         const reservado = reservadoPorProducto.get(p.id) ?? 0;
-        const stockDisponibleVenta = Math.max(0, stockTotal - reservado);
+        const cupoVenta = Math.floor((stockTotal * (p.porcentajeVenta ?? 70)) / 100);
+        const stockDisponibleVenta = Math.max(0, Math.min(stockTotal - reservado, cupoVenta));
 
         return {
           ...p,
@@ -539,6 +550,173 @@ export class ProductoService {
     return { productos, total, page, limit };
   }
 
+  /**
+   * Catálogo optimizado para POS de farmacia / botica / droguería.
+   * Incluye lote FEFO, diasAlVencimiento y stockDisponibleVenta por producto.
+   */
+  async catalogoFarmacia(params: {
+    empresaId: number;
+    sedeId: number;
+    page?: number;
+    limit?: number;
+    search?: string;
+    categoriaId?: number;
+  }) {
+    const { empresaId, sedeId, categoriaId } = params;
+    const page = Number(params.page) || 1;
+    const limit = Number(params.limit) || 20;
+    const skip = (page - 1) * limit;
+    const searchTerm = params.search?.trim();
+
+    const where: any = {
+      empresaId,
+      estado: EstadoType.ACTIVO,
+      ...(categoriaId ? { categoriaId: Number(categoriaId) } : {}),
+      ...(searchTerm
+        ? {
+            OR: [
+              { descripcion: { contains: searchTerm, mode: 'insensitive' } },
+              { codigo: { contains: searchTerm, mode: 'insensitive' } },
+              { principioActivo: { contains: searchTerm, mode: 'insensitive' } },
+              { codigoBarras: { contains: searchTerm, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+
+    const [productosRaw, total] = await Promise.all([
+      this.prisma.producto.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { descripcion: 'asc' },
+        select: {
+          id: true,
+          codigo: true,
+          descripcion: true,
+          imagenUrl: true,
+          precioUnitario: true,
+          igvPorcentaje: true,
+          tipoAfectacionIGV: true,
+          unidadMedidaId: true,
+          refrigerado: true,
+          requiereReceta: true,
+          controlado: true,
+          categoriaId: true,
+          // Fraccionamiento
+          factorConversion: true,
+          unidadCompra: true,
+          unidadVenta: true,
+          stock: true,
+          porcentajeVenta: true,
+          unidadMedida: { select: { codigo: true } },
+          stocks: {
+            where: { sedeId },
+            select: { stock: true },
+          },
+          lotes: {
+            where: {
+              activo: true,
+              stockActual: { gt: 0 },
+              fechaVencimiento: { gt: new Date() },
+            },
+            select: {
+              id: true,
+              lote: true,
+              fechaVencimiento: true,
+              stockActual: true,
+              costoUnitario: true,
+            },
+            orderBy: { fechaVencimiento: 'asc' }, // FEFO — primer elemento es el más próximo a vencer
+          },
+        },
+      }),
+      this.prisma.producto.count({ where }),
+    ]);
+
+    // Reservas activas para calcular stockDisponibleVenta
+    const productoIds = productosRaw.map((p) => p.id);
+    const reservasAgrupadas =
+      productoIds.length > 0
+        ? await this.prisma.reserva.groupBy({
+            by: ['productoId'],
+            where: {
+              empresaId,
+              sedeId,
+              productoId: { in: productoIds },
+              estado: { in: [EstadoReserva.PENDIENTE, EstadoReserva.CONFIRMADA] },
+            },
+            _sum: { cantidad: true },
+          })
+        : [];
+    const reservadoPorProducto = new Map<number, number>(
+      reservasAgrupadas.map((r) => [r.productoId, r._sum.cantidad ?? 0]),
+    );
+
+    const hoy = new Date();
+    const productos = productosRaw.map((p) => {
+      const loteFefo = p.lotes[0] ?? null; // primer lote FEFO (más próximo a vencer)
+      const stockTotalLotes = p.lotes.reduce((sum, l) => sum + Number(l.stockActual ?? 0), 0);
+      const stockBase = stockTotalLotes > 0
+        ? stockTotalLotes
+        : (p.stocks[0]?.stock ?? (p as any).stock ?? 0);
+      const reservado = reservadoPorProducto.get(p.id) ?? 0;
+      const cupoVenta = Math.floor((stockBase * (p.porcentajeVenta ?? 70)) / 100);
+      const stockDisponibleVenta = Math.max(0, Math.min(stockBase - reservado, cupoVenta));
+
+      let diasAlVencimiento: number | null = null;
+      if (loteFefo?.fechaVencimiento) {
+        diasAlVencimiento = Math.floor(
+          (new Date(loteFefo.fechaVencimiento).getTime() - hoy.getTime()) /
+            (1000 * 60 * 60 * 24),
+        );
+      }
+
+      return {
+        id: p.id,
+        codigo: p.codigo,
+        descripcion: p.descripcion,
+        imagenUrl: p.imagenUrl,
+        precioUnitario: Number(p.precioUnitario),
+        igvPorcentaje: Number(p.igvPorcentaje),
+        tipoAfectacionIGV: p.tipoAfectacionIGV,
+        unidadCodigo: (p as any).unidadMedida?.codigo ?? '',
+        refrigerado: p.refrigerado,
+        requiereReceta: p.requiereReceta,
+        controlado: p.controlado,
+        categoriaId: p.categoriaId,
+        // Fraccionamiento
+        factorConversion: Number(p.factorConversion ?? 1),
+        unidadCompra: (p as any).unidadCompra ?? null,
+        unidadVenta: (p as any).unidadVenta ?? null,
+        stock: stockDisponibleVenta,
+        stockDisponibleVenta,
+        stockReservado: reservado,
+        loteFefoCostoUnitario: loteFefo?.costoUnitario ? Number(loteFefo.costoUnitario) : null,
+        lotesDisponibles: p.lotes.map((l) => ({
+          loteId: l.id,
+          loteNumero: l.lote,
+          stockActual: l.stockActual,
+          costoUnitario: l.costoUnitario ? Number(l.costoUnitario) : null,
+          fechaVencimiento: l.fechaVencimiento,
+        })),
+        loteFefo: loteFefo
+          ? {
+              loteId: loteFefo.id,
+              loteNumero: loteFefo.lote,
+              fechaVencimiento: loteFefo.fechaVencimiento,
+              stockActual: loteFefo.stockActual,
+              costoUnitario: loteFefo.costoUnitario ? Number(loteFefo.costoUnitario) : null,
+              stockDisponibleVenta,
+              diasAlVencimiento,
+            }
+          : null,
+      };
+    });
+
+    return { productos, total, page, limit };
+  }
+
   async obtenerPorId(id: number, empresaId: number) {
     const producto = await this.prisma.producto.findFirst({
       where: { id, empresaId },
@@ -552,6 +730,18 @@ export class ProductoService {
   }
 
   async getByBarcode(empresaId: number, codigoBarras: string) {
+    // Determinar rubro para priorizar la fuente de búsqueda global correcta
+    const empresa = await this.prisma.empresa.findFirst({
+      where: { id: empresaId },
+      select: { rubro: { select: { nombre: true } } },
+    });
+    const rubroNombre = (empresa?.rubro?.nombre ?? '').toLowerCase();
+    const esFarmaceutico =
+      rubroNombre.includes('farmacia') ||
+      rubroNombre.includes('botica') ||
+      rubroNombre.includes('drogueria') ||
+      rubroNombre.includes('droguería');
+
     // 1. Intentar buscar en el catálogo local de la empresa
     const producto = await this.prisma.producto.findFirst({
       where: {
@@ -621,17 +811,45 @@ export class ProductoService {
       };
     }
 
-    // 2. Si no existe localmente, intentar buscar en Open Food Facts (Catálogo Global)
-    console.log(
-      `[BY_BARCODE] Producto ${codigoBarras} no encontrado localmente. Buscando en Open Food Facts...`,
-    );
-    const globalProduct = await this.buscarEnOpenFoodFacts(codigoBarras);
+    // 2+3+4. Búsqueda en catálogos globales — orden según rubro
+    if (esFarmaceutico) {
+      // Farmacias/boticas/droguerías:
+      // 2. DIGEMID local (registro sanitario peruano — más confiable para Perú)
+      const digemidProduct = await this.digemidService.buscarPorBarcode(codigoBarras);
+      if (digemidProduct) {
+        return {
+          id: 0,
+          codigo: `DIGEMID-${codigoBarras}`,
+          descripcion: digemidProduct.nombreComercial,
+          codigoBarras,
+          imagenUrl: null,
+          precioUnitario: 0,
+          costoUnitario: 0,
+          stock: 0,
+          tipoAfectacionIGV: '20', // Exonerado de IGV
+          principioActivo: digemidProduct.principioActivo,
+          laboratorio: digemidProduct.laboratorio,
+          presentacion: digemidProduct.presentacion,
+          concentracion: digemidProduct.concentracion,
+          formaFarmaceutica: digemidProduct.formaFarmaceutica,
+          registroSanitario: digemidProduct.registroSanitario,
+          condicionVenta: digemidProduct.condicionVenta,
+          categoriaStr: 'Medicamentos',
+          fuenteGlobal: 'DIGEMID',
+          isGlobal: true,
+        };
+      }
 
-    if (globalProduct) {
-      return {
-        ...globalProduct,
-        isGlobal: true, // Indica que es una sugerencia externa
-      };
+      // 3. OpenFDA (medicamentos con NDC code — principalmente importados de USA)
+      const fdaProduct = await this.buscarEnOpenFDA(codigoBarras);
+      if (fdaProduct) return { ...fdaProduct, isGlobal: true };
+    } else {
+      // Resto de rubros: Open Food Facts primero, FDA como fallback
+      const offProduct = await this.buscarEnOpenFoodFacts(codigoBarras);
+      if (offProduct) return { ...offProduct, isGlobal: true };
+
+      const fdaProduct = await this.buscarEnOpenFDA(codigoBarras);
+      if (fdaProduct) return { ...fdaProduct, isGlobal: true };
     }
 
     return null;
@@ -642,30 +860,74 @@ export class ProductoService {
       const url = `https://world.openfoodfacts.org/api/v2/product/${barcode}.json`;
       const { data } = await axios.get(url, { timeout: 5000 });
 
-      if (data && data.status === 1 && data.product) {
+      if (data?.status === 1 && data.product) {
         const p = data.product;
-        // Mapear campos de OFF a estructura de Falconext
         return {
-          id: 0, // ID provisional
+          id: 0,
           codigo: `OFF-${barcode}`,
-          descripcion:
-            p.product_name || p.generic_name || 'Producto Desconocido',
+          descripcion: p.product_name || p.generic_name || 'Producto Desconocido',
           codigoBarras: barcode,
           imagenUrl: p.image_url || p.image_front_url || null,
           precioUnitario: 0,
           costoUnitario: 0,
           stock: 0,
-          tipoAfectacionIGV: '10', // Gravado por defecto
-          // Sugerencias de marca/categoría
+          tipoAfectacionIGV: '10',
           marcaStr: p.brands || null,
           categoriaStr: p.categories_tags?.[0]?.replace('en:', '') || null,
         };
       }
     } catch (error: any) {
-      console.error(
-        `[OpenFoodFacts] Error buscando barcode ${barcode}:`,
-        error.message,
-      );
+      if (error?.response?.status !== 404) {
+        console.error(`[OpenFoodFacts] Error buscando barcode ${barcode}:`, error.message);
+      }
+    }
+    return null;
+  }
+
+  private async buscarEnOpenFDA(barcode: string) {
+    try {
+      // NDC (National Drug Code) — formato estándar en etiquetas de medicamentos
+      // Intentar con el barcode tal cual y también sin el primer dígito (check digit)
+      const queries = [barcode, barcode.length === 12 ? barcode.slice(1) : null].filter(Boolean);
+
+      for (const query of queries) {
+        const url = `https://api.fda.gov/drug/ndc.json?search=product_ndc:"${query}"&limit=1`;
+        const { data } = await axios.get(url, { timeout: 6000 });
+
+        if (data?.results?.length > 0) {
+          const drug = data.results[0];
+          const activeIngredient = Array.isArray(drug.active_ingredients)
+            ? drug.active_ingredients[0]
+            : null;
+
+          return {
+            id: 0,
+            codigo: `FDA-${barcode}`,
+            descripcion: drug.brand_name || drug.generic_name || 'Medicamento',
+            codigoBarras: barcode,
+            imagenUrl: null,
+            precioUnitario: 0,
+            costoUnitario: 0,
+            stock: 0,
+            // Medicamentos en Perú: exonerados de IGV (Catálogo 07 SUNAT código 20)
+            tipoAfectacionIGV: '20',
+            // Campos farmacéuticos
+            principioActivo: drug.generic_name || null,
+            laboratorio: drug.labeler_name || null,
+            presentacion: drug.dosage_form || null,
+            concentracion: activeIngredient?.strength || null,
+            unidadVenta: drug.packaging?.[0]?.description?.split(' ')[0] || null,
+            marcaStr: drug.brand_name || drug.labeler_name || null,
+            categoriaStr: 'Medicamentos',
+            // Fuente para mostrar badge en UI
+            fuenteGlobal: 'FDA',
+          };
+        }
+      }
+    } catch (error: any) {
+      if (error?.response?.status !== 404) {
+        console.error(`[OpenFDA] Error buscando barcode ${barcode}:`, error.message);
+      }
     }
     return null;
   }
@@ -928,6 +1190,10 @@ export class ProductoService {
           : undefined,
         codigoBarras: data.codigoBarras,
         codigoDigemid: data.codigoDigemid,
+        // Campos farmacia booleanos
+        requiereReceta: (data as any).requiereReceta !== undefined ? Boolean((data as any).requiereReceta) : undefined,
+        controlado: (data as any).controlado !== undefined ? Boolean((data as any).controlado) : undefined,
+        refrigerado: (data as any).refrigerado !== undefined ? Boolean((data as any).refrigerado) : undefined,
         // Campos Ofertas
         precioOferta: data.precioOferta
           ? new Decimal(data.precioOferta)

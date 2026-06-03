@@ -30,6 +30,12 @@ interface EnviarGuiaParams {
   destinatario: string;
 }
 
+interface WhatsAppCredentials {
+  token: string;
+  phoneId: string;
+  source: 'PLATFORM' | 'EMPRESA';
+}
+
 @Injectable()
 export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
@@ -62,6 +68,43 @@ export class WhatsAppService {
       '';
 
     return { token, phoneId };
+  }
+
+  private async getCredentialsForEmpresa(empresaId: number): Promise<WhatsAppCredentials> {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: {
+        whatsappProvider: true,
+        whatsappApiToken: true,
+        whatsappPhoneNumberId: true,
+        whatsappActivo: true,
+      },
+    });
+
+    if (!empresa?.whatsappActivo || empresa?.whatsappProvider === 'DISABLED') {
+      throw new BadRequestException('WhatsApp está deshabilitado para esta empresa.');
+    }
+
+    if (empresa.whatsappProvider === 'EMPRESA') {
+      if (!empresa.whatsappApiToken || !empresa.whatsappPhoneNumberId) {
+        throw new BadRequestException(
+          'WhatsApp propio no configurado. Agrega token y phone number ID de Meta para esta empresa.',
+        );
+      }
+
+      return {
+        token: empresa.whatsappApiToken,
+        phoneId: empresa.whatsappPhoneNumberId,
+        source: 'EMPRESA',
+      };
+    }
+
+    const platform = this.getCredentials();
+    if (!platform.token || !platform.phoneId) {
+      throw new BadRequestException('WhatsApp de plataforma no está configurado.');
+    }
+
+    return { ...platform, source: 'PLATFORM' };
   }
 
   /**
@@ -114,11 +157,6 @@ export class WhatsAppService {
   async enviarComprobante(
     params: EnviarComprobanteParams,
   ): Promise<{ success: boolean; mensajeId?: string; error?: string }> {
-    const { token, phoneId } = this.getCredentials();
-    if (!token || !phoneId) {
-      throw new BadRequestException('WhatsApp no está configurado.');
-    }
-
     const {
       comprobanteId,
       empresaId,
@@ -134,6 +172,7 @@ export class WhatsAppService {
     } = params;
 
     try {
+      const { token, phoneId, source } = await this.getCredentialsForEmpresa(empresaId);
       const to = this.formatearNumero(numeroDestino);
       
       const tipoDocumento = tipoDoc === '01' ? 'Factura' : tipoDoc === '03' ? 'Boleta' : 'Comprobante';
@@ -180,6 +219,7 @@ export class WhatsAppService {
       });
 
       this.logger.log(`✅ WhatsApp enviado (Meta): ${mensajeId} a ${to}`);
+      this.logger.log(`📲 WhatsApp source: ${source} empresaId=${empresaId}`);
 
       return { success: true, mensajeId };
     } catch (error) {
@@ -208,11 +248,6 @@ export class WhatsAppService {
   async enviarGuia(
     params: EnviarGuiaParams,
   ): Promise<{ success: boolean; mensajeId?: string; error?: string }> {
-    const { token, phoneId } = this.getCredentials();
-    if (!token || !phoneId) {
-      throw new BadRequestException('WhatsApp no está configurado.');
-    }
-
     const {
       guiaRemisionId,
       empresaId,
@@ -222,6 +257,7 @@ export class WhatsAppService {
     } = params;
 
     try {
+      const { token, phoneId } = await this.getCredentialsForEmpresa(empresaId);
       const to = this.formatearNumero(numeroDestino);
 
       const payload = {

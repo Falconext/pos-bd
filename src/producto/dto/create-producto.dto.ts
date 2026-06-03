@@ -16,9 +16,10 @@ export class CreateProductoDto {
   @IsNotEmpty()
   descripcion: string;
 
+  @IsOptional()
   @IsInt()
   @Type(() => Number)
-  unidadMedidaId: number;
+  unidadMedidaId?: number;
 
   @IsString()
   tipoAfectacionIGV: string; // '10', '20', '30', '40'

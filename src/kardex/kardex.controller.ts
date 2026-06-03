@@ -379,6 +379,25 @@ export class KardexController {
   /**
    * Obtiene dashboard completo de inventario
    */
+  @Get('libro-control-psicotropicos')
+  async obtenerLibroControlPsicotropicos(
+    @Request() req,
+    @Query('fechaInicio') fechaInicio: string,
+    @Query('fechaFin') fechaFin: string,
+    @Query('productoId') productoId?: string,
+  ) {
+    const empresaId = req.user.empresaId;
+    if (!empresaId) throw new BadRequestException('Usuario sin empresa asignada');
+    const inicio = fechaInicio ? new Date(`${fechaInicio}T00:00:00-05:00`) : new Date(new Date().getFullYear(), 0, 1);
+    const fin = fechaFin ? new Date(`${fechaFin}T23:59:59-05:00`) : new Date();
+    return this.kardexService.obtenerLibroControlPsicotropicos({
+      empresaId,
+      fechaInicio: inicio,
+      fechaFin: fin,
+      productoId: productoId ? Number(productoId) : undefined,
+    });
+  }
+
   @Get('dashboard')
   async obtenerDashboardInventario(@Request() req) {
     const empresaId = req.user.empresaId;
@@ -386,11 +405,12 @@ export class KardexController {
       throw new BadRequestException('Usuario sin empresa asignada');
     }
 
-    const [inventarioValorizado, movimientosRecientes, stockCritico, productosObsoletos] = await Promise.all([
+    const [inventarioValorizado, movimientosRecientes, stockCritico, productosObsoletos, farmacia] = await Promise.all([
       this.kardexService.obtenerInventarioValorizado(empresaId, undefined, req.user.sedeId),
       this.kardexService.obtenerKardexGeneral(empresaId, { page: 1, limit: 10 }, req.user.sedeId),
       this.kardexService.obtenerInventarioValorizado(empresaId, { soloStockCritico: true }, req.user.sedeId),
       this.kardexService.obtenerProductosObsoletos(empresaId, 60, req.user.sedeId),
+      this.kardexService.obtenerDashboardFarmacia(empresaId),
     ]);
 
     return {
@@ -405,6 +425,7 @@ export class KardexController {
         stockCritico: stockCritico.productos.slice(0, 5),
         obsoletos: productosObsoletos.productos.slice(0, 5),
       },
+      farmacia,
       fechaActualizacion: new Date(),
     };
   }

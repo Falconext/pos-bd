@@ -62,7 +62,19 @@ export class CrearPedidoDto {
   @IsOptional()
   referenciaTransf?: string;
 
+  @IsString()
+  @IsOptional()
+  culqiToken?: string;
+
+  @IsEmail()
+  @IsOptional()
+  culqiEmail?: string;
+
   @IsEnum(TipoEntrega)
   @IsOptional()
   tipoEntrega?: TipoEntrega = TipoEntrega.RECOJO;
+
+  @IsString()
+  @IsOptional()
+  agenciaEnvio?: string;
 }

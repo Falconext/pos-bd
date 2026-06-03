@@ -69,7 +69,7 @@ export class AuthController {
   @HttpCode(200)
   @Post('forgot-password')
   async forgotPassword(@Body() dto: ForgotPasswordDto) {
-    await this.authService.forgotPassword(dto.email);
+    await this.authService.forgotPassword(dto.email, dto.brand);
     return { message: 'Si el correo existe, recibirás un enlace de recuperación en breve.' };
   }
 

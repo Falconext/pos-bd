@@ -419,6 +419,12 @@ export class AuthService {
             esAgenteRetencion: true,
             usaCodigoBarrasManual: true,
             usarPrecioLoteFefo: true,
+            directorTecnico: true,
+            whatsappProvider: true,
+            whatsappApiToken: true,
+            whatsappPhoneNumberId: true,
+            whatsappBusinessId: true,
+            whatsappActivo: true,
             ruc: true,
             fechaActivacion: true,
             fechaExpiracion: true,
@@ -476,13 +482,25 @@ export class AuthService {
       }
     }
 
+    if (usuario?.empresa) {
+      usuario.empresa.whatsappApiTokenConfigured = Boolean(usuario.empresa.whatsappApiToken);
+      delete usuario.empresa.whatsappApiToken;
+    }
+
     return usuario;
   }
 
-  async forgotPassword(email: string): Promise<void> {
-    const user = await this.prisma.usuario.findUnique({ where: { email } } as any);
+  async forgotPassword(email: string, brand?: string): Promise<void> {
+    const user = await (this.prisma.usuario as any).findUnique({
+      where: { email },
+      include: { empresa: { select: { brand: true } } },
+    });
     // Always return silently to avoid user enumeration
     if (!user) return;
+
+    // DB es la fuente de verdad — empresa.brand tiene prioridad sobre lo que
+    // envía el frontend, que depende del modo de arranque del dev server.
+    const resolvedBrand = user.empresa?.brand || brand;
 
     const token = crypto.randomBytes(32).toString('hex');
     const expires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
@@ -498,10 +516,29 @@ export class AuthService {
     const resendKey = this.config.get<string>('RESEND_API_KEY') || process.env.RESEND_API_KEY;
     if (!resendKey) return;
 
-    const frontendUrl = this.config.get<string>('FRONTEND_URL') || process.env.FRONTEND_URL || 'http://localhost:5173';
-    const resetUrl = `${frontendUrl}/reset-password?token=${token}`;
-    const appName = this.config.get<string>('APP_NAME') || process.env.APP_NAME || 'Falconext';
-    const fromEmail = this.config.get<string>('RESEND_FROM_EMAIL') || process.env.RESEND_FROM_EMAIL || 'noreply@falconext.pe';
+    const brandConfigs: Record<string, { appName: string; fromEmail: string; frontendUrl: string; primaryColor: string }> = {
+      falconext: {
+        appName: 'Falconext',
+        fromEmail: 'noreply@falconext.pe',
+        frontendUrl: 'https://app.falconext.pe',
+        primaryColor: '#3E2BC7',
+      },
+      krezka: {
+        appName: 'Krezka',
+        fromEmail: 'noreply@krezka.com',
+        frontendUrl: 'https://app.krezka.com',
+        primaryColor: '#00D0D4',
+      },
+    };
+
+    const cfg = brandConfigs[resolvedBrand?.toLowerCase() ?? ''] ?? {
+      appName: this.config.get<string>('APP_NAME') || process.env.APP_NAME || 'Falconext',
+      fromEmail: this.config.get<string>('RESEND_FROM_EMAIL') || process.env.RESEND_FROM_EMAIL || 'noreply@falconext.pe',
+      frontendUrl: this.config.get<string>('FRONTEND_URL') || process.env.FRONTEND_URL || 'http://localhost:5173',
+      primaryColor: '#3E2BC7',
+    };
+
+    const resetUrl = `${cfg.frontendUrl}/restablecer-contrasena?token=${token}`;
 
     const { Resend } = await import('resend');
     const { render } = await import('@react-email/components');
@@ -511,16 +548,17 @@ export class AuthService {
       RecuperacionPasswordEmail({
         nombre: user.nombre,
         resetUrl,
-        appName,
+        appName: cfg.appName,
         expiresInMinutes: 15,
+        primaryColor: cfg.primaryColor,
       }) as any,
     );
 
     const resend = new Resend(resendKey);
     await resend.emails.send({
-      from: `${appName} <${fromEmail}>`,
+      from: `${cfg.appName} <${cfg.fromEmail}>`,
       to: [email],
-      subject: `🔐 Recupera tu contraseña — ${appName}`,
+      subject: `🔐 Recupera tu contraseña — ${cfg.appName}`,
       html,
     });
   }

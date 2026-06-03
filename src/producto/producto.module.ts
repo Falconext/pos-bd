@@ -8,9 +8,10 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { KardexModule } from '../kardex/kardex.module';
 import { S3Module } from '../s3/s3.module';
 import { GeminiModule } from '../gemini/gemini.module';
+import { DigemidModule } from '../digemid/digemid.module';
 
 @Module({
-  imports: [forwardRef(() => KardexModule), S3Module, GeminiModule],
+  imports: [forwardRef(() => KardexModule), S3Module, GeminiModule, DigemidModule],
   controllers: [ProductoController, ProductoPlantillaController],
   providers: [ProductoService, ProductoPlantillaService, ProductoLoteService, RolesGuard],
   exports: [ProductoService, ProductoLoteService],

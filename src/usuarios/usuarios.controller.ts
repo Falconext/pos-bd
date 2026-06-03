@@ -202,4 +202,38 @@ export class UsersController {
     res.locals.message = 'Administrador eliminado correctamente';
     return result;
   }
+
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN_EMPRESA')
+  @Get('ranking-vendedores')
+  async rankingVendedores(
+    @User() user: any,
+    @Query('fechaInicio') fechaInicio: string,
+    @Query('fechaFin') fechaFin: string,
+    @Query('sedeId') sedeId?: string,
+  ) {
+    return this.usersService.getRankingVendedores({
+      empresaId: user.empresaId,
+      fechaInicio,
+      fechaFin,
+      sedeId: sedeId ? Number(sedeId) : undefined,
+    });
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN_EMPRESA')
+  @Get('ranking-vendedores/:id')
+  async detalleVendedor(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Query('fechaInicio') fechaInicio: string,
+    @Query('fechaFin') fechaFin: string,
+  ) {
+    return this.usersService.getDetalleVendedor({
+      empresaId: user.empresaId,
+      usuarioId: id,
+      fechaInicio,
+      fechaFin,
+    });
+  }
 }

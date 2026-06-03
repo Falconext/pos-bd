@@ -74,6 +74,21 @@ export class SchedulerService {
     }
   }
 
+  // Alertas de vencimiento de lotes farmacéuticos — todos los días a las 8:15 AM
+  @Cron('15 8 * * *', {
+    name: 'alertar-lotes-vencimiento',
+    timeZone: 'America/Lima',
+  })
+  async alertarLotesVencimiento(): Promise<void> {
+    this.logger.log('💊 Iniciando alertas de vencimiento de lotes...');
+    try {
+      const resultado = await this.inventarioNotificacionesService.alertarLotesVencimientoProximo();
+      this.logger.log(`✅ Alertas de vencimiento completadas. ${resultado.total} notificaciones enviadas.`);
+    } catch (error) {
+      this.logger.error('❌ Error al alertar vencimientos de lotes:', error);
+    }
+  }
+
   @Cron('10 9 * * *', {
     name: 'renovar-clientes-reseller',
     timeZone: 'America/Lima',

@@ -23,6 +23,25 @@ export class SunatPayloadException extends Error {
   }
 }
 
+/**
+ * Códigos SUNAT que nunca serán aceptados sin importar cuántos reintentos se hagan.
+ * Cuando SUNAT devuelve uno de estos códigos el comprobante se elimina automáticamente.
+ */
+const SUNAT_FATAL_CODES = new Set([
+  1033, 1034,          // RUC emisor no activo / no habilitado para CPE
+  1083,                // RUC receptor no existe en SUNAT
+  2329,                // Dirección del establecimiento no registrada
+  2800, 2825,          // Serie no corresponde / no existe para el emisor
+  3117,                // Código de producto SUNAT incorrecto
+]);
+
+function extractFatalSunatCode(detail: string | null | undefined): number | null {
+  if (!detail) return null;
+  const match = detail.match(/\b(\d{3,4})\s*[-–]/);
+  if (!match) return null;
+  const code = Number(match[1]);
+  return SUNAT_FATAL_CODES.has(code) ? code : null;
+}
 
 // Catálogo 51 SUNAT — códigos de tipo de operación válidos
 const VALID_TIPO_OPERACION_CODES = new Set([
@@ -251,7 +270,7 @@ export class EnviarSunatService {
             _attributes: {
               listID: tipoOperacionListID,
               listAgencyName: 'PE:SUNAT',
-              listName: 'SUNAT:Identificador de Tipo de Documento',
+              listName: 'Tipo de Documento',
               listURI: 'urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo01',
             },
             _text: comp.tipoDoc,
@@ -354,25 +373,41 @@ export class EnviarSunatService {
               _attributes: { currencyID: comp.tipoMoneda },
               _text: comp.totalImpuestos,
             },
-            'cac:TaxSubtotal': [
-              {
-                'cbc:TaxableAmount': {
-                  _attributes: { currencyID: comp.tipoMoneda },
-                  _text: comp.mtoOperGravadas,
-                },
-                'cbc:TaxAmount': {
-                  _attributes: { currencyID: comp.tipoMoneda },
-                  _text: comp.mtoIGV,
-                },
-                'cac:TaxCategory': {
-                  'cac:TaxScheme': {
-                    'cbc:ID': { _text: '1000' },
-                    'cbc:Name': { _text: 'IGV' },
-                    'cbc:TaxTypeCode': { _text: 'VAT' },
+            'cac:TaxSubtotal': (() => {
+              const cur = comp.tipoMoneda;
+              const subtotals: any[] = [];
+              // IGV (Gravado) — siempre incluir si hay mtoOperGravadas o si no hay otras ops
+              if (Number(comp.mtoOperGravadas) > 0 || (Number(comp.mtoOperExoneradas ?? 0) === 0 && Number(comp.mtoOperInafectas ?? 0) === 0)) {
+                subtotals.push({
+                  'cbc:TaxableAmount': { _attributes: { currencyID: cur }, _text: comp.mtoOperGravadas },
+                  'cbc:TaxAmount': { _attributes: { currencyID: cur }, _text: comp.mtoIGV },
+                  'cac:TaxCategory': {
+                    'cac:TaxScheme': { 'cbc:ID': { _text: '1000' }, 'cbc:Name': { _text: 'IGV' }, 'cbc:TaxTypeCode': { _text: 'VAT' } },
                   },
-                },
-              },
-            ],
+                });
+              }
+              // Exonerado (9997)
+              if (Number(comp.mtoOperExoneradas ?? 0) > 0) {
+                subtotals.push({
+                  'cbc:TaxableAmount': { _attributes: { currencyID: cur }, _text: comp.mtoOperExoneradas },
+                  'cbc:TaxAmount': { _attributes: { currencyID: cur }, _text: 0 },
+                  'cac:TaxCategory': {
+                    'cac:TaxScheme': { 'cbc:ID': { _text: '9997' }, 'cbc:Name': { _text: 'EXO' }, 'cbc:TaxTypeCode': { _text: 'VAT' } },
+                  },
+                });
+              }
+              // Inafecto (9998)
+              if (Number(comp.mtoOperInafectas ?? 0) > 0) {
+                subtotals.push({
+                  'cbc:TaxableAmount': { _attributes: { currencyID: cur }, _text: comp.mtoOperInafectas },
+                  'cbc:TaxAmount': { _attributes: { currencyID: cur }, _text: 0 },
+                  'cac:TaxCategory': {
+                    'cac:TaxScheme': { 'cbc:ID': { _text: '9998' }, 'cbc:Name': { _text: 'INA' }, 'cbc:TaxTypeCode': { _text: 'FRE' } },
+                  },
+                });
+              }
+              return subtotals;
+            })(),
           },
           'cac:LegalMonetaryTotal': {
             'cbc:LineExtensionAmount': {
@@ -388,7 +423,16 @@ export class EnviarSunatService {
               _text: comp.mtoImpVenta,
             },
           },
-          'cac:InvoiceLine': comp.detalles.map((d: any, index: number) => ({
+          'cac:InvoiceLine': comp.detalles.map((d: any, index: number) => {
+            const tipAfe = Number(d.tipAfeIgv ?? 10);
+            // Catálogo 05 SUNAT: TaxScheme por tipo de afectación IGV
+            const taxScheme = tipAfe === 20
+              ? { id: '9997', name: 'EXO', typeCode: 'VAT' }
+              : tipAfe === 30
+              ? { id: '9998', name: 'INA', typeCode: 'FRE' }
+              : { id: '1000', name: 'IGV', typeCode: 'VAT' }; // 10 Gravado
+
+            return ({
             'cbc:ID': { _text: (index + 1).toString() },
             'cbc:InvoicedQuantity': {
               _attributes: { unitCode: d.unidad || 'NIU' },
@@ -423,14 +467,14 @@ export class EnviarSunatService {
                     _text: d.igv,
                   },
                   'cac:TaxCategory': {
-                    'cbc:Percent': { _text: d.porcentajeIgv || 18 },
+                    'cbc:Percent': { _text: tipAfe === 10 ? (d.porcentajeIgv || 18) : 0 },
                     'cbc:TaxExemptionReasonCode': {
-                      _text: d.tipAfeIgv || '10',
+                      _text: String(tipAfe === 10 ? (d.tipAfeIgv || 10) : d.tipAfeIgv),
                     },
                     'cac:TaxScheme': {
-                      'cbc:ID': { _text: '1000' },
-                      'cbc:Name': { _text: 'IGV' },
-                      'cbc:TaxTypeCode': { _text: 'VAT' },
+                      'cbc:ID': { _text: taxScheme.id },
+                      'cbc:Name': { _text: taxScheme.name },
+                      'cbc:TaxTypeCode': { _text: taxScheme.typeCode },
                     },
                   },
                 },
@@ -448,7 +492,7 @@ export class EnviarSunatService {
                 _text: d.mtoValorUnitario,
               },
             },
-          })),
+          }); }),
         },
       };
 
@@ -583,7 +627,14 @@ export class EnviarSunatService {
 
         // Convertir InvoiceLines a CreditNoteLines con estructura correcta
         payload.documentBody['cac:CreditNoteLine'] = comp.detalles.map(
-          (d: any, index: number) => ({
+          (d: any, index: number) => {
+            const tipAfe = Number(d.tipAfeIgv ?? 10);
+            const taxScheme = tipAfe === 20
+              ? { id: '9997', name: 'EXO', typeCode: 'VAT' }
+              : tipAfe === 30
+              ? { id: '9998', name: 'INA', typeCode: 'FRE' }
+              : { id: '1000', name: 'IGV', typeCode: 'VAT' };
+            return ({
             'cbc:ID': { _text: (index + 1).toString() },
             'cbc:CreditedQuantity': {
               _attributes: { unitCode: d.unidad || 'NIU' },
@@ -597,7 +648,7 @@ export class EnviarSunatService {
               'cac:AlternativeConditionPrice': {
                 'cbc:PriceAmount': {
                   _attributes: { currencyID: comp.tipoMoneda },
-                  _text: d.mtoPrecioUnitario, // Precio CON IGV
+                  _text: d.mtoPrecioUnitario,
                 },
                 'cbc:PriceTypeCode': { _text: '01' },
               },
@@ -618,14 +669,14 @@ export class EnviarSunatService {
                     _text: d.igv,
                   },
                   'cac:TaxCategory': {
-                    'cbc:Percent': { _text: d.porcentajeIgv || 18 },
+                    'cbc:Percent': { _text: tipAfe === 10 ? (d.porcentajeIgv || 18) : 0 },
                     'cbc:TaxExemptionReasonCode': {
-                      _text: d.tipAfeIgv || '10',
+                      _text: String(d.tipAfeIgv || 10),
                     },
                     'cac:TaxScheme': {
-                      'cbc:ID': { _text: '1000' },
-                      'cbc:Name': { _text: 'IGV' },
-                      'cbc:TaxTypeCode': { _text: 'VAT' },
+                      'cbc:ID': { _text: taxScheme.id },
+                      'cbc:Name': { _text: taxScheme.name },
+                      'cbc:TaxTypeCode': { _text: taxScheme.typeCode },
                     },
                   },
                 },
@@ -640,7 +691,7 @@ export class EnviarSunatService {
                 _text: d.mtoValorUnitario,
               },
             },
-          }),
+          }); },
         );
 
         // Sobrescribir Note como array para nota de crédito
@@ -657,25 +708,38 @@ export class EnviarSunatService {
             _attributes: { currencyID: comp.tipoMoneda },
             _text: comp.totalImpuestos,
           },
-          'cac:TaxSubtotal': [
-            {
-              'cbc:TaxableAmount': {
-                _attributes: { currencyID: comp.tipoMoneda },
-                _text: comp.mtoOperGravadas,
-              },
-              'cbc:TaxAmount': {
-                _attributes: { currencyID: comp.tipoMoneda },
-                _text: comp.mtoIGV,
-              },
-              'cac:TaxCategory': {
-                'cac:TaxScheme': {
-                  'cbc:ID': { _text: '1000' },
-                  'cbc:Name': { _text: 'IGV' },
-                  'cbc:TaxTypeCode': { _text: 'VAT' },
+          'cac:TaxSubtotal': (() => {
+            const cur = comp.tipoMoneda;
+            const subtotals: any[] = [];
+            if (Number(comp.mtoOperGravadas) > 0 || (Number(comp.mtoOperExoneradas ?? 0) === 0 && Number(comp.mtoOperInafectas ?? 0) === 0)) {
+              subtotals.push({
+                'cbc:TaxableAmount': { _attributes: { currencyID: cur }, _text: comp.mtoOperGravadas },
+                'cbc:TaxAmount': { _attributes: { currencyID: cur }, _text: comp.mtoIGV },
+                'cac:TaxCategory': {
+                  'cac:TaxScheme': { 'cbc:ID': { _text: '1000' }, 'cbc:Name': { _text: 'IGV' }, 'cbc:TaxTypeCode': { _text: 'VAT' } },
                 },
-              },
-            },
-          ],
+              });
+            }
+            if (Number(comp.mtoOperExoneradas ?? 0) > 0) {
+              subtotals.push({
+                'cbc:TaxableAmount': { _attributes: { currencyID: cur }, _text: comp.mtoOperExoneradas },
+                'cbc:TaxAmount': { _attributes: { currencyID: cur }, _text: 0 },
+                'cac:TaxCategory': {
+                  'cac:TaxScheme': { 'cbc:ID': { _text: '9997' }, 'cbc:Name': { _text: 'EXO' }, 'cbc:TaxTypeCode': { _text: 'VAT' } },
+                },
+              });
+            }
+            if (Number(comp.mtoOperInafectas ?? 0) > 0) {
+              subtotals.push({
+                'cbc:TaxableAmount': { _attributes: { currencyID: cur }, _text: comp.mtoOperInafectas },
+                'cbc:TaxAmount': { _attributes: { currencyID: cur }, _text: 0 },
+                'cac:TaxCategory': {
+                  'cac:TaxScheme': { 'cbc:ID': { _text: '9998' }, 'cbc:Name': { _text: 'INA' }, 'cbc:TaxTypeCode': { _text: 'FRE' } },
+                },
+              });
+            }
+            return subtotals;
+          })(),
         };
 
         // Ajustar estructura monetaria para nota de crédito
@@ -1555,6 +1619,16 @@ export class EnviarSunatService {
           : isJambleProvider(billingProvider)
             ? this.extractJambleMessage(finalResponse, status)
             : this.extractQpseMessage(finalResponse, status);
+
+        // Códigos SUNAT permanentemente fatales: eliminar el comprobante de inmediato
+        const fatalCode = extractFatalSunatCode(detail);
+        if (fatalCode) {
+          console.warn(`🗑️ Comprobante ${comprobanteId} → código SUNAT fatal ${fatalCode}: auto-eliminando`);
+          throw new SunatPayloadException(
+            `Código SUNAT ${fatalCode}: ${detail || 'Error de datos permanente'}`,
+          );
+        }
+
         throw new HttpException(
           `${provider} rechazó el documento: ${detail || 'Error desconocido'}`,
           502,
@@ -1578,6 +1652,10 @@ export class EnviarSunatService {
         response: this.sanitizeLogPayload(err.response?.data),
         status: err.response?.status,
       });
+
+      // Error de datos fatal (código SUNAT irrecuperable): re-lanzar sin guardar estado
+      // El controller lo captura como SunatPayloadException y elimina el comprobante.
+      if (err instanceof SunatPayloadException) throw err;
 
       // Persist retry state based on error type:
       // - DATOS (SUNAT/QPSE rechazó explícitamente): máx 5 intentos → RECHAZADO

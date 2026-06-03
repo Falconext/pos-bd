@@ -474,4 +474,92 @@ export class InventarioNotificacionesService {
       return admin.sedesAsignadas?.some((s) => s.sedeId === sedeId);
     });
   }
+
+  /**
+   * Job diario: alerta a admins de empresas farmacéuticas sobre lotes
+   * que vencen en los próximos 7 días o ya vencieron con stock disponible.
+   */
+  async alertarLotesVencimientoProximo(): Promise<{ total: number }> {
+    const hoy = new Date();
+    const en7dias = new Date(hoy.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    const rubrosRegulados = ['farmacia', 'botica', 'drogueria', 'droguería'];
+
+    // Obtener empresas con rubros farmacéuticos
+    const empresas = await this.prisma.empresa.findMany({
+      where: {
+        rubro: {
+          OR: rubrosRegulados.map((r) => ({ nombre: { contains: r, mode: 'insensitive' as any } })),
+        },
+      },
+      select: { id: true },
+    });
+
+    if (empresas.length === 0) return { total: 0 };
+
+    const empresaIds = empresas.map((e) => e.id);
+
+    // Lotes próximos a vencer o ya vencidos con stock
+    const lotesAlerta = await this.prisma.productoLote.findMany({
+      where: {
+        producto: { empresaId: { in: empresaIds } },
+        activo: true,
+        stockActual: { gt: 0 },
+        fechaVencimiento: { lte: en7dias },
+      },
+      include: {
+        producto: {
+          select: { descripcion: true, empresaId: true },
+        },
+      },
+    });
+
+    if (lotesAlerta.length === 0) return { total: 0 };
+
+    // Agrupar por empresa
+    const porEmpresa = new Map<number, typeof lotesAlerta>();
+    for (const lote of lotesAlerta) {
+      const eid = lote.producto.empresaId as number;
+      if (!porEmpresa.has(eid)) porEmpresa.set(eid, []);
+      porEmpresa.get(eid)!.push(lote);
+    }
+
+    let total = 0;
+    for (const [empresaId, lotes] of porEmpresa.entries()) {
+      // Notificar a admins de la empresa
+      const admins = await this.prisma.usuario.findMany({
+        where: { empresaId, rol: { in: ['ADMIN_EMPRESA', 'USUARIO_EMPRESA'] } },
+        select: { id: true },
+        take: 5,
+      });
+
+      const vencidos = lotes.filter((l) => l.fechaVencimiento < hoy);
+      const porVencer = lotes.filter((l) => l.fechaVencimiento >= hoy);
+
+      let mensaje = '';
+      if (vencidos.length > 0) {
+        mensaje += `${vencidos.length} lote(s) VENCIDO(S) con stock disponible. `;
+      }
+      if (porVencer.length > 0) {
+        mensaje += `${porVencer.length} lote(s) vencen en menos de 7 días.`;
+      }
+
+      for (const admin of admins) {
+        try {
+          await this.notificacionesService.crearNotificacion({
+            usuarioId: admin.id,
+            empresaId,
+            tipo: vencidos.length > 0 ? 'CRITICAL' : 'WARNING',
+            titulo: '⚠️ Alerta de vencimiento de lotes',
+            mensaje: mensaje.trim(),
+          });
+          total++;
+        } catch {
+          // No bloquear el job si falla una notificación individual
+        }
+      }
+    }
+
+    return { total };
+  }
 }

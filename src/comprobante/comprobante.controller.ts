@@ -298,7 +298,17 @@ export class ComprobanteController {
       console.error('[crearBoleta] ERROR:', error.message);
       if (comp?.id) {
         if (error instanceof SunatPayloadException) {
-          // Error de datos: el comprobante no es válido → eliminarlo para no contaminar el listado
+          // Error de datos fatal: guardar log y eliminar el comprobante
+          try {
+            await this.service.guardarLogErrorFatal({
+              empresaId: comp.empresaId,
+              usuarioId: user.id,
+              serie: comp.serie,
+              correlativo: comp.correlativo,
+              tipoDoc: comp.tipoDoc,
+              errorMsg: error.message,
+            });
+          } catch (_) {}
           try { await this.service.eliminarComprobante(comp.id); } catch (_) {}
           throw new BadRequestException(
             `El comprobante no pudo enviarse a SUNAT porque los datos son inválidos: ${error.message}. ` +
@@ -333,6 +343,16 @@ export class ComprobanteController {
       console.error('[crearFactura] ERROR:', error.message);
       if (comp?.id) {
         if (error instanceof SunatPayloadException) {
+          try {
+            await this.service.guardarLogErrorFatal({
+              empresaId: comp.empresaId,
+              usuarioId: user.id,
+              serie: comp.serie,
+              correlativo: comp.correlativo,
+              tipoDoc: comp.tipoDoc,
+              errorMsg: error.message,
+            });
+          } catch (_) {}
           try { await this.service.eliminarComprobante(comp.id); } catch (_) {}
           throw new BadRequestException(
             `El comprobante no pudo enviarse a SUNAT porque los datos son inválidos: ${error.message}. ` +
@@ -433,9 +453,14 @@ export class ComprobanteController {
   async enviarWhatsApp(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { celular: string },
+    @User() user: any,
   ) {
     if (!body?.celular) throw new BadRequestException('El campo celular es requerido');
-    await this.service.enviarWhatsAppComprobante(id, body.celular);
+    await this.service.enviarWhatsAppComprobante(id, body.celular, {
+      usuarioId: user.id,
+      empresaId: user.empresaId,
+      rol: user.rol,
+    });
     return { message: 'Mensaje de WhatsApp enviado correctamente' };
   }
 

@@ -33,7 +33,7 @@ import { CrearLoteDto } from './dto/lote.dto';
 import { KardexService } from '../kardex/kardex.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Controller('producto')
+@Controller('productos')
 export class ProductoController {
   constructor(
     private readonly service: ProductoService,
@@ -42,7 +42,7 @@ export class ProductoController {
     private readonly kardexService: KardexService,
   ) {}
 
-  @Post('crear')
+  @Post()
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async crear(
     @Body() dto: CreateProductoDto,
@@ -638,20 +638,40 @@ export class ProductoController {
     return this.service.subirImagenDesdeUrl(user.empresaId, id, body.url);
   }
 
-  @Get('listar')
+  // Catálogo optimizado para POS farmacia/botica/droguería — con FEFO, vencimientos y receta
+  @Get('catalogo-farmacia')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async catalogoFarmacia(
+    @User() user: any,
+    @Query('sedeId') sedeId: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+    @Query('categoriaId') categoriaId?: string,
+  ) {
+    const resolvedSedeId = sedeId ? Number(sedeId) : user.sedeId;
+    if (!resolvedSedeId) throw new Error('sedeId es requerido');
+    return this.service.catalogoFarmacia({
+      empresaId: user.empresaId,
+      sedeId: resolvedSedeId,
+      page: page ? Number(page) : 1,
+      limit: limit ? Number(limit) : 20,
+      search,
+      categoriaId: categoriaId ? Number(categoriaId) : undefined,
+    });
+  }
+
+  // Literales primero — siempre antes que :id para evitar conflictos de matching
+  @Get()
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async listar(
     @User() user: any,
     @Query() query: ListProductoDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    console.log('Listar Query:', query);
-    const isAdmin =
-      user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
+    const isAdmin = user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
     const sedeId = isAdmin
-      ? query.sedeId
-        ? Number(query.sedeId)
-        : null
+      ? query.sedeId ? Number(query.sedeId) : null
       : user.sedeId;
     const resultado = await this.service.listar({
       empresaId: user.empresaId,
@@ -668,33 +688,24 @@ export class ProductoController {
     return resultado;
   }
 
-  // Eliminar (lógico) un producto
-  @Delete(':id')
+  @Get('codigo-siguiente')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
-  async eliminarProducto(
-    @Param('id', ParseIntPipe) id: number,
-    @User() user: any,
-    @Res({ passthrough: true }) res: Response,
-  ) {
-    const eliminado = await this.service.eliminar(id, user.empresaId);
-    res.locals.message = 'Producto eliminado correctamente';
-    return eliminado;
+  async codigoSiguiente(@User() user: any) {
+    const codigo = await this.service.obtenerSiguienteCodigo(user.empresaId, 'PR');
+    return { codigo };
   }
 
-  @Delete('empresa/eliminar-todo')
-  @Roles('ADMIN_EMPRESA')
-  async eliminarTodo(
+  @Get('exportar')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async exportar(
     @User() user: any,
-    @Query('sedeId') sedeId: string,
-    @Res({ passthrough: true }) res: Response,
+    @Query('search') search: string | undefined,
+    @Res() res: Response,
   ) {
-    const sedeIdNum = sedeId ? parseInt(sedeId, 10) : undefined;
-    const eliminados = await this.service.eliminarTodo(
-      user.empresaId,
-      sedeIdNum,
-    );
-    res.locals.message = `Se eliminaron (lógicamente) ${eliminados.count} productos correctamente`;
-    return eliminados;
+    const buffer = await this.service.exportar(user.empresaId, search);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename=productos.xlsx');
+    res.status(200).send(buffer);
   }
 
   @Get('barcode/:codigo')
@@ -709,6 +720,20 @@ export class ProductoController {
     return producto;
   }
 
+  @Delete('eliminar-todo')
+  @Roles('ADMIN_EMPRESA')
+  async eliminarTodo(
+    @User() user: any,
+    @Query('sedeId') sedeId: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const sedeIdNum = sedeId ? parseInt(sedeId, 10) : undefined;
+    const eliminados = await this.service.eliminarTodo(user.empresaId, sedeIdNum);
+    res.locals.message = `Se eliminaron (lógicamente) ${eliminados.count} productos correctamente`;
+    return eliminados;
+  }
+
+  // Rutas con parámetros dinámicos al final
   @Get(':id')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async obtenerPorId(
@@ -733,11 +758,11 @@ export class ProductoController {
       {
         id,
         empresaId: user.empresaId,
-        sedeId: user.sedeId ?? undefined, // forward JWT sedeId so stock updates target the user's sede
+        sedeId: user.sedeId ?? undefined,
         ...body,
       },
       user.id,
-    ); // Pasar el usuarioId para el kardex
+    );
     res.locals.message = 'Producto actualizado correctamente';
     return actualizado;
   }
@@ -749,11 +774,7 @@ export class ProductoController {
     @User() user: any,
     @Body() body: { publicarEnTienda: boolean },
   ) {
-    return this.service.togglePublicarEnTienda(
-      id,
-      user.empresaId,
-      body.publicarEnTienda,
-    );
+    return this.service.togglePublicarEnTienda(id, user.empresaId, body.publicarEnTienda);
   }
 
   @Patch(':id/estado')
@@ -764,101 +785,31 @@ export class ProductoController {
     @Body() body: { estado: 'ACTIVO' | 'INACTIVO' | 'PLACEHOLDER' },
     @Res({ passthrough: true }) res: Response,
   ) {
-    const actualizado = await this.service.cambiarEstado(
-      id,
-      user.empresaId,
-      body.estado as any,
-    );
+    const actualizado = await this.service.cambiarEstado(id, user.empresaId, body.estado as any);
     res.locals.message = `Producto ${body.estado === 'ACTIVO' ? 'activado' : body.estado === 'INACTIVO' ? 'desactivado' : 'actualizado'} correctamente`;
     return actualizado;
   }
 
-  @Get('empresa/:empresaId/codigo-siguiente')
+  @Delete(':id')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
-  async codigoSiguientePorEmpresa(@Param('empresaId') empresaIdParam: string) {
-    const empresaId = Number(empresaIdParam);
-    if (!empresaId || Number.isNaN(empresaId)) {
-      throw new BadRequestException('empresaId debe ser un número válido');
-    }
-    const codigo = await this.service.obtenerSiguienteCodigo(empresaId, 'PR');
-    return { codigo };
+  async eliminarProducto(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const eliminado = await this.service.eliminar(id, user.empresaId);
+    res.locals.message = 'Producto eliminado correctamente';
+    return eliminado;
   }
 
-  @Post('carga-masiva')
+  @Post('importar')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   @UseInterceptors(FileInterceptor('file'))
   async cargarMasivo(@UploadedFile() file: any, @User() user: any) {
     if (!file) {
-      return {
-        total: 0,
-        exitosos: 0,
-        fallidos: 0,
-        detalles: [{ error: 'No se proporcionó un archivo Excel' }],
-      };
+      return { total: 0, exitosos: 0, fallidos: 0, detalles: [{ error: 'No se proporcionó un archivo Excel' }] };
     }
     return this.service.cargaMasiva(file.buffer, user.empresaId);
-  }
-
-  @Get('empresa/:empresaId/exportar-archivo/:search')
-  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
-  async exportarBuscar(
-    @Param('empresaId') empresaIdParam: string,
-    @Param('search') search: string,
-    @Res() res: Response,
-  ) {
-    const empresaId = Number(empresaIdParam);
-    if (!empresaId || Number.isNaN(empresaId)) {
-      throw new BadRequestException('empresaId debe ser un número válido');
-    }
-    const buffer = await this.service.exportar(empresaId, search);
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    );
-    res.setHeader('Content-Disposition', 'attachment; filename=productos.xlsx');
-    res.status(200).send(buffer);
-  }
-
-  @Get('empresa/:empresaId/exportar-archivo')
-  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
-  async exportarArchivoEmpresa(
-    @Param('empresaId') empresaIdParam: string,
-    @Res() res: Response,
-  ) {
-    const empresaId = Number(empresaIdParam);
-    if (!empresaId || Number.isNaN(empresaId)) {
-      throw new BadRequestException('empresaId debe ser un número válido');
-    }
-    const buffer = await this.service.exportar(empresaId, undefined);
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    );
-    res.setHeader('Content-Disposition', 'attachment; filename=productos.xlsx');
-    res.status(200).send(buffer);
-  }
-
-  // Endpoint para compatibilidad con frontend kardex
-  @Get()
-  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
-  async listarProductos(
-    @User() user: any,
-    @Query() query: ListProductoDto,
-    @Res({ passthrough: true }) res: Response,
-  ) {
-    const resultado = await this.service.listar({
-      empresaId: user.empresaId,
-      sedeId: user.sedeId,
-      search: query.search,
-      page: query.page,
-      limit: query.limit,
-      sort: query.sort,
-      order: query.order,
-      marcaId: query.marcaId,
-      categoriaId: query.categoriaId,
-    });
-    res.locals.message = 'Productos listados correctamente';
-    return resultado;
   }
 
   // ==================== GESTIÓN DE LOTES (Farmacia) ====================
@@ -1025,7 +976,19 @@ export class ProductoController {
 
   @Get('lotes/todos')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
-  async listarLotesActivos(@User() user: any) {
-    return this.loteService.obtenerTodosLotes(user.empresaId);
+  async listarLotesActivos(
+    @User() user: any,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+    @Query('estado') estado?: 'TODOS' | 'VIGENTE' | 'POR_VENCER' | 'VENCIDO',
+  ) {
+    return this.loteService.obtenerLotesConFiltros({
+      empresaId: user.empresaId,
+      page: page ? Number(page) : 1,
+      limit: limit ? Number(limit) : 20,
+      search,
+      estado: estado ?? 'TODOS',
+    });
   }
 }

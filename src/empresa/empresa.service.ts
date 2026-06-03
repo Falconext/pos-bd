@@ -343,6 +343,11 @@ export class EmpresaService {
         producto: productoEmpresa,
         usuarioPse: data.usuarioPse || null,
         contrasenaPse: data.contrasenaPse || null,
+        whatsappProvider: data.whatsappProvider || 'PLATFORM',
+        whatsappApiToken: data.whatsappApiToken || null,
+        whatsappPhoneNumberId: data.whatsappPhoneNumberId || null,
+        whatsappBusinessId: data.whatsappBusinessId || null,
+        whatsappActivo: data.whatsappActivo ?? true,
         usaDemo: data.usaDemo ?? false,
         usuarios: {
           create: {
@@ -682,6 +687,8 @@ export class EmpresaService {
         updateData.usaCodigoBarrasManual = dto.usaCodigoBarrasManual;
       if (dto.usarPrecioLoteFefo !== undefined)
         updateData.usarPrecioLoteFefo = dto.usarPrecioLoteFefo;
+      if (dto.directorTecnico !== undefined)
+        updateData.directorTecnico = dto.directorTecnico;
       if (dto.logo !== undefined) updateData.logo = dto.logo;
       if (dto.bancoNombre !== undefined) updateData.bancoNombre = dto.bancoNombre;
       if (dto.numeroCuenta !== undefined) updateData.numeroCuenta = dto.numeroCuenta;
@@ -703,6 +710,11 @@ export class EmpresaService {
       }
       if (dto.usuarioPse !== undefined) updateData.usuarioPse = dto.usuarioPse;
       if (dto.contrasenaPse !== undefined) updateData.contrasenaPse = dto.contrasenaPse;
+      if (dto.whatsappProvider !== undefined) updateData.whatsappProvider = dto.whatsappProvider;
+      if (dto.whatsappApiToken !== undefined) updateData.whatsappApiToken = dto.whatsappApiToken;
+      if (dto.whatsappPhoneNumberId !== undefined) updateData.whatsappPhoneNumberId = dto.whatsappPhoneNumberId;
+      if (dto.whatsappBusinessId !== undefined) updateData.whatsappBusinessId = dto.whatsappBusinessId;
+      if (dto.whatsappActivo !== undefined) updateData.whatsappActivo = dto.whatsappActivo;
       if (dto.usaDemo !== undefined) updateData.usaDemo = dto.usaDemo;
 
       const productoFinal = adminSistemaProducto

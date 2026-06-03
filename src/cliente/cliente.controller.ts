@@ -29,11 +29,11 @@ import { FileInterceptor } from '@nestjs/platform-express';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @UsePipes(new ValidationPipe({ transform: true }))
-@Controller('cliente')
+@Controller('clientes')
 export class ClienteController {
   constructor(private readonly service: ClienteService) {}
 
-  @Post('crear')
+  @Post()
   @Roles('ADMIN_EMPRESA','USUARIO_EMPRESA')
   async crear(
     @Body() dto: CreateClienteDto,
@@ -48,7 +48,7 @@ export class ClienteController {
     return cliente;
   }
 
-  @Get('listar')
+  @Get()
   @Roles('ADMIN_EMPRESA','USUARIO_EMPRESA')
   async listar(
     @User() user: any,
@@ -67,6 +67,65 @@ export class ClienteController {
     return resultado;
   }
 
+  // Rutas literales primero — siempre antes que :id para evitar conflictos de matching
+  @Get('consultar')
+  async consultar(
+    @Query('numero') numero: string,
+    @Query('tipo') tipo: 'DNI' | 'RUC',
+  ) {
+    if (!numero || !tipo) {
+      throw new BadRequestException(
+        'Parámetros "numero" y "tipo" son requeridos',
+      );
+    }
+    return this.service.consultarDocumento(numero.toString(), tipo);
+  }
+
+  @Get('consultar/:tipo/:numero')
+  async consultarPath(
+    @Param('tipo') tipo: 'DNI' | 'RUC',
+    @Param('numero') numero: string,
+  ) {
+    if (!numero || !tipo) {
+      throw new BadRequestException(
+        'Parámetros "numero" y "tipo" son requeridos',
+      );
+    }
+    return this.service.consultarDocumento(numero.toString(), tipo);
+  }
+
+  @Get('exportar')
+  @Roles('ADMIN_EMPRESA','USUARIO_EMPRESA')
+  async exportarArchivoEmpresa(
+    @User() user: any,
+    @Query('search') search: string | undefined,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.service.exportar(user.empresaId, search);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', 'attachment; filename=clientes.xlsx');
+    res.status(200).send(buffer);
+  }
+
+  @Post('importar')
+  @Roles('ADMIN_EMPRESA','USUARIO_EMPRESA')
+  @UseInterceptors(FileInterceptor('file'))
+  async cargarMasivo(@UploadedFile() file: any, @User() user: any) {
+    if (!file) {
+      return {
+        total: 0,
+        exitosos: 0,
+        fallidos: 0,
+        detalles: [{ error: 'No se proporcionó un archivo Excel' }],
+      };
+    }
+    return this.service.cargaMasiva(file.buffer, user.empresaId);
+  }
+
+  // Rutas con parámetros dinámicos al final
   @Get(':id')
   @Roles('ADMIN_EMPRESA','USUARIO_EMPRESA')
   async obtenerPorId(
@@ -111,67 +170,5 @@ export class ClienteController {
     );
     res.locals.message = `Cliente ${body.estado === 'ACTIVO' ? 'activado' : 'desactivado'} correctamente`;
     return actualizado;
-  }
-
-  @Get('consultar')
-  async consultar(
-    @Query('numero') numero: string,
-    @Query('tipo') tipo: 'DNI' | 'RUC',
-  ) {
-    if (!numero || !tipo) {
-      throw new BadRequestException(
-        'Parámetros "numero" y "tipo" son requeridos',
-      );
-    }
-    return this.service.consultarDocumento(numero.toString(), tipo);
-  }
-
-  // Alternativa con path params para evitar problemas de parseo de query
-  @Get('consultar/:tipo/:numero')
-  async consultarPath(
-    @Param('tipo') tipo: 'DNI' | 'RUC',
-    @Param('numero') numero: string,
-  ) {
-    if (!numero || !tipo) {
-      throw new BadRequestException(
-        'Parámetros "numero" y "tipo" son requeridos',
-      );
-    }
-    return this.service.consultarDocumento(numero.toString(), tipo);
-  }
-
-  @Post('carga-masiva')
-  @Roles('ADMIN_EMPRESA','USUARIO_EMPRESA')
-  @UseInterceptors(FileInterceptor('file'))
-  async cargarMasivo(@UploadedFile() file: any, @User() user: any) {
-    if (!file) {
-      return {
-        total: 0,
-        exitosos: 0,
-        fallidos: 0,
-        detalles: [{ error: 'No se proporcionó un archivo Excel' }],
-      };
-    }
-    return this.service.cargaMasiva(file.buffer, user.empresaId);
-  }
-
-  @Get('empresa/:empresaId/exportar-archivo')
-  @Roles('ADMIN_EMPRESA','USUARIO_EMPRESA')
-  async exportarArchivoEmpresa(
-    @Param('empresaId') empresaIdParam: string,
-    @Query('search') search: string | undefined,
-    @Res() res: Response,
-  ) {
-    const empresaId = Number(empresaIdParam);
-    if (!empresaId || Number.isNaN(empresaId)) {
-      throw new BadRequestException('empresaId debe ser un número válido');
-    }
-    const buffer = await this.service.exportar(empresaId, search);
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    );
-    res.setHeader('Content-Disposition', 'attachment; filename=clientes.xlsx');
-    res.status(200).send(buffer);
   }
 }

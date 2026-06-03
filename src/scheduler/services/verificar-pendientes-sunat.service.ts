@@ -1,6 +1,7 @@
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { EnviarSunatService } from '../../comprobante/enviar-sunat.service';
+import { EnviarSunatService, SunatPayloadException } from '../../comprobante/enviar-sunat.service';
+import { ComprobanteService } from '../../comprobante/comprobante.service';
 import { GuiaRemisionService } from '../../guia-remision/guia-remision.service';
 import { QpseClient, QpseSendResponse } from '../../common/utils/qpse.client';
 import { S3Service } from '../../s3/s3.service';
@@ -14,6 +15,8 @@ export class VerificarPendientesSunatService {
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => EnviarSunatService))
     private readonly enviarSunat: EnviarSunatService,
+    @Inject(forwardRef(() => ComprobanteService))
+    private readonly comprobanteService: ComprobanteService,
     @Inject(forwardRef(() => GuiaRemisionService))
     private readonly guiaRemisionService: GuiaRemisionService,
     private readonly qpseClient: QpseClient,
@@ -119,6 +122,11 @@ export class VerificarPendientesSunatService {
             try {
               await this.enviarSunat.execute(comprobante.id);
             } catch (err: any) {
+              if (err instanceof SunatPayloadException) {
+                this.logger.warn(`[Job 1] Comprobante ${comprobante.id} → error fatal SUNAT, auto-eliminando: ${err.message}`);
+                await this.autoEliminarComprobante(comprobante.id, err.message);
+                continue;
+              }
               const msg = String(err?.message || '').toLowerCase();
               // Si QPSE ya lo tiene registrado (numeración repetida), marcarlo EMITIDO directamente
               if (msg.includes('numeraci') || msg.includes('repetid') || msg.includes('duplicad') || msg.includes('ya exist')) {
@@ -260,8 +268,12 @@ export class VerificarPendientesSunatService {
 
           this.logger.log(`✅ Comprobante ${comprobante.id} enviado exitosamente en reintento`);
         } catch (err: any) {
+          if (err instanceof SunatPayloadException) {
+            this.logger.warn(`[Job 2] Comprobante ${comprobante.id} → error fatal SUNAT, auto-eliminando: ${err.message}`);
+            await this.autoEliminarComprobante(comprobante.id, err.message);
+            continue;
+          }
           // The enviarSunat.execute already handles updating the state
-          // Just log the error here
           this.logger.warn(
             `⚠️ Reintento de comprobante ${comprobante.id} falló: ${err.message}`,
           );
@@ -348,5 +360,44 @@ export class VerificarPendientesSunatService {
     }
 
     return updates;
+  }
+
+  /** Elimina un comprobante con error fatal SUNAT, guarda log y respeta orden de FKs. */
+  private async autoEliminarComprobante(id: number, errorMsg?: string): Promise<void> {
+    try {
+      // Obtener datos del comprobante para el log antes de borrarlo
+      const comp = await this.prisma.comprobante.findUnique({
+        where: { id },
+        select: { id: true, empresaId: true, serie: true, correlativo: true, tipoDoc: true, sunatErrorMsg: true },
+      });
+
+      if (comp) {
+        await this.comprobanteService.guardarLogErrorFatal({
+          empresaId: comp.empresaId,
+          serie: comp.serie,
+          correlativo: comp.correlativo,
+          tipoDoc: comp.tipoDoc,
+          errorMsg: errorMsg ?? comp.sunatErrorMsg ?? 'Error fatal SUNAT (scheduler)',
+        });
+      }
+
+      await this.prisma.$transaction(async (tx) => {
+        const movimientos = await tx.movimientoKardex.findMany({
+          where: { comprobanteId: id },
+          select: { id: true },
+        });
+        if (movimientos.length) {
+          const movIds = movimientos.map((m) => m.id);
+          await tx.movimientoKardexLote.deleteMany({ where: { movimientoId: { in: movIds } } });
+          await tx.movimientoKardex.deleteMany({ where: { id: { in: movIds } } });
+        }
+        await tx.detalleComprobante.deleteMany({ where: { comprobanteId: id } });
+        await tx.leyenda.deleteMany({ where: { comprobanteId: id } });
+        await tx.comprobante.delete({ where: { id } });
+      });
+      this.logger.log(`🗑️ Comprobante ${id} eliminado automáticamente (error SUNAT fatal)`);
+    } catch (err: any) {
+      this.logger.error(`Error al auto-eliminar comprobante ${id}: ${err.message}`);
+    }
   }
 }

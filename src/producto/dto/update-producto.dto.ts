@@ -1,5 +1,5 @@
-import { IsInt, IsNumber, IsOptional, IsString } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsBoolean, IsInt, IsNumber, IsOptional, IsString } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
 
 export class UpdateProductoDto {
   @IsInt()
@@ -118,6 +118,18 @@ export class UpdateProductoDto {
   @IsOptional()
   @IsString()
   codigoDigemid?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  requiereReceta?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  controlado?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  refrigerado?: boolean;
 
   // Campos Ofertas
   @IsOptional()

@@ -3,7 +3,9 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  InternalServerErrorException,
 } from '@nestjs/common';
+import axios from 'axios';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import { ConfigurarTiendaDto } from './dto/configurar-tienda.dto';
@@ -12,6 +14,20 @@ import { ActualizarEstadoPedidoDto } from './dto/actualizar-pedido.dto';
 
 import { DisenoRubroService } from '../diseno-rubro/diseno-rubro.service';
 
+interface CulqiChargeResponse {
+  id: string;
+  amount: number;
+  currency_code: string;
+  email?: string;
+  paid?: boolean;
+  outcome?: {
+    type?: string;
+    code?: string;
+    user_message?: string;
+    merchant_message?: string;
+  };
+}
+
 @Injectable()
 export class TiendaService {
   constructor(
@@ -19,6 +35,21 @@ export class TiendaService {
     private readonly s3: S3Service,
     private readonly disenoService: DisenoRubroService,
   ) { }
+
+  private handlePedidoSchemaError(error: unknown): never {
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: string }).code === 'P2022'
+    ) {
+      throw new InternalServerErrorException(
+        'Falta aplicar la migración ecommerce de pedidos. Ejecuta prisma migrate deploy y prisma generate en backend.',
+      );
+    }
+
+    throw error;
+  }
 
   // ==================== CONFIGURACIÓN DE TIENDA ====================
 
@@ -904,12 +935,18 @@ export class TiendaService {
     const empresa = await this.prisma.empresa.findUnique({
       where: { slugTienda: slug },
       select: {
+        id: true,
         yapeQrUrl: true,
         yapeNumero: true,
         plinQrUrl: true,
         plinNumero: true,
         aceptaEfectivo: true,
         whatsappTienda: true,
+        plan: {
+          select: {
+            tieneCulqi: true,
+          },
+        },
       },
     });
 
@@ -933,6 +970,10 @@ export class TiendaService {
       }
     };
 
+    const culqiPublicKey = (process.env.CULQI_PUBLIC_KEY || '').trim();
+    const culqiSecretKey = (process.env.CULQI_SECRET_KEY || '').trim();
+    const aceptaTarjeta = Boolean(empresa.plan?.tieneCulqi && culqiPublicKey);
+
     return {
       yapeQrUrl: await signIfS3(empresa.yapeQrUrl),
       yapeNumero: empresa.yapeNumero,
@@ -940,6 +981,9 @@ export class TiendaService {
       plinNumero: empresa.plinNumero,
       aceptaEfectivo: empresa.aceptaEfectivo,
       whatsappTienda: empresa.whatsappTienda,
+      aceptaTarjeta,
+      culqiPublicKey: aceptaTarjeta ? culqiPublicKey : null,
+      culqiBackendReady: Boolean(culqiSecretKey),
     };
   }
 
@@ -1064,6 +1108,13 @@ export class TiendaService {
     // IGV = Subtotal - (Subtotal / 1.18)
     const igv = subtotal - (subtotal / 1.18);
     const total = subtotal + costoEnvio;
+    const montoPagado = dto.medioPago === 'TARJETA' ? total : 0;
+    const saldoPendiente = Math.max(total - montoPagado, 0);
+    const estadoEnvioInicial = tipoEntrega === 'ENVIO' ? 'POR_COORDINAR' : 'NO_APLICA';
+    const agenciaEnvioInicial =
+      tipoEntrega === 'ENVIO'
+        ? dto.agenciaEnvio?.trim() || null
+        : 'RECOJO EN TIENDA';
 
     // Validar monto mínimo de pedido (se evalúa después de calcular el total real)
     const minimoCompra = Number(empresa.minimoCompra || 0);
@@ -1073,6 +1124,45 @@ export class TiendaService {
 
     // Generar un código de seguimiento único y corto
     const codigoSeguimiento = `PT-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`.toUpperCase();
+
+    let referenciaTarjeta: string | null = null;
+    if (dto.medioPago === 'TARJETA') {
+      if (!empresa.id) {
+        throw new BadRequestException('No se pudo identificar la empresa para cobro con tarjeta');
+      }
+      const culqiToken = (dto.culqiToken || '').trim();
+      if (!culqiToken) {
+        throw new BadRequestException('Falta el token de pago con tarjeta');
+      }
+
+      const empresaConPlan = await this.prisma.empresa.findUnique({
+        where: { id: empresa.id },
+        select: {
+          nombreComercial: true,
+          razonSocial: true,
+          plan: { select: { tieneCulqi: true } },
+        },
+      });
+
+      if (!empresaConPlan?.plan?.tieneCulqi) {
+        throw new ForbiddenException('Tu plan actual no incluye pagos con tarjeta');
+      }
+
+      const emailPago = (dto.culqiEmail || dto.clienteEmail || '').trim();
+      if (!emailPago) {
+        throw new BadRequestException('Para pagar con tarjeta debes registrar un correo electrónico');
+      }
+
+      const charge = await this.crearCargoCulqi({
+        token: culqiToken,
+        email: emailPago,
+        amountInSoles: total,
+        empresaNombre: empresaConPlan.nombreComercial || empresaConPlan.razonSocial || 'Tienda',
+        orderCode: codigoSeguimiento,
+      });
+
+      referenciaTarjeta = `culqi_charge:${charge.id}`;
+    }
 
     // Crear pedido
     const pedido = await this.prisma.pedidoTienda.create({
@@ -1090,8 +1180,14 @@ export class TiendaService {
         igv,
         total,
         medioPago: dto.medioPago,
+        montoPagado,
+        saldoPendiente,
+        estadoEntrega: 'PENDIENTE',
+        estadoEnvio: estadoEnvioInicial,
+        agenciaEnvio: agenciaEnvioInicial,
+        vendedorNombre: 'Tienda online',
         observaciones: dto.observaciones,
-        referenciaTransf: dto.referenciaTransf,
+        referenciaTransf: referenciaTarjeta || dto.referenciaTransf,
         items: {
           create: itemsData,
         },
@@ -1129,6 +1225,88 @@ export class TiendaService {
     return `PED-${timestamp}-${random}`;
   }
 
+  private validarMontoCulqiEnCentavos(montoSoles: number): number {
+    if (!Number.isFinite(montoSoles) || montoSoles <= 0) {
+      throw new BadRequestException('Monto inválido para cobro con tarjeta');
+    }
+    return Math.round(montoSoles * 100);
+  }
+
+  private async crearCargoCulqi(params: {
+    token: string;
+    email: string;
+    amountInSoles: number;
+    empresaNombre: string;
+    orderCode: string;
+  }): Promise<CulqiChargeResponse> {
+    const secretKey = (process.env.CULQI_SECRET_KEY || '').trim();
+    if (!secretKey) {
+      throw new BadRequestException('Pasarela de tarjeta no configurada');
+    }
+
+    const payload = {
+      amount: this.validarMontoCulqiEnCentavos(params.amountInSoles),
+      currency_code: 'PEN',
+      email: params.email,
+      source_id: params.token,
+      description: `Pedido tienda ${params.empresaNombre} - ${params.orderCode}`,
+      metadata: {
+        orderCode: params.orderCode,
+        empresa: params.empresaNombre,
+      },
+    };
+
+    try {
+      const { data } = await axios.post<CulqiChargeResponse>(
+        'https://api.culqi.com/v2/charges',
+        payload,
+        {
+          headers: {
+            Authorization: `Bearer ${secretKey}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 20000,
+        },
+      );
+
+      if (!data?.id) {
+        throw new BadRequestException('No se pudo confirmar el cobro con tarjeta');
+      }
+
+      const estadoPagoValido =
+        data.paid === true ||
+        data.outcome?.type === 'venta_exitosa' ||
+        data.outcome?.type === 'venta_autorizada';
+
+      if (!estadoPagoValido) {
+        throw new BadRequestException(
+          data.outcome?.user_message ||
+          data.outcome?.merchant_message ||
+          'El pago con tarjeta no fue aprobado por Culqi',
+        );
+      }
+
+      return data;
+    } catch (error: unknown) {
+      let messageFromCulqi: string | null = null;
+
+      if (axios.isAxiosError(error)) {
+        const errorData = error.response?.data as
+          | { user_message?: string; merchant_message?: string; message?: string }
+          | undefined;
+        messageFromCulqi =
+          errorData?.user_message ||
+          errorData?.merchant_message ||
+          errorData?.message ||
+          null;
+      }
+
+      throw new BadRequestException(
+        messageFromCulqi || 'No se pudo procesar el pago con tarjeta',
+      );
+    }
+  }
+
   async listarPedidos(empresaId: number, estado?: string, page = 1, limit = 50) {
     const where: any = { empresaId };
 
@@ -1140,35 +1318,40 @@ export class TiendaService {
     const skip = Math.max(0, (Number(page) || 1) - 1) * (Number(limit) || 50);
     const take = Math.max(1, Math.min(100, Number(limit) || 50)); // Max 100 per request
 
-    // Get total count for pagination info
-    const total = await this.prisma.pedidoTienda.count({ where });
+    try {
+      // Get total count for pagination info
+      const total = await this.prisma.pedidoTienda.count({ where });
 
-    const data = await this.prisma.pedidoTienda.findMany({
-      where,
-      include: {
-        items: {
-          include: {
-            producto: {
-              select: {
-                descripcion: true,
-                imagenUrl: true,
+      const data = await this.prisma.pedidoTienda.findMany({
+        where,
+        include: {
+          items: {
+            include: {
+              producto: {
+                select: {
+                  codigo: true,
+                  descripcion: true,
+                  imagenUrl: true,
+                },
               },
             },
           },
         },
-      },
-      orderBy: { creadoEn: 'desc' },
-      skip,
-      take,
-    });
+        orderBy: { creadoEn: 'desc' },
+        skip,
+        take,
+      });
 
-    return {
-      data,
-      total,
-      page: Number(page) || 1,
-      limit: take,
-      totalPages: Math.ceil(total / take),
-    };
+      return {
+        data,
+        total,
+        page: Number(page) || 1,
+        limit: take,
+        totalPages: Math.ceil(total / take),
+      };
+    } catch (error) {
+      this.handlePedidoSchemaError(error);
+    }
   }
 
   async obtenerPedido(empresaId: number, pedidoId: number) {
@@ -1216,14 +1399,35 @@ export class TiendaService {
     }
 
     const estadoAnterior = pedido.estado;
-    const dataToUpdate: any = {
-      estado: dto.estado,
-    };
+    const estadoNuevo = dto.estado || pedido.estado;
+    const dataToUpdate: any = {};
+
+    if (dto.estado) dataToUpdate.estado = dto.estado;
+    if (dto.estadoEntrega !== undefined) dataToUpdate.estadoEntrega = dto.estadoEntrega;
+    if (dto.agenciaEnvio !== undefined) dataToUpdate.agenciaEnvio = dto.agenciaEnvio;
+    if (dto.estadoEnvio !== undefined) dataToUpdate.estadoEnvio = dto.estadoEnvio;
+    if (dto.numeroTracking !== undefined) dataToUpdate.numeroTracking = dto.numeroTracking;
+    if (dto.notasInternas !== undefined) dataToUpdate.notasInternas = dto.notasInternas;
+    if (dto.usuarioConfirma !== undefined) dataToUpdate.vendedorId = dto.usuarioConfirma;
+    if (dto.vendedorNombre !== undefined) dataToUpdate.vendedorNombre = dto.vendedorNombre;
+    if (dto.montoPagado !== undefined) {
+      const montoPagado = Math.max(Number(dto.montoPagado) || 0, 0);
+      dataToUpdate.montoPagado = montoPagado;
+      dataToUpdate.saldoPendiente = Math.max(Number(pedido.total) - montoPagado, 0);
+    }
 
     if (dto.estado === 'CONFIRMADO' && !pedido.fechaConfirmacion) {
       dataToUpdate.fechaConfirmacion = new Date();
       dataToUpdate.usuarioConfirma = dto.usuarioConfirma;
     }
+
+    const notas = [
+      dto.estado ? `Estado comercial: ${estadoAnterior} -> ${dto.estado}` : null,
+      dto.estadoEntrega ? `Entrega: ${dto.estadoEntrega}` : null,
+      dto.estadoEnvio ? `Envío: ${dto.estadoEnvio}` : null,
+      dto.agenciaEnvio ? `Agencia: ${dto.agenciaEnvio}` : null,
+      dto.montoPagado !== undefined ? `Pagado: S/ ${Number(dto.montoPagado).toFixed(2)}` : null,
+    ].filter(Boolean).join(' · ') || 'Pedido actualizado';
 
     // Actualizar pedido y registrar en historial en una transacción
     const [pedidoActualizado] = await this.prisma.$transaction([
@@ -1235,7 +1439,9 @@ export class TiendaService {
             include: {
               producto: {
                 select: {
+                  codigo: true,
                   descripcion: true,
+                  imagenUrl: true,
                 },
               },
             },
@@ -1246,9 +1452,9 @@ export class TiendaService {
         data: {
           pedidoId,
           estadoAnterior,
-          estadoNuevo: dto.estado,
+          estadoNuevo,
           usuarioId: dto.usuarioConfirma,
-          notas: `Estado cambiado de ${estadoAnterior} a ${dto.estado}`,
+          notas,
         },
       }),
     ]);

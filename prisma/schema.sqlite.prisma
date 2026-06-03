@@ -80,6 +80,11 @@ model Empresa {
   slugTienda            String?                    @unique
   descripcionTienda     String?
   whatsappTienda        String?
+  whatsappProvider      WhatsAppProvider          @default(PLATFORM)
+  whatsappApiToken      String?
+  whatsappPhoneNumberId String?
+  whatsappBusinessId    String?
+  whatsappActivo        Boolean                   @default(true)
   facebookUrl           String?
   instagramUrl          String?
   tiktokUrl             String?
@@ -522,6 +527,12 @@ model DetalleComprobante {
   tipAfeIgv         Int
   totalImpuestos    Float
   mtoPrecioUnitario Float
+  // Farmacia: trazabilidad de lote dispensado (sin FK en SQLite — ProductoLote no existe en desktop)
+  loteId            Int?
+  // Farmacia: datos de receta médica y medicamentos controlados
+  numeroReceta      String?
+  dniPaciente       String?
+  medicoNombre      String?
   comprobante       Comprobante @relation(fields: [comprobanteId], references: [id])
   producto          Producto?   @relation(fields: [productoId], references: [id])
 }
@@ -639,7 +650,12 @@ model PedidoTienda {
   igv               Decimal                 @default(0)
   total             Decimal
   estado            EstadoPedidoTienda      @default(PENDIENTE)
+  estadoEntrega     String                  @default("PENDIENTE")
+  agenciaEnvio      String?
+  estadoEnvio       String                  @default("SIN_ASIGNAR")
   medioPago         MedioPagoTienda         @default(YAPE)
+  montoPagado       Decimal                 @default(0)
+  saldoPendiente    Decimal                 @default(0)
   observaciones     String?
   referenciaTransf  String?
   creadoEn          DateTime                @default(now())
@@ -647,11 +663,16 @@ model PedidoTienda {
   fechaConfirmacion DateTime?
   usuarioConfirma   Int?
   comprobanteId     Int?
+  vendedorId        Int?
+  vendedorNombre    String?
+  numeroTracking    String?
   empresa           Empresa                 @relation(fields: [empresaId], references: [id])
   items             ItemPedidoTienda[]
   historialEstados  HistorialEstadoPedido[]
 
   @@index([empresaId, estado])
+  @@index([empresaId, estadoEntrega])
+  @@index([empresaId, estadoEnvio])
   @@index([creadoEn])
   @@index([codigoSeguimiento])
 }
@@ -960,6 +981,12 @@ enum EstadoWhatsApp {
   ENTREGADO
   LEIDO
   FALLIDO
+}
+
+enum WhatsAppProvider {
+  PLATFORM
+  EMPRESA
+  DISABLED
 }
 
 model GrupoModificador {

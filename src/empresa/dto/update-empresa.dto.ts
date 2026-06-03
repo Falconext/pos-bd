@@ -74,6 +74,10 @@ export class UpdateEmpresaDto {
 
   @IsOptional()
   @IsString()
+  directorTecnico?: string;
+
+  @IsOptional()
+  @IsString()
   providerId?: string;
 
   @IsOptional()
@@ -150,6 +154,27 @@ export class UpdateEmpresaDto {
   @IsOptional()
   @IsString()
   contrasenaPse?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['PLATFORM', 'EMPRESA', 'DISABLED'])
+  whatsappProvider?: 'PLATFORM' | 'EMPRESA' | 'DISABLED';
+
+  @IsOptional()
+  @IsString()
+  whatsappApiToken?: string;
+
+  @IsOptional()
+  @IsString()
+  whatsappPhoneNumberId?: string;
+
+  @IsOptional()
+  @IsString()
+  whatsappBusinessId?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  whatsappActivo?: boolean;
 
   @IsOptional()
   @IsBoolean()

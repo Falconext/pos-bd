@@ -8,10 +8,13 @@ export interface RecuperacionPasswordEmailProps {
   resetUrl: string;
   appName: string;
   expiresInMinutes?: number;
+  primaryColor?: string;
 }
 
+const DEFAULT_COLOR = '#3E2BC7';
+
 const main: React.CSSProperties = {
-  backgroundColor: '#F5F3FF',
+  backgroundColor: '#F8F9FF',
   fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
 };
 
@@ -25,13 +28,7 @@ const card: React.CSSProperties = {
   backgroundColor: '#ffffff',
   borderRadius: '20px',
   overflow: 'hidden',
-  boxShadow: '0 4px 24px rgba(100,42,229,0.10)',
-};
-
-const header: React.CSSProperties = {
-  background: 'linear-gradient(135deg, #642AE5 0%, #8B5CF6 100%)',
-  padding: '44px 40px 40px',
-  textAlign: 'center' as const,
+  boxShadow: '0 4px 24px rgba(0,0,0,0.08)',
 };
 
 const emojiStyle: React.CSSProperties = {
@@ -67,32 +64,11 @@ const greeting: React.CSSProperties = {
   lineHeight: '1.7',
 };
 
-const infoBox: React.CSSProperties = {
-  backgroundColor: '#F5F3FF',
-  borderLeft: '4px solid #642AE5',
-  borderRadius: '0 10px 10px 0',
-  padding: '14px 18px',
-  marginBottom: '28px',
-};
-
 const infoText: React.CSSProperties = {
   fontSize: '13px',
   color: '#4B5563',
   margin: '0',
   lineHeight: '1.7',
-};
-
-const ctaButton: React.CSSProperties = {
-  backgroundColor: '#642AE5',
-  borderRadius: '12px',
-  color: '#ffffff',
-  display: 'block',
-  fontSize: '15px',
-  fontWeight: '700',
-  textAlign: 'center' as const,
-  padding: '15px 32px',
-  textDecoration: 'none',
-  margin: '0 0 20px 0',
 };
 
 const linkNote: React.CSSProperties = {
@@ -117,67 +93,97 @@ const footer: React.CSSProperties = {
   margin: '0',
 };
 
-const footerBrand: React.CSSProperties = {
-  fontSize: '13px',
-  fontWeight: '700',
-  color: '#642AE5',
-  textAlign: 'center' as const,
-  margin: '0 0 4px 0',
-};
-
 export const RecuperacionPasswordEmail: React.FC<RecuperacionPasswordEmailProps> = ({
   nombre,
   resetUrl,
   appName,
   expiresInMinutes = 15,
-}) => (
-  <Html lang="es">
-    <Head />
-    <Preview>Solicitud de cambio de contraseña para tu cuenta en {appName}</Preview>
-    <Body style={main}>
-      <Container style={container}>
-        <div style={card}>
-          {/* Header */}
-          <div style={header}>
-            <p style={emojiStyle}>🔐</p>
-            <p style={headerTitle}>Recupera tu contraseña</p>
-            <p style={headerSubtitle}>{appName} · Seguridad de cuenta</p>
-          </div>
+  primaryColor = DEFAULT_COLOR,
+}) => {
+  const header: React.CSSProperties = {
+    background: `linear-gradient(135deg, ${primaryColor} 0%, ${primaryColor}CC 100%)`,
+    padding: '44px 40px 40px',
+    textAlign: 'center' as const,
+  };
 
-          {/* Body */}
-          <div style={body}>
-            <Text style={greeting}>
-              Hola, <strong>{nombre}</strong>. Recibimos una solicitud para restablecer la contraseña
-              de tu cuenta. Si no fuiste tú, puedes ignorar este correo.
-            </Text>
+  const infoBox: React.CSSProperties = {
+    backgroundColor: `${primaryColor}0F`,
+    borderLeft: `4px solid ${primaryColor}`,
+    borderRadius: '0 10px 10px 0',
+    padding: '14px 18px',
+    marginBottom: '28px',
+  };
 
-            <div style={infoBox}>
-              <p style={infoText}>
-                ⏱️ Este enlace es válido por <strong>{expiresInMinutes} minutos</strong> y solo puede
-                ser usado una vez.
-              </p>
+  const ctaButton: React.CSSProperties = {
+    backgroundColor: primaryColor,
+    borderRadius: '12px',
+    color: '#ffffff',
+    display: 'block',
+    fontSize: '15px',
+    fontWeight: '700',
+    textAlign: 'center' as const,
+    padding: '15px 32px',
+    textDecoration: 'none',
+    margin: '0 0 20px 0',
+  };
+
+  const footerBrand: React.CSSProperties = {
+    fontSize: '13px',
+    fontWeight: '700',
+    color: primaryColor,
+    textAlign: 'center' as const,
+    margin: '0 0 4px 0',
+  };
+
+  return (
+    <Html lang="es">
+      <Head />
+      <Preview>Solicitud de cambio de contraseña para tu cuenta en {appName}</Preview>
+      <Body style={main}>
+        <Container style={container}>
+          <div style={card}>
+            {/* Header */}
+            <div style={header}>
+              <p style={emojiStyle}>🔐</p>
+              <p style={headerTitle}>Recupera tu contraseña</p>
+              <p style={headerSubtitle}>{appName} · Seguridad de cuenta</p>
             </div>
 
-            <Button href={resetUrl} style={ctaButton}>
-              Cambiar mi contraseña
-            </Button>
+            {/* Body */}
+            <div style={body}>
+              <Text style={greeting}>
+                Hola, <strong>{nombre}</strong>. Recibimos una solicitud para restablecer la contraseña
+                de tu cuenta. Si no fuiste tú, puedes ignorar este correo.
+              </Text>
 
-            <p style={linkNote}>
-              Si el botón no funciona, copia y pega este enlace en tu navegador:{' '}
-              <a href={resetUrl} style={{ color: '#642AE5' }}>{resetUrl}</a>
-            </p>
+              <div style={infoBox}>
+                <p style={infoText}>
+                  ⏱️ Este enlace es válido por <strong>{expiresInMinutes} minutos</strong> y solo puede
+                  ser usado una vez.
+                </p>
+              </div>
 
-            <Hr style={hr} />
+              <Button href={resetUrl} style={ctaButton}>
+                Cambiar mi contraseña
+              </Button>
 
-            <p style={footerBrand}>{appName}</p>
-            <Text style={footer}>
-              Si no solicitaste este cambio, tu contraseña permanece segura. Puedes ignorar este mensaje.
-            </Text>
+              <p style={linkNote}>
+                Si el botón no funciona, copia y pega este enlace en tu navegador:{' '}
+                <a href={resetUrl} style={{ color: primaryColor }}>{resetUrl}</a>
+              </p>
+
+              <Hr style={hr} />
+
+              <p style={footerBrand}>{appName}</p>
+              <Text style={footer}>
+                Si no solicitaste este cambio, tu contraseña permanece segura. Puedes ignorar este mensaje.
+              </Text>
+            </div>
           </div>
-        </div>
-      </Container>
-    </Body>
-  </Html>
-);
+        </Container>
+      </Body>
+    </Html>
+  );
+};
 
 export default RecuperacionPasswordEmail;

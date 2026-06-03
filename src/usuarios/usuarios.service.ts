@@ -425,4 +425,129 @@ export class UsersService {
       select: { id: true, nombre: true, estado: true },
     });
   }
+
+  async getRankingVendedores(params: {
+    empresaId: number;
+    fechaInicio: string;
+    fechaFin: string;
+    sedeId?: number;
+  }) {
+    const { empresaId, fechaInicio, fechaFin, sedeId } = params;
+
+    const baseWhere: any = {
+      empresaId,
+      tipoDoc: { in: ['01', '03'] },
+      estadoEnvioSunat: { not: 'ANULADO' },
+      usuarioId: { not: null },
+      ...(sedeId ? { sedeId } : {}),
+    };
+
+    const inicio = new Date(`${fechaInicio}T00:00:00-05:00`);
+    const fin = new Date(`${fechaFin}T23:59:59-05:00`);
+    const duracionMs = fin.getTime() - inicio.getTime();
+    const prevFin = new Date(inicio.getTime() - 1);
+    const prevInicio = new Date(inicio.getTime() - duracionMs - 1);
+
+    const [grouped, prevGrouped] = await Promise.all([
+      this.prisma.comprobante.groupBy({
+        by: ['usuarioId'],
+        where: { ...baseWhere, fechaEmision: { gte: inicio, lte: fin } },
+        _sum: { mtoImpVenta: true },
+        _count: { id: true },
+        orderBy: { _sum: { mtoImpVenta: 'desc' } },
+      }),
+      this.prisma.comprobante.groupBy({
+        by: ['usuarioId'],
+        where: { ...baseWhere, fechaEmision: { gte: prevInicio, lte: prevFin } },
+        _sum: { mtoImpVenta: true },
+      }),
+    ]);
+
+    const userIds = grouped.map((g) => g.usuarioId).filter(Boolean) as number[];
+    const usuarios = await this.prisma.usuario.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, nombre: true, email: true, rol: true },
+    });
+
+    const prevMap = new Map(prevGrouped.map((g) => [g.usuarioId, Number(g._sum.mtoImpVenta || 0)]));
+    const usuarioMap = new Map(usuarios.map((u) => [u.id, u]));
+
+    return grouped.map((g, idx) => {
+      const totalActual = Number(g._sum.mtoImpVenta || 0);
+      const totalAnterior = prevMap.get(g.usuarioId!) || 0;
+      const count = g._count.id;
+      const crecimientoPct = totalAnterior > 0
+        ? Number((((totalActual - totalAnterior) / totalAnterior) * 100).toFixed(1))
+        : null;
+      return {
+        posicion: idx + 1,
+        usuario: usuarioMap.get(g.usuarioId!) ?? null,
+        totalVentas: Number(totalActual.toFixed(2)),
+        numComprobantes: count,
+        ticketPromedio: count > 0 ? Number((totalActual / count).toFixed(2)) : 0,
+        totalVentasPeriodoAnterior: Number(totalAnterior.toFixed(2)),
+        crecimientoPct,
+      };
+    });
+  }
+
+  async getDetalleVendedor(params: {
+    empresaId: number;
+    usuarioId: number;
+    fechaInicio: string;
+    fechaFin: string;
+  }) {
+    const { empresaId, usuarioId, fechaInicio, fechaFin } = params;
+
+    const [usuario, comprobantes] = await Promise.all([
+      this.prisma.usuario.findFirst({
+        where: { id: usuarioId, empresaId },
+        select: { id: true, nombre: true, email: true, rol: true },
+      }),
+      this.prisma.comprobante.findMany({
+        where: {
+          empresaId,
+          usuarioId,
+          tipoDoc: { in: ['01', '03'] },
+          estadoEnvioSunat: { not: 'ANULADO' },
+          fechaEmision: {
+            gte: new Date(`${fechaInicio}T00:00:00-05:00`),
+            lte: new Date(`${fechaFin}T23:59:59-05:00`),
+          },
+        },
+        include: { cliente: { select: { nombre: true } } },
+        orderBy: { fechaEmision: 'desc' },
+      }),
+    ]);
+
+    if (!usuario) throw new NotFoundException('Vendedor no encontrado');
+
+    // Agrupar por día para el gráfico
+    const byDay: Record<string, number> = {};
+    for (const c of comprobantes) {
+      const d = new Date(c.fechaEmision);
+      const peruDate = new Date(d.getTime() - 5 * 60 * 60 * 1000);
+      const day = peruDate.toISOString().split('T')[0];
+      byDay[day] = (byDay[day] || 0) + Number(c.mtoImpVenta);
+    }
+
+    const chartData = Object.entries(byDay)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([fecha, total]) => ({ fecha, total: Number(total.toFixed(2)) }));
+
+    return {
+      usuario,
+      chartData,
+      comprobantes: comprobantes.map((c) => ({
+        id: c.id,
+        serie: c.serie,
+        correlativo: c.correlativo,
+        tipoDoc: c.tipoDoc,
+        fechaEmision: c.fechaEmision,
+        clienteNombre: (c as any).cliente?.nombre ?? '-',
+        total: Number(c.mtoImpVenta.toFixed(2)),
+        estadoEnvioSunat: c.estadoEnvioSunat,
+      })),
+    };
+  }
 }

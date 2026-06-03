@@ -1,4 +1,4 @@
-import { IsEnum, IsOptional, IsNumber } from 'class-validator';
+import { IsEnum, IsOptional, IsNumber, IsString, Min } from 'class-validator';
 
 export enum EstadoPedidoTienda {
   PENDIENTE = 'PENDIENTE',
@@ -11,9 +11,39 @@ export enum EstadoPedidoTienda {
 
 export class ActualizarEstadoPedidoDto {
   @IsEnum(EstadoPedidoTienda)
-  estado: EstadoPedidoTienda;
+  @IsOptional()
+  estado?: EstadoPedidoTienda;
 
   @IsNumber()
   @IsOptional()
   usuarioConfirma?: number;
+
+  @IsString()
+  @IsOptional()
+  estadoEntrega?: string;
+
+  @IsString()
+  @IsOptional()
+  agenciaEnvio?: string;
+
+  @IsString()
+  @IsOptional()
+  estadoEnvio?: string;
+
+  @IsString()
+  @IsOptional()
+  numeroTracking?: string;
+
+  @IsString()
+  @IsOptional()
+  vendedorNombre?: string;
+
+  @IsString()
+  @IsOptional()
+  notasInternas?: string;
+
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  montoPagado?: number;
 }

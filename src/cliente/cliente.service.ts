@@ -88,13 +88,12 @@ export class ClienteService {
 
     const where: any = {
       empresaId,
-      estado: 'ACTIVO',
       ...(persona ? { persona } : {}),
       ...(search
         ? {
           OR: [
-            { nombre: { contains: search } },
-            { nroDoc: { contains: search } },
+            { nombre: { contains: search, mode: 'insensitive' } },
+            { nroDoc: { contains: search, mode: 'insensitive' } },
           ],
         }
         : {}),
@@ -197,8 +196,8 @@ export class ClienteService {
       estado: { in: ['ACTIVO', 'INACTIVO'] },
       OR: search
         ? [
-          { nombre: { contains: search } },
-          { nroDoc: { contains: search } },
+          { nombre: { contains: search, mode: 'insensitive' } },
+          { nroDoc: { contains: search, mode: 'insensitive' } },
         ]
         : undefined,
     };

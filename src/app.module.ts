@@ -41,6 +41,8 @@ import { SistemaFinanzasModule } from './sistema-finanzas/sistema-finanzas.modul
 import { ProduccionModule } from './produccion/produccion.module';
 import { BrandingModule } from './branding/branding.module';
 import { ReservaModule } from './reserva/reserva.module';
+import { EnvioDespachoModule } from './envio-despacho/envio-despacho.module';
+import { DigemidModule } from './digemid/digemid.module';
 
 @Module({
   imports: [
@@ -84,6 +86,8 @@ import { ReservaModule } from './reserva/reserva.module';
     ProduccionModule,
     BrandingModule,
     ReservaModule,
+    DigemidModule,
+    EnvioDespachoModule,
   ],
   controllers: [AppController],
   providers: [AppService],

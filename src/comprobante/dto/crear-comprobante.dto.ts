@@ -35,6 +35,34 @@ class DetalleDto {
   @IsNumber()
   @Min(0)
   descuento?: number;
+
+  // Farmacia: lote específico a descontar (si no se provee, usa FEFO automático)
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  loteId?: number;
+
+  // Fraccionamiento: unidad de venta cuando difiere de la unidad base del producto
+  @IsOptional()
+  @IsString()
+  unidadVenta?: string;
+
+  // Farmacia: datos de receta médica
+  @IsOptional()
+  @IsString()
+  numeroReceta?: string;
+
+  @IsOptional()
+  @IsString()
+  dniPaciente?: string;
+
+  @IsOptional()
+  @IsString()
+  nombrePaciente?: string;
+
+  @IsOptional()
+  @IsString()
+  medicoNombre?: string;
 }
 
 export class CrearComprobanteDto {
@@ -198,4 +226,11 @@ export class CrearComprobanteDto {
   @ValidateNested({ each: true })
   @Type(() => DetalleDto)
   detalles: DetalleDto[];
+
+  // Conversión desde informal (NV, TICKET, etc.) al formal.
+  // Cuando se provee, el stock NO se descuenta porque ya fue descontado al crear el informal.
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  comprobanteOrigenId?: number;
 }

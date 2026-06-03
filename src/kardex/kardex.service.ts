@@ -1173,4 +1173,228 @@ export class KardexService {
       return resultados;
     });
   }
+
+  /**
+   * Libro de Control de Psicotrópicos y Estupefacientes (DS 023-2001-SA).
+   * Combina entradas (compras) y salidas (comprobantes) de productos controlados.
+   * Devuelve movimientos ordenados por fecha con saldo corrido por producto.
+   */
+  async obtenerLibroControlPsicotropicos(params: {
+    empresaId: number;
+    fechaInicio: Date;
+    fechaFin: Date;
+    productoId?: number;
+  }) {
+    const { empresaId, fechaInicio, fechaFin, productoId } = params;
+
+    const productoWhere: any = { empresaId, controlado: true };
+    if (productoId) productoWhere.id = productoId;
+
+    // ── ENTRADAS desde Compras ─────────────────────────────────
+    const entradas = await this.prisma.detalleCompra.findMany({
+      where: {
+        compra: { empresaId, fechaEmision: { gte: fechaInicio, lte: fechaFin } },
+        productoId: { not: null },
+        producto: productoWhere,
+      },
+      include: {
+        compra: {
+          include: {
+            proveedor: { select: { nombre: true, nroDoc: true } },
+          },
+        },
+        producto: {
+          select: {
+            id: true, descripcion: true, concentracion: true, presentacion: true,
+          },
+        },
+      },
+      orderBy: { compra: { fechaEmision: 'asc' } },
+    });
+
+    // ── SALIDAS desde Comprobantes ─────────────────────────────
+    const salidas = await this.prisma.detalleComprobante.findMany({
+      where: {
+        comprobante: { empresaId, fechaEmision: { gte: fechaInicio, lte: fechaFin } },
+        productoId: { not: null },
+        producto: productoWhere,
+      },
+      include: {
+        comprobante: { select: { fechaEmision: true, serie: true, correlativo: true } },
+        producto: {
+          select: {
+            id: true, descripcion: true, concentracion: true, presentacion: true,
+          },
+        },
+        lote: { select: { lote: true } },
+      },
+      orderBy: { comprobante: { fechaEmision: 'asc' } },
+    });
+
+    // ── Combinar y calcular saldo corrido por producto ─────────
+    type Movimiento = {
+      fecha: Date; tipo: 'ENTRADA' | 'SALIDA';
+      proveedor?: string; proveedorDoc?: string; documento?: string;
+      paciente?: string; dniPaciente?: string; nombrePaciente?: string; numeroReceta?: string; medico?: string;
+      productoId: number; productoNombre: string; concentracion: string | null; formaFarmaceutica: string | null;
+      lote?: string; cantidad: number;
+      saldo?: number;
+    };
+
+    const movimientos: Movimiento[] = [
+      ...entradas.map((e) => ({
+        fecha: e.compra.fechaEmision,
+        tipo: 'ENTRADA' as const,
+        proveedor: e.compra.proveedor.nombre,
+        proveedorDoc: e.compra.proveedor.nroDoc ?? undefined,
+        documento: `${e.compra.serie}-${e.compra.numero}`,
+        productoId: e.productoId!,
+        productoNombre: e.producto!.descripcion,
+        concentracion: (e.producto as any).concentracion ?? null,
+        formaFarmaceutica: (e.producto as any).presentacion ?? null,
+        lote: e.lote ?? undefined,
+        cantidad: Number(e.cantidad),
+      })),
+      ...salidas.map((s) => ({
+        fecha: s.comprobante.fechaEmision,
+        tipo: 'SALIDA' as const,
+        paciente: (s as any).nombrePaciente ?? s.dniPaciente ?? undefined,
+        dniPaciente: s.dniPaciente ?? undefined,
+        nombrePaciente: (s as any).nombrePaciente ?? undefined,
+        numeroReceta: s.numeroReceta ?? undefined,
+        medico: s.medicoNombre ?? undefined,
+        documento: `${s.comprobante.serie}-${s.comprobante.correlativo}`,
+        productoId: s.productoId!,
+        productoNombre: s.producto!.descripcion,
+        concentracion: (s.producto as any).concentracion ?? null,
+        formaFarmaceutica: (s.producto as any).presentacion ?? null,
+        lote: s.lote?.lote ?? undefined,
+        cantidad: Number(s.cantidad),
+      })),
+    ].sort((a, b) => a.fecha.getTime() - b.fecha.getTime());
+
+    // Saldo inicial por producto: suma de entradas - salidas ANTES del período filtrado
+    const entradasPrevias = await this.prisma.detalleCompra.findMany({
+      where: {
+        compra: { empresaId, fechaEmision: { lt: fechaInicio } },
+        productoId: { not: null },
+        producto: productoWhere,
+      },
+      select: { productoId: true, cantidad: true },
+    });
+    const salidasPrevias = await this.prisma.detalleComprobante.findMany({
+      where: {
+        comprobante: { empresaId, fechaEmision: { lt: fechaInicio } },
+        productoId: { not: null },
+        producto: productoWhere,
+      },
+      select: { productoId: true, cantidad: true },
+    });
+
+    const saldoPorProducto = new Map<number, number>();
+    for (const e of entradasPrevias) {
+      const pid = e.productoId!;
+      saldoPorProducto.set(pid, (saldoPorProducto.get(pid) ?? 0) + Number(e.cantidad));
+    }
+    for (const s of salidasPrevias) {
+      const pid = s.productoId!;
+      saldoPorProducto.set(pid, Math.max(0, (saldoPorProducto.get(pid) ?? 0) - Number(s.cantidad)));
+    }
+
+    const movimientosConSaldo = movimientos.map((m) => {
+      const saldoAnterior = saldoPorProducto.get(m.productoId) ?? 0;
+      const nuevoSaldo = m.tipo === 'ENTRADA'
+        ? saldoAnterior + m.cantidad
+        : Math.max(0, saldoAnterior - m.cantidad);
+      saldoPorProducto.set(m.productoId, nuevoSaldo);
+      return { ...m, saldo: nuevoSaldo };
+    });
+
+    // Productos controlados para el filtro
+    const productosControlados = await this.prisma.producto.findMany({
+      where: productoWhere,
+      select: { id: true, descripcion: true, concentracion: true },
+      orderBy: { descripcion: 'asc' },
+    });
+
+    return { movimientos: movimientosConSaldo, productosControlados };
+  }
+
+  /**
+   * KPIs farmacéuticos para el dashboard de kardex.
+   * Retorna null si la empresa no tiene rubro farmacéutico.
+   */
+  async obtenerDashboardFarmacia(empresaId: number) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { rubro: { select: { nombre: true } } },
+    });
+
+    const rubroNombre = empresa?.rubro?.nombre?.toLowerCase() ?? '';
+    const esFarmaceutico =
+      rubroNombre.includes('farmacia') ||
+      rubroNombre.includes('botica') ||
+      rubroNombre.includes('drogueria') ||
+      rubroNombre.includes('droguería');
+
+    if (!esFarmaceutico) return null;
+
+    const hoy = new Date();
+    const en30dias = new Date(hoy.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    const baseWhere = {
+      producto: { empresaId },
+      activo: true,
+      stockActual: { gt: 0 },
+    };
+
+    const [vencidosRaw, porVencer30dRaw, top5PorVencer, top5Vencidos] = await Promise.all([
+      this.prisma.productoLote.findMany({
+        where: { ...baseWhere, fechaVencimiento: { lt: hoy } },
+        select: { stockActual: true, costoUnitario: true },
+      }),
+      this.prisma.productoLote.count({
+        where: { ...baseWhere, fechaVencimiento: { gte: hoy, lte: en30dias } },
+      }),
+      this.prisma.productoLote.findMany({
+        where: { ...baseWhere, fechaVencimiento: { gte: hoy, lte: en30dias } },
+        orderBy: { fechaVencimiento: 'asc' },
+        take: 5,
+        select: {
+          id: true, lote: true, fechaVencimiento: true, stockActual: true,
+          producto: { select: { descripcion: true, codigo: true } },
+        },
+      }),
+      this.prisma.productoLote.findMany({
+        where: { ...baseWhere, fechaVencimiento: { lt: hoy } },
+        orderBy: { fechaVencimiento: 'asc' },
+        take: 5,
+        select: {
+          id: true, lote: true, fechaVencimiento: true, stockActual: true,
+          producto: { select: { descripcion: true, codigo: true } },
+        },
+      }),
+    ]);
+
+    const valorLotesVencidos = vencidosRaw.reduce(
+      (acc, l) => acc + l.stockActual * Number(l.costoUnitario ?? 0), 0
+    );
+
+    const mapLote = (l: any) => ({
+      id: l.id,
+      lote: l.lote,
+      fechaVencimiento: l.fechaVencimiento,
+      diasAlVencimiento: Math.floor((new Date(l.fechaVencimiento).getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24)),
+      stockActual: l.stockActual,
+      producto: l.producto,
+    });
+
+    return {
+      lotesVencidos: vencidosRaw.length,
+      lotesPorVencer30d: porVencer30dRaw,
+      valorLotesVencidos,
+      top5PorVencer: top5PorVencer.map(mapLote),
+      top5Vencidos: top5Vencidos.map(mapLote),
+    };
+  }
 }

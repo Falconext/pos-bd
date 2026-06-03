@@ -133,6 +133,123 @@ export class ProductoLoteService {
     }
 
     /**
+     * Crea o actualiza un ProductoLote desde un ingreso de compra.
+     * NO modifica Producto.stock (ya fue hecho por KardexService.registrarMovimiento).
+     * Si factorConversion > 1, el stock se almacena en unidadVenta (unidad mínima).
+     */
+    async sincronizarLoteDesdeIngreso(params: {
+        productoId: number;
+        empresaId: number;
+        lote: string;
+        fechaVencimiento: Date;
+        cantidad: number;           // en unidadCompra
+        costoUnitario?: number;
+        movimientoKardexId: number;
+    }): Promise<void> {
+        const producto = await this.prisma.producto.findFirst({
+            where: { id: params.productoId, empresaId: params.empresaId },
+            select: { factorConversion: true },
+        });
+
+        const factor = Number(producto?.factorConversion ?? 1);
+        const stockEnUnidad = params.cantidad * factor;
+
+        const loteExistente = await this.prisma.productoLote.findUnique({
+            where: { productoId_lote: { productoId: params.productoId, lote: params.lote } },
+        });
+
+        if (loteExistente) {
+            await this.prisma.productoLote.update({
+                where: { id: loteExistente.id },
+                data: { stockActual: { increment: stockEnUnidad }, activo: true },
+            });
+            await this.prisma.movimientoKardexLote.create({
+                data: {
+                    productoLoteId: loteExistente.id,
+                    movimientoId: params.movimientoKardexId,
+                    cantidad: stockEnUnidad,
+                    stockAnterior: loteExistente.stockActual,
+                    stockActual: loteExistente.stockActual + stockEnUnidad,
+                },
+            });
+        } else {
+            const nuevoLote = await this.prisma.productoLote.create({
+                data: {
+                    productoId: params.productoId,
+                    lote: params.lote,
+                    fechaVencimiento: params.fechaVencimiento,
+                    stockInicial: stockEnUnidad,
+                    stockActual: stockEnUnidad,
+                    costoUnitario: params.costoUnitario,
+                    activo: true,
+                },
+            });
+            await this.prisma.movimientoKardexLote.create({
+                data: {
+                    productoLoteId: nuevoLote.id,
+                    movimientoId: params.movimientoKardexId,
+                    cantidad: stockEnUnidad,
+                    stockAnterior: 0,
+                    stockActual: stockEnUnidad,
+                },
+            });
+        }
+    }
+
+    /**
+     * Descuento atómico de un lote específico dentro de una transacción Prisma existente.
+     * Usa conditional UPDATE para evitar sobreventa por concurrencia.
+     * Llamar siempre desde dentro de prisma.$transaction().
+     */
+    async descontarStockLoteEnTx(
+        tx: Prisma.TransactionClient,
+        params: { loteId: number; cantidad: number; movimientoKardexId: number },
+    ): Promise<void> {
+        const { loteId, cantidad, movimientoKardexId } = params;
+
+        // Leer estado actual dentro de la tx para registrar stockAnterior
+        const lote = await tx.productoLote.findUnique({ where: { id: loteId } });
+        if (!lote) throw new NotFoundException(`Lote ${loteId} no encontrado`);
+        if (!lote.activo) throw new BadRequestException(`El lote ${lote.lote} está inactivo`);
+
+        // Validar vencimiento (no dispensar lotes vencidos)
+        if (lote.fechaVencimiento && lote.fechaVencimiento < new Date()) {
+            throw new BadRequestException(
+                `El lote ${lote.lote} está vencido (${lote.fechaVencimiento.toISOString().slice(0, 10)})`,
+            );
+        }
+
+        // UPDATE condicional atómico — si otra tx decrementó justo antes, count=0 y lanzamos error
+        const result = await tx.productoLote.updateMany({
+            where: {
+                id: loteId,
+                activo: true,
+                stockActual: { gte: cantidad },
+            },
+            data: {
+                stockActual: { decrement: cantidad },
+                ...(lote.stockActual - cantidad <= 0 ? { activo: false } : {}),
+            },
+        });
+
+        if (result.count === 0) {
+            throw new BadRequestException(
+                `Stock insuficiente en lote ${lote.lote}. Disponible: ${lote.stockActual}, solicitado: ${cantidad}`,
+            );
+        }
+
+        await tx.movimientoKardexLote.create({
+            data: {
+                productoLoteId: loteId,
+                movimientoId: movimientoKardexId,
+                cantidad,
+                stockAnterior: lote.stockActual,
+                stockActual: lote.stockActual - cantidad,
+            },
+        });
+    }
+
+    /**
      * Descontar stock de un lote específico (para ventas)
      * Automáticamente elige el lote más próximo a vencer si no se especifica
      */
@@ -161,13 +278,15 @@ export class ProductoLoteService {
             lotesAfectados.push({ lote, cantidadAdescontar: cantidad });
         } else {
             // Caso 2: FEFO automático (múltiples lotes si es necesario)
+            // Solo lotes vigentes (no vencidos) — los vencidos deben darse de baja manualmente
             const lotesDisponibles = await this.prisma.productoLote.findMany({
                 where: {
                     productoId,
                     activo: true,
                     stockActual: { gt: 0 },
+                    fechaVencimiento: { gte: new Date() },
                 },
-                orderBy: { fechaVencimiento: 'asc' }, // Primero los próximos a vencer
+                orderBy: { fechaVencimiento: 'asc' }, // Primero los próximos a vencer (FEFO)
             });
 
             if (lotesDisponibles.length === 0) {
@@ -457,18 +576,106 @@ export class ProductoLoteService {
         });
     }
 
-    async obtenerTodosLotes(empresaId: number) {
-        return this.prisma.productoLote.findMany({
-            where: {
-                producto: { empresaId },
-                activo: true,
-                stockActual: { gt: 0 },
-            },
-            include: {
-                producto: true,
-            },
-            orderBy: { fechaVencimiento: 'asc' },
+    async obtenerLotesConFiltros(params: {
+        empresaId: number;
+        page?: number;
+        limit?: number;
+        search?: string;
+        estado?: 'TODOS' | 'VIGENTE' | 'POR_VENCER' | 'VENCIDO';
+    }) {
+        const { empresaId } = params;
+        const page = Number(params.page) || 1;
+        const limit = Number(params.limit) || 20;
+        const skip = (page - 1) * limit;
+        const searchTerm = params.search?.trim();
+        const hoy = new Date();
+        const en30dias = new Date(hoy.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+        // Filtro de estado en fechaVencimiento
+        let fechaWhere: any = undefined;
+        if (params.estado === 'VIGENTE') {
+            fechaWhere = { gt: en30dias };
+        } else if (params.estado === 'POR_VENCER') {
+            fechaWhere = { gte: hoy, lte: en30dias };
+        } else if (params.estado === 'VENCIDO') {
+            fechaWhere = { lt: hoy };
+        }
+
+        const where: any = {
+            producto: { empresaId },
+            activo: true,
+            ...(fechaWhere ? { fechaVencimiento: fechaWhere } : {}),
+            ...(searchTerm ? {
+                OR: [
+                    { lote: { contains: searchTerm, mode: 'insensitive' } },
+                    { producto: { descripcion: { contains: searchTerm, mode: 'insensitive' } } },
+                ],
+            } : {}),
+        };
+
+        // KPIs globales (sin paginación)
+        const [totalActivos, porVencer30d, vencidosConStock, valorAggregate] = await Promise.all([
+            this.prisma.productoLote.count({ where: { producto: { empresaId }, activo: true, stockActual: { gt: 0 } } }),
+            this.prisma.productoLote.count({ where: { producto: { empresaId }, activo: true, stockActual: { gt: 0 }, fechaVencimiento: { gte: hoy, lte: en30dias } } }),
+            this.prisma.productoLote.count({ where: { producto: { empresaId }, activo: true, stockActual: { gt: 0 }, fechaVencimiento: { lt: hoy } } }),
+            this.prisma.productoLote.findMany({
+                where: { producto: { empresaId }, activo: true, stockActual: { gt: 0 }, costoUnitario: { not: null } },
+                select: { stockActual: true, costoUnitario: true },
+            }),
+        ]);
+
+        const valorTotalInventario = valorAggregate.reduce(
+            (acc, l) => acc + l.stockActual * Number(l.costoUnitario ?? 0), 0
+        );
+
+        const [lotesRaw, total] = await Promise.all([
+            this.prisma.productoLote.findMany({
+                where,
+                skip,
+                take: limit,
+                orderBy: { fechaVencimiento: 'asc' },
+                include: {
+                    producto: { select: { id: true, descripcion: true, codigo: true, imagenUrl: true, categoriaId: true } },
+                    detallesComprobante: { select: { id: true } },
+                },
+            }),
+            this.prisma.productoLote.count({ where }),
+        ]);
+
+        const lotes = lotesRaw.map((l) => {
+            const diasAlVencimiento = Math.floor(
+                (new Date(l.fechaVencimiento).getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24)
+            );
+            return {
+                id: l.id,
+                lote: l.lote,
+                fechaVencimiento: l.fechaVencimiento,
+                stockActual: l.stockActual,
+                stockInicial: l.stockInicial,
+                costoUnitario: l.costoUnitario ? Number(l.costoUnitario) : null,
+                proveedor: l.proveedor,
+                activo: l.activo,
+                creadoEn: l.creadoEn,
+                diasAlVencimiento,
+                valorEnStock: l.stockActual * Number(l.costoUnitario ?? 0),
+                totalVentas: l.detallesComprobante.length,
+                producto: l.producto,
+            };
         });
+
+        return {
+            kpis: { totalActivos, porVencer30d, vencidosConStock, valorTotalInventario },
+            lotes,
+            total,
+            page,
+            limit,
+        };
+    }
+
+    // Mantener compatibilidad con llamadas existentes
+    async obtenerTodosLotes(empresaId: number) {
+        const result = await this.obtenerLotesConFiltros({ empresaId, limit: 1000 });
+        return result.lotes;
     }
     /**
      * Obtener historial kardex de un lote específico

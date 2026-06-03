@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { KardexService } from '../kardex/kardex.service';
+import { ProductoLoteService } from '../producto/producto-lote.service';
 import { CrearCompraDto } from './dto/crear-compra.dto';
 import { Prisma } from '@prisma/client';
 import { XMLParser } from 'fast-xml-parser';
@@ -10,6 +11,7 @@ export class ComprasService {
     constructor(
         private prisma: PrismaService,
         private kardexService: KardexService,
+        private productoLoteService: ProductoLoteService,
     ) { }
 
     async crear(empresaId: number, usuarioId: number, data: CrearCompraDto, reqSedeId?: number) {
@@ -120,7 +122,7 @@ export class ComprasService {
                     const costoNetoKardex = item.incluyeIgv
                         ? parseFloat((Number(item.precioUnitario) / 1.18).toFixed(4))
                         : Number(item.precioUnitario);
-                    await this.kardexService.registrarMovimiento({
+                    const movimiento = await this.kardexService.registrarMovimiento({
                         empresaId,
                         productoId: item.productoId,
                         tipoMovimiento: 'INGRESO',
@@ -133,6 +135,23 @@ export class ComprasService {
                         lote: item.lote,
                         fechaVencimiento: item.fechaVencimiento ? new Date(item.fechaVencimiento) : undefined
                     });
+
+                    // Sincronizar ProductoLote para FEFO (sin double-contar stock global)
+                    if (item.lote && item.fechaVencimiento) {
+                        await this.productoLoteService.sincronizarLoteDesdeIngreso({
+                            productoId: item.productoId,
+                            empresaId,
+                            lote: item.lote,
+                            fechaVencimiento: new Date(item.fechaVencimiento),
+                            cantidad: Number(item.cantidad),
+                            costoUnitario: costoNetoKardex,
+                            movimientoKardexId: movimiento.id,
+                        }).catch(err => {
+                            throw new Error(
+                                `Error sincronizando lote "${item.lote}" del producto "${item.descripcion ?? item.productoId}": ${err.message}`,
+                            );
+                        });
+                    }
                 } catch (error) {
                     console.error(`Error updating kardex for product ${item.productoId}:`, error);
                     // Continue with other items, or flag warning?

@@ -319,7 +319,12 @@ export class ComprobanteService {
       where: { empresaId, serie, correlativo, ...(sedeId ? { sedeId } : {}) },
       include: {
         cliente: true,
-        detalles: { include: { producto: true } },
+        detalles: {
+          include: {
+            producto: true,
+            lote: { select: { lote: true, fechaVencimiento: true } },
+          },
+        },
         pagos: true
       },
     });
@@ -353,7 +358,8 @@ export class ComprobanteService {
                 descripcion: true,
                 imagenUrl: true,
               }
-            }
+            },
+            lote: { select: { lote: true, fechaVencimiento: true } },
           }
         },
         usuario: {
@@ -708,12 +714,13 @@ export class ComprobanteService {
     let mtoOpInafectas = 0;
     let totalIGV = 0;
     const detalleFinal = detalles.map((item: any) => {
-      const prod = productos.find((p) => p.id === item.productoId)!;
-      const cantidad = item.cantidad;
+      const productoId = Number(item.productoId);
+      const prod = productos.find((p) => p.id === productoId)!;
+      const cantidad = Number(item.cantidad);
       const descripcion = item.descripcion ?? (prod as any).descripcion;
       const precioConIgv =
         item.nuevoValorUnitario != null
-          ? item.nuevoValorUnitario
+          ? Number(item.nuevoValorUnitario)
           : Number((prod as any).precioUnitario);
       const tipAfeIgv = parseInt((prod as any).tipoAfectacionIGV ?? '10', 10);
 
@@ -723,7 +730,8 @@ export class ComprobanteService {
 
       if (tipAfeIgv === 10) {
         // Gravado — extraer IGV incluido en precioUnitario
-        igvPct = Number((prod as any).igvPorcentaje);
+        // Fallback a 18% si igvPorcentaje es 0/null (evita TaxAmount=0 en SUNAT código 3111)
+        igvPct = Number((prod as any).igvPorcentaje) || 18;
         valorUnitario = precioConIgv / (1 + igvPct / 100);
         igvMonto = precioConIgv * cantidad - valorUnitario * cantidad;
         mtoOperGravadas += valorUnitario * cantidad;
@@ -742,7 +750,7 @@ export class ComprobanteService {
         mtoOpInafectas += precioConIgv * cantidad;
       } else {
         // Fallback: tratar como gravado
-        igvPct = Number((prod as any).igvPorcentaje);
+        igvPct = Number((prod as any).igvPorcentaje) || 18;
         valorUnitario = precioConIgv / (1 + igvPct / 100);
         igvMonto = precioConIgv * cantidad - valorUnitario * cantidad;
         mtoOperGravadas += valorUnitario * cantidad;
@@ -752,7 +760,8 @@ export class ComprobanteService {
       const mtoValorVenta = valorUnitario * cantidad;
       return {
         productoId: (prod as any).id,
-        unidad: (prod as any).unidadMedida.codigo,
+        // Fraccionamiento: usar unidadVenta del ítem si viene (ej. TABLETA vs CAJA)
+        unidad: item.unidadVenta || (prod as any).unidadMedida.codigo,
         descripcion,
         cantidad,
         mtoPrecioUnitario: this.round2(precioConIgv),
@@ -763,6 +772,12 @@ export class ComprobanteService {
         igv: this.round2(igvMonto),
         tipAfeIgv,
         totalImpuestos: this.round2(igvMonto),
+        // Farmacia: propagar campos de trazabilidad y receta
+        ...(item.loteId != null && { loteId: Number(item.loteId) }),
+        ...(item.numeroReceta && { numeroReceta: item.numeroReceta }),
+        ...(item.dniPaciente && { dniPaciente: item.dniPaciente }),
+        ...(item.nombrePaciente && { nombrePaciente: item.nombrePaciente }),
+        ...(item.medicoNombre && { medicoNombre: item.medicoNombre }),
       };
     });
     return {
@@ -775,6 +790,151 @@ export class ComprobanteService {
     };
   }
 
+  /**
+   * Valida receta médica y datos de controlados para rubros farmacia/botica.
+   * Rechaza la emisión en backend (el frontend solo hace UX).
+   */
+  private async validarRecetasSiFarmacia(detalles: any[], empresaId: number): Promise<void> {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { rubro: { select: { nombre: true } } },
+    });
+    const rubroNombre = empresa?.rubro?.nombre?.toLowerCase() ?? '';
+    const esFarmaciaRetail =
+      rubroNombre.includes('farmacia') || rubroNombre.includes('botica');
+
+    if (!esFarmaciaRetail) return;
+
+    const productIds = detalles
+      .map((d) => Number(d.productoId))
+      .filter((id) => !Number.isNaN(id));
+
+    const productos = await this.prisma.producto.findMany({
+      where: { id: { in: productIds }, empresaId },
+      select: { id: true, descripcion: true, requiereReceta: true, controlado: true },
+    });
+    const productoMap = new Map(productos.map((p) => [p.id, p]));
+
+    for (const detalle of detalles) {
+      const prod = productoMap.get(Number(detalle.productoId));
+      if (!prod) continue;
+
+      if (prod.requiereReceta && !detalle.numeroReceta) {
+        throw new BadRequestException(
+          `El producto "${prod.descripcion}" requiere número de receta médica.`,
+        );
+      }
+      if (prod.controlado) {
+        if (!detalle.dniPaciente) {
+          throw new BadRequestException(
+            `El producto controlado "${prod.descripcion}" requiere DNI del paciente.`,
+          );
+        }
+        if (!detalle.medicoNombre) {
+          throw new BadRequestException(
+            `El producto controlado "${prod.descripcion}" requiere nombre del médico.`,
+          );
+        }
+      }
+    }
+  }
+
+  private async resolverSedeParaStock(data: {
+    empresaId: number;
+    usuarioId?: number;
+    sedeId?: number;
+  }): Promise<number> {
+    let sedeId = data.sedeId;
+
+    if (!sedeId && data.usuarioId) {
+      const usuario = await this.prisma.usuario.findUnique({
+        where: { id: data.usuarioId },
+        select: { sedeId: true },
+      });
+      if (usuario?.sedeId) sedeId = usuario.sedeId;
+    }
+
+    if (!sedeId) {
+      const principal = await this.prisma.sede.findFirst({
+        where: { empresaId: data.empresaId, esPrincipal: true },
+        select: { id: true },
+      });
+      if (principal) sedeId = principal.id;
+    }
+
+    if (!sedeId) {
+      throw new BadRequestException('No se pudo determinar la sede para descontar stock');
+    }
+
+    return sedeId;
+  }
+
+  private async validarStockDisponibleParaVenta(
+    detalles: Array<{ productoId: number; cantidad: number }>,
+    data: {
+      empresaId: number;
+      usuarioId?: number;
+      sedeId?: number;
+    },
+  ): Promise<number> {
+    const sedeId = await this.resolverSedeParaStock(data);
+
+    for (const item of detalles) {
+      const productoId = Number(item.productoId);
+      const cantidad = Number(item.cantidad);
+
+      if (!Number.isFinite(productoId) || productoId <= 0) {
+        throw new BadRequestException(`productoId inválido para descontar stock: ${item.productoId}`);
+      }
+      if (!Number.isFinite(cantidad) || cantidad <= 0) {
+        throw new BadRequestException(`Cantidad inválida para descontar stock: ${item.cantidad}`);
+      }
+
+      const producto = await this.prisma.producto.findFirst({
+        where: { id: productoId, empresaId: data.empresaId },
+        select: {
+          id: true,
+          descripcion: true,
+          stock: true,
+          porcentajeVenta: true,
+        },
+      });
+
+      if (!producto) {
+        throw new BadRequestException('El producto no existe o no pertenece a la empresa');
+      }
+
+      const stockSede = await this.prisma.productoStock.findUnique({
+        where: { productoId_sedeId: { productoId, sedeId } },
+        select: { stock: true },
+      });
+
+      const stockBase = stockSede?.stock ?? producto.stock ?? 0;
+      const reservasActivas = await this.prisma.reserva.aggregate({
+        _sum: { cantidad: true },
+        where: {
+          empresaId: data.empresaId,
+          sedeId,
+          productoId,
+          estado: { in: [EstadoReserva.PENDIENTE, EstadoReserva.CONFIRMADA] },
+        },
+      });
+      const reservado = reservasActivas._sum.cantidad ?? 0;
+      const cupoVenta = Math.floor(
+        (stockBase * (producto.porcentajeVenta ?? 70)) / 100,
+      );
+      const disponibleVenta = Math.max(0, Math.min(stockBase - reservado, cupoVenta));
+
+      if (disponibleVenta < cantidad) {
+        throw new BadRequestException(
+          `Stock no disponible para venta en "${producto.descripcion}". Disponible para venta: ${disponibleVenta}, solicitado: ${cantidad}.`,
+        );
+      }
+    }
+
+    return sedeId;
+  }
+
   private async ajustarStock(detalles: any[], data?: {
     empresaId: number;
     comprobanteId: number;
@@ -783,59 +943,21 @@ export class ComprobanteService {
     usuarioId?: number;
     sedeId?: number;
   }) {
-    // Resolver Sede ID una sola vez para todo el ajuste
-    let sedeId = data?.sedeId;
-
-    // 1. Si no viene explícito, intentar obtener del usuario
-    if (!sedeId && data?.usuarioId) {
-      const usuario = await this.prisma.usuario.findUnique({ where: { id: data.usuarioId }, select: { sedeId: true } });
-      if (usuario?.sedeId) sedeId = usuario.sedeId;
+    if (!data) {
+      throw new BadRequestException('No se recibieron datos para descontar stock');
     }
 
-    // 2. Si sigue nulo, usar Sede Principal
-    if (!sedeId && data?.empresaId) {
-      const principal = await this.prisma.sede.findFirst({ where: { empresaId: data.empresaId, esPrincipal: true } });
-      if (principal) sedeId = principal.id;
-    }
-
-    if (!sedeId) {
-      // Fallback final: No se puede ajustar stock sin sede. 
-      // Loggear warning y salir o lanzar error. 
-      // Para evitar romper flujos críticos legacy, loggeamos error y continuamos sin mover stock (o asumimos que no hay stock que mover).
-      console.error('CRITICAL: No se pudo determinar Sede para ajuste de stock en ComprobanteService');
-      return;
-    }
+    const sedeId = await this.validarStockDisponibleParaVenta(detalles, data);
 
     for (const item of detalles) {
-      const producto = await this.prisma.producto.findUnique({
-        where: { id: item.productoId },
+      const productoId = Number(item.productoId);
+      const cantidad = Number(item.cantidad);
+
+      const producto = await this.prisma.producto.findFirst({
+        where: { id: productoId, empresaId: data.empresaId },
         select: { stock: true, costoPromedio: true },
       });
       if (!producto) continue;
-
-      const stockSede = await this.prisma.productoStock.findUnique({
-        where: { productoId_sedeId: { productoId: item.productoId, sedeId } },
-        select: { stock: true },
-      });
-
-      const stockBase = stockSede?.stock ?? producto.stock ?? 0;
-      const reservasActivas = await this.prisma.reserva.aggregate({
-        _sum: { cantidad: true },
-        where: {
-          empresaId: data?.empresaId,
-          sedeId,
-          productoId: item.productoId,
-          estado: { in: [EstadoReserva.PENDIENTE, EstadoReserva.CONFIRMADA] },
-        },
-      });
-      const reservado = reservasActivas._sum.cantidad ?? 0;
-      const disponibleVenta = stockBase - reservado;
-
-      if (disponibleVenta < Number(item.cantidad || 0)) {
-        throw new BadRequestException(
-          `Stock no disponible para venta en producto ${item.productoId}. Disponible para venta: ${disponibleVenta}, solicitado: ${item.cantidad}.`,
-        );
-      }
 
       // Registrar movimiento de kardex si se proporcionan los datos
       if (data && this.kardexService) {
@@ -843,31 +965,41 @@ export class ComprobanteService {
         const costoUnitario = Number(producto.costoPromedio) || 0;
 
         const movimiento = await this.kardexService.registrarMovimiento({
-          productoId: item.productoId,
+          productoId,
           empresaId: data.empresaId,
           tipoMovimiento: 'SALIDA',
           concepto: data.concepto,
-          cantidad: item.cantidad,
+          cantidad,
           comprobanteId: data.comprobanteId,
           costoUnitario: costoUnitario,
           usuarioId: data.usuarioId,
-          sedeId: sedeId!, // Pass resolved sedeId (non-null asserted because of check above)
+          sedeId,
         });
 
-        // Integración Lotes (FEFO) - ESTRICTA:
-        // Si el producto trabaja con lotes y no hay stock de lotes suficiente, debe fallar la emisión.
+        // Descuento de lote: atómico cuando viene loteId (farmacia), FEFO cuando no
         if (this.loteService) {
-          await this.loteService.descontarStockLote(
-            item.productoId,
-            item.cantidad,
-            movimiento.id
-          );
+          if (item.loteId) {
+            // Lote específico: descuento dentro de transacción propia para evitar sobreventa
+            await this.prisma.$transaction(async (tx) => {
+              await this.loteService.descontarStockLoteEnTx(tx, {
+                loteId: Number(item.loteId),
+                cantidad,
+                movimientoKardexId: movimiento.id,
+              });
+            });
+          } else {
+            await this.loteService.descontarStockLote(
+              productoId,
+              cantidad,
+              movimiento.id,
+            );
+          }
         }
 
         // Notificación no bloqueante: si falla, no tumbamos la emisión
         try {
           await this.inventarioNotificaciones.verificarProductoDespuesVenta(
-            item.productoId,
+            productoId,
             data.empresaId,
             sedeId,
           );
@@ -997,7 +1129,27 @@ export class ComprobanteService {
       cuotas,
       retencionMonto,
       retencionPorcentaje,
+      comprobanteOrigenId,
     } = input;
+
+    // Cuando se convierte desde un informal (NV, TICKET, etc.) el stock ya fue descontado
+    // al crear el informal — NO volver a descontarlo.
+    const esConversionDesdeInformal = comprobanteOrigenId != null;
+
+    // Validar que el comprobante origen pertenezca a esta empresa (seguridad)
+    if (esConversionDesdeInformal) {
+      const origen = await this.prisma.comprobante.findFirst({
+        where: { id: Number(comprobanteOrigenId), empresaId },
+        select: { id: true, tipoDoc: true },
+      });
+      if (!origen) {
+        throw new BadRequestException('El comprobante de origen no existe o no pertenece a esta empresa');
+      }
+      const tiposInformales = ['NV', 'TICKET', 'NP', 'OT', 'RH', 'CP'];
+      if (!tiposInformales.includes(origen.tipoDoc)) {
+        throw new BadRequestException('El comprobante de origen no es de tipo informal');
+      }
+    }
 
     // Map retencion fields to detraccion fields if present
     const finalMontoDetraccion = retencionMonto || montoDetraccion;
@@ -1140,6 +1292,17 @@ export class ComprobanteService {
       leyendas: { create: [{ code: '1000', value: leyenda }] },
     };
 
+    // Validar receta médica en backend (guardia real, no solo UX)
+    await this.validarRecetasSiFarmacia(detalles, empresaId);
+
+    if (!esConversionDesdeInformal) {
+      await this.validarStockDisponibleParaVenta(detalleFinal, {
+        empresaId,
+        sedeId,
+        usuarioId,
+      });
+    }
+
     const comprobante = await this.crearComprobanteConReintento(
       dataBase,
       formalTipo,
@@ -1147,14 +1310,17 @@ export class ComprobanteService {
       empresaId,
     );
 
-    // Registrar movimientos de kardex
-    await this.ajustarStock(detalles, {
-      empresaId,
-      comprobanteId: comprobante.id,
-      concepto: `Venta ${formalTipo === '01' ? 'Factura' : formalTipo === '03' ? 'Boleta' : 'Nota de Débito'} ${comprobante.serie}-${comprobante.correlativo}`,
-      sedeId,
-      usuarioId,
-    });
+    // Registrar movimientos de kardex SOLO si NO es conversión desde informal.
+    // Cuando viene de NV/TICKET el stock ya fue descontado al crear el informal.
+    if (!esConversionDesdeInformal) {
+      await this.ajustarStock(detalleFinal, {
+        empresaId,
+        comprobanteId: comprobante.id,
+        concepto: `Venta ${formalTipo === '01' ? 'Factura' : formalTipo === '03' ? 'Boleta' : 'Nota de Débito'} ${comprobante.serie}-${comprobante.correlativo}`,
+        sedeId,
+        usuarioId,
+      });
+    }
     return comprobante;
   }
 
@@ -1175,6 +1341,49 @@ export class ComprobanteService {
    */
   async eliminarComprobante(id: number) {
     await this.prisma.comprobante.delete({ where: { id } });
+  }
+
+  /**
+   * Guarda una notificación de error fatal SUNAT antes de que el comprobante sea eliminado.
+   * Así el usuario tiene trazabilidad de qué pasó sin necesidad de ver el comprobante eliminado.
+   */
+  async guardarLogErrorFatal(params: {
+    empresaId: number;
+    usuarioId?: number | null;
+    serie: string;
+    correlativo: number;
+    tipoDoc: string;
+    errorMsg: string;
+  }): Promise<void> {
+    try {
+      let uid = params.usuarioId;
+      if (!uid) {
+        const adminUser = await this.prisma.usuario.findFirst({
+          where: { empresaId: params.empresaId, rol: 'ADMIN_EMPRESA' },
+          select: { id: true },
+          orderBy: { id: 'asc' },
+        });
+        uid = adminUser?.id ?? null;
+      }
+      if (!uid) return; // sin usuario no se puede crear la notificación
+
+      const correlativoStr = String(params.correlativo).padStart(8, '0');
+      const tipoLabel: Record<string, string> = { '01': 'Factura', '03': 'Boleta', '07': 'Nota de Crédito', '08': 'Nota de Débito' };
+      const tipo = tipoLabel[params.tipoDoc] ?? 'Comprobante';
+
+      await this.prisma.notificacion.create({
+        data: {
+          usuarioId: uid,
+          empresaId: params.empresaId,
+          tipo: 'ERROR_SUNAT_FATAL',
+          titulo: `${tipo} ${params.serie}-${correlativoStr} eliminado por error SUNAT`,
+          mensaje: params.errorMsg,
+          leida: false,
+        },
+      });
+    } catch (logErr: any) {
+      console.warn('[guardarLogErrorFatal] No se pudo guardar el log:', logErr?.message);
+    }
   }
 
   /**
@@ -1210,14 +1419,27 @@ export class ComprobanteService {
       }
     }
 
-    // 2) Borrar en orden respetando FK sin cascade:
-    //    movimientoKardex → detalleComprobante → leyenda → comprobante
-    await this.prisma.$transaction([
-      this.prisma.movimientoKardex.deleteMany({ where: { comprobanteId: id } }),
-      this.prisma.detalleComprobante.deleteMany({ where: { comprobanteId: id } }),
-      this.prisma.leyenda.deleteMany({ where: { comprobanteId: id } }),
-      this.prisma.comprobante.delete({ where: { id } }),
-    ]);
+    // 2) Borrar en orden respetando FKs (hijos antes que padres).
+    //    Usa transacción interactiva para poder capturar el paso exacto que falla.
+    await this.prisma.$transaction(async (tx) => {
+      // 2a. Hijos de movimientoKardex (pueden no tener CASCADE activo en la BD)
+      const movimientos = await tx.movimientoKardex.findMany({
+        where: { comprobanteId: id },
+        select: { id: true },
+      });
+      if (movimientos.length) {
+        const movIds = movimientos.map((m) => m.id);
+        await tx.movimientoKardexLote.deleteMany({ where: { movimientoId: { in: movIds } } });
+        await tx.movimientoKardex.deleteMany({ where: { id: { in: movIds } } });
+      }
+
+      // 2b. Resto de hijos directos del comprobante
+      await tx.detalleComprobante.deleteMany({ where: { comprobanteId: id } });
+      await tx.leyenda.deleteMany({ where: { comprobanteId: id } });
+
+      // 2c. Eliminar el comprobante (Pago/WhatsAppEnvio/EnvioDespacho tienen CASCADE en DB)
+      await tx.comprobante.delete({ where: { id } });
+    });
 
     return { message: 'Comprobante eliminado y stock revertido', eliminado: true };
   }
@@ -1464,7 +1686,7 @@ export class ComprobanteService {
 
         const qty = item.cantidad;
         const newInclUnit = this.round2(item.nuevoValorUnitario);
-        const igvPct = orig.porcentajeIgv;
+        const igvPct = Number(orig.porcentajeIgv) || 18;
         const valorUnitario = newInclUnit / (1 + igvPct / 100);
         const mtoValorVenta = valorUnitario * item.cantidad;
         const igvMonto = newInclUnit * qty - mtoValorVenta;
@@ -1790,6 +2012,17 @@ export class ComprobanteService {
       detalles: { create: detalleFinal },
       leyendas: { create: [{ code: '1000', value: leyenda }] },
     };
+    // Validar receta médica en backend si rubro farmacia/botica
+    await this.validarRecetasSiFarmacia(detalles, empresaId);
+
+    if (tipoDoc !== 'COT') {
+      await this.validarStockDisponibleParaVenta(detalleFinal, {
+        empresaId,
+        sedeId: finalSedeId,
+        usuarioId,
+      });
+    }
+
     const comp = await this.crearComprobanteConReintento(dataBase, tipoDoc, null, empresaId);
 
     // Crear registro de pago automáticamente si hay adelanto
@@ -1813,11 +2046,11 @@ export class ComprobanteService {
 
     // Registrar movimientos de kardex
     if (tipoDoc !== 'COT') {
-      await this.ajustarStock(detalles, {
+      await this.ajustarStock(detalleFinal, {
         empresaId,
         comprobanteId: comp.id,
         concepto: `Venta ${tipoDoc} ${comp.serie}-${comp.correlativo}`,
-        sedeId,
+        sedeId: finalSedeId,
         usuarioId,
       });
     }
@@ -2432,7 +2665,7 @@ export class ComprobanteService {
     return token === this.tokenPdf(id);
   }
 
-  private getWhatsAppCredentials(): { token: string; phoneNumberId: string } {
+  private getPlatformWhatsAppCredentials(): { token: string; phoneNumberId: string } {
     const token =
       process.env.WHATSAPP_TOKEN ||
       process.env.META_WHATSAPP_TOKEN ||
@@ -2445,6 +2678,49 @@ export class ComprobanteService {
       '';
 
     return { token, phoneNumberId };
+  }
+
+  private async getWhatsAppCredentials(empresaId: number): Promise<{
+    token: string;
+    phoneNumberId: string;
+    source: 'PLATFORM' | 'EMPRESA';
+  }> {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: {
+        whatsappProvider: true,
+        whatsappApiToken: true,
+        whatsappPhoneNumberId: true,
+        whatsappActivo: true,
+      },
+    });
+
+    if (!empresa?.whatsappActivo || empresa?.whatsappProvider === 'DISABLED') {
+      throw new BadRequestException('WhatsApp está deshabilitado para esta empresa.');
+    }
+
+    if (empresa.whatsappProvider === 'EMPRESA') {
+      if (!empresa.whatsappApiToken || !empresa.whatsappPhoneNumberId) {
+        throw new BadRequestException(
+          'WhatsApp propio no configurado. Agrega token y phone number ID de Meta para esta empresa.',
+        );
+      }
+
+      return {
+        token: empresa.whatsappApiToken,
+        phoneNumberId: empresa.whatsappPhoneNumberId,
+        source: 'EMPRESA',
+      };
+    }
+
+    const platform = this.getPlatformWhatsAppCredentials();
+    if (!platform.token || !platform.phoneNumberId) {
+      throw new BadRequestException(
+        'WhatsApp de plataforma no configurado. Agrega WHATSAPP_TOKEN y WHATSAPP_PHONE_NUMBER_ID en el .env.',
+      );
+    }
+
+    return { ...platform, source: 'PLATFORM' };
   }
 
   private formatMetaWhatsAppError(metaPayload: any, fallback: string): string {
@@ -2465,15 +2741,18 @@ export class ComprobanteService {
 
   // ─── Enviar por WhatsApp (Meta Cloud API) ────────────────────────────────
 
-  async enviarWhatsAppComprobante(id: number, celular: string): Promise<void> {
-    const { token, phoneNumberId } = this.getWhatsAppCredentials();
-
-    if (!token || !phoneNumberId) {
-      throw new BadRequestException('WhatsApp no configurado. Agrega WHATSAPP_TOKEN y WHATSAPP_PHONE_ID en el .env.');
-    }
-
+  async enviarWhatsAppComprobante(
+    id: number,
+    celular: string,
+    context?: { usuarioId?: number; empresaId?: number; rol?: string },
+  ): Promise<void> {
     const comp = await this.cargarComprobanteCompleto(id);
     if (!comp) throw new NotFoundException('Comprobante no encontrado');
+    if (context?.rol !== 'ADMIN_SISTEMA' && context?.empresaId && comp.empresaId !== context.empresaId) {
+      throw new NotFoundException('Comprobante no encontrado');
+    }
+
+    const { token, phoneNumberId, source } = await this.getWhatsAppCredentials(comp.empresaId);
 
     const tipoDocMap: Record<string, string> = {
       TICKET: 'Ticket', NV: 'Nota de Venta', RH: 'Recibo por Honorarios',
@@ -2576,6 +2855,25 @@ export class ComprobanteService {
 
       throw new BadRequestException(formattedSendError);
     }
+
+    const sendPayload = await sendRes.json().catch(() => null) as { messages?: Array<{ id?: string }> } | null;
+    const mensajeId = sendPayload?.messages?.[0]?.id;
+    if (context?.usuarioId) {
+      await this.prisma.whatsAppEnvio.create({
+        data: {
+          comprobanteId: id,
+          empresaId: comp.empresaId,
+          usuarioId: context.usuarioId,
+          numeroDestino: to,
+          estado: 'ENVIADO',
+          mensajeId,
+          costoUSD: 0.01,
+          incluyeXML: false,
+        },
+      });
+    }
+
+    this.logger.log(`✅ WhatsApp comprobante enviado (${source}) comprobanteId=${id} destino=${to}`);
   }
 
   // ─── Enviar por email ─────────────────────────────────────────────────────

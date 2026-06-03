@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { EstadoSunat, EstadoPago } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -345,6 +346,58 @@ export class DashboardService {
       where: { ...baseWhere, fechaEmision: prevRange },
     });
 
+    const TIPOS_INFORMALES_ARRAY = ['NP', 'OT', 'COT', 'TICKET', 'NV', 'RH', 'CP'];
+    const [productosBajoStockRaw, sunatPendientesRows, sunatPendientesCount, cuentasCobrarAgg, pedidosTiendaCount] =
+      await Promise.all([
+        this.prisma.producto.findMany({
+          where: {
+            empresaId,
+            estado: 'ACTIVO',
+            stockMinimo: { gt: 0 },
+            codigo: { notIn: ['DGD', 'IPM', 'PLD'] },
+          },
+          select: { id: true, descripcion: true, stock: true, stockMinimo: true },
+          orderBy: { stock: 'asc' },
+          take: 20,
+        }),
+        this.prisma.comprobante.findMany({
+          where: {
+            empresaId,
+            ...(sedeId ? { sedeId } : {}),
+            estadoEnvioSunat: { in: [EstadoSunat.PENDIENTE, EstadoSunat.FALLIDO_ENVIO, EstadoSunat.RECHAZADO] },
+            tipoDoc: { notIn: TIPOS_INFORMALES_ARRAY },
+          },
+          select: { id: true, serie: true, correlativo: true, tipoDoc: true, estadoEnvioSunat: true, mtoImpVenta: true },
+          orderBy: { fechaEmision: 'desc' },
+          take: 4,
+        }),
+        this.prisma.comprobante.count({
+          where: {
+            empresaId,
+            ...(sedeId ? { sedeId } : {}),
+            estadoEnvioSunat: { in: [EstadoSunat.PENDIENTE, EstadoSunat.FALLIDO_ENVIO, EstadoSunat.RECHAZADO] },
+            tipoDoc: { notIn: TIPOS_INFORMALES_ARRAY },
+          },
+        }),
+        this.prisma.comprobante.aggregate({
+          _sum: { mtoImpVenta: true },
+          _count: { id: true },
+          where: {
+            empresaId,
+            ...(sedeId ? { sedeId } : {}),
+            estadoPago: { in: [EstadoPago.PENDIENTE_PAGO, EstadoPago.PAGO_PARCIAL] },
+            tipoDoc: { notIn: [...TIPOS_INFORMALES_ARRAY, '07'] },
+          },
+        }),
+        this.prisma.pedidoTienda.count({
+          where: { empresaId, estado: 'PENDIENTE' as any },
+        }),
+      ]);
+
+    const stockBajoList = productosBajoStockRaw
+      .filter(p => p.stock <= (p.stockMinimo ?? 0))
+      .slice(0, 4);
+
     const gastosCurr = Number(comprasRows._sum.total ?? 0);
     const gastosPrev = Number(comprasPrevRows._sum.total ?? 0);
     const gananciasCurr = ingresosCurr - gastosCurr;
@@ -370,6 +423,30 @@ export class DashboardService {
         gastos: { value: gastosCurr, trend: gastosTrend },
         ganancias: { value: gananciasCurr, trend: gananciasTrend },
         margen: marginCurr,
+      },
+      alertas: {
+        stockBajo: stockBajoList.map(p => ({
+          id: p.id,
+          descripcion: p.descripcion,
+          stock: p.stock,
+          stockMinimo: p.stockMinimo,
+        })),
+        sunatPendientes: {
+          count: sunatPendientesCount,
+          items: sunatPendientesRows.map(c => ({
+            id: c.id,
+            serie: c.serie,
+            correlativo: c.correlativo,
+            tipoDoc: c.tipoDoc,
+            estado: c.estadoEnvioSunat,
+            monto: Number(c.mtoImpVenta),
+          })),
+        },
+        cuentasCobrar: {
+          cantidad: cuentasCobrarAgg._count.id,
+          total: Number(cuentasCobrarAgg._sum.mtoImpVenta ?? 0),
+        },
+        pedidosTiendaPendientes: pedidosTiendaCount,
       },
     };
   }
