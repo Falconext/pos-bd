@@ -170,7 +170,9 @@ export class ComprobanteController {
     const correlativo = Number(correlativoRaw);
     if (!serie || Number.isNaN(correlativo))
       throw new BadRequestException('Serie y correlativo son requeridos');
-    return this.service.detalle(user.empresaId, serie, correlativo, user.sedeId);
+    const isAdmin = user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
+    const sedeId = isAdmin ? undefined : user.sedeId;
+    return this.service.detalle(user.empresaId, serie, correlativo, sedeId);
   }
 
   // Alternativa con path params
@@ -193,7 +195,9 @@ export class ComprobanteController {
   @Get(':id')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async obtenerPorId(@Param('id', ParseIntPipe) id: number, @User() user: any) {
-    return this.service.obtenerPorId(user.empresaId, id, user.sedeId);
+    const isAdmin = user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
+    const sedeId = isAdmin ? undefined : user.sedeId;
+    return this.service.obtenerPorId(user.empresaId, id, sedeId);
   }
 
   @Get(':id/xml')
