@@ -1,67 +1,154 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEnvioDespachoDto, UpdateEnvioDespachoDto, EstadoDespacho } from './dto/envio-despacho.dto';
+import { DespachoConfigDto } from './dto/despacho-config.dto';
+import { RepartidorService } from '../repartidor/repartidor.service';
+import { WhatsAppService } from '../whatsapp/whatsapp.service';
+
+const ESTADOS_NOTIFICABLES = new Set([EstadoDespacho.EN_CAMINO, EstadoDespacho.ENTREGADO]);
+
+const MENSAJES_DEFAULT: Record<string, string> = {
+    EN_CAMINO:  'Hola {{nombre}}, tu pedido {{pedido}} ya está en camino 🚚. Repartidor: {{repartidor}}.',
+    ENTREGADO:  'Hola {{nombre}}, tu pedido {{pedido}} fue entregado exitosamente ✅. ¡Gracias por preferir {{empresa}}!',
+};
 
 const DESPACHO_FIELDS = [
     'transportista', 'codigoGuia', 'observaciones', 'direccionDestino',
     'tipoEnvio', 'agenciaDestino', 'celularDest', 'nroPaquetes',
     'turnoEnvio', 'tipoMercaderia', 'claveEnvio', 'nroOrden', 'claveOrden',
-    'establecimiento', 'repartidor', 'empaquetador',
+    'establecimiento', 'empaquetador',
 ] as const;
+
+const DESPACHO_TO_PEDIDO_ESTADO: Record<EstadoDespacho, { estadoEntrega: string; estadoEnvio: string }> = {
+    [EstadoDespacho.PREPARANDO]: { estadoEntrega: 'CONFIRMADO', estadoEnvio: 'POR_COORDINAR' },
+    [EstadoDespacho.EN_CAMINO]: { estadoEntrega: 'EN_TRANSITO', estadoEnvio: 'EN_REPARTO' },
+    [EstadoDespacho.EN_DESTINO]: { estadoEntrega: 'EN_TRANSITO', estadoEnvio: 'EN_REPARTO' },
+    [EstadoDespacho.ENTREGADO]: { estadoEntrega: 'ENTREGADO_COMPLETADO', estadoEnvio: 'ENTREGADO' },
+    [EstadoDespacho.DEVUELTO]: { estadoEntrega: 'PENDIENTE', estadoEnvio: 'INCIDENCIA' },
+};
 
 @Injectable()
 export class EnvioDespachoService {
-    constructor(private prisma: PrismaService) {}
+    private readonly logger = new Logger(EnvioDespachoService.name);
+
+    constructor(
+        private prisma: PrismaService,
+        private repartidorService: RepartidorService,
+        private whatsapp: WhatsAppService,
+    ) {}
 
     async getByComprobante(comprobanteId: number, empresaId: number) {
         await this.validateComprobante(comprobanteId, empresaId);
-        return this.prisma.envioDespacho.findUnique({ where: { comprobanteId } });
+        const envio = await this.prisma.envioDespacho.findUnique({
+            where: { comprobanteId },
+            include: { repartidor: true },
+        });
+        return this.withLegacyRepartidor(envio);
     }
 
-    async create(comprobanteId: number, empresaId: number, dto: CreateEnvioDespachoDto) {
+    async create(comprobanteId: number, empresaId: number, dto: CreateEnvioDespachoDto, usuarioId?: number) {
         const comprobante = await this.validateComprobante(comprobanteId, empresaId);
         const existing = await this.prisma.envioDespacho.findUnique({ where: { comprobanteId } });
         if (existing) throw new BadRequestException('Este comprobante ya tiene un seguimiento de despacho.');
 
         const estadoInicial: EstadoDespacho = dto.estado ?? EstadoDespacho.PREPARANDO;
-        const historial = [{ estado: estadoInicial, fecha: new Date().toISOString(), nota: 'Despacho creado' }];
+        const usuarioNombre = await this.resolveUsuarioNombre(usuarioId);
+        const historial = [{
+            estado: estadoInicial,
+            fecha: new Date().toISOString(),
+            nota: 'Despacho creado',
+            ...(usuarioId && { usuarioId, usuarioNombre }),
+        }];
+        const repartidorId = await this.repartidorService.resolveForEmpresa(empresaId, {
+            repartidorId: dto.repartidorId,
+            repartidor: dto.repartidor,
+            sedeId: comprobante.sedeId,
+        });
 
-        return this.prisma.envioDespacho.create({
+        const envio = await this.prisma.envioDespacho.create({
             data: {
                 comprobanteId,
                 estado: estadoInicial,
                 historial,
                 direccionDestino: dto.direccionDestino ?? comprobante.cliente?.direccion ?? null,
                 fechaEstimada: dto.fechaEstimada ? new Date(dto.fechaEstimada) : null,
+                ...(repartidorId !== undefined && { repartidorId }),
                 ...this.pickFields(dto),
             },
+            include: { repartidor: true },
         });
+        await this.syncPedidoTiendaByComprobante(comprobanteId, estadoInicial);
+        return this.withLegacyRepartidor(envio);
     }
 
-    async upsert(comprobanteId: number, empresaId: number, dto: CreateEnvioDespachoDto) {
+    async upsert(comprobanteId: number, empresaId: number, dto: CreateEnvioDespachoDto, usuarioId?: number) {
         const existing = await this.prisma.envioDespacho.findUnique({ where: { comprobanteId } });
-        if (existing) return this.update(comprobanteId, empresaId, dto);
-        return this.create(comprobanteId, empresaId, dto);
+        if (existing) return this.update(comprobanteId, empresaId, dto, usuarioId);
+        return this.create(comprobanteId, empresaId, dto, usuarioId);
     }
 
-    async update(comprobanteId: number, empresaId: number, dto: UpdateEnvioDespachoDto) {
+    async update(comprobanteId: number, empresaId: number, dto: UpdateEnvioDespachoDto, usuarioId?: number) {
         await this.validateComprobante(comprobanteId, empresaId);
         const envio = await this.prisma.envioDespacho.findUnique({ where: { comprobanteId } });
         if (!envio) throw new NotFoundException('No existe seguimiento de despacho para este comprobante.');
 
         let historial: any[] = Array.isArray(envio.historial) ? (envio.historial as any[]) : [];
         if (dto.estado && dto.estado !== envio.estado) {
-            historial = [...historial, { estado: dto.estado, fecha: new Date().toISOString(), nota: dto.observaciones ?? null }];
+            const usuarioNombre = await this.resolveUsuarioNombre(usuarioId);
+            historial = [...historial, {
+                estado: dto.estado,
+                fecha: new Date().toISOString(),
+                nota: dto.observaciones ?? null,
+                ...(usuarioId && { usuarioId, usuarioNombre }),
+            }];
         }
+        const repartidorId = await this.repartidorService.resolveForEmpresa(empresaId, {
+            repartidorId: dto.repartidorId,
+            repartidor: dto.repartidor,
+        });
 
-        return this.prisma.envioDespacho.update({
+        const estadoCambia = dto.estado && dto.estado !== envio.estado;
+
+        const updated = await this.prisma.envioDespacho.update({
             where: { comprobanteId },
             data: {
                 ...(dto.estado !== undefined && { estado: dto.estado as any }),
                 ...(dto.fechaEstimada !== undefined && { fechaEstimada: new Date(dto.fechaEstimada) }),
+                ...(repartidorId !== undefined && { repartidorId }),
                 historial,
                 ...this.pickFields(dto),
             },
+            include: { repartidor: true },
+        });
+
+        if (estadoCambia && ESTADOS_NOTIFICABLES.has(dto.estado as EstadoDespacho)) {
+            this.notificarCambioEstado(comprobanteId, empresaId, dto.estado as EstadoDespacho, updated.repartidor?.nombre ?? null)
+                .catch((e) => this.logger.warn(`WA despacho fallido: ${e.message}`));
+        }
+
+        if (estadoCambia) {
+            await this.syncPedidoTiendaByComprobante(comprobanteId, dto.estado as EstadoDespacho);
+        }
+
+        return this.withLegacyRepartidor(updated);
+    }
+
+    async getConfig(empresaId: number) {
+        const config = await this.prisma.despachoMensajeTemplate.findUnique({ where: { empresaId } });
+        return config ?? {
+            empresaId,
+            mensajeEnCamino: MENSAJES_DEFAULT.EN_CAMINO,
+            mensajeEntregado: MENSAJES_DEFAULT.ENTREGADO,
+            notificarEnCamino: true,
+            notificarEntregado: true,
+        };
+    }
+
+    async upsertConfig(empresaId: number, dto: DespachoConfigDto) {
+        return this.prisma.despachoMensajeTemplate.upsert({
+            where: { empresaId },
+            create: { empresaId, ...dto },
+            update: dto,
         });
     }
 
@@ -93,6 +180,7 @@ export class EnvioDespachoService {
                             usuario: { select: { nombre: true } },
                         },
                     },
+                    repartidor: true,
                 },
             }),
             this.prisma.envioDespacho.count({ where }),
@@ -131,6 +219,7 @@ export class EnvioDespachoService {
                             usuario: { select: { nombre: true } },
                         },
                     },
+                    repartidor: true,
                 },
             }),
             this.prisma.pedidoTienda.findMany({
@@ -144,9 +233,17 @@ export class EnvioDespachoService {
                 select: {
                     id: true, codigoSeguimiento: true, clienteNombre: true,
                     clienteTelefono: true, clienteDireccion: true,
-                    total: true, agenciaEnvio: true, estadoEnvio: true,
-                    estadoEntrega: true, creadoEn: true,
-                    items: { select: { cantidad: true, precioUnit: true, producto: { select: { descripcion: true } } } },
+                    total: true, montoPagado: true, saldoPendiente: true, agenciaEnvio: true, estadoEnvio: true,
+                    estadoEntrega: true, creadoEn: true, repartidorId: true,
+                    repartidor: true,
+                    items: {
+                        select: {
+                            productoId: true,
+                            cantidad: true,
+                            precioUnit: true,
+                            producto: { select: { id: true, codigo: true, descripcion: true } },
+                        },
+                    },
                 },
             }),
         ]);
@@ -155,6 +252,7 @@ export class EnvioDespachoService {
             tipo: 'COMPROBANTE' as const,
             id: d.id,
             comprobanteId: d.comprobanteId,
+            comprobanteTipoDoc: d.comprobante.tipoDoc,
             referencia: `${d.comprobante.serie}-${String(d.comprobante.correlativo).padStart(8, '0')}`,
             cliente: d.comprobante.cliente?.nombre ?? '—',
             telefono: d.comprobante.cliente?.telefono ?? '',
@@ -167,6 +265,9 @@ export class EnvioDespachoService {
             nroPaquetes: d.nroPaquetes ?? 1,
             turnoEnvio: d.turnoEnvio ?? '—',
             codigoGuia: d.codigoGuia ?? '',
+            repartidorId: d.repartidorId,
+            repartidor: d.repartidor?.nombre ?? '—',
+            repartidorData: d.repartidor,
             estado: d.estado,
             creadoEn: d.creadoEn,
         }));
@@ -180,6 +281,8 @@ export class EnvioDespachoService {
             telefono: p.clienteTelefono,
             vendedor: 'Tienda online',
             total: Number(p.total),
+            montoPagado: Number(p.montoPagado ?? 0),
+            saldoPendiente: Number(p.saldoPendiente ?? Math.max(Number(p.total) - Number(p.montoPagado ?? 0), 0)),
             courier: p.agenciaEnvio ?? '—',
             tipoEnvio: 'AGENCIA',
             agenciaDestino: p.clienteDireccion ?? '—',
@@ -187,7 +290,12 @@ export class EnvioDespachoService {
             nroPaquetes: 1,
             turnoEnvio: '—',
             codigoGuia: '',
+            repartidorId: p.repartidorId,
+            repartidor: p.repartidor?.nombre ?? '—',
+            repartidorData: p.repartidor,
             estado: p.estadoEnvio,
+            estadoEntrega: p.estadoEntrega,
+            items: p.items,
             creadoEn: p.creadoEn,
         }));
 
@@ -195,6 +303,53 @@ export class EnvioDespachoService {
             .sort((a, b) => new Date(b.creadoEn).getTime() - new Date(a.creadoEn).getTime());
 
         return { data: todos, total: todos.length };
+    }
+
+    private async notificarCambioEstado(
+        comprobanteId: number,
+        empresaId: number,
+        estado: EstadoDespacho,
+        repartidorNombre: string | null,
+    ): Promise<void> {
+        const [comprobante, empresa, config] = await Promise.all([
+            this.prisma.comprobante.findFirst({
+                where: { id: comprobanteId },
+                select: {
+                    serie: true, correlativo: true,
+                    cliente: { select: { nombre: true, telefono: true } },
+                },
+            }),
+            this.prisma.empresa.findUnique({ where: { id: empresaId }, select: { razonSocial: true } }),
+            this.prisma.despachoMensajeTemplate.findUnique({ where: { empresaId } }),
+        ]);
+
+        const telefono = comprobante?.cliente?.telefono;
+        if (!telefono) return;
+
+        const esEnCamino = estado === EstadoDespacho.EN_CAMINO;
+        const habilitado = esEnCamino
+            ? (config?.notificarEnCamino ?? true)
+            : (config?.notificarEntregado ?? true);
+        if (!habilitado) return;
+
+        const plantilla = esEnCamino
+            ? (config?.mensajeEnCamino ?? MENSAJES_DEFAULT.EN_CAMINO)
+            : (config?.mensajeEntregado ?? MENSAJES_DEFAULT.ENTREGADO);
+
+        const pedidoRef = `${comprobante.serie}-${String(comprobante.correlativo).padStart(8, '0')}`;
+        const mensaje = plantilla
+            .replace(/\{\{nombre\}\}/g, comprobante.cliente?.nombre ?? 'Cliente')
+            .replace(/\{\{pedido\}\}/g, pedidoRef)
+            .replace(/\{\{repartidor\}\}/g, repartidorNombre ?? 'Sin asignar')
+            .replace(/\{\{empresa\}\}/g, empresa?.razonSocial ?? '');
+
+        await this.whatsapp.enviarTexto(telefono, mensaje);
+    }
+
+    private async resolveUsuarioNombre(usuarioId?: number): Promise<string | null> {
+        if (!usuarioId) return null;
+        const u = await this.prisma.usuario.findUnique({ where: { id: usuarioId }, select: { nombre: true } });
+        return u?.nombre ?? null;
     }
 
     private pickFields(dto: CreateEnvioDespachoDto) {
@@ -212,5 +367,24 @@ export class EnvioDespachoService {
         });
         if (!comprobante) throw new NotFoundException('Comprobante no encontrado.');
         return comprobante;
+    }
+
+    private async syncPedidoTiendaByComprobante(comprobanteId: number, estado: EstadoDespacho) {
+        const mapped = DESPACHO_TO_PEDIDO_ESTADO[estado];
+        if (!mapped) return;
+        await this.prisma.pedidoTienda.updateMany({
+            where: { comprobanteId },
+            data: mapped,
+        });
+    }
+
+    private withLegacyRepartidor<T>(envio: T): T {
+        if (!envio) return envio;
+        const data = envio as any;
+        return {
+            ...data,
+            repartidor: data.repartidor?.nombre ?? null,
+            repartidorData: data.repartidor ?? null,
+        };
     }
 }

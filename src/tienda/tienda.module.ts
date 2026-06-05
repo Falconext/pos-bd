@@ -6,9 +6,10 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { DisenoRubroModule } from '../diseno-rubro/diseno-rubro.module';
 import { S3Module } from 'src/s3/s3.module';
 import { ModificadoresModule } from '../modificadores/modificadores.module';
+import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 
 @Module({
-  imports: [PrismaModule, S3Module, DisenoRubroModule, ModificadoresModule],
+  imports: [PrismaModule, S3Module, DisenoRubroModule, ModificadoresModule, WhatsAppModule],
   controllers: [TiendaController, TiendaPublicController],
   providers: [TiendaService],
   exports: [TiendaService],

@@ -38,6 +38,8 @@ export class CreateEnvioDespachoDto {
     @IsOptional() @IsString() nroOrden?: string;
     @IsOptional() @IsString() claveOrden?: string;
     @IsOptional() @IsString() establecimiento?: string;
+    @IsOptional() @Type(() => Number) @IsInt() @Min(1) repartidorId?: number;
+    // Compatibilidad temporal: si llega texto libre, el backend crea/asigna el repartidor EVENTUAL.
     @IsOptional() @IsString() repartidor?: string;
     @IsOptional() @IsString() empaquetador?: string;
 }

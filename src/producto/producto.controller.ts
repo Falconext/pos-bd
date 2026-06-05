@@ -35,6 +35,9 @@ import { KardexService } from '../kardex/kardex.service';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('productos')
 export class ProductoController {
+  private readonly imageSearchCache = new Map<string, { bestUrl: string; candidates: string[]; cachedAt: number }>();
+  private readonly IMAGE_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 días
+
   constructor(
     private readonly service: ProductoService,
     private readonly geminiService: GeminiService,
@@ -101,6 +104,21 @@ export class ProductoController {
         source: 'MEMORIA_APROBADA',
         message: 'Imagen recuperada desde memoria aprobada de tu empresa.',
         candidates: [imagenMemorizada.url],
+      };
+    }
+
+    // Cache en memoria (evita llamadas duplicadas a Serper en la misma sesión)
+    const cacheKey = `${nombre}|${marca}|${categoria}`.toLowerCase().trim();
+    const cached = this.imageSearchCache.get(cacheKey);
+    if (cached && Date.now() - cached.cachedAt < this.IMAGE_CACHE_TTL) {
+      void this.service.guardarImagenMemorizada({ empresaId: user.empresaId, nombre, marca, categoria, url: cached.bestUrl }).catch(() => {});
+      return {
+        success: true,
+        url: cached.bestUrl,
+        confidence: 80,
+        source: 'CACHE',
+        message: 'Imagen recuperada desde caché.',
+        candidates: cached.candidates,
       };
     }
 
@@ -250,242 +268,166 @@ export class ProductoController {
       return { score, tokenMatches };
     };
 
+    // Helper: normaliza resultados de cualquier proveedor y los acumula
+    const processImageResults = (
+      rawImages: ImageResult[],
+      rankedByUrl: Map<string, any>,
+      curatedGlobal: Set<string>,
+    ): { bestLocal: { url: string; score: number; tokenMatches: number } | null; curated: string[] } => {
+      const candidates = rawImages
+        .filter((img) => !!img?.url && /^https?:\/\//i.test(String(img.url)))
+        .map((img) => {
+          const ranking = scoreImage(img);
+          return { img, score: ranking.score, tokenMatches: ranking.tokenMatches };
+        })
+        .sort((a, b) => b.score - a.score);
+
+      for (const c of candidates) {
+        if (!c.img.url) continue;
+        const url = String(c.img.url);
+        const prev = rankedByUrl.get(url);
+        if (!prev || c.score > prev.score) {
+          rankedByUrl.set(url, { url, title: c.img.title, alt: c.img.alt, width: c.img.width, height: c.img.height, score: c.score, tokenMatches: c.tokenMatches });
+        }
+      }
+
+      const curatedList = candidates
+        .filter((c) => c.score > 0 && c.tokenMatches >= 1 && c.img.url)
+        .slice(0, 4)
+        .map((c) => String(c.img.url))
+        .filter((url) => !url.toLowerCase().endsWith('.svg'));
+      for (const url of curatedList) curatedGlobal.add(url);
+
+      const best = candidates[0];
+      return {
+        bestLocal: best?.img?.url ? { url: String(best.img.url), score: best.score, tokenMatches: best.tokenMatches } : null,
+        curated: curatedList,
+      };
+    };
+
     try {
-      // Dynamic import to avoid build issues if lib is commonjs
-      const { GOOGLE_IMG_SCRAP } = await import('google-img-scrap');
-      const canonicalName = normalize(nombre)
-        .split(' ')
-        .map(canonicalToken)
-        .join(' ');
-      const canonicalBrand = normalize(marca)
-        .split(' ')
-        .map(canonicalToken)
-        .join(' ');
-      const canonicalCategory = normalize(categoria)
-        .split(' ')
-        .map(canonicalToken)
-        .join(' ');
-      const queryContext = [canonicalName, canonicalBrand, canonicalCategory]
-        .filter(Boolean)
-        .join(' ')
-        .trim();
+      const canonicalName = normalize(nombre).split(' ').map(canonicalToken).join(' ');
+      const canonicalBrand = normalize(marca).split(' ').map(canonicalToken).join(' ');
+      const canonicalCategory = normalize(categoria).split(' ').map(canonicalToken).join(' ');
+      const queryContext = [canonicalName, canonicalBrand, canonicalCategory].filter(Boolean).join(' ').trim();
 
       const queries = Array.from(
         new Set(
           [
-            `"${queryContext}" producto`,
+            `${queryContext} producto`,
             `${queryContext} foto producto`,
             `${queryContext} packshot`,
-            `${canonicalName} ${canonicalBrand} adhesivo transparente`,
-            `${canonicalName} ${canonicalBrand} 1/8`,
           ].filter((q) => q.trim().length > 0),
         ),
       );
 
-      let bestGlobal: {
-        url: string;
-        score: number;
-        tokenMatches: number;
-      } | null = null;
+      let bestGlobal: { url: string; score: number; tokenMatches: number } | null = null;
       const curatedGlobal = new Set<string>();
-      const rankedByUrl = new Map<
-        string,
-        {
-          url: string;
-          title?: string;
-          alt?: string;
-          width?: number;
-          height?: number;
-          score: number;
-          tokenMatches: number;
-        }
-      >();
+      const rankedByUrl = new Map<string, { url: string; title?: string; alt?: string; width?: number; height?: number; score: number; tokenMatches: number }>();
 
       for (const query of queries) {
-        // Provider preferente: Brave Image Search API (si existe API key)
+        // Provider 1: Serper (Google Images real, 2500 gratis sin CC)
+        const serperKey = process.env.SERPER_API_KEY;
+        if (serperKey) {
+          try {
+            const serperResp = await axios.post(
+              'https://google.serper.dev/images',
+              { q: query, gl: 'pe', hl: 'es', num: 10 },
+              { headers: { 'X-API-KEY': serperKey, 'Content-Type': 'application/json' }, timeout: 10000 },
+            );
+            const serperImages: ImageResult[] = ((serperResp.data as any)?.images || []).map((img: any) => ({
+              url: img?.imageUrl || '',
+              title: img?.title || '',
+              alt: img?.title || '',
+              width: Number(img?.imageWidth || 0) || undefined,
+              height: Number(img?.imageHeight || 0) || undefined,
+            }));
+            const { bestLocal } = processImageResults(serperImages, rankedByUrl, curatedGlobal);
+            if (bestLocal && (!bestGlobal || bestLocal.score > bestGlobal.score)) bestGlobal = bestLocal;
+            if (bestLocal && bestLocal.score >= 6 && bestLocal.tokenMatches >= 1) break;
+          } catch {
+            // Continuar con siguiente provider
+          }
+        }
+
+        // Provider 2: Google Custom Search JSON API (gratis 100/día)
+        const cseApiKey = process.env.GOOGLE_CSE_API_KEY;
+        const cseCx = process.env.GOOGLE_CSE_CX;
+        if (cseApiKey && cseCx) {
+          try {
+            const cseResp = await axios.get('https://www.googleapis.com/customsearch/v1', {
+              params: { key: cseApiKey, cx: cseCx, searchType: 'image', q: query, num: 10, imgType: 'photo', safe: 'medium', gl: 'pe', hl: 'es' },
+              timeout: 10000,
+            });
+            const cseItems: any[] = Array.isArray((cseResp.data as any)?.items) ? (cseResp.data as any).items : [];
+            const cseImages: ImageResult[] = cseItems.map((item: any) => ({
+              url: item?.link || '',
+              title: item?.title || '',
+              alt: item?.snippet || '',
+              width: Number(item?.image?.width || 0) || undefined,
+              height: Number(item?.image?.height || 0) || undefined,
+            }));
+            const { bestLocal } = processImageResults(cseImages, rankedByUrl, curatedGlobal);
+            if (bestLocal && (!bestGlobal || bestLocal.score > bestGlobal.score)) bestGlobal = bestLocal;
+            if (bestLocal && bestLocal.score >= 6 && bestLocal.tokenMatches >= 1) break;
+          } catch {
+            // Continuar con siguiente provider
+          }
+        }
+
+        // Provider 2: Brave Image Search API
         const braveApiKey = process.env.BRAVE_SEARCH_API_KEY;
         if (braveApiKey) {
           try {
-            const braveResp = await axios.get(
-              'https://api.search.brave.com/res/v1/images/search',
-              {
-                params: {
-                  q: query,
-                  count: 20,
-                  country: 'PE',
-                  search_lang: 'es',
-                  safesearch: 'strict',
-                  spellcheck: true,
-                },
-                headers: {
-                  'X-Subscription-Token': braveApiKey,
-                },
-                timeout: 10000,
-              },
-            );
-
-            const braveResults = Array.isArray((braveResp.data as any)?.results)
-              ? (braveResp.data as any).results
-              : [];
-
-            const braveCandidates = braveResults
-              .map((item: any) => {
-                const originalUrl =
-                  item?.properties?.url ||
-                  item?.url ||
-                  item?.thumbnail?.src ||
-                  '';
-                const title = item?.title || item?.page_title || '';
-                const alt = item?.description || item?.alt || '';
-                const width = Number(
-                  item?.properties?.width || item?.width || 0,
-                );
-                const height = Number(
-                  item?.properties?.height || item?.height || 0,
-                );
-                const img: ImageResult = {
-                  url: typeof originalUrl === 'string' ? originalUrl : '',
-                  title: typeof title === 'string' ? title : '',
-                  alt: typeof alt === 'string' ? alt : '',
-                  width: Number.isFinite(width) ? width : undefined,
-                  height: Number.isFinite(height) ? height : undefined,
-                };
-                const ranking = scoreImage(img);
-                return {
-                  img,
-                  score: ranking.score,
-                  tokenMatches: ranking.tokenMatches,
-                };
-              })
-              .filter(
-                (c: any) =>
-                  !!c.img?.url && /^https?:\/\//i.test(String(c.img.url)),
-              )
-              .sort((a: any, b: any) => b.score - a.score);
-
-            for (const candidate of braveCandidates) {
-              if (!candidate.img.url) continue;
-              const url = String(candidate.img.url);
-              const prev = rankedByUrl.get(url);
-              if (!prev || candidate.score > prev.score) {
-                rankedByUrl.set(url, {
-                  url,
-                  title: candidate.img.title,
-                  alt: candidate.img.alt,
-                  width: candidate.img.width,
-                  height: candidate.img.height,
-                  score: candidate.score,
-                  tokenMatches: candidate.tokenMatches,
-                });
-              }
-            }
-
-            const braveCurated = braveCandidates
-              .filter(
-                (c: any) => c.score > 0 && c.tokenMatches >= 2 && c.img.url,
-              )
-              .slice(0, 5)
-              .map((c: any) => String(c.img.url))
-              .filter((url: string) => !url.toLowerCase().endsWith('.svg'));
-            for (const url of braveCurated) curatedGlobal.add(url);
-
-            const braveBest = braveCandidates[0];
-            if (braveBest && braveBest.img?.url) {
-              if (!bestGlobal || braveBest.score > bestGlobal.score) {
-                bestGlobal = {
-                  url: String(braveBest.img.url),
-                  score: braveBest.score,
-                  tokenMatches: braveBest.tokenMatches,
-                };
-              }
-            }
+            const braveResp = await axios.get('https://api.search.brave.com/res/v1/images/search', {
+              params: { q: query, count: 20, country: 'PE', search_lang: 'es', safesearch: 'strict', spellcheck: true },
+              headers: { 'X-Subscription-Token': braveApiKey },
+              timeout: 10000,
+            });
+            const braveItems: any[] = Array.isArray((braveResp.data as any)?.results) ? (braveResp.data as any).results : [];
+            const braveImages: ImageResult[] = braveItems.map((item: any) => ({
+              url: item?.properties?.url || item?.url || item?.thumbnail?.src || '',
+              title: item?.title || item?.page_title || '',
+              alt: item?.description || item?.alt || '',
+              width: Number(item?.properties?.width || item?.width || 0) || undefined,
+              height: Number(item?.properties?.height || item?.height || 0) || undefined,
+            }));
+            const { bestLocal } = processImageResults(braveImages, rankedByUrl, curatedGlobal);
+            if (bestLocal && (!bestGlobal || bestLocal.score > bestGlobal.score)) bestGlobal = bestLocal;
           } catch {
-            // Si Brave falla, continuar con provider secundario.
+            // Continuar
           }
         }
 
-        const results = await GOOGLE_IMG_SCRAP({
-          search: query,
-          limit: 16,
-          safeSearch: true,
-          // @ts-ignore
-          userAgent:
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        });
-
-        if (
-          results &&
-          results.result &&
-          Array.isArray(results.result) &&
-          results.result.length > 0
-        ) {
-          const candidates = (results.result as ImageResult[])
-            .filter(
-              (img) => !!img?.url && /^https?:\/\//i.test(String(img.url)),
-            )
-            .map((img) => {
-              const ranking = scoreImage(img);
-              return {
-                img,
-                score: ranking.score,
-                tokenMatches: ranking.tokenMatches,
-              };
-            })
-            .sort((a, b) => b.score - a.score);
-
-          for (const candidate of candidates) {
-            if (!candidate.img.url) continue;
-            const url = String(candidate.img.url);
-            const prev = rankedByUrl.get(url);
-            if (!prev || candidate.score > prev.score) {
-              rankedByUrl.set(url, {
-                url,
-                title: candidate.img.title,
-                alt: candidate.img.alt,
-                width: candidate.img.width,
-                height: candidate.img.height,
-                score: candidate.score,
-                tokenMatches: candidate.tokenMatches,
-              });
-            }
-          }
-
-          const curatedCandidates = candidates
-            .filter((c) => c.score > 0 && c.tokenMatches >= 1 && c.img.url)
-            .slice(0, 4)
-            .map((c) => String(c.img.url))
-            .filter((url) => !url.toLowerCase().endsWith('.svg'));
-          for (const url of curatedCandidates) curatedGlobal.add(url);
-
-          const best = candidates[0];
-          if (best && best.img.url) {
-            if (!bestGlobal || best.score > bestGlobal.score) {
-              bestGlobal = {
-                url: String(best.img.url),
-                score: best.score,
-                tokenMatches: best.tokenMatches,
-              };
-            }
-          }
-
-          if (
-            best &&
-            best.score >= 11 &&
-            best.tokenMatches >= 2 &&
-            best.img.url
-          ) {
-            return {
-              success: true,
-              url: best.img.url,
-              confidence: best.score,
-              candidates:
-                curatedCandidates.length > 0
-                  ? curatedCandidates
-                  : [String(best.img.url)],
-            };
+        // Provider 3: Pixabay (gratis 5000/hora, sin CC — imágenes genéricas de producto)
+        const pixabayKey = process.env.PIXABAY_API_KEY;
+        if (pixabayKey) {
+          try {
+            const pixabayResp = await axios.get('https://pixabay.com/api/', {
+              params: { key: pixabayKey, q: query, image_type: 'photo', per_page: 10, safesearch: true, lang: 'es' },
+              timeout: 8000,
+            });
+            const pixabayHits: any[] = Array.isArray((pixabayResp.data as any)?.hits) ? (pixabayResp.data as any).hits : [];
+            const pixabayImages: ImageResult[] = pixabayHits.map((hit: any) => ({
+              url: hit?.largeImageURL || hit?.webformatURL || '',
+              title: hit?.tags || '',
+              alt: hit?.tags || '',
+              width: Number(hit?.imageWidth || hit?.webformatWidth || 0) || undefined,
+              height: Number(hit?.imageHeight || hit?.webformatHeight || 0) || undefined,
+            }));
+            const { bestLocal } = processImageResults(pixabayImages, rankedByUrl, curatedGlobal);
+            if (bestLocal && (!bestGlobal || bestLocal.score > bestGlobal.score)) bestGlobal = bestLocal;
+          } catch {
+            // Continuar
           }
         }
       }
+
+      // Helper para guardar resultado en caché en memoria + DB automáticamente
+      const guardarEnCache = (url: string, candidates: string[]) => {
+        this.imageSearchCache.set(cacheKey, { bestUrl: url, candidates, cachedAt: Date.now() });
+        void this.service.guardarImagenMemorizada({ empresaId: user.empresaId, nombre, marca, categoria, url }).catch(() => {});
+      };
 
       // Gemini decide la mejor candidata (si está disponible), usando las mejores heurísticas.
       const rankedGlobalList = Array.from(rankedByUrl.values()).sort(
@@ -508,48 +450,43 @@ export class ProductoController {
 
         if (geminiChoice?.url) {
           const globalCandidates = Array.from(curatedGlobal).slice(0, 5);
+          const candidates = globalCandidates.length > 0 ? globalCandidates : [geminiChoice.url];
+          guardarEnCache(geminiChoice.url, candidates);
           return {
             success: true,
             url: geminiChoice.url,
             confidence: geminiChoice.confidence,
             message: geminiChoice.reason || 'Imagen seleccionada por Gemini.',
-            candidates:
-              globalCandidates.length > 0
-                ? globalCandidates
-                : [geminiChoice.url],
+            candidates,
           };
         }
       }
 
       const globalCandidates = Array.from(curatedGlobal).slice(0, 5);
-      if (
-        bestGlobal?.url &&
-        bestGlobal.score >= 11 &&
-        bestGlobal.tokenMatches >= 2
-      ) {
+      if (bestGlobal?.url && bestGlobal.score >= 6) {
+        const candidates = globalCandidates.length > 0 ? globalCandidates : [bestGlobal.url];
+        guardarEnCache(bestGlobal.url, candidates);
         return {
           success: true,
           url: bestGlobal.url,
           confidence: bestGlobal.score,
-          candidates:
-            globalCandidates.length > 0 ? globalCandidates : [bestGlobal.url],
-          message: 'Se devolvió la mejor coincidencia disponible.',
+          candidates,
+          message: 'Imagen encontrada.',
         };
       }
 
       if (globalCandidates.length > 0) {
+        guardarEnCache(globalCandidates[0], globalCandidates);
         return {
           success: false,
-          message:
-            'No hubo coincidencia exacta, pero encontré opciones sugeridas.',
+          message: 'No hubo coincidencia exacta, pero encontré opciones sugeridas.',
           candidates: globalCandidates,
         };
       }
 
       return {
         success: false,
-        message:
-          'No se encontraron imágenes suficientemente relacionadas para este producto.',
+        message: 'No se encontraron imágenes suficientemente relacionadas para este producto.',
         candidates: [],
       };
     } catch (e: any) {

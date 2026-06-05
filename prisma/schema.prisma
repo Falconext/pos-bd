@@ -143,6 +143,8 @@ model Empresa {
   vinculosXmlProductos    VinculoProductoProveedorXml[]
   imagenesProductoIa      ImagenProductoAprobadaIa[]
   reservas                Reserva[]
+  repartidores            Repartidor[]
+  despachoMensajeTemplate DespachoMensajeTemplate?
 
   bancoNombre         String?
   numeroCuenta        String?
@@ -162,6 +164,7 @@ model Empresa {
   metodoSalidaLotes   String               @default("LIFO")
   notas               NotaEmpresa[]
   logs                EmpresaLog[]
+  gastosOperativos    GastoOperativo[]
 
   @@index([providerToken])
   @@index([slugTienda])
@@ -745,6 +748,8 @@ model PedidoTienda {
   historialEstados  HistorialEstadoPedido[]
   items             ItemPedidoTienda[]
   empresa           Empresa                 @relation(fields: [empresaId], references: [id])
+  repartidorId      Int?
+  repartidor        Repartidor?             @relation(fields: [repartidorId], references: [id], onDelete: SetNull)
 
   sedeId Int?
   sede   Sede? @relation(fields: [sedeId], references: [id])
@@ -754,6 +759,7 @@ model PedidoTienda {
   @@index([empresaId, estadoEnvio])
   @@index([creadoEn])
   @@index([codigoSeguimiento])
+  @@index([repartidorId])
 }
 
 model ItemPedidoTienda {
@@ -1064,6 +1070,7 @@ model Sede {
   Compra            Compra[]
   GuiaRemision      GuiaRemision[]
   reservas          Reserva[]
+  repartidores      Repartidor[]
 
   @@index([empresaId])
 }
@@ -1388,6 +1395,11 @@ enum EstadoDespacho {
   DEVUELTO
 }
 
+enum TipoRepartidor {
+  PLANILLA
+  EVENTUAL
+}
+
 model EnvioDespacho {
   id               Int            @id @default(autoincrement())
   comprobanteId    Int            @unique
@@ -1410,12 +1422,48 @@ model EnvioDespacho {
   nroOrden         String?
   claveOrden       String?
   establecimiento  String?        // Local/sucursal desde donde despacha
-  repartidor       String?        // Nombre del repartidor (reparto propio)
+  repartidorId     Int?
+  repartidor       Repartidor?    @relation(fields: [repartidorId], references: [id], onDelete: SetNull)
   empaquetador     String?        // Nombre del empaquetador
   creadoEn         DateTime       @default(now())
   actualizadoEn    DateTime       @updatedAt
 
   @@index([comprobanteId])
+  @@index([repartidorId])
+}
+
+model Repartidor {
+  id              Int              @id @default(autoincrement())
+  nombre          String
+  celular         String?
+  tipo            TipoRepartidor   @default(EVENTUAL)
+  activo          Boolean          @default(true)
+  empresaId       Int
+  empresa         Empresa          @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  sedeId          Int?
+  sede            Sede?            @relation(fields: [sedeId], references: [id], onDelete: SetNull)
+  creadoEn        DateTime         @default(now())
+  actualizadoEn   DateTime         @updatedAt
+  enviosDespacho  EnvioDespacho[]
+  pedidosTienda   PedidoTienda[]
+
+  @@index([empresaId, activo])
+  @@index([sedeId])
+  @@unique([empresaId, nombre])
+}
+
+model DespachoMensajeTemplate {
+  id        Int     @id @default(autoincrement())
+  empresaId Int     @unique
+  empresa   Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  mensajeEnCamino    String?
+  mensajeEntregado   String?
+  notificarEnCamino  Boolean @default(true)
+  notificarEntregado Boolean @default(true)
+
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
 }
 
 model GuiaRemision {
@@ -1761,4 +1809,31 @@ model DigemidProducto {
   @@index([codigoBarras])
   @@index([estado])
   @@map("digemid_productos")
+}
+
+enum CategoriaGasto {
+  PUBLICIDAD
+  SUELDOS
+  ENVIOS
+  COMISIONES
+  ALQUILER
+  OTROS
+  PERSONALIZADA
+}
+
+model GastoOperativo {
+  id            Int            @id @default(autoincrement())
+  empresaId     Int
+  mes           Int
+  anio          Int
+  categoria     CategoriaGasto
+  etiqueta      String?
+  monto         Decimal        @db.Decimal(12, 2)
+  descripcion   String?
+  creadoEn      DateTime       @default(now())
+  actualizadoEn DateTime       @updatedAt
+  empresa       Empresa        @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  @@index([empresaId, anio, mes])
+  @@index([empresaId, categoria])
 }

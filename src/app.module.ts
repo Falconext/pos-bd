@@ -43,6 +43,8 @@ import { BrandingModule } from './branding/branding.module';
 import { ReservaModule } from './reserva/reserva.module';
 import { EnvioDespachoModule } from './envio-despacho/envio-despacho.module';
 import { DigemidModule } from './digemid/digemid.module';
+import { RepartidorModule } from './repartidor/repartidor.module';
+import { AnalisisFinancieroModule } from './analisis-financiero/analisis-financiero.module';
 
 @Module({
   imports: [
@@ -87,7 +89,9 @@ import { DigemidModule } from './digemid/digemid.module';
     BrandingModule,
     ReservaModule,
     DigemidModule,
+    RepartidorModule,
     EnvioDespachoModule,
+    AnalisisFinancieroModule,
   ],
   controllers: [AppController],
   providers: [AppService],

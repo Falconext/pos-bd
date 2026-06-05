@@ -1,4 +1,5 @@
 import { IsEnum, IsOptional, IsNumber, IsString, Min } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export enum EstadoPedidoTienda {
   PENDIENTE = 'PENDIENTE',
@@ -33,6 +34,19 @@ export class ActualizarEstadoPedidoDto {
   @IsString()
   @IsOptional()
   numeroTracking?: string;
+
+  @Type(() => Number)
+  @IsNumber()
+  @IsOptional()
+  repartidorId?: number;
+
+  @IsString()
+  @IsOptional()
+  clienteDireccion?: string;
+
+  @IsString()
+  @IsOptional()
+  clienteTelefono?: string;
 
   @IsString()
   @IsOptional()

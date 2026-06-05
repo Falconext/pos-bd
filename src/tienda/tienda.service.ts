@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ForbiddenException,
   InternalServerErrorException,
+  Logger,
 } from '@nestjs/common';
 import axios from 'axios';
 import { PrismaService } from '../prisma/prisma.service';
@@ -11,8 +12,36 @@ import { S3Service } from '../s3/s3.service';
 import { ConfigurarTiendaDto } from './dto/configurar-tienda.dto';
 import { CrearPedidoDto } from './dto/crear-pedido.dto';
 import { ActualizarEstadoPedidoDto } from './dto/actualizar-pedido.dto';
-
 import { DisenoRubroService } from '../diseno-rubro/diseno-rubro.service';
+import { WhatsAppService } from '../whatsapp/whatsapp.service';
+
+const ESTADOS_ENVIO_NOTIFICABLES = new Set(['EN_CAMINO', 'EN_REPARTO', 'ENVIADO', 'ENTREGADO']);
+
+const MENSAJES_DEFAULT_TIENDA: Record<string, string> = {
+  EN_CAMINO: 'Hola {{nombre}}, tu pedido {{pedido}} ya está en camino 🚚. Repartidor: {{repartidor}}.',
+  ENTREGADO: 'Hola {{nombre}}, tu pedido {{pedido}} fue entregado exitosamente ✅. ¡Gracias por preferir {{empresa}}!',
+};
+
+const PEDIDO_ENTREGA_TO_DESPACHO: Record<string, string> = {
+  PENDIENTE: 'PREPARANDO',
+  CONFIRMADO: 'PREPARANDO',
+  EN_TRANSITO: 'EN_CAMINO',
+  REPROGRAMADO: 'PREPARANDO',
+  ENTREGADO_COMPLETADO: 'ENTREGADO',
+  CANCELADO_INTERNO: 'DEVUELTO',
+  CANCELADO_CLIENTE: 'DEVUELTO',
+};
+
+const PEDIDO_ENVIO_TO_DESPACHO: Record<string, string> = {
+  SIN_ASIGNAR: 'PREPARANDO',
+  POR_COORDINAR: 'PREPARANDO',
+  ENVIADO: 'EN_CAMINO',
+  EN_REPARTO: 'EN_CAMINO',
+  EN_CAMINO: 'EN_CAMINO',
+  ENTREGADO: 'ENTREGADO',
+  INCIDENCIA: 'DEVUELTO',
+  NO_APLICA: 'PREPARANDO',
+};
 
 interface CulqiChargeResponse {
   id: string;
@@ -30,10 +59,13 @@ interface CulqiChargeResponse {
 
 @Injectable()
 export class TiendaService {
+  private readonly logger = new Logger(TiendaService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly s3: S3Service,
     private readonly disenoService: DisenoRubroService,
+    private readonly whatsapp: WhatsAppService,
   ) { }
 
   private handlePedidoSchemaError(error: unknown): never {
@@ -1407,6 +1439,9 @@ export class TiendaService {
     if (dto.agenciaEnvio !== undefined) dataToUpdate.agenciaEnvio = dto.agenciaEnvio;
     if (dto.estadoEnvio !== undefined) dataToUpdate.estadoEnvio = dto.estadoEnvio;
     if (dto.numeroTracking !== undefined) dataToUpdate.numeroTracking = dto.numeroTracking;
+    if (dto.repartidorId !== undefined) dataToUpdate.repartidorId = dto.repartidorId || null;
+    if (dto.clienteDireccion !== undefined) dataToUpdate.clienteDireccion = dto.clienteDireccion;
+    if (dto.clienteTelefono !== undefined) dataToUpdate.clienteTelefono = dto.clienteTelefono;
     if (dto.notasInternas !== undefined) dataToUpdate.notasInternas = dto.notasInternas;
     if (dto.usuarioConfirma !== undefined) dataToUpdate.vendedorId = dto.usuarioConfirma;
     if (dto.vendedorNombre !== undefined) dataToUpdate.vendedorNombre = dto.vendedorNombre;
@@ -1426,6 +1461,8 @@ export class TiendaService {
       dto.estadoEntrega ? `Entrega: ${dto.estadoEntrega}` : null,
       dto.estadoEnvio ? `Envío: ${dto.estadoEnvio}` : null,
       dto.agenciaEnvio ? `Agencia: ${dto.agenciaEnvio}` : null,
+      dto.repartidorId !== undefined ? `Repartidor ID: ${dto.repartidorId || 'Sin asignar'}` : null,
+      dto.numeroTracking ? `Tracking: ${dto.numeroTracking}` : null,
       dto.montoPagado !== undefined ? `Pagado: S/ ${Number(dto.montoPagado).toFixed(2)}` : null,
     ].filter(Boolean).join(' · ') || 'Pedido actualizado';
 
@@ -1446,6 +1483,13 @@ export class TiendaService {
               },
             },
           },
+          repartidor: {
+            select: {
+              id: true,
+              nombre: true,
+              celular: true,
+            },
+          },
         },
       }),
       this.prisma.historialEstadoPedido.create({
@@ -1459,7 +1503,87 @@ export class TiendaService {
       }),
     ]);
 
+    const estadoEnvioCambia = dto.estadoEnvio && dto.estadoEnvio !== pedido.estadoEnvio;
+    if (estadoEnvioCambia && dto.estadoEnvio && ESTADOS_ENVIO_NOTIFICABLES.has(dto.estadoEnvio)) {
+      this.notificarCambioEstadoEnvio(
+        pedido.empresaId,
+        dto.estadoEnvio,
+        pedido.clienteTelefono,
+        pedido.clienteNombre,
+        pedido.codigoSeguimiento,
+        (pedidoActualizado as any).repartidor?.nombre ?? null,
+      ).catch((e) => this.logger.warn(`WA tienda fallido: ${e.message}`));
+    }
+
+    await this.syncDespachoByPedido(pedidoActualizado as any, dto);
+
     return pedidoActualizado;
+  }
+
+  private async syncDespachoByPedido(pedido: { comprobanteId?: number | null }, dto: ActualizarEstadoPedidoDto) {
+    if (!pedido.comprobanteId) return;
+    const estadoDespacho = dto.estadoEnvio
+      ? PEDIDO_ENVIO_TO_DESPACHO[dto.estadoEnvio]
+      : dto.estadoEntrega
+        ? PEDIDO_ENTREGA_TO_DESPACHO[dto.estadoEntrega]
+        : null;
+    if (!estadoDespacho) return;
+
+    const envio = await this.prisma.envioDespacho.findUnique({
+      where: { comprobanteId: pedido.comprobanteId },
+      select: { estado: true, historial: true },
+    });
+    if (!envio || envio.estado === estadoDespacho) return;
+
+    const historial = Array.isArray(envio.historial) ? envio.historial as any[] : [];
+    await this.prisma.envioDespacho.update({
+      where: { comprobanteId: pedido.comprobanteId },
+      data: {
+        estado: estadoDespacho as any,
+        historial: [
+          ...historial,
+          {
+            estado: estadoDespacho,
+            fecha: new Date().toISOString(),
+            nota: 'Sincronizado desde pedido tienda',
+          },
+        ],
+      },
+    });
+  }
+
+  private async notificarCambioEstadoEnvio(
+    empresaId: number,
+    estadoEnvio: string,
+    telefono: string,
+    clienteNombre: string,
+    pedidoRef: string,
+    repartidorNombre: string | null,
+  ): Promise<void> {
+    if (!telefono) return;
+
+    const [empresa, config] = await Promise.all([
+      this.prisma.empresa.findUnique({ where: { id: empresaId }, select: { razonSocial: true } }),
+      this.prisma.despachoMensajeTemplate.findUnique({ where: { empresaId } }),
+    ]);
+
+    const esEnCamino = ['EN_CAMINO', 'EN_REPARTO', 'ENVIADO'].includes(estadoEnvio);
+    const habilitado = esEnCamino
+      ? (config?.notificarEnCamino ?? true)
+      : (config?.notificarEntregado ?? true);
+    if (!habilitado) return;
+
+    const plantilla = esEnCamino
+      ? (config?.mensajeEnCamino ?? MENSAJES_DEFAULT_TIENDA.EN_CAMINO)
+      : (config?.mensajeEntregado ?? MENSAJES_DEFAULT_TIENDA.ENTREGADO);
+
+    const mensaje = plantilla
+      .replace(/\{\{nombre\}\}/g, clienteNombre ?? 'Cliente')
+      .replace(/\{\{pedido\}\}/g, pedidoRef)
+      .replace(/\{\{repartidor\}\}/g, repartidorNombre ?? 'Sin asignar')
+      .replace(/\{\{empresa\}\}/g, empresa?.razonSocial ?? '');
+
+    await this.whatsapp.enviarTexto(telefono, mensaje);
   }
 
   // Métodos nuevos para configuración de envío
