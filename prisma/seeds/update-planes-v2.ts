@@ -21,6 +21,8 @@ const planesV2 = [
     tieneCulqi: false,
     tieneDeliveryGPS: false,
     tieneTicketera: false,
+    tieneGestionLotes: false,
+    tieneGestionComisiones: false,
     maxComprobantes: 0,   // 0 = ilimitado
     maxSedes: 1,
     maxImagenesProducto: 3,
@@ -40,6 +42,8 @@ const planesV2 = [
     tieneCulqi: false,
     tieneDeliveryGPS: false,
     tieneTicketera: true,
+    tieneGestionLotes: true,
+    tieneGestionComisiones: false,
     maxComprobantes: 0,   // 0 = ilimitado
     maxSedes: 2,
     maxImagenesProducto: 5,
@@ -59,6 +63,8 @@ const planesV2 = [
     tieneCulqi: true,
     tieneDeliveryGPS: true,
     tieneTicketera: true,
+    tieneGestionLotes: true,
+    tieneGestionComisiones: true,
     maxComprobantes: 0,   // 0 = ilimitado
     maxSedes: 0,          // 0 = ilimitado
     maxImagenesProducto: 10,
@@ -93,6 +99,20 @@ async function main() {
     });
     console.log(`✓ ${result.nombre}: S/ ${result.costo} | maxComprobantes=${result.maxComprobantes} | maxSedes=${result.maxSedes} | limiteUsuarios=${result.limiteUsuarios}`);
   }
+
+  await prisma.plan.updateMany({
+    where: {
+      OR: [
+        { nombre: { equals: 'CORPORATIVO', mode: 'insensitive' } },
+        { nombre: { equals: 'COORPORATIVO', mode: 'insensitive' } },
+      ],
+    },
+    data: {
+      tieneGestionLotes: true,
+      tieneDeliveryGPS: true,
+      tieneGestionComisiones: true,
+    },
+  });
 
   console.log('\n✓ Actualización completada.');
 }

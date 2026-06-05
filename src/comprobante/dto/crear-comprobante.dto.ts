@@ -13,8 +13,9 @@ import {
 } from 'class-validator';
 
 class DetalleDto {
+  @IsOptional()
   @IsInt()
-  productoId: number;
+  productoId?: number | null;
 
   @Type(() => Number)
   @IsNumber()

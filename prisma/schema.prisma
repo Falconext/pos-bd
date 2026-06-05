@@ -8,30 +8,31 @@ datasource db {
 }
 
 model Plan {
-  id                  Int             @id @default(autoincrement())
-  nombre              String
-  plataforma          String          @default("falconext")
-  producto            String          @default("facturacion")
-  descripcion         String?
-  limiteUsuarios      Int?
-  maxSedes            Int?            @default(1)
-  costo               Decimal         @default(0)
-  esPrueba            Boolean         @default(false)
-  duracionDias        Int             @default(30)
-  tipoFacturacion     String          @default("MENSUAL")
-  tieneTienda         Boolean         @default(false)
-  maxBanners          Int?            @default(3)
-  maxImagenesProducto Int?            @default(1)
-  tieneBanners        Boolean         @default(false)
-  tieneCulqi          Boolean         @default(false)
-  tieneDeliveryGPS    Boolean         @default(false)
-  tieneGaleria        Boolean         @default(false)
-  maxComprobantes     Int?            @default(100)
-  tieneTicketera      Boolean         @default(false)
-  tieneGestionLotes   Boolean         @default(false)
-  empresas            Empresa[]
-  modulosAsignados    PlanModulo[]
-  subModulosAsignados PlanSubModulo[]
+  id                     Int             @id @default(autoincrement())
+  nombre                 String
+  plataforma             String          @default("falconext")
+  producto               String          @default("facturacion")
+  descripcion            String?
+  limiteUsuarios         Int?
+  maxSedes               Int?            @default(1)
+  costo                  Decimal         @default(0)
+  esPrueba               Boolean         @default(false)
+  duracionDias           Int             @default(30)
+  tipoFacturacion        String          @default("MENSUAL")
+  tieneTienda            Boolean         @default(false)
+  maxBanners             Int?            @default(3)
+  maxImagenesProducto    Int?            @default(1)
+  tieneBanners           Boolean         @default(false)
+  tieneCulqi             Boolean         @default(false)
+  tieneDeliveryGPS       Boolean         @default(false)
+  tieneGaleria           Boolean         @default(false)
+  maxComprobantes        Int?            @default(100)
+  tieneTicketera         Boolean         @default(false)
+  tieneGestionLotes      Boolean         @default(false)
+  tieneGestionComisiones Boolean         @default(false)
+  empresas               Empresa[]
+  modulosAsignados       PlanModulo[]
+  subModulosAsignados    PlanSubModulo[]
 
   @@unique([nombre, plataforma, producto])
   @@index([plataforma])
@@ -94,11 +95,11 @@ model Empresa {
   slugTienda              String?                       @unique
   tiktokUrl               String?
   whatsappTienda          String?
-  whatsappProvider        WhatsAppProvider             @default(PLATFORM)
+  whatsappProvider        WhatsAppProvider              @default(PLATFORM)
   whatsappApiToken        String?
   whatsappPhoneNumberId   String?
   whatsappBusinessId      String?
-  whatsappActivo          Boolean                      @default(true)
+  whatsappActivo          Boolean                       @default(true)
   yapeNumero              String?
   yapeQrUrl               String?
   aceptaEnvio             Boolean                       @default(true)
@@ -285,8 +286,8 @@ model Producto {
   volumenMl                Decimal?
   preciosMayorista         Json?
   localizacion             String?
-  porcentajeVenta          Int                           @default(70)
-  porcentajeProvision      Int                           @default(30)
+  porcentajeVenta          Int                           @default(100)
+  porcentajeProvision      Int                           @default(0)
   detalleCompras           DetalleCompra[]
   detalleComprobantes      DetalleComprobante[]
   galeria                  GaleriaProducto[]
@@ -1011,18 +1012,18 @@ model ProductoPlantilla {
 }
 
 model ProductoLote {
-  id                Int                    @id @default(autoincrement())
-  productoId        Int
-  lote              String
-  fechaVencimiento  DateTime
-  fechaIngreso      DateTime               @default(now())
-  stockActual       Int                    @default(0)
-  stockInicial      Int                    @default(0)
-  costoUnitario     Decimal?
-  proveedor         String?
-  activo            Boolean                @default(true)
-  creadoEn          DateTime               @default(now())
-  actualizadoEn     DateTime               @updatedAt
+  id                  Int                    @id @default(autoincrement())
+  productoId          Int
+  lote                String
+  fechaVencimiento    DateTime
+  fechaIngreso        DateTime               @default(now())
+  stockActual         Int                    @default(0)
+  stockInicial        Int                    @default(0)
+  costoUnitario       Decimal?
+  proveedor           String?
+  activo              Boolean                @default(true)
+  creadoEn            DateTime               @default(now())
+  actualizadoEn       DateTime               @updatedAt
   movimientosKardex   MovimientoKardexLote[]
   detallesComprobante DetalleComprobante[]
   producto            Producto               @relation(fields: [productoId], references: [id], onDelete: Cascade)
@@ -1412,19 +1413,19 @@ model EnvioDespacho {
   fechaEstimada    DateTime?
   historial        Json?
   // Coordinación de envío nacional
-  tipoEnvio        String?        // AGENCIA | DOMICILIO
-  agenciaDestino   String?        // Nombre de agencia destino (ej: "Shalom Cusco Centro")
-  celularDest      String?        // Celular del destinatario
+  tipoEnvio        String? // AGENCIA | DOMICILIO
+  agenciaDestino   String? // Nombre de agencia destino (ej: "Shalom Cusco Centro")
+  celularDest      String? // Celular del destinatario
   nroPaquetes      Int?           @default(1)
-  turnoEnvio       String?        // MANANA | TARDE | NOCHE
-  tipoMercaderia   String?        // Clasificación para el courier (Shalom)
+  turnoEnvio       String? // MANANA | TARDE | NOCHE
+  tipoMercaderia   String? // Clasificación para el courier (Shalom)
   claveEnvio       String?
   nroOrden         String?
   claveOrden       String?
-  establecimiento  String?        // Local/sucursal desde donde despacha
+  establecimiento  String? // Local/sucursal desde donde despacha
   repartidorId     Int?
   repartidor       Repartidor?    @relation(fields: [repartidorId], references: [id], onDelete: SetNull)
-  empaquetador     String?        // Nombre del empaquetador
+  empaquetador     String? // Nombre del empaquetador
   creadoEn         DateTime       @default(now())
   actualizadoEn    DateTime       @updatedAt
 
@@ -1433,23 +1434,23 @@ model EnvioDespacho {
 }
 
 model Repartidor {
-  id              Int              @id @default(autoincrement())
-  nombre          String
-  celular         String?
-  tipo            TipoRepartidor   @default(EVENTUAL)
-  activo          Boolean          @default(true)
-  empresaId       Int
-  empresa         Empresa          @relation(fields: [empresaId], references: [id], onDelete: Cascade)
-  sedeId          Int?
-  sede            Sede?            @relation(fields: [sedeId], references: [id], onDelete: SetNull)
-  creadoEn        DateTime         @default(now())
-  actualizadoEn   DateTime         @updatedAt
-  enviosDespacho  EnvioDespacho[]
-  pedidosTienda   PedidoTienda[]
+  id             Int             @id @default(autoincrement())
+  nombre         String
+  celular        String?
+  tipo           TipoRepartidor  @default(EVENTUAL)
+  activo         Boolean         @default(true)
+  empresaId      Int
+  empresa        Empresa         @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  sedeId         Int?
+  sede           Sede?           @relation(fields: [sedeId], references: [id], onDelete: SetNull)
+  creadoEn       DateTime        @default(now())
+  actualizadoEn  DateTime        @updatedAt
+  enviosDespacho EnvioDespacho[]
+  pedidosTienda  PedidoTienda[]
 
+  @@unique([empresaId, nombre])
   @@index([empresaId, activo])
   @@index([sedeId])
-  @@unique([empresaId, nombre])
 }
 
 model DespachoMensajeTemplate {

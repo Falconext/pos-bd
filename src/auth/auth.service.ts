@@ -343,7 +343,9 @@ export class AuthService {
               select: {
                 nombre: true,
                 tieneTienda: true,
+                tieneDeliveryGPS: true,
                 tieneGestionLotes: true,
+                tieneGestionComisiones: true,
                 maxSedes: true,
                 modulosAsignados: {
                   include: { modulo: true }
@@ -445,6 +447,9 @@ export class AuthService {
                 duracionDias: true,
                 tipoFacturacion: true,
                 esPrueba: true,
+                tieneDeliveryGPS: true,
+                tieneGestionLotes: true,
+                tieneGestionComisiones: true,
                 modulosAsignados: {
                   include: { modulo: true }
                 }

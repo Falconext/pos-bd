@@ -155,6 +155,7 @@ export class PlanService {
                 tieneDeliveryGPS: true,
                 tieneTicketera: true,
                 tieneGestionLotes: true,
+                tieneGestionComisiones: true,
             },
         });
 

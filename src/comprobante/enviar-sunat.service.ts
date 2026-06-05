@@ -483,7 +483,7 @@ export class EnviarSunatService {
             'cac:Item': {
               'cbc:Description': { _text: limpiarTexto(d.descripcion) },
               'cac:SellersItemIdentification': {
-                'cbc:ID': { _text: d.producto.codigo },
+                'cbc:ID': { _text: d.producto?.codigo || '-' },
               },
             },
             'cac:Price': {

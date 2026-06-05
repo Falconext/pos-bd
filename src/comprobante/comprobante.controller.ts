@@ -313,7 +313,12 @@ export class ComprobanteController {
               errorMsg: error.message,
             });
           } catch (_) {}
-          try { await this.service.eliminarComprobante(comp.id); } catch (_) {}
+          let deleted = false;
+          try { await this.service.eliminarComprobante(comp.id); deleted = true; } catch (_) {}
+          // Si no se pudo eliminar: marcar FALLIDO_ENVIO para que el usuario pueda descartarlo
+          if (!deleted) {
+            try { await this.service.registrarErrorSunat(comp.id, error.message); } catch (_) {}
+          }
           throw new BadRequestException(
             `El comprobante no pudo enviarse a SUNAT porque los datos son inválidos: ${error.message}. ` +
             `Por favor revise los datos ingresados y vuelva a intentarlo.`,
@@ -357,7 +362,11 @@ export class ComprobanteController {
               errorMsg: error.message,
             });
           } catch (_) {}
-          try { await this.service.eliminarComprobante(comp.id); } catch (_) {}
+          let deleted = false;
+          try { await this.service.eliminarComprobante(comp.id); deleted = true; } catch (_) {}
+          if (!deleted) {
+            try { await this.service.registrarErrorSunat(comp.id, error.message); } catch (_) {}
+          }
           throw new BadRequestException(
             `El comprobante no pudo enviarse a SUNAT porque los datos son inválidos: ${error.message}. ` +
             `Por favor revise los datos ingresados y vuelva a intentarlo.`,

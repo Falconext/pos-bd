@@ -685,8 +685,18 @@ export class ComprobanteService {
   }
 
   private async cargarProductosYDetalles(detalles: any[], empresaId: number) {
-    // Normalizar IDs a números
-    const productIds = detalles.map((d) => {
+    // Separar ítems con producto de ítems de servicio libre (sin productoId, ej. costo de envío)
+    const productDetalles = detalles.filter((d) => d.productoId != null);
+    const serviceDetalles = detalles.filter((d) => d.productoId == null);
+
+    for (const s of serviceDetalles) {
+      if (!String(s.descripcion ?? '').trim()) {
+        throw new BadRequestException('Los ítems de servicio (sin productoId) requieren una descripción.');
+      }
+    }
+
+    // Normalizar IDs a números (solo ítems con producto)
+    const productIds = productDetalles.map((d) => {
       const id = Number(d.productoId);
       if (Number.isNaN(id)) {
         throw new BadRequestException(`productoId inválido: ${d.productoId}`);
@@ -701,7 +711,7 @@ export class ComprobanteService {
       include: { unidadMedida: true },
     });
 
-    if (productos.length !== detalles.length) {
+    if (productos.length !== productDetalles.length) {
       // Identificar cuáles productos no fueron encontrados
       const productosEncontrados = productos.map((p) => p.id);
       const productosFaltantes = productIds.filter(
@@ -729,6 +739,32 @@ export class ComprobanteService {
     let mtoOpInafectas = 0;
     let totalIGV = 0;
     const detalleFinal = detalles.map((item: any) => {
+      // Ítem de servicio libre (sin productoId): ej. costo de envío al cliente
+      if (item.productoId == null) {
+        const cantidad = Number(item.cantidad);
+        const precioConIgv = Number(item.nuevoValorUnitario);
+        const igvPct = 18;
+        const valorUnitario = this.round2(precioConIgv / 1.18);
+        const igvMonto = this.round2(precioConIgv * cantidad - valorUnitario * cantidad);
+        const mtoValorVenta = this.round2(valorUnitario * cantidad);
+        mtoOperGravadas += valorUnitario * cantidad;
+        totalIGV += igvMonto;
+        return {
+          productoId: null,
+          unidad: 'ZZ',
+          descripcion: String(item.descripcion),
+          cantidad,
+          mtoPrecioUnitario: this.round2(precioConIgv),
+          mtoValorUnitario: valorUnitario,
+          mtoValorVenta,
+          mtoBaseIgv: mtoValorVenta,
+          porcentajeIgv: igvPct,
+          igv: igvMonto,
+          tipAfeIgv: 10,
+          totalImpuestos: igvMonto,
+        };
+      }
+
       const productoId = Number(item.productoId);
       const prod = productos.find((p) => p.id === productoId)!;
       const cantidad = Number(item.cantidad);
@@ -895,6 +931,8 @@ export class ComprobanteService {
     const sedeId = await this.resolverSedeParaStock(data);
 
     for (const item of detalles) {
+      // Ítems de servicio libre (sin productoId) no tienen stock que validar
+      if (item.productoId == null) continue;
       const productoId = Number(item.productoId);
       const cantidad = Number(item.cantidad);
 
@@ -912,6 +950,7 @@ export class ComprobanteService {
           descripcion: true,
           stock: true,
           porcentajeVenta: true,
+          porcentajeProvision: true,
         },
       });
 
@@ -935,9 +974,10 @@ export class ComprobanteService {
         },
       });
       const reservado = reservasActivas._sum.cantidad ?? 0;
-      const cupoVenta = Math.floor(
-        (stockBase * (producto.porcentajeVenta ?? 70)) / 100,
+      const cupoProvision = Math.floor(
+        (stockBase * (producto.porcentajeProvision ?? 0)) / 100,
       );
+      const cupoVenta = Math.max(0, stockBase - cupoProvision);
       const disponibleVenta = Math.max(0, Math.min(stockBase - reservado, cupoVenta));
 
       if (disponibleVenta < cantidad) {
@@ -1355,6 +1395,13 @@ export class ComprobanteService {
    * por errores de red, ya que esos sí deben reintentarse.
    */
   async eliminarComprobante(id: number) {
+    // Borrar hijos sin cascade antes de eliminar el padre
+    await this.prisma.detalleComprobante.deleteMany({ where: { comprobanteId: id } });
+    await this.prisma.leyenda.deleteMany({ where: { comprobanteId: id } });
+    await this.prisma.movimientoKardex.updateMany({
+      where: { comprobanteId: id },
+      data: { comprobanteId: null },
+    });
     await this.prisma.comprobante.delete({ where: { id } });
   }
 

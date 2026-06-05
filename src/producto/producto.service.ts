@@ -84,7 +84,7 @@ export class ProductoService {
       };
     }
 
-    return { porcentajeVenta: 70, porcentajeProvision: 30 };
+    return { porcentajeVenta: 100, porcentajeProvision: 0 };
   }
 
   async crear(
@@ -526,7 +526,10 @@ export class ProductoService {
             ? p.stocks.reduce((sum, s) => sum + (s.stockMinimo || 0), 0)
             : ((p as any).stockMinimo ?? 0);
         const reservado = reservadoPorProducto.get(p.id) ?? 0;
-        const cupoVenta = Math.floor((stockTotal * (p.porcentajeVenta ?? 70)) / 100);
+        const cupoProvision = Math.floor(
+          (stockTotal * (p.porcentajeProvision ?? 0)) / 100,
+        );
+        const cupoVenta = Math.max(0, stockTotal - cupoProvision);
         const stockDisponibleVenta = Math.max(0, Math.min(stockTotal - reservado, cupoVenta));
 
         return {
@@ -609,6 +612,7 @@ export class ProductoService {
           unidadVenta: true,
           stock: true,
           porcentajeVenta: true,
+          porcentajeProvision: true,
           unidadMedida: { select: { codigo: true } },
           stocks: {
             where: { sedeId },
@@ -661,7 +665,10 @@ export class ProductoService {
         ? stockTotalLotes
         : (p.stocks[0]?.stock ?? (p as any).stock ?? 0);
       const reservado = reservadoPorProducto.get(p.id) ?? 0;
-      const cupoVenta = Math.floor((stockBase * (p.porcentajeVenta ?? 70)) / 100);
+      const cupoProvision = Math.floor(
+        (stockBase * (p.porcentajeProvision ?? 0)) / 100,
+      );
+      const cupoVenta = Math.max(0, stockBase - cupoProvision);
       const stockDisponibleVenta = Math.max(0, Math.min(stockBase - reservado, cupoVenta));
 
       let diasAlVencimiento: number | null = null;

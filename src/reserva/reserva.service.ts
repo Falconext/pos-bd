@@ -53,7 +53,7 @@ export class ReservaService {
     const reservado = suma._sum.cantidad ?? 0;
     const disponible = stockBase - reservado;
     const cupoProvision = Math.floor(
-      (stockBase * (producto.porcentajeProvision ?? 30)) / 100,
+      (stockBase * (producto.porcentajeProvision ?? 0)) / 100,
     );
     const disponibleProvision = cupoProvision - reservado;
 
