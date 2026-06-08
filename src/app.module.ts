@@ -45,6 +45,9 @@ import { EnvioDespachoModule } from './envio-despacho/envio-despacho.module';
 import { DigemidModule } from './digemid/digemid.module';
 import { RepartidorModule } from './repartidor/repartidor.module';
 import { AnalisisFinancieroModule } from './analisis-financiero/analisis-financiero.module';
+import { ComisionesModule } from './comisiones/comisiones.module';
+import { CampanasModule } from './campanas/campanas.module';
+import { VentasModule } from './ventas/ventas.module';
 
 @Module({
   imports: [
@@ -92,6 +95,9 @@ import { AnalisisFinancieroModule } from './analisis-financiero/analisis-financi
     RepartidorModule,
     EnvioDespachoModule,
     AnalisisFinancieroModule,
+    ComisionesModule,
+    CampanasModule,
+    VentasModule,
   ],
   controllers: [AppController],
   providers: [AppService],
