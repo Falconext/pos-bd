@@ -114,7 +114,11 @@ export class ProductoService {
       factorConversion?: number | string;
       codigoBarras?: string;
       codigoDigemid?: string;
+      costoUnitario?: number;
       costoPromedio?: number;
+      costoFijo?: number;
+      comisionPorVenta?: number;
+      comisionPorcentaje?: number;
       // Campos Ofertas
       precioOferta?: number;
       fechaInicioOferta?: string | Date;
@@ -150,7 +154,11 @@ export class ProductoService {
       factorConversion,
       codigoBarras,
       codigoDigemid,
+      costoUnitario,
       costoPromedio,
+      costoFijo,
+      comisionPorVenta,
+      comisionPorcentaje,
       precioOferta,
       fechaInicioOferta,
       fechaFinOferta,
@@ -213,6 +221,7 @@ export class ProductoService {
     const divisor = 1 + igvPorcentaje / 100;
     const rawValor = precioUnitario / divisor;
     const valorUnitario = parseFloat(rawValor.toFixed(2));
+    const costoBase = costoPromedio ?? costoUnitario;
 
     let nuevo;
     if (existe && existe.estado === 'PLACEHOLDER') {
@@ -255,7 +264,13 @@ export class ProductoService {
           codigoBarras,
           codigoDigemid,
           costoPromedio:
-            costoPromedio != null ? new Decimal(costoPromedio) : undefined,
+            costoBase != null ? new Decimal(costoBase) : undefined,
+          costoFijo:
+            costoFijo != null ? new Decimal(costoFijo) : undefined,
+          comisionPorVenta:
+            comisionPorVenta != null ? new Decimal(comisionPorVenta) : undefined,
+          comisionPorcentaje:
+            comisionPorcentaje != null ? new Decimal(comisionPorcentaje) : undefined,
           // Campos Ofertas
           precioOferta: precioOferta ? new Decimal(precioOferta) : undefined,
           fechaInicioOferta: fechaInicioOferta
@@ -301,7 +316,13 @@ export class ProductoService {
           codigoBarras,
           codigoDigemid,
           costoPromedio:
-            costoPromedio != null ? new Decimal(costoPromedio) : undefined,
+            costoBase != null ? new Decimal(costoBase) : undefined,
+          costoFijo:
+            costoFijo != null ? new Decimal(costoFijo) : undefined,
+          comisionPorVenta:
+            comisionPorVenta != null ? new Decimal(comisionPorVenta) : undefined,
+          comisionPorcentaje:
+            comisionPorcentaje != null ? new Decimal(comisionPorcentaje) : undefined,
           // Campos Ofertas
           precioOferta: precioOferta ? new Decimal(precioOferta) : undefined,
           fechaInicioOferta: fechaInicioOferta
@@ -415,6 +436,9 @@ export class ProductoService {
             },
           },
           costoPromedio: true,
+          costoFijo: true,
+          comisionPorVenta: true,
+          comisionPorcentaje: true,
           precioUnitario: true,
           valorUnitario: true,
           igvPorcentaje: true,
@@ -540,6 +564,9 @@ export class ProductoService {
           stockDisponibleVenta,
           stockMinimo: stockMinimo,
           costoUnitario: Number(p.costoPromedio) || 0,
+          costoFijo: Number((p as any).costoFijo) || 0,
+          comisionPorVenta: Number((p as any).comisionPorVenta) || 0,
+          comisionPorcentaje: Number((p as any).comisionPorcentaje) || 0,
           loteFefoCodigo: loteFefoActual?.lote || null,
           loteFefoVencimiento: loteFefoActual?.fechaVencimiento || null,
           loteFefoCostoUnitario: loteFefoActual?.costoUnitario
@@ -953,6 +980,9 @@ export class ProductoService {
       precioUnitario?: number;
       stock?: number;
       costoUnitario?: number;
+      costoFijo?: number;
+      comisionPorVenta?: number;
+      comisionPorcentaje?: number;
       imagenUrl?: string | null;
       localizacion?: string;
       porcentajeVenta?: number;
@@ -1179,6 +1209,18 @@ export class ProductoService {
         costoPromedio:
           data.costoUnitario !== undefined
             ? new Decimal(data.costoUnitario)
+            : undefined,
+        costoFijo:
+          data.costoFijo !== undefined
+            ? new Decimal(data.costoFijo)
+            : undefined,
+        comisionPorVenta:
+          data.comisionPorVenta !== undefined
+            ? new Decimal(data.comisionPorVenta)
+            : undefined,
+        comisionPorcentaje:
+          data.comisionPorcentaje !== undefined
+            ? new Decimal(data.comisionPorcentaje)
             : undefined,
         // stock: data.stock, // DEPRECATED: No actualizar stock global directamente aquí, se hace vía triggers o agregación
         stockMinimo:

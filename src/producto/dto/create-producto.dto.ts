@@ -112,6 +112,26 @@ export class CreateProductoDto {
   @Type(() => Number)
   precioOferta?: number;
 
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
+  costoUnitario?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
+  costoFijo?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
+  comisionPorVenta?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
+  comisionPorcentaje?: number;
+
   // 🆕 FRACCIONAMIENTO
   @IsOptional()
   @IsString()

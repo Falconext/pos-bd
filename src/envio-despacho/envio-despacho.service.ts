@@ -5,7 +5,7 @@ import { DespachoConfigDto } from './dto/despacho-config.dto';
 import { RepartidorService } from '../repartidor/repartidor.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 
-const ESTADOS_NOTIFICABLES = new Set([EstadoDespacho.EN_CAMINO, EstadoDespacho.ENTREGADO]);
+const ESTADOS_NOTIFICABLES = new Set([EstadoDespacho.EN_CAMINO, EstadoDespacho.EN_AGENCIA, EstadoDespacho.ENTREGADO]);
 
 const MENSAJES_DEFAULT: Record<string, string> = {
     EN_CAMINO:  'Hola {{nombre}}, tu pedido {{pedido}} ya está en camino 🚚. Repartidor: {{repartidor}}.',
@@ -22,6 +22,7 @@ const DESPACHO_FIELDS = [
 const DESPACHO_TO_PEDIDO_ESTADO: Record<EstadoDespacho, { estadoEntrega: string; estadoEnvio: string }> = {
     [EstadoDespacho.PREPARANDO]: { estadoEntrega: 'CONFIRMADO', estadoEnvio: 'POR_COORDINAR' },
     [EstadoDespacho.EN_CAMINO]: { estadoEntrega: 'EN_TRANSITO', estadoEnvio: 'EN_REPARTO' },
+    [EstadoDespacho.EN_AGENCIA]: { estadoEntrega: 'EN_AGENCIA', estadoEnvio: 'ENVIADO' },
     [EstadoDespacho.EN_DESTINO]: { estadoEntrega: 'EN_TRANSITO', estadoEnvio: 'EN_REPARTO' },
     [EstadoDespacho.ENTREGADO]: { estadoEntrega: 'ENTREGADO_COMPLETADO', estadoEnvio: 'ENTREGADO' },
     [EstadoDespacho.DEVUELTO]: { estadoEntrega: 'PENDIENTE', estadoEnvio: 'INCIDENCIA' },
@@ -215,6 +216,7 @@ export class EnvioDespachoService {
                         select: {
                             id: true, serie: true, correlativo: true, tipoDoc: true,
                             fechaEmision: true, mtoImpVenta: true,
+                            adelanto: true, saldo: true, estadoPago: true,
                             cliente: { select: { nombre: true, telefono: true, nroDoc: true } },
                             usuario: { select: { nombre: true } },
                         },
@@ -248,29 +250,39 @@ export class EnvioDespachoService {
             }),
         ]);
 
-        const despachosNormalizados = despachos.map((d) => ({
-            tipo: 'COMPROBANTE' as const,
-            id: d.id,
-            comprobanteId: d.comprobanteId,
-            comprobanteTipoDoc: d.comprobante.tipoDoc,
-            referencia: `${d.comprobante.serie}-${String(d.comprobante.correlativo).padStart(8, '0')}`,
-            cliente: d.comprobante.cliente?.nombre ?? '—',
-            telefono: d.comprobante.cliente?.telefono ?? '',
-            vendedor: d.comprobante.usuario?.nombre ?? '—',
-            total: d.comprobante.mtoImpVenta,
-            courier: d.transportista ?? '—',
-            tipoEnvio: d.tipoEnvio ?? '—',
-            agenciaDestino: d.agenciaDestino ?? '—',
-            celularDest: d.celularDest ?? '',
-            nroPaquetes: d.nroPaquetes ?? 1,
-            turnoEnvio: d.turnoEnvio ?? '—',
-            codigoGuia: d.codigoGuia ?? '',
-            repartidorId: d.repartidorId,
-            repartidor: d.repartidor?.nombre ?? '—',
-            repartidorData: d.repartidor,
-            estado: d.estado,
-            creadoEn: d.creadoEn,
-        }));
+        const despachosNormalizados = despachos.map((d) => {
+            const total = Number(d.comprobante.mtoImpVenta);
+            const saldo = Number(d.comprobante.saldo ?? 0);
+            const adelanto = Number(d.comprobante.adelanto ?? 0);
+            const montoPagado = adelanto > 0 ? adelanto : (saldo === 0 ? total : total - saldo);
+            return {
+                tipo: 'COMPROBANTE' as const,
+                id: d.id,
+                comprobanteId: d.comprobanteId,
+                comprobanteTipoDoc: d.comprobante.tipoDoc,
+                referencia: `${d.comprobante.serie}-${String(d.comprobante.correlativo).padStart(8, '0')}`,
+                cliente: d.comprobante.cliente?.nombre ?? '—',
+                telefono: d.comprobante.cliente?.telefono ?? '',
+                vendedor: d.comprobante.usuario?.nombre ?? '—',
+                total,
+                montoPagado,
+                saldoPendiente: saldo,
+                courier: d.transportista ?? '—',
+                tipoEnvio: d.tipoEnvio ?? '—',
+                agenciaDestino: d.agenciaDestino ?? '—',
+                celularDest: d.celularDest ?? '',
+                nroPaquetes: d.nroPaquetes ?? 1,
+                turnoEnvio: d.turnoEnvio ?? '—',
+                codigoGuia: d.codigoGuia ?? '',
+                nroOrden: d.nroOrden ?? '',
+                claveOrden: d.claveOrden ?? '',
+                repartidorId: d.repartidorId,
+                repartidor: d.repartidor?.nombre ?? '—',
+                repartidorData: d.repartidor,
+                estado: d.estado,
+                creadoEn: d.creadoEn,
+            };
+        });
 
         const pedidosNormalizados = pedidos.map((p) => ({
             tipo: 'PEDIDO_TIENDA' as const,
@@ -327,6 +339,20 @@ export class EnvioDespachoService {
         if (!telefono) return;
 
         const esEnCamino = estado === EstadoDespacho.EN_CAMINO;
+        const esEnAgencia = estado === EstadoDespacho.EN_AGENCIA;
+        const pedidoRef = `${comprobante.serie}-${String(comprobante.correlativo).padStart(8, '0')}`;
+
+        if (esEnAgencia) {
+            const saldo = Number((comprobante as any)?.saldo ?? 0);
+            const agencia = (await this.prisma.envioDespacho.findFirst({
+                where: { comprobanteId },
+                select: { agenciaDestino: true },
+            }))?.agenciaDestino ?? 'la agencia';
+            const msg = `Hola ${comprobante?.cliente?.nombre ?? 'Cliente'}! 📦 Tu pedido ${pedidoRef} llegó a ${agencia}. Para retirarlo confirma el pago restante de S/ ${saldo.toFixed(2)}. Te avisamos cuando esté listo. — ${empresa?.razonSocial ?? ''}`;
+            await this.whatsapp.enviarTexto(telefono, msg);
+            return;
+        }
+
         const habilitado = esEnCamino
             ? (config?.notificarEnCamino ?? true)
             : (config?.notificarEntregado ?? true);
@@ -336,7 +362,6 @@ export class EnvioDespachoService {
             ? (config?.mensajeEnCamino ?? MENSAJES_DEFAULT.EN_CAMINO)
             : (config?.mensajeEntregado ?? MENSAJES_DEFAULT.ENTREGADO);
 
-        const pedidoRef = `${comprobante.serie}-${String(comprobante.correlativo).padStart(8, '0')}`;
         const mensaje = plantilla
             .replace(/\{\{nombre\}\}/g, comprobante.cliente?.nombre ?? 'Cliente')
             .replace(/\{\{pedido\}\}/g, pedidoRef)
@@ -344,6 +369,44 @@ export class EnvioDespachoService {
             .replace(/\{\{empresa\}\}/g, empresa?.razonSocial ?? '');
 
         await this.whatsapp.enviarTexto(telefono, mensaje);
+    }
+
+    async actualizarSaldo(comprobanteId: number, empresaId: number, saldo: number): Promise<void> {
+        const comprobante = await this.prisma.comprobante.findFirst({
+            where: { id: comprobanteId, empresaId },
+            select: { id: true, mtoImpVenta: true },
+        });
+        if (!comprobante) throw new NotFoundException('Comprobante no encontrado');
+        const nuevoSaldo = Math.max(Math.min(saldo, Number(comprobante.mtoImpVenta)), 0);
+        const estadoPago = nuevoSaldo <= 0 ? 'COMPLETADO' : 'PAGO_PARCIAL';
+        await this.prisma.comprobante.update({
+            where: { id: comprobanteId },
+            data: { saldo: nuevoSaldo, estadoPago },
+        });
+    }
+
+    async confirmarPago(comprobanteId: number, empresaId: number): Promise<void> {
+        const comprobante = await this.prisma.comprobante.findFirst({
+            where: { id: comprobanteId, empresaId },
+            select: {
+                id: true, serie: true, correlativo: true, saldo: true,
+                cliente: { select: { nombre: true, telefono: true } },
+            },
+        });
+        if (!comprobante) throw new NotFoundException('Comprobante no encontrado');
+
+        await this.prisma.comprobante.update({
+            where: { id: comprobanteId },
+            data: { saldo: 0, estadoPago: 'COMPLETADO' },
+        });
+
+        const telefono = comprobante.cliente?.telefono;
+        if (telefono) {
+            const empresa = await this.prisma.empresa.findUnique({ where: { id: empresaId }, select: { razonSocial: true } });
+            const pedidoRef = `${comprobante.serie}-${String(comprobante.correlativo).padStart(8, '0')}`;
+            const msg = `Hola ${comprobante.cliente?.nombre ?? 'Cliente'}! ✅ Tu pago fue confirmado. Ya puedes retirar tu pedido ${pedidoRef} de la agencia. ¡Gracias por tu compra! — ${empresa?.razonSocial ?? ''}`;
+            this.whatsapp.enviarTexto(telefono, msg).catch((e) => this.logger.warn(`WA pago completo fallido: ${e.message}`));
+        }
     }
 
     private async resolveUsuarioNombre(usuarioId?: number): Promise<string | null> {

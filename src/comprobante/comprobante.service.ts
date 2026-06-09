@@ -5,6 +5,7 @@ import {
   Inject,
   forwardRef,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { Prisma, EstadoReserva, EstadoSunat, EstadoType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -16,6 +17,7 @@ import { numeroALetras } from './utils/numero-a-letras';
 import { ProductoLoteService } from '../producto/producto-lote.service';
 import { EnviarSunatService } from './enviar-sunat.service';
 import { isJambleProvider, resolveBillingProvider } from '../common/utils/billing-provider';
+import { ComisionesService } from '../comisiones/comisiones.service';
 
 @Injectable()
 export class ComprobanteService {
@@ -49,6 +51,7 @@ export class ComprobanteService {
     private readonly loteService: ProductoLoteService,
     @Inject(forwardRef(() => EnviarSunatService))
     private readonly enviarSunatService: EnviarSunatService,
+    @Optional() private readonly comisionesService: ComisionesService,
   ) { }
 
   async listarTipoOperacion() {
@@ -483,6 +486,13 @@ export class ComprobanteService {
         concepto: `Anulación ${comp.tipoDoc} ${comp.serie}-${comp.correlativo}`,
       });
     }
+
+    // Eliminar pagos registrados — la venta queda anulada, no hubo cobro válido.
+    // La caja ya excluye comprobantes ANULADO al calcular totales de cierre,
+    // pero los pagos individuales deben borrarse para no inflar reportes de ingresos.
+    await this.prisma.pago.deleteMany({
+      where: { comprobanteId: comp.id },
+    });
 
     return this.prisma.comprobante.update({
       where: { id: comprobanteId },
@@ -1345,6 +1355,10 @@ export class ComprobanteService {
         : {}),
       detalles: { create: detalleFinal },
       leyendas: { create: [{ code: '1000', value: leyenda }] },
+      // Vínculo con el documento informal de origen (NV, TICKET, NP, etc.)
+      ...(esConversionDesdeInformal && comprobanteOrigenId != null
+        ? { comprobanteOrigenId: Number(comprobanteOrigenId) }
+        : {}),
     };
 
     // Validar receta médica en backend (guardia real, no solo UX)
@@ -1376,6 +1390,27 @@ export class ComprobanteService {
         usuarioId,
       });
     }
+
+    // Registrar comisiones del vendedor (no bloqueante)
+    if (usuarioId && this.comisionesService) {
+      try {
+        await this.comisionesService.registrarComisionesDesdeComprobante({
+          comprobanteId: comprobante.id,
+          empresaId,
+          vendedorId: usuarioId,
+          fechaEmision: new Date(fechaEmision),
+          detalles: detalleFinal.map((d: any) => ({
+            productoId: d.productoId ?? null,
+            descripcion: d.descripcion,
+            cantidad: d.cantidad,
+            mtoPrecioUnitario: d.mtoPrecioUnitario,
+          })),
+        });
+      } catch (err) {
+        console.warn('[crearFormal] Error al registrar comisiones:', err?.message);
+      }
+    }
+
     return comprobante;
   }
 
@@ -1900,6 +1935,9 @@ export class ComprobanteService {
 
     // 12) Actualizar estado del comprobante afectado según motivo
     if (['01', '06'].includes(motivoNota.codigo)) {
+      // Eliminar pagos del comprobante original — la NC lo anula totalmente
+      await this.prisma.pago.deleteMany({ where: { comprobanteId: afectado.id } });
+
       await this.prisma.comprobante.update({
         where: { id: afectado.id },
         data: {
@@ -2115,6 +2153,26 @@ export class ComprobanteService {
         sedeId: finalSedeId,
         usuarioId,
       });
+    }
+
+    // Registrar comisiones del vendedor (no bloqueante)
+    if (usuarioId && this.comisionesService && tipoDoc !== 'COT') {
+      try {
+        await this.comisionesService.registrarComisionesDesdeComprobante({
+          comprobanteId: comp.id,
+          empresaId,
+          vendedorId: usuarioId,
+          fechaEmision: fecha,
+          detalles: detalleFinal.map((d: any) => ({
+            productoId: d.productoId ?? null,
+            descripcion: d.descripcion,
+            cantidad: d.cantidad,
+            mtoPrecioUnitario: d.mtoPrecioUnitario,
+          })),
+        });
+      } catch (err) {
+        console.warn('[crearInformal] Error al registrar comisiones:', err?.message);
+      }
     }
 
     return comp;

@@ -16,6 +16,10 @@ export class CreateSubModuloDto {
   @IsOptional()
   descripcion?: string;
 
+  @IsString()
+  @IsOptional()
+  ruta?: string;
+
   @IsBoolean()
   @IsOptional()
   activo?: boolean;

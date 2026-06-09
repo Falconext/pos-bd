@@ -20,6 +20,10 @@ export class CreateModuloDto {
     @IsOptional()
     icono?: string;
 
+    @IsString()
+    @IsOptional()
+    ruta?: string;
+
     @IsInt()
     @IsOptional()
     orden?: number;

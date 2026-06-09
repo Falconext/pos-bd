@@ -26,8 +26,10 @@ export class UsersService {
     const existeEmail = await this.prisma.usuario.findUnique({ where: { email } });
     if (existeEmail) throw new BadRequestException('El email ya está en uso');
 
-    const existeDni = await this.prisma.usuario.findFirst({ where: { dni } });
-    if (existeDni) throw new BadRequestException('El DNI ya está en uso');
+    if (dni) {
+      const existeDni = await this.prisma.usuario.findFirst({ where: { dni } });
+      if (existeDni) throw new BadRequestException('El DNI ya está en uso');
+    }
 
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaIdFromToken },
@@ -55,8 +57,8 @@ export class UsersService {
       data: {
         nombre,
         email,
-        dni,
-        celular,
+        dni: dni ?? '',
+        celular: celular ?? '',
         password: hash,
         rol: 'USUARIO_EMPRESA',
         empresaId: empresaIdFromToken,
@@ -329,8 +331,10 @@ export class UsersService {
     const existeEmail = await this.prisma.usuario.findUnique({ where: { email } });
     if (existeEmail) throw new BadRequestException('El email ya está en uso');
 
-    const existeDni = await this.prisma.usuario.findFirst({ where: { dni } });
-    if (existeDni) throw new BadRequestException('El DNI ya está en uso');
+    if (dni) {
+      const existeDni = await this.prisma.usuario.findFirst({ where: { dni } });
+      if (existeDni) throw new BadRequestException('El DNI ya está en uso');
+    }
 
     const hash = await bcrypt.hash(password, 10);
 
@@ -341,8 +345,8 @@ export class UsersService {
       data: {
         nombre,
         email,
-        dni,
-        celular,
+        dni: dni ?? '',
+        celular: celular ?? '',
         password: hash,
         rol: 'ADMIN_SISTEMA',
         sistemaNegocio: sistemaNegocioFinal,

@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { EstadoType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCategoriaDto } from './dto/create-categoria.dto';
 import { S3Service } from '../s3/s3.service';
@@ -31,7 +32,11 @@ export class CategoriaService {
       orderBy: { id: 'desc' },
       include: {
         _count: {
-          select: { productos: true },
+          select: {
+            productos: {
+              where: { estado: { in: [EstadoType.ACTIVO, EstadoType.INACTIVO] } },
+            },
+          },
         },
       },
     });

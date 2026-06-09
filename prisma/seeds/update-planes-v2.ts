@@ -22,7 +22,7 @@ const planesV2 = [
     tieneDeliveryGPS: false,
     tieneTicketera: false,
     tieneGestionLotes: false,
-    tieneGestionComisiones: false,
+    tieneGestionProvisiones: false,
     maxComprobantes: 0,   // 0 = ilimitado
     maxSedes: 1,
     maxImagenesProducto: 3,
@@ -43,7 +43,7 @@ const planesV2 = [
     tieneDeliveryGPS: false,
     tieneTicketera: true,
     tieneGestionLotes: true,
-    tieneGestionComisiones: false,
+    tieneGestionProvisiones: false,
     maxComprobantes: 0,   // 0 = ilimitado
     maxSedes: 2,
     maxImagenesProducto: 5,
@@ -64,7 +64,7 @@ const planesV2 = [
     tieneDeliveryGPS: true,
     tieneTicketera: true,
     tieneGestionLotes: true,
-    tieneGestionComisiones: true,
+    tieneGestionProvisiones: true,
     maxComprobantes: 0,   // 0 = ilimitado
     maxSedes: 0,          // 0 = ilimitado
     maxImagenesProducto: 10,
@@ -110,7 +110,7 @@ async function main() {
     data: {
       tieneGestionLotes: true,
       tieneDeliveryGPS: true,
-      tieneGestionComisiones: true,
+      tieneGestionProvisiones: true,
     },
   });
 

@@ -318,7 +318,7 @@ export class AuthService {
         subModulosAsignados: {
           select: {
             subModulo: {
-              select: { id: true, codigo: true, nombre: true, moduloId: true }
+              select: { id: true, codigo: true, nombre: true, moduloId: true, ruta: true, orden: true }
             }
           }
         },
@@ -345,7 +345,7 @@ export class AuthService {
                 tieneTienda: true,
                 tieneDeliveryGPS: true,
                 tieneGestionLotes: true,
-                tieneGestionComisiones: true,
+                tieneGestionProvisiones: true,
                 maxSedes: true,
                 modulosAsignados: {
                   include: { modulo: true }
@@ -353,7 +353,7 @@ export class AuthService {
                 subModulosAsignados: {
                   include: {
                     subModulo: {
-                      select: { id: true, codigo: true, nombre: true, moduloId: true }
+                      select: { id: true, codigo: true, nombre: true, moduloId: true, ruta: true, orden: true }
                     }
                   }
                 },
@@ -449,7 +449,7 @@ export class AuthService {
                 esPrueba: true,
                 tieneDeliveryGPS: true,
                 tieneGestionLotes: true,
-                tieneGestionComisiones: true,
+                tieneGestionProvisiones: true,
                 modulosAsignados: {
                   include: { modulo: true }
                 }

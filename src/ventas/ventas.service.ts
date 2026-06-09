@@ -58,12 +58,27 @@ function resolverMetodoPago(pagos: { medioPago: string; monto: number }[], medio
     return unicos.size === 1 ? [...unicos][0] : 'Mixto';
 }
 
+const ESTADOS_PAGADO = new Set(['PAGADO', 'PAGADO_PAGO', 'COMPLETADO']);
+const ESTADOS_PARCIAL = new Set(['PAGO_PARCIAL', 'PARCIAL']);
+
 function resolverEstadoPagoComprobante(
     mtoImpVenta: number,
     estadoPago: string | null,
     pagos: { monto: number }[],
+    esSunat = false,
 ): string {
-    if (estadoPago === 'PAGADO' || estadoPago === 'PAGADO_PAGO') return 'PAGADO';
+    const ep = estadoPago ?? '';
+    if (ESTADOS_PAGADO.has(ep)) return 'PAGADO';
+    if (ESTADOS_PARCIAL.has(ep)) return 'PARCIAL';
+    // Para Boleta/Factura emitida sin registro explícito de pago: si no hay
+    // cuotas pendientes confirmadas, asumimos pago al contado en el acto.
+    if (esSunat && ep === 'PENDIENTE_PAGO') {
+        const totalPagado = pagos.reduce((s, p) => s + (p.monto ?? 0), 0);
+        if (totalPagado >= mtoImpVenta - 0.01) return 'PAGADO';
+        if (totalPagado > 0) return 'PARCIAL';
+        // Sin registro de pago pero es documento formal → PENDIENTE (puede ser crédito)
+        return 'PENDIENTE';
+    }
     const totalPagado = pagos.reduce((s, p) => s + (p.monto ?? 0), 0);
     if (totalPagado >= mtoImpVenta - 0.01) return 'PAGADO';
     if (totalPagado > 0) return 'PARCIAL';
@@ -89,6 +104,7 @@ export class VentasService {
                     ...sedeFilter,
                     fechaEmision: { gte: inicioLima, lte: finLima },
                     tipoDoc: { in: [...TIPOS_SUNAT, ...TIPOS_INFORMALES] },
+                    estadoEnvioSunat: { not: 'ANULADO' },
                 },
                 orderBy: { fechaEmision: 'desc' },
                 select: {
@@ -102,16 +118,37 @@ export class VentasService {
                     sunatCdrResponse: true,
                     estadoPago: true,
                     medioPago: true,
+                    saldo: true,
+                    adelanto: true,
+                    formaPagoTipo: true,
+                    montoDetraccion: true,
+                    porcentajeDetraccion: true,
+                    cuotas: true,
+                    observaciones: true,
                     cliente: { select: { nombre: true } },
                     usuario: { select: { nombre: true } },
                     sede: { select: { nombre: true } },
                     envioDespacho: {
                         select: {
                             estado: true,
+                            tipoEnvio: true,
+                            agenciaDestino: true,
+                            celularDest: true,
+                            nroPaquetes: true,
+                            turnoEnvio: true,
+                            transportista: true,
+                            nroOrden: true,
+                            claveOrden: true,
+                            repartidorId: true,
                             repartidor: { select: { nombre: true } },
                         },
                     },
                     pagos: { select: { medioPago: true, monto: true } },
+                    // Para detectar si este comprobante informal ya fue convertido
+                    comprobantesDerivados: { select: { id: true, tipoDoc: true, serie: true, correlativo: true } },
+                    // Para saber si este comprobante formal viene de un informal
+                    comprobanteOrigenId: true,
+                    comprobanteOrigen: { select: { serie: true, correlativo: true, tipoDoc: true } },
                 },
             }),
 
@@ -133,6 +170,9 @@ export class VentasService {
                     medioPago: true,
                     creadoEn: true,
                     vendedorNombre: true,
+                    clienteDireccion: true,
+                    clienteTelefono: true,
+                    repartidorId: true,
                     repartidor: { select: { nombre: true } },
                     sede: { select: { nombre: true } },
                 },
@@ -142,6 +182,38 @@ export class VentasService {
         const comprobantesNorm = comprobantesRaw.map((c) => {
             const esSunat = TIPOS_SUNAT.includes(c.tipoDoc);
             const pagos = (c.pagos ?? []) as { medioPago: string; monto: number }[];
+            const derivado = (c.comprobantesDerivados ?? [])[0] ?? null;
+            const mtoImpVentaNum = Number(c.mtoImpVenta ?? 0);
+            const epRaw = (c.estadoPago as string) ?? '';
+            const saldoDB = Number(c.saldo ?? 0);
+            const adelantoNum = Number((c as any).adelanto ?? 0);
+            const totalPagadoPagos = pagos.reduce((s, p) => s + (p.monto ?? 0), 0);
+            // Compute saldo real: if DB saldo is correctly set, use it;
+            // otherwise derive from estadoPago + pagos + adelanto (handles old NPs
+            // created before saldo was properly initialized on the comprobante)
+            let saldoReal: number;
+            if (saldoDB > 0) {
+                saldoReal = saldoDB;
+            } else if (ESTADOS_PAGADO.has(epRaw)) {
+                saldoReal = 0;
+            } else if (ESTADOS_PARCIAL.has(epRaw) || epRaw === 'PAGO_PARCIAL') {
+                saldoReal = Math.max(0, mtoImpVentaNum - totalPagadoPagos - adelantoNum);
+            } else if (epRaw === 'PENDIENTE_PAGO') {
+                saldoReal = Math.max(0, mtoImpVentaNum - totalPagadoPagos);
+            } else {
+                saldoReal = 0;
+            }
+
+            // Comprobante informal que ya fue convertido a boleta/factura
+            const esConvertida = derivado != null;
+            const convertidaEn = derivado
+                ? `${derivado.serie}-${String(derivado.correlativo).padStart(8, '0')}`
+                : null;
+
+            // Comprobante formal que vino de un informal
+            const origenReferencia = c.comprobanteOrigen
+                ? `${c.comprobanteOrigen.serie}-${String(c.comprobanteOrigen.correlativo).padStart(8, '0')}`
+                : null;
 
             return {
                 id: c.id,
@@ -154,6 +226,7 @@ export class VentasService {
                     Number(c.mtoImpVenta ?? 0),
                     c.estadoPago as string | null,
                     pagos,
+                    esSunat,
                 ),
                 metodoPago: resolverMetodoPago(pagos, c.medioPago),
                 estadoSunat: esSunat
@@ -162,11 +235,31 @@ export class VentasService {
                 estadoDespacho: c.envioDespacho
                     ? normalizarDespachoEstado(c.envioDespacho.estado)
                     : 'NO_APLICA',
+                repartidorId: c.envioDespacho?.repartidorId ?? null,
                 repartidor: c.envioDespacho?.repartidor?.nombre ?? 'No aplica',
+                tipoEnvio: c.envioDespacho?.tipoEnvio ?? '—',
+                agenciaDestino: c.envioDespacho?.agenciaDestino ?? '—',
+                celularDest: c.envioDespacho?.celularDest ?? '—',
+                nroPaquetes: c.envioDespacho?.nroPaquetes ?? null,
+                turnoEnvio: c.envioDespacho?.turnoEnvio ?? '—',
+                courier: c.envioDespacho?.transportista ?? '',
+                nroOrden: c.envioDespacho?.nroOrden ?? '',
+                claveOrden: c.envioDespacho?.claveOrden ?? '',
                 vendedor: c.usuario?.nombre ?? '—',
                 sede: c.sede?.nombre ?? '—',
                 comprobanteId: c.id,
                 pedidoId: null,
+                esConvertida,
+                convertidaEn,
+                origenReferencia,
+                // Para cobros inline (ModalRegistrarPago, ModalHistorialPagos, ModalDetalleCuenta)
+                saldo: saldoReal,
+                estadoPagoRaw: epRaw || 'PENDIENTE_PAGO',
+                formaPagoTipo: c.formaPagoTipo ?? 'CONTADO',
+                montoDetraccion: Number(c.montoDetraccion ?? 0),
+                porcentajeDetraccion: Number(c.porcentajeDetraccion ?? 0),
+                cuotas: c.cuotas ?? null,
+                observaciones: c.observaciones ?? null,
             };
         });
 
@@ -191,11 +284,27 @@ export class VentasService {
                 metodoPago: p.medioPago ?? '—',
                 estadoSunat: 'NO_APLICA',
                 estadoDespacho: normalizarDespachoEstado(p.estadoEnvio ?? 'SIN_ASIGNAR'),
+                repartidorId: p.repartidorId ?? null,
                 repartidor: p.repartidor?.nombre ?? 'No aplica',
+                tipoEnvio: 'AGENCIA',
+                agenciaDestino: p.clienteDireccion ?? '—',
+                celularDest: p.clienteTelefono ?? '—',
+                nroPaquetes: 1,
+                turnoEnvio: '—',
                 vendedor: p.vendedorNombre ?? 'Tienda online',
                 sede: p.sede?.nombre ?? '—',
                 comprobanteId: null,
                 pedidoId: p.id,
+                esConvertida: false,
+                convertidaEn: null,
+                origenReferencia: null,
+                saldo: saldoPendiente,
+                estadoPagoRaw: saldoPendiente <= 0.01 ? 'COMPLETADO' : montoPagado > 0 ? 'PAGO_PARCIAL' : 'PENDIENTE_PAGO',
+                formaPagoTipo: 'CONTADO',
+                montoDetraccion: 0,
+                porcentajeDetraccion: 0,
+                cuotas: null,
+                observaciones: null,
             };
         });
 

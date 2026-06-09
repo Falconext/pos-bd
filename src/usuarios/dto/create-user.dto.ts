@@ -8,6 +8,7 @@ import {
   IsString,
   Length,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export class CreateUserDto {
   @IsString()
@@ -17,13 +18,16 @@ export class CreateUserDto {
   @IsEmail()
   email: string;
 
+  @IsOptional()
+  @Transform(({ value }) => value || undefined)
   @IsString()
   @Length(8, 12)
-  dni: string;
+  dni?: string;
 
+  @IsOptional()
+  @Transform(({ value }) => value || undefined)
   @IsString()
-  @IsNotEmpty()
-  celular: string;
+  celular?: string;
 
   @IsString()
   @IsNotEmpty()

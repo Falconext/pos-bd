@@ -4,6 +4,7 @@ import { Type } from 'class-transformer';
 export enum EstadoDespacho {
     PREPARANDO = 'PREPARANDO',
     EN_CAMINO = 'EN_CAMINO',
+    EN_AGENCIA = 'EN_AGENCIA',
     EN_DESTINO = 'EN_DESTINO',
     ENTREGADO = 'ENTREGADO',
     DEVUELTO = 'DEVUELTO',

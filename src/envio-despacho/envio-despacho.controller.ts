@@ -1,5 +1,9 @@
 import { Controller, Get, Post, Put, Patch, Delete, Param, Body, ParseIntPipe, UseGuards, Query } from '@nestjs/common';
 import { EnvioDespachoService } from './envio-despacho.service';
+
+class ActualizarSaldoDto {
+    saldo: number;
+}
 import { CreateEnvioDespachoDto, UpdateEnvioDespachoDto } from './dto/envio-despacho.dto';
 import { DespachoConfigDto } from './dto/despacho-config.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -81,6 +85,23 @@ export class EnvioDespachoController {
         @User() user: any,
     ) {
         return this.service.update(comprobanteId, user.empresaId, dto, user.id ?? undefined);
+    }
+
+    @Patch('comprobante/:comprobanteId/confirmar-pago')
+    confirmarPago(
+        @Param('comprobanteId', ParseIntPipe) comprobanteId: number,
+        @User() user: any,
+    ) {
+        return this.service.confirmarPago(comprobanteId, user.empresaId);
+    }
+
+    @Patch('comprobante/:comprobanteId/actualizar-saldo')
+    actualizarSaldo(
+        @Param('comprobanteId', ParseIntPipe) comprobanteId: number,
+        @Body() body: ActualizarSaldoDto,
+        @User() user: any,
+    ) {
+        return this.service.actualizarSaldo(comprobanteId, user.empresaId, body.saldo);
     }
 
     @Delete('comprobante/:comprobanteId')

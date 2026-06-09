@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, ParseIntPipe, UseGuards } from '@nestjs/common';
 import { FinanzasService } from './finanzas.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -9,6 +9,16 @@ import { User } from '../common/decorators/user.decorator';
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class FinanzasController {
     constructor(private readonly finanzasService: FinanzasService) { }
+
+    @Get('ecommerce')
+    @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+    async getResumenEcommerce(
+        @User() user: any,
+        @Query('mes', ParseIntPipe) mes: number,
+        @Query('anio', ParseIntPipe) anio: number,
+    ) {
+        return this.finanzasService.getResumenEcommerce(user.empresaId, mes, anio);
+    }
 
     @Get('resumen')
     @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')

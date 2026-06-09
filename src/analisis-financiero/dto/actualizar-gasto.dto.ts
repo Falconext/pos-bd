@@ -1,5 +1,7 @@
 import {
+  IsBoolean,
   IsEnum,
+  IsISO8601,
   IsNumber,
   IsOptional,
   IsString,
@@ -10,6 +12,22 @@ import {
 import { CategoriaGasto } from '@prisma/client';
 
 export class ActualizarGastoDto {
+  @IsOptional()
+  @IsISO8601()
+  fecha?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  recurrenteDiario?: boolean;
+
+  @IsOptional()
+  @IsISO8601()
+  fechaInicio?: string;
+
+  @IsOptional()
+  @IsISO8601()
+  fechaFin?: string;
+
   @IsOptional()
   @IsEnum(CategoriaGasto)
   categoria?: CategoriaGasto;

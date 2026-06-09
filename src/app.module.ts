@@ -48,6 +48,7 @@ import { AnalisisFinancieroModule } from './analisis-financiero/analisis-financi
 import { ComisionesModule } from './comisiones/comisiones.module';
 import { CampanasModule } from './campanas/campanas.module';
 import { VentasModule } from './ventas/ventas.module';
+import { ShalomModule } from './shalom/shalom.module';
 
 @Module({
   imports: [
@@ -98,6 +99,7 @@ import { VentasModule } from './ventas/ventas.module';
     ComisionesModule,
     CampanasModule,
     VentasModule,
+    ShalomModule,
   ],
   controllers: [AppController],
   providers: [AppService],

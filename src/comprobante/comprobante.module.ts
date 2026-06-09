@@ -13,9 +13,10 @@ import { ProductoModule } from '../producto/producto.module';
 import { QpseClient } from '../common/utils/qpse.client';
 import { ApisPeruClient } from '../common/utils/apis-peru.client';
 import { JambleClient } from '../common/utils/jamble.client';
+import { ComisionesModule } from '../comisiones/comisiones.module';
 
 @Module({
-  imports: [EmpresaModule, forwardRef(() => KardexModule), NotificacionesModule, S3Module, forwardRef(() => ProductoModule)],
+  imports: [EmpresaModule, forwardRef(() => KardexModule), NotificacionesModule, S3Module, forwardRef(() => ProductoModule), ComisionesModule],
   controllers: [ComprobanteController, ComprobantePublicoController],
   providers: [ComprobanteService, RolesGuard, EnviarSunatService, PdfGeneratorService, QpseClient, ApisPeruClient, JambleClient],
   exports: [ComprobanteService, EnviarSunatService, PdfGeneratorService, QpseClient, ApisPeruClient, JambleClient],

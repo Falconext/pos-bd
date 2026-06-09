@@ -6,6 +6,31 @@ import { PrismaService } from '../prisma/prisma.service';
 export class DashboardService {
   constructor(private readonly prisma: PrismaService) { }
 
+  // Tipos de comprobantes informales (no van a SUNAT)
+  private readonly TIPOS_INFORMALES = ['NP', 'OT', 'COT', 'TICKET', 'NV', 'RH', 'CP'];
+
+  /**
+   * Filtro para excluir comprobantes informales que ya fueron convertidos
+   * a un formal (tienen al menos un comprobante derivado).
+   * Se agrega en el WHERE como AND condition.
+   */
+  private get filtroExcluirConvertidos() {
+    return {
+      AND: [
+        {
+          NOT: {
+            tipoDoc: { in: this.TIPOS_INFORMALES },
+            comprobantesDerivados: { some: {} },
+          },
+        },
+        {
+          // Excluir documentos de pre-venta que no son ventas cerradas
+          tipoDoc: { notIn: ['NP', 'COT', 'OT'] },
+        }
+      ]
+    };
+  }
+
   private parseRange(fechaInicio?: string, fechaFin?: string) {
     const whereFecha: any = {};
     if (fechaInicio)
@@ -32,6 +57,7 @@ export class DashboardService {
         empresaId,
         ...(sedeId ? { sedeId } : {}),
         ...(fechaEmision ? { fechaEmision } : {}),
+        ...this.filtroExcluirConvertidos,
       };
 
       const guiaWhere: any = {
@@ -89,10 +115,15 @@ export class DashboardService {
     const fechaEmision = this.parseRange(fechaInicio, fechaFin);
     const rows = await this.prisma.comprobante.groupBy({
       by: ['fechaEmision', 'tipoDoc'],
-      where: { empresaId, ...(sedeId ? { sedeId } : {}), ...(fechaEmision ? { fechaEmision } : {}) },
+      where: {
+        empresaId,
+        ...(sedeId ? { sedeId } : {}),
+        ...(fechaEmision ? { fechaEmision } : {}),
+        ...this.filtroExcluirConvertidos,
+      },
       _sum: { mtoImpVenta: true },
     });
-    const TIPOS_INFORMALES = new Set(['NP', 'OT', 'COT', 'TICKET', 'NV', 'RH', 'CP']);
+    const TIPOS_INFORMALES = new Set(this.TIPOS_INFORMALES);
 
     const map = new Map<
       string,
@@ -137,7 +168,12 @@ export class DashboardService {
     const fechaEmision = this.parseRange(fechaInicio, fechaFin);
     const rows = await this.prisma.comprobante.groupBy({
       by: ['fechaEmision', 'medioPago'],
-      where: { empresaId, ...(sedeId ? { sedeId } : {}), ...(fechaEmision ? { fechaEmision } : {}) },
+      where: {
+        empresaId,
+        ...(sedeId ? { sedeId } : {}),
+        ...(fechaEmision ? { fechaEmision } : {}),
+        ...this.filtroExcluirConvertidos,
+      },
       _sum: { mtoImpVenta: true },
     });
     const map = new Map<
@@ -169,7 +205,12 @@ export class DashboardService {
     const fechaEmision = this.parseRange(fechaInicio, fechaFin);
     // Prefiltrar comprobantes (IDs) filtrar tambien por sede
     const comprobantes = await this.prisma.comprobante.findMany({
-      where: { empresaId, ...(sedeId ? { sedeId } : {}), ...(fechaEmision ? { fechaEmision } : {}) },
+      where: {
+        empresaId,
+        ...(sedeId ? { sedeId } : {}),
+        ...(fechaEmision ? { fechaEmision } : {}),
+        ...this.filtroExcluirConvertidos,
+      },
       select: { id: true },
     });
     const compIds = comprobantes.map((c) => c.id);
@@ -228,24 +269,33 @@ export class DashboardService {
       lte: new Date(prevEnd.setHours(23, 59, 59, 999)),
     };
 
-    const baseWhere = { empresaId, ...(sedeId ? { sedeId } : {}) };
+    const baseComprobanteWhere = {
+      empresaId,
+      ...(sedeId ? { sedeId } : {}),
+      ...this.filtroExcluirConvertidos,
+    };
+
+    const baseCompraWhere = {
+      empresaId,
+      ...(sedeId ? { sedeId } : {}),
+    };
 
     const [ventasCurr, ventasPrev, ventasNCCurr, ventasNCPrev] = await Promise.all([
       this.prisma.comprobante.aggregate({
         _sum: { mtoImpVenta: true },
-        where: { ...baseWhere, fechaEmision: currentRange, tipoDoc: { notIn: ['07'] } },
+        where: { ...baseComprobanteWhere, fechaEmision: currentRange, tipoDoc: { notIn: ['07'] } },
       }),
       this.prisma.comprobante.aggregate({
         _sum: { mtoImpVenta: true },
-        where: { ...baseWhere, fechaEmision: prevRange, tipoDoc: { notIn: ['07'] } },
+        where: { ...baseComprobanteWhere, fechaEmision: prevRange, tipoDoc: { notIn: ['07'] } },
       }),
       this.prisma.comprobante.aggregate({
         _sum: { mtoImpVenta: true },
-        where: { ...baseWhere, fechaEmision: currentRange, tipoDoc: '07' },
+        where: { ...baseComprobanteWhere, fechaEmision: currentRange, tipoDoc: '07' },
       }),
       this.prisma.comprobante.aggregate({
         _sum: { mtoImpVenta: true },
-        where: { ...baseWhere, fechaEmision: prevRange, tipoDoc: '07' },
+        where: { ...baseComprobanteWhere, fechaEmision: prevRange, tipoDoc: '07' },
       }),
     ]);
 
@@ -254,8 +304,8 @@ export class DashboardService {
     const ventasTrend = ingresosPrev === 0 ? 100 : ((ingresosCurr - ingresosPrev) / ingresosPrev) * 100;
 
     const [pedidosCurr, pedidosPrev] = await Promise.all([
-      this.prisma.comprobante.count({ where: { ...baseWhere, fechaEmision: currentRange } }),
-      this.prisma.comprobante.count({ where: { ...baseWhere, fechaEmision: prevRange } }),
+      this.prisma.comprobante.count({ where: { ...baseComprobanteWhere, fechaEmision: currentRange } }),
+      this.prisma.comprobante.count({ where: { ...baseComprobanteWhere, fechaEmision: prevRange } }),
     ]);
     const pedidosTrend = pedidosPrev === 0 ? 100 : ((pedidosCurr - pedidosPrev) / pedidosPrev) * 100;
 
@@ -278,7 +328,7 @@ export class DashboardService {
 
     const dailyVentasRows = await this.prisma.comprobante.groupBy({
       by: ['fechaEmision'],
-      where: { ...baseWhere, fechaEmision: currentRange, tipoDoc: { notIn: ['07'] } },
+      where: { ...baseComprobanteWhere, fechaEmision: currentRange, tipoDoc: { notIn: ['07'] } },
       _sum: { mtoImpVenta: true },
     });
 
@@ -293,7 +343,7 @@ export class DashboardService {
 
     const ventasCanalRows = await this.prisma.comprobante.groupBy({
       by: ['medioPago'],
-      where: { ...baseWhere, fechaEmision: currentRange },
+      where: { ...baseComprobanteWhere, fechaEmision: currentRange },
       _sum: { mtoImpVenta: true },
     });
 
@@ -321,7 +371,7 @@ export class DashboardService {
     ].filter((x) => x.value > 0);
 
     const recientes = await this.prisma.comprobante.findMany({
-      where: baseWhere,
+      where: baseComprobanteWhere,
       orderBy: { fechaEmision: 'desc' },
       take: 4,
       include: { cliente: { select: { nombre: true } } },
@@ -339,14 +389,14 @@ export class DashboardService {
 
     const comprasRows = await this.prisma.compra.aggregate({
       _sum: { total: true },
-      where: { ...baseWhere, fechaEmision: currentRange },
+      where: { ...baseCompraWhere, fechaEmision: currentRange },
     });
     const comprasPrevRows = await this.prisma.compra.aggregate({
       _sum: { total: true },
-      where: { ...baseWhere, fechaEmision: prevRange },
+      where: { ...baseCompraWhere, fechaEmision: prevRange },
     });
 
-    const TIPOS_INFORMALES_ARRAY = ['NP', 'OT', 'COT', 'TICKET', 'NV', 'RH', 'CP'];
+    const TIPOS_INFORMALES_ARRAY = this.TIPOS_INFORMALES;
     const [productosBajoStockRaw, sunatPendientesRows, sunatPendientesCount, cuentasCobrarAgg, pedidosTiendaCount] =
       await Promise.all([
         this.prisma.producto.findMany({

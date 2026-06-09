@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { EstadoCompra, EstadoSunat, GastoOperativo } from '@prisma/client';
+import { EstadoSunat, GastoOperativo } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CrearGastoDto } from './dto/crear-gasto.dto';
 import { ActualizarGastoDto } from './dto/actualizar-gasto.dto';
@@ -13,13 +13,20 @@ export interface GastoPorCategoria {
 export interface PnlResponse {
   periodo: { mes: number; anio: number; label: string };
   ventasNetas: number;
+  costoBaseProductos: number;
+  costosFijosProducto: number;
   costoMercaderia: number;
+  unidadesVendidas: number;
+  lineasProducto: number;
+  lineasServicio: number;
   gananciaBruta: number;
   margenBruto: number;
   gastosTotales: number;
+  gastoPublicidad: number;
   gastosPorCategoria: GastoPorCategoria[];
   gananciaNeta: number;
   margenNeto: number;
+  resumenDiario: RentabilidadDia[];
   comparacion: {
     mesAnterior: { gananciaNeta: number; margenNeto: number } | null;
     variacionMonto: number | null;
@@ -37,9 +44,83 @@ export interface EvolucionPoint {
   gananciaNeta: number;
 }
 
+interface DecimalLike {
+  toNumber(): number;
+}
+
+interface ProductoCostoPnl {
+  costoPromedio: DecimalLike | number | null;
+  costoFijo: DecimalLike | number | null;
+}
+
+interface DetalleComprobantePnl {
+  productoId: number | null;
+  cantidad: number;
+  producto: ProductoCostoPnl | null;
+}
+
+interface ComprobantePnl {
+  tipoDoc: string;
+  estadoEnvioSunat: EstadoSunat;
+  mtoImpVenta: number;
+  fechaEmision?: Date;
+  detalles: DetalleComprobantePnl[];
+}
+
+export interface RentabilidadDia {
+  fecha: string;
+  ventasNetas: number;
+  costoMercaderia: number;
+  gananciaBruta: number;
+  margenBruto: number;
+  publicidad: number;
+  otrosGastos: number;
+  gastosOperativos: number;
+  gananciaNeta: number;
+  margenNeto: number;
+  pedidos: number;
+  roas: number | null;
+  costoPublicidadPorPedido: number | null;
+}
+
+interface GastoPnl {
+  categoria: string;
+  etiqueta: string | null;
+  monto: DecimalLike;
+  fecha: Date | null;
+  recurrenteDiario: boolean;
+  fechaInicio: Date | null;
+  fechaFin: Date | null;
+}
+
+interface GastoAplicadoPnl {
+  categoria: string;
+  etiqueta: string | null;
+  monto: number;
+  fecha: string | null;
+}
+
 @Injectable()
 export class AnalisisFinancieroService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private readonly TIPOS_INFORMALES = ['NP', 'OT', 'COT', 'TICKET', 'NV', 'RH', 'CP'];
+
+  private get filtroExcluirConvertidos() {
+    return {
+      AND: [
+        {
+          NOT: {
+            tipoDoc: { in: this.TIPOS_INFORMALES },
+            comprobantesDerivados: { some: {} },
+          },
+        },
+        {
+          tipoDoc: { notIn: ['NP', 'COT', 'OT'] },
+        }
+      ]
+    };
+  }
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -99,53 +180,325 @@ export class AnalisisFinancieroService {
     return { mes: date.getMonth() + 1, anio: date.getFullYear() };
   }
 
-  private r2(n: number): number { return Math.round(n * 100) / 100; }
+  private r2(n: number): number {
+    return Math.round(n * 100) / 100;
+  }
+
+  private toNumber(value: DecimalLike | number | null | undefined): number {
+    if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+    if (value && typeof value.toNumber === 'function') return value.toNumber();
+    return 0;
+  }
+
+  private fechaLimaKey(fecha?: Date): string | null {
+    if (!fecha) return null;
+    return new Date(fecha.getTime() - 5 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+  }
+
+  private parseFechaGasto(fecha?: string): Date | undefined {
+    if (!fecha) return undefined;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+      return new Date(`${fecha}T05:00:00.000Z`);
+    }
+    const parsed = new Date(fecha);
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+  }
+
+  private monthEndKey(mes: number, anio: number): string {
+    const day = new Date(anio, mes, 0).getDate();
+    return `${anio}-${String(mes).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+
+  private todayLimaKey(): string {
+    return (
+      this.fechaLimaKey(new Date()) ?? new Date().toISOString().slice(0, 10)
+    );
+  }
+
+  private listarDiasPeriodo(mes: number, anio: number): string[] {
+    const startKey = `${anio}-${String(mes).padStart(2, '0')}-01`;
+    let endKey = this.monthEndKey(mes, anio);
+    const todayKey = this.todayLimaKey();
+    if (startKey > todayKey) return [];
+    if (endKey > todayKey) endKey = todayKey;
+
+    const [startYear, startMonth, startDay] = startKey.split('-').map(Number);
+    const [endYear, endMonth, endDay] = endKey.split('-').map(Number);
+    const current = new Date(Date.UTC(startYear, startMonth - 1, startDay));
+    const end = new Date(Date.UTC(endYear, endMonth - 1, endDay));
+    const days: string[] = [];
+
+    while (current.getTime() <= end.getTime()) {
+      days.push(current.toISOString().slice(0, 10));
+      current.setUTCDate(current.getUTCDate() + 1);
+    }
+
+    return days;
+  }
+
+  private expandirGastosPeriodo(
+    gastosRaw: GastoPnl[],
+    mes: number,
+    anio: number,
+  ): GastoAplicadoPnl[] {
+    const diasPeriodo = this.listarDiasPeriodo(mes, anio);
+    const startKey = `${anio}-${String(mes).padStart(2, '0')}-01`;
+    const endKey = this.monthEndKey(mes, anio);
+    const gastosAplicados: GastoAplicadoPnl[] = [];
+
+    for (const gasto of gastosRaw) {
+      const monto = this.toNumber(gasto.monto);
+      if (!gasto.recurrenteDiario) {
+        gastosAplicados.push({
+          categoria: gasto.categoria,
+          etiqueta: gasto.etiqueta,
+          monto,
+          fecha: this.fechaLimaKey(gasto.fecha ?? undefined),
+        });
+        continue;
+      }
+
+      const fechaInicio =
+        this.fechaLimaKey(gasto.fechaInicio ?? gasto.fecha ?? undefined) ??
+        startKey;
+      const fechaFin = this.fechaLimaKey(gasto.fechaFin ?? undefined) ?? endKey;
+
+      for (const fecha of diasPeriodo) {
+        if (fecha < fechaInicio || fecha > fechaFin) continue;
+        gastosAplicados.push({
+          categoria: gasto.categoria,
+          etiqueta: gasto.etiqueta,
+          monto,
+          fecha,
+        });
+      }
+    }
+
+    return gastosAplicados;
+  }
+
+  private esDocumentoVenta(c: ComprobantePnl): boolean {
+    return c.tipoDoc !== 'COT' && c.estadoEnvioSunat !== EstadoSunat.ANULADO;
+  }
+
+  private signoDocumento(tipoDoc: string): 1 | -1 {
+    return tipoDoc === '07' ? -1 : 1;
+  }
+
+  private calcularCostoProducto(comprobante: ComprobantePnl) {
+    const signo = this.signoDocumento(comprobante.tipoDoc);
+    let costoBaseProductos = 0;
+    let costosFijosProducto = 0;
+    let unidadesVendidas = 0;
+    let lineasProducto = 0;
+    let lineasServicio = 0;
+
+    for (const detalle of comprobante.detalles ?? []) {
+      if (!detalle.productoId || !detalle.producto) {
+        lineasServicio += 1;
+        continue;
+      }
+
+      const cantidad = Number(detalle.cantidad || 0) * signo;
+      const producto = detalle.producto;
+      costoBaseProductos += cantidad * this.toNumber(producto.costoPromedio);
+      costosFijosProducto += cantidad * this.toNumber(producto.costoFijo);
+      unidadesVendidas += cantidad;
+      lineasProducto += 1;
+    }
+
+    const costoMercaderia = costoBaseProductos + costosFijosProducto;
+
+    return {
+      costoBaseProductos,
+      costosFijosProducto,
+      costoMercaderia,
+      unidadesVendidas,
+      lineasProducto,
+      lineasServicio,
+    };
+  }
 
   /** Computes P&L figures from pre-fetched raw data. */
   private calcularPnl(
-    comprobantes: { tipoDoc: string; estadoEnvioSunat: string; mtoImpVenta: number }[],
-    compras: { total: { toNumber(): number } }[],
-    gastosRaw: { categoria: string; etiqueta: string | null; monto: { toNumber(): number } }[],
+    comprobantes: ComprobantePnl[],
+    gastosRaw: GastoPnl[],
+    mes: number,
+    anio: number,
   ) {
-    const ventasBrutas = comprobantes
-      .filter(c => c.tipoDoc !== '07' && c.estadoEnvioSunat !== EstadoSunat.ANULADO)
+    const gastosAplicados = this.expandirGastosPeriodo(gastosRaw, mes, anio);
+    const documentosVenta = comprobantes.filter((c) =>
+      this.esDocumentoVenta(c),
+    );
+    const ventasBrutas = documentosVenta
+      .filter((c) => c.tipoDoc !== '07')
       .reduce((acc, c) => acc + c.mtoImpVenta, 0);
 
-    const notasCredito = comprobantes
-      .filter(c => c.tipoDoc === '07' && c.estadoEnvioSunat !== EstadoSunat.ANULADO)
+    const notasCredito = documentosVenta
+      .filter((c) => c.tipoDoc === '07')
       .reduce((acc, c) => acc + c.mtoImpVenta, 0);
 
-    const ventasNetas    = ventasBrutas - notasCredito;
-    const costoMercaderia = compras.reduce((acc, c) => acc + c.total.toNumber(), 0);
-    const gananciaBruta  = ventasNetas - costoMercaderia;
+    const costosProducto = documentosVenta.reduce(
+      (acc, comprobante) => {
+        const costo = this.calcularCostoProducto(comprobante);
+        acc.costoBaseProductos += costo.costoBaseProductos;
+        acc.costosFijosProducto += costo.costosFijosProducto;
+        acc.costoMercaderia += costo.costoMercaderia;
+        acc.unidadesVendidas += costo.unidadesVendidas;
+        acc.lineasProducto += costo.lineasProducto;
+        acc.lineasServicio += costo.lineasServicio;
+        return acc;
+      },
+      {
+        costoBaseProductos: 0,
+        costosFijosProducto: 0,
+        costoMercaderia: 0,
+        unidadesVendidas: 0,
+        lineasProducto: 0,
+        lineasServicio: 0,
+      },
+    );
+
+    const resumenDiarioMap = new Map<string, RentabilidadDia>();
+    for (const comprobante of documentosVenta) {
+      const fecha = this.fechaLimaKey(comprobante.fechaEmision);
+      if (!fecha) continue;
+      const signo = this.signoDocumento(comprobante.tipoDoc);
+      const costo = this.calcularCostoProducto(comprobante);
+      const current = resumenDiarioMap.get(fecha) ?? {
+        fecha,
+        ventasNetas: 0,
+        costoMercaderia: 0,
+        gananciaBruta: 0,
+        margenBruto: 0,
+        publicidad: 0,
+        otrosGastos: 0,
+        gastosOperativos: 0,
+        gananciaNeta: 0,
+        margenNeto: 0,
+        pedidos: 0,
+        roas: null,
+        costoPublicidadPorPedido: null,
+      };
+      current.ventasNetas += Number(comprobante.mtoImpVenta || 0) * signo;
+      current.costoMercaderia += costo.costoMercaderia;
+      if (signo > 0) current.pedidos += 1;
+      resumenDiarioMap.set(fecha, current);
+    }
+
+    for (const gasto of gastosAplicados) {
+      const fecha = gasto.fecha;
+      if (!fecha) continue;
+      const monto = gasto.monto;
+      const current = resumenDiarioMap.get(fecha) ?? {
+        fecha,
+        ventasNetas: 0,
+        costoMercaderia: 0,
+        gananciaBruta: 0,
+        margenBruto: 0,
+        publicidad: 0,
+        otrosGastos: 0,
+        gastosOperativos: 0,
+        gananciaNeta: 0,
+        margenNeto: 0,
+        pedidos: 0,
+        roas: null,
+        costoPublicidadPorPedido: null,
+      };
+      if (gasto.categoria === 'PUBLICIDAD') {
+        current.publicidad += monto;
+      } else {
+        current.otrosGastos += monto;
+      }
+      current.gastosOperativos += monto;
+      resumenDiarioMap.set(fecha, current);
+    }
+
+    const resumenDiario = [...resumenDiarioMap.values()]
+      .map((dia) => {
+        const gananciaBrutaDia = dia.ventasNetas - dia.costoMercaderia;
+        const gananciaNetaDia = gananciaBrutaDia - dia.gastosOperativos;
+        return {
+          fecha: dia.fecha,
+          ventasNetas: this.r2(dia.ventasNetas),
+          costoMercaderia: this.r2(dia.costoMercaderia),
+          gananciaBruta: this.r2(gananciaBrutaDia),
+          margenBruto: this.r2(
+            dia.ventasNetas > 0
+              ? (gananciaBrutaDia / dia.ventasNetas) * 100
+              : 0,
+          ),
+          publicidad: this.r2(dia.publicidad),
+          otrosGastos: this.r2(dia.otrosGastos),
+          gastosOperativos: this.r2(dia.gastosOperativos),
+          gananciaNeta: this.r2(gananciaNetaDia),
+          margenNeto: this.r2(
+            dia.ventasNetas > 0 ? (gananciaNetaDia / dia.ventasNetas) * 100 : 0,
+          ),
+          pedidos: dia.pedidos,
+          roas:
+            dia.publicidad > 0
+              ? this.r2(dia.ventasNetas / dia.publicidad)
+              : null,
+          costoPublicidadPorPedido:
+            dia.publicidad > 0 && dia.pedidos > 0
+              ? this.r2(dia.publicidad / dia.pedidos)
+              : null,
+        };
+      })
+      .sort((a, b) => b.fecha.localeCompare(a.fecha));
+
+    const ventasNetas = ventasBrutas - notasCredito;
+    const costoMercaderia = costosProducto.costoMercaderia;
+    const gananciaBruta = ventasNetas - costoMercaderia;
 
     // Build gastosPorCategoria grouping by (categoria, etiqueta)
     const gastoMap = new Map<string, GastoPorCategoria>();
-    for (const g of gastosRaw) {
+    for (const g of gastosAplicados) {
       const key = `${g.categoria}::${g.etiqueta ?? ''}`;
       const existing = gastoMap.get(key);
       if (existing) {
-        existing.monto = this.r2(existing.monto + g.monto.toNumber());
+        existing.monto = this.r2(existing.monto + g.monto);
       } else {
-        gastoMap.set(key, { categoria: g.categoria, etiqueta: g.etiqueta, monto: this.r2(g.monto.toNumber()) });
+        gastoMap.set(key, {
+          categoria: g.categoria,
+          etiqueta: g.etiqueta,
+          monto: this.r2(g.monto),
+        });
       }
     }
     const gastosPorCategoria = [...gastoMap.values()];
-    const gastosTotales = gastosPorCategoria.reduce((acc, g) => acc + g.monto, 0);
+    const gastosTotales = gastosPorCategoria.reduce(
+      (acc, g) => acc + g.monto,
+      0,
+    );
+    const gastoPublicidad = gastosAplicados
+      .filter((g) => g.categoria === 'PUBLICIDAD')
+      .reduce((acc, g) => acc + g.monto, 0);
 
     const gananciaNeta = gananciaBruta - gastosTotales;
-    const margenBruto  = ventasNetas > 0 ? (gananciaBruta / ventasNetas) * 100 : 0;
-    const margenNeto   = ventasNetas > 0 ? (gananciaNeta  / ventasNetas) * 100 : 0;
+    const margenBruto =
+      ventasNetas > 0 ? (gananciaBruta / ventasNetas) * 100 : 0;
+    const margenNeto = ventasNetas > 0 ? (gananciaNeta / ventasNetas) * 100 : 0;
 
     return {
-      ventasNetas:      this.r2(ventasNetas),
-      costoMercaderia:  this.r2(costoMercaderia),
-      gananciaBruta:    this.r2(gananciaBruta),
-      margenBruto:      this.r2(margenBruto),
-      gastosTotales:    this.r2(gastosTotales),
+      ventasNetas: this.r2(ventasNetas),
+      costoBaseProductos: this.r2(costosProducto.costoBaseProductos),
+      costosFijosProducto: this.r2(costosProducto.costosFijosProducto),
+      costoMercaderia: this.r2(costoMercaderia),
+      unidadesVendidas: this.r2(costosProducto.unidadesVendidas),
+      lineasProducto: costosProducto.lineasProducto,
+      lineasServicio: costosProducto.lineasServicio,
+      gananciaBruta: this.r2(gananciaBruta),
+      margenBruto: this.r2(margenBruto),
+      gastosTotales: this.r2(gastosTotales),
+      gastoPublicidad: this.r2(gastoPublicidad),
       gastosPorCategoria,
-      gananciaNeta:     this.r2(gananciaNeta),
-      margenNeto:       this.r2(margenNeto),
+      gananciaNeta: this.r2(gananciaNeta),
+      margenNeto: this.r2(margenNeto),
+      resumenDiario,
     };
   }
 
@@ -154,25 +507,83 @@ export class AnalisisFinancieroService {
   /** Fetches raw data for one period and returns calculated P&L. */
   private async fetchPeriodData(empresaId: number, mes: number, anio: number) {
     const range = this.periodoToRange(mes, anio);
-    const [comprobantes, compras, gastos] = await Promise.all([
+    const gastoWhere = this.buildGastoPeriodoWhere(empresaId, mes, anio);
+    const [comprobantes, gastos, campanas] = await Promise.all([
       this.prisma.comprobante.findMany({
-        where: { empresaId, fechaEmision: { gte: range.gte, lte: range.lte } },
-        select: { tipoDoc: true, estadoEnvioSunat: true, mtoImpVenta: true },
-      }),
-      this.prisma.compra.findMany({
-        where: { empresaId, estado: { not: EstadoCompra.ANULADO }, fechaEmision: { gte: range.gte, lte: range.lte } },
-        select: { total: true },
+        where: {
+          empresaId,
+          fechaEmision: { gte: range.gte, lte: range.lte },
+          ...this.filtroExcluirConvertidos,
+        },
+        select: {
+          tipoDoc: true,
+          estadoEnvioSunat: true,
+          mtoImpVenta: true,
+          fechaEmision: true,
+          detalles: {
+            select: {
+              productoId: true,
+              cantidad: true,
+              producto: {
+                select: {
+                  costoPromedio: true,
+                  costoFijo: true,
+                },
+              },
+            },
+          },
+        },
       }),
       this.prisma.gastoOperativo.findMany({
-        where: { empresaId, mes, anio },
-        select: { categoria: true, etiqueta: true, monto: true },
+        where: gastoWhere,
+        select: {
+          categoria: true,
+          etiqueta: true,
+          monto: true,
+          fecha: true,
+          recurrenteDiario: true,
+          fechaInicio: true,
+          fechaFin: true,
+        },
+      }),
+      this.prisma.campanaMarketing.findMany({
+        where: { empresaId },
+        select: { nombre: true, plataforma: true, presupuestoDiario: true, fechaInicio: true, estado: true },
       }),
     ]);
-    return this.calcularPnl(comprobantes, compras, gastos);
+
+    // Inject active campaign spend as virtual daily PUBLICIDAD gastos
+    const inicioMes = new Date(anio, mes - 1, 1);
+    const finMes = new Date(anio, mes, 0, 23, 59, 59);
+    const hoy = new Date();
+    const finReal = hoy < finMes ? hoy : finMes;
+
+    const gastosConCampanas: GastoPnl[] = [...gastos];
+    for (const c of campanas) {
+      if (c.estado === 'PAUSADA') continue;
+      const inicio = c.fechaInicio > inicioMes ? c.fechaInicio : inicioMes;
+      if (inicio > finReal) continue;
+      const presupuesto = Number(c.presupuestoDiario);
+      gastosConCampanas.push({
+        categoria: 'PUBLICIDAD',
+        etiqueta: `${c.plataforma} - ${c.nombre}`,
+        monto: { toNumber: () => presupuesto },
+        fecha: null,
+        recurrenteDiario: true,
+        fechaInicio: inicio,
+        fechaFin: finReal,
+      });
+    }
+
+    return this.calcularPnl(comprobantes, gastosConCampanas, mes, anio);
   }
 
   /** GET /pnl — P&L for a single mes/anio period. */
-  async getPnl(empresaId: number, mes: number, anio: number): Promise<PnlResponse> {
+  async getPnl(
+    empresaId: number,
+    mes: number,
+    anio: number,
+  ): Promise<PnlResponse> {
     const prev = this.restarMeses(mes, anio, 1);
 
     const [pnl, pnlAnterior] = await Promise.all([
@@ -180,17 +591,30 @@ export class AnalisisFinancieroService {
       this.fetchPeriodData(empresaId, prev.mes, prev.anio),
     ]);
 
-    const tieneAnterior = pnlAnterior.ventasNetas > 0 || pnlAnterior.gastosTotales > 0;
-    const variacionMonto = tieneAnterior ? this.r2(pnl.gananciaNeta - pnlAnterior.gananciaNeta) : null;
-    const variacionPorcentaje = tieneAnterior && pnlAnterior.gananciaNeta !== 0
-      ? this.r2(((pnl.gananciaNeta - pnlAnterior.gananciaNeta) / Math.abs(pnlAnterior.gananciaNeta)) * 100)
+    const tieneAnterior =
+      pnlAnterior.ventasNetas > 0 || pnlAnterior.gastosTotales > 0;
+    const variacionMonto = tieneAnterior
+      ? this.r2(pnl.gananciaNeta - pnlAnterior.gananciaNeta)
       : null;
+    const variacionPorcentaje =
+      tieneAnterior && pnlAnterior.gananciaNeta !== 0
+        ? this.r2(
+            ((pnl.gananciaNeta - pnlAnterior.gananciaNeta) /
+              Math.abs(pnlAnterior.gananciaNeta)) *
+              100,
+          )
+        : null;
 
     return {
       periodo: { mes, anio, label: this.mesLabel(mes) },
       ...pnl,
       comparacion: {
-        mesAnterior: tieneAnterior ? { gananciaNeta: pnlAnterior.gananciaNeta, margenNeto: pnlAnterior.margenNeto } : null,
+        mesAnterior: tieneAnterior
+          ? {
+              gananciaNeta: pnlAnterior.gananciaNeta,
+              margenNeto: pnlAnterior.margenNeto,
+            }
+          : null,
         variacionMonto,
         variacionPorcentaje,
       },
@@ -215,33 +639,52 @@ export class AnalisisFinancieroService {
     const rangeLte = this.periodoToRange(mesActual, anioActual).lte;
 
     // Single query per entity covering the full window
-    const [comprobantes, compras, gastos] = await Promise.all([
+    const [comprobantes, gastos] = await Promise.all([
       this.prisma.comprobante.findMany({
         where: {
           empresaId,
           fechaEmision: { gte: rangeGte, lte: rangeLte },
+          ...this.filtroExcluirConvertidos,
         },
         select: {
           tipoDoc: true,
           estadoEnvioSunat: true,
           mtoImpVenta: true,
           fechaEmision: true,
+          detalles: {
+            select: {
+              productoId: true,
+              cantidad: true,
+              producto: {
+                select: {
+                  costoPromedio: true,
+                  costoFijo: true,
+                },
+              },
+            },
+          },
         },
-      }),
-      this.prisma.compra.findMany({
-        where: {
-          empresaId,
-          estado: { not: EstadoCompra.ANULADO },
-          fechaEmision: { gte: rangeGte, lte: rangeLte },
-        },
-        select: { total: true, fechaEmision: true },
       }),
       this.prisma.gastoOperativo.findMany({
-        where: {
+        where: this.buildGastosEvolucionWhere(
           empresaId,
-          OR: this.buildMesAnioOr(mesActual, anioActual, meses),
+          rangeGte,
+          rangeLte,
+          mesActual,
+          anioActual,
+          meses,
+        ),
+        select: {
+          categoria: true,
+          etiqueta: true,
+          monto: true,
+          fecha: true,
+          recurrenteDiario: true,
+          fechaInicio: true,
+          fechaFin: true,
+          mes: true,
+          anio: true,
         },
-        select: { categoria: true, etiqueta: true, monto: true, mes: true, anio: true },
       }),
     ]);
 
@@ -257,25 +700,22 @@ export class AnalisisFinancieroService {
         return t >= range.gte.getTime() && t <= range.lte.getTime();
       });
 
-      const comprasDelMes = compras.filter((c) => {
-        const t = c.fechaEmision.getTime();
-        return t >= range.gte.getTime() && t <= range.lte.getTime();
-      });
-
       const gastosDelMes = gastos.filter(
-        (g) => g.mes === mes && g.anio === anio,
+        (g) =>
+          (g.mes === mes && g.anio === anio) ||
+          this.gastoRecurrenteCubrePeriodo(g, range.gte, range.lte),
       );
 
-      const pnl = this.calcularPnl(comprobantesDelMes, comprasDelMes, gastosDelMes);
+      const pnl = this.calcularPnl(comprobantesDelMes, gastosDelMes, mes, anio);
 
       resultado.push({
         mes,
         anio,
         label: this.mesLabel(mes),
         shortLabel: this.mesShortLabel(mes),
-        ventasNetas:     pnl.ventasNetas,
-        gananciaBruta:   pnl.gananciaBruta,
-        gananciaNeta:    pnl.gananciaNeta,
+        ventasNetas: pnl.ventasNetas,
+        gananciaBruta: pnl.gananciaBruta,
+        gananciaNeta: pnl.gananciaNeta,
       });
     }
 
@@ -295,15 +735,67 @@ export class AnalisisFinancieroService {
     return conditions;
   }
 
+  private buildGastoPeriodoWhere(empresaId: number, mes: number, anio: number) {
+    const range = this.periodoToRange(mes, anio);
+    return {
+      empresaId,
+      OR: [
+        { mes, anio },
+        {
+          recurrenteDiario: true,
+          fechaInicio: { lte: range.lte },
+          OR: [{ fechaFin: null }, { fechaFin: { gte: range.gte } }],
+        },
+      ],
+    };
+  }
+
+  private buildGastosEvolucionWhere(
+    empresaId: number,
+    rangeGte: Date,
+    rangeLte: Date,
+    mesActual: number,
+    anioActual: number,
+    meses: number,
+  ) {
+    return {
+      empresaId,
+      OR: [
+        ...this.buildMesAnioOr(mesActual, anioActual, meses),
+        {
+          recurrenteDiario: true,
+          fechaInicio: { lte: rangeLte },
+          OR: [{ fechaFin: null }, { fechaFin: { gte: rangeGte } }],
+        },
+      ],
+    };
+  }
+
+  private gastoRecurrenteCubrePeriodo(
+    gasto: {
+      recurrenteDiario: boolean;
+      fechaInicio: Date | null;
+      fechaFin: Date | null;
+    },
+    gte: Date,
+    lte: Date,
+  ): boolean {
+    if (!gasto.recurrenteDiario || !gasto.fechaInicio) return false;
+    return (
+      gasto.fechaInicio <= lte && (!gasto.fechaFin || gasto.fechaFin >= gte)
+    );
+  }
+
   /** GET /gastos — list operative expenses for a period. */
   async listarGastos(
     empresaId: number,
     mes: number,
     anio: number,
   ): Promise<GastoOperativo[]> {
+    const gastoWhere = this.buildGastoPeriodoWhere(empresaId, mes, anio);
     return this.prisma.gastoOperativo.findMany({
-      where: { empresaId, mes, anio },
-      orderBy: { creadoEn: 'asc' },
+      where: gastoWhere,
+      orderBy: [{ fecha: 'desc' }, { creadoEn: 'desc' }],
     });
   }
 
@@ -317,6 +809,14 @@ export class AnalisisFinancieroService {
         empresaId,
         mes: dto.mes,
         anio: dto.anio,
+        fecha: this.parseFechaGasto(dto.fecha),
+        recurrenteDiario: dto.recurrenteDiario ?? false,
+        fechaInicio: dto.recurrenteDiario
+          ? this.parseFechaGasto(dto.fechaInicio ?? dto.fecha)
+          : null,
+        fechaFin: dto.recurrenteDiario
+          ? this.parseFechaGasto(dto.fechaFin)
+          : null,
         categoria: dto.categoria,
         etiqueta: dto.etiqueta,
         monto: dto.monto,
@@ -344,6 +844,24 @@ export class AnalisisFinancieroService {
     return this.prisma.gastoOperativo.update({
       where: { id },
       data: {
+        ...(dto.fecha !== undefined && {
+          fecha: this.parseFechaGasto(dto.fecha) ?? null,
+        }),
+        ...(dto.recurrenteDiario !== undefined && {
+          recurrenteDiario: dto.recurrenteDiario,
+        }),
+        ...(dto.recurrenteDiario === false && {
+          fechaInicio: null,
+          fechaFin: null,
+        }),
+        ...(dto.fechaInicio !== undefined &&
+          dto.recurrenteDiario !== false && {
+            fechaInicio: this.parseFechaGasto(dto.fechaInicio) ?? null,
+          }),
+        ...(dto.fechaFin !== undefined &&
+          dto.recurrenteDiario !== false && {
+            fechaFin: this.parseFechaGasto(dto.fechaFin) ?? null,
+          }),
         ...(dto.categoria !== undefined && { categoria: dto.categoria }),
         ...(dto.etiqueta !== undefined && { etiqueta: dto.etiqueta }),
         ...(dto.monto !== undefined && { monto: dto.monto }),
@@ -353,10 +871,7 @@ export class AnalisisFinancieroService {
   }
 
   /** DELETE /gastos/:id — remove an operative expense. */
-  async eliminarGasto(
-    empresaId: number,
-    id: number,
-  ): Promise<{ id: number }> {
+  async eliminarGasto(empresaId: number, id: number): Promise<{ id: number }> {
     const existing = await this.prisma.gastoOperativo.findFirst({
       where: { id, empresaId },
     });

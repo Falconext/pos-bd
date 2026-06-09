@@ -1,6 +1,8 @@
 import {
+  IsBoolean,
   IsEnum,
   IsInt,
+  IsISO8601,
   IsNumber,
   IsOptional,
   IsString,
@@ -20,6 +22,22 @@ export class CrearGastoDto {
   @Min(2020)
   @Max(2100)
   anio: number;
+
+  @IsOptional()
+  @IsISO8601()
+  fecha?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  recurrenteDiario?: boolean;
+
+  @IsOptional()
+  @IsISO8601()
+  fechaInicio?: string;
+
+  @IsOptional()
+  @IsISO8601()
+  fechaFin?: string;
 
   @IsEnum(CategoriaGasto)
   categoria: CategoriaGasto;

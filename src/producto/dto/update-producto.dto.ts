@@ -55,6 +55,21 @@ export class UpdateProductoDto {
   costoUnitario?: number;
 
   @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
+  costoFijo?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
+  comisionPorVenta?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
+  comisionPorcentaje?: number;
+
+  @IsOptional()
   @IsString()
   imagenUrl?: string | null;
 

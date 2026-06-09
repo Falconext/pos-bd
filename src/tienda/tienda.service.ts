@@ -1140,7 +1140,8 @@ export class TiendaService {
     // IGV = Subtotal - (Subtotal / 1.18)
     const igv = subtotal - (subtotal / 1.18);
     const total = subtotal + costoEnvio;
-    const montoPagado = dto.medioPago === 'TARJETA' ? total : 0;
+    const adelanto = dto.medioPago === 'TARJETA' ? total : Math.max(Number(dto.adelanto ?? 0), 0);
+    const montoPagado = Math.min(adelanto, total);
     const saldoPendiente = Math.max(total - montoPagado, 0);
     const estadoEnvioInicial = tipoEntrega === 'ENVIO' ? 'POR_COORDINAR' : 'NO_APLICA';
     const agenciaEnvioInicial =
@@ -1445,8 +1446,12 @@ export class TiendaService {
     if (dto.notasInternas !== undefined) dataToUpdate.notasInternas = dto.notasInternas;
     if (dto.usuarioConfirma !== undefined) dataToUpdate.vendedorId = dto.usuarioConfirma;
     if (dto.vendedorNombre !== undefined) dataToUpdate.vendedorNombre = dto.vendedorNombre;
+    const pagoCompletoConfirmado = dto.montoPagado !== undefined &&
+      Number(pedido.saldoPendiente) > 0.01 &&
+      Number(dto.montoPagado) >= Number(pedido.total);
+
     if (dto.montoPagado !== undefined) {
-      const montoPagado = Math.max(Number(dto.montoPagado) || 0, 0);
+      const montoPagado = Math.min(Math.max(Number(dto.montoPagado) || 0, 0), Number(pedido.total));
       dataToUpdate.montoPagado = montoPagado;
       dataToUpdate.saldoPendiente = Math.max(Number(pedido.total) - montoPagado, 0);
     }
@@ -1513,6 +1518,29 @@ export class TiendaService {
         pedido.codigoSeguimiento,
         (pedidoActualizado as any).repartidor?.nombre ?? null,
       ).catch((e) => this.logger.warn(`WA tienda fallido: ${e.message}`));
+    }
+
+    // WA: paquete en agencia (pendiente de pago)
+    const llegoAAgencia = dto.estadoEntrega === 'EN_AGENCIA' && pedido.estadoEntrega !== 'EN_AGENCIA';
+    if (llegoAAgencia && pedido.clienteTelefono) {
+      this.notificarEnAgencia(
+        pedido.empresaId,
+        pedido.clienteTelefono,
+        pedido.clienteNombre,
+        pedido.codigoSeguimiento,
+        Number(pedido.saldoPendiente),
+        pedido.agenciaEnvio ?? null,
+      ).catch((e) => this.logger.warn(`WA agencia fallido: ${e.message}`));
+    }
+
+    // WA: pago completo confirmado
+    if (pagoCompletoConfirmado && pedido.clienteTelefono) {
+      this.notificarPagoCompleto(
+        pedido.empresaId,
+        pedido.clienteTelefono,
+        pedido.clienteNombre,
+        pedido.codigoSeguimiento,
+      ).catch((e) => this.logger.warn(`WA pago completo fallido: ${e.message}`));
     }
 
     await this.syncDespachoByPedido(pedidoActualizado as any, dto);
@@ -1584,6 +1612,33 @@ export class TiendaService {
       .replace(/\{\{empresa\}\}/g, empresa?.razonSocial ?? '');
 
     await this.whatsapp.enviarTexto(telefono, mensaje);
+  }
+
+  private async notificarEnAgencia(
+    empresaId: number,
+    telefono: string,
+    clienteNombre: string,
+    pedidoRef: string,
+    saldo: number,
+    agencia: string | null,
+  ): Promise<void> {
+    if (!telefono) return;
+    const empresa = await this.prisma.empresa.findUnique({ where: { id: empresaId }, select: { razonSocial: true } });
+    const nombreAgencia = agencia && agencia !== 'RECOJO EN TIENDA' ? agencia : 'la agencia';
+    const msg = `Hola ${clienteNombre}! 📦 Tu pedido ${pedidoRef} llegó a ${nombreAgencia}. Para que puedas retirarlo necesitamos confirmar el pago restante de S/ ${saldo.toFixed(2)}. Una vez confirmado te avisamos. — ${empresa?.razonSocial ?? ''}`;
+    await this.whatsapp.enviarTexto(telefono, msg);
+  }
+
+  private async notificarPagoCompleto(
+    empresaId: number,
+    telefono: string,
+    clienteNombre: string,
+    pedidoRef: string,
+  ): Promise<void> {
+    if (!telefono) return;
+    const empresa = await this.prisma.empresa.findUnique({ where: { id: empresaId }, select: { razonSocial: true } });
+    const msg = `Hola ${clienteNombre}! ✅ Tu pago fue confirmado. Ya puedes retirar tu pedido ${pedidoRef} de la agencia. ¡Gracias por tu compra! — ${empresa?.razonSocial ?? ''}`;
+    await this.whatsapp.enviarTexto(telefono, msg);
   }
 
   // Métodos nuevos para configuración de envío

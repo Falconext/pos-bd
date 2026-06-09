@@ -83,7 +83,7 @@ export class CreatePlanDto {
 
     @IsBoolean()
     @IsOptional()
-    tieneGestionComisiones?: boolean;
+    tieneGestionProvisiones?: boolean;
 
     // Módulos asignados
     @IsOptional()

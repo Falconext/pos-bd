@@ -128,4 +128,118 @@ export class FinanzasService {
             chartData
         };
     }
+
+    async getResumenEcommerce(empresaId: number, mes: number, anio: number) {
+        const inicioMes = new Date(anio, mes - 1, 1);
+        const finMes = new Date(anio, mes, 0, 23, 59, 59);
+
+        // Detalles de ventas del mes con info de producto
+        const detalles = await this.prisma.detalleComprobante.findMany({
+            where: {
+                comprobante: {
+                    empresaId,
+                    estadoEnvioSunat: { not: 'ANULADO' },
+                    fechaEmision: { gte: inicioMes, lte: finMes },
+                },
+            },
+            include: {
+                producto: { select: { id: true, descripcion: true, costoPromedio: true, costoFijo: true } },
+            },
+        });
+
+        // Gasto de publicidad real hasta hoy por producto en el mes
+        const hoy = new Date();
+        const finReal = hoy < finMes ? hoy : finMes;
+        const campanas = await this.prisma.campanaMarketing.findMany({ where: { empresaId } });
+        const gastoAdsPorProducto = new Map<number, number>();
+        let gastoAdsTotal = 0;
+        for (const c of campanas) {
+            if (c.estado === 'PAUSADA' || !c.productoId) continue;
+            const inicio = c.fechaInicio > inicioMes ? c.fechaInicio : inicioMes;
+            if (inicio > finReal) continue;
+            const dias = Math.max(0, Math.ceil((finReal.getTime() - inicio.getTime()) / 86400000));
+            const gasto = Number(c.presupuestoDiario) * dias;
+            gastoAdsPorProducto.set(c.productoId, (gastoAdsPorProducto.get(c.productoId) ?? 0) + gasto);
+            gastoAdsTotal += gasto;
+        }
+
+        // Comisiones pagadas/pendientes del mes
+        const comisionesAgg = await this.prisma.comisionVendedor.aggregate({
+            where: { empresaId, mes, anio },
+            _sum: { montoComision: true },
+        });
+        const totalComisiones = Number(comisionesAgg._sum.montoComision ?? 0);
+
+        // Acumular totales y por producto
+        const comprobanteIds = new Set<number>();
+        let ingresos = 0, costoMercaderia = 0, costoEnvios = 0;
+
+        type ProdEntry = { descripcion: string; unidades: number; ingresos: number; costoMercaderia: number; costoEnvio: number; ads: number };
+        const porProducto = new Map<number, ProdEntry>();
+
+        for (const d of detalles) {
+            const cant = Number(d.cantidad);
+            const ingreso = Number(d.mtoPrecioUnitario) * cant;
+            const costo = d.producto ? Number(d.producto.costoPromedio ?? 0) * cant : 0;
+            const cf = d.producto ? Number((d.producto as any).costoFijo ?? 0) * cant : 0;
+
+            ingresos += ingreso;
+            costoMercaderia += costo;
+            costoEnvios += cf;
+            comprobanteIds.add(d.comprobanteId);
+
+            if (d.productoId && d.producto) {
+                const e = porProducto.get(d.productoId) ?? { descripcion: d.producto.descripcion, unidades: 0, ingresos: 0, costoMercaderia: 0, costoEnvio: 0, ads: 0 };
+                e.unidades += cant;
+                e.ingresos += ingreso;
+                e.costoMercaderia += costo;
+                e.costoEnvio += cf;
+                porProducto.set(d.productoId, e);
+            }
+        }
+
+        for (const [prodId, gasto] of gastoAdsPorProducto) {
+            const e = porProducto.get(prodId);
+            if (e) e.ads = gasto;
+        }
+
+        const gananciaReal = ingresos - costoMercaderia - costoEnvios - gastoAdsTotal - totalComisiones;
+        const margen = ingresos > 0 ? Math.round((gananciaReal / ingresos) * 100) : 0;
+
+        const productos = Array.from(porProducto.entries())
+            .map(([id, p]) => {
+                const ganancia = p.ingresos - p.costoMercaderia - p.costoEnvio - p.ads;
+                const margenProd = p.ingresos > 0 ? Math.round((ganancia / p.ingresos) * 100) : 0;
+                return {
+                    id,
+                    descripcion: p.descripcion,
+                    unidades: Math.round(p.unidades),
+                    ingresos: Math.round(p.ingresos * 100) / 100,
+                    costoMercaderia: Math.round(p.costoMercaderia * 100) / 100,
+                    costoEnvio: Math.round(p.costoEnvio * 100) / 100,
+                    ads: Math.round(p.ads * 100) / 100,
+                    ganancia: Math.round(ganancia * 100) / 100,
+                    margen: margenProd,
+                    estado: margenProd >= 20 ? 'bien' : margenProd >= 0 ? 'alerta' : 'perdida' as const,
+                };
+            })
+            .sort((a, b) => b.ingresos - a.ingresos);
+
+        return {
+            mes, anio,
+            resumen: {
+                ingresos: Math.round(ingresos * 100) / 100,
+                costoMercaderia: Math.round(costoMercaderia * 100) / 100,
+                costoEnvios: Math.round(costoEnvios * 100) / 100,
+                gastoPublicidad: Math.round(gastoAdsTotal * 100) / 100,
+                comisiones: Math.round(totalComisiones * 100) / 100,
+                gananciaReal: Math.round(gananciaReal * 100) / 100,
+                margen,
+                totalVentas: comprobanteIds.size,
+                ticketPromedio: comprobanteIds.size > 0 ? Math.round((ingresos / comprobanteIds.size) * 100) / 100 : 0,
+                productosDistintos: porProducto.size,
+            },
+            productos,
+        };
+    }
 }

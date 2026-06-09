@@ -35,24 +35,34 @@ export class PagoService {
       );
     }
 
-    // Recalcular saldo si es crédito y tiene saldo 0 (mal guardado en BD)
-    let saldoActual = comprobante.saldo ?? 0;
-    const formaPagoUpper = (comprobante.formaPagoTipo || '').toUpperCase();
-    const esCredito = formaPagoUpper === 'CREDITO';
+    let saldoActual = Number(comprobante.saldo ?? 0);
+    const epActual = String(comprobante.estadoPago ?? '');
 
-    // Si es crédito y saldo es 0 pero tiene total > 0, recalcular y corregir en BD
-    if (esCredito && saldoActual === 0 && Number(comprobante.mtoImpVenta) > 0) {
+    // Auto-fix: si saldo es 0 pero el doc no está COMPLETADO, recalcularlo desde
+    // los pagos registrados + el adelanto guardado (cubre NP/OT creados antes de
+    // que el backend inicializara saldo correctamente)
+    if (saldoActual === 0 && Number(comprobante.mtoImpVenta) > 0 && epActual !== 'COMPLETADO') {
       const montoDescontado = Number(comprobante.montoDetraccion || 0);
-      saldoActual = Math.max(0, Number(comprobante.mtoImpVenta) - montoDescontado);
-
-      // Corregir el saldo en la base de datos para futuros pagos
-      await this.prisma.comprobante.update({
-        where: { id: comprobanteId },
-        data: {
-          saldo: saldoActual,
-          estadoPago: 'PENDIENTE_PAGO'
-        },
+      const pagosExistentes = await this.prisma.pago.findMany({
+        where: { comprobanteId },
+        select: { monto: true },
       });
+      const totalPagadoRegistrado = pagosExistentes.reduce(
+        (s: number, p: any) => s + Number(p.monto),
+        0,
+      );
+      const adelantoGuardado = Number((comprobante as any).adelanto ?? 0);
+      saldoActual = Math.max(
+        0,
+        Number(comprobante.mtoImpVenta) - montoDescontado - totalPagadoRegistrado - adelantoGuardado,
+      );
+
+      if (saldoActual > 0) {
+        await this.prisma.comprobante.update({
+          where: { id: comprobanteId },
+          data: { saldo: saldoActual },
+        });
+      }
     }
 
     if (dto.monto <= 0) {
