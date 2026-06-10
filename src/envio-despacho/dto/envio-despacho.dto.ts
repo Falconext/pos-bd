@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, IsDateString, IsInt, Min } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsDateString, IsInt, IsNumber, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export enum EstadoDespacho {
@@ -43,6 +43,11 @@ export class CreateEnvioDespachoDto {
     // Compatibilidad temporal: si llega texto libre, el backend crea/asigna el repartidor EVENTUAL.
     @IsOptional() @IsString() repartidor?: string;
     @IsOptional() @IsString() empaquetador?: string;
+    // Datos destinatario Shalom
+    @IsOptional() @IsString() nombreDestinatario?: string;
+    @IsOptional() @IsString() dniDestinatario?: string;
+    @IsOptional() @IsString() contenidoPaquete?: string;
+    @IsOptional() @Type(() => Number) @IsNumber() @Min(0) montoCOD?: number;
 }
 
 export class UpdateEnvioDespachoDto extends CreateEnvioDespachoDto {}

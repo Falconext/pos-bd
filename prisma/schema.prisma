@@ -1440,9 +1440,14 @@ model EnvioDespacho {
   establecimiento  String? // Local/sucursal desde donde despacha
   repartidorId     Int?
   repartidor       Repartidor?    @relation(fields: [repartidorId], references: [id], onDelete: SetNull)
-  empaquetador     String? // Nombre del empaquetador
-  creadoEn         DateTime       @default(now())
-  actualizadoEn    DateTime       @updatedAt
+  empaquetador       String? // Nombre del empaquetador
+  // Datos del destinatario (Shalom)
+  nombreDestinatario String? // Nombre completo del destinatario
+  dniDestinatario    String? // DNI/documento del destinatario
+  contenidoPaquete   String? // Descripción del contenido (ej: "1 Caja")
+  montoCOD           Float?  // Monto a cobrar en destino (Shalom COD)
+  creadoEn           DateTime       @default(now())
+  actualizadoEn      DateTime       @updatedAt
 
   @@index([comprobanteId])
   @@index([repartidorId])

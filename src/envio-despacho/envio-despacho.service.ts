@@ -17,6 +17,7 @@ const DESPACHO_FIELDS = [
     'tipoEnvio', 'agenciaDestino', 'celularDest', 'nroPaquetes',
     'turnoEnvio', 'tipoMercaderia', 'claveEnvio', 'nroOrden', 'claveOrden',
     'establecimiento', 'empaquetador',
+    'nombreDestinatario', 'dniDestinatario', 'contenidoPaquete', 'montoCOD',
 ] as const;
 
 const DESPACHO_TO_PEDIDO_ESTADO: Record<EstadoDespacho, { estadoEntrega: string; estadoEnvio: string }> = {

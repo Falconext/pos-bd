@@ -304,8 +304,8 @@ export class DashboardService {
     const ventasTrend = ingresosPrev === 0 ? 100 : ((ingresosCurr - ingresosPrev) / ingresosPrev) * 100;
 
     const [pedidosCurr, pedidosPrev] = await Promise.all([
-      this.prisma.comprobante.count({ where: { ...baseComprobanteWhere, fechaEmision: currentRange } }),
-      this.prisma.comprobante.count({ where: { ...baseComprobanteWhere, fechaEmision: prevRange } }),
+      this.prisma.comprobante.count({ where: { ...baseComprobanteWhere, fechaEmision: currentRange, tipoDoc: { notIn: ['07'] } } }),
+      this.prisma.comprobante.count({ where: { ...baseComprobanteWhere, fechaEmision: prevRange, tipoDoc: { notIn: ['07'] } } }),
     ]);
     const pedidosTrend = pedidosPrev === 0 ? 100 : ((pedidosCurr - pedidosPrev) / pedidosPrev) * 100;
 
@@ -440,7 +440,11 @@ export class DashboardService {
           },
         }),
         this.prisma.pedidoTienda.count({
-          where: { empresaId, estado: 'PENDIENTE' as any },
+          where: {
+            empresaId,
+            estado: 'PENDIENTE' as any,
+            estadoEntrega: { notIn: ['ENTREGADO_COMPLETADO', 'CANCELADO_INTERNO', 'CANCELADO_CLIENTE'] as any },
+          },
         }),
       ]);
 
