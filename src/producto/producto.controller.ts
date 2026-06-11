@@ -645,6 +645,15 @@ export class ProductoController {
     res.status(200).send(buffer);
   }
 
+  @Get('plantilla')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async plantilla(@Res() res: Response) {
+    const buffer = await this.service.plantilla();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename=plantilla_productos.xlsx');
+    res.status(200).send(buffer);
+  }
+
   @Get('barcode/:codigo')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async getByBarcode(

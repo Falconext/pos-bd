@@ -453,6 +453,7 @@ export class ProductoService {
           empresaId: true,
           creadoEn: true,
           preciosMayorista: true,
+          codigoBarras: true,
           unidadMedida: {
             select: {
               id: true,
@@ -640,6 +641,7 @@ export class ProductoService {
           stock: true,
           porcentajeVenta: true,
           porcentajeProvision: true,
+          codigoBarras: true,
           unidadMedida: { select: { codigo: true } },
           stocks: {
             where: { sedeId },
@@ -1671,7 +1673,7 @@ export class ProductoService {
     });
 
     const datosExcel = productos.map((producto) => ({
-      CÓDIGO: producto.codigo,
+      CÓDIGO: (producto as any)?.codigoBarras || producto.codigo,
       PRODUCTO: producto.descripcion,
       'U.M': producto.unidadMedida?.nombre || '',
       AFECT: producto.tipoAfectacionIGV,
@@ -1686,18 +1688,61 @@ export class ProductoService {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Productos');
     worksheet['!cols'] = [
-      { wch: 15 },
+      { wch: 18 },
       { wch: 100 },
       { wch: 20 },
+      { wch: 10 },
       { wch: 15 },
-      { wch: 15 },
-      { wch: 15 },
-      { wch: 15 },
+      { wch: 8 },
+      { wch: 10 },
+      { wch: 20 },
       { wch: 20 },
     ];
 
     const buffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
     return buffer;
+  }
+
+  async plantilla(): Promise<Buffer> {
+    const filas = [
+      {
+        CÓDIGO: 'PR001',
+        PRODUCTO: 'Producto sin código de barras (SKU manual)',
+        'U.M': 'UNIDAD',
+        AFECT: '10',
+        'PRECIO UNITARIO': 10.0,
+        IGV: 18,
+        STOCK: 100,
+        CATEGORIA: 'General',
+        MARCA: '',
+      },
+      {
+        CÓDIGO: '7750243072366',
+        PRODUCTO: 'Producto con código de barras EAN-13',
+        'U.M': 'UNIDAD',
+        AFECT: '10',
+        'PRECIO UNITARIO': 25.5,
+        IGV: 18,
+        STOCK: 50,
+        CATEGORIA: 'Abarrotes',
+        MARCA: 'Ejemplo',
+      },
+    ];
+    const worksheet = XLSX.utils.json_to_sheet(filas);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Productos');
+    worksheet['!cols'] = [
+      { wch: 18 },
+      { wch: 50 },
+      { wch: 12 },
+      { wch: 8 },
+      { wch: 16 },
+      { wch: 6 },
+      { wch: 8 },
+      { wch: 20 },
+      { wch: 20 },
+    ];
+    return XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
   }
 
   private normClave(s: string): string {
@@ -1887,7 +1932,7 @@ export class ProductoService {
     if (rows.length === 0)
       throw new ForbiddenException('El archivo Excel está vacío');
 
-    const resultados: { producto?: any; error?: string }[] = [];
+    const resultados: { producto?: any; error?: string; actualizado?: boolean }[] = [];
     const tiposValidos = ['10', '20', '30', '40'];
 
     for (const [index, row] of rows.entries()) {
@@ -1913,7 +1958,6 @@ export class ProductoService {
         const stockRaw = row['STOCK'] ?? row['Stock'] ?? row['stock'] ?? null;
         const categoriaRaw =
           row['CATEGORIA'] ?? row['Categoría'] ?? row['categoria'] ?? null;
-
         if (!codigo)
           throw new ForbiddenException(
             `Código no proporcionado en la fila ${index + 1}`,
@@ -1926,6 +1970,19 @@ export class ProductoService {
           throw new ForbiddenException(
             `Unidad de medida no proporcionada en la fila ${index + 1}`,
           );
+
+        // Si CÓDIGO es solo dígitos de 8-14 chars → es un código de barras EAN/UPC
+        const codigoRaw = codigo.toString().trim();
+        const esBarcode = /^\d{8,14}$/.test(codigoRaw);
+        let codigoFinal: string;
+        let codigoBarras: string | undefined;
+        if (esBarcode) {
+          codigoBarras = codigoRaw;
+          codigoFinal = await this.obtenerSiguienteCodigo(empresaId, 'PR');
+        } else {
+          codigoFinal = codigoRaw;
+          codigoBarras = undefined;
+        }
 
         const unidadKey = unidadNombre
           .toString()
@@ -1973,19 +2030,18 @@ export class ProductoService {
           categoriaId = id;
         }
 
-        // Upsert: update if already exists (non-PLACEHOLDER), create if new
-        const codigoStr = codigo.toString();
+        // Upsert: si es barcode busca por codigoBarras, si es SKU busca por codigo
         const existe = await this.prisma.producto.findFirst({
-          where: {
-            codigo: codigoStr,
-            empresaId,
-            estado: { not: 'PLACEHOLDER' as any },
-          },
+          where: esBarcode
+            ? { empresaId, codigoBarras, estado: { not: 'PLACEHOLDER' as any } }
+            : { empresaId, codigo: codigoFinal, estado: { not: 'PLACEHOLDER' as any } },
           select: { id: true },
         });
 
         let producto: any;
+        let esActualizacion = false;
         if (existe) {
+          esActualizacion = true;
           const divisor = 1 + igvPorcentaje / 100;
           const valorUnitario = parseFloat(
             (precioUnitario / divisor).toFixed(2),
@@ -2003,12 +2059,13 @@ export class ProductoService {
                 ? { costoPromedio: new Decimal(costoPromedio) }
                 : {}),
               ...(categoriaId != null ? { categoriaId } : {}),
+              ...(codigoBarras != null ? { codigoBarras } : {}),
             },
           });
         } else {
           producto = await this.crear(
             {
-              codigo: codigoStr,
+              codigo: codigoFinal,
               descripcion: descripcion.toString(),
               unidadMedidaId: Number(unidadMedidaId),
               tipoAfectacionIGV,
@@ -2017,11 +2074,12 @@ export class ProductoService {
               igvPorcentaje,
               stock,
               categoriaId,
+              codigoBarras,
             },
             empresaId,
           );
         }
-        resultados.push({ producto });
+        resultados.push({ producto, actualizado: esActualizacion });
       } catch (e: any) {
         resultados.push({ error: e?.message || 'Error desconocido' });
       }
@@ -2030,6 +2088,8 @@ export class ProductoService {
     return {
       total: rows.length,
       exitosos: resultados.filter((r) => r.producto).length,
+      creados: resultados.filter((r) => r.producto && !r.actualizado).length,
+      actualizados: resultados.filter((r) => r.producto && r.actualizado).length,
       fallidos: resultados.filter((r) => r.error).length,
       detalles: resultados,
     };
