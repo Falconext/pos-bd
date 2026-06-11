@@ -1968,6 +1968,7 @@ export class ComprobanteService {
       adelanto,
       fechaRecojo,
       vuelto,
+      fechaVencimientoCredito,
     } = input;
     // Resolver cliente
     let finalClienteId: number | null = clienteId ?? null;
@@ -2018,12 +2019,15 @@ export class ComprobanteService {
       ? medioPagoFinal
       : 'EFECTIVO';
 
-    // Determinar estado y saldo según tipo de comprobante y medio de pago
+    // Determinar estado y saldo según tipo de comprobante y condición de pago
     // PRIORIDAD:
-    // 1. NP (Nota de Pedido) con adelanto → PAGO_PARCIAL (saldo = total - adelanto)
-    // 2. OT (Orden de Trabajo) con adelanto → PAGO_PARCIAL (saldo = total - adelanto)
-    // 3. Otros: según medio de pago (contado=COMPLETADO, crédito=PENDIENTE_PAGO)
+    // 1. NP con adelanto → PAGO_PARCIAL
+    // 2. OT con adelanto → PAGO_PARCIAL
+    // 3. formaPagoTipo = CREDITO → PENDIENTE_PAGO (independiente del medioPago)
+    // 4. medioPago al contado → COMPLETADO
+    // 5. resto → PENDIENTE_PAGO
     const pagosAlContado = ['EFECTIVO', 'YAPE', 'PLIN'];
+    const esCreditoPorTipo = (formaPagoTipo ?? '').toUpperCase() === 'CREDITO';
     let estadoPagoInicial = 'COMPLETADO' as any;
     let saldoInicial = 0;
 
@@ -2042,7 +2046,7 @@ export class ComprobanteService {
       estadoPagoInicial =
         saldoInicial > 0 ? ('PAGO_PARCIAL' as any) : ('COMPLETADO' as any);
     }
-    // PRIORIDAD 2: OT (Orden de Trabajo) con adelanto → siempre PAGO_PARCIAL
+    // PRIORIDAD 2: OT con adelanto → siempre PAGO_PARCIAL
     else if (tipoDoc === 'OT' && adelanto && Number(adelanto) > 0) {
       const adelantoNormalizado = Number(adelanto);
       saldoInicial = Math.max(
@@ -2052,13 +2056,18 @@ export class ComprobanteService {
       estadoPagoInicial =
         saldoInicial > 0 ? ('PAGO_PARCIAL' as any) : ('COMPLETADO' as any);
     }
-    // PRIORIDAD 3: Otros tipos - basados en medio de pago
+    // PRIORIDAD 3: formaPagoTipo = CREDITO → PENDIENTE_PAGO sin importar medioPago
+    else if (esCreditoPorTipo) {
+      estadoPagoInicial = 'PENDIENTE_PAGO' as any;
+      saldoInicial = mtoImpVenta;
+    }
+    // PRIORIDAD 4: medioPago al contado → COMPLETADO
     else if (pagosAlContado.includes(medioPagoValido)) {
-      // Pagos al contado (EFECTIVO, YAPE, PLIN) → COMPLETADO
       estadoPagoInicial = 'COMPLETADO' as any;
       saldoInicial = 0;
-    } else {
-      // Pagos a crédito (TRANSFERENCIA, TARJETA) → PENDIENTE_PAGO
+    }
+    // PRIORIDAD 5: resto (TRANSFERENCIA, TARJETA sin crédito explícito) → PENDIENTE_PAGO
+    else {
       estadoPagoInicial = 'PENDIENTE_PAGO' as any;
       saldoInicial = mtoImpVenta;
     }
@@ -2100,6 +2109,8 @@ export class ComprobanteService {
       adelanto: (tipoDoc === 'NP' || tipoDoc === 'OT') && adelanto ? Number(adelanto) : undefined,
       fechaRecojo:
         (tipoDoc === 'NP' || tipoDoc === 'OT') && fechaRecojo ? new Date(fechaRecojo) : undefined,
+      fechaVencimientoCredito:
+        esCreditoPorTipo && fechaVencimientoCredito ? new Date(fechaVencimientoCredito) : undefined,
       vuelto: vuelto != null ? Number(vuelto) : 0,
       // Campos de cotización
       cotizIncluirImagenes: input.cotizIncluirImagenes ?? false,

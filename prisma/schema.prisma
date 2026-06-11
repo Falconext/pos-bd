@@ -573,6 +573,7 @@ model Comprobante {
   porcentajeDetraccion  Float?
   tipoDetraccionId      Int?
   cuotas                Json?
+  fechaVencimientoCredito DateTime?
   cliente               Cliente              @relation(fields: [clienteId], references: [id])
   empresa               Empresa              @relation(fields: [empresaId], references: [id])
   medioPagoDetraccion   MedioPagoDetraccion? @relation(fields: [medioPagoDetraccionId], references: [id])
