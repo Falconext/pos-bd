@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   NotFoundException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -19,6 +20,7 @@ interface LoginPayload {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
   private readonly accessExpiresInSec: number;
   private readonly refreshExpiresInSec: number;
 
@@ -27,24 +29,36 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
   ) {
-    const accessEnv = this.config.get<string>('JWT_ACCESS_EXPIRES_IN') ?? '86400';
-    const refreshEnv = this.config.get<string>('JWT_REFRESH_EXPIRES_IN') ?? '604800';
-    const nodeEnv = this.config.get<string>('NODE_ENV') || process.env.NODE_ENV || 'development';
+    const accessEnv =
+      this.config.get<string>('JWT_ACCESS_EXPIRES_IN') ?? '86400';
+    const refreshEnv =
+      this.config.get<string>('JWT_REFRESH_EXPIRES_IN') ?? '604800';
+    const nodeEnv =
+      this.config.get<string>('NODE_ENV') ||
+      process.env.NODE_ENV ||
+      'development';
     const isProduction = nodeEnv === 'production';
 
-    this.accessExpiresInSec = isProduction ? (Number(accessEnv) || 86400) : 86400;
-    this.refreshExpiresInSec = isProduction ? (Number(refreshEnv) || 604800) : 604800;
+    this.accessExpiresInSec = isProduction ? Number(accessEnv) || 86400 : 86400;
+    this.refreshExpiresInSec = isProduction
+      ? Number(refreshEnv) || 604800
+      : 604800;
   }
 
   private resolveBrandFromOrigin(origin: string | undefined): string | null {
     if (!origin) return null;
-    if (origin.includes('krezka.com') || origin.includes('krezka.pe')) return 'krezka';
-    if (origin.includes('falconext.pe') || origin.includes('falconext.app')) return 'falconext';
+    if (origin.includes('krezka.com') || origin.includes('krezka.pe'))
+      return 'krezka';
+    if (origin.includes('falconext.pe') || origin.includes('falconext.app'))
+      return 'falconext';
     // localhost/dev: sin restricción
     return null;
   }
 
-  async login({ email, password, brand: bodyBrand }: LoginPayload, origin?: string) {
+  async login(
+    { email, password, brand: bodyBrand }: LoginPayload,
+    origin?: string,
+  ) {
     const user: any = await this.prisma.usuario.findUnique({
       where: { email },
       include: { empresa: true },
@@ -54,7 +68,9 @@ export class AuthService {
       throw new ForbiddenException('Cuenta inactiva');
 
     if (user.empresaId && user.empresa?.estado !== 'ACTIVO') {
-      throw new ForbiddenException('La empresa está inactiva. Contacte con soporte.');
+      throw new ForbiddenException(
+        'La empresa está inactiva. Contacte con soporte.',
+      );
     }
 
     if (
@@ -72,7 +88,8 @@ export class AuthService {
     const rolesLibres = ['ADMIN_SISTEMA', 'RESELLER'];
     if (!rolesLibres.includes(user.rol) && user.empresa) {
       // Origin header tiene prioridad; si no resuelve, usa el brand enviado en el body
-      const expectedBrand = this.resolveBrandFromOrigin(origin) ?? bodyBrand ?? null;
+      const expectedBrand =
+        this.resolveBrandFromOrigin(origin) ?? bodyBrand ?? null;
       if (expectedBrand && user.empresa.brand !== expectedBrand) {
         throw new ForbiddenException(
           `Esta cuenta no pertenece a este portal. Accede desde el portal correcto.`,
@@ -82,7 +99,8 @@ export class AuthService {
 
     // ── Multi-sede logic ──────────────────────────────────────────
     // Solo ADMIN_SISTEMA y RESELLER pueden operar sin sede fija.
-    const isSuperAdmin = user.rol === 'ADMIN_SISTEMA' || user.rol === 'RESELLER';
+    const isSuperAdmin =
+      user.rol === 'ADMIN_SISTEMA' || user.rol === 'RESELLER';
 
     let sedeIdFinal: number | null = null;
     let requiresSedeSelection = false;
@@ -101,7 +119,13 @@ export class AuthService {
         // Admin de empresa: usar todas las sedes activas de su empresa.
         sedesActivas = await this.prisma.sede.findMany({
           where: { empresaId: user.empresaId, activo: true },
-          select: { id: true, nombre: true, codigo: true, esPrincipal: true, activo: true },
+          select: {
+            id: true,
+            nombre: true,
+            codigo: true,
+            esPrincipal: true,
+            activo: true,
+          },
           orderBy: [{ esPrincipal: 'desc' }, { id: 'asc' }],
         });
       } else {
@@ -110,11 +134,19 @@ export class AuthService {
           where: { usuarioId: user.id },
           include: {
             sede: {
-              select: { id: true, nombre: true, codigo: true, esPrincipal: true, activo: true },
+              select: {
+                id: true,
+                nombre: true,
+                codigo: true,
+                esPrincipal: true,
+                activo: true,
+              },
             },
           },
         });
-        sedesActivas = usuarioSedes.filter(us => us.sede.activo).map(us => us.sede);
+        sedesActivas = usuarioSedes
+          .filter((us) => us.sede.activo)
+          .map((us) => us.sede);
       }
 
       if (sedesActivas.length === 0) {
@@ -239,7 +271,7 @@ export class AuthService {
     const stored = await this.prisma.refreshToken.findUnique({
       where: { token: refreshToken },
       include: {
-        usuario: { include: { empresa: true } }
+        usuario: { include: { empresa: true } },
       },
     });
     if (!stored) throw new UnauthorizedException('Refresh token inválido');
@@ -254,8 +286,15 @@ export class AuthService {
       throw new ForbiddenException('Cuenta inactiva');
     }
 
-    if (user.rol !== 'ADMIN_SISTEMA' && user.rol !== 'RESELLER' && user.empresaId && user.empresa?.estado !== 'ACTIVO') {
-      throw new ForbiddenException('La empresa está inactiva. Contacte con soporte.');
+    if (
+      user.rol !== 'ADMIN_SISTEMA' &&
+      user.rol !== 'RESELLER' &&
+      user.empresaId &&
+      user.empresa?.estado !== 'ACTIVO'
+    ) {
+      throw new ForbiddenException(
+        'La empresa está inactiva. Contacte con soporte.',
+      );
     }
 
     // Recuperar sedeId del refresh token anterior (incluido en el payload al hacer login)
@@ -311,16 +350,29 @@ export class AuthService {
         sedesAsignadas: {
           select: {
             sede: {
-              select: { id: true, nombre: true, codigo: true, esPrincipal: true, activo: true }
-            }
-          }
+              select: {
+                id: true,
+                nombre: true,
+                codigo: true,
+                esPrincipal: true,
+                activo: true,
+              },
+            },
+          },
         },
         subModulosAsignados: {
           select: {
             subModulo: {
-              select: { id: true, codigo: true, nombre: true, moduloId: true, ruta: true, orden: true }
-            }
-          }
+              select: {
+                id: true,
+                codigo: true,
+                nombre: true,
+                moduloId: true,
+                ruta: true,
+                orden: true,
+              },
+            },
+          },
         },
         empresa: {
           select: {
@@ -348,14 +400,21 @@ export class AuthService {
                 tieneGestionProvisiones: true,
                 maxSedes: true,
                 modulosAsignados: {
-                  include: { modulo: true }
+                  include: { modulo: true },
                 },
                 subModulosAsignados: {
                   include: {
                     subModulo: {
-                      select: { id: true, codigo: true, nombre: true, moduloId: true, ruta: true, orden: true }
-                    }
-                  }
+                      select: {
+                        id: true,
+                        codigo: true,
+                        nombre: true,
+                        moduloId: true,
+                        ruta: true,
+                        orden: true,
+                      },
+                    },
+                  },
                 },
               },
             },
@@ -387,11 +446,15 @@ export class AuthService {
     }
 
     // Aplanar sedes
-    (usuario as any).sedes = (usuario.sedesAsignadas || []).map((us: any) => us.sede);
+    (usuario as any).sedes = (usuario.sedesAsignadas || []).map(
+      (us: any) => us.sede,
+    );
     delete (usuario as any).sedesAsignadas;
 
     // Aplanar submódulos del usuario
-    (usuario as any).subModulos = (usuario.subModulosAsignados || []).map((us: any) => us.subModulo);
+    (usuario as any).subModulos = (usuario.subModulosAsignados || []).map(
+      (us: any) => us.subModulo,
+    );
     delete (usuario as any).subModulosAsignados;
 
     return usuario;
@@ -451,8 +514,8 @@ export class AuthService {
                 tieneGestionLotes: true,
                 tieneGestionProvisiones: true,
                 modulosAsignados: {
-                  include: { modulo: true }
-                }
+                  include: { modulo: true },
+                },
               },
             },
             ubicacion: {
@@ -488,14 +551,20 @@ export class AuthService {
     }
 
     if (usuario?.empresa) {
-      usuario.empresa.whatsappApiTokenConfigured = Boolean(usuario.empresa.whatsappApiToken);
+      usuario.empresa.whatsappApiTokenConfigured = Boolean(
+        usuario.empresa.whatsappApiToken,
+      );
       delete usuario.empresa.whatsappApiToken;
     }
 
     return usuario;
   }
 
-  async forgotPassword(email: string, brand?: string): Promise<void> {
+  async forgotPassword(
+    email: string,
+    brand?: string,
+    origin?: string,
+  ): Promise<void> {
     const user = await (this.prisma.usuario as any).findUnique({
       where: { email },
       include: { empresa: { select: { brand: true } } },
@@ -505,7 +574,8 @@ export class AuthService {
 
     // DB es la fuente de verdad — empresa.brand tiene prioridad sobre lo que
     // envía el frontend, que depende del modo de arranque del dev server.
-    const resolvedBrand = user.empresa?.brand || brand;
+    const resolvedBrand =
+      user.empresa?.brand || this.resolveBrandFromOrigin(origin) || brand;
 
     const token = crypto.randomBytes(32).toString('hex');
     const expires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
@@ -518,36 +588,65 @@ export class AuthService {
       },
     });
 
-    const resendKey = this.config.get<string>('RESEND_API_KEY') || process.env.RESEND_API_KEY;
+    const resendKey =
+      this.config.get<string>('RESEND_API_KEY') || process.env.RESEND_API_KEY;
     if (!resendKey) return;
 
-    const brandConfigs: Record<string, { appName: string; fromEmail: string; frontendUrl: string; primaryColor: string }> = {
+    const defaultFromEmail =
+      this.config.get<string>('RESEND_FROM_EMAIL') ||
+      process.env.RESEND_FROM_EMAIL ||
+      'noreply@falconext.pe';
+
+    const brandConfigs: Record<
+      string,
+      {
+        appName: string;
+        fromEmail: string;
+        frontendUrl: string;
+        primaryColor: string;
+        replyToEmail: string;
+      }
+    > = {
       falconext: {
         appName: 'Falconext',
-        fromEmail: 'noreply@falconext.pe',
+        fromEmail: defaultFromEmail,
         frontendUrl: 'https://app.falconext.pe',
         primaryColor: '#3E2BC7',
+        replyToEmail: 'ventas@falconext.pe',
       },
       krezka: {
         appName: 'Krezka',
-        fromEmail: 'noreply@krezka.com',
+        fromEmail: defaultFromEmail,
         frontendUrl: 'https://app.krezka.com',
         primaryColor: '#00D0D4',
+        replyToEmail: 'ventas@krezka.com',
       },
     };
 
     const cfg = brandConfigs[resolvedBrand?.toLowerCase() ?? ''] ?? {
-      appName: this.config.get<string>('APP_NAME') || process.env.APP_NAME || 'Falconext',
-      fromEmail: this.config.get<string>('RESEND_FROM_EMAIL') || process.env.RESEND_FROM_EMAIL || 'noreply@falconext.pe',
-      frontendUrl: this.config.get<string>('FRONTEND_URL') || process.env.FRONTEND_URL || 'http://localhost:5173',
+      appName:
+        this.config.get<string>('APP_NAME') ||
+        process.env.APP_NAME ||
+        'Falconext',
+      fromEmail: defaultFromEmail,
+      frontendUrl:
+        this.config.get<string>('FRONTEND_URL') ||
+        process.env.FRONTEND_URL ||
+        'http://localhost:5173',
       primaryColor: '#3E2BC7',
+      replyToEmail:
+        this.config.get<string>('RESEND_REPLY_TO_EMAIL') ||
+        process.env.RESEND_REPLY_TO_EMAIL ||
+        'ventas@falconext.pe',
     };
 
     const resetUrl = `${cfg.frontendUrl}/restablecer-contrasena?token=${token}`;
 
     const { Resend } = await import('resend');
     const { render } = await import('@react-email/components');
-    const { RecuperacionPasswordEmail } = await import('./emails/RecuperacionPasswordEmail');
+    const { RecuperacionPasswordEmail } = await import(
+      './emails/RecuperacionPasswordEmail'
+    );
 
     const html = await render(
       RecuperacionPasswordEmail({
@@ -560,12 +659,23 @@ export class AuthService {
     );
 
     const resend = new Resend(resendKey);
-    await resend.emails.send({
+    const { error } = await resend.emails.send({
       from: `${cfg.appName} <${cfg.fromEmail}>`,
       to: [email],
       subject: `🔐 Recupera tu contraseña — ${cfg.appName}`,
       html,
+      replyTo: cfg.replyToEmail,
     });
+
+    if (error) {
+      this.logger.error(
+        `Error enviando recuperación de contraseña (${cfg.appName})`,
+        error,
+      );
+      throw new BadRequestException(
+        'No se pudo enviar el correo de recuperación. Intenta nuevamente.',
+      );
+    }
   }
 
   async resetPassword(token: string, newPassword: string): Promise<void> {
@@ -577,7 +687,9 @@ export class AuthService {
     });
 
     if (!user) {
-      throw new BadRequestException('El enlace de recuperación es inválido o ha expirado.');
+      throw new BadRequestException(
+        'El enlace de recuperación es inválido o ha expirado.',
+      );
     }
 
     const hashed = await bcrypt.hash(newPassword, 10);
@@ -592,6 +704,8 @@ export class AuthService {
     });
 
     // Invalidate all refresh tokens
-    await this.prisma.refreshToken.deleteMany({ where: { usuarioId: user.id } });
+    await this.prisma.refreshToken.deleteMany({
+      where: { usuarioId: user.id },
+    });
   }
 }

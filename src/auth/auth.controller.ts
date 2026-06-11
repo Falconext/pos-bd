@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Headers, HttpCode, Post, Res, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  HttpCode,
+  Post,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
@@ -68,15 +77,25 @@ export class AuthController {
 
   @HttpCode(200)
   @Post('forgot-password')
-  async forgotPassword(@Body() dto: ForgotPasswordDto) {
-    await this.authService.forgotPassword(dto.email, dto.brand);
-    return { message: 'Si el correo existe, recibirás un enlace de recuperación en breve.' };
+  async forgotPassword(
+    @Body() dto: ForgotPasswordDto,
+    @Headers('origin') origin?: string,
+    @Headers('host') host?: string,
+  ) {
+    await this.authService.forgotPassword(dto.email, dto.brand, origin || host);
+    return {
+      message:
+        'Si el correo existe, recibirás un enlace de recuperación en breve.',
+    };
   }
 
   @HttpCode(200)
   @Post('reset-password')
   async resetPassword(@Body() dto: ResetPasswordDto) {
     await this.authService.resetPassword(dto.token, dto.password);
-    return { message: 'Contraseña actualizada correctamente. Ya puedes iniciar sesión.' };
+    return {
+      message:
+        'Contraseña actualizada correctamente. Ya puedes iniciar sesión.',
+    };
   }
 }
