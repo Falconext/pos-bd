@@ -5,9 +5,38 @@ import { PrismaService } from 'src/prisma/prisma.service';
 export class SistemaFinanzasService {
     constructor(private readonly prisma: PrismaService) { }
 
+    // ── Brand scope resolver ───────────────────────────────────────────────────
+    // ADMIN_SISTEMA → usa sistemaNegocio del JWT (null = ve todo).
+    // ADMIN_EMPRESA → deriva brand de su empresa.
+    private async resolveScope(
+        sistemaNegocio: string | null | undefined,
+        sistemaProducto: string | null | undefined,
+        empresaId?: number | null,
+        rol?: string,
+    ): Promise<{ sn: string | null; sp: string | null }> {
+        let sn = sistemaNegocio ?? null;
+        const sp = sistemaProducto ?? null;
+        if (rol === 'ADMIN_EMPRESA' && empresaId) {
+            const emp = await this.prisma.empresa.findUnique({
+                where: { id: empresaId },
+                select: { brand: true },
+            });
+            sn = emp?.brand ?? null;
+        }
+        return { sn, sp };
+    }
+
     // ── DASHBOARD KPIs ─────────────────────────────────────────────────────────
 
-    async getDashboard(sistemaNegocio?: string | null, sistemaProducto?: string | null) {
+    async getDashboard(
+        sistemaNegocio?: string | null,
+        sistemaProducto?: string | null,
+        empresaId?: number | null,
+        rol?: string,
+    ) {
+        const { sn: resolvedSN, sp: resolvedSP } = await this.resolveScope(sistemaNegocio, sistemaProducto, empresaId, rol);
+        sistemaNegocio = resolvedSN;
+        sistemaProducto = resolvedSP;
         const ahora = new Date();
         const inicioMes = new Date(ahora.getFullYear(), ahora.getMonth(), 1);
         const inicioAnio = new Date(ahora.getFullYear(), 0, 1);
@@ -148,7 +177,17 @@ export class SistemaFinanzasService {
 
     // ── TENDENCIA MENSUAL (últimos N meses) ────────────────────────────────────
 
-    async getTendencia(meses = 12, sistemaNegocio?: string | null, sistemaProducto?: string | null) {
+    async getTendencia(
+        meses = 12,
+        sistemaNegocio?: string | null,
+        sistemaProducto?: string | null,
+        empresaId?: number | null,
+        rol?: string,
+    ) {
+        const { sn: resolvedSN, sp: resolvedSP } = await this.resolveScope(sistemaNegocio, sistemaProducto, empresaId, rol);
+        sistemaNegocio = resolvedSN;
+        sistemaProducto = resolvedSP;
+
         const ahora = new Date();
         const resultado: any[] = [];
         const empresaScopeWhere: any = {};

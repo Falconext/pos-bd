@@ -4,8 +4,10 @@ import { Reseller, ResellerRecarga, ResellerMovimiento, EstadoType, Prisma } fro
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { NotificacionesService } from 'src/notificaciones/notificaciones.service';
 import { SedeService } from 'src/sede/sede.service';
+import { S3Service } from 'src/s3/s3.service';
 import * as bcrypt from 'bcrypt';
 import { resolveBillingProvider } from 'src/common/utils/billing-provider';
+import axios from 'axios';
 
 // Falconext volume-based reseller pricing (cost the platform charges the reseller per active client/month).
 // Tiers: [1-5 clients, 6-15 clients, 16-30 clients, 31+ clients]
@@ -15,8 +17,18 @@ const FALCONEXT_VOLUME_PRICING: Record<string, [number, number, number, number]>
     'Corporativo': [59.90, 56.90, 52.90, 49.90],
 };
 
+function normalizePlanName(planNombre: string): string {
+    return String(planNombre || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+        .toLowerCase();
+}
+
 function getVolumeTierPrice(planNombre: string, clientesActivos: number): number | null {
-    const prices = FALCONEXT_VOLUME_PRICING[planNombre];
+    const normalized = normalizePlanName(planNombre);
+    const key = Object.keys(FALCONEXT_VOLUME_PRICING).find((item) => normalizePlanName(item) === normalized);
+    const prices = key ? FALCONEXT_VOLUME_PRICING[key] : undefined;
     if (!prices) return null;
     if (clientesActivos <= 5)  return prices[0];
     if (clientesActivos <= 15) return prices[1];
@@ -30,17 +42,23 @@ export class ResellerService {
         private prisma: PrismaService,
         private readonly notificacionesService: NotificacionesService,
         private readonly sedeService: SedeService,
+        private readonly s3: S3Service,
     ) { }
+
+    async uploadLogo(resellerId: number, file: Express.Multer.File): Promise<string> {
+        const ct = file.mimetype || 'image/jpeg';
+        const ext = ct.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg';
+        const key = `logos/reseller-${resellerId}/logo-${Date.now()}.${ext}`;
+        return this.s3.uploadImage(file.buffer, key, ct);
+    }
 
     private calculatePlanCostWithDiscount(planCost: number, discount: number) {
         return planCost * (1 - discount / 100);
     }
 
     private resolveClientCost(planNombre: string, planCosto: number, porcentajeDescuento: number, clientesActivos: number): number {
-        if (process.env.RESELLER_PRICING_MODEL === 'VOLUMEN') {
-            const tierPrice = getVolumeTierPrice(planNombre, clientesActivos);
-            if (tierPrice !== null) return tierPrice;
-        }
+        const tierPrice = getVolumeTierPrice(planNombre, clientesActivos);
+        if (tierPrice !== null) return tierPrice;
         return this.calculatePlanCostWithDiscount(planCosto, porcentajeDescuento);
     }
 
@@ -55,6 +73,15 @@ export class ResellerService {
         const graceDays = Math.max(0, Number(process.env.RESELLER_RENEWAL_GRACE_DAYS ?? 3));
         const maxRetries = Math.max(1, Number(process.env.RESELLER_RENEWAL_MAX_RETRIES ?? 3));
         return { graceDays, maxRetries };
+    }
+
+    private normalizeUbigeo(value: unknown): string | null {
+        if (Array.isArray(value)) {
+            const last = value.filter(Boolean).at(-1);
+            return last ? String(last).trim() : null;
+        }
+        const text = String(value ?? '').trim();
+        return text || null;
     }
 
     private getDiscountPolicy() {
@@ -291,6 +318,7 @@ export class ResellerService {
             where: { id },
             include: {
                 empresas: {
+                    where: { estado: { not: EstadoType.ELIMINADO } },
                     include: {
                         plan: true,
                         usuarios: {
@@ -368,6 +396,16 @@ export class ResellerService {
         data: {
             rut: string;
             razonSocial: string;
+            nombreComercial?: string;
+            direccion?: string;
+            logo?: string | null;
+            departamento?: string;
+            provincia?: string;
+            distrito?: string;
+            ubigeo?: string | string[];
+            rubroId?: number | string | null;
+            usaCodigoBarrasManual?: boolean;
+            usaDemo?: boolean;
             email: string;
             password?: string;
             representa?: string;
@@ -375,6 +413,7 @@ export class ResellerService {
             planId?: number | string;
             billingProvider?: 'QPSE' | 'APISUNAT' | 'JAMBLE';
             billingApiBaseUrl?: string;
+            billingApiDemoBaseUrl?: string;
             billingApiToken?: string;
             billingApiUser?: string;
             billingApiPassword?: string;
@@ -382,10 +421,12 @@ export class ResellerService {
             providerToken?: string;
             usuarioPse?: string;
             contrasenaPse?: string;
+            series?: Array<{ tipoDoc: string; serie: string; correlativo?: number; activo?: boolean }>;
         },
     ) {
         const inputRuc = String(data.rut || '').trim();
         const inputEmail = String(data.email || '').trim().toLowerCase();
+        const inputUbigeo = this.normalizeUbigeo(data.ubigeo);
         if (!inputRuc) throw new BadRequestException('El RUC es obligatorio.');
         if (!inputEmail) throw new BadRequestException('El email es obligatorio.');
 
@@ -437,7 +478,8 @@ export class ResellerService {
                 data: { saldo: { decrement: costoFinal } }
             });
 
-            const descripcionActivacion = process.env.RESELLER_PRICING_MODEL === 'VOLUMEN'
+            const usaPrecioPorVolumen = getVolumeTierPrice(plan.nombre, clientesConNuevo) !== null;
+            const descripcionActivacion = usaPrecioPorVolumen
                 ? `Activación cliente: ${data.razonSocial} - Plan: ${plan.nombre} (Tier ${this.getTierLabel(clientesConNuevo)})`
                 : `Activación cliente: ${data.razonSocial} - Plan: ${plan.nombre} (${descuento}% Off)`;
 
@@ -477,9 +519,12 @@ export class ResellerService {
             if (billingProvider === 'JAMBLE') {
                 const hasToken = !!String(data.billingApiToken || '').trim();
                 const hasBasicAuth = !!String(data.billingApiUser || '').trim() && !!String(data.billingApiPassword || '').trim();
-                if (!data.billingApiBaseUrl || (!hasToken && !hasBasicAuth)) {
+                const selectedBaseUrl = data.usaDemo
+                    ? String(data.billingApiDemoBaseUrl || data.billingApiBaseUrl || '').trim()
+                    : String(data.billingApiBaseUrl || '').trim();
+                if (!selectedBaseUrl || (!hasToken && !hasBasicAuth)) {
                     throw new BadRequestException(
-                        'Para JAMBLE debes enviar billingApiBaseUrl y token o usuario/clave API.',
+                        'Para JAMBLE debes enviar la URL API del entorno seleccionado y token o usuario/clave API.',
                     );
                 }
             }
@@ -489,14 +534,23 @@ export class ResellerService {
                 data: {
                     ruc: inputRuc, // RUC logic
                     razonSocial: data.razonSocial,
-                    nombreComercial: data.razonSocial,
-                    direccion: '-',
+                    nombreComercial: data.nombreComercial || data.razonSocial,
+                    direccion: data.direccion || '-',
+                    logo: data.logo || null,
+                    departamento: data.departamento || null,
+                    provincia: data.provincia || null,
+                    distrito: data.distrito || null,
+                    ubigeo: inputUbigeo,
+                    empresaUbigeo: inputUbigeo,
+                    rubroId: data.rubroId ? Number(data.rubroId) : null,
+                    usaCodigoBarrasManual: Boolean(data.usaCodigoBarrasManual),
                     fechaActivacion: new Date(),
                     fechaExpiracion: new Date(new Date().setDate(new Date().getDate() + 30)), // 30 days
                     planId: plan.id,
                     resellerId: resellerId,
                     billingProvider: billingProvider as any,
                     billingApiBaseUrl: data.billingApiBaseUrl || null,
+                    billingApiDemoBaseUrl: data.billingApiDemoBaseUrl || null,
                     billingApiToken: data.billingApiToken || null,
                     billingApiUser: data.billingApiUser || null,
                     billingApiPassword: data.billingApiPassword || null,
@@ -504,7 +558,7 @@ export class ResellerService {
                     providerToken: data.providerToken || null,
                     usuarioPse: data.usuarioPse || null,
                     contrasenaPse: data.contrasenaPse || null,
-                    usaDemo: billingProvider === 'APISUNAT',
+                    usaDemo: data.usaDemo !== undefined ? Boolean(data.usaDemo) : billingProvider === 'APISUNAT',
                     slugTienda: inputRuc + Math.floor(Math.random() * 1000), // Temp slug
                     costoActivacionReseller: costoFinal,
                     clientes: {
@@ -569,6 +623,22 @@ export class ResellerService {
                 }
             });
 
+            const validTipos = new Set(['01', '03', '07', '08', 'TICKET', 'NV', 'RH', 'CP', 'NP', 'OT', 'COT']);
+            const series = (data.series || [])
+                .map((item) => ({
+                    tipoDoc: String(item.tipoDoc || '').trim().toUpperCase(),
+                    serie: String(item.serie || '').trim().toUpperCase(),
+                    correlativo: Math.max(1, Number(item.correlativo || 1)),
+                    activo: item.activo !== false,
+                }))
+                .filter((item) => validTipos.has(item.tipoDoc) && item.serie.length >= 2);
+            if (series.length) {
+                await tx.empresaSerie.createMany({
+                    data: series.map((item) => ({ empresaId: empresa.id, ...item })),
+                    skipDuplicates: true,
+                });
+            }
+
             return empresa;
         }).catch((error: unknown) => {
             if (error instanceof PrismaClientKnownRequestError && error.code === 'P2002') {
@@ -585,6 +655,30 @@ export class ResellerService {
         }, empresa.id);
 
         return empresa;
+    }
+
+    async consultarDocumento(numero: string, tipo: 'DNI' | 'RUC') {
+        const cleanNumero = String(numero || '').replace(/\D/g, '');
+        const cleanTipo = String(tipo || '').toUpperCase() as 'DNI' | 'RUC';
+        if (cleanTipo === 'DNI' && cleanNumero.length !== 8) {
+            throw new BadRequestException('El DNI debe tener 8 dígitos.');
+        }
+        if (cleanTipo === 'RUC' && cleanNumero.length !== 11) {
+            throw new BadRequestException('El RUC debe tener 11 dígitos.');
+        }
+
+        const token = process.env.RENIEC_TOKEN;
+        if (!token) throw new BadRequestException('RENIEC_TOKEN no está configurado.');
+
+        const url = cleanTipo === 'DNI' ? 'https://apiperu.dev/api/dni' : 'https://apiperu.dev/api/ruc';
+        const body = cleanTipo === 'DNI' ? { dni: cleanNumero } : { ruc: cleanNumero };
+        const response = await axios.post(url, body, {
+            headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json',
+            },
+        });
+        return response.data?.data;
     }
 
     async getProfitabilityOverview(days = 30) {
@@ -770,7 +864,7 @@ export class ResellerService {
                             monto: -costoFinal,
                             estado: 'APLICADO',
                             intento: intentoActual,
-                            descripcion: process.env.RESELLER_PRICING_MODEL === 'VOLUMEN'
+                            descripcion: getVolumeTierPrice(empresa.plan.nombre, clientesActivos) !== null
                                 ? `Renovación mensual cliente: ${empresa.razonSocial} - Plan: ${empresa.plan.nombre} (Tier ${this.getTierLabel(clientesActivos)})`
                                 : `Renovación mensual cliente: ${empresa.razonSocial} - Plan: ${empresa.plan.nombre} (${descuento}% Off)`,
                         }
@@ -866,12 +960,16 @@ export class ResellerService {
         });
 
         const clientesSuspendidos = await this.prisma.empresa.count({
-            where: { resellerId, estado: { not: 'ACTIVO' } },
+            where: { resellerId, estado: { in: [EstadoType.INACTIVO, EstadoType.PLACEHOLDER] } },
+        });
+
+        const totalClientes = await this.prisma.empresa.count({
+            where: { resellerId, estado: { not: EstadoType.ELIMINADO } },
         });
 
         return {
             saldo: reseller.saldo,
-            totalClientes: reseller._count.empresas,
+            totalClientes,
             clientesActivos,
             clientesSuspendidos,
         };
@@ -1151,12 +1249,52 @@ export class ResellerService {
         });
     }
 
+    async deleteDemoClient(resellerId: number, empresaId: number) {
+        const empresa = await this.prisma.empresa.findFirst({
+            where: { id: empresaId, resellerId },
+            select: {
+                id: true,
+                razonSocial: true,
+                usaDemo: true,
+                estado: true,
+            },
+        });
+
+        if (!empresa || empresa.estado === EstadoType.ELIMINADO) {
+            throw new NotFoundException('Cliente no encontrado');
+        }
+
+        if (!empresa.usaDemo) {
+            throw new BadRequestException('Solo puedes eliminar clientes en modo demo. En producción usa inactivar/suspender.');
+        }
+
+        return this.prisma.empresa.update({
+            where: { id: empresaId },
+            data: {
+                estado: EstadoType.ELIMINADO,
+                usuarios: {
+                    updateMany: {
+                        where: {},
+                        data: { estado: EstadoType.INACTIVO },
+                    },
+                },
+            },
+            select: {
+                id: true,
+                razonSocial: true,
+                estado: true,
+                usaDemo: true,
+            },
+        });
+    }
+
     async updateClientConfig(
         resellerId: number,
         empresaId: number,
         data: {
             billingProvider?: 'QPSE' | 'APISUNAT' | 'JAMBLE';
             billingApiBaseUrl?: string | null;
+            billingApiDemoBaseUrl?: string | null;
             billingApiToken?: string | null;
             billingApiUser?: string | null;
             billingApiPassword?: string | null;
@@ -1168,6 +1306,7 @@ export class ResellerService {
             adminEmail?: string;
             adminCelular?: string;
             adminPassword?: string;
+            usaDemo?: boolean;
         },
     ) {
         const empresa = await this.prisma.empresa.findFirst({
@@ -1193,10 +1332,13 @@ export class ResellerService {
                     throw new BadRequestException('billingProvider inválido.');
                 }
                 updateEmpresa.billingProvider = provider as any;
-                updateEmpresa.usaDemo = provider === 'APISUNAT';
+                if (provider === 'APISUNAT') {
+                    updateEmpresa.usaDemo = true;
+                }
             }
 
             if (data.billingApiBaseUrl !== undefined) updateEmpresa.billingApiBaseUrl = data.billingApiBaseUrl || null;
+            if (data.billingApiDemoBaseUrl !== undefined) updateEmpresa.billingApiDemoBaseUrl = data.billingApiDemoBaseUrl || null;
             if (data.billingApiToken !== undefined) updateEmpresa.billingApiToken = data.billingApiToken || null;
             if (data.billingApiUser !== undefined) updateEmpresa.billingApiUser = data.billingApiUser || null;
             if (data.billingApiPassword !== undefined) updateEmpresa.billingApiPassword = data.billingApiPassword || null;
@@ -1204,6 +1346,7 @@ export class ResellerService {
             if (data.providerToken !== undefined) updateEmpresa.providerToken = data.providerToken || null;
             if (data.usuarioPse !== undefined) updateEmpresa.usuarioPse = data.usuarioPse || null;
             if (data.contrasenaPse !== undefined) updateEmpresa.contrasenaPse = data.contrasenaPse || null;
+            if (data.usaDemo !== undefined) updateEmpresa.usaDemo = Boolean(data.usaDemo);
 
             const updatedEmpresa = Object.keys(updateEmpresa).length
                 ? await tx.empresa.update({
@@ -1236,11 +1379,13 @@ export class ResellerService {
             if (
                 finalProvider === 'JAMBLE' &&
                 (
-                    !updatedEmpresa.billingApiBaseUrl ||
+                    !(updatedEmpresa.usaDemo
+                        ? (updatedEmpresa.billingApiDemoBaseUrl || updatedEmpresa.billingApiBaseUrl)
+                        : updatedEmpresa.billingApiBaseUrl) ||
                     (!updatedEmpresa.billingApiToken && !(updatedEmpresa.billingApiUser && updatedEmpresa.billingApiPassword))
                 )
             ) {
-                throw new BadRequestException('JAMBLE requiere billingApiBaseUrl y token o usuario/clave.');
+                throw new BadRequestException('JAMBLE requiere URL API del entorno seleccionado y token o usuario/clave.');
             }
 
             return tx.empresa.findUnique({
@@ -1266,6 +1411,16 @@ export class ResellerService {
             razonSocial?: string;
             adminEmail?: string;
             adminPassword?: string;
+            nombreComercial?: string;
+            direccion?: string;
+            logo?: string | null;
+            departamento?: string;
+            provincia?: string;
+            distrito?: string;
+            ubigeo?: string | string[];
+            rubroId?: number | null;
+            usaCodigoBarrasManual?: boolean;
+            usaDemo?: boolean;
         },
     ) {
         const empresa = await this.prisma.empresa.findFirst({
@@ -1276,8 +1431,42 @@ export class ResellerService {
 
         return this.prisma.$transaction(async (tx) => {
             const updateEmpresa: Prisma.EmpresaUpdateInput = {};
-            if (data.planId && data.planId !== empresa.planId) updateEmpresa.plan = { connect: { id: data.planId } };
+            if (data.planId !== undefined) {
+                const planId = Number(data.planId);
+                if (!Number.isInteger(planId) || planId <= 0) throw new BadRequestException('Plan inválido.');
+                if (planId !== empresa.planId) {
+                    const plan = await tx.plan.findUnique({ where: { id: planId }, select: { id: true } });
+                    if (!plan) throw new BadRequestException('El plan seleccionado no existe.');
+                    (updateEmpresa as any).planId = planId;
+                }
+            }
             if (data.razonSocial !== undefined) updateEmpresa.razonSocial = data.razonSocial;
+            if (data.nombreComercial !== undefined) updateEmpresa.nombreComercial = data.nombreComercial || null;
+            if (data.direccion !== undefined) updateEmpresa.direccion = data.direccion || '-';
+            if (data.logo !== undefined) updateEmpresa.logo = data.logo || null;
+            if (data.departamento !== undefined) updateEmpresa.departamento = data.departamento || null;
+            if (data.provincia !== undefined) updateEmpresa.provincia = data.provincia || null;
+            if (data.distrito !== undefined) updateEmpresa.distrito = data.distrito || null;
+            if (data.ubigeo !== undefined) {
+                const inputUbigeo = this.normalizeUbigeo(data.ubigeo);
+                updateEmpresa.ubigeo = inputUbigeo;
+                if (inputUbigeo) {
+                    const ubigeo = await tx.ubigeo.findUnique({ where: { codigo: inputUbigeo }, select: { codigo: true } });
+                    if (!ubigeo) throw new BadRequestException('El ubigeo seleccionado no existe.');
+                }
+                (updateEmpresa as any).empresaUbigeo = inputUbigeo || null;
+            }
+            if (data.rubroId !== undefined) {
+                const rubroId = data.rubroId === null || data.rubroId === undefined || data.rubroId === 0 ? null : Number(data.rubroId);
+                if (rubroId !== null && (!Number.isInteger(rubroId) || rubroId <= 0)) throw new BadRequestException('Rubro inválido.');
+                if (rubroId !== null) {
+                    const rubro = await tx.rubro.findUnique({ where: { id: rubroId }, select: { id: true } });
+                    if (!rubro) throw new BadRequestException('El rubro seleccionado no existe.');
+                }
+                (updateEmpresa as any).rubroId = rubroId;
+            }
+            if (data.usaCodigoBarrasManual !== undefined) updateEmpresa.usaCodigoBarrasManual = Boolean(data.usaCodigoBarrasManual);
+            if (data.usaDemo !== undefined) updateEmpresa.usaDemo = Boolean(data.usaDemo);
             if (data.telefono !== undefined) updateEmpresa.whatsappTienda = data.telefono;
 
             if (Object.keys(updateEmpresa).length) {
@@ -1297,8 +1486,65 @@ export class ResellerService {
 
             return tx.empresa.findUnique({
                 where: { id: empresaId },
-                include: { plan: true, usuarios: { where: { rol: 'ADMIN_EMPRESA' }, take: 1, select: { id: true, nombre: true, email: true } } },
+                include: { plan: true, rubro: true, usuarios: { where: { rol: 'ADMIN_EMPRESA' }, take: 1, select: { id: true, nombre: true, email: true, celular: true } } },
             });
         });
+    }
+
+    async updateClientAmbiente(resellerId: number, empresaId: number, usaDemo: boolean) {
+        const empresa = await this.prisma.empresa.findFirst({
+            where: { id: empresaId, resellerId },
+            select: { id: true },
+        });
+        if (!empresa) throw new NotFoundException('Cliente no encontrado o no pertenece a este distribuidor');
+        return this.prisma.empresa.update({
+            where: { id: empresaId },
+            data: { usaDemo: Boolean(usaDemo) },
+            select: { id: true, ruc: true, razonSocial: true, usaDemo: true },
+        });
+    }
+
+    async getClientSeries(resellerId: number, empresaId: number) {
+        const empresa = await this.prisma.empresa.findFirst({
+            where: { id: empresaId, resellerId },
+            select: { id: true },
+        });
+        if (!empresa) throw new NotFoundException('Cliente no encontrado o no pertenece a este distribuidor');
+
+        return this.prisma.empresaSerie.findMany({
+            where: { empresaId },
+            orderBy: [{ tipoDoc: 'asc' }, { serie: 'asc' }],
+        });
+    }
+
+    async upsertClientSeries(
+        resellerId: number,
+        empresaId: number,
+        series: Array<{ tipoDoc: string; serie: string; correlativo?: number; activo?: boolean }>,
+    ) {
+        const empresa = await this.prisma.empresa.findFirst({
+            where: { id: empresaId, resellerId },
+            select: { id: true },
+        });
+        if (!empresa) throw new NotFoundException('Cliente no encontrado o no pertenece a este distribuidor');
+
+        const validTipos = new Set(['01', '03', '07', '08', 'TICKET', 'NV', 'RH', 'CP', 'NP', 'OT', 'COT']);
+        const cleanSeries = series
+            .map((item) => ({
+                tipoDoc: String(item.tipoDoc || '').trim().toUpperCase(),
+                serie: String(item.serie || '').trim().toUpperCase(),
+                correlativo: Math.max(1, Number(item.correlativo || 1)),
+                activo: item.activo !== false,
+            }))
+            .filter((item) => validTipos.has(item.tipoDoc) && item.serie.length >= 2);
+
+        if (!cleanSeries.length) throw new BadRequestException('Debes enviar al menos una serie válida.');
+
+        await this.prisma.$transaction(async (tx) => {
+            await tx.empresaSerie.deleteMany({ where: { empresaId } });
+            await tx.empresaSerie.createMany({ data: cleanSeries.map((s) => ({ empresaId, ...s })) });
+        });
+
+        return this.getClientSeries(resellerId, empresaId);
     }
 }

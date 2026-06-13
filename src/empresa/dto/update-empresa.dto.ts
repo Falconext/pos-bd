@@ -91,6 +91,10 @@ export class UpdateEmpresaDto {
 
   @IsOptional()
   @IsString()
+  billingApiDemoBaseUrl?: string;
+
+  @IsOptional()
+  @IsString()
   billingApiToken?: string;
 
   @IsOptional()

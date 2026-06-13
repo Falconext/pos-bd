@@ -10,18 +10,29 @@ import { User } from 'src/common/decorators/user.decorator';
 
 @Controller('sistema-finanzas')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('ADMIN_SISTEMA')
+@Roles('ADMIN_SISTEMA', 'ADMIN_EMPRESA')
 export class SistemaFinanzasController {
     constructor(private readonly service: SistemaFinanzasService) { }
 
     @Get('dashboard')
     getDashboard(@User() user: any) {
-        return this.service.getDashboard(user.sistemaNegocio ?? null, user.sistemaProducto ?? null);
+        return this.service.getDashboard(
+            user.sistemaNegocio ?? null,
+            user.sistemaProducto ?? null,
+            user.empresaId ?? null,
+            user.rol,
+        );
     }
 
     @Get('tendencia')
     getTendencia(@User() user: any, @Query('meses') meses?: string) {
-        return this.service.getTendencia(meses ? Number(meses) : 12, user.sistemaNegocio ?? null, user.sistemaProducto ?? null);
+        return this.service.getTendencia(
+            meses ? Number(meses) : 12,
+            user.sistemaNegocio ?? null,
+            user.sistemaProducto ?? null,
+            user.empresaId ?? null,
+            user.rol,
+        );
     }
 
     @Get('gastos')

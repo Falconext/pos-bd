@@ -9,10 +9,14 @@ export class BrandingController {
   @Get('public')
   async getPublicBranding(
     @Query('host') host: string | undefined,
+    @Query('resellerId') resellerId: string | undefined,
     @Headers('host') headerHost: string | undefined,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const branding = await this.brandingService.getPublicBranding(host || headerHost);
+    const parsedResellerId = resellerId ? parseInt(resellerId, 10) : NaN;
+    const branding = !isNaN(parsedResellerId)
+      ? await this.brandingService.getPublicBrandingByResellerId(parsedResellerId)
+      : await this.brandingService.getPublicBranding(host || headerHost);
     res.locals.message = 'Branding cargado';
     return branding;
   }

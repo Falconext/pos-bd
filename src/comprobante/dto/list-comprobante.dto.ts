@@ -63,4 +63,10 @@ export class ListComprobanteDto {
   @IsInt()
   @Min(1)
   sedeId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  usuarioId?: number;
 }

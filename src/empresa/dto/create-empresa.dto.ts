@@ -108,6 +108,10 @@ export class CreateEmpresaDto {
 
   @IsOptional()
   @IsString()
+  billingApiDemoBaseUrl?: string;
+
+  @IsOptional()
+  @IsString()
   billingApiToken?: string;
 
   @IsOptional()

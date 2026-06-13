@@ -368,6 +368,7 @@ export class EmpresaService {
         providerId: data.providerId || null,
         billingProvider: data.billingProvider === 'JAMBLE' ? 'JAMBLE' : 'QPSE',
         billingApiBaseUrl: data.billingApiBaseUrl || null,
+        billingApiDemoBaseUrl: data.billingApiDemoBaseUrl || null,
         billingApiToken: data.billingApiToken || null,
         billingApiUser: data.billingApiUser || null,
         billingApiPassword: data.billingApiPassword || null,
@@ -743,6 +744,8 @@ export class EmpresaService {
       }
       if (dto.billingApiBaseUrl !== undefined)
         updateData.billingApiBaseUrl = dto.billingApiBaseUrl;
+      if (dto.billingApiDemoBaseUrl !== undefined)
+        updateData.billingApiDemoBaseUrl = dto.billingApiDemoBaseUrl;
       if (dto.billingApiToken !== undefined)
         updateData.billingApiToken = dto.billingApiToken;
       if (dto.billingApiUser !== undefined)

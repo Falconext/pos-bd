@@ -16,12 +16,15 @@ export class VentasController {
         @User() user: any,
         @Query('fecha') fecha: string,
         @Query('sedeId') sedeId?: string,
+        @Query('usuarioId') usuarioId?: string,
     ) {
         const fechaFinal = fecha || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+        const isAdmin = user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
         return this.service.panelVentas({
             empresaId: user.empresaId,
             fecha: fechaFinal,
             sedeId: sedeId ? Number(sedeId) : undefined,
+            usuarioId: isAdmin ? (usuarioId ? Number(usuarioId) : undefined) : user.id,
         });
     }
 }

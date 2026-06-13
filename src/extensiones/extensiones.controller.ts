@@ -35,7 +35,7 @@ export class ExtensionesController {
   }
 
   @Get('ubigeos')
-  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA', 'RESELLER')
   async listarUbigeos() {
     const data = await this.prisma.ubigeo.findMany({
       select: {
@@ -140,7 +140,7 @@ export class ExtensionesController {
   }
 
   @Get('rubros')
-  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA', 'RESELLER')
   async listarRubros() {
     const rubros = await this.prisma.rubro.findMany({
       orderBy: { nombre: 'asc' },

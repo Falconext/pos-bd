@@ -89,7 +89,7 @@ export class ComprasService {
                     subtotal,
                     igv: igvTotal,
                     total,
-                    saldo: total - (Number(data.montoPagadoInicial) || 0),
+                    saldo: Math.max(0, parseFloat((total - (Number(data.montoPagadoInicial) || 0)).toFixed(2))),
                     estado: 'REGISTRADO',
                     estadoPago: (Number(data.montoPagadoInicial) || 0) >= total ? 'COMPLETADO' : (data.montoPagadoInicial || 0) > 0 ? 'PAGO_PARCIAL' : 'PENDIENTE_PAGO',
                     observaciones: data.observaciones,
@@ -293,8 +293,8 @@ export class ComprasService {
         if (monto <= 0) throw new BadRequestException('El monto debe ser mayor a 0');
         if (monto > Number(compra.saldo) + 0.1) throw new BadRequestException('El monto excede el saldo pendiente');
 
-        const nuevoSaldo = Number(compra.saldo) - monto;
-        const nuevoEstadoPago = nuevoSaldo <= 0.1 ? 'COMPLETADO' : 'PAGO_PARCIAL';
+        const nuevoSaldo = Math.max(0, parseFloat((Number(compra.saldo) - monto).toFixed(2)));
+        const nuevoEstadoPago = nuevoSaldo <= 0 ? 'COMPLETADO' : 'PAGO_PARCIAL';
 
         // Transaction
         const result = await this.prisma.$transaction(async (tx) => {

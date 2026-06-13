@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, IsDateString, IsInt, IsNumber, Min } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsDateString, IsInt, IsNumber, Min, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export enum EstadoDespacho {
@@ -48,6 +48,9 @@ export class CreateEnvioDespachoDto {
     @IsOptional() @IsString() dniDestinatario?: string;
     @IsOptional() @IsString() contenidoPaquete?: string;
     @IsOptional() @Type(() => Number) @IsNumber() @Min(0) montoCOD?: number;
+    @IsOptional() @Type(() => Number) @IsNumber() @Min(0) costoEnvio?: number;
+    @IsOptional() @IsIn(['CLIENTE', 'NEGOCIO']) pagarFlete?: 'CLIENTE' | 'NEGOCIO';
+    @IsOptional() @IsIn(['ITEM_ENVIO', 'ADELANTO', 'NEGOCIO']) aplicacionMontoCliente?: 'ITEM_ENVIO' | 'ADELANTO' | 'NEGOCIO';
 }
 
 export class UpdateEnvioDespachoDto extends CreateEnvioDespachoDto {}

@@ -89,19 +89,22 @@ function resolverEstadoPagoComprobante(
 export class VentasService {
     constructor(private readonly prisma: PrismaService) {}
 
-    async panelVentas(params: { empresaId: number; fecha: string; sedeId?: number }) {
-        const { empresaId, fecha, sedeId } = params;
+    async panelVentas(params: { empresaId: number; fecha: string; sedeId?: number; usuarioId?: number }) {
+        const { empresaId, fecha, sedeId, usuarioId } = params;
 
         const inicioLima = new Date(`${fecha}T00:00:00-05:00`);
         const finLima = new Date(`${fecha}T23:59:59-05:00`);
 
         const sedeFilter = sedeId ? { sedeId } : {};
+        const comprobanteUsuarioFilter = usuarioId ? { usuarioId } : {};
+        const pedidoUsuarioFilter = usuarioId ? { vendedorId: usuarioId } : {};
 
         const [comprobantesRaw, pedidosRaw] = await Promise.all([
             this.prisma.comprobante.findMany({
                 where: {
                     empresaId,
                     ...sedeFilter,
+                    ...comprobanteUsuarioFilter,
                     fechaEmision: { gte: inicioLima, lte: finLima },
                     tipoDoc: { in: [...TIPOS_SUNAT, ...TIPOS_INFORMALES] },
                     estadoEnvioSunat: { not: 'ANULADO' },
@@ -156,6 +159,7 @@ export class VentasService {
                 where: {
                     empresaId,
                     ...sedeFilter,
+                    ...pedidoUsuarioFilter,
                     creadoEn: { gte: inicioLima, lte: finLima },
                 },
                 orderBy: { creadoEn: 'desc' },

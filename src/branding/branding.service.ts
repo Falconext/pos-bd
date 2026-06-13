@@ -83,13 +83,69 @@ export class BrandingService {
       });
 
       reseller =
-        candidates.find((item) => this.normalizeHost(item.dominioPersonalizado || '') === host) || null;
+        candidates.find((item) =>
+          this.hostMatches(item.dominioPersonalizado || '', host),
+        ) || null;
     }
 
     if (!reseller) {
       return defaults;
     }
 
+    return this.mergeResellerBranding(reseller, defaults, `https://${host}`);
+  }
+
+  async getPublicBrandingByResellerId(resellerId: number): Promise<PublicBranding> {
+    const defaults = this.getDefaults('falconext');
+
+    const reseller = await this.prisma.reseller.findUnique({
+      where: { id: resellerId, activo: true },
+      select: {
+        id: true,
+        codigo: true,
+        nombre: true,
+        dominioPersonalizado: true,
+        whiteLabelNombre: true,
+        whiteLabelLogoUrl: true,
+        whiteLabelLogoWhiteUrl: true,
+        whiteLabelFaviconUrl: true,
+        whiteLabelColorPrimario: true,
+        whiteLabelColorSecundario: true,
+        whiteLabelWebsite: true,
+        whiteLabelEmail: true,
+        whiteLabelTelefono: true,
+        whiteLabelWhatsapp: true,
+      },
+    });
+
+    if (!reseller) return defaults;
+
+    const dashboardUrl = reseller.dominioPersonalizado
+      ? `https://${reseller.dominioPersonalizado}`
+      : defaults.dashboardUrl;
+
+    return this.mergeResellerBranding(reseller, defaults, dashboardUrl);
+  }
+
+  private mergeResellerBranding(
+    reseller: {
+      id: number;
+      codigo?: string | null;
+      nombre: string;
+      whiteLabelNombre?: string | null;
+      whiteLabelLogoUrl?: string | null;
+      whiteLabelLogoWhiteUrl?: string | null;
+      whiteLabelFaviconUrl?: string | null;
+      whiteLabelColorPrimario?: string | null;
+      whiteLabelColorSecundario?: string | null;
+      whiteLabelWebsite?: string | null;
+      whiteLabelEmail?: string | null;
+      whiteLabelTelefono?: string | null;
+      whiteLabelWhatsapp?: string | null;
+    },
+    defaults: PublicBranding,
+    dashboardUrl: string,
+  ): PublicBranding {
     return {
       ...defaults,
       key: reseller.codigo?.toLowerCase?.() || `reseller-${reseller.id}`,
@@ -101,22 +157,40 @@ export class BrandingService {
       phone: reseller.whiteLabelTelefono || defaults.phone,
       whatsapp: reseller.whiteLabelWhatsapp || defaults.whatsapp,
       logo: reseller.whiteLabelLogoUrl || defaults.logo,
-      logoWhite: reseller.whiteLabelLogoWhiteUrl || reseller.whiteLabelLogoUrl || defaults.logoWhite,
+      logoWhite:
+        reseller.whiteLabelLogoWhiteUrl ||
+        reseller.whiteLabelLogoUrl ||
+        defaults.logoWhite,
       favicon: reseller.whiteLabelFaviconUrl || defaults.favicon,
       primaryColor: reseller.whiteLabelColorPrimario || defaults.primaryColor,
       secondaryColor: reseller.whiteLabelColorSecundario || defaults.secondaryColor,
-      dashboardUrl: `https://${host}`,
+      dashboardUrl,
     };
   }
 
   private normalizeHost(rawHost?: string): string {
-    const source = String(rawHost || '').trim().toLowerCase();
+    const source = String(rawHost || '')
+      .trim()
+      .toLowerCase();
     const stripped = source
       .replace(/^https?:\/\//, '')
       .replace(/^www\./, '')
       .split('/')[0]
       .split(':')[0];
     return stripped;
+  }
+
+  private normalizeHostCompact(rawHost?: string): string {
+    return this.normalizeHost(rawHost).replace(/[^a-z0-9]/g, '');
+  }
+
+  private hostMatches(savedHost: string, requestHost: string): boolean {
+    const saved = this.normalizeHost(savedHost);
+    const requested = this.normalizeHost(requestHost);
+    return (
+      saved === requested ||
+      this.normalizeHostCompact(saved) === this.normalizeHostCompact(requested)
+    );
   }
 
   private getBaseBrandByHost(host: string): 'falconext' | 'krezka' {

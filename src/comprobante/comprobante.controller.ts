@@ -83,13 +83,13 @@ export class ComprobanteController {
       );
     }
     const isAdmin = user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
-    // Usuario normal → forzado a ver solo su sede
-    // Admin → puede pasar ?sedeId=X para filtrar, o dejar vacío para ver todas las sedes
     const sedeId = isAdmin ? (query.sedeId ?? null) : user.sedeId;
+    const usuarioId = isAdmin ? query.usuarioId : user.id;
 
     const resultado = await this.service.listar({
       empresaId: user.empresaId,
       sedeId,
+      usuarioId,
       tipoComprobante: query.tipoComprobante,
       search: query.search,
       page: query.page,
@@ -445,8 +445,11 @@ export class ComprobanteController {
 
   @Post(':id/generar-pdf')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
-  async generarPdf(@Param('id', ParseIntPipe) id: number) {
-    const pdfUrl = await this.service.generarYSubirPdf(id);
+  async generarPdf(@Param('id', ParseIntPipe) id: number, @User() user: any) {
+    const pdfUrl = await this.service.generarYSubirPdf(id, {
+      empresaId: user.empresaId,
+      rol: user.rol,
+    });
     return { pdfUrl };
   }
 
@@ -455,9 +458,13 @@ export class ComprobanteController {
   async enviarEmail(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { email: string },
+    @User() user: any,
   ) {
     if (!body?.email) throw new BadRequestException('El campo email es requerido');
-    await this.service.enviarEmailComprobante(id, body.email);
+    await this.service.enviarEmailComprobante(id, body.email, {
+      empresaId: user.empresaId,
+      rol: user.rol,
+    });
     return { message: 'Correo enviado correctamente' };
   }
 

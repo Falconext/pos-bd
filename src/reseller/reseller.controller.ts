@@ -1,8 +1,10 @@
-import { Controller, Get, Post, Body, Param, UseGuards, Request, ParseIntPipe, Patch, Query } from '@nestjs/common';
+import { Controller, Delete, Get, Post, Body, Param, UseGuards, Request, ParseIntPipe, Patch, Query, UseInterceptors, UploadedFile } from '@nestjs/common';
 import { ResellerService } from './reseller.service';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
 import { Roles } from 'src/common/decorators/roles.decorator';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { imageUploadOptions } from 'src/common/utils/multer.config';
 
 @Controller('resellers')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -109,10 +111,35 @@ export class ResellerController {
     }
 
     @Roles('ADMIN_SISTEMA', 'RESELLER')
+    @Post(':id/upload-logo')
+    @UseInterceptors(FileInterceptor('file', imageUploadOptions))
+    async uploadLogo(
+        @Param('id', ParseIntPipe) id: number,
+        @UploadedFile() file: Express.Multer.File,
+        @Request() req: any,
+    ) {
+        await this.resellerService.validateResellerAccess(req.user.id, req.user.rol, id);
+        const url = await this.resellerService.uploadLogo(id, file);
+        return { url };
+    }
+
+    @Roles('ADMIN_SISTEMA', 'RESELLER')
     @Post(':id/clientes')
     async createClient(@Param('id', ParseIntPipe) id: number, @Body() body: any, @Request() req: any) {
         await this.resellerService.validateResellerAccess(req.user.id, req.user.rol, id);
         return this.resellerService.createClient(id, body);
+    }
+
+    @Roles('ADMIN_SISTEMA', 'RESELLER')
+    @Get(':id/consultar-documento')
+    async consultarDocumento(
+        @Param('id', ParseIntPipe) id: number,
+        @Query('tipo') tipo: 'DNI' | 'RUC',
+        @Query('numero') numero: string,
+        @Request() req: any,
+    ) {
+        await this.resellerService.validateResellerAccess(req.user.id, req.user.rol, id);
+        return this.resellerService.consultarDocumento(numero, tipo);
     }
 
     @Roles('ADMIN_SISTEMA', 'RESELLER')
@@ -139,6 +166,17 @@ export class ResellerController {
     }
 
     @Roles('ADMIN_SISTEMA', 'RESELLER')
+    @Delete(':id/clientes/:clienteId')
+    async deleteDemoClient(
+        @Param('id', ParseIntPipe) id: number,
+        @Param('clienteId', ParseIntPipe) clienteId: number,
+        @Request() req: any,
+    ) {
+        await this.resellerService.validateResellerAccess(req.user.id, req.user.rol, id);
+        return this.resellerService.deleteDemoClient(id, clienteId);
+    }
+
+    @Roles('ADMIN_SISTEMA', 'RESELLER')
     @Patch(':id/clientes/:clienteId')
     async updateClient(
         @Param('id', ParseIntPipe) id: number,
@@ -160,5 +198,40 @@ export class ResellerController {
     ) {
         await this.resellerService.validateResellerAccess(req.user.id, req.user.rol, id);
         return this.resellerService.updateClientConfig(id, clienteId, body);
+    }
+
+    @Roles('ADMIN_SISTEMA', 'RESELLER')
+    @Patch(':id/clientes/:clienteId/ambiente')
+    async updateClientAmbiente(
+        @Param('id', ParseIntPipe) id: number,
+        @Param('clienteId', ParseIntPipe) clienteId: number,
+        @Body() body: { usaDemo: boolean },
+        @Request() req: any,
+    ) {
+        await this.resellerService.validateResellerAccess(req.user.id, req.user.rol, id);
+        return this.resellerService.updateClientAmbiente(id, clienteId, body.usaDemo);
+    }
+
+    @Roles('ADMIN_SISTEMA', 'RESELLER')
+    @Get(':id/clientes/:clienteId/series')
+    async getClientSeries(
+        @Param('id', ParseIntPipe) id: number,
+        @Param('clienteId', ParseIntPipe) clienteId: number,
+        @Request() req: any,
+    ) {
+        await this.resellerService.validateResellerAccess(req.user.id, req.user.rol, id);
+        return this.resellerService.getClientSeries(id, clienteId);
+    }
+
+    @Roles('ADMIN_SISTEMA', 'RESELLER')
+    @Patch(':id/clientes/:clienteId/series')
+    async updateClientSeries(
+        @Param('id', ParseIntPipe) id: number,
+        @Param('clienteId', ParseIntPipe) clienteId: number,
+        @Body() body: { series: Array<{ tipoDoc: string; serie: string; correlativo?: number; activo?: boolean }> },
+        @Request() req: any,
+    ) {
+        await this.resellerService.validateResellerAccess(req.user.id, req.user.rol, id);
+        return this.resellerService.upsertClientSeries(id, clienteId, body.series || []);
     }
 }

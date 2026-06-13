@@ -150,6 +150,7 @@ export class EnviarSunatService {
         providerToken: true,
         billingProvider: true,
         billingApiBaseUrl: true,
+        billingApiDemoBaseUrl: true,
         billingApiToken: true,
         billingApiUser: true,
         billingApiPassword: true,
@@ -163,6 +164,7 @@ export class EnviarSunatService {
       providerToken: string | null;
       billingProvider: string | null;
       billingApiBaseUrl: string | null;
+      billingApiDemoBaseUrl: string | null;
       billingApiToken: string | null;
       billingApiUser: string | null;
       billingApiPassword: string | null;
@@ -173,7 +175,11 @@ export class EnviarSunatService {
     const providerToken = String(empresa?.providerToken || '').trim();
     const billingProvider = resolveBillingProvider(empresa);
     const usaDemo = empresa?.usaDemo ?? false;
-    const jambleBaseUrl = String(empresa?.billingApiBaseUrl || '').trim();
+    const jambleBaseUrl = String(
+      usaDemo
+        ? (empresa?.billingApiDemoBaseUrl || empresa?.billingApiBaseUrl || '')
+        : (empresa?.billingApiBaseUrl || ''),
+    ).trim();
     const jambleToken = String(empresa?.billingApiToken || '').trim();
     const jambleUser = String(empresa?.billingApiUser || '').trim();
     const jamblePassword = String(empresa?.billingApiPassword || '').trim();
@@ -188,7 +194,7 @@ export class EnviarSunatService {
     } else if (isJambleProvider(billingProvider)) {
       if (!jambleBaseUrl) {
         throw new HttpException(
-          'Proveedor JAMBLE: falta billingApiBaseUrl en la empresa.',
+          'Proveedor JAMBLE: falta URL API para el entorno seleccionado en la empresa.',
           400,
         );
       }
@@ -2596,6 +2602,7 @@ export class EnviarSunatService {
           providerToken: true,
           billingProvider: true,
           billingApiBaseUrl: true,
+          billingApiDemoBaseUrl: true,
           billingApiToken: true,
           billingApiUser: true,
           billingApiPassword: true,
@@ -2608,6 +2615,7 @@ export class EnviarSunatService {
         providerToken: string | null;
         billingProvider: string | null;
         billingApiBaseUrl: string | null;
+        billingApiDemoBaseUrl: string | null;
         billingApiToken: string | null;
         billingApiUser: string | null;
         billingApiPassword: string | null;
@@ -2618,7 +2626,11 @@ export class EnviarSunatService {
       const providerToken = String(empresaCreds?.providerToken || '').trim();
       const billingProvider = resolveBillingProvider(empresaCreds);
       const usaDemo = empresaCreds?.usaDemo ?? false;
-      const jambleBaseUrl = String(empresaCreds?.billingApiBaseUrl || '').trim();
+      const jambleBaseUrl = String(
+        usaDemo
+          ? (empresaCreds?.billingApiDemoBaseUrl || empresaCreds?.billingApiBaseUrl || '')
+          : (empresaCreds?.billingApiBaseUrl || ''),
+      ).trim();
       const jambleToken = String(empresaCreds?.billingApiToken || '').trim();
       const jambleUser = String(empresaCreds?.billingApiUser || '').trim();
       const jamblePassword = String(empresaCreds?.billingApiPassword || '').trim();
@@ -2649,7 +2661,7 @@ export class EnviarSunatService {
 
       if (isJambleProvider(billingProvider)) {
         if (!jambleBaseUrl) {
-          throw new HttpException('Proveedor JAMBLE: falta billingApiBaseUrl en la empresa.', 400);
+          throw new HttpException('Proveedor JAMBLE: falta URL API para el entorno seleccionado en la empresa.', 400);
         }
         if (!jambleToken && !(jambleUser && jamblePassword)) {
           throw new HttpException(

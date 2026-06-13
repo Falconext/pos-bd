@@ -73,6 +73,7 @@ model Empresa {
   providerToken           String?
   billingProvider         BillingProvider               @default(QPSE)
   billingApiBaseUrl       String?
+  billingApiDemoBaseUrl   String?
   billingApiToken         String?
   billingApiUser          String?
   billingApiPassword      String?
@@ -168,6 +169,7 @@ model Empresa {
   gastosOperativos    GastoOperativo[]
   comisionesVendedor  ComisionVendedor[]
   campanas            CampanaMarketing[]
+  series              EmpresaSerie[]
 
   @@index([providerToken])
   @@index([slugTienda])
@@ -175,6 +177,22 @@ model Empresa {
   @@index([producto])
   @@index([brand, producto])
   @@index([whatsappProvider])
+}
+
+model EmpresaSerie {
+  id            Int      @id @default(autoincrement())
+  empresaId     Int
+  tipoDoc       String
+  serie         String
+  correlativo   Int      @default(1)
+  activo        Boolean  @default(true)
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  @@unique([empresaId, tipoDoc, serie])
+  @@index([empresaId, tipoDoc, activo])
 }
 
 model Usuario {
@@ -1295,6 +1313,7 @@ enum EstadoType {
   ACTIVO
   INACTIVO
   PLACEHOLDER
+  ELIMINADO
 }
 
 enum TipoNota {
@@ -1447,6 +1466,9 @@ model EnvioDespacho {
   dniDestinatario    String? // DNI/documento del destinatario
   contenidoPaquete   String? // Descripción del contenido (ej: "1 Caja")
   montoCOD           Float?  // Monto a cobrar en destino (Shalom COD)
+  costoEnvio         Float?  @default(0) // Monto cobrado al cliente o absorbido por el negocio
+  pagarFlete         String? @default("NEGOCIO") // CLIENTE | NEGOCIO
+  aplicacionMontoCliente String? @default("NEGOCIO") // ITEM_ENVIO | ADELANTO | NEGOCIO
   creadoEn           DateTime       @default(now())
   actualizadoEn      DateTime       @updatedAt
 

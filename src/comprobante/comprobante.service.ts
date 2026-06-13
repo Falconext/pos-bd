@@ -23,6 +23,8 @@ import { ComisionesService } from '../comisiones/comisiones.service';
 export class ComprobanteService {
   private readonly logger = new Logger(ComprobanteService.name);
 
+  private readonly adminSistemaRole = 'ADMIN_SISTEMA';
+
   private getJambleCorrelativoFloor(empresaId: number, serie: string): number | null {
     // Format:
     // JAMBLE_CORRELATIVO_FLOOR="43:B001:60,43:F001:16,50:B001:120"
@@ -75,6 +77,7 @@ export class ComprobanteService {
   async listar(params: {
     empresaId: number;
     sedeId?: number;
+    usuarioId?: number;
     tipoComprobante: 'FORMAL' | 'INFORMAL' | 'COTIZACION' | 'TODOS';
     search?: string;
     page?: number;
@@ -89,6 +92,7 @@ export class ComprobanteService {
   }) {
     const {
       empresaId,
+      usuarioId,
       tipoComprobante,
       search,
       page = 1,
@@ -177,6 +181,7 @@ export class ComprobanteService {
       const where: any = {
         empresaId,
         ...sedeFilter,
+        ...(usuarioId ? { usuarioId } : {}),
         tipoDoc: { in: tipoDoc ? [tipoDoc] : tiposPermitidos },
         ...(search
           ? {
@@ -668,6 +673,14 @@ export class ComprobanteService {
           throw new BadRequestException('Tipo de documento no reconocido');
       }
 
+      const configuredSerie = await this.prisma.empresaSerie.findFirst({
+        where: { empresaId, tipoDoc, activo: true },
+        orderBy: { id: 'asc' },
+      });
+      if (configuredSerie?.serie) {
+        serie = configuredSerie.serie;
+      }
+
       console.log('[obtenerSerieYCorrelativo] Querying for serie:', serie);
 
       const ultimo = await this.prisma.comprobante.findFirst({
@@ -675,6 +688,10 @@ export class ComprobanteService {
         orderBy: { correlativo: 'desc' },
       });
       let correlativo = ultimo ? Number(ultimo.correlativo) + 1 : 1;
+
+      if (!ultimo && configuredSerie?.correlativo && correlativo < configuredSerie.correlativo) {
+        correlativo = configuredSerie.correlativo;
+      }
 
       if (useJambleSeries && (serie === 'B001' || serie === 'F001')) {
         const floor = this.getJambleCorrelativoFloor(empresaId, serie);
@@ -2028,27 +2045,12 @@ export class ComprobanteService {
     // 5. resto → PENDIENTE_PAGO
     const pagosAlContado = ['EFECTIVO', 'YAPE', 'PLIN'];
     const esCreditoPorTipo = (formaPagoTipo ?? '').toUpperCase() === 'CREDITO';
+    const adelantoNormalizado = adelanto ? Math.max(Number(adelanto), 0) : 0;
     let estadoPagoInicial = 'COMPLETADO' as any;
     let saldoInicial = 0;
 
-    // PRIORIDAD 1: NP con adelanto → siempre PAGO_PARCIAL
-    if (
-      tipoDoc === 'NP' &&
-      adelanto !== undefined &&
-      adelanto !== null &&
-      Number(adelanto) > 0
-    ) {
-      const adelantoNormalizado = Number(adelanto);
-      saldoInicial = Math.max(
-        0,
-        this.round2(mtoImpVenta - adelantoNormalizado),
-      );
-      estadoPagoInicial =
-        saldoInicial > 0 ? ('PAGO_PARCIAL' as any) : ('COMPLETADO' as any);
-    }
-    // PRIORIDAD 2: OT con adelanto → siempre PAGO_PARCIAL
-    else if (tipoDoc === 'OT' && adelanto && Number(adelanto) > 0) {
-      const adelantoNormalizado = Number(adelanto);
+    // PRIORIDAD 1: Informales con adelanto → PAGO_PARCIAL
+    if (tipoDoc !== 'COT' && adelantoNormalizado > 0) {
       saldoInicial = Math.max(
         0,
         this.round2(mtoImpVenta - adelantoNormalizado),
@@ -2106,7 +2108,7 @@ export class ComprobanteService {
       estadoEnvioSunat: 'NO_APLICA' as string,
       estadoPago: estadoPagoInicial,
       saldo: saldoInicial,
-      adelanto: (tipoDoc === 'NP' || tipoDoc === 'OT') && adelanto ? Number(adelanto) : undefined,
+      adelanto: tipoDoc !== 'COT' && adelantoNormalizado > 0 ? adelantoNormalizado : undefined,
       fechaRecojo:
         (tipoDoc === 'NP' || tipoDoc === 'OT') && fechaRecojo ? new Date(fechaRecojo) : undefined,
       fechaVencimientoCredito:
@@ -2138,11 +2140,9 @@ export class ComprobanteService {
 
     // Crear registro de pago automáticamente si hay adelanto
     if (
-      (tipoDoc === 'NP' || tipoDoc === 'OT') &&
-      adelanto &&
-      Number(adelanto) > 0
+      tipoDoc !== 'COT' &&
+      adelantoNormalizado > 0
     ) {
-      const adelantoNormalizado = Number(adelanto);
       await this.prisma.pago.create({
         data: {
           comprobanteId: comp.id,
@@ -2707,7 +2707,23 @@ export class ComprobanteService {
   }
 
   // ─── Genera PDF, sube a S3 y devuelve URL permanente ─────────────────────
-  async generarYSubirPdf(id: number): Promise<string> {
+  async generarYSubirPdf(
+    id: number,
+    context?: { empresaId?: number; rol?: string },
+  ): Promise<string> {
+    const comprobante = await this.prisma.comprobante.findFirst({
+      where: {
+        id,
+        ...(context?.rol === this.adminSistemaRole || !context?.empresaId
+          ? {}
+          : { empresaId: context.empresaId }),
+      },
+      select: { s3PdfUrl: true },
+    });
+
+    if (!comprobante) throw new NotFoundException('Comprobante no encontrado');
+    if (comprobante.s3PdfUrl) return comprobante.s3PdfUrl;
+
     const { buffer, key } = await this.buildPdfBufferInformal(id);
 
     if (this.s3Service.isEnabled()) {
@@ -3009,7 +3025,11 @@ export class ComprobanteService {
 
   // ─── Enviar por email ─────────────────────────────────────────────────────
 
-  async enviarEmailComprobante(id: number, destinatario: string): Promise<void> {
+  async enviarEmailComprobante(
+    id: number,
+    destinatario: string,
+    context?: { empresaId?: number; rol?: string },
+  ): Promise<void> {
     const resendKey = process.env.RESEND_API_KEY;
     if (!resendKey) {
       throw new BadRequestException('Correo no configurado. Agrega RESEND_API_KEY en el .env del backend.');
@@ -3017,6 +3037,9 @@ export class ComprobanteService {
 
     const comp = await this.cargarComprobanteCompleto(id);
     if (!comp) throw new NotFoundException('Comprobante no encontrado');
+    if (context?.rol !== this.adminSistemaRole && context?.empresaId && comp.empresaId !== context.empresaId) {
+      throw new NotFoundException('Comprobante no encontrado');
+    }
 
     // Comprobantes SUNAT ya tienen PDF en S3 — descargarlo directamente.
     // Informales se generan en memoria con Puppeteer.

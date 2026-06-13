@@ -1,0 +1,2 @@
+ALTER TABLE "Empresa"
+ADD COLUMN IF NOT EXISTS "billingApiDemoBaseUrl" TEXT;

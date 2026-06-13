@@ -119,6 +119,37 @@ export class PdfGeneratorService {
     return this.browser;
   }
 
+  private async renderPdfBuffer(
+    html: string,
+    options: Parameters<puppeteer.Page['pdf']>[0],
+    successMessage: string,
+  ): Promise<Buffer> {
+    const browser = await this.getBrowser();
+    const page = await browser.newPage();
+
+    try {
+      page.setDefaultTimeout(15_000);
+      page.setDefaultNavigationTimeout(15_000);
+
+      await page.setContent(html, {
+        waitUntil: 'domcontentloaded',
+        timeout: 15_000,
+      });
+
+      await page.waitForNetworkIdle({ idleTime: 500, timeout: 5_000 }).catch(() => {
+        this.logger.warn('⚠️ PDF generado sin esperar recursos externos lentos');
+      });
+
+      const pdfBuffer = await page.pdf(options);
+      this.logger.log(successMessage);
+      return Buffer.from(pdfBuffer);
+    } finally {
+      await page.close().catch((error) => {
+        this.logger.warn(`No se pudo cerrar la página de Puppeteer: ${error.message}`);
+      });
+    }
+  }
+
   /**
    * Genera PDF de comprobante personalizado del sistema
    */
@@ -192,15 +223,7 @@ export class PdfGeneratorService {
       // Generar HTML desde template
       const html = this.template(data);
 
-      // Generar PDF con Puppeteer
-      const browser = await this.getBrowser();
-      const page = await browser.newPage();
-
-      await page.setContent(html, {
-        waitUntil: 'networkidle0',
-      });
-
-      const pdfBuffer = await page.pdf({
+      return this.renderPdfBuffer(html, {
         format: 'A4',
         printBackground: true,
         margin: {
@@ -209,12 +232,7 @@ export class PdfGeneratorService {
           bottom: '10mm',
           left: '10mm',
         },
-      });
-
-      await page.close();
-
-      this.logger.log('✅ PDF generado exitosamente');
-      return Buffer.from(pdfBuffer);
+      }, '✅ PDF generado exitosamente');
     } catch (error) {
       this.logger.error(`❌ Error generando PDF: ${error.message}`, error.stack);
       throw error;
@@ -232,14 +250,7 @@ export class PdfGeneratorService {
 
       const html = this.template(data);
 
-      const browser = await this.getBrowser();
-      const page = await browser.newPage();
-
-      await page.setContent(html, {
-        waitUntil: 'networkidle0',
-      });
-
-      const pdfBuffer = await page.pdf({
+      return this.renderPdfBuffer(html, {
         width: '80mm',
         printBackground: true,
         margin: {
@@ -248,12 +259,7 @@ export class PdfGeneratorService {
           bottom: '5mm',
           left: '5mm',
         },
-      });
-
-      await page.close();
-
-      this.logger.log('✅ PDF ticket generado exitosamente');
-      return Buffer.from(pdfBuffer);
+      }, '✅ PDF ticket generado exitosamente');
     } catch (error) {
       this.logger.error(`❌ Error generando PDF ticket: ${error.message}`, error.stack);
       throw error;
@@ -334,15 +340,7 @@ export class PdfGeneratorService {
       // Generar HTML desde template
       const html = template(data);
 
-      // Generar PDF con Puppeteer
-      const browser = await this.getBrowser();
-      const page = await browser.newPage();
-
-      await page.setContent(html, {
-        waitUntil: 'networkidle0',
-      });
-
-      const pdfBuffer = await page.pdf({
+      return this.renderPdfBuffer(html, {
         format: 'A4',
         printBackground: true,
         margin: {
@@ -351,12 +349,7 @@ export class PdfGeneratorService {
           bottom: '10mm',
           left: '10mm',
         },
-      });
-
-      await page.close();
-
-      this.logger.log('✅ PDF de cotización generado exitosamente');
-      return Buffer.from(pdfBuffer);
+      }, '✅ PDF de cotización generado exitosamente');
     } catch (error) {
       this.logger.error(`❌ Error generando PDF de cotización: ${error.message}`, error.stack);
       throw error;
@@ -370,14 +363,7 @@ export class PdfGeneratorService {
 
       const html = this.guiaTemplate(data);
 
-      const browser = await this.getBrowser();
-      const page = await browser.newPage();
-
-      await page.setContent(html, {
-        waitUntil: 'networkidle0',
-      });
-
-      const pdfBuffer = await page.pdf({
+      return this.renderPdfBuffer(html, {
         format: 'A4',
         printBackground: true,
         margin: {
@@ -386,12 +372,7 @@ export class PdfGeneratorService {
           bottom: '10mm',
           left: '10mm',
         },
-      });
-
-      await page.close();
-
-      this.logger.log('✅ PDF de guía de remisión generado exitosamente');
-      return Buffer.from(pdfBuffer);
+      }, '✅ PDF de guía de remisión generado exitosamente');
     } catch (error) {
       this.logger.error(`❌ Error generando PDF de guía: ${error.message}`, error.stack);
       throw error;

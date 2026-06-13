@@ -18,6 +18,7 @@ const DESPACHO_FIELDS = [
     'turnoEnvio', 'tipoMercaderia', 'claveEnvio', 'nroOrden', 'claveOrden',
     'establecimiento', 'empaquetador',
     'nombreDestinatario', 'dniDestinatario', 'contenidoPaquete', 'montoCOD',
+    'costoEnvio', 'pagarFlete', 'aplicacionMontoCliente',
 ] as const;
 
 const DESPACHO_TO_PEDIDO_ESTADO: Record<EstadoDespacho, { estadoEntrega: string; estadoEnvio: string }> = {
@@ -79,6 +80,7 @@ export class EnvioDespachoService {
             },
             include: { repartidor: true },
         });
+        await this.syncAdelantoDesdeEnvio(comprobanteId, empresaId, dto);
         await this.syncPedidoTiendaByComprobante(comprobanteId, estadoInicial);
         return this.withLegacyRepartidor(envio);
     }
@@ -122,6 +124,8 @@ export class EnvioDespachoService {
             },
             include: { repartidor: true },
         });
+
+        await this.syncAdelantoDesdeEnvio(comprobanteId, empresaId, dto);
 
         if (estadoCambia && ESTADOS_NOTIFICABLES.has(dto.estado as EstadoDespacho)) {
             this.notificarCambioEstado(comprobanteId, empresaId, dto.estado as EstadoDespacho, updated.repartidor?.nombre ?? null)
@@ -422,6 +426,64 @@ export class EnvioDespachoService {
             if ((dto as any)[key] !== undefined) result[key] = (dto as any)[key];
         }
         return result;
+    }
+
+    private async syncAdelantoDesdeEnvio(comprobanteId: number, empresaId: number, dto: CreateEnvioDespachoDto) {
+        const aplicacion = dto.aplicacionMontoCliente;
+        if (aplicacion === undefined) return;
+
+        const comprobante = await this.prisma.comprobante.findFirst({
+            where: { id: comprobanteId, empresaId },
+            select: { id: true, tipoDoc: true, mtoImpVenta: true },
+        });
+        if (!comprobante) return;
+
+        const tiposInformalesConAdelanto = new Set(['NV', 'NP', 'OT', 'TICKET', 'CP', 'RH']);
+        if (!tiposInformalesConAdelanto.has(comprobante.tipoDoc)) return;
+
+        const monto = Math.max(Number(dto.costoEnvio ?? 0), 0);
+        const esAdelanto = aplicacion === 'ADELANTO' && monto > 0;
+        const adelanto = esAdelanto ? Math.min(monto, Number(comprobante.mtoImpVenta)) : 0;
+        const saldo = esAdelanto ? Math.max(this.round2(Number(comprobante.mtoImpVenta) - adelanto), 0) : 0;
+        const estadoPago = esAdelanto
+            ? (saldo > 0 ? 'PAGO_PARCIAL' : 'COMPLETADO')
+            : 'COMPLETADO';
+
+        await this.prisma.comprobante.update({
+            where: { id: comprobanteId },
+            data: { adelanto, saldo, estadoPago: estadoPago as any },
+        });
+
+        // Limpiar AMBOS tipos de pago de adelanto para evitar duplicados:
+        // el que crea comprobante.service al guardar la NV y el que crea este método.
+        await this.prisma.pago.deleteMany({
+            where: {
+                comprobanteId,
+                observacion: {
+                    in: [
+                        'Adelanto registrado desde coordinación de envío',
+                        'Pago adelantado registrado automáticamente',
+                    ],
+                },
+            },
+        });
+
+        if (esAdelanto) {
+            await this.prisma.pago.create({
+                data: {
+                    comprobanteId,
+                    empresaId,
+                    monto: adelanto,
+                    medioPago: 'EFECTIVO',
+                    observacion: 'Adelanto registrado desde coordinación de envío',
+                    referencia: `${comprobante.tipoDoc}-ENVIO-${comprobanteId}`,
+                },
+            });
+        }
+    }
+
+    private round2(value: number): number {
+        return Math.round((value + Number.EPSILON) * 100) / 100;
     }
 
     private async validateComprobante(comprobanteId: number, empresaId: number) {

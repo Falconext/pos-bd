@@ -77,7 +77,9 @@ export class AuthService {
       user.empresa?.fechaExpiracion &&
       user.empresa.fechaExpiracion < new Date()
     ) {
-      throw new ForbiddenException('Suscripción expirada');
+      throw new ForbiddenException(
+        'Tu plan venció. Contacta a tu asesor o proveedor para renovarlo y seguir usando el sistema.',
+      );
     }
 
     const isValid = await bcrypt.compare(password, user.password);
@@ -424,6 +426,8 @@ export class AuthService {
             monedaCuenta: true,
             reseller: {
               select: {
+                id: true,
+                codigo: true,
                 nombre: true,
                 whiteLabelNombre: true,
                 whiteLabelWebsite: true,
@@ -532,6 +536,8 @@ export class AuthService {
             monedaCuenta: true,
             reseller: {
               select: {
+                id: true,
+                codigo: true,
                 nombre: true,
                 whiteLabelNombre: true,
                 whiteLabelWebsite: true,
