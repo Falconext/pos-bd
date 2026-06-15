@@ -1,4 +1,4 @@
-import { IsBoolean, IsIn, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsNumber, IsObject, IsOptional, IsString, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreatePlanDto {
@@ -84,6 +84,10 @@ export class CreatePlanDto {
     @IsBoolean()
     @IsOptional()
     tieneGestionProvisiones?: boolean;
+
+    @IsObject()
+    @IsOptional()
+    features?: Record<string, boolean>;
 
     // Módulos asignados
     @IsOptional()

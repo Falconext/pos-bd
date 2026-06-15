@@ -400,6 +400,12 @@ export class AuthService {
                 tieneDeliveryGPS: true,
                 tieneGestionLotes: true,
                 tieneGestionProvisiones: true,
+                features: {
+                  select: {
+                    featureKey: true,
+                    enabled: true,
+                  },
+                },
                 maxSedes: true,
                 modulosAsignados: {
                   include: { modulo: true },
@@ -439,6 +445,12 @@ export class AuthService {
     } as any);
 
     if (!usuario) return null;
+
+    if ((usuario as any).empresa?.plan?.features) {
+      (usuario as any).empresa.plan.features = Object.fromEntries(
+        (usuario as any).empresa.plan.features.map((feature: any) => [feature.featureKey, feature.enabled]),
+      );
+    }
 
     // Parsear permisos
     if (usuario.permisos) {
@@ -517,6 +529,12 @@ export class AuthService {
                 tieneDeliveryGPS: true,
                 tieneGestionLotes: true,
                 tieneGestionProvisiones: true,
+                features: {
+                  select: {
+                    featureKey: true,
+                    enabled: true,
+                  },
+                },
                 modulosAsignados: {
                   include: { modulo: true },
                 },
@@ -557,6 +575,11 @@ export class AuthService {
     }
 
     if (usuario?.empresa) {
+      if (usuario.empresa.plan?.features) {
+        usuario.empresa.plan.features = Object.fromEntries(
+          usuario.empresa.plan.features.map((feature: any) => [feature.featureKey, feature.enabled]),
+        );
+      }
       usuario.empresa.whatsappApiTokenConfigured = Boolean(
         usuario.empresa.whatsappApiToken,
       );

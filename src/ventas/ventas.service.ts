@@ -152,6 +152,14 @@ export class VentasService {
                     // Para saber si este comprobante formal viene de un informal
                     comprobanteOrigenId: true,
                     comprobanteOrigen: { select: { serie: true, correlativo: true, tipoDoc: true } },
+                    detalles: {
+                        select: {
+                            descripcion: true,
+                            cantidad: true,
+                            mtoPrecioUnitario: true,
+                            unidad: true,
+                        },
+                    },
                 },
             }),
 
@@ -179,6 +187,13 @@ export class VentasService {
                     repartidorId: true,
                     repartidor: { select: { nombre: true } },
                     sede: { select: { nombre: true } },
+                    items: {
+                        select: {
+                            cantidad: true,
+                            precioUnit: true,
+                            producto: { select: { descripcion: true } },
+                        },
+                    },
                 },
             }),
         ]);
@@ -264,6 +279,12 @@ export class VentasService {
                 porcentajeDetraccion: Number(c.porcentajeDetraccion ?? 0),
                 cuotas: c.cuotas ?? null,
                 observaciones: c.observaciones ?? null,
+                productos: (c.detalles ?? []).map((d) => ({
+                    nombre: d.descripcion,
+                    cantidad: Number(d.cantidad),
+                    precioUnitario: Number(d.mtoPrecioUnitario),
+                    unidad: d.unidad,
+                })),
             };
         });
 
@@ -309,6 +330,12 @@ export class VentasService {
                 porcentajeDetraccion: 0,
                 cuotas: null,
                 observaciones: null,
+                productos: (p.items ?? []).map((i) => ({
+                    nombre: i.producto?.descripcion ?? '—',
+                    cantidad: Number(i.cantidad),
+                    precioUnitario: Number(i.precioUnit),
+                    unidad: 'NIU',
+                })),
             };
         });
 

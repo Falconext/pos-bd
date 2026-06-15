@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePlanDto } from './dto/create-plan.dto';
 import { UpdatePlanDto } from './dto/update-plan.dto';
+import { PLAN_FEATURE_CATALOG, getPlanFeatureKeys } from './plan-feature-catalog';
 
 const PLAN_INCLUDE = {
     _count: { select: { empresas: true } },
@@ -19,11 +20,50 @@ const PLAN_INCLUDE = {
             subModulo: { select: { id: true, codigo: true, nombre: true, moduloId: true } }
         }
     },
+    features: true,
 } as const;
 
 @Injectable()
 export class PlanService {
     constructor(private prisma: PrismaService) { }
+
+    getFeatureCatalog() {
+        return PLAN_FEATURE_CATALOG;
+    }
+
+    private resolvePlanFeatures(plan: Record<string, unknown>) {
+        const relationFeatures = Array.isArray(plan.features)
+            ? (plan.features as Array<{ featureKey: string; enabled: boolean }>)
+            : [];
+        const relationMap = new Map(relationFeatures.map((feature) => [feature.featureKey, feature.enabled]));
+
+        return getPlanFeatureKeys().reduce<Record<string, boolean>>((features, key) => {
+            features[key] = relationMap.has(key) ? Boolean(relationMap.get(key)) : Boolean(plan[key]);
+            return features;
+        }, {});
+    }
+
+    private normalizeFeaturePayload(dto: CreatePlanDto | UpdatePlanDto) {
+        const incomingFeatures = dto.features ?? {};
+        return getPlanFeatureKeys().reduce<Record<string, boolean>>((features, key) => {
+            const directValue = (dto as Record<string, unknown>)[key];
+            const mapValue = incomingFeatures[key];
+            features[key] = Boolean(mapValue ?? directValue ?? false);
+            return features;
+        }, {});
+    }
+
+    private omitVirtualPlanFields<T extends CreatePlanDto | UpdatePlanDto>(dto: T) {
+        const { features, moduloIds, subModuloIds, ...planData } = dto;
+        return planData;
+    }
+
+    private withResolvedFeatures<T extends Record<string, unknown>>(plan: T) {
+        return {
+            ...plan,
+            features: this.resolvePlanFeatures(plan),
+        };
+    }
 
     private normalizeProducto(value?: string | null): 'facturacion' | 'hotel' {
         return String(value ?? '').trim().toLowerCase() === 'hotel' ? 'hotel' : 'facturacion';
@@ -82,18 +122,24 @@ export class PlanService {
     }
 
     async create(dto: CreatePlanDto) {
-        const { moduloIds, subModuloIds, ...planData } = dto;
+        const { moduloIds, subModuloIds } = dto;
+        const planData = this.omitVirtualPlanFields(dto);
+        const features = this.normalizeFeaturePayload(dto);
         const producto = this.normalizeProducto(dto.producto);
         const plataforma = this.normalizePlataforma(dto.plataforma);
 
         await this.validateProductAssignments(producto, moduloIds, subModuloIds);
 
         try {
-            return await this.prisma.plan.create({
+            const plan = await this.prisma.plan.create({
                 data: {
                     ...planData,
+                    ...features,
                     producto,
                     plataforma,
+                    features: {
+                        create: Object.entries(features).map(([featureKey, enabled]) => ({ featureKey, enabled })),
+                    },
                     modulosAsignados: moduloIds?.length
                         ? { create: moduloIds.map(moduloId => ({ moduloId })) }
                         : undefined,
@@ -103,6 +149,7 @@ export class PlanService {
                 },
                 include: PLAN_INCLUDE,
             });
+            return this.withResolvedFeatures(plan);
         } catch (error) {
             if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
                 throw new BadRequestException(`Ya existe un plan "${dto.nombre}" para ${plataforma}/${producto}`);
@@ -114,7 +161,7 @@ export class PlanService {
     async findAll(producto?: string, plataforma?: string) {
         const productoFiltro = producto ? this.normalizeProducto(producto) : undefined;
         const plataformaFiltro = plataforma ? this.normalizePlataforma(plataforma) : undefined;
-        return this.prisma.plan.findMany({
+        const plans = await this.prisma.plan.findMany({
             where: {
                 ...(productoFiltro
                     ? { producto: { equals: productoFiltro, mode: 'insensitive' } }
@@ -126,6 +173,7 @@ export class PlanService {
             orderBy: { costo: 'asc' },
             include: PLAN_INCLUDE,
         });
+        return plans.map((plan) => this.withResolvedFeatures(plan));
     }
 
     async findPublicPlans(producto?: string, plataforma?: string) {
@@ -156,6 +204,7 @@ export class PlanService {
                 tieneTicketera: true,
                 tieneGestionLotes: true,
                 tieneGestionProvisiones: true,
+                features: true,
             },
         });
 
@@ -165,6 +214,7 @@ export class PlanService {
             maxComprobantes: plan.maxComprobantes ?? null,
             limiteUsuarios: plan.limiteUsuarios ?? null,
             maxSedes: plan.maxSedes ?? null,
+            features: this.resolvePlanFeatures(plan),
         }));
     }
 
@@ -174,7 +224,7 @@ export class PlanService {
             include: PLAN_INCLUDE,
         });
         if (!plan) throw new NotFoundException(`Plan con ID ${id} no encontrado`);
-        return plan;
+        return this.withResolvedFeatures(plan);
     }
 
     async update(id: number, dto: UpdatePlanDto) {
@@ -183,7 +233,9 @@ export class PlanService {
             select: { id: true, producto: true },
         });
 
-        const { moduloIds, subModuloIds, ...planData } = dto;
+        const { moduloIds, subModuloIds } = dto;
+        const planData = this.omitVirtualPlanFields(dto);
+        const features = this.normalizeFeaturePayload(dto);
         const producto = dto.producto !== undefined
             ? this.normalizeProducto(dto.producto)
             : this.normalizeProducto(currentPlan.producto);
@@ -213,15 +265,24 @@ export class PlanService {
             }
 
             try {
-                return await prisma.plan.update({
+                const plan = await prisma.plan.update({
                     where: { id },
                     data: {
                         ...planData,
+                        ...features,
                         producto,
                         ...(plataforma !== undefined ? { plataforma } : {}),
+                        features: {
+                            upsert: Object.entries(features).map(([featureKey, enabled]) => ({
+                                where: { planId_featureKey: { planId: id, featureKey } },
+                                update: { enabled },
+                                create: { featureKey, enabled },
+                            })),
+                        },
                     },
                     include: PLAN_INCLUDE,
                 });
+                return this.withResolvedFeatures(plan);
             } catch (error) {
                 if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
                     throw new BadRequestException(`Ya existe un plan "${dto.nombre || ''}" con esa plataforma/producto`);

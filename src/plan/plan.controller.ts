@@ -19,6 +19,13 @@ export class PlanController {
         return this.planService.findPublicPlans(producto, plataforma);
     }
 
+    @Get('features/catalog')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('ADMIN_SISTEMA')
+    featureCatalog() {
+        return this.planService.getFeatureCatalog();
+    }
+
     @Get()
     findAll(
         @Query('producto') producto?: string,

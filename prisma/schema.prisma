@@ -31,6 +31,7 @@ model Plan {
   tieneGestionLotes      Boolean         @default(false)
   tieneGestionProvisiones Boolean         @default(false)
   empresas               Empresa[]
+  features               PlanFeature[]
   modulosAsignados       PlanModulo[]
   subModulosAsignados    PlanSubModulo[]
 
@@ -38,6 +39,20 @@ model Plan {
   @@index([plataforma])
   @@index([producto])
   @@index([plataforma, producto])
+}
+
+model PlanFeature {
+  id        Int      @id @default(autoincrement())
+  planId    Int
+  featureKey String
+  enabled   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  plan      Plan     @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, featureKey])
+  @@index([planId])
+  @@index([featureKey])
 }
 
 model Ubigeo {
