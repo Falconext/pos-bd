@@ -44,6 +44,19 @@ export class SchedulerService {
     }
   }
 
+  // Job 4: Notificar comprobantes PENDIENTE estancados más de 2h (cada hora)
+  @Cron('0 * * * *', {
+    name: 'notificar-pendientes-estancados',
+    timeZone: 'America/Lima',
+  })
+  async notificarPendientesEstancados(): Promise<void> {
+    try {
+      await this.verificarSunat.notificarPendientesEstancados();
+    } catch (error: any) {
+      this.logger.error(`[Job 4] Error al notificar pendientes estancados: ${error?.message}`);
+    }
+  }
+
   // Verificar suscripciones todos los días a las 9 AM
   @Cron('0 9 * * *', {
     name: 'verificar-suscripciones',

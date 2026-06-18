@@ -74,6 +74,10 @@ export class UpdateProductoDto {
   imagenUrl?: string | null;
 
   @IsOptional()
+  @IsBoolean()
+  removerImagen?: boolean;
+
+  @IsOptional()
   @IsString()
   localizacion?: string;
 
@@ -161,4 +165,11 @@ export class UpdateProductoDto {
 
   @IsOptional()
   preciosMayorista?: { cantidadMinima: number; precio: number }[];
+
+  @IsOptional()
+  @IsString()
+  descripcionLarga?: string | null;
+
+  @IsOptional()
+  atributosTecnicos?: Record<string, any> | null;
 }

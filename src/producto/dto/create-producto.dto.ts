@@ -148,4 +148,11 @@ export class CreateProductoDto {
 
   @IsOptional()
   preciosMayorista?: { cantidadMinima: number; precio: number }[];
+
+  @IsOptional()
+  @IsString()
+  descripcionLarga?: string;
+
+  @IsOptional()
+  atributosTecnicos?: Record<string, any>;
 }

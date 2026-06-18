@@ -874,6 +874,7 @@ model Notificacion {
   titulo    String
   mensaje   String
   leida     Boolean  @default(false)
+  metaData  Json?
   creadoEn  DateTime @default(now())
 
   usuario Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)

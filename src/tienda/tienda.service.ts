@@ -7,6 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import axios from 'axios';
+import { EstadoProductoReview, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import { ConfigurarTiendaDto } from './dto/configurar-tienda.dto';
@@ -14,6 +15,7 @@ import { CrearPedidoDto } from './dto/crear-pedido.dto';
 import { ActualizarEstadoPedidoDto } from './dto/actualizar-pedido.dto';
 import { DisenoRubroService } from '../diseno-rubro/diseno-rubro.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { esRubroComputo, obtenerPlantillaComputo } from '../producto/ficha-tecnica-computo';
 
 const ESTADOS_ENVIO_NOTIFICABLES = new Set(['EN_CAMINO', 'EN_REPARTO', 'ENVIADO', 'ENTREGADO']);
 
@@ -207,12 +209,31 @@ export class TiendaService {
       }
     };
 
+    const diseno = await this.disenoService.obtenerDisenoPorEmpresa(empresaId);
+
     return {
       ...empresa,
+      diseno: diseno || {},
       yapeQrSignedUrl: await signIfS3(empresa.yapeQrUrl as any),
       plinQrSignedUrl: await signIfS3(empresa.plinQrUrl as any),
       logoSignedUrl: await signIfS3(empresa.logo as any),
     } as any;
+  }
+
+  async actualizarDiseno(empresaId: number, campos: Record<string, any>) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { disenoOverride: true },
+    });
+    const overrideActual = empresa?.disenoOverride
+      ? JSON.parse(empresa.disenoOverride as string)
+      : {};
+    const nuevoOverride = { ...overrideActual, ...campos };
+    await this.prisma.empresa.update({
+      where: { id: empresaId },
+      data: { disenoOverride: JSON.stringify(nuevoOverride) },
+    });
+    return { success: true };
   }
 
   // ==================== UPLOADS (QRs) ====================
@@ -381,7 +402,7 @@ export class TiendaService {
       where: {
         empresaId: empresa.id,
         estado: 'ACTIVO',
-        stock: { gt: 0 },
+        AND: [this.whereStockPublico()],
       },
       select: {
         categoria: {
@@ -446,7 +467,7 @@ export class TiendaService {
         empresaId: empresa.id,
         estado: 'ACTIVO',
         stock: { gt: 0 },
-        marcaId: { not: null }, // Only products with brand
+        marcaId: { not: null },
       },
       select: {
         marca: {
@@ -546,6 +567,42 @@ export class TiendaService {
         } catch { return url as any; }
       };
 
+      const hydratePublicProducts = async (itemsRaw: any[]) => {
+        const productIds = itemsRaw.map((item) => item.id);
+        const ratings = productIds.length
+          ? await this.prisma.productoReview.groupBy({
+              by: ['productoId'],
+              where: {
+                empresaId: empresa.id,
+                productoId: { in: productIds },
+                estado: EstadoProductoReview.APROBADO,
+              },
+              _avg: { rating: true },
+              _count: { rating: true },
+            })
+          : [];
+        const ratingByProduct = new Map(
+          ratings.map((item) => [
+            item.productoId,
+            {
+              ratingAvg: item._avg.rating ? Number(item._avg.rating.toFixed(2)) : 0,
+              ratingCount: item._count.rating || 0,
+            },
+          ]),
+        );
+
+        return Promise.all(
+          itemsRaw.map(async (product: any) => ({
+            ...product,
+            ...(ratingByProduct.get(product.id) || { ratingAvg: 0, ratingCount: 0 }),
+            imagenUrl: await signIfS3(product.imagenUrl),
+            imagenesExtra: Array.isArray(product.imagenesExtra)
+              ? await Promise.all(product.imagenesExtra.map((url: string) => signIfS3(url)))
+              : product.imagenesExtra,
+          })),
+        );
+      };
+
       const skip = Math.max(0, (Number(page) || 1) - 1) * (Number(limit) || 30);
       const take = Math.max(1, Math.min(100, Number(limit) || 30));
 
@@ -561,6 +618,7 @@ export class TiendaService {
         destacado: true,
         ratingAvg: true,
         ratingCount: true,
+        atributosTecnicos: true,
         categoria: { select: { id: true, nombre: true } },
         unidadMedida: { select: { codigo: true, nombre: true } },
         marca: { select: { id: true, nombre: true } },
@@ -572,7 +630,7 @@ export class TiendaService {
         empresaId: empresa.id,
         publicarEnTienda: true,
         estado: 'ACTIVO' as const,
-        stock: { gt: 0 },
+        AND: [this.whereStockPublico()],
       };
       const term = (search || '').trim();
       if (term) {
@@ -658,10 +716,7 @@ export class TiendaService {
         maxPrice !== undefined ||
         wholesale;
       const pageNumber = Number(page) || 1;
-      const MIN_HOME_PRODUCTS = 12;
-      const shouldFallbackToActivos =
-        countPublicados === 0 ||
-        (!hasCatalogFilters && pageNumber === 1 && countPublicados < MIN_HOME_PRODUCTS);
+      const shouldFallbackToActivos = countPublicados === 0;
 
       if (countPublicados > 0 && !shouldFallbackToActivos) {
         const itemsRaw = await this.prisma.producto.findMany({
@@ -671,15 +726,7 @@ export class TiendaService {
           skip,
           take,
         });
-        const items = await Promise.all(
-          itemsRaw.map(async (p: any) => ({
-            ...p,
-            imagenUrl: await signIfS3(p.imagenUrl),
-            imagenesExtra: Array.isArray(p.imagenesExtra)
-              ? await Promise.all(p.imagenesExtra.map((u: string) => signIfS3(u)))
-              : p.imagenesExtra,
-          }))
-        );
+        const items = await hydratePublicProducts(itemsRaw);
         return { data: items, total: countPublicados, page: pageNumber, limit: take };
       }
 
@@ -689,7 +736,7 @@ export class TiendaService {
       const whereActivos: any = {
         empresaId: empresa.id,
         estado: 'ACTIVO' as const,
-        stock: { gt: 0 },
+        AND: [this.whereStockPublico()],
       };
       if (term) {
         whereActivos.OR = [
@@ -768,15 +815,7 @@ export class TiendaService {
         take,
       });
 
-      const items = await Promise.all(
-        itemsRaw.map(async (p: any) => ({
-          ...p,
-          imagenUrl: await signIfS3(p.imagenUrl),
-          imagenesExtra: Array.isArray(p.imagenesExtra)
-            ? await Promise.all(p.imagenesExtra.map((u: string) => signIfS3(u)))
-            : p.imagenesExtra,
-        }))
-      );
+      const items = await hydratePublicProducts(itemsRaw);
 
       return { data: items, total, page: pageNumber, limit: take };
 
@@ -806,7 +845,7 @@ export class TiendaService {
           categoriaId: producto.categoriaId,
           id: { not: id },
           estado: 'ACTIVO',
-          stock: { gt: 0 }
+          AND: [this.whereStockPublico()],
         },
         take: 20, // Fetch more to shuffle
         select: {
@@ -828,7 +867,7 @@ export class TiendaService {
           empresaId: tienda.id,
           id: { not: id }, // and not in related? (simplified for now)
           estado: 'ACTIVO',
-          stock: { gt: 0 }
+          AND: [this.whereStockPublico()],
         },
         take: 20,
         select: {
@@ -878,7 +917,7 @@ export class TiendaService {
   async obtenerProductoDetalle(slug: string, productoId: number) {
     const empresa = await this.prisma.empresa.findUnique({
       where: { slugTienda: slug },
-      select: { id: true },
+      select: { id: true, rubroId: true, rubro: { select: { nombre: true } } },
     });
 
     if (!empresa) {
@@ -897,7 +936,14 @@ export class TiendaService {
       destacado: true,
       ratingAvg: true,
       ratingCount: true,
+      atributosTecnicos: true,
       categoria: {
+        select: {
+          id: true,
+          nombre: true,
+        },
+      },
+      marca: {
         select: {
           id: true,
           nombre: true,
@@ -929,7 +975,7 @@ export class TiendaService {
           id: productoId,
           empresaId: empresa.id,
           estado: 'ACTIVO',
-          stock: { gt: 0 },
+          AND: [this.whereStockPublico()],
         },
         select,
       });
@@ -960,7 +1006,284 @@ export class TiendaService {
       ...producto,
       imagenUrl: await signIfS3((producto as any).imagenUrl as any),
       imagenesExtra: imagenesExtraFirmadas as any,
+      fichaTecnica: await this.construirFichaTecnicaPublica(empresa, producto as any),
     } as any;
+  }
+
+  private getFichaTecnicaComputoDefault(params: { categoriaNombre?: string | null; descripcion?: string | null } = {}) {
+    return obtenerPlantillaComputo(params);
+  }
+
+  private esRubroComputo(nombre?: string | null) {
+    return esRubroComputo(nombre);
+  }
+
+  private whereStockPublico() {
+    return { stock: { gt: 0 } };
+  }
+
+  private formatearValorFichaTecnica(value: any, campo: any) {
+    if (value === null || value === undefined || value === '') return '';
+    if (campo?.tipo === 'booleano') {
+      return value === true || value === 'true' || value === '1' || value === 'Sí' ? 'Sí' : 'No';
+    }
+    const formatted = String(value).trim();
+    return campo?.unidad && formatted ? `${formatted} ${campo.unidad}` : formatted;
+  }
+
+  private async construirFichaTecnicaPublica(empresa: any, producto: any) {
+    const atributos = {
+      ...(producto?.atributosTecnicos || {}),
+      ...(producto?.marca?.nombre ? { marca: producto.marca.nombre } : {}),
+    };
+    if (!atributos || Object.keys(atributos).length === 0) return null;
+
+    const candidates = await this.prisma.fichaTecnicaPlantilla.findMany({
+      where: {
+        activo: true,
+        OR: [
+          { empresaId: empresa.id, categoriaId: producto.categoria?.id || undefined },
+          { empresaId: empresa.id, categoriaId: null },
+          { empresaId: null, categoriaId: producto.categoria?.id || undefined },
+          { empresaId: null, rubroId: empresa.rubroId || undefined },
+        ],
+      },
+      orderBy: [{ empresaId: 'desc' }, { categoriaId: 'desc' }, { rubroId: 'desc' }, { id: 'asc' }],
+      take: 10,
+    });
+    const exactCategory = candidates.find((item) => producto.categoria?.id && item.categoriaId === producto.categoria.id);
+    const companyDefault = candidates.find((item) => item.empresaId === empresa.id && !item.categoriaId);
+    const rubroDefault = candidates.find((item) => item.rubroId === empresa.rubroId);
+    const computedDefault = this.esRubroComputo(empresa.rubro?.nombre)
+      ? this.getFichaTecnicaComputoDefault({
+          categoriaNombre: producto.categoria?.nombre,
+          descripcion: producto.descripcion,
+        })
+      : null;
+    const shouldPreferComputed = computedDefault && (computedDefault as any).familia !== 'general';
+    const plantilla = exactCategory || companyDefault || (shouldPreferComputed ? computedDefault : rubroDefault) || candidates[0] || computedDefault;
+
+    if (!plantilla) return null;
+
+    const campos = Array.isArray((plantilla as any).campos) ? (plantilla as any).campos : [];
+    const destacadosKeys = Array.isArray((plantilla as any).destacados) ? (plantilla as any).destacados : [];
+    const valuesByKey = new Map<string, any>();
+
+    const gruposMap = new Map<string, any[]>();
+    for (const campo of campos.sort((a: any, b: any) => Number(a.orden || 0) - Number(b.orden || 0))) {
+      const rawValue = atributos[campo.key];
+      const value = this.formatearValorFichaTecnica(rawValue, campo);
+      if (!value) continue;
+      valuesByKey.set(campo.key, value);
+      const grupo = campo.grupo || 'Características';
+      const current = gruposMap.get(grupo) || [];
+      current.push({ key: campo.key, label: campo.label, value });
+      gruposMap.set(grupo, current);
+    }
+
+    const destacados = destacadosKeys
+      .map((key: string) => {
+        const campo = campos.find((item: any) => item.key === key);
+        const value = valuesByKey.get(key);
+        return campo && value ? { key, label: campo.label, value } : null;
+      })
+      .filter(Boolean);
+
+    const grupos = Array.from(gruposMap.entries()).map(([nombre, items]) => ({ nombre, items }));
+    if (!destacados.length && !grupos.length) return null;
+    return { destacados, grupos };
+  }
+
+  private async recalcularRatingProducto(productoId: number) {
+    const aggregate = await this.prisma.productoReview.aggregate({
+      where: { productoId, estado: EstadoProductoReview.APROBADO },
+      _avg: { rating: true },
+      _count: { rating: true },
+    });
+
+    await this.prisma.producto.update({
+      where: { id: productoId },
+      data: {
+        ratingAvg: aggregate._avg.rating
+          ? Number(aggregate._avg.rating.toFixed(2))
+          : 0,
+        ratingCount: aggregate._count.rating || 0,
+      },
+    });
+  }
+
+  async listarReviewsPublicas(slug: string, productoId: number) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { slugTienda: slug },
+      select: { id: true },
+    });
+    if (!empresa) throw new NotFoundException('Tienda no encontrada');
+
+    const producto = await this.prisma.producto.findFirst({
+      where: { id: productoId, empresaId: empresa.id, estado: 'ACTIVO' },
+      select: { id: true, ratingAvg: true, ratingCount: true },
+    });
+    if (!producto) throw new NotFoundException('Producto no encontrado');
+
+    const reviews = await this.prisma.productoReview.findMany({
+      where: {
+        empresaId: empresa.id,
+        productoId,
+        estado: EstadoProductoReview.APROBADO,
+      },
+      orderBy: { creadoEn: 'desc' },
+      take: 20,
+      select: {
+        id: true,
+        clienteNombre: true,
+        rating: true,
+        comentario: true,
+        compraVerificada: true,
+        creadoEn: true,
+      },
+    });
+
+    const rating = await this.prisma.productoReview.aggregate({
+      where: {
+        empresaId: empresa.id,
+        productoId,
+        estado: EstadoProductoReview.APROBADO,
+      },
+      _avg: { rating: true },
+      _count: { rating: true },
+    });
+
+    return {
+      ratingAvg: rating._avg.rating ? Number(rating._avg.rating.toFixed(2)) : 0,
+      ratingCount: rating._count.rating || 0,
+      reviews,
+    };
+  }
+
+  async crearReviewPublica(slug: string, productoId: number, dto: any) {
+    const rating = Number(dto?.rating);
+    const comentario = String(dto?.comentario || '').trim();
+    const clienteNombre = String(dto?.clienteNombre || '').trim();
+    const clienteEmail = String(dto?.clienteEmail || '').trim() || null;
+    const clienteTelefono = String(dto?.clienteTelefono || '').replace(/\s+/g, '').trim() || null;
+    const codigoSeguimiento = String(dto?.codigoSeguimiento || '').trim() || null;
+
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      throw new BadRequestException('La calificación debe ser de 1 a 5');
+    }
+    if (clienteNombre.length < 2) {
+      throw new BadRequestException('Ingresa tu nombre');
+    }
+    if (comentario.length < 8 || comentario.length > 800) {
+      throw new BadRequestException('El comentario debe tener entre 8 y 800 caracteres');
+    }
+
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { slugTienda: slug },
+      select: { id: true },
+    });
+    if (!empresa) throw new NotFoundException('Tienda no encontrada');
+
+    const producto = await this.prisma.producto.findFirst({
+      where: { id: productoId, empresaId: empresa.id, estado: 'ACTIVO' },
+      select: { id: true },
+    });
+    if (!producto) throw new NotFoundException('Producto no encontrado');
+
+    let pedido: { id: number } | null = null;
+    if (codigoSeguimiento) {
+      const identidadCliente = [
+        clienteTelefono ? { clienteTelefono } : null,
+        clienteEmail ? { clienteEmail } : null,
+      ].filter(Boolean);
+      pedido = await this.prisma.pedidoTienda.findFirst({
+        where: {
+          empresaId: empresa.id,
+          codigoSeguimiento,
+          items: { some: { productoId } },
+          ...(identidadCliente.length > 0 ? { OR: identidadCliente as any } : {}),
+        },
+        select: { id: true },
+      });
+    }
+
+    const review = await this.prisma.productoReview.create({
+      data: {
+        empresaId: empresa.id,
+        productoId,
+        pedidoId: pedido?.id,
+        clienteNombre,
+        clienteEmail,
+        clienteTelefono,
+        rating,
+        comentario,
+        compraVerificada: Boolean(pedido),
+        estado: EstadoProductoReview.PENDIENTE,
+      },
+      select: {
+        id: true,
+        estado: true,
+        compraVerificada: true,
+      },
+    });
+
+    return {
+      ...review,
+      message: 'Gracias por tu reseña. Será publicada cuando la tienda la apruebe.',
+    };
+  }
+
+  async listarReviewsAdmin(empresaId: number, estado?: string, page = 1, limit = 50) {
+    const where: any = { empresaId };
+    if (estado && Object.values(EstadoProductoReview).includes(estado as EstadoProductoReview)) {
+      where.estado = estado;
+    }
+
+    const take = Math.max(1, Math.min(Number(limit) || 50, 100));
+    const skip = Math.max(0, (Number(page) || 1) - 1) * take;
+
+    const [items, total] = await Promise.all([
+      this.prisma.productoReview.findMany({
+        where,
+        orderBy: { creadoEn: 'desc' },
+        skip,
+        take,
+        include: {
+          producto: { select: { id: true, descripcion: true, imagenUrl: true } },
+          pedido: { select: { id: true, codigoSeguimiento: true } },
+        },
+      }),
+      this.prisma.productoReview.count({ where }),
+    ]);
+
+    return { items, total, page: Number(page) || 1, limit: take };
+  }
+
+  async actualizarEstadoReviewAdmin(
+    empresaId: number,
+    reviewId: number,
+    estado: EstadoProductoReview,
+  ) {
+    if (!Object.values(EstadoProductoReview).includes(estado)) {
+      throw new BadRequestException('Estado de reseña inválido');
+    }
+
+    const review = await this.prisma.productoReview.findFirst({
+      where: { id: reviewId, empresaId },
+      select: { id: true, productoId: true },
+    });
+    if (!review) throw new NotFoundException('Reseña no encontrada');
+
+    const updated = await this.prisma.productoReview.update({
+      where: { id: reviewId },
+      data: {
+        estado,
+        aprobadoEn: estado === EstadoProductoReview.APROBADO ? new Date() : null,
+      },
+    });
+
+    await this.recalcularRatingProducto(review.productoId);
+    return updated;
   }
 
   async obtenerConfiguracionPago(slug: string) {
@@ -1106,7 +1429,7 @@ export class TiendaService {
             id: item.productoId,
             empresaId: empresa.id,
             estado: 'ACTIVO',
-            stock: { gt: 0 },
+            AND: [this.whereStockPublico()],
           },
         });
       }
@@ -1117,7 +1440,8 @@ export class TiendaService {
         );
       }
 
-      if (producto.stock < item.cantidad) {
+      const esServicio = String((producto.atributosTecnicos as any)?.tipoProducto || '').toUpperCase() === 'SERVICIO';
+      if (!esServicio && producto.stock < item.cantidad) {
         throw new BadRequestException(
           `Stock insuficiente para ${producto.descripcion}. Disponible: ${producto.stock}`,
         );
@@ -1365,6 +1689,7 @@ export class TiendaService {
                   codigo: true,
                   descripcion: true,
                   imagenUrl: true,
+                  atributosTecnicos: true,
                 },
               },
             },
@@ -1401,6 +1726,7 @@ export class TiendaService {
                 descripcion: true,
                 imagenUrl: true,
                 codigo: true,
+                atributosTecnicos: true,
               },
             },
           },

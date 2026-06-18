@@ -67,6 +67,23 @@ export class TiendaPublicController {
     return this.tiendaService.obtenerProductoDetalle(slug, +id);
   }
 
+  @Get(':slug/products/:id/reviews')
+  async listarReviewsProducto(
+    @Param('slug') slug: string,
+    @Param('id') id: string,
+  ) {
+    return this.tiendaService.listarReviewsPublicas(slug, +id);
+  }
+
+  @Post(':slug/products/:id/reviews')
+  async crearReviewProducto(
+    @Param('slug') slug: string,
+    @Param('id') id: string,
+    @Body() dto: any,
+  ) {
+    return this.tiendaService.crearReviewPublica(slug, +id, dto);
+  }
+
   @Get(':slug/products/:id/related')
   async obtenerProductosRelacionados(
     @Param('slug') slug: string,

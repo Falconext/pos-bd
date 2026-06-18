@@ -29,7 +29,8 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json"
+    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "seed:computo": "npx ts-node prisma/seeds/seed-computo-products.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.927.0",
@@ -53,7 +54,6 @@
     "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
-    "duck-duck-scrape": "^2.2.7",
     "express": "^4.18.2",
     "fast-xml-parser": "^5.8.0",
     "google-img-scrap": "^1.1.4",
@@ -71,7 +71,6 @@
     "sharp": "^0.34.5",
     "socket.io": "^4.8.1",
     "ts-node": "^10.9.2",
-    "twilio": "^5.10.4",
     "typescript": "^5.7.3",
     "xlsx": "^0.18.5"
   },

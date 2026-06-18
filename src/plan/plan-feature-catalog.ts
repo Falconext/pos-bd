@@ -7,7 +7,8 @@ export type PlanFeatureKey =
   | 'tieneDeliveryGPS'
   | 'tieneTicketera'
   | 'tieneGestionLotes'
-  | 'tieneGestionProvisiones';
+  | 'tieneGestionProvisiones'
+  | 'tieneDescripcionRica';
 
 export interface PlanFeatureCatalogItem {
   key: PlanFeatureKey;
@@ -93,6 +94,14 @@ export const PLAN_FEATURE_CATALOG: PlanFeatureCatalogItem[] = [
     description: 'Habilita costos provisionados y análisis avanzado de rentabilidad.',
     group: 'inventario',
     icon: 'solar:chart-square-bold-duotone',
+  },
+  {
+    key: 'tieneDescripcionRica',
+    label: 'Descripción Rica de Producto',
+    description: 'Habilita editor rich text (fichas técnicas, specs, tablas) en la página de producto de la tienda virtual.',
+    group: 'tienda',
+    icon: 'solar:document-text-bold-duotone',
+    dependsOn: 'tieneTienda',
   },
 ];
 

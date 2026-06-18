@@ -1,4 +1,6 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import * as https from 'https';
+import * as http from 'http';
 import type { MovimientoKardex } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -18,10 +20,97 @@ import {
   InventarioValorizadoResponse,
   ReporteRotacionResponse
 } from './dto/response-kardex.dto';
+import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
 
 @Injectable()
 export class KardexService {
-  constructor(private prisma: PrismaService) { }
+  constructor(
+    private prisma: PrismaService,
+    private pdfGenerator: PdfGeneratorService,
+  ) { }
+
+  private readonly estadosSerieValidos = new Set(['DISPONIBLE', 'VENDIDO', 'RESERVADO', 'BAJA']);
+  private readonly estadosReclamoValidos = new Set(['ABIERTO', 'EN_PROCESO', 'RESUELTO', 'CERRADO']);
+
+  private normalizarSerie(numeroSerie: unknown) {
+    const normalized = String(numeroSerie ?? '').trim().toUpperCase();
+    if (!normalized) throw new BadRequestException('numeroSerie es requerido');
+    return normalized;
+  }
+
+  private calcularGarantiaHasta(garantiaMeses: unknown) {
+    if (garantiaMeses == null || garantiaMeses === '') return null;
+    const meses = Number(garantiaMeses);
+    if (!Number.isInteger(meses) || meses < 0) {
+      throw new BadRequestException('garantiaMeses debe ser un entero mayor o igual a 0');
+    }
+    if (meses === 0) return null;
+    const fecha = new Date();
+    fecha.setMonth(fecha.getMonth() + meses);
+    return fecha;
+  }
+
+  private validarEstadoSerie(estado?: unknown) {
+    if (estado == null || estado === '') return undefined;
+    const value = String(estado).trim().toUpperCase();
+    if (!this.estadosSerieValidos.has(value)) {
+      throw new BadRequestException(`Estado de serie inválido: ${estado}`);
+    }
+    return value;
+  }
+
+  private validarEstadoReclamo(estado?: unknown) {
+    if (estado == null || estado === '') return undefined;
+    const value = String(estado).trim().toUpperCase();
+    if (!this.estadosReclamoValidos.has(value)) {
+      throw new BadRequestException(`Estado de reclamo inválido: ${estado}`);
+    }
+    return value;
+  }
+
+  private async validarProductoEmpresa(empresaId: number, productoId: number) {
+    const producto = await this.prisma.producto.findFirst({
+      where: { id: productoId, empresaId },
+      select: { id: true },
+    });
+    if (!producto) throw new BadRequestException('Producto no encontrado para esta empresa');
+  }
+
+  private async validarCompraEmpresa(empresaId: number, compraId?: unknown, compraDetalleId?: unknown) {
+    if (compraId == null && compraDetalleId == null) return;
+
+    const parsedCompraId = compraId != null && compraId !== '' ? Number(compraId) : undefined;
+    const parsedDetalleId = compraDetalleId != null && compraDetalleId !== '' ? Number(compraDetalleId) : undefined;
+
+    if (parsedCompraId != null && !Number.isInteger(parsedCompraId)) {
+      throw new BadRequestException('compraId inválido');
+    }
+    if (parsedDetalleId != null && !Number.isInteger(parsedDetalleId)) {
+      throw new BadRequestException('compraDetalleId inválido');
+    }
+
+    if (parsedCompraId != null) {
+      const compra = await this.prisma.compra.findFirst({
+        where: { id: parsedCompraId, empresaId },
+        select: { id: true },
+      });
+      if (!compra) throw new BadRequestException('Compra no encontrada para esta empresa');
+    }
+
+    if (parsedDetalleId != null) {
+      const detalle = await this.prisma.detalleCompra.findFirst({
+        where: {
+          id: parsedDetalleId,
+          compra: {
+            empresaId,
+            ...(parsedCompraId != null ? { id: parsedCompraId } : {}),
+          },
+        },
+        select: { id: true },
+      });
+      if (!detalle) throw new BadRequestException('Detalle de compra no encontrado para esta empresa');
+    }
+  }
 
   /**
    * Registra un movimiento de kardex automáticamente
@@ -1395,6 +1484,396 @@ export class KardexService {
       valorLotesVencidos,
       top5PorVencer: top5PorVencer.map(mapLote),
       top5Vencidos: top5Vencidos.map(mapLote),
+    };
+  }
+
+  async obtenerSeriesGarantias(
+    empresaId: number,
+    filtros: {
+      page?: string | number;
+      limit?: string | number;
+      search?: string;
+      estado?: string;
+      garantia?: string;
+      sedeId?: number;
+    },
+  ) {
+    const page = Math.max(Number(filtros.page ?? 1), 1);
+    const limit = Math.min(Math.max(Number(filtros.limit ?? 20), 1), 100);
+    const skip = (page - 1) * limit;
+    const hoy = new Date();
+    const search = String(filtros.search ?? '').trim();
+    const estado = String(filtros.estado ?? '').trim().toUpperCase();
+    const garantia = String(filtros.garantia ?? '').trim().toUpperCase();
+
+    const where: any = { empresaId };
+
+    if (filtros.sedeId) where.sedeId = filtros.sedeId;
+    if (estado && estado !== 'TODOS') where.estado = estado;
+
+    if (garantia === 'VIGENTE') where.garantiaHasta = { gte: hoy };
+    if (garantia === 'VENCIDA') where.garantiaHasta = { lt: hoy };
+    if (garantia === 'SIN_GARANTIA') where.garantiaHasta = null;
+
+    if (search) {
+      where.OR = [
+        { numeroSerie: { contains: search, mode: 'insensitive' } },
+        { producto: { descripcion: { contains: search, mode: 'insensitive' } } },
+        { producto: { codigo: { contains: search, mode: 'insensitive' } } },
+        { comprobante: { serie: { contains: search, mode: 'insensitive' } } },
+        { comprobante: { cliente: { nombre: { contains: search, mode: 'insensitive' } } } },
+        { comprobante: { cliente: { nroDoc: { contains: search, mode: 'insensitive' } } } },
+      ];
+    }
+
+    const [total, rows, resumenRaw] = await Promise.all([
+      this.prisma.productoSerie.count({ where }),
+      this.prisma.productoSerie.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: [{ garantiaHasta: 'asc' }, { actualizadoEn: 'desc' }],
+        include: {
+          producto: { select: { id: true, codigo: true, descripcion: true, marca: { select: { nombre: true } } } },
+          sede: { select: { id: true, nombre: true } },
+          comprobante: {
+            select: {
+              id: true,
+              tipoDoc: true,
+              serie: true,
+              correlativo: true,
+              fechaEmision: true,
+              cliente: { select: { id: true, nombre: true, nroDoc: true, telefono: true, email: true } },
+            },
+          },
+        },
+      }),
+      this.prisma.productoSerie.findMany({
+        where: { empresaId, ...(filtros.sedeId ? { sedeId: filtros.sedeId } : {}) },
+        select: { estado: true, garantiaHasta: true },
+      }),
+    ]);
+
+    const obtenerEstadoGarantia = (garantiaHasta: Date | null) => {
+      if (!garantiaHasta) return 'SIN_GARANTIA';
+      return garantiaHasta.getTime() >= hoy.getTime() ? 'VIGENTE' : 'VENCIDA';
+    };
+
+    const resumen = resumenRaw.reduce(
+      (acc, item) => {
+        acc.total += 1;
+        acc.estados[item.estado] = (acc.estados[item.estado] ?? 0) + 1;
+        const estadoGarantia = obtenerEstadoGarantia(item.garantiaHasta);
+        acc.garantias[estadoGarantia] = (acc.garantias[estadoGarantia] ?? 0) + 1;
+        return acc;
+      },
+      {
+        total: 0,
+        estados: { DISPONIBLE: 0, VENDIDO: 0, RESERVADO: 0, BAJA: 0 } as Record<string, number>,
+        garantias: { VIGENTE: 0, VENCIDA: 0, SIN_GARANTIA: 0 } as Record<string, number>,
+      },
+    );
+
+    return {
+      data: rows.map((serie) => ({
+        id: serie.id,
+        numeroSerie: serie.numeroSerie,
+        estado: serie.estado,
+        garantiaMeses: serie.garantiaMeses,
+        garantiaHasta: serie.garantiaHasta,
+        estadoGarantia: obtenerEstadoGarantia(serie.garantiaHasta),
+        observacion: serie.observacion,
+        creadoEn: serie.creadoEn,
+        actualizadoEn: serie.actualizadoEn,
+        producto: serie.producto,
+        sede: serie.sede,
+        comprobante: serie.comprobante
+          ? {
+              ...serie.comprobante,
+              numero: `${serie.comprobante.serie}-${serie.comprobante.correlativo}`,
+            }
+          : null,
+      })),
+      resumen,
+      paginacion: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async crearSerie(empresaId: number, sedeId: number | null, dto: any) {
+    const { productoId, numeroSerie, garantiaMeses, observacion, compraId, compraDetalleId, estado } = dto;
+    if (!productoId || !numeroSerie) {
+      throw new BadRequestException('productoId y numeroSerie son requeridos');
+    }
+
+    const parsedProductoId = Number(productoId);
+    if (!Number.isInteger(parsedProductoId)) throw new BadRequestException('productoId inválido');
+    const serieNormalizada = this.normalizarSerie(numeroSerie);
+    const estadoNormalizado = this.validarEstadoSerie(estado) ?? 'DISPONIBLE';
+    const garantiaHasta = this.calcularGarantiaHasta(garantiaMeses);
+    const parsedCompraId = compraId ? Number(compraId) : null;
+    const parsedCompraDetalleId = compraDetalleId ? Number(compraDetalleId) : null;
+
+    await this.validarProductoEmpresa(empresaId, parsedProductoId);
+    await this.validarCompraEmpresa(empresaId, parsedCompraId, parsedCompraDetalleId);
+
+    const existing = await this.prisma.productoSerie.findUnique({
+      where: { empresaId_numeroSerie: { empresaId, numeroSerie: serieNormalizada } },
+    });
+    if (existing) throw new BadRequestException(`La serie "${numeroSerie}" ya existe para esta empresa`);
+
+    const serie = await this.prisma.productoSerie.create({
+      data: {
+        empresaId,
+        productoId: parsedProductoId,
+        sedeId: sedeId ?? null,
+        numeroSerie: serieNormalizada,
+        estado: estadoNormalizado as any,
+        garantiaMeses: garantiaMeses ? Number(garantiaMeses) : null,
+        garantiaHasta,
+        compraId: parsedCompraId,
+        compraDetalleId: parsedCompraDetalleId,
+        observacion: observacion ?? null,
+      },
+      include: {
+        producto: { select: { id: true, codigo: true, descripcion: true } },
+        sede: { select: { id: true, nombre: true } },
+      },
+    });
+    return serie;
+  }
+
+  async actualizarSerie(empresaId: number, id: number, dto: any) {
+    const serie = await this.prisma.productoSerie.findFirst({ where: { id, empresaId } });
+    if (!serie) throw new BadRequestException('Serie no encontrada');
+
+    const { estado, observacion, garantiaMeses } = dto;
+    const estadoNormalizado = this.validarEstadoSerie(estado);
+    const garantiaHasta = garantiaMeses != null ? this.calcularGarantiaHasta(garantiaMeses) : serie.garantiaHasta;
+
+    return this.prisma.productoSerie.update({
+      where: { id },
+      data: {
+        ...(estadoNormalizado ? { estado: estadoNormalizado as any } : {}),
+        ...(observacion !== undefined ? { observacion } : {}),
+        ...(garantiaMeses != null ? { garantiaMeses: Number(garantiaMeses), garantiaHasta } : {}),
+      },
+      include: {
+        producto: { select: { id: true, codigo: true, descripcion: true } },
+        sede: { select: { id: true, nombre: true } },
+      },
+    });
+  }
+
+  async eliminarSerie(empresaId: number, id: number) {
+    const serie = await this.prisma.productoSerie.findFirst({ where: { id, empresaId } });
+    if (!serie) throw new BadRequestException('Serie no encontrada');
+    if (serie.estado === 'VENDIDO') {
+      return this.prisma.productoSerie.update({ where: { id }, data: { estado: 'BAJA' } });
+    }
+    await this.prisma.reclamoGarantia.deleteMany({ where: { productoSerieId: id } });
+    await this.prisma.productoSerie.delete({ where: { id } });
+    return { message: 'Serie eliminada' };
+  }
+
+  async obtenerSeriesPorProducto(empresaId: number, productoId: number, estado?: string) {
+    await this.validarProductoEmpresa(empresaId, productoId);
+    const where: any = { empresaId, productoId };
+    if (estado && estado !== 'TODOS') where.estado = this.validarEstadoSerie(estado);
+    const series = await this.prisma.productoSerie.findMany({
+      where,
+      orderBy: [{ estado: 'asc' }, { creadoEn: 'desc' }],
+      include: {
+        sede: { select: { id: true, nombre: true } },
+        comprobante: {
+          select: {
+            serie: true, correlativo: true, fechaEmision: true,
+            cliente: { select: { nombre: true, nroDoc: true } },
+          },
+        },
+        compra: { select: { id: true, serie: true, numero: true, fechaEmision: true } },
+        reclamos: { select: { id: true, estadoReclamo: true, descripcion: true, fechaReclamo: true } },
+      },
+    });
+
+    const hoy = new Date();
+    return series.map((s) => ({
+      ...s,
+      estadoGarantia: !s.garantiaHasta ? 'SIN_GARANTIA' : s.garantiaHasta >= hoy ? 'VIGENTE' : 'VENCIDA',
+      comprobante: s.comprobante
+        ? { ...s.comprobante, numero: `${s.comprobante.serie}-${s.comprobante.correlativo}` }
+        : null,
+    }));
+  }
+
+  async crearReclamo(empresaId: number, serieId: number, dto: any) {
+    const serie = await this.prisma.productoSerie.findFirst({ where: { id: serieId, empresaId } });
+    if (!serie) throw new BadRequestException('Serie no encontrada');
+    const { descripcion, tecnico, estadoReclamo } = dto;
+    if (!descripcion) throw new BadRequestException('descripcion es requerida');
+    const estadoReclamoNormalizado = this.validarEstadoReclamo(estadoReclamo) ?? 'ABIERTO';
+    return this.prisma.reclamoGarantia.create({
+      data: {
+        empresaId,
+        productoSerieId: serieId,
+        descripcion: String(descripcion),
+        tecnico: tecnico ?? null,
+        estadoReclamo: estadoReclamoNormalizado as any,
+      },
+    });
+  }
+
+  async obtenerReclamos(empresaId: number, serieId: number) {
+    const serie = await this.prisma.productoSerie.findFirst({ where: { id: serieId, empresaId } });
+    if (!serie) throw new BadRequestException('Serie no encontrada');
+    return this.prisma.reclamoGarantia.findMany({
+      where: { productoSerieId: serieId },
+      orderBy: { creadoEn: 'desc' },
+    });
+  }
+
+  async actualizarReclamo(empresaId: number, reclamoId: number, dto: any) {
+    const reclamo = await this.prisma.reclamoGarantia.findFirst({ where: { id: reclamoId, empresaId } });
+    if (!reclamo) throw new BadRequestException('Reclamo no encontrado');
+    const { estadoReclamo, resolucion, tecnico, fechaResolucion } = dto;
+    const estadoReclamoNormalizado = this.validarEstadoReclamo(estadoReclamo);
+    return this.prisma.reclamoGarantia.update({
+      where: { id: reclamoId },
+      data: {
+        ...(estadoReclamoNormalizado ? { estadoReclamo: estadoReclamoNormalizado as any } : {}),
+        ...(resolucion !== undefined ? { resolucion } : {}),
+        ...(tecnico !== undefined ? { tecnico } : {}),
+        ...(fechaResolucion ? { fechaResolucion: new Date(fechaResolucion) } : {}),
+        ...(estadoReclamoNormalizado && ['RESUELTO', 'CERRADO'].includes(estadoReclamoNormalizado) && !reclamo.fechaResolucion
+          ? { fechaResolucion: new Date() }
+          : {}),
+      },
+    });
+  }
+
+  async eliminarReclamo(empresaId: number, reclamoId: number) {
+    const reclamo = await this.prisma.reclamoGarantia.findFirst({ where: { id: reclamoId, empresaId } });
+    if (!reclamo) throw new BadRequestException('Reclamo no encontrado');
+    await this.prisma.reclamoGarantia.delete({ where: { id: reclamoId } });
+    return { message: 'Reclamo eliminado' };
+  }
+
+  private readonly logger = new Logger('KardexService');
+
+  private fetchUrlAsBase64(url: string): Promise<string> {
+    return new Promise((resolve) => {
+      const client = url.startsWith('https') ? https : http;
+      client.get(url, (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => {
+          const mime = res.headers['content-type'] || 'image/png';
+          const b64 = Buffer.concat(chunks).toString('base64');
+          resolve(`data:${mime};base64,${b64}`);
+        });
+        res.on('error', () => resolve(''));
+      }).on('error', () => resolve(''));
+    });
+  }
+
+  async generarConstanciaGarantia(empresaId: number, serieId: number) {
+    const serie = await this.prisma.productoSerie.findFirst({
+      where: { id: serieId, empresaId },
+      include: {
+        empresa: {
+          select: {
+            razonSocial: true,
+            nombreComercial: true,
+            ruc: true,
+            direccion: true,
+            logo: true,
+            whatsappTienda: true,
+          },
+        },
+        producto: {
+          select: {
+            codigo: true,
+            descripcion: true,
+            atributosTecnicos: true,
+            marca: { select: { nombre: true } },
+          },
+        },
+        sede: { select: { nombre: true } },
+        comprobante: {
+          select: {
+            serie: true,
+            correlativo: true,
+            fechaEmision: true,
+            cliente: { select: { nombre: true, nroDoc: true, telefono: true, email: true } },
+          },
+        },
+        compra: { select: { serie: true, numero: true, fechaEmision: true } },
+      },
+    });
+
+    if (!serie) throw new BadRequestException('Serie no encontrada');
+
+    const atributos = (serie.producto.atributosTecnicos ?? {}) as Record<string, any>;
+    const comprobanteNumero = serie.comprobante
+      ? `${serie.comprobante.serie}-${String(serie.comprobante.correlativo).padStart(8, '0')}`
+      : null;
+    const compraNumero = serie.compra
+      ? [serie.compra.serie, serie.compra.numero].filter(Boolean).join('-')
+      : null;
+
+    // Convertir logo a base64 para que Puppeteer lo renderice sin depender de URLs externas
+    let logoBase64: string | null = null;
+    if (serie.empresa.logo) {
+      try {
+        logoBase64 = await this.fetchUrlAsBase64(serie.empresa.logo);
+      } catch {
+        this.logger.warn('No se pudo convertir el logo a base64; se omitirá en la constancia');
+      }
+    }
+
+    const buffer = await this.pdfGenerator.generarPDFConstanciaGarantia({
+      empresa: {
+        razonSocial: serie.empresa.razonSocial,
+        nombreComercial: serie.empresa.nombreComercial,
+        ruc: serie.empresa.ruc,
+        direccion: serie.empresa.direccion,
+        logo: logoBase64 || serie.empresa.logo,
+        telefono: serie.empresa.whatsappTienda,
+      },
+      producto: {
+        codigo: serie.producto.codigo,
+        descripcion: serie.producto.descripcion,
+        marca: serie.producto.marca?.nombre,
+        modelo: atributos.modelo,
+        partNumber: atributos.partNumber,
+      },
+      serie: {
+        id: serie.id,
+        numeroSerie: serie.numeroSerie,
+        estado: serie.estado,
+        garantiaMeses: serie.garantiaMeses,
+        garantiaHasta: serie.garantiaHasta,
+        observacion: serie.observacion,
+        sede: serie.sede?.nombre,
+      },
+      cliente: serie.comprobante?.cliente ?? null,
+      comprobante: {
+        numero: comprobanteNumero,
+        fechaEmision: serie.comprobante?.fechaEmision,
+      },
+      compra: {
+        numero: compraNumero,
+        fechaEmision: serie.compra?.fechaEmision,
+      },
+    });
+
+    return {
+      buffer,
+      filename: `constancia-garantia-${serie.numeroSerie}.pdf`.replace(/[^\w.-]+/g, '_'),
     };
   }
 }

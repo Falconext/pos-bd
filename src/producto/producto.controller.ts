@@ -599,6 +599,43 @@ export class ProductoController {
   }
 
   // Literales primero — siempre antes que :id para evitar conflictos de matching
+  @Get('ficha-tecnica/plantilla')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async obtenerPlantillaFichaTecnica(
+    @User() user: any,
+    @Query('categoriaId') categoriaId?: string,
+    @Query('descripcion') descripcion?: string,
+    @Query('tipoProducto') tipoProducto?: string,
+  ) {
+    return this.service.obtenerPlantillaFichaTecnica(user.empresaId, {
+      categoriaId: categoriaId ? Number(categoriaId) : undefined,
+      descripcion,
+      tipoProducto,
+    });
+  }
+
+  @Get('ficha-tecnica/plantillas')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async listarPlantillasFichaTecnica(@User() user: any) {
+    return this.service.listarPlantillasFichaTecnica(user.empresaId);
+  }
+
+  @Post('ficha-tecnica/plantillas')
+  @Roles('ADMIN_EMPRESA')
+  async guardarPlantillaFichaTecnica(@User() user: any, @Body() body: any) {
+    return this.service.guardarPlantillaFichaTecnica(user.empresaId, body);
+  }
+
+  @Put('ficha-tecnica/plantillas/:id')
+  @Roles('ADMIN_EMPRESA')
+  async actualizarPlantillaFichaTecnica(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: any,
+  ) {
+    return this.service.guardarPlantillaFichaTecnica(user.empresaId, { ...body, id });
+  }
+
   @Get()
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async listar(

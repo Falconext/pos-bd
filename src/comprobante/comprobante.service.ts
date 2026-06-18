@@ -7,7 +7,7 @@ import {
   Logger,
   Optional,
 } from '@nestjs/common';
-import { Prisma, EstadoReserva, EstadoSunat, EstadoType } from '@prisma/client';
+import { Prisma, EstadoProductoSerie, EstadoReserva, EstadoSunat, EstadoType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { KardexService } from '../kardex/kardex.service';
 import { InventarioNotificacionesService } from '../notificaciones/inventario-notificaciones.service';
@@ -24,6 +24,10 @@ export class ComprobanteService {
   private readonly logger = new Logger(ComprobanteService.name);
 
   private readonly adminSistemaRole = 'ADMIN_SISTEMA';
+
+  private esProductoServicio(atributosTecnicos?: Record<string, any> | null) {
+    return String(atributosTecnicos?.tipoProducto || '').toUpperCase() === 'SERVICIO';
+  }
 
   private getJambleCorrelativoFloor(empresaId: number, serie: string): number | null {
     // Format:
@@ -583,6 +587,147 @@ export class ComprobanteService {
     return parseFloat(n.toFixed(2));
   }
 
+  private normalizarNumerosSerie(value: unknown): string[] {
+    const raw = Array.isArray(value)
+      ? value
+      : typeof value === 'string'
+        ? value.split(/[\n,;]+/)
+        : [];
+    return Array.from(
+      new Set(
+        raw
+          .map((serie) => String(serie ?? '').trim().toUpperCase())
+          .filter(Boolean),
+      ),
+    );
+  }
+
+  private atributosProducto(producto: any): Record<string, any> {
+    const attrs = producto?.atributosTecnicos;
+    if (!attrs) return {};
+    if (typeof attrs === 'string') {
+      try {
+        return JSON.parse(attrs);
+      } catch {
+        return {};
+      }
+    }
+    return typeof attrs === 'object' ? attrs : {};
+  }
+
+  private productoRequiereSerie(producto: any): boolean {
+    const attrs = this.atributosProducto(producto);
+    const control = String(attrs.controlSeries ?? attrs.requiereSerie ?? '').toLowerCase();
+    return attrs.controlSeries === true || attrs.requiereSerie === true || ['true', 'si', 'sí', '1'].includes(control);
+  }
+
+  private garantiaMesesProducto(producto: any): number | undefined {
+    const attrs = this.atributosProducto(producto);
+    const meses = Number(attrs.garantiaMeses ?? attrs.garantia ?? 0);
+    return Number.isFinite(meses) && meses > 0 ? Math.trunc(meses) : undefined;
+  }
+
+  private async validarSeriesComprobante(detalles: any[], empresaId: number, esVenta = true) {
+    if (!esVenta) return;
+
+    const seriesSolicitadas = detalles.flatMap((detalle) => detalle.numerosSerie ?? []);
+    const duplicadas = seriesSolicitadas.filter((serie, index) => seriesSolicitadas.indexOf(serie) !== index);
+    if (duplicadas.length > 0) {
+      throw new BadRequestException(`Series duplicadas en el comprobante: ${Array.from(new Set(duplicadas)).join(', ')}`);
+    }
+
+    for (const detalle of detalles) {
+      if (!detalle.productoId) continue;
+      const cantidad = Number(detalle.cantidad);
+      const numerosSerie = this.normalizarNumerosSerie(detalle.numerosSerie);
+      const requiereSerie = Boolean(detalle.requiereSerie);
+
+      if ((requiereSerie || numerosSerie.length > 0) && (!Number.isInteger(cantidad) || cantidad <= 0)) {
+        throw new BadRequestException(`El producto "${detalle.descripcion}" requiere cantidad entera para controlar series.`);
+      }
+
+      if (requiereSerie && numerosSerie.length !== cantidad) {
+        throw new BadRequestException(`El producto "${detalle.descripcion}" requiere ${cantidad} serie(s). Recibidas: ${numerosSerie.length}.`);
+      }
+
+      if (numerosSerie.length > 0 && numerosSerie.length !== cantidad) {
+        throw new BadRequestException(`La cantidad de series de "${detalle.descripcion}" debe coincidir con la cantidad vendida.`);
+      }
+    }
+
+    if (seriesSolicitadas.length === 0) return;
+
+    const existentes = await this.prisma.productoSerie.findMany({
+      where: {
+        empresaId,
+        numeroSerie: { in: seriesSolicitadas },
+      },
+      select: { numeroSerie: true, productoId: true, estado: true },
+    });
+
+    for (const existente of existentes) {
+      const detalle = detalles.find((d) => (d.numerosSerie ?? []).includes(existente.numeroSerie));
+      if (!detalle) continue;
+      if (existente.productoId !== Number(detalle.productoId)) {
+        throw new BadRequestException(`La serie ${existente.numeroSerie} pertenece a otro producto.`);
+      }
+      if (existente.estado === EstadoProductoSerie.VENDIDO || existente.estado === EstadoProductoSerie.BAJA) {
+        throw new BadRequestException(`La serie ${existente.numeroSerie} no está disponible.`);
+      }
+    }
+  }
+
+  private async registrarSeriesVendidas(comprobanteId: number, empresaId: number, sedeId?: number | null) {
+    const detalles = await this.prisma.detalleComprobante.findMany({
+      where: { comprobanteId, numerosSerie: { not: Prisma.JsonNull } },
+      select: {
+        id: true,
+        productoId: true,
+        numerosSerie: true,
+        producto: { select: { atributosTecnicos: true } },
+      },
+    });
+
+    for (const detalle of detalles) {
+      if (!detalle.productoId) continue;
+      const numerosSerie = this.normalizarNumerosSerie(detalle.numerosSerie);
+      if (numerosSerie.length === 0) continue;
+      const garantiaMeses = this.garantiaMesesProducto(detalle.producto);
+      const garantiaHasta = garantiaMeses
+        ? new Date(new Date().setMonth(new Date().getMonth() + garantiaMeses))
+        : undefined;
+
+      for (const numeroSerie of numerosSerie) {
+        await this.prisma.productoSerie.upsert({
+          where: { empresaId_numeroSerie: { empresaId, numeroSerie } },
+          create: {
+            empresaId,
+            productoId: detalle.productoId,
+            sedeId: sedeId ?? undefined,
+            numeroSerie,
+            estado: EstadoProductoSerie.VENDIDO,
+            garantiaMeses,
+            garantiaHasta,
+            comprobanteId,
+            detalleComprobanteId: detalle.id,
+          },
+          update: {
+            estado: EstadoProductoSerie.VENDIDO,
+            garantiaMeses,
+            garantiaHasta,
+            comprobanteId,
+            detalleComprobanteId: detalle.id,
+            sedeId: sedeId ?? undefined,
+          },
+        });
+      }
+    }
+  }
+
+  private limpiarDetalleParaPersistencia(detalles: any[]) {
+    return detalles.map(({ requiereSerie, ...detalle }) => detalle);
+  }
+
   // Crea el comprobante con reintentos automáticos en caso de colisión de correlativo (race condition)
   private async crearComprobanteConReintento(
     data: any,
@@ -795,6 +940,8 @@ export class ComprobanteService {
       const productoId = Number(item.productoId);
       const prod = productos.find((p) => p.id === productoId)!;
       const cantidad = Number(item.cantidad);
+      const numerosSerie = this.normalizarNumerosSerie(item.numerosSerie ?? item.series);
+      const requiereSerie = this.productoRequiereSerie(prod);
       const descripcion = item.descripcion ?? (prod as any).descripcion;
       const precioConIgv =
         item.nuevoValorUnitario != null
@@ -856,6 +1003,8 @@ export class ComprobanteService {
         ...(item.dniPaciente && { dniPaciente: item.dniPaciente }),
         ...(item.nombrePaciente && { nombrePaciente: item.nombrePaciente }),
         ...(item.medicoNombre && { medicoNombre: item.medicoNombre }),
+        ...(numerosSerie.length > 0 ? { numerosSerie } : {}),
+        ...(requiereSerie ? { requiereSerie: true } : {}),
       };
     });
     return {
@@ -976,6 +1125,7 @@ export class ComprobanteService {
           id: true,
           descripcion: true,
           stock: true,
+          atributosTecnicos: true,
           porcentajeVenta: true,
           porcentajeProvision: true,
         },
@@ -984,6 +1134,7 @@ export class ComprobanteService {
       if (!producto) {
         throw new BadRequestException('El producto no existe o no pertenece a la empresa');
       }
+      if (this.esProductoServicio(producto.atributosTecnicos as any)) continue;
 
       const stockSede = await this.prisma.productoStock.findUnique({
         where: { productoId_sedeId: { productoId, sedeId } },
@@ -1037,9 +1188,10 @@ export class ComprobanteService {
 
       const producto = await this.prisma.producto.findFirst({
         where: { id: productoId, empresaId: data.empresaId },
-        select: { stock: true, costoPromedio: true },
+        select: { stock: true, costoPromedio: true, atributosTecnicos: true },
       });
       if (!producto) continue;
+      if (this.esProductoServicio(producto.atributosTecnicos as any)) continue;
 
       // Registrar movimiento de kardex si se proporcionan los datos
       if (data && this.kardexService) {
@@ -1278,6 +1430,7 @@ export class ComprobanteService {
 
     const { detalleFinal, mtoOperGravadas, mtoOpExoneradas, mtoOpInafectas, totalIGV } =
       await this.cargarProductosYDetalles(detalles, empresaId);
+    await this.validarSeriesComprobante(detalleFinal, empresaId, !esConversionDesdeInformal);
 
     // Validar cliente si viene explícito
     if (clienteName !== 'CLIENTES VARIOS' && finalClienteId) {
@@ -1370,7 +1523,7 @@ export class ComprobanteService {
           motivoId: motivoId ?? null,
         }
         : {}),
-      detalles: { create: detalleFinal },
+      detalles: { create: this.limpiarDetalleParaPersistencia(detalleFinal) },
       leyendas: { create: [{ code: '1000', value: leyenda }] },
       // Vínculo con el documento informal de origen (NV, TICKET, NP, etc.)
       ...(esConversionDesdeInformal && comprobanteOrigenId != null
@@ -1406,6 +1559,7 @@ export class ComprobanteService {
         sedeId,
         usuarioId,
       });
+      await this.registrarSeriesVendidas(comprobante.id, empresaId, sedeId);
     }
 
     // Registrar comisiones del vendedor (no bloqueante)
@@ -2009,6 +2163,7 @@ export class ComprobanteService {
     }
     const { detalleFinal, mtoOperGravadas, mtoOpExoneradas, mtoOpInafectas, totalIGV } =
       await this.cargarProductosYDetalles(detalles, empresaId);
+    await this.validarSeriesComprobante(detalleFinal, empresaId, tipoDoc !== 'COT');
     const valorVenta = this.round2(mtoOperGravadas + mtoOpExoneradas + mtoOpInafectas);
     const subTotal = this.round2(valorVenta + totalIGV);
     const mtoImpVenta = subTotal;
@@ -2122,7 +2277,7 @@ export class ComprobanteService {
       cotizTerminos: input.cotizTerminos ?? null,
       cotizTipoPago: input.cotizTipoPago ?? 'CONTADO',
       cotizAdelanto: input.cotizAdelanto ?? 0,
-      detalles: { create: detalleFinal },
+      detalles: { create: this.limpiarDetalleParaPersistencia(detalleFinal) },
       leyendas: { create: [{ code: '1000', value: leyenda }] },
     };
     // Validar receta médica en backend si rubro farmacia/botica
@@ -2164,6 +2319,7 @@ export class ComprobanteService {
         sedeId: finalSedeId,
         usuarioId,
       });
+      await this.registrarSeriesVendidas(comp.id, empresaId, finalSedeId);
     }
 
     // Registrar comisiones del vendedor (no bloqueante)

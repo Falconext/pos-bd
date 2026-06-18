@@ -1,6 +1,16 @@
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificacionesGateway } from './notificaciones.gateway';
+
+export interface SunatNotifMeta {
+  comprobanteId?: number;
+  guiaId?: number;
+  serie?: string | null;
+  correlativo?: number | null;
+  tipoDoc?: string | null;
+  errorMsg?: string | null;
+}
 
 @Injectable()
 export class NotificacionesService {
@@ -134,10 +144,12 @@ export class NotificacionesService {
     tipo: 'INFO' | 'WARNING' | 'CRITICAL';
     titulo: string;
     mensaje: string;
+    metaData?: SunatNotifMeta;
   }) {
     const notificacion = await this.prisma.notificacion.create({
       data: {
         ...data,
+        metaData: data.metaData as Prisma.InputJsonValue | undefined,
         leida: false,
       },
     });
@@ -146,6 +158,58 @@ export class NotificacionesService {
     this.gateway.enviarNotificacionAUsuario(data.usuarioId, notificacion);
 
     return notificacion;
+  }
+
+  /**
+   * Notifica a todos los ADMIN_EMPRESA de una empresa sobre un fallo SUNAT.
+   * Incluye dedup: no crea otra notificación si ya existe una no-leída del mismo
+   * comprobante en las últimas 24 horas.
+   */
+  async notificarFallaSunat(params: {
+    empresaId: number;
+    tipo: 'CRITICAL' | 'WARNING' | 'INFO';
+    titulo: string;
+    mensaje: string;
+    meta: SunatNotifMeta;
+  }) {
+    const { empresaId, tipo, titulo, mensaje, meta } = params;
+
+    // Dedup por comprobanteId o guiaId en las últimas 24 h
+    const refId = meta.comprobanteId ?? meta.guiaId;
+    const refKey = meta.comprobanteId ? 'comprobanteId' : 'guiaId';
+    if (refId !== undefined) {
+      const hace24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const yaExiste = await (this.prisma.notificacion as any).findFirst({
+        where: {
+          empresaId,
+          titulo,
+          leida: false,
+          creadoEn: { gte: hace24h },
+          metaData: { path: [refKey], equals: refId },
+        },
+      });
+      if (yaExiste) return;
+    }
+
+    const admins = await this.prisma.usuario.findMany({
+      where: { empresaId, rol: 'ADMIN_EMPRESA' },
+      select: { id: true },
+    });
+
+    for (const admin of admins) {
+      const notif = await this.prisma.notificacion.create({
+        data: {
+          usuarioId: admin.id,
+          empresaId,
+          tipo,
+          titulo,
+          mensaje,
+          leida: false,
+          metaData: meta as any,
+        },
+      });
+      this.gateway.enviarNotificacionAUsuario(admin.id, notif);
+    }
   }
 
   // Enviar notificación en tiempo real usando el gateway

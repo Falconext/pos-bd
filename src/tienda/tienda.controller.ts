@@ -38,6 +38,11 @@ export class TiendaController {
     return this.tiendaService.configurarTienda(empresaId, dto);
   }
 
+  @Patch('diseno')
+  async actualizarDiseno(@Req() req: any, @Body() body: Record<string, any>) {
+    return this.tiendaService.actualizarDiseno(req.user.empresaId, body);
+  }
+
   // ==================== PEDIDOS ====================
 
   @Get('pedidos')
@@ -81,6 +86,36 @@ export class TiendaController {
   async obtenerHistorialEstados(@Req() req: any, @Param('id') id: string) {
     const empresaId = req.user.empresaId;
     return this.tiendaService.obtenerHistorialEstados(empresaId, +id);
+  }
+
+  // ==================== RESEÑAS / RATING ====================
+
+  @Get('reviews')
+  async listarReviews(
+    @Req() req: any,
+    @Query('estado') estado?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.tiendaService.listarReviewsAdmin(
+      req.user.empresaId,
+      estado,
+      page ? parseInt(page, 10) : 1,
+      limit ? parseInt(limit, 10) : 50,
+    );
+  }
+
+  @Patch('reviews/:id/estado')
+  async actualizarReview(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: { estado: any },
+  ) {
+    return this.tiendaService.actualizarEstadoReviewAdmin(
+      req.user.empresaId,
+      +id,
+      body.estado,
+    );
   }
 
   // ==================== CONFIGURACIÓN DE ENVÍO ====================

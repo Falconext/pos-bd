@@ -14,6 +14,29 @@ export class ComprasService {
         private productoLoteService: ProductoLoteService,
     ) { }
 
+    private readonly saldoTolerance = 0.01;
+
+    private roundMoney(value: number) {
+        return parseFloat((Number(value) || 0).toFixed(2));
+    }
+
+    private normalizeEstadoPagoBySaldo(total: number, saldo: number) {
+        const safeTotal = this.roundMoney(total);
+        const safeSaldo = Math.max(0, this.roundMoney(saldo));
+        if (safeSaldo <= this.saldoTolerance) return 'COMPLETADO';
+        if (safeSaldo < safeTotal - this.saldoTolerance) return 'PAGO_PARCIAL';
+        return 'PENDIENTE_PAGO';
+    }
+
+    private normalizeCompraForResponse<T extends { total: any; saldo: any; estadoPago: any }>(compra: T): T {
+        const saldo = Math.max(0, this.roundMoney(Number(compra.saldo ?? 0)));
+        return {
+            ...compra,
+            saldo,
+            estadoPago: this.normalizeEstadoPagoBySaldo(Number(compra.total ?? 0), saldo) as any,
+        };
+    }
+
     async crear(empresaId: number, usuarioId: number, data: CrearCompraDto, reqSedeId?: number) {
         const duplicado = await this.prisma.compra.findFirst({
             where: { empresaId, serie: data.serie, numero: data.numero },
@@ -26,6 +49,7 @@ export class ComprasService {
         }
 
         let subtotal = 0;
+        let totalLineas = 0;
 
         // Usar la sede del token; si el usuario es admin sin sede asignada, usar la sede principal
         let sedeId = reqSedeId;
@@ -52,8 +76,12 @@ export class ComprasService {
                 : precioIngresado;
             const igvItem = parseFloat((costoNeto * 0.18).toFixed(4));
             const sub = costoNeto * Number(item.cantidad);
+            const totalLinea = item.incluyeIgv
+                ? precioIngresado * Number(item.cantidad)
+                : (costoNeto + igvItem) * Number(item.cantidad);
 
             subtotal += sub;
+            totalLineas += totalLinea;
 
             detallesData.push({
                 productoId: item.productoId,
@@ -61,16 +89,20 @@ export class ComprasService {
                 cantidad: item.cantidad,
                 precioUnitario: costoNeto,  // siempre neto en DB
                 subtotal: sub,
-                igv: igvItem * Number(item.cantidad),
-                total: (costoNeto + igvItem) * Number(item.cantidad),
+                igv: totalLinea - sub,
+                total: totalLinea,
                 lote: item.lote,
                 fechaVencimiento: item.fechaVencimiento ? new Date(item.fechaVencimiento) : null,
             });
         }
 
         // Calculate final totals
-        const igvTotal = data.igv !== undefined ? Number(data.igv) : subtotal * 0.18;
-        const total = subtotal + igvTotal;
+        const subtotalTotal = this.roundMoney(subtotal);
+        const total = this.roundMoney(data.total !== undefined ? Number(data.total) : totalLineas);
+        const igvTotal = this.roundMoney(data.igv !== undefined ? Number(data.igv) : total - subtotalTotal);
+        const montoPagadoInicial = Math.max(0, this.roundMoney(Number(data.montoPagadoInicial) || 0));
+        const saldoInicial = Math.max(0, this.roundMoney(total - montoPagadoInicial));
+        const estadoPagoInicial = this.normalizeEstadoPagoBySaldo(total, saldoInicial);
 
         // Create Purchase Transaction
         const compra = await this.prisma.$transaction(async (tx) => {
@@ -86,12 +118,12 @@ export class ComprasService {
                     fechaVencimiento: data.fechaVencimiento ? new Date(data.fechaVencimiento) : null,
                     moneda: data.moneda || 'PEN',
                     tipoCambio: data.tipoCambio,
-                    subtotal,
+                    subtotal: subtotalTotal,
                     igv: igvTotal,
                     total,
-                    saldo: Math.max(0, parseFloat((total - (Number(data.montoPagadoInicial) || 0)).toFixed(2))),
+                    saldo: saldoInicial,
                     estado: 'REGISTRADO',
-                    estadoPago: (Number(data.montoPagadoInicial) || 0) >= total ? 'COMPLETADO' : (data.montoPagadoInicial || 0) > 0 ? 'PAGO_PARCIAL' : 'PENDIENTE_PAGO',
+                    estadoPago: estadoPagoInicial as any,
                     observaciones: data.observaciones,
                     // Save installments
                     cuotas: data.cuotas ? JSON.stringify(data.cuotas) : undefined,
@@ -99,11 +131,11 @@ export class ComprasService {
                         create: detallesData
                     },
                     sedeId: sedeId, // Guardar la sede a nivel de la cabecera de la compra
-                    pagos: data.montoPagadoInicial ? {
+                    pagos: montoPagadoInicial > 0 ? {
                         create: {
                             empresaId,
                             usuarioId,
-                            monto: data.montoPagadoInicial,
+                            monto: montoPagadoInicial,
                             metodoPago: data.metodoPagoInicial || 'EFECTIVO',
                             fecha: new Date(),
                         }
@@ -209,12 +241,17 @@ export class ComprasService {
             console.error('No se pudo guardar equivalencias XML de proveedor:', error);
         }
 
-        return compra;
+        return this.normalizeCompraForResponse(compra);
     }
 
     async listar(empresaId: number, query: any, sedeId?: number) {
         const { page = 1, limit = 10, search, estadoPago, fechaInicio, fechaFin } = query;
         const skip = (Number(page) - 1) * Number(limit);
+        const estadoPagoFiltro =
+            estadoPago === 'PAGADO' ? 'COMPLETADO'
+                : estadoPago === 'PARCIAL' ? 'PAGO_PARCIAL'
+                    : estadoPago === 'PENDIENTE' ? 'PENDIENTE_PAGO'
+                        : estadoPago;
 
         // Principal sede: include legacy records with sedeId=null (created before JWT sedeId fix)
         let sedeFilter: any = {};
@@ -233,7 +270,7 @@ export class ComprasService {
         const where: Prisma.CompraWhereInput = {
             empresaId,
             ...sedeFilter,
-            ...(estadoPago ? { estadoPago: estadoPago } : {}),
+            ...(estadoPagoFiltro ? { estadoPago: estadoPagoFiltro } : {}),
             ...(fechaInicio ? {
                 fechaEmision: {
                     gte: new Date(fechaInicio),
@@ -249,6 +286,19 @@ export class ComprasService {
             } : {})
         };
 
+        await this.prisma.compra.updateMany({
+            where: {
+                empresaId,
+                ...sedeFilter,
+                saldo: { lte: new Prisma.Decimal(this.saldoTolerance) },
+                estadoPago: { in: ['PENDIENTE_PAGO', 'PAGO_PARCIAL'] as any },
+            },
+            data: {
+                saldo: 0,
+                estadoPago: 'COMPLETADO' as any,
+            },
+        });
+
         const [data, total] = await Promise.all([
             this.prisma.compra.findMany({
                 where,
@@ -260,7 +310,12 @@ export class ComprasService {
             this.prisma.compra.count({ where })
         ]);
 
-        return { data, total, page: Number(page), limit: Number(limit) };
+        return {
+            data: data.map((compra) => this.normalizeCompraForResponse(compra)),
+            total,
+            page: Number(page),
+            limit: Number(limit),
+        };
     }
 
     async obtenerPorId(empresaId: number, id: number, sedeId?: number) {
@@ -279,7 +334,7 @@ export class ComprasService {
         });
 
         if (!compra) throw new NotFoundException('Compra no encontrada');
-        return compra;
+        return this.normalizeCompraForResponse(compra);
     }
 
     async registrarPago(empresaId: number, usuarioId: number, compraId: number, data: any, sedeId?: number) {
@@ -293,8 +348,8 @@ export class ComprasService {
         if (monto <= 0) throw new BadRequestException('El monto debe ser mayor a 0');
         if (monto > Number(compra.saldo) + 0.1) throw new BadRequestException('El monto excede el saldo pendiente');
 
-        const nuevoSaldo = Math.max(0, parseFloat((Number(compra.saldo) - monto).toFixed(2)));
-        const nuevoEstadoPago = nuevoSaldo <= 0 ? 'COMPLETADO' : 'PAGO_PARCIAL';
+        const nuevoSaldo = Math.max(0, this.roundMoney(Number(compra.saldo) - monto));
+        const nuevoEstadoPago = this.normalizeEstadoPagoBySaldo(Number(compra.total), nuevoSaldo);
 
         // Transaction
         const result = await this.prisma.$transaction(async (tx) => {
@@ -319,7 +374,8 @@ export class ComprasService {
                 }
             });
 
-            return { pago, nuevoSaldo: Number(compraUpdated.saldo), nuevoEstado: compraUpdated.estadoPago };
+            const normalized = this.normalizeCompraForResponse(compraUpdated);
+            return { pago, nuevoSaldo: Number(normalized.saldo), nuevoEstado: normalized.estadoPago };
         });
 
         return { success: true, ...result };

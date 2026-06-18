@@ -388,7 +388,16 @@ export class AuthService {
             usarPrecioLoteFefo: true,
             tipoEmpresa: true,
             rubroId: true,
-            rubro: true,
+            rubro: {
+              include: {
+                features: {
+                  select: {
+                    featureKey: true,
+                    enabledByDefault: true,
+                  },
+                },
+              },
+            },
             slugTienda: true,
             ruc: true,
             brand: true,
@@ -408,7 +417,16 @@ export class AuthService {
                 },
                 maxSedes: true,
                 modulosAsignados: {
-                  include: { modulo: true },
+                  include: {
+                    modulo: {
+                      include: {
+                        subModulos: {
+                          where: { activo: true },
+                          orderBy: { orden: 'asc' },
+                        },
+                      },
+                    },
+                  },
                 },
                 subModulosAsignados: {
                   include: {
@@ -449,6 +467,12 @@ export class AuthService {
     if ((usuario as any).empresa?.plan?.features) {
       (usuario as any).empresa.plan.features = Object.fromEntries(
         (usuario as any).empresa.plan.features.map((feature: any) => [feature.featureKey, feature.enabled]),
+      );
+    }
+
+    if ((usuario as any).empresa?.rubro?.features) {
+      (usuario as any).empresa.rubro.features = Object.fromEntries(
+        (usuario as any).empresa.rubro.features.map((feature: any) => [feature.featureKey, feature.enabledByDefault]),
       );
     }
 
@@ -515,7 +539,16 @@ export class AuthService {
             provincia: true,
             distrito: true,
             rubro: {
-              select: { id: true, nombre: true },
+              select: {
+                id: true,
+                nombre: true,
+                features: {
+                  select: {
+                    featureKey: true,
+                    enabledByDefault: true,
+                  },
+                },
+              },
             },
             plan: {
               select: {
@@ -536,7 +569,16 @@ export class AuthService {
                   },
                 },
                 modulosAsignados: {
-                  include: { modulo: true },
+                  include: {
+                    modulo: {
+                      include: {
+                        subModulos: {
+                          where: { activo: true },
+                          orderBy: { orden: 'asc' },
+                        },
+                      },
+                    },
+                  },
                 },
               },
             },
@@ -578,6 +620,11 @@ export class AuthService {
       if (usuario.empresa.plan?.features) {
         usuario.empresa.plan.features = Object.fromEntries(
           usuario.empresa.plan.features.map((feature: any) => [feature.featureKey, feature.enabled]),
+        );
+      }
+      if (usuario.empresa.rubro?.features) {
+        usuario.empresa.rubro.features = Object.fromEntries(
+          usuario.empresa.rubro.features.map((feature: any) => [feature.featureKey, feature.enabledByDefault]),
         );
       }
       usuario.empresa.whatsappApiTokenConfigured = Boolean(

@@ -38,6 +38,8 @@ export class DisenoRubroService {
             'vistaProductos',
             'tiempoEntregaMin',
             'tiempoEntregaMax',
+            'templateHtml',
+            'templateCss',
         ];
 
         const dataFiltrada: Record<string, any> = {};
@@ -76,17 +78,8 @@ export class DisenoRubroService {
         if (!empresa) return null;
 
         // Si hay override, mezclar con el diseño base
-        const disenoBase = empresa.rubro?.disenos?.[0] || null; // Asumiendo relación uno a uno o tomando el primero
-        // Nota: En el schema DisenoRubro tiene rubroId @unique, así que es 1 a 1.
-        // Pero en Prisma relation puede ser array si no está definido como unique en el otro lado.
-        // En schema: rubro Rubro @relation... y en Rubro: disenos DisenoRubro[]?
-        // Revisemos schema: model DisenoRubro { rubroId Int @unique ... }
-        // model Rubro { ... disenos DisenoRubro? ... } -> Debería ser singular si es 1-1
-        // Voy a asumir que puedo acceder a disenoRubro desde rubro.
-
-        // Revisando schema actual en memoria:
-        // model Rubro { ... disenos DisenoRubro[] } (en el schema original era array)
-        // Pero DisenoRubro tiene @unique en rubroId.
+        // Rubro.disenos es DisenoRubro? (relación 1-1, no array)
+        const disenoBase = empresa.rubro?.disenos || null;
 
         // Si hay override en empresa, usarlo
         if (empresa.disenoOverride) {

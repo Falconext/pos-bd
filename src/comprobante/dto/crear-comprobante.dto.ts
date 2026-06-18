@@ -64,6 +64,9 @@ class DetalleDto {
   @IsOptional()
   @IsString()
   medicoNombre?: string;
+
+  @IsOptional()
+  numerosSerie?: string | string[];
 }
 
 export class CrearComprobanteDto {

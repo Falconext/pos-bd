@@ -1012,7 +1012,16 @@ export class EmpresaService {
       where: { id },
       include: {
         plan: true,
-        rubro: true,
+        rubro: {
+          include: {
+            features: {
+              select: {
+                featureKey: true,
+                enabledByDefault: true,
+              },
+            },
+          },
+        },
         usuarios: {
           where: { rol: { in: ['ADMIN_EMPRESA', 'ADMIN_SISTEMA'] } },
           select: {
@@ -1029,6 +1038,11 @@ export class EmpresaService {
       },
     });
     if (!empresa) throw new NotFoundException('Empresa no encontrada');
+    if ((empresa as any).rubro?.features) {
+      (empresa as any).rubro.features = Object.fromEntries(
+        (empresa as any).rubro.features.map((feature: any) => [feature.featureKey, feature.enabledByDefault]),
+      );
+    }
     return empresa;
   }
 

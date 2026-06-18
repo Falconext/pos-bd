@@ -12,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import { KardexService } from '../kardex/kardex.service';
 import { DigemidService } from '../digemid/digemid.service';
+import { esRubroComputo, obtenerPlantillaComputo } from './ficha-tecnica-computo';
 import * as XLSX from 'xlsx';
 import axios from 'axios';
 
@@ -24,6 +25,10 @@ export class ProductoService {
     private readonly s3: S3Service,
     private readonly digemidService: DigemidService,
   ) {}
+
+  private esProductoServicio(atributosTecnicos?: Record<string, any> | null) {
+    return String(atributosTecnicos?.tipoProducto || '').toUpperCase() === 'SERVICIO';
+  }
 
   private async generarCodigoProducto(empresaId: number, prefijo = 'PR') {
     const productos = await this.prisma.producto.findMany({
@@ -124,6 +129,8 @@ export class ProductoService {
       fechaInicioOferta?: string | Date;
       fechaFinOferta?: string | Date;
       preciosMayorista?: { cantidadMinima: number; precio: number }[];
+      atributosTecnicos?: Record<string, any> | null;
+      descripcionLarga?: string;
     },
     empresaId: number,
     sedeId?: number,
@@ -163,12 +170,20 @@ export class ProductoService {
       fechaInicioOferta,
       fechaFinOferta,
       preciosMayorista,
+      atributosTecnicos,
+      descripcionLarga,
     } = data;
 
     const porcentajes = this.normalizarPorcentajes(
       porcentajeVenta,
       porcentajeProvision,
     );
+    const esServicio = this.esProductoServicio(atributosTecnicos);
+    if (esServicio) {
+      stock = 0;
+      stockMinimo = 0;
+      stockMaximo = 0;
+    }
 
     if (!codigo) {
       codigo = await this.generarCodigoProducto(empresaId, 'PR');
@@ -278,6 +293,7 @@ export class ProductoService {
             : undefined,
           fechaFinOferta: fechaFinOferta ? new Date(fechaFinOferta) : undefined,
           preciosMayorista: preciosMayorista ?? undefined,
+          atributosTecnicos: atributosTecnicos ?? undefined,
         },
       });
     } else {
@@ -330,6 +346,8 @@ export class ProductoService {
             : undefined,
           fechaFinOferta: fechaFinOferta ? new Date(fechaFinOferta) : undefined,
           preciosMayorista: preciosMayorista ?? undefined,
+          atributosTecnicos: atributosTecnicos ?? undefined,
+          descripcionLarga: descripcionLarga || undefined,
         },
       });
 
@@ -339,7 +357,7 @@ export class ProductoService {
       const sedes = await this.prisma.sede.findMany({
         where: { empresaId, activo: true },
       });
-      if (sedes.length > 0) {
+      if (!esServicio && sedes.length > 0) {
         const sedePrincipalId = sedes.find((s) => s.esPrincipal)?.id;
         // La sede que recibe el stock inicial: la del usuario actual, o la principal como fallback.
         const sedeConStock = sedeId ?? sedePrincipalId;
@@ -453,7 +471,9 @@ export class ProductoService {
           empresaId: true,
           creadoEn: true,
           preciosMayorista: true,
+          atributosTecnicos: true,
           codigoBarras: true,
+          publicarEnTienda: true,
           unidadMedida: {
             select: {
               id: true,
@@ -514,15 +534,21 @@ export class ProductoService {
     );
 
     // Firmar imagenes si son de S3
+    const normalizePersistentImageUrl = (url?: string | null) => {
+      if (!url) return url as any;
+      return url.includes('amazonaws.com/') ? url.split('?')[0] : url;
+    };
+
     const signIfS3 = async (url?: string | null) => {
       try {
-        if (!url) return url as any;
-        const idx = url.indexOf('amazonaws.com/');
-        if (idx === -1) return url as any;
-        const key = url.substring(idx + 'amazonaws.com/'.length);
-        if (!key) return url as any;
+        const persistentUrl = normalizePersistentImageUrl(url);
+        if (!persistentUrl) return persistentUrl as any;
+        const idx = persistentUrl.indexOf('amazonaws.com/');
+        if (idx === -1) return persistentUrl as any;
+        const key = persistentUrl.substring(idx + 'amazonaws.com/'.length);
+        if (!key) return persistentUrl as any;
         const signed = await this.s3.getSignedGetUrl(key, 600);
-        return signed || (url as any);
+        return signed || (persistentUrl as any);
       } catch {
         return url as any;
       }
@@ -557,6 +583,8 @@ export class ProductoService {
         const cupoVenta = Math.max(0, stockTotal - cupoProvision);
         const stockDisponibleVenta = Math.max(0, Math.min(stockTotal - reservado, cupoVenta));
 
+        const imagenUrl = normalizePersistentImageUrl((p as any).imagenUrl as string | null);
+
         return {
           ...p,
           stock: stockDisponibleVenta,
@@ -573,7 +601,8 @@ export class ProductoService {
           loteFefoCostoUnitario: loteFefoActual?.costoUnitario
             ? Number(loteFefoActual.costoUnitario)
             : null,
-          imagenUrl: await signIfS3((p as any).imagenUrl as any),
+          imagenUrl,
+          imagenUrlDisplay: await signIfS3(imagenUrl),
         };
       }),
     );
@@ -642,6 +671,7 @@ export class ProductoService {
           porcentajeVenta: true,
           porcentajeProvision: true,
           codigoBarras: true,
+          atributosTecnicos: true,
           unidadMedida: { select: { codigo: true } },
           stocks: {
             where: { sedeId },
@@ -986,6 +1016,7 @@ export class ProductoService {
       comisionPorVenta?: number;
       comisionPorcentaje?: number;
       imagenUrl?: string | null;
+      removerImagen?: boolean;
       localizacion?: string;
       porcentajeVenta?: number;
       porcentajeProvision?: number;
@@ -1006,6 +1037,8 @@ export class ProductoService {
       fechaInicioOferta?: string | Date;
       fechaFinOferta?: string | Date;
       preciosMayorista?: { cantidadMinima: number; precio: number }[];
+      atributosTecnicos?: Record<string, any> | null;
+      descripcionLarga?: string | null;
 
       sedeId?: number; // Nueva propiedad opcional para identificar dónde se ajusta el stock
     },
@@ -1015,6 +1048,14 @@ export class ProductoService {
       where: { id: data.id, empresaId: data.empresaId },
     });
     if (!producto) throw new NotFoundException('Producto no encontrado');
+    const esServicio = this.esProductoServicio(data.atributosTecnicos ?? (producto.atributosTecnicos as any));
+    if (esServicio) {
+      data.stock = 0;
+      data.stockMinimo = 0;
+      data.stockMaximo = 0;
+      data.porcentajeVenta = 100;
+      data.porcentajeProvision = 0;
+    }
 
     // Validar unicidad de Código de Barras (si cambió)
     if (data.codigoBarras && data.codigoBarras !== producto.codigoBarras) {
@@ -1045,8 +1086,9 @@ export class ProductoService {
 
     // Si se actualizan porcentajes, validar que no rompan reservas ya existentes.
     if (
-      data.porcentajeVenta !== undefined ||
+      !esServicio && (data.porcentajeVenta !== undefined ||
       data.porcentajeProvision !== undefined
+      )
     ) {
       const porcentajesNuevos = this.normalizarPorcentajes(
         data.porcentajeVenta,
@@ -1098,7 +1140,12 @@ export class ProductoService {
 
     // Si cambió el stock, registrar movimiento de kardex
     // NOTA: Para cambio de stock directo, se asume Sede Principal si no se especifica
-    if (data.stock !== undefined) {
+    if (esServicio) {
+      await this.prisma.productoStock.updateMany({
+        where: { productoId: data.id },
+        data: { stock: 0, stockMinimo: 0, stockMaximo: 0 },
+      });
+    } else if (data.stock !== undefined) {
       // Obtener sede principal por defecto si no viene en data
       let targetSedeId = data.sedeId;
       if (!targetSedeId) {
@@ -1166,6 +1213,16 @@ export class ProductoService {
       }
     }
 
+    const normalizePersistentImageUrl = (url: string) =>
+      url.includes('amazonaws.com/') ? url.split('?')[0] : url;
+
+    const imagenUrlUpdate =
+      data.removerImagen === true
+        ? null
+        : typeof data.imagenUrl === 'string' && data.imagenUrl.trim()
+          ? normalizePersistentImageUrl(data.imagenUrl.trim())
+          : undefined;
+
     const actualizado = await this.prisma.producto.update({
       where: { id: data.id },
       data: {
@@ -1198,7 +1255,7 @@ export class ProductoService {
           data.precioUnitario !== undefined
             ? new Decimal(data.precioUnitario)
             : undefined,
-        imagenUrl: data.imagenUrl !== undefined ? data.imagenUrl : undefined,
+        imagenUrl: imagenUrlUpdate,
         localizacion:
           data.localizacion !== undefined ? data.localizacion : undefined,
         ...(data.porcentajeVenta !== undefined ||
@@ -1259,6 +1316,14 @@ export class ProductoService {
           data.preciosMayorista !== undefined
             ? data.preciosMayorista
             : undefined,
+        atributosTecnicos:
+          data.atributosTecnicos !== undefined
+            ? data.atributosTecnicos === null
+              ? Prisma.JsonNull
+              : data.atributosTecnicos
+            : undefined,
+        descripcionLarga:
+          data.descripcionLarga !== undefined ? (data.descripcionLarga || null) : undefined,
       },
     });
 
@@ -2093,5 +2158,114 @@ export class ProductoService {
       fallidos: resultados.filter((r) => r.error).length,
       detalles: resultados,
     };
+  }
+
+  private getFichaTecnicaComputoDefault(params: { categoriaNombre?: string | null; descripcion?: string | null; tipoProducto?: string | null } = {}) {
+    return obtenerPlantillaComputo(params);
+  }
+
+  private esRubroComputo(nombre?: string | null) {
+    return esRubroComputo(nombre);
+  }
+
+  async obtenerPlantillaFichaTecnica(
+    empresaId: number,
+    params: { categoriaId?: number; descripcion?: string; tipoProducto?: string } = {},
+  ) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { rubroId: true, rubro: { select: { nombre: true } } },
+    });
+    if (!empresa) throw new NotFoundException('Empresa no encontrada');
+
+    const categoriaId = Number(params.categoriaId || 0) || undefined;
+    const categoria = categoriaId
+      ? await this.prisma.categoria.findFirst({
+          where: { id: categoriaId, empresaId },
+          select: { nombre: true },
+        })
+      : null;
+    const candidates = await this.prisma.fichaTecnicaPlantilla.findMany({
+      where: {
+        activo: true,
+        OR: [
+          { empresaId, categoriaId: categoriaId || null },
+          { empresaId, categoriaId: null },
+          { empresaId: null, categoriaId: categoriaId || null },
+          { empresaId: null, rubroId: empresa.rubroId || undefined },
+          { empresaId: null, rubroId: null, categoriaId: null },
+        ],
+      },
+      orderBy: [{ empresaId: 'desc' }, { categoriaId: 'desc' }, { rubroId: 'desc' }, { id: 'asc' }],
+      take: 10,
+    });
+
+    const exactCategory = candidates.find((item) => categoriaId && item.categoriaId === categoriaId);
+    const companyDefault = candidates.find((item) => item.empresaId === empresaId && !item.categoriaId);
+    const rubroDefault = candidates.find((item) => item.rubroId === empresa.rubroId);
+    const computedDefault = this.esRubroComputo(empresa.rubro?.nombre)
+      ? this.getFichaTecnicaComputoDefault({
+          categoriaNombre: categoria?.nombre,
+          descripcion: params.descripcion,
+          tipoProducto: params.tipoProducto,
+        })
+      : null;
+    const shouldPreferComputed = computedDefault && (computedDefault as any).familia !== 'general';
+    const selected = exactCategory || companyDefault || (shouldPreferComputed ? computedDefault : rubroDefault) || candidates[0];
+
+    if (selected) return selected;
+    if (computedDefault) return computedDefault;
+    return null;
+  }
+
+  async listarPlantillasFichaTecnica(empresaId: number) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { rubroId: true },
+    });
+    return this.prisma.fichaTecnicaPlantilla.findMany({
+      where: {
+        OR: [
+          { empresaId },
+          { empresaId: null, rubroId: empresa?.rubroId || undefined },
+          { empresaId: null, rubroId: null },
+        ],
+      },
+      orderBy: [{ empresaId: 'desc' }, { rubroId: 'desc' }, { nombre: 'asc' }],
+    });
+  }
+
+  async guardarPlantillaFichaTecnica(empresaId: number, dto: any) {
+    const campos = Array.isArray(dto?.campos) ? dto.campos : [];
+    if (!String(dto?.nombre || '').trim()) {
+      throw new BadRequestException('Nombre de plantilla requerido');
+    }
+    if (campos.length === 0) {
+      throw new BadRequestException('Agrega al menos un campo técnico');
+    }
+
+    const data = {
+      nombre: String(dto.nombre).trim(),
+      descripcion: dto.descripcion ? String(dto.descripcion).trim() : null,
+      empresaId,
+      categoriaId: Number(dto.categoriaId || 0) || null,
+      rubroId: null,
+      campos,
+      destacados: Array.isArray(dto.destacados) ? dto.destacados : [],
+      activo: dto.activo !== false,
+    };
+
+    if (dto.id) {
+      const current = await this.prisma.fichaTecnicaPlantilla.findFirst({
+        where: { id: Number(dto.id), empresaId },
+      });
+      if (!current) throw new NotFoundException('Plantilla no encontrada');
+      return this.prisma.fichaTecnicaPlantilla.update({
+        where: { id: Number(dto.id) },
+        data,
+      });
+    }
+
+    return this.prisma.fichaTecnicaPlantilla.create({ data });
   }
 }

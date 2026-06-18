@@ -6,6 +6,10 @@ import { GuiaRemisionService } from '../../guia-remision/guia-remision.service';
 import { QpseClient, QpseSendResponse } from '../../common/utils/qpse.client';
 import { S3Service } from '../../s3/s3.service';
 import { isQpseProvider, resolveBillingProvider } from '../../common/utils/billing-provider';
+import { NotificacionesService } from '../../notificaciones/notificaciones.service';
+
+const MAX_RETRIES_ANTES_NOTIFICAR = 5;
+const PENDIENTE_STUCK_HORAS = 2;
 
 @Injectable()
 export class VerificarPendientesSunatService {
@@ -21,6 +25,7 @@ export class VerificarPendientesSunatService {
     private readonly guiaRemisionService: GuiaRemisionService,
     private readonly qpseClient: QpseClient,
     private readonly s3Service: S3Service,
+    private readonly notificacionesService: NotificacionesService,
   ) { }
 
   /**
@@ -211,6 +216,25 @@ export class VerificarPendientesSunatService {
               `Comprobante ${comprobante.id} actualizado a ${status}`,
             );
           }
+
+          // Notificar al admin si SUNAT rechazó el comprobante
+          if (status === 'RECHAZADO') {
+            const errorMsg = this.extractQpseMessage(finalResponse);
+            const ref = `${comprobante.serie ?? ''}-${String(comprobante.correlativo ?? '').padStart(8, '0')}`;
+            await this.notificacionesService.notificarFallaSunat({
+              empresaId: comprobante.empresaId,
+              tipo: 'CRITICAL',
+              titulo: 'Comprobante rechazado por SUNAT',
+              mensaje: `${ref} fue rechazado: ${errorMsg}. Revísalo y corrígelo.`,
+              meta: {
+                comprobanteId: comprobante.id,
+                serie: comprobante.serie,
+                correlativo: comprobante.correlativo,
+                tipoDoc: comprobante.tipoDoc,
+                errorMsg,
+              },
+            }).catch(() => { /* no bloquear el flujo */ });
+          }
         } catch (err: any) {
           this.logger.error(
             `Error verificando documento ${comprobante.documentoId}: ${err.message}`,
@@ -277,10 +301,73 @@ export class VerificarPendientesSunatService {
           this.logger.warn(
             `⚠️ Reintento de comprobante ${comprobante.id} falló: ${err.message}`,
           );
+
+          // Notificar al admin cuando se agotan los reintentos
+          const retriesCount = (comprobante.sunatRetriesCount || 0) + 1;
+          if (retriesCount >= MAX_RETRIES_ANTES_NOTIFICAR) {
+            const ref = `${comprobante.serie ?? ''}-${String(comprobante.correlativo ?? '').padStart(8, '0')}`;
+            await this.notificacionesService.notificarFallaSunat({
+              empresaId: comprobante.empresaId,
+              tipo: 'WARNING',
+              titulo: 'Comprobante pendiente de envío a SUNAT',
+              mensaje: `${ref} no pudo enviarse a SUNAT tras ${retriesCount} intentos. Verifica tu conexión y credenciales PSE.`,
+              meta: {
+                comprobanteId: comprobante.id,
+                serie: comprobante.serie,
+                correlativo: comprobante.correlativo,
+                tipoDoc: comprobante.tipoDoc,
+                errorMsg: err.message,
+              },
+            }).catch(() => { /* no bloquear el flujo */ });
+          }
         }
       }
     } catch (err: any) {
       this.logger.error(`Error en reintentos de SUNAT: ${err.message}`);
+    }
+  }
+
+  /**
+   * Job 4: Notificar comprobantes PENDIENTE estancados por más de N horas.
+   */
+  async notificarPendientesEstancados(): Promise<void> {
+    try {
+      const limite = new Date(Date.now() - PENDIENTE_STUCK_HORAS * 60 * 60 * 1000);
+      const estancados = await this.prisma.comprobante.findMany({
+        where: {
+          estadoEnvioSunat: 'PENDIENTE',
+          documentoId: { not: null },
+          creadoEn: { lte: limite },
+        },
+        select: {
+          id: true, empresaId: true, serie: true, correlativo: true, tipoDoc: true, creadoEn: true,
+        },
+        take: 20,
+        orderBy: { creadoEn: 'asc' },
+      });
+
+      if (estancados.length > 0) {
+        this.logger.log(`[Job 4] ${estancados.length} comprobantes PENDIENTE estancados > ${PENDIENTE_STUCK_HORAS}h`);
+      }
+
+      for (const comp of estancados) {
+        const ref = `${comp.serie ?? ''}-${String(comp.correlativo ?? '').padStart(8, '0')}`;
+        const horasEstancado = Math.floor((Date.now() - comp.creadoEn.getTime()) / (60 * 60 * 1000));
+        await this.notificacionesService.notificarFallaSunat({
+          empresaId: comp.empresaId,
+          tipo: 'INFO',
+          titulo: 'Comprobante pendiente en SUNAT',
+          mensaje: `${ref} lleva más de ${horasEstancado} horas en estado pendiente. SUNAT podría estar procesando la respuesta.`,
+          meta: {
+            comprobanteId: comp.id,
+            serie: comp.serie,
+            correlativo: comp.correlativo,
+            tipoDoc: comp.tipoDoc,
+          },
+        }).catch(() => { /* no bloquear el flujo */ });
+      }
+    } catch (err: any) {
+      this.logger.error(`Error en notificaciones de pendientes estancados: ${err.message}`);
     }
   }
 

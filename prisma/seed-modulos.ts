@@ -137,6 +137,7 @@ async function seedModulos() {
     { moduloCodigo: 'kardex', codigo: 'kardex:traslados',   nombre: 'Traslados',           descripcion: 'Traslado de productos entre sedes',              orden: 3 },
     { moduloCodigo: 'kardex', codigo: 'kardex:combos',      nombre: 'Kits / Packs',        descripcion: 'Kits de productos para venta por mayor',          orden: 4 },
     { moduloCodigo: 'kardex', codigo: 'kardex:movimientos', nombre: 'Movimientos',         descripcion: 'Movimientos de entrada y salida de productos',   orden: 5 },
+    { moduloCodigo: 'kardex', codigo: 'kardex:series-garantias', nombre: 'Series y Garantías', descripcion: 'Trazabilidad por número de serie y garantías', orden: 6 },
     // Comprobantes
     { moduloCodigo: 'comprobantes', codigo: 'comprobantes:lista',      nombre: 'Comprobantes SUNAT', descripcion: 'Listado de comprobantes electrónicos',      orden: 1 },
     { moduloCodigo: 'comprobantes', codigo: 'comprobantes:emitir',     nombre: 'Crear comprobantes', descripcion: 'Emisión de nuevos comprobantes electrónicos', orden: 2 },
@@ -168,6 +169,41 @@ async function seedModulos() {
       create: { moduloId: modulo.id, codigo: sub.codigo, nombre: sub.nombre, descripcion: sub.descripcion, orden: sub.orden, activo: true },
     });
     console.log(`✅ SubMódulo '${sub.codigo}' creado/actualizado`);
+  }
+
+  const seriesGarantias = await prisma.subModulo.findUnique({
+    where: { codigo: 'kardex:series-garantias' },
+  });
+  const kardexModulo = await prisma.modulo.findFirst({
+    where: { codigo: 'kardex', producto: 'facturacion' },
+  });
+
+  if (seriesGarantias && kardexModulo) {
+    const planesConKardex = await prisma.plan.findMany({
+      where: {
+        modulosAsignados: {
+          some: { moduloId: kardexModulo.id },
+        },
+      },
+      select: { id: true, nombre: true },
+    });
+
+    for (const plan of planesConKardex) {
+      await prisma.planSubModulo.upsert({
+        where: {
+          planId_subModuloId: {
+            planId: plan.id,
+            subModuloId: seriesGarantias.id,
+          },
+        },
+        update: {},
+        create: {
+          planId: plan.id,
+          subModuloId: seriesGarantias.id,
+        },
+      });
+      console.log(`✅ SubMódulo 'kardex:series-garantias' asignado al plan ${plan.nombre}`);
+    }
   }
 
   console.log('\n✨ Seed completado exitosamente!');

@@ -2,15 +2,20 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
+  Delete,
   Body,
   Query,
   Param,
   Request,
+  Res,
   UseGuards,
   ParseIntPipe,
   ValidationPipe,
-  BadRequestException
+  BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { ModuleAccessGuard } from '../common/guards/module-access.guard';
 import { RequiresModule } from '../common/decorators/module.decorator';
@@ -242,6 +247,107 @@ export class KardexController {
     return this.kardexService.obtenerInventarioValorizado(empresaId, {
       soloStockCritico: true,
     }, req.user.sedeId);
+  }
+
+  @Get('series-garantias')
+  async obtenerSeriesGarantias(
+    @Request() req,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+    @Query('estado') estado?: string,
+    @Query('garantia') garantia?: string,
+  ) {
+    const empresaId = req.user.empresaId;
+    if (!empresaId) {
+      throw new BadRequestException('Usuario sin empresa asignada');
+    }
+
+    const isAdmin = ['ADMIN_EMPRESA', 'ADMIN_SISTEMA'].includes(req.user.rol);
+    return this.kardexService.obtenerSeriesGarantias(empresaId, {
+      page,
+      limit,
+      search,
+      estado,
+      garantia,
+      sedeId: isAdmin ? undefined : req.user.sedeId,
+    });
+  }
+
+  @Post('series-garantias')
+  async crearSerie(@Request() req, @Body() body: any) {
+    const empresaId = req.user.empresaId;
+    if (!empresaId) throw new BadRequestException('Usuario sin empresa asignada');
+    return this.kardexService.crearSerie(empresaId, req.user.sedeId, body);
+  }
+
+  @Patch('series-garantias/:id')
+  async actualizarSerie(@Request() req, @Param('id', ParseIntPipe) id: number, @Body() body: any) {
+    const empresaId = req.user.empresaId;
+    if (!empresaId) throw new BadRequestException('Usuario sin empresa asignada');
+    return this.kardexService.actualizarSerie(empresaId, id, body);
+  }
+
+  @Delete('series-garantias/:id')
+  async eliminarSerie(@Request() req, @Param('id', ParseIntPipe) id: number) {
+    const empresaId = req.user.empresaId;
+    if (!empresaId) throw new BadRequestException('Usuario sin empresa asignada');
+    return this.kardexService.eliminarSerie(empresaId, id);
+  }
+
+  @Get('series-garantias/producto/:productoId')
+  async seriesPorProducto(
+    @Request() req,
+    @Param('productoId', ParseIntPipe) productoId: number,
+    @Query('estado') estado?: string,
+  ) {
+    const empresaId = req.user.empresaId;
+    if (!empresaId) throw new BadRequestException('Usuario sin empresa asignada');
+    return this.kardexService.obtenerSeriesPorProducto(empresaId, productoId, estado);
+  }
+
+  @Get('series-garantias/:id/constancia')
+  async constanciaGarantia(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+    @Res() res: Response,
+  ) {
+    const empresaId = req.user.empresaId;
+    if (!empresaId) throw new BadRequestException('Usuario sin empresa asignada');
+
+    const { buffer, filename } = await this.kardexService.generarConstanciaGarantia(empresaId, id);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.setHeader('Content-Length', buffer.length);
+    res.end(buffer);
+  }
+
+  @Post('series-garantias/:id/reclamos')
+  async crearReclamo(@Request() req, @Param('id', ParseIntPipe) serieId: number, @Body() body: any) {
+    const empresaId = req.user.empresaId;
+    if (!empresaId) throw new BadRequestException('Usuario sin empresa asignada');
+    return this.kardexService.crearReclamo(empresaId, serieId, body);
+  }
+
+  @Get('series-garantias/:id/reclamos')
+  async obtenerReclamos(@Request() req, @Param('id', ParseIntPipe) serieId: number) {
+    const empresaId = req.user.empresaId;
+    if (!empresaId) throw new BadRequestException('Usuario sin empresa asignada');
+    return this.kardexService.obtenerReclamos(empresaId, serieId);
+  }
+
+  @Patch('reclamos-garantia/:reclamoId')
+  async actualizarReclamo(@Request() req, @Param('reclamoId', ParseIntPipe) reclamoId: number, @Body() body: any) {
+    const empresaId = req.user.empresaId;
+    if (!empresaId) throw new BadRequestException('Usuario sin empresa asignada');
+    return this.kardexService.actualizarReclamo(empresaId, reclamoId, body);
+  }
+
+  @Delete('reclamos-garantia/:reclamoId')
+  async eliminarReclamo(@Request() req, @Param('reclamoId', ParseIntPipe) reclamoId: number) {
+    const empresaId = req.user.empresaId;
+    if (!empresaId) throw new BadRequestException('Usuario sin empresa asignada');
+    return this.kardexService.eliminarReclamo(empresaId, reclamoId);
   }
 
   /**

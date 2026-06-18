@@ -30,6 +30,7 @@ model Plan {
   tieneTicketera         Boolean         @default(false)
   tieneGestionLotes      Boolean         @default(false)
   tieneGestionProvisiones Boolean         @default(false)
+  tieneDescripcionRica   Boolean         @default(false)
   empresas               Empresa[]
   features               PlanFeature[]
   modulosAsignados       PlanModulo[]
@@ -69,6 +70,23 @@ model Rubro {
   disenos    DisenoRubro?
   empresas   Empresa[]
   plantillas ProductoPlantilla[]
+  features   RubroFeature[]
+  fichasTecnicas FichaTecnicaPlantilla[]
+}
+
+model RubroFeature {
+  id               Int      @id @default(autoincrement())
+  rubroId          Int
+  featureKey       String
+  enabledByDefault Boolean  @default(false)
+  config           Json?
+  creadoEn         DateTime @default(now())
+  actualizadoEn    DateTime @updatedAt
+
+  rubro Rubro @relation(fields: [rubroId], references: [id], onDelete: Cascade)
+
+  @@unique([rubroId, featureKey])
+  @@index([featureKey])
 }
 
 model Empresa {
@@ -185,6 +203,10 @@ model Empresa {
   comisionesVendedor  ComisionVendedor[]
   campanas            CampanaMarketing[]
   series              EmpresaSerie[]
+  productoSeries      ProductoSerie[]
+  reclamosGarantia    ReclamoGarantia[]
+  productoReviews     ProductoReview[]
+  fichasTecnicas      FichaTecnicaPlantilla[]
 
   @@index([providerToken])
   @@index([slugTienda])
@@ -258,6 +280,30 @@ model Categoria {
   empresaId Int?
   empresa   Empresa?   @relation(fields: [empresaId], references: [id])
   productos Producto[]
+  fichasTecnicas FichaTecnicaPlantilla[]
+}
+
+model FichaTecnicaPlantilla {
+  id             Int      @id @default(autoincrement())
+  nombre         String
+  descripcion    String?
+  rubroId        Int?
+  categoriaId    Int?
+  empresaId      Int?
+  campos         Json
+  destacados     Json?
+  activo         Boolean  @default(true)
+  creadoEn       DateTime @default(now())
+  actualizadoEn  DateTime @updatedAt
+
+  rubro     Rubro?     @relation(fields: [rubroId], references: [id], onDelete: Cascade)
+  categoria Categoria? @relation(fields: [categoriaId], references: [id], onDelete: Cascade)
+  empresa   Empresa?   @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  @@index([rubroId])
+  @@index([categoriaId])
+  @@index([empresaId])
+  @@index([activo])
 }
 
 model UnidadMedida {
@@ -302,7 +348,7 @@ model Producto {
   destacado                Boolean                       @default(false)
   imagenUrl                String?
   imagenesExtra            String?
-  publicarEnTienda         Boolean                       @default(false)
+  publicarEnTienda         Boolean                       @default(true)
   marcaId                  Int?
   ratingAvg                Decimal?                      @default(0)
   ratingCount              Int?                          @default(0)
@@ -325,6 +371,7 @@ model Producto {
   unidadVenta              String?
   volumenMl                Decimal?
   preciosMayorista         Json?
+  atributosTecnicos        Json?
   localizacion             String?
   porcentajeVenta          Int                           @default(100)
   porcentajeProvision      Int                           @default(0)
@@ -350,12 +397,49 @@ model Producto {
   vinculosProveedorXml     VinculoProductoProveedorXml[]
   reservas                 Reserva[]
   campanas                 CampanaMarketing[]
+  seriesInventario         ProductoSerie[]
+  reviews                  ProductoReview[]
 
   @@unique([empresaId, codigo])
   @@unique([empresaId, codigoDigemid])
   @@index([empresaId, publicarEnTienda])
   @@index([marcaId])
   @@index([empresaId, codigoBarras])
+}
+
+enum EstadoProductoReview {
+  PENDIENTE
+  APROBADO
+  RECHAZADO
+  OCULTO
+}
+
+model ProductoReview {
+  id              Int                  @id @default(autoincrement())
+  empresaId       Int
+  productoId      Int
+  pedidoId        Int?
+  clienteId       Int?
+  clienteNombre   String
+  clienteEmail    String?
+  clienteTelefono String?
+  rating          Int
+  comentario      String
+  estado          EstadoProductoReview @default(PENDIENTE)
+  compraVerificada Boolean             @default(false)
+  token           String?              @unique
+  creadoEn        DateTime             @default(now())
+  actualizadoEn   DateTime             @updatedAt
+  aprobadoEn      DateTime?
+
+  empresa  Empresa       @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  producto Producto      @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  pedido   PedidoTienda? @relation(fields: [pedidoId], references: [id], onDelete: SetNull)
+  cliente  Cliente?      @relation(fields: [clienteId], references: [id], onDelete: SetNull)
+
+  @@index([empresaId, estado, creadoEn])
+  @@index([productoId, estado])
+  @@index([pedidoId])
 }
 
 model RecetaProduccion {
@@ -508,6 +592,7 @@ model Cliente {
   compras         Compra[]
   comprobantes    Comprobante[]
   guiasRemision   GuiaRemision[]
+  productoReviews ProductoReview[]
 }
 
 model TipoOperacion {
@@ -628,6 +713,7 @@ model Comprobante {
   envioDespacho         EnvioDespacho?
   comisiones            ComisionVendedor[]
   campanas              CampanaMarketing[]
+  productoSeries        ProductoSerie[]
 }
 
 model DetalleComprobante {
@@ -644,6 +730,7 @@ model DetalleComprobante {
   igv               Float
   tipAfeIgv         Int
   totalImpuestos    Float
+  numerosSerie      Json?
   mtoPrecioUnitario Float
   // Farmacia: trazabilidad de lote dispensado
   loteId            Int?
@@ -655,6 +742,74 @@ model DetalleComprobante {
   comprobante       Comprobante   @relation(fields: [comprobanteId], references: [id])
   producto          Producto?     @relation(fields: [productoId], references: [id])
   lote              ProductoLote? @relation(fields: [loteId], references: [id])
+  seriesVendidas    ProductoSerie[]
+}
+
+enum EstadoProductoSerie {
+  DISPONIBLE
+  VENDIDO
+  RESERVADO
+  BAJA
+}
+
+model ProductoSerie {
+  id                   Int                 @id @default(autoincrement())
+  empresaId            Int
+  productoId           Int
+  sedeId               Int?
+  numeroSerie          String
+  estado               EstadoProductoSerie @default(DISPONIBLE)
+  garantiaMeses        Int?
+  garantiaHasta        DateTime?
+  comprobanteId        Int?
+  detalleComprobanteId Int?
+  compraId             Int?
+  compraDetalleId      Int?
+  observacion          String?
+  creadoEn             DateTime            @default(now())
+  actualizadoEn        DateTime            @updatedAt
+
+  empresa            Empresa             @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  producto           Producto            @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  sede               Sede?               @relation(fields: [sedeId], references: [id], onDelete: SetNull)
+  comprobante        Comprobante?        @relation(fields: [comprobanteId], references: [id], onDelete: SetNull)
+  detalleComprobante DetalleComprobante? @relation(fields: [detalleComprobanteId], references: [id], onDelete: SetNull)
+  compra             Compra?             @relation(fields: [compraId], references: [id], onDelete: SetNull)
+  compraDetalle      DetalleCompra?      @relation(fields: [compraDetalleId], references: [id], onDelete: SetNull)
+  reclamos           ReclamoGarantia[]
+
+  @@unique([empresaId, numeroSerie])
+  @@index([empresaId, productoId, estado])
+  @@index([comprobanteId])
+  @@index([detalleComprobanteId])
+  @@index([compraId])
+}
+
+enum EstadoReclamo {
+  ABIERTO
+  EN_PROCESO
+  RESUELTO
+  CERRADO
+}
+
+model ReclamoGarantia {
+  id              Int           @id @default(autoincrement())
+  empresaId       Int
+  productoSerieId Int
+  descripcion     String
+  estadoReclamo   EstadoReclamo @default(ABIERTO)
+  tecnico         String?
+  resolucion      String?
+  fechaReclamo    DateTime      @default(now())
+  fechaResolucion DateTime?
+  creadoEn        DateTime      @default(now())
+  actualizadoEn   DateTime      @updatedAt
+
+  empresa       Empresa       @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  productoSerie ProductoSerie @relation(fields: [productoSerieId], references: [id], onDelete: Cascade)
+
+  @@index([empresaId])
+  @@index([productoSerieId])
 }
 
 model Leyenda {
@@ -796,6 +951,7 @@ model PedidoTienda {
   tipoEntrega       TipoEntrega             @default(RECOJO)
   historialEstados  HistorialEstadoPedido[]
   items             ItemPedidoTienda[]
+  reviews           ProductoReview[]
   empresa           Empresa                 @relation(fields: [empresaId], references: [id])
   repartidorId      Int?
   repartidor        Repartidor?             @relation(fields: [repartidorId], references: [id], onDelete: SetNull)
@@ -889,6 +1045,7 @@ model Notificacion {
   titulo    String
   mensaje   String
   leida     Boolean  @default(false)
+  metaData  Json?
   creadoEn  DateTime @default(now())
   empresa   Empresa? @relation(fields: [empresaId], references: [id], onDelete: Cascade)
   usuario   Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
@@ -939,6 +1096,8 @@ model DisenoRubro {
   vistaProductos   String   @default("cards")
   tiempoEntregaMax Int?     @default(25)
   tiempoEntregaMin Int?     @default(15)
+  templateHtml     String?
+  templateCss      String?
   rubro            Rubro    @relation(fields: [rubroId], references: [id], onDelete: Cascade)
 
   @@index([rubroId])
@@ -1120,6 +1279,7 @@ model Sede {
   GuiaRemision      GuiaRemision[]
   reservas          Reserva[]
   repartidores      Repartidor[]
+  productoSeries    ProductoSerie[]
 
   @@index([empresaId])
 }
@@ -1219,6 +1379,7 @@ model Compra {
   detalles         DetalleCompra[]
   movimientos      MovimientoKardex[]
   pagos            PagoCompra[]
+  seriesGarantias  ProductoSerie[]
 
   sedeId Int?
   sede   Sede? @relation(fields: [sedeId], references: [id])
@@ -1240,8 +1401,9 @@ model DetalleCompra {
   total            Decimal
   lote             String?
   fechaVencimiento DateTime?
-  compra           Compra    @relation(fields: [compraId], references: [id], onDelete: Cascade)
-  producto         Producto? @relation(fields: [productoId], references: [id])
+  compra          Compra         @relation(fields: [compraId], references: [id], onDelete: Cascade)
+  producto        Producto?      @relation(fields: [productoId], references: [id])
+  seriesGarantias ProductoSerie[]
 
   @@index([compraId])
   @@index([productoId])

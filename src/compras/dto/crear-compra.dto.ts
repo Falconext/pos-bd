@@ -67,6 +67,10 @@ export class CrearCompraDto {
     @IsNumber()
     igv?: number;
 
+    @IsOptional()
+    @IsNumber()
+    total?: number;
+
     @IsArray()
     @ValidateNested({ each: true })
     @Type(() => DetalleCompraDto)
