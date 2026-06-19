@@ -185,6 +185,7 @@ export class TiendaService {
         plan: {
           select: {
             tieneTienda: true,
+            nombre: true,
           },
         },
       },

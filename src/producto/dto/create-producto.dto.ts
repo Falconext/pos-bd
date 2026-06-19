@@ -1,13 +1,18 @@
 import {
+  IsBoolean,
   IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 
 export class CreateProductoDto {
+  @IsOptional()
+  @IsBoolean()
+  publicarEnTienda?: boolean;
+
   @IsOptional()
   @IsString()
   codigo?: string;

@@ -73,6 +73,10 @@ const planesV2 = [
 ];
 
 async function main() {
+  // Deshabilitado por petición del usuario para no sobreescribir planes en producción.
+  console.log('El script de update-planes-v2.ts está deshabilitado para no sobreescribir configuraciones manuales en producción.');
+  return;
+
   console.log('Actualizando planes v2...\n');
 
   for (const plan of planesV2) {

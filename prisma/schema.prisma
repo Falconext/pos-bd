@@ -139,6 +139,7 @@ model Empresa {
   aceptaEnvio             Boolean                       @default(true)
   aceptaRecojo            Boolean                       @default(true)
   esAgenteRetencion       Boolean                       @default(false)
+  ticketLogoSize          Int?                          @default(96)
   usaCodigoBarrasManual   Boolean?
   usarPrecioLoteFefo      Boolean                       @default(false)
   costoActivacionReseller Decimal?                      @default(0)

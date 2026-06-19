@@ -135,6 +135,7 @@ export class ProductoService {
       opcionesAtributos?: any;
       valoresAtributos?: any;
       productoPadreId?: number;
+      publicarEnTienda?: boolean;
     },
     empresaId: number,
     sedeId?: number,
@@ -176,6 +177,7 @@ export class ProductoService {
       preciosMayorista,
       atributosTecnicos,
       descripcionLarga,
+      publicarEnTienda,
     } = data;
 
     const porcentajes = this.normalizarPorcentajes(
@@ -269,7 +271,7 @@ export class ProductoService {
           porcentajeVenta: porcentajes.porcentajeVenta,
           porcentajeProvision: porcentajes.porcentajeProvision,
           estado: EstadoType.ACTIVO, // Reactivar usando Enum
-          publicarEnTienda: true,
+          publicarEnTienda: publicarEnTienda ?? true,
           // Campos Farmacia update on restore
           principioActivo,
           concentracion,
@@ -328,6 +330,7 @@ export class ProductoService {
           porcentajeVenta: porcentajes.porcentajeVenta,
           porcentajeProvision: porcentajes.porcentajeProvision,
           estado: EstadoType.ACTIVO,
+          publicarEnTienda: publicarEnTienda ?? true,
           // Campos Farmacia
           principioActivo,
           concentracion,
@@ -1078,6 +1081,7 @@ export class ProductoService {
       valoresAtributos?: any;
       productoPadreId?: number | null;
       descripcionLarga?: string | null;
+      publicarEnTienda?: boolean;
 
       sedeId?: number; // Nueva propiedad opcional para identificar dónde se ajusta el stock
     },
@@ -1295,6 +1299,7 @@ export class ProductoService {
             ? new Decimal(data.precioUnitario)
             : undefined,
         imagenUrl: imagenUrlUpdate,
+        publicarEnTienda: data.publicarEnTienda !== undefined ? data.publicarEnTienda : undefined,
         localizacion:
           data.localizacion !== undefined ? data.localizacion : undefined,
         ...(data.porcentajeVenta !== undefined ||

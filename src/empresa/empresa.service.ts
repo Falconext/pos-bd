@@ -756,6 +756,8 @@ export class EmpresaService {
         updateData.esAgenteRetencion = dto.esAgenteRetencion;
       if (dto.usaCodigoBarrasManual !== undefined)
         updateData.usaCodigoBarrasManual = dto.usaCodigoBarrasManual;
+      if (dto.ticketLogoSize !== undefined)
+        updateData.ticketLogoSize = dto.ticketLogoSize;
       if (dto.usarPrecioLoteFefo !== undefined)
         updateData.usarPrecioLoteFefo = dto.usarPrecioLoteFefo;
       if (dto.directorTecnico !== undefined)

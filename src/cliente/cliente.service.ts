@@ -181,13 +181,22 @@ export class ClienteService {
     const body = tipo === 'DNI' ? { dni: numero } : { ruc: numero };
     const token = process.env.RENIEC_TOKEN;
 
-    const response = await axios.post(url, body, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-    });
-    return response.data?.data;
+    try {
+      const response = await axios.post(url, body, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      return response.data?.data;
+    } catch (error: any) {
+      if (axios.isAxiosError(error)) {
+        throw new ForbiddenException(
+          error.response?.data?.message || error.message || 'Error al consultar la API externa'
+        );
+      }
+      throw error;
+    }
   }
 
   async exportar(empresaId: number, search?: string): Promise<Buffer> {

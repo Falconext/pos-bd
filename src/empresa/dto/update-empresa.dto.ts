@@ -69,6 +69,10 @@ export class UpdateEmpresaDto {
   usaCodigoBarrasManual?: boolean;
 
   @IsOptional()
+  @IsInt()
+  ticketLogoSize?: number;
+
+  @IsOptional()
   @IsBoolean()
   usarPrecioLoteFefo?: boolean;
 

@@ -7,6 +7,10 @@ export class UpdateProductoDto {
   id: number;
 
   @IsOptional()
+  @IsBoolean()
+  publicarEnTienda?: boolean;
+
+  @IsOptional()
   @IsString()
   descripcion?: string;
 
