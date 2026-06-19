@@ -865,6 +865,14 @@ export class ComprobanteService {
       if (!String(s.descripcion ?? '').trim()) {
         throw new BadRequestException('Los ítems de servicio (sin productoId) requieren una descripción.');
       }
+      const cantidad = Number(s.cantidad);
+      const precioConIgv = Number(s.nuevoValorUnitario);
+      if (!Number.isFinite(cantidad) || cantidad <= 0) {
+        throw new BadRequestException(`Cantidad inválida para "${s.descripcion}"`);
+      }
+      if (!Number.isFinite(precioConIgv) || precioConIgv < 0) {
+        throw new BadRequestException(`Precio inválido para "${s.descripcion}"`);
+      }
     }
 
     // Normalizar IDs a números (solo ítems con producto)
@@ -915,6 +923,7 @@ export class ComprobanteService {
       if (item.productoId == null) {
         const cantidad = Number(item.cantidad);
         const precioConIgv = Number(item.nuevoValorUnitario);
+        const unidadLibre = String(item.unidadVenta || item.unidad || 'ZZ').trim().toUpperCase();
         const igvPct = 18;
         const valorUnitario = this.round2(precioConIgv / 1.18);
         const igvMonto = this.round2(precioConIgv * cantidad - valorUnitario * cantidad);
@@ -923,8 +932,8 @@ export class ComprobanteService {
         totalIGV += igvMonto;
         return {
           productoId: null,
-          unidad: 'ZZ',
-          descripcion: String(item.descripcion),
+          unidad: unidadLibre || 'ZZ',
+          descripcion: String(item.descripcion).trim(),
           cantidad,
           mtoPrecioUnitario: this.round2(precioConIgv),
           mtoValorUnitario: valorUnitario,
@@ -2731,10 +2740,16 @@ export class ComprobanteService {
       if (/^https?:\/\//i.test(t) || t.startsWith('/')) return t;
       return `data:${t.startsWith('/9j/') ? 'image/jpeg' : 'image/png'};base64,${t}`;
     };
+    const formatCantidad = (value: any): string => {
+      const cantidad = Number(value || 0);
+      if (!Number.isFinite(cantidad)) return '0';
+      if (Number.isInteger(cantidad)) return String(cantidad);
+      return cantidad.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+    };
 
     const productos = full.detalles.map((d: any, i: number) => ({
       index: i + 1,
-      cantidad: Number(d.cantidad || 0).toFixed(3),
+      cantidad: formatCantidad(d.cantidad),
       unidadMedida: (d.unidad || 'NIU').toUpperCase(),
       descripcion: (d.descripcion || '').toUpperCase(),
       precioUnitario: Number(d.mtoPrecioUnitario || 0).toFixed(2),
@@ -2770,8 +2785,8 @@ export class ComprobanteService {
       ruc: full.empresa.ruc,
       direccion: (full.empresa.direccion || '').toUpperCase(),
       rubro: full.empresa.rubro?.nombre?.toUpperCase() || '',
-      celular: '',
-      email: '',
+      celular: ((full.empresa as any).celular || (full.empresa as any).telefono || '').toString(),
+      email: ((full.empresa as any).email || '').toString(),
       logo: buildLogoDataUrl((full.empresa as any).logo),
       tipoDocumento: tipoDocMap[full.tipoDoc] || 'COMPROBANTE',
       serie: full.serie,
@@ -2794,6 +2809,9 @@ export class ComprobanteService {
       totalEnLetras: numeroALetras(mtoImpVenta).toUpperCase(),
       formaPago,
       medioPago: (full.medioPago || 'EFECTIVO').toUpperCase(),
+      vuelto: Number((full as any).vuelto || 0).toFixed(2),
+      pagado: (mtoImpVenta + Number((full as any).vuelto || 0)).toFixed(2),
+      vendedor: (full.usuario?.nombre || 'ADMIN').toUpperCase(),
       observaciones: full.observaciones ? full.observaciones.toUpperCase() : undefined,
       shouldShowRetention,
       retencionMonto: retencionMonto.toFixed(2),

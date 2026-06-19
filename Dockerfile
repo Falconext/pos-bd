@@ -81,4 +81,4 @@ USER appuser
 EXPOSE 4000
 
 # Ejecutar migraciones y iniciar aplicación
-CMD ["sh", "-c", "npx prisma db push --accept-data-loss && node dist/prisma/seeds/update-planes-v2.js && node dist/src/main.js"]
+CMD ["sh", "-c", "npx prisma db push --accept-data-loss && node dist/src/main.js"]

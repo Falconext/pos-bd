@@ -380,7 +380,13 @@ model Producto {
   galeria                  GaleriaProducto[]
   itemsPedido              ItemPedidoTienda[]
   movimientosKardex        MovimientoKardex[]
+  productoPadreId          Int?
+  opcionesAtributos        Json?
+  valoresAtributos         Json?
+
   categoria                Categoria?                    @relation(fields: [categoriaId], references: [id])
+  productoPadre            Producto?                     @relation("ProductoVariantes", fields: [productoPadreId], references: [id])
+  variantes                Producto[]                    @relation("ProductoVariantes")
   empresa                  Empresa?                      @relation(fields: [empresaId], references: [id])
   marca                    Marca?                        @relation(fields: [marcaId], references: [id])
   unidadMedida             UnidadMedida                  @relation(fields: [unidadMedidaId], references: [id])

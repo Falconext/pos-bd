@@ -248,6 +248,9 @@ export class PdfGeneratorService {
     // Otros
     formaPago: string;
     medioPago?: string;
+    vuelto?: string;
+    pagado?: string;
+    vendedor?: string;
     observaciones?: string;
     qrCode?: string; // base64 o data URL
 

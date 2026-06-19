@@ -630,6 +630,7 @@ export class TiendaService {
         empresaId: empresa.id,
         publicarEnTienda: true,
         estado: 'ACTIVO' as const,
+        productoPadreId: null,
         AND: [this.whereStockPublico()],
       };
       const term = (search || '').trim();
@@ -716,16 +717,36 @@ export class TiendaService {
         maxPrice !== undefined ||
         wholesale;
       const pageNumber = Number(page) || 1;
-      const shouldFallbackToActivos = countPublicados === 0;
+      
+      let shouldFallbackToActivos = false;
+      if (countPublicados === 0) {
+        if (hasCatalogFilters) {
+          const countTotalPublicados = await this.prisma.producto.count({
+            where: {
+              empresaId: empresa.id,
+              publicarEnTienda: true,
+              estado: 'ACTIVO',
+              productoPadreId: null,
+              AND: [this.whereStockPublico()],
+            }
+          });
+          shouldFallbackToActivos = countTotalPublicados === 0;
+        } else {
+          shouldFallbackToActivos = true;
+        }
+      }
 
-      if (countPublicados > 0 && !shouldFallbackToActivos) {
-        const itemsRaw = await this.prisma.producto.findMany({
-          where: wherePublicados,
-          select,
-          orderBy: baseOrder,
-          skip,
-          take,
-        });
+      if (!shouldFallbackToActivos) {
+        let itemsRaw: any[] = [];
+        if (countPublicados > 0) {
+          itemsRaw = await this.prisma.producto.findMany({
+            where: wherePublicados,
+            select,
+            orderBy: baseOrder,
+            skip,
+            take,
+          });
+        }
         const items = await hydratePublicProducts(itemsRaw);
         return { data: items, total: countPublicados, page: pageNumber, limit: take };
       }
@@ -736,6 +757,7 @@ export class TiendaService {
       const whereActivos: any = {
         empresaId: empresa.id,
         estado: 'ACTIVO' as const,
+        productoPadreId: null,
         AND: [this.whereStockPublico()],
       };
       if (term) {
@@ -955,6 +977,18 @@ export class TiendaService {
           nombre: true,
         },
       },
+      opcionesAtributos: true,
+      variantes: {
+        select: {
+          id: true,
+          codigo: true,
+          descripcion: true,
+          precioUnitario: true,
+          stock: true,
+          valoresAtributos: true,
+          imagenUrl: true,
+        }
+      }
     } as const;
 
     // Primero intentar con publicarEnTienda=true
@@ -969,16 +1003,28 @@ export class TiendaService {
     });
 
     // Fallback: ACTIVO con stock>0 aunque no esté marcado para publicar
+    // SOLO si la tienda NO tiene ningún producto marcado como publicarEnTienda=true.
     if (!producto) {
-      producto = await this.prisma.producto.findFirst({
+      const countTotalPublicados = await this.prisma.producto.count({
         where: {
-          id: productoId,
           empresaId: empresa.id,
+          publicarEnTienda: true,
           estado: 'ACTIVO',
+          productoPadreId: null,
           AND: [this.whereStockPublico()],
-        },
-        select,
+        }
       });
+      if (countTotalPublicados === 0) {
+        producto = await this.prisma.producto.findFirst({
+          where: {
+            id: productoId,
+            empresaId: empresa.id,
+            estado: 'ACTIVO',
+            AND: [this.whereStockPublico()],
+          },
+          select,
+        });
+      }
     }
 
     if (!producto) {
@@ -1019,7 +1065,7 @@ export class TiendaService {
   }
 
   private whereStockPublico() {
-    return { stock: { gt: 0 } };
+    return { stock: { gte: 0 } };
   }
 
   private formatearValorFichaTecnica(value: any, campo: any) {

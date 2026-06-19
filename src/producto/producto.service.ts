@@ -12,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import { KardexService } from '../kardex/kardex.service';
 import { DigemidService } from '../digemid/digemid.service';
+import { sincronizarVariantes } from './variantes.util';
 import { esRubroComputo, obtenerPlantillaComputo } from './ficha-tecnica-computo';
 import * as XLSX from 'xlsx';
 import axios from 'axios';
@@ -131,6 +132,9 @@ export class ProductoService {
       preciosMayorista?: { cantidadMinima: number; precio: number }[];
       atributosTecnicos?: Record<string, any> | null;
       descripcionLarga?: string;
+      opcionesAtributos?: any;
+      valoresAtributos?: any;
+      productoPadreId?: number;
     },
     empresaId: number,
     sedeId?: number,
@@ -294,6 +298,9 @@ export class ProductoService {
           fechaFinOferta: fechaFinOferta ? new Date(fechaFinOferta) : undefined,
           preciosMayorista: preciosMayorista ?? undefined,
           atributosTecnicos: atributosTecnicos ?? undefined,
+          opcionesAtributos: data.opcionesAtributos ?? undefined,
+          valoresAtributos: data.valoresAtributos ?? undefined,
+          productoPadreId: data.productoPadreId ?? undefined,
         },
       });
     } else {
@@ -347,6 +354,9 @@ export class ProductoService {
           fechaFinOferta: fechaFinOferta ? new Date(fechaFinOferta) : undefined,
           preciosMayorista: preciosMayorista ?? undefined,
           atributosTecnicos: atributosTecnicos ?? undefined,
+          opcionesAtributos: data.opcionesAtributos ?? undefined,
+          valoresAtributos: data.valoresAtributos ?? undefined,
+          productoPadreId: data.productoPadreId ?? undefined,
           descripcionLarga: descripcionLarga || undefined,
         },
       });
@@ -373,6 +383,11 @@ export class ProductoService {
       }
     }
 
+    if (nuevo.opcionesAtributos) {
+      const sedesSync = await this.prisma.sede.findMany({ where: { empresaId: empresaId, activo: true } });
+      await sincronizarVariantes(this.prisma as any, nuevo, sedesSync);
+    }
+
     return {
       ...nuevo,
       costoUnitario: Number((nuevo as any).costoPromedio) || 0,
@@ -389,6 +404,7 @@ export class ProductoService {
     order?: 'asc' | 'desc';
     marcaId?: number;
     categoriaId?: number;
+    incluirVariantes?: string | boolean;
   }) {
     const {
       empresaId,
@@ -427,6 +443,10 @@ export class ProductoService {
           ]
         : undefined,
     };
+
+    if (String(params.incluirVariantes) !== 'true') {
+      where.productoPadreId = null;
+    }
 
     const [productosRaw, total] = await Promise.all([
       this.prisma.producto.findMany({
@@ -786,7 +806,23 @@ export class ProductoService {
   async obtenerPorId(id: number, empresaId: number) {
     const producto = await this.prisma.producto.findFirst({
       where: { id, empresaId },
-      include: { unidadMedida: true, categoria: true, marca: true },
+      include: { 
+        unidadMedida: true, 
+        categoria: true, 
+        marca: true,
+        variantes: {
+          select: {
+            id: true,
+            codigo: true,
+            precioUnitario: true,
+            precioOferta: true,
+            stock: true,
+            estado: true,
+            valoresAtributos: true,
+            imagenUrl: true,
+          }
+        }
+      },
     });
     if (!producto) throw new NotFoundException('Producto no encontrado');
     return {
@@ -1038,6 +1074,9 @@ export class ProductoService {
       fechaFinOferta?: string | Date;
       preciosMayorista?: { cantidadMinima: number; precio: number }[];
       atributosTecnicos?: Record<string, any> | null;
+      opcionesAtributos?: any;
+      valoresAtributos?: any;
+      productoPadreId?: number | null;
       descripcionLarga?: string | null;
 
       sedeId?: number; // Nueva propiedad opcional para identificar dónde se ajusta el stock
@@ -1322,10 +1361,31 @@ export class ProductoService {
               ? Prisma.JsonNull
               : data.atributosTecnicos
             : undefined,
+        opcionesAtributos:
+          data.opcionesAtributos !== undefined
+            ? data.opcionesAtributos === null
+              ? Prisma.JsonNull
+              : data.opcionesAtributos
+            : undefined,
+        valoresAtributos:
+          data.valoresAtributos !== undefined
+            ? data.valoresAtributos === null
+              ? Prisma.JsonNull
+              : data.valoresAtributos
+            : undefined,
+        productoPadreId:
+          data.productoPadreId !== undefined
+            ? data.productoPadreId
+            : undefined,
         descripcionLarga:
           data.descripcionLarga !== undefined ? (data.descripcionLarga || null) : undefined,
       },
     });
+
+    if (actualizado.opcionesAtributos) {
+      const sedesSync = await this.prisma.sede.findMany({ where: { empresaId: data.empresaId, activo: true } });
+      await sincronizarVariantes(this.prisma as any, actualizado, sedesSync);
+    }
 
     return {
       ...actualizado,

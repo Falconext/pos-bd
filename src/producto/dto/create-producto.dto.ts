@@ -155,4 +155,16 @@ export class CreateProductoDto {
 
   @IsOptional()
   atributosTecnicos?: Record<string, any>;
+
+  // 🆕 VARIANTES (Shopify style)
+  @IsOptional()
+  @IsInt()
+  @Type(() => Number)
+  productoPadreId?: number;
+
+  @IsOptional()
+  opcionesAtributos?: any; // e.g. [{"nombre": "Color", "valores": ["Rojo"]}]
+
+  @IsOptional()
+  valoresAtributos?: any; // e.g. {"Color": "Rojo", "Talla": "M"}
 }
