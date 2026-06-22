@@ -6,12 +6,16 @@
   "private": true,
   "license": "UNLICENSED",
   "packageManager": "pnpm@9.12.2",
+  "engines": {
+    "node": ">=22 <25",
+    "pnpm": "9.12.2"
+  },
   "scripts": {
     "build": "prisma generate && prisma db push && nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "start": "prisma migrate deploy && prisma generate && nest start",
-    "start:dev": "prisma db push && prisma generate && nest start --watch",
-    "start:debug": "nest start --debug --watch",
+    "start": "prisma migrate deploy && prisma generate && NINJA_ENV=parentDisabled nest start",
+    "start:dev": "lsof -ti:4001 | xargs kill -9 2>/dev/null; prisma db push && prisma generate && NINJA_ENV=parentDisabled nest start --watch",
+    "start:debug": "NINJA_ENV=parentDisabled nest start --debug --watch",
     "start:prod": "npx prisma db push && npx ts-node prisma/seed.ts && npx ts-node src/scripts/migrate-sedes.ts && node dist/src/main.js",
     "sync:plans": "npx ts-node prisma/seeds/update-planes-v2.ts",
     "migrate:sedes": "npx ts-node src/scripts/migrate-sedes.ts",
@@ -31,7 +35,9 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "seed:computo": "npx ts-node prisma/seeds/seed-computo-products.ts",
-    "seed:demo-computo-krezka": "npx ts-node prisma/seeds/seed-demo-computo-krezka.ts"
+    "seed:demo-computo-krezka": "npx ts-node prisma/seeds/seed-demo-computo-krezka.ts",
+    "seed:demo-autopartes": "npx ts-node prisma/seeds/seed-demo-autopartes.ts",
+    "seed:demo-moda": "npx ts-node prisma/seeds/seed-demo-moda.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.927.0",

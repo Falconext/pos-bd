@@ -17,6 +17,7 @@ import { EmpresaService } from './empresa.service';
 import { CreateEmpresaDto } from './dto/create-empresa.dto';
 import { ListEmpresaDto } from './dto/list-empresa.dto';
 import { UpdateEmpresaDto } from './dto/update-empresa.dto';
+import { CreateCuentaBancariaDto, UpdateCuentaBancariaDto } from './dto/cuenta-bancaria.dto';
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -210,16 +211,55 @@ export class EmpresaController {
     return result;
   }
 
-  @Get(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('ADMIN_SISTEMA')
-  async obtenerPorId(
+  // ─── Cuentas Bancarias ──────────────────────────────────────────────────────
+  // Estos endpoints DEBEN ir antes de @Get(':id') para evitar colisión de rutas
+
+  @Get('cuentas-bancarias')
+  @UseGuards(JwtAuthGuard)
+  async listarCuentasBancarias(
+    @User() user: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const cuentas = await this.empresaService.listarCuentasBancarias(user.empresaId);
+    res.locals.message = 'Cuentas bancarias obtenidas';
+    return cuentas;
+  }
+
+  @Post('cuentas-bancarias')
+  @UseGuards(JwtAuthGuard)
+  async crearCuentaBancaria(
+    @User() user: any,
+    @Body() dto: CreateCuentaBancariaDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const cuenta = await this.empresaService.crearCuentaBancaria(user.empresaId, dto);
+    res.locals.message = 'Cuenta bancaria creada';
+    return cuenta;
+  }
+
+  @Put('cuentas-bancarias/:id')
+  @UseGuards(JwtAuthGuard)
+  async actualizarCuentaBancaria(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateCuentaBancariaDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const cuenta = await this.empresaService.actualizarCuentaBancaria(user.empresaId, id, dto);
+    res.locals.message = 'Cuenta bancaria actualizada';
+    return cuenta;
+  }
+
+  @Delete('cuentas-bancarias/:id')
+  @UseGuards(JwtAuthGuard)
+  async eliminarCuentaBancaria(
+    @User() user: any,
     @Param('id', ParseIntPipe) id: number,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const empresa = await this.empresaService.obtenerPorId(id);
-    res.locals.message = 'Empresa obtenida correctamente';
-    return empresa;
+    await this.empresaService.eliminarCuentaBancaria(user.empresaId, id);
+    res.locals.message = 'Cuenta bancaria desactivada';
+    return null;
   }
 
   @Get('consultar-ruc/:ruc')
@@ -249,5 +289,17 @@ export class EmpresaController {
       await this.empresaService.obtenerEmpresasProximasVencer(diasAntes);
     res.locals.message = `Empresas que vencen en ${diasAntes} días obtenidas correctamente`;
     return empresas;
+  }
+
+  @Get(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  async obtenerPorId(
+    @Param('id', ParseIntPipe) id: number,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const empresa = await this.empresaService.obtenerPorId(id);
+    res.locals.message = 'Empresa obtenida correctamente';
+    return empresa;
   }
 }

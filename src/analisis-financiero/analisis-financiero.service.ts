@@ -131,6 +131,17 @@ export class AnalisisFinancieroService {
     return { gte, lte };
   }
 
+  private fechasToRange(fechaInicio?: string, fechaFin?: string) {
+    if (!fechaInicio || !fechaFin) return null;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fechaInicio) || !/^\d{4}-\d{2}-\d{2}$/.test(fechaFin)) {
+      return null;
+    }
+    return {
+      gte: new Date(`${fechaInicio}T00:00:00.000-05:00`),
+      lte: new Date(`${fechaFin}T23:59:59.999-05:00`),
+    };
+  }
+
   private readonly MESES_LARGO = [
     'Enero',
     'Febrero',
@@ -797,6 +808,314 @@ export class AnalisisFinancieroService {
       where: gastoWhere,
       orderBy: [{ fecha: 'desc' }, { creadoEn: 'desc' }],
     });
+  }
+
+  // ─── Rentabilidad por Categorías ─────────────────────────────────────────────
+
+  async getRentabilidadCategorias(empresaId: number, mes: number, anio: number) {
+    const range = this.periodoToRange(mes, anio);
+
+    const comprobantes = await this.prisma.comprobante.findMany({
+      where: {
+        empresaId,
+        fechaEmision: { gte: range.gte, lte: range.lte },
+        ...this.filtroExcluirConvertidos,
+      },
+      select: {
+        tipoDoc: true,
+        estadoEnvioSunat: true,
+        detalles: {
+          select: {
+            descripcion: true,
+            cantidad: true,
+            mtoPrecioUnitario: true,
+            productoId: true,
+            producto: {
+              select: {
+                descripcion: true,
+                costoPromedio: true,
+                costoFijo: true,
+                categoria: { select: { nombre: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // catKey → { prodKey → accumulator }
+    const catMap = new Map<string, Map<string, {
+      nombre: string;
+      ingreso: number;
+      costo: number;
+      unidades: number;
+    }>>();
+
+    for (const comp of comprobantes) {
+      if (comp.estadoEnvioSunat === 'ANULADO' || comp.tipoDoc === 'COT') continue;
+      const signo: 1 | -1 = comp.tipoDoc === '07' ? -1 : 1;
+
+      for (const det of comp.detalles) {
+        const catNombre = det.producto?.categoria?.nombre ?? 'Sin categoría';
+        const prodNombre = det.producto?.descripcion ?? det.descripcion ?? 'Producto';
+        const prodKey = String(det.productoId ?? prodNombre);
+        const qty = (det.cantidad ?? 0) * signo;
+        const precioUnit = det.mtoPrecioUnitario ?? 0;
+        const costoUnit = this.toNumber(det.producto?.costoPromedio) + this.toNumber(det.producto?.costoFijo);
+
+        if (!catMap.has(catNombre)) catMap.set(catNombre, new Map());
+        const prodMap = catMap.get(catNombre)!;
+
+        if (!prodMap.has(prodKey)) {
+          prodMap.set(prodKey, { nombre: prodNombre, ingreso: 0, costo: 0, unidades: 0 });
+        }
+        const acc = prodMap.get(prodKey)!;
+        acc.ingreso += precioUnit * qty;
+        acc.costo += costoUnit * qty;
+        acc.unidades += qty;
+      }
+    }
+
+    const categorias = [...catMap.entries()].map(([catNombre, prodMap]) => {
+      const productos = [...prodMap.values()]
+        .map((p) => {
+          const gananciaTotal = this.r2(p.ingreso - p.costo);
+          const margen = p.ingreso > 0 ? this.r2(((p.ingreso - p.costo) / p.ingreso) * 100) : 0;
+          return {
+            nombre: p.nombre,
+            precioUnitario: this.r2(p.unidades !== 0 ? p.ingreso / p.unidades : 0),
+            costoUnitario: this.r2(p.unidades !== 0 ? p.costo / p.unidades : 0),
+            margen,
+            unidadesVendidas: this.r2(p.unidades),
+            ingresoTotal: this.r2(p.ingreso),
+            gananciaTotal,
+          };
+        })
+        .sort((a, b) => b.gananciaTotal - a.gananciaTotal);
+
+      const ingresoTotal = this.r2(productos.reduce((s, p) => s + p.ingresoTotal, 0));
+      const gananciaTotal = this.r2(productos.reduce((s, p) => s + p.gananciaTotal, 0));
+      const unidadesVendidas = this.r2(productos.reduce((s, p) => s + p.unidadesVendidas, 0));
+      const margenPromedio = ingresoTotal > 0 ? this.r2((gananciaTotal / ingresoTotal) * 100) : 0;
+
+      return {
+        nombre: catNombre,
+        ingresoTotal,
+        gananciaTotal,
+        margenPromedio,
+        unidadesVendidas,
+        cantidadProductos: productos.length,
+        productos,
+      };
+    }).sort((a, b) => b.gananciaTotal - a.gananciaTotal);
+
+    const ingresoTotal = this.r2(categorias.reduce((s, c) => s + c.ingresoTotal, 0));
+    const gananciaTotal = this.r2(categorias.reduce((s, c) => s + c.gananciaTotal, 0));
+    const margenPromedio = ingresoTotal > 0 ? this.r2((gananciaTotal / ingresoTotal) * 100) : 0;
+
+    return {
+      periodo: { mes, anio, label: `${this.mesLabel(mes)} ${anio}` },
+      ingresoTotal,
+      gananciaTotal,
+      margenPromedio,
+      totalCategorias: categorias.length,
+      mejorCategoria: categorias[0]?.nombre ?? null,
+      categorias,
+    };
+  }
+
+  async getMetodosPago(
+    empresaId: number,
+    mes?: number,
+    anio?: number,
+    fechaInicio?: string,
+    fechaFin?: string,
+  ) {
+    const now = new Date();
+    const mesFinal = mes && mes >= 1 && mes <= 12 ? mes : now.getMonth() + 1;
+    const anioFinal = anio && anio >= 2020 && anio <= 2100 ? anio : now.getFullYear();
+    const range = this.fechasToRange(fechaInicio, fechaFin) ?? this.periodoToRange(mesFinal, anioFinal);
+    const periodoLabel = fechaInicio && fechaFin
+      ? `${fechaInicio} al ${fechaFin}`
+      : `${this.mesLabel(mesFinal)} ${anioFinal}`;
+
+    const pagos = await this.prisma.pago.findMany({
+      where: {
+        empresaId,
+        fecha: { gte: range.gte, lte: range.lte },
+        comprobante: {
+          estadoEnvioSunat: { not: EstadoSunat.ANULADO },
+          ...this.filtroExcluirConvertidos,
+        },
+      },
+      orderBy: { fecha: 'desc' },
+      select: {
+        id: true,
+        fecha: true,
+        monto: true,
+        medioPago: true,
+        referencia: true,
+        observacion: true,
+        cuentaBancaria: {
+          select: { banco: true, alias: true, numeroCuenta: true, cci: true },
+        },
+        comprobante: {
+          select: {
+            id: true,
+            tipoDoc: true,
+            serie: true,
+            correlativo: true,
+            estadoPago: true,
+            mtoImpVenta: true,
+            cliente: { select: { nombre: true, nroDoc: true } },
+          },
+        },
+      },
+    });
+
+    const comprobantesRespaldo = await this.prisma.comprobante.findMany({
+      where: {
+        empresaId,
+        fechaEmision: { gte: range.gte, lte: range.lte },
+        estadoEnvioSunat: { not: EstadoSunat.ANULADO },
+        estadoPago: 'COMPLETADO',
+        formaPagoTipo: { in: ['Contado', 'CONTADO', 'contado'] },
+        pagos: { none: {} },
+        ...this.filtroExcluirConvertidos,
+      },
+      orderBy: { fechaEmision: 'desc' },
+      select: {
+        id: true,
+        fechaEmision: true,
+        tipoDoc: true,
+        serie: true,
+        correlativo: true,
+        medioPago: true,
+        mtoImpVenta: true,
+        estadoPago: true,
+        paymentDetails: true,
+        cliente: { select: { nombre: true, nroDoc: true } },
+      },
+    });
+
+    const metodoMap = new Map<string, {
+      metodo: string;
+      total: number;
+      cantidad: number;
+      referencias: number;
+      cuentas: Set<string>;
+      items: any[];
+    }>();
+
+    const cuentaLabel = (cuenta?: { banco?: string | null; alias?: string | null; numeroCuenta?: string | null } | null) => {
+      if (!cuenta) return null;
+      return `${cuenta.alias || cuenta.banco || 'Cuenta'} ${String(cuenta.numeroCuenta || '').slice(-4)}`.trim();
+    };
+
+    const addItem = (item: any) => {
+      const metodo = String(item.metodo || 'EFECTIVO').toUpperCase();
+      const current = metodoMap.get(metodo) || {
+        metodo,
+        total: 0,
+        cantidad: 0,
+        referencias: 0,
+        cuentas: new Set<string>(),
+        items: [],
+      };
+      current.total += Number(item.monto || 0);
+      current.cantidad += 1;
+      if (item.referencia) current.referencias += 1;
+      if (item.cuenta) current.cuentas.add(item.cuenta);
+      current.items.push(item);
+      metodoMap.set(metodo, current);
+    };
+
+    for (const pago of pagos) {
+      addItem({
+        id: `P-${pago.id}`,
+        origen: 'PAGO',
+        fecha: this.fechaLimaKey(pago.fecha),
+        metodo: pago.medioPago,
+        monto: this.r2(Number(pago.monto || 0)),
+        referencia: pago.referencia || null,
+        cuenta: cuentaLabel(pago.cuentaBancaria),
+        observacion: pago.observacion || null,
+        documento: `${pago.comprobante.tipoDoc} ${pago.comprobante.serie}-${String(pago.comprobante.correlativo).padStart(8, '0')}`,
+        comprobanteId: pago.comprobante.id,
+        cliente: pago.comprobante.cliente?.nombre || 'CLIENTES VARIOS',
+        clienteDoc: pago.comprobante.cliente?.nroDoc || null,
+        estadoPago: pago.comprobante.estadoPago,
+      });
+    }
+
+    for (const comp of comprobantesRespaldo) {
+      const details: any = comp.paymentDetails || {};
+      const split = Array.isArray(details?.splitPayments) ? details.splitPayments : null;
+      const legacyLines = split && split.length > 0
+        ? split.map((line: any) => ({
+            metodo: line.method || comp.medioPago || 'EFECTIVO',
+            monto: Number(line.amount || 0),
+            referencia: line.referencia || null,
+            cuenta: line.cuentaBancariaLabel || null,
+          }))
+        : [{
+            metodo: comp.medioPago || details?.method || 'EFECTIVO',
+            monto: Number(comp.mtoImpVenta || 0),
+            referencia: details?.referencia || null,
+            cuenta: details?.cuentaBancariaLabel || null,
+          }];
+
+      for (const line of legacyLines) {
+        addItem({
+          id: `C-${comp.id}-${line.metodo}`,
+          origen: 'COMPROBANTE_SIN_PAGO',
+          fecha: this.fechaLimaKey(comp.fechaEmision),
+          metodo: line.metodo,
+          monto: this.r2(Number(line.monto || 0)),
+          referencia: line.referencia,
+          cuenta: line.cuenta,
+          observacion: 'Respaldo por comprobante antiguo sin pago separado',
+          documento: `${comp.tipoDoc} ${comp.serie}-${String(comp.correlativo).padStart(8, '0')}`,
+          comprobanteId: comp.id,
+          cliente: comp.cliente?.nombre || 'CLIENTES VARIOS',
+          clienteDoc: comp.cliente?.nroDoc || null,
+          estadoPago: comp.estadoPago,
+        });
+      }
+    }
+
+    const metodos = [...metodoMap.values()]
+      .map((metodo) => ({
+        metodo: metodo.metodo,
+        total: this.r2(metodo.total),
+        cantidad: metodo.cantidad,
+        referencias: metodo.referencias,
+        cuentas: [...metodo.cuentas],
+        items: metodo.items.sort((a, b) => String(b.fecha).localeCompare(String(a.fecha))),
+      }))
+      .sort((a, b) => b.total - a.total);
+
+    const totalCobrado = this.r2(metodos.reduce((sum, metodo) => sum + metodo.total, 0));
+    const totalReferenciado = metodos.reduce((sum, metodo) => sum + metodo.referencias, 0);
+    const totalItems = metodos.reduce((sum, metodo) => sum + metodo.cantidad, 0);
+
+    return {
+      periodo: {
+        mes: mesFinal,
+        anio: anioFinal,
+        fechaInicio: fechaInicio || null,
+        fechaFin: fechaFin || null,
+        label: periodoLabel,
+      },
+      resumen: {
+        totalCobrado,
+        totalMetodos: metodos.length,
+        totalPagos: totalItems,
+        totalConReferencia: totalReferenciado,
+        totalRespaldo: comprobantesRespaldo.length,
+      },
+      metodos,
+    };
   }
 
   /** POST /gastos — create a new operative expense. */

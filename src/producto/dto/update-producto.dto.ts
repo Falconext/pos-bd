@@ -156,15 +156,16 @@ export class UpdateProductoDto {
 
   // Campos Ofertas
   @IsOptional()
-  // @IsNumber()
+  @IsNumber()
+  @Type(() => Number)
   precioOferta?: number;
 
   @IsOptional()
-  // @IsDateString() // Puede ser vacío o string fecha
+  @IsString()
   fechaInicioOferta?: string | Date;
 
   @IsOptional()
-  // @IsDateString()
+  @IsString()
   fechaFinOferta?: string | Date;
 
   @IsOptional()
@@ -176,4 +177,24 @@ export class UpdateProductoDto {
 
   @IsOptional()
   atributosTecnicos?: Record<string, any> | null;
+
+  @IsOptional()
+  opcionesAtributos?: any;
+
+  @IsOptional()
+  valoresAtributos?: any;
+
+  @IsOptional()
+  productoPadreId?: number | null;
+
+  @IsOptional()
+  variantesConfig?: {
+    valoresAtributos: Record<string, string>;
+    codigo?: string;
+    precioUnitario?: number;
+    stock?: number;
+    imagenUrl?: string | null;
+    codigoBarras?: string | null;
+    estado?: 'ACTIVO' | 'INACTIVO';
+  }[];
 }

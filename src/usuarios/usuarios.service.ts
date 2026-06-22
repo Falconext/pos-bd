@@ -227,7 +227,34 @@ export class UsersService {
       }
     }
 
-    return updated;
+    const updatedConRelaciones = await this.prisma.usuario.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        nombre: true,
+        email: true,
+        dni: true,
+        celular: true,
+        rol: true,
+        empresaId: true,
+        permisos: true,
+        estado: true,
+        sedesAsignadas: {
+          select: { sede: { select: { id: true, nombre: true, codigo: true, esPrincipal: true } } },
+        },
+        subModulosAsignados: {
+          select: { subModulo: { select: { id: true, codigo: true, nombre: true, moduloId: true } } },
+        },
+      },
+    });
+
+    return {
+      ...updatedConRelaciones,
+      sedes: (updatedConRelaciones?.sedesAsignadas || []).map((us) => us.sede),
+      sedesAsignadas: undefined,
+      subModulos: (updatedConRelaciones?.subModulosAsignados || []).map((us) => us.subModulo),
+      subModulosAsignados: undefined,
+    };
   }
 
   async me(userId: number) {

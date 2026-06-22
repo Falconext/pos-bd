@@ -128,9 +128,10 @@ export class VentasService {
                     porcentajeDetraccion: true,
                     cuotas: true,
                     observaciones: true,
-                    cliente: { select: { nombre: true } },
+                    cliente: { select: { nombre: true, nroDoc: true } },
                     usuario: { select: { nombre: true } },
                     sede: { select: { nombre: true } },
+                    productoSeries: { select: { numeroSerie: true } },
                     envioDespacho: {
                         select: {
                             estado: true,
@@ -239,7 +240,9 @@ export class VentasService {
                 tipo: TIPO_LABEL[c.tipoDoc] ?? c.tipoDoc,
                 referencia: `${c.serie}-${String(c.correlativo).padStart(8, '0')}`,
                 fecha: c.fechaEmision.toISOString(),
+                clienteDoc: c.cliente?.nroDoc ?? '',
                 cliente: c.cliente?.nombre ?? '—',
+                seriesGarantia: (c.productoSeries ?? []).map((s) => s.numeroSerie),
                 total: Number(c.mtoImpVenta ?? 0),
                 estadoPago: resolverEstadoPagoComprobante(
                     Number(c.mtoImpVenta ?? 0),
@@ -303,6 +306,8 @@ export class VentasService {
                 tipo: 'PEDIDO_TIENDA',
                 referencia: p.codigoSeguimiento,
                 fecha: p.creadoEn.toISOString(),
+                clienteDoc: '',
+                seriesGarantia: [],
                 cliente: p.clienteNombre ?? '—',
                 total,
                 estadoPago,

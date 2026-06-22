@@ -12,7 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import { KardexService } from '../kardex/kardex.service';
 import { DigemidService } from '../digemid/digemid.service';
-import { sincronizarVariantes } from './variantes.util';
+import { sincronizarVariantes, type VarianteConfig } from './variantes.util';
 import { esRubroComputo, obtenerPlantillaComputo } from './ficha-tecnica-computo';
 import * as XLSX from 'xlsx';
 import axios from 'axios';
@@ -135,6 +135,7 @@ export class ProductoService {
       opcionesAtributos?: any;
       valoresAtributos?: any;
       productoPadreId?: number;
+      variantesConfig?: VarianteConfig[];
       publicarEnTienda?: boolean;
     },
     empresaId: number,
@@ -388,13 +389,10 @@ export class ProductoService {
 
     if (nuevo.opcionesAtributos) {
       const sedesSync = await this.prisma.sede.findMany({ where: { empresaId: empresaId, activo: true } });
-      await sincronizarVariantes(this.prisma as any, nuevo, sedesSync);
+      await sincronizarVariantes(this.prisma as any, nuevo, sedesSync, data.variantesConfig || [], sedeId);
     }
 
-    return {
-      ...nuevo,
-      costoUnitario: Number((nuevo as any).costoPromedio) || 0,
-    };
+    return this.obtenerPorId(nuevo.id, empresaId);
   }
 
   async listar(params: {
@@ -481,6 +479,9 @@ export class ProductoService {
           comisionPorVenta: true,
           comisionPorcentaje: true,
           precioUnitario: true,
+          precioOferta: true,
+          fechaInicioOferta: true,
+          fechaFinOferta: true,
           valorUnitario: true,
           igvPorcentaje: true,
           tipoAfectacionIGV: true,
@@ -497,6 +498,33 @@ export class ProductoService {
           atributosTecnicos: true,
           codigoBarras: true,
           publicarEnTienda: true,
+          productoPadreId: true,
+          opcionesAtributos: true,
+          valoresAtributos: true,
+          variantes: {
+            where: { estado: { in: [EstadoType.ACTIVO, EstadoType.INACTIVO] } },
+            select: {
+              id: true,
+              codigo: true,
+              descripcion: true,
+              precioUnitario: true,
+              precioOferta: true,
+              stock: true,
+              estado: true,
+              valoresAtributos: true,
+              imagenUrl: true,
+              codigoBarras: true,
+              stocks: {
+                where: {
+                  ...(params.sedeId ? { sedeId: params.sedeId } : {}),
+                },
+                select: {
+                  stock: true,
+                  sedeId: true,
+                },
+              },
+            },
+          },
           unidadMedida: {
             select: {
               id: true,
@@ -607,9 +635,27 @@ export class ProductoService {
         const stockDisponibleVenta = Math.max(0, Math.min(stockTotal - reservado, cupoVenta));
 
         const imagenUrl = normalizePersistentImageUrl((p as any).imagenUrl as string | null);
+        const variantes = await Promise.all(
+          ((p as any).variantes || []).map(async (variante: any) => {
+            const varianteImagenUrl = normalizePersistentImageUrl(variante.imagenUrl as string | null);
+            const varianteStock = params.sedeId
+              ? (variante.stocks?.[0]?.stock ?? variante.stock ?? 0)
+              : Array.isArray(variante.stocks) && variante.stocks.length > 0
+                ? variante.stocks.reduce((sum: number, stockRow: any) => sum + Number(stockRow.stock || 0), 0)
+                : Number(variante.stock || 0);
+
+            return {
+              ...variante,
+              stock: varianteStock,
+              imagenUrl: varianteImagenUrl,
+              imagenUrlDisplay: await signIfS3(varianteImagenUrl),
+            };
+          }),
+        );
 
         return {
           ...p,
+          variantes,
           stock: stockDisponibleVenta,
           stockBase: stockTotal,
           stockReservado: reservado,
@@ -1080,6 +1126,7 @@ export class ProductoService {
       opcionesAtributos?: any;
       valoresAtributos?: any;
       productoPadreId?: number | null;
+      variantesConfig?: VarianteConfig[];
       descripcionLarga?: string | null;
       publicarEnTienda?: boolean;
 
@@ -1265,6 +1312,11 @@ export class ProductoService {
         : typeof data.imagenUrl === 'string' && data.imagenUrl.trim()
           ? normalizePersistentImageUrl(data.imagenUrl.trim())
           : undefined;
+    const normalizeOptionalDate = (value: string | Date | null | undefined) => {
+      if (value === undefined) return undefined;
+      if (value === null || value === '') return null;
+      return new Date(value);
+    };
 
     const actualizado = await this.prisma.producto.update({
       where: { id: data.id },
@@ -1347,15 +1399,16 @@ export class ProductoService {
         controlado: (data as any).controlado !== undefined ? Boolean((data as any).controlado) : undefined,
         refrigerado: (data as any).refrigerado !== undefined ? Boolean((data as any).refrigerado) : undefined,
         // Campos Ofertas
-        precioOferta: data.precioOferta
-          ? new Decimal(data.precioOferta)
-          : undefined,
-        fechaInicioOferta: data.fechaInicioOferta
-          ? new Date(data.fechaInicioOferta)
-          : undefined,
-        fechaFinOferta: data.fechaFinOferta
-          ? new Date(data.fechaFinOferta)
-          : undefined,
+        precioOferta:
+          data.precioOferta !== undefined
+            ? data.precioOferta === null
+              ? null
+              : new Decimal(data.precioOferta)
+            : undefined,
+        fechaInicioOferta:
+          normalizeOptionalDate(data.fechaInicioOferta),
+        fechaFinOferta:
+          normalizeOptionalDate(data.fechaFinOferta),
         preciosMayorista:
           data.preciosMayorista !== undefined
             ? data.preciosMayorista
@@ -1389,13 +1442,10 @@ export class ProductoService {
 
     if (actualizado.opcionesAtributos) {
       const sedesSync = await this.prisma.sede.findMany({ where: { empresaId: data.empresaId, activo: true } });
-      await sincronizarVariantes(this.prisma as any, actualizado, sedesSync);
+      await sincronizarVariantes(this.prisma as any, actualizado, sedesSync, data.variantesConfig || [], data.sedeId);
     }
 
-    return {
-      ...actualizado,
-      costoUnitario: Number((actualizado as any).costoPromedio) || 0,
-    };
+    return this.obtenerPorId(actualizado.id, data.empresaId);
   }
 
   // ==================== IMÁGENES (S3) ====================

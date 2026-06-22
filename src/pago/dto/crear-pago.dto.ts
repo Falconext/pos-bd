@@ -15,4 +15,8 @@ export class CrearPagoDto {
   @IsOptional()
   @IsString()
   referencia?: string;
+
+  @IsOptional()
+  @IsNumber()
+  cuentaBancariaId?: number;
 }

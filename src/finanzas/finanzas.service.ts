@@ -50,28 +50,41 @@ export class FinanzasService {
 
         const totalPorCobrar = Number(porCobrarAgg._sum.saldo || 0);
 
-        // 3. Flujo de Caja (Ingresos vs Egresos) en el rango de fechas
-        // VENTAS CONTADO (Ingreso Real) — filtradas por sede
-        const ventasContado = await this.prisma.comprobante.groupBy({
-            by: ['fechaEmision'],
+        // 3. Flujo de Caja (Ingresos vs Egresos) en el rango de fechas.
+        // Fuente principal: pagos reales. Respaldo: comprobantes antiguos completados sin pagos.
+        const pagosIngreso = await this.prisma.pago.findMany({
+            where: {
+                empresaId,
+                fecha: rangoFecha,
+                comprobante: {
+                    ...(sedeId ? { sedeId } : {}),
+                    estadoEnvioSunat: { not: 'ANULADO' },
+                },
+            },
+            select: {
+                fecha: true,
+                monto: true,
+                medioPago: true,
+                referencia: true,
+                cuentaBancaria: { select: { banco: true, alias: true, numeroCuenta: true } },
+            },
+        });
+
+        const ventasContadoSinPago = await this.prisma.comprobante.findMany({
             where: {
                 empresaId,
                 ...(sedeId ? { sedeId } : {}),
                 fechaEmision: rangoFecha,
-                formaPagoTipo: 'Contado',
+                formaPagoTipo: { in: ['Contado', 'CONTADO', 'contado'] },
                 estadoEnvioSunat: { not: 'ANULADO' },
+                estadoPago: 'COMPLETADO',
+                pagos: { none: {} },
             },
-            _sum: { mtoImpVenta: true },
-        });
-
-        // COBROS DE CREDITOS (Ingreso Real) — filtrados por sede (a través de empresaId)
-        const cobrosCredito = await this.prisma.pago.groupBy({
-            by: ['fecha'],
-            where: {
-                empresaId,
-                fecha: rangoFecha,
+            select: {
+                fechaEmision: true,
+                mtoImpVenta: true,
+                medioPago: true,
             },
-            _sum: { monto: true },
         });
 
         // PAGOS A PROVEEDORES (Egreso Real) — filtrados por sede
@@ -87,20 +100,30 @@ export class FinanzasService {
         // Mapear datos para el gráfico
         const mapDatos = new Map<string, { fecha: string; ingresos: number; egresos: number }>();
 
-        // Procesar Ingresos (Ventas Contado)
-        ventasContado.forEach((v) => {
-            const fecha = v.fechaEmision.toISOString().split('T')[0];
+        const resumenMetodos = new Map<string, { metodo: string; total: number; cantidad: number; referencias: number }>();
+        const sumarMetodo = (metodoRaw: string | null | undefined, monto: number, tieneReferencia = false) => {
+            const metodo = String(metodoRaw || 'EFECTIVO').toUpperCase();
+            const actual = resumenMetodos.get(metodo) || { metodo, total: 0, cantidad: 0, referencias: 0 };
+            actual.total += Number(monto || 0);
+            actual.cantidad += 1;
+            if (tieneReferencia) actual.referencias += 1;
+            resumenMetodos.set(metodo, actual);
+        };
+
+        pagosIngreso.forEach((p) => {
+            const fecha = p.fecha.toISOString().split('T')[0];
             const actual = mapDatos.get(fecha) || { fecha, ingresos: 0, egresos: 0 };
-            actual.ingresos += Number(v._sum.mtoImpVenta || 0);
+            actual.ingresos += Number(p.monto || 0);
             mapDatos.set(fecha, actual);
+            sumarMetodo(p.medioPago, Number(p.monto || 0), Boolean(p.referencia));
         });
 
-        // Procesar Ingresos (Cobros)
-        cobrosCredito.forEach((c) => {
-            const fecha = c.fecha.toISOString().split('T')[0];
+        ventasContadoSinPago.forEach((v) => {
+            const fecha = v.fechaEmision.toISOString().split('T')[0];
             const actual = mapDatos.get(fecha) || { fecha, ingresos: 0, egresos: 0 };
-            actual.ingresos += Number(c._sum.monto || 0);
+            actual.ingresos += Number(v.mtoImpVenta || 0);
             mapDatos.set(fecha, actual);
+            sumarMetodo(v.medioPago, Number(v.mtoImpVenta || 0), false);
         });
 
         // Procesar Egresos (Pagos a Proveedores)
@@ -116,6 +139,13 @@ export class FinanzasService {
         const ingresosMes = chartData.reduce((acc, curr) => acc + curr.ingresos, 0);
         const egresosMes = chartData.reduce((acc, curr) => acc + curr.egresos, 0);
         const balanceMes = ingresosMes - egresosMes;
+        const metodosPago = Array.from(resumenMetodos.values())
+            .map((item) => ({
+                ...item,
+                total: Number(item.total.toFixed(2)),
+                explicacion: this.explicacionMetodoPago(item.metodo),
+            }))
+            .sort((a, b) => b.total - a.total);
 
         return {
             kpis: {
@@ -125,8 +155,27 @@ export class FinanzasService {
                 egresosPeriodo: egresosMes,
                 balancePeriodo: balanceMes
             },
-            chartData
+            chartData,
+            metodosPago,
+            conciliacion: {
+                fuentePrincipal: 'pagos',
+                pagosRegistrados: pagosIngreso.length,
+                comprobantesRespaldo: ventasContadoSinPago.length,
+                totalPorMetodo: Number(metodosPago.reduce((sum, item) => sum + item.total, 0).toFixed(2)),
+            },
         };
+    }
+
+    private explicacionMetodoPago(metodo: string) {
+        const labels: Record<string, string> = {
+            EFECTIVO: 'Dinero físico que debe cuadrar con caja.',
+            YAPE: 'Cobros que deben coincidir con el movimiento de Yape.',
+            PLIN: 'Cobros que deben coincidir con el movimiento de Plin.',
+            TRANSFERENCIA: 'Depósitos bancarios con cuenta destino y operación.',
+            TARJETA: 'Voucher/POS o pasarela, pendiente de liquidación bancaria.',
+            MIXTO: 'Pago antiguo sin separación; las nuevas ventas mixtas se distribuyen por método.',
+        };
+        return labels[metodo] || 'Ingreso registrado por método de pago.';
     }
 
     async getResumenEcommerce(empresaId: number, mes: number, anio: number) {

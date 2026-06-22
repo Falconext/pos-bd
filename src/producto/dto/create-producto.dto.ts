@@ -118,6 +118,14 @@ export class CreateProductoDto {
   precioOferta?: number;
 
   @IsOptional()
+  @IsString()
+  fechaInicioOferta?: string | Date;
+
+  @IsOptional()
+  @IsString()
+  fechaFinOferta?: string | Date;
+
+  @IsOptional()
   @IsNumber()
   @Type(() => Number)
   costoUnitario?: number;
@@ -172,4 +180,15 @@ export class CreateProductoDto {
 
   @IsOptional()
   valoresAtributos?: any; // e.g. {"Color": "Rojo", "Talla": "M"}
+
+  @IsOptional()
+  variantesConfig?: {
+    valoresAtributos: Record<string, string>;
+    codigo?: string;
+    precioUnitario?: number;
+    stock?: number;
+    imagenUrl?: string | null;
+    codigoBarras?: string | null;
+    estado?: 'ACTIVO' | 'INACTIVO';
+  }[];
 }

@@ -208,6 +208,7 @@ model Empresa {
   reclamosGarantia    ReclamoGarantia[]
   productoReviews     ProductoReview[]
   fichasTecnicas      FichaTecnicaPlantilla[]
+  cuentasBancarias    CuentaBancaria[]
 
   @@index([providerToken])
   @@index([slugTienda])
@@ -655,6 +656,7 @@ model Comprobante {
   mtoImpVenta           Float
   estadoEnvioSunat      EstadoSunat          @default(PENDIENTE)
   medioPago             String?
+  paymentDetails        Json?
   clienteId             Int
   empresaId             Int
   tipDocAfectado        String?
@@ -828,22 +830,43 @@ model Leyenda {
 }
 
 model Pago {
-  id            Int         @id @default(autoincrement())
-  comprobanteId Int
-  fecha         DateTime    @default(now())
-  monto         Float
-  medioPago     String
-  observacion   String?
-  referencia    String?
-  creadoEn      DateTime    @default(now())
-  empresaId     Int?
-  usuarioId     Int?
-  comprobante   Comprobante @relation(fields: [comprobanteId], references: [id], onDelete: Cascade)
-  empresa       Empresa?    @relation(fields: [empresaId], references: [id])
-  usuario       Usuario?    @relation(fields: [usuarioId], references: [id])
+  id                 Int              @id @default(autoincrement())
+  comprobanteId      Int
+  fecha              DateTime         @default(now())
+  monto              Float
+  medioPago          String
+  observacion        String?
+  referencia         String?
+  creadoEn           DateTime         @default(now())
+  empresaId          Int?
+  usuarioId          Int?
+  cuentaBancariaId   Int?
+  comprobante        Comprobante      @relation(fields: [comprobanteId], references: [id], onDelete: Cascade)
+  empresa            Empresa?         @relation(fields: [empresaId], references: [id])
+  usuario            Usuario?         @relation(fields: [usuarioId], references: [id])
+  cuentaBancaria     CuentaBancaria?  @relation(fields: [cuentaBancariaId], references: [id])
 
   @@index([comprobanteId])
   @@index([usuarioId])
+  @@index([empresaId])
+  @@index([cuentaBancariaId])
+}
+
+model CuentaBancaria {
+  id           Int      @id @default(autoincrement())
+  empresaId    Int
+  banco        String
+  numeroCuenta String
+  cci          String?
+  titular      String?
+  tipoCuenta   String   @default("AHORROS")
+  moneda       String   @default("PEN")
+  alias        String?
+  activo       Boolean  @default(true)
+  creadoEn     DateTime @default(now())
+  empresa      Empresa  @relation(fields: [empresaId], references: [id])
+  pagos        Pago[]
+
   @@index([empresaId])
 }
 
@@ -1269,6 +1292,7 @@ model Sede {
   nombre        String
   direccion     String?
   codigo        String?
+  tipo          TipoSede @default(PUNTO_DE_VENTA)
   esPrincipal   Boolean  @default(false)
   activo        Boolean  @default(true)
   creadoEn      DateTime @default(now())
@@ -1545,6 +1569,11 @@ enum EstadoPago {
 enum TipoEmpresa {
   FORMAL
   INFORMAL
+}
+
+enum TipoSede {
+  PUNTO_DE_VENTA
+  ALMACEN
 }
 
 enum TipoMovimiento {

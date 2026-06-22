@@ -1,7 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 // Force rebuild to regenerate Prisma Client with new schema columns
-import { ValidationPipe } from '@nestjs/common'; // rebuilt
+import { Logger, ValidationPipe } from '@nestjs/common'; // rebuilt
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import * as express from 'express';
@@ -9,6 +9,7 @@ import { PrismaService } from './prisma/prisma.service';
 import { initializeDatabase } from './common/utils/init-db';
 
 async function bootstrap() {
+  const logger = new Logger('Bootstrap');
   process.env.TZ = 'America/Lima';
   const app = await NestFactory.create(AppModule, {
     bodyParser: false, // Desactivamos el body parser por defecto
@@ -70,12 +71,15 @@ async function bootstrap() {
 
   // Auto-initialize (Seed) if empty
   try {
+    logger.log('Validando base de datos inicial...');
     const prismaService = app.get(PrismaService);
     await initializeDatabase(prismaService);
   } catch (e) {
-    console.warn('Skipping auto-seed:', e.message);
+    const message = e instanceof Error ? e.message : String(e);
+    logger.warn(`Seed inicial omitido: ${message}`);
   }
 
   await app.listen(PORT, '0.0.0.0');
+  logger.log(`Falconext MYPE API lista en http://localhost:${PORT}/api`);
 }
 bootstrap();

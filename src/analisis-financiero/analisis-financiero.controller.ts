@@ -65,6 +65,30 @@ export class AnalisisFinancieroController {
     return this.service.actualizarGasto(user.empresaId, id, dto);
   }
 
+  /** GET /analisis-financiero/categorias?mes=&anio= */
+  @Get('categorias')
+  getRentabilidadCategorias(@User() user: any, @Query() query: QueryPeriodoDto) {
+    return this.service.getRentabilidadCategorias(user.empresaId, query.mes, query.anio);
+  }
+
+  /** GET /analisis-financiero/metodos-pago?mes=&anio=&fechaInicio=&fechaFin= */
+  @Get('metodos-pago')
+  getMetodosPago(
+    @User() user: any,
+    @Query('mes') mes?: string,
+    @Query('anio') anio?: string,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
+  ) {
+    return this.service.getMetodosPago(
+      user.empresaId,
+      mes ? Number(mes) : undefined,
+      anio ? Number(anio) : undefined,
+      fechaInicio,
+      fechaFin,
+    );
+  }
+
   /** DELETE /analisis-financiero/gastos/:id */
   @Delete('gastos/:id')
   eliminarGasto(

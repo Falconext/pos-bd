@@ -83,6 +83,7 @@ export class PagoService {
         medioPago: (dto.medioPago ?? 'EFECTIVO').toUpperCase(),
         observacion: dto.observacion,
         referencia: dto.referencia,
+        cuentaBancariaId: dto.cuentaBancariaId ?? null,
       },
     });
 

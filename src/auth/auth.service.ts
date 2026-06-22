@@ -125,6 +125,7 @@ export class AuthService {
             id: true,
             nombre: true,
             codigo: true,
+            tipo: true,
             esPrincipal: true,
             activo: true,
           },
@@ -140,6 +141,7 @@ export class AuthService {
                 id: true,
                 nombre: true,
                 codigo: true,
+                tipo: true,
                 esPrincipal: true,
                 activo: true,
               },
@@ -218,24 +220,35 @@ export class AuthService {
   }
 
   async selectSede(userId: number, sedeId: number) {
-    // Validar que el usuario tiene acceso a esa sede
-    const usuarioSede = await this.prisma.usuarioSede.findUnique({
-      where: { usuarioId_sedeId: { usuarioId: userId, sedeId } },
-      include: { sede: true },
-    });
-
-    if (!usuarioSede) {
-      throw new ForbiddenException('No tienes acceso a esta sede');
-    }
-    if (!usuarioSede.sede.activo) {
-      throw new ForbiddenException('Esta sede está inactiva');
-    }
-
     const user = await this.prisma.usuario.findUnique({
       where: { id: userId },
       include: { empresa: true },
     });
     if (!user) throw new NotFoundException('Usuario no encontrado');
+
+    const isAdmin =
+      user.rol === 'ADMIN_EMPRESA' ||
+      user.rol === 'ADMIN_SISTEMA' ||
+      user.rol === 'RESELLER';
+
+    let sede: any;
+
+    if (isAdmin) {
+      // ADMIN_EMPRESA puede seleccionar cualquier sede activa de su empresa
+      sede = await this.prisma.sede.findFirst({
+        where: { id: sedeId, empresaId: user.empresaId ?? undefined, activo: true },
+      });
+      if (!sede) throw new ForbiddenException('Sede no encontrada o inactiva');
+    } else {
+      // USUARIO_EMPRESA: validar a través de la tabla de asignación
+      const usuarioSede = await this.prisma.usuarioSede.findUnique({
+        where: { usuarioId_sedeId: { usuarioId: userId, sedeId } },
+        include: { sede: true },
+      });
+      if (!usuarioSede) throw new ForbiddenException('No tienes acceso a esta sede');
+      if (!usuarioSede.sede.activo) throw new ForbiddenException('Esta sede está inactiva');
+      sede = usuarioSede.sede;
+    }
 
     const payload: any = {
       sub: user.id,
@@ -265,7 +278,7 @@ export class AuthService {
       accessToken,
       refreshToken,
       usuario: usuarioCompleto,
-      sede: usuarioSede.sede,
+      sede,
     };
   }
 
@@ -356,6 +369,7 @@ export class AuthService {
                 id: true,
                 nombre: true,
                 codigo: true,
+                tipo: true,
                 esPrincipal: true,
                 activo: true,
               },
@@ -487,9 +501,24 @@ export class AuthService {
     }
 
     // Aplanar sedes
-    (usuario as any).sedes = (usuario.sedesAsignadas || []).map(
-      (us: any) => us.sede,
-    );
+    if (usuario.rol === 'ADMIN_EMPRESA' && usuario.empresaId) {
+      (usuario as any).sedes = await this.prisma.sede.findMany({
+        where: { empresaId: usuario.empresaId, activo: true },
+        select: {
+          id: true,
+          nombre: true,
+          codigo: true,
+          tipo: true,
+          esPrincipal: true,
+          activo: true,
+        },
+        orderBy: [{ esPrincipal: 'desc' }, { id: 'asc' }],
+      });
+    } else {
+      (usuario as any).sedes = (usuario.sedesAsignadas || []).map(
+        (us: any) => us.sede,
+      );
+    }
     delete (usuario as any).sedesAsignadas;
 
     // Aplanar submódulos del usuario

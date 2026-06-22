@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -9,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import bcrypt from 'bcrypt';
 import { CreateEmpresaDto } from './dto/create-empresa.dto';
 import { UpdateEmpresaDto } from './dto/update-empresa.dto';
+import { CreateCuentaBancariaDto, UpdateCuentaBancariaDto } from './dto/cuenta-bancaria.dto';
 import { SedeService } from '../sede/sede.service';
 import axios from 'axios';
 
@@ -357,7 +359,7 @@ export class EmpresaService {
         tipoEmpresa,
         fechaActivacion,
         departamento: data.departamento,
-        rubroId: data.rubroId,
+        rubroId: data.rubroId && data.rubroId > 0 ? data.rubroId : null,
         nombreComercial: data.nombreComercial,
         provincia: data.provincia,
         distrito: data.distrito,
@@ -1455,5 +1457,60 @@ export class EmpresaService {
     } catch {
       /* nunca debe romper el flujo principal */
     }
+  }
+
+  // ─── Cuentas Bancarias ────────────────────────────────────────────────────────
+
+  async listarCuentasBancarias(empresaId: number) {
+    return this.prisma.cuentaBancaria.findMany({
+      where: { empresaId },
+      orderBy: { creadoEn: 'asc' },
+    });
+  }
+
+  async crearCuentaBancaria(empresaId: number, dto: CreateCuentaBancariaDto) {
+    return this.prisma.cuentaBancaria.create({
+      data: {
+        empresaId,
+        banco: dto.banco,
+        numeroCuenta: dto.numeroCuenta,
+        cci: dto.cci ?? null,
+        titular: dto.titular ?? null,
+        tipoCuenta: dto.tipoCuenta ?? 'AHORROS',
+        moneda: dto.moneda ?? 'PEN',
+        alias: dto.alias ?? null,
+      },
+    });
+  }
+
+  async actualizarCuentaBancaria(empresaId: number, id: number, dto: UpdateCuentaBancariaDto) {
+    const cuenta = await this.prisma.cuentaBancaria.findUnique({ where: { id } });
+    if (!cuenta) throw new NotFoundException('Cuenta bancaria no encontrada');
+    if (cuenta.empresaId !== empresaId) throw new BadRequestException('La cuenta no pertenece a tu empresa');
+
+    return this.prisma.cuentaBancaria.update({
+      where: { id },
+      data: {
+        ...(dto.banco !== undefined && { banco: dto.banco }),
+        ...(dto.numeroCuenta !== undefined && { numeroCuenta: dto.numeroCuenta }),
+        ...(dto.cci !== undefined && { cci: dto.cci }),
+        ...(dto.titular !== undefined && { titular: dto.titular }),
+        ...(dto.tipoCuenta !== undefined && { tipoCuenta: dto.tipoCuenta }),
+        ...(dto.moneda !== undefined && { moneda: dto.moneda }),
+        ...(dto.alias !== undefined && { alias: dto.alias }),
+        ...(dto.activo !== undefined && { activo: dto.activo }),
+      },
+    });
+  }
+
+  async eliminarCuentaBancaria(empresaId: number, id: number) {
+    const cuenta = await this.prisma.cuentaBancaria.findUnique({ where: { id } });
+    if (!cuenta) throw new NotFoundException('Cuenta bancaria no encontrada');
+    if (cuenta.empresaId !== empresaId) throw new BadRequestException('La cuenta no pertenece a tu empresa');
+
+    return this.prisma.cuentaBancaria.update({
+      where: { id },
+      data: { activo: false },
+    });
   }
 }

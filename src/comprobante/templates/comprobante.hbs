@@ -354,6 +354,9 @@
         <div class="tot-row"><span>DESCUENTOS TOTAL:</span><span>S/ {{descuento}}</span></div>
         <div class="tot-row bold"><span>IGV 18%:</span><span>S/ {{mtoIGV}}</span></div>
         {{/if}}
+        {{#unless isDocumentoFiscal}}{{#if descuento}}
+        <div class="tot-row"><span>DESCUENTO:</span><span>- S/ {{descuento}}</span></div>
+        {{/if}}{{/unless}}
         <div class="tot-final">
           <span>MONTO TOTAL:</span>
           <span>S/ {{mtoImpVenta}}</span>

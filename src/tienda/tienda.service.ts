@@ -45,6 +45,23 @@ const PEDIDO_ENVIO_TO_DESPACHO: Record<string, string> = {
   NO_APLICA: 'PREPARANDO',
 };
 
+const TEMPLATE_IMAGE_FIELDS = new Set([
+  'autopartesHeroImageUrl',
+  'autopartesSideTopImageUrl',
+  'autopartesSideBottomImageUrl',
+  'autopartesVehicleImageUrl',
+  'autopartesPromoLeftImageUrl',
+  'autopartesPromoRightImageUrl',
+  'autopartesCommunityImageUrl',
+  'autopartesSupportImageUrl',
+  'autopartesBrandsImageUrl',
+  'autopartesProductImageUrl',
+  'autopartesCategoryImageUrl',
+  'autopartesWidgetOneImageUrl',
+  'autopartesWidgetTwoImageUrl',
+  'autopartesWidgetThreeImageUrl',
+]);
+
 interface CulqiChargeResponse {
   id: string;
   amount: number;
@@ -287,6 +304,52 @@ export class TiendaService {
     const objKey = idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
     const signedUrl = objKey ? await this.s3.getSignedGetUrl(objKey, 600) : url;
     return { url, signedUrl };
+  }
+
+  async subirImagenTemplate(
+    empresaId: number,
+    campo: string,
+    file: { buffer: Buffer; mimetype?: string },
+  ) {
+    if (!TEMPLATE_IMAGE_FIELDS.has(campo)) {
+      throw new BadRequestException('Campo de template inválido');
+    }
+    if (!file || !file.buffer) {
+      throw new BadRequestException('Archivo no proporcionado');
+    }
+
+    const ct = file.mimetype || 'image/jpeg';
+    if (!/^image\//i.test(ct)) {
+      throw new BadRequestException('El archivo debe ser una imagen');
+    }
+
+    const ext = ct.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg';
+    const s3Key = `tiendas/empresa-${empresaId}/template/${campo}-${Date.now()}.${ext}`;
+    const url = await this.s3.uploadImage(file.buffer, s3Key, ct);
+
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { disenoOverride: true },
+    });
+
+    const overrideActual = empresa?.disenoOverride
+      ? JSON.parse(empresa.disenoOverride as string)
+      : {};
+
+    await this.prisma.empresa.update({
+      where: { id: empresaId },
+      data: {
+        disenoOverride: JSON.stringify({
+          ...overrideActual,
+          [campo]: url,
+        }),
+      },
+    });
+
+    const idx = url.indexOf('amazonaws.com/');
+    const objKey = idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
+    const signedUrl = objKey ? await this.s3.getSignedGetUrl(objKey, 600) : url;
+    return { field: campo, url, signedUrl };
   }
 
   // ==================== TIENDA PÚBLICA ====================
@@ -1349,6 +1412,18 @@ export class TiendaService {
             tieneCulqi: true,
           },
         },
+        cuentasBancarias: {
+          where: { activo: true },
+          select: {
+            id: true,
+            banco: true,
+            numeroCuenta: true,
+            cci: true,
+            tipoCuenta: true,
+            moneda: true,
+            alias: true,
+          },
+        },
       },
     });
 
@@ -1386,6 +1461,7 @@ export class TiendaService {
       aceptaTarjeta,
       culqiPublicKey: aceptaTarjeta ? culqiPublicKey : null,
       culqiBackendReady: Boolean(culqiSecretKey),
+      cuentasBancarias: empresa.cuentasBancarias || [],
     };
   }
 

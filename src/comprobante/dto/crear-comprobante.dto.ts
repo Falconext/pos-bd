@@ -143,6 +143,13 @@ export class CrearComprobanteDto {
   medioPago?: string;
 
   @IsOptional()
+  paymentDetails?: any;
+
+  @IsOptional()
+  @IsArray()
+  splitPayments?: any[];
+
+  @IsOptional()
   @IsString()
   tipDocAfectado?: string;
 

@@ -1,4 +1,5 @@
-import { IsBoolean, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsEnum, IsOptional, IsString } from 'class-validator';
+import { TipoSede } from '@prisma/client';
 
 export class CreateSedeDto {
     @IsString()
@@ -11,6 +12,10 @@ export class CreateSedeDto {
     @IsString()
     @IsOptional()
     codigo?: string;
+
+    @IsEnum(TipoSede)
+    @IsOptional()
+    tipo?: TipoSede;
 
     @IsBoolean()
     @IsOptional()

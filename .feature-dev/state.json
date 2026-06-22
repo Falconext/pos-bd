@@ -1,0 +1,12 @@
+{
+  "feature": "Gestión de cuentas bancarias por empresa",
+  "status": "in_progress",
+  "methodology": "traditional",
+  "complexity": "medium",
+  "current_step": 1,
+  "current_phase": 1,
+  "completed_steps": [],
+  "files_created": [],
+  "started_at": "2026-06-21T00:00:00.000Z",
+  "last_updated": "2026-06-21T00:00:00.000Z"
+}

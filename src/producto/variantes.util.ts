@@ -1,6 +1,16 @@
 import { PrismaClient } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 
+export type VarianteConfig = {
+  valoresAtributos: Record<string, string>;
+  codigo?: string;
+  precioUnitario?: number;
+  stock?: number;
+  imagenUrl?: string | null;
+  codigoBarras?: string | null;
+  estado?: 'ACTIVO' | 'INACTIVO';
+};
+
 export function generarCombinacionesVariantes(opcionesAtributos: any[]): any[] {
   if (!opcionesAtributos || opcionesAtributos.length === 0) return [];
   
@@ -27,7 +37,27 @@ export function generarCombinacionesVariantes(opcionesAtributos: any[]): any[] {
   return results;
 }
 
-export async function sincronizarVariantes(prisma: PrismaClient, productoPadre: any, sedes: any[]) {
+const comboKey = (combo: Record<string, string>) =>
+  Object.entries(combo)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}:${value}`)
+    .join('|');
+
+const normalizeCodeToken = (value: string) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '')
+    .slice(0, 4)
+    .toUpperCase();
+
+export async function sincronizarVariantes(
+  prisma: PrismaClient,
+  productoPadre: any,
+  sedes: any[],
+  variantesConfig: VarianteConfig[] = [],
+  sedeConStockId?: number,
+) {
     if (!productoPadre.opcionesAtributos) return;
     
     const combinaciones = generarCombinacionesVariantes(productoPadre.opcionesAtributos as any[]);
@@ -37,8 +67,16 @@ export async function sincronizarVariantes(prisma: PrismaClient, productoPadre: 
     const variantesActuales = await prisma.producto.findMany({
         where: { productoPadreId: productoPadre.id }
     });
+    const configByKey = new Map(
+        variantesConfig.map((config) => [comboKey(config.valoresAtributos || {}), config]),
+    );
+    const combinacionesKeys = new Set(combinaciones.map((combo) => comboKey(combo)));
+    const sedePrincipalId = sedes.find((s) => s.esPrincipal)?.id;
+    const stockSedeId = sedeConStockId ?? sedePrincipalId ?? sedes[0]?.id;
 
     for (const combo of combinaciones) {
+        const currentKey = comboKey(combo);
+        const config = configByKey.get(currentKey);
         // Checar si existe
         const existe = variantesActuales.find(v => {
             if (!v.valoresAtributos) return false;
@@ -48,43 +86,107 @@ export async function sincronizarVariantes(prisma: PrismaClient, productoPadre: 
                    Object.keys(valAttr).every(k => valAttr[k] === combo[k]);
         });
 
+        const precioUnitario = Number(config?.precioUnitario ?? productoPadre.precioUnitario);
+        const valorUnitario = Number((precioUnitario / (1 + Number(productoPadre.igvPorcentaje || 18) / 100)).toFixed(2));
+        const stock = Number(config?.stock ?? 0);
+        const codigoSugerido = `${productoPadre.codigo}-${Object.values(combo).map((value) => normalizeCodeToken(String(value))).filter(Boolean).join('-')}`;
+        const codigo = String(config?.codigo || codigoSugerido).slice(0, 60);
+        const descripcion = `${productoPadre.descripcion} - ${Object.values(combo).join(' / ')}`;
+
+        const data = {
+            codigo,
+            descripcion,
+            unidadMedidaId: productoPadre.unidadMedidaId,
+            tipoAfectacionIGV: productoPadre.tipoAfectacionIGV,
+            precioUnitario: new Decimal(precioUnitario),
+            valorUnitario: new Decimal(valorUnitario),
+            igvPorcentaje: productoPadre.igvPorcentaje,
+            categoriaId: productoPadre.categoriaId,
+            marcaId: productoPadre.marcaId,
+            estado: config?.estado || 'ACTIVO',
+            stock,
+            valoresAtributos: combo,
+            porcentajeVenta: productoPadre.porcentajeVenta,
+            porcentajeProvision: productoPadre.porcentajeProvision,
+            imagenUrl: config?.imagenUrl || undefined,
+            codigoBarras: config?.codigoBarras || undefined,
+            publicarEnTienda: productoPadre.publicarEnTienda ?? true,
+        };
+
+        let varianteId = existe?.id;
         if (!existe) {
             // Crear nueva variante
-            // Generar codigo
-            const count = await prisma.producto.count({ where: { empresaId: productoPadre.empresaId } });
-            const codigoUnico = `${productoPadre.codigo}-V${count + 1}`;
-
             const nuevaVar = await prisma.producto.create({
                 data: {
                     empresaId: productoPadre.empresaId,
                     productoPadreId: productoPadre.id,
-                    codigo: codigoUnico,
-                    descripcion: `${productoPadre.descripcion} - ${Object.values(combo).join(' ')}`,
-                    unidadMedidaId: productoPadre.unidadMedidaId,
-                    tipoAfectacionIGV: productoPadre.tipoAfectacionIGV,
-                    precioUnitario: productoPadre.precioUnitario,
-                    valorUnitario: productoPadre.valorUnitario,
-                    igvPorcentaje: productoPadre.igvPorcentaje,
-                    categoriaId: productoPadre.categoriaId,
-                    marcaId: productoPadre.marcaId,
-                    estado: 'ACTIVO',
-                    stock: 0,
-                    valoresAtributos: combo,
-                    porcentajeVenta: productoPadre.porcentajeVenta,
-                    porcentajeProvision: productoPadre.porcentajeProvision,
+                    ...data,
                 }
             });
+            varianteId = nuevaVar.id;
+        } else {
+            await prisma.producto.update({
+                where: { id: existe.id },
+                data,
+            });
+        }
 
-            if (sedes.length > 0) {
-                await prisma.productoStock.createMany({
-                    data: sedes.map(s => ({
-                        productoId: nuevaVar.id,
-                        sedeId: s.id,
-                        stock: 0,
-                        stockMinimo: 0,
-                    }))
-                });
-            }
+        if (varianteId && sedes.length > 0) {
+            await Promise.all(
+                sedes.map((s) =>
+                    prisma.productoStock.upsert({
+                        where: { productoId_sedeId: { productoId: varianteId!, sedeId: s.id } },
+                        update: {
+                            stock: s.id === stockSedeId ? stock : 0,
+                            stockMinimo: 0,
+                        },
+                        create: {
+                            productoId: varianteId!,
+                            sedeId: s.id,
+                            stock: s.id === stockSedeId ? stock : 0,
+                            stockMinimo: 0,
+                        },
+                    }),
+                ),
+            );
+        }
+    }
+
+    const variantesFueraDeMatriz = variantesActuales.filter((variante) => {
+        if (!variante.valoresAtributos) return false;
+        return !combinacionesKeys.has(comboKey(variante.valoresAtributos as any));
+    });
+    if (variantesFueraDeMatriz.length > 0) {
+        await prisma.producto.updateMany({
+            where: { id: { in: variantesFueraDeMatriz.map((variante) => variante.id) } },
+            data: { estado: 'INACTIVO' },
+        });
+    }
+
+    if (variantesConfig.length > 0) {
+        const stockTotal = variantesConfig.reduce((sum, config) => sum + Number(config.stock || 0), 0);
+        await prisma.producto.update({
+            where: { id: productoPadre.id },
+            data: { stock: stockTotal },
+        });
+        if (stockSedeId) {
+            await prisma.productoStock.upsert({
+                where: { productoId_sedeId: { productoId: productoPadre.id, sedeId: stockSedeId } },
+                update: { stock: stockTotal },
+                create: {
+                    productoId: productoPadre.id,
+                    sedeId: stockSedeId,
+                    stock: stockTotal,
+                    stockMinimo: 0,
+                },
+            });
+            await prisma.productoStock.updateMany({
+                where: {
+                    productoId: productoPadre.id,
+                    sedeId: { not: stockSedeId },
+                },
+                data: { stock: 0 },
+            });
         }
     }
 }

@@ -159,4 +159,15 @@ export class TiendaController {
     const empresaId = req.user.empresaId;
     return this.tiendaService.subirLogo(empresaId, { buffer: file?.buffer, mimetype: file?.mimetype });
   }
+
+  @Post('template/imagen/:campo')
+  @UseInterceptors(FileInterceptor('file', imageUploadOptions))
+  async subirImagenTemplate(
+    @Req() req: any,
+    @Param('campo') campo: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    const empresaId = req.user.empresaId;
+    return this.tiendaService.subirImagenTemplate(empresaId, campo, { buffer: file?.buffer, mimetype: file?.mimetype });
+  }
 }

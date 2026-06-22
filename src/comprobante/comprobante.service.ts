@@ -60,6 +60,107 @@ export class ComprobanteService {
     @Optional() private readonly comisionesService: ComisionesService,
   ) { }
 
+  private normalizarMedioPago(value?: string) {
+    return String(value || 'EFECTIVO').trim().toUpperCase();
+  }
+
+  private normalizarDetallePago(input: any, medioPago: string, montoObjetivo: number) {
+    const objetivo = Math.max(0, this.round2(Number(montoObjetivo || 0)));
+    const source = input && typeof input === 'object' ? input : {};
+    const rawLines = Array.isArray(source.splitPayments)
+      ? source.splitPayments
+      : Array.isArray(source.pagos)
+        ? source.pagos
+        : [];
+
+    const lines = rawLines.length > 0
+      ? rawLines
+      : [{
+        method: source.method || medioPago,
+        amount: source.amount || objetivo,
+        referencia: source.referencia,
+        cuentaBancariaId: source.cuentaBancariaId,
+        tarjetaMarca: source.tarjetaMarca,
+        tarjetaTipo: source.tarjetaTipo,
+        tarjetaUltimos4: source.tarjetaUltimos4,
+      }];
+
+    let restante = objetivo;
+    return lines
+      .map((line: any) => {
+        const requestedAmount = this.round2(Number(line?.amount || 0));
+        const amount = rawLines.length > 0 ? Math.min(requestedAmount, restante) : objetivo;
+        restante = this.round2(restante - amount);
+        return {
+          method: this.normalizarMedioPago(line?.method),
+          amount,
+          referencia: String(line?.referencia || '').trim() || null,
+          cuentaBancariaId: line?.cuentaBancariaId ? Number(line.cuentaBancariaId) : null,
+          tarjetaMarca: String(line?.tarjetaMarca || '').trim() || null,
+          tarjetaTipo: String(line?.tarjetaTipo || '').trim() || null,
+          tarjetaUltimos4: String(line?.tarjetaUltimos4 || '').replace(/\D/g, '').slice(-4) || null,
+        };
+      })
+      .filter((line: any) => line.amount > 0);
+  }
+
+  private async validarDetallePago(input: any, medioPago: string, montoObjetivo: number, empresaId: number) {
+    const lines = this.normalizarDetallePago(input, medioPago, montoObjetivo);
+    for (const line of lines) {
+      if (['TRANSFERENCIA', 'TARJETA'].includes(line.method) && !line.referencia) {
+        throw new BadRequestException(`El pago por ${line.method} requiere número de operación o voucher`);
+      }
+      if (line.method === 'TRANSFERENCIA') {
+        if (!line.cuentaBancariaId) {
+          throw new BadRequestException('El pago por transferencia requiere cuenta bancaria destino');
+        }
+        const cuenta = await this.prisma.cuentaBancaria.findFirst({
+          where: { id: line.cuentaBancariaId, empresaId, activo: true },
+          select: { id: true },
+        });
+        if (!cuenta) {
+          throw new BadRequestException('La cuenta bancaria destino no pertenece a la empresa o está inactiva');
+        }
+      }
+    }
+    return lines;
+  }
+
+  private async registrarPagosDeEmision(params: {
+    comprobanteId: number;
+    empresaId: number;
+    usuarioId?: number;
+    medioPago: string;
+    paymentDetails?: any;
+    montoPagado: number;
+    documento: string;
+    fecha?: Date;
+  }) {
+    const montoPagado = this.round2(Number(params.montoPagado || 0));
+    if (montoPagado <= 0) return;
+    const lines = await this.validarDetallePago(
+      params.paymentDetails,
+      params.medioPago,
+      montoPagado,
+      params.empresaId,
+    );
+    if (lines.length === 0) return;
+
+    await this.prisma.pago.createMany({
+      data: lines.map((line: any) => ({
+        comprobanteId: params.comprobanteId,
+        empresaId: params.empresaId,
+        usuarioId: params.usuarioId ?? null,
+        fecha: params.fecha ?? new Date(),
+        monto: line.amount,
+        medioPago: line.method,
+        observacion: `Pago registrado al emitir ${params.documento}`,
+        referencia: line.referencia || params.documento,
+        cuentaBancariaId: line.cuentaBancariaId,
+      })),
+    });
+  }
+
   async listarTipoOperacion() {
     return this.prisma.tipoOperacion.findMany({ orderBy: { codigo: 'asc' } });
   }
@@ -560,6 +661,7 @@ export class ComprobanteService {
         medioPago: (input?.medioPago ?? 'EFECTIVO').toUpperCase(),
         observacion: input?.observacion || null,
         referencia: input?.referencia || null,
+        cuentaBancariaId: input?.cuentaBancariaId ?? null,
       },
     });
 
@@ -1373,6 +1475,7 @@ export class ComprobanteService {
       retencionMonto,
       retencionPorcentaje,
       comprobanteOrigenId,
+      paymentDetails,
     } = input;
 
     // Cuando se convierte desde un informal (NV, TICKET, etc.) el stock ya fue descontado
@@ -1494,6 +1597,10 @@ export class ComprobanteService {
       saldoInicial = Math.max(0, this.round2(mtoImpVenta - montoDescontado));
     }
 
+    if (esPagoContado) {
+      await this.validarDetallePago(paymentDetails, medioPago, mtoImpVenta, empresaId);
+    }
+
     const dataBase: any = {
       tipoOperacionId: tipoOperacionIdFinal ?? undefined,
       tipoDetraccionId: tipoDetraccionId ?? undefined,
@@ -1516,6 +1623,7 @@ export class ComprobanteService {
       mtoOperInafectas: mtoOpInafectas,
       mtoOperExoneradas: mtoOpExoneradas,
       medioPago,
+      paymentDetails: paymentDetails ?? Prisma.JsonNull,
       mtoIGV: totalIGV,
       valorVenta,
       totalImpuestos: totalIGV,
@@ -1557,6 +1665,19 @@ export class ComprobanteService {
       tipDocAfectado ?? null,
       empresaId,
     );
+
+    if (esPagoContado) {
+      await this.registrarPagosDeEmision({
+        comprobanteId: comprobante.id,
+        empresaId,
+        usuarioId,
+        medioPago,
+        paymentDetails,
+        montoPagado: mtoImpVenta,
+        documento: `${comprobante.serie}-${comprobante.correlativo}`,
+        fecha,
+      });
+    }
 
     // Registrar movimientos de kardex SOLO si NO es conversión desde informal.
     // Cuando viene de NV/TICKET el stock ya fue descontado al crear el informal.
@@ -2149,6 +2270,8 @@ export class ComprobanteService {
       fechaRecojo,
       vuelto,
       fechaVencimientoCredito,
+      paymentDetails,
+      montoDescuentoGlobal,
     } = input;
     // Resolver cliente
     let finalClienteId: number | null = clienteId ?? null;
@@ -2175,7 +2298,8 @@ export class ComprobanteService {
     await this.validarSeriesComprobante(detalleFinal, empresaId, tipoDoc !== 'COT');
     const valorVenta = this.round2(mtoOperGravadas + mtoOpExoneradas + mtoOpInafectas);
     const subTotal = this.round2(valorVenta + totalIGV);
-    const mtoImpVenta = subTotal;
+    const descuentoGlobal = this.round2(Math.max(0, Number(montoDescuentoGlobal ?? 0)));
+    const mtoImpVenta = this.round2(Math.max(0, subTotal - descuentoGlobal));
     const fecha = new Date(fechaEmision);
 
     // Validar tipoOperacionId si existe para evitar error de FK
@@ -2195,6 +2319,7 @@ export class ComprobanteService {
       'EFECTIVO',
       'TRANSFERENCIA',
       'TARJETA',
+      'MIXTO',
     ];
     const medioPagoValido = mediosPermitidos.includes(medioPagoFinal)
       ? medioPagoFinal
@@ -2207,7 +2332,7 @@ export class ComprobanteService {
     // 3. formaPagoTipo = CREDITO → PENDIENTE_PAGO (independiente del medioPago)
     // 4. medioPago al contado → COMPLETADO
     // 5. resto → PENDIENTE_PAGO
-    const pagosAlContado = ['EFECTIVO', 'YAPE', 'PLIN'];
+    const pagosAlContado = ['EFECTIVO', 'YAPE', 'PLIN', 'TRANSFERENCIA', 'TARJETA', 'MIXTO'];
     const esCreditoPorTipo = (formaPagoTipo ?? '').toUpperCase() === 'CREDITO';
     const adelantoNormalizado = adelanto ? Math.max(Number(adelanto), 0) : 0;
     let estadoPagoInicial = 'COMPLETADO' as any;
@@ -2238,6 +2363,13 @@ export class ComprobanteService {
       saldoInicial = mtoImpVenta;
     }
 
+    const montoPagadoInicial = tipoDoc !== 'COT'
+      ? (adelantoNormalizado > 0 ? Math.min(adelantoNormalizado, mtoImpVenta) : (estadoPagoInicial === 'COMPLETADO' ? mtoImpVenta : 0))
+      : 0;
+    if (montoPagadoInicial > 0) {
+      await this.validarDetallePago(paymentDetails, medioPagoValido, montoPagadoInicial, empresaId);
+    }
+
     // Si no viene sedeId, intentar usar la sede principal de la empresa
     let finalSedeId = sedeId;
     if (!finalSedeId) {
@@ -2264,10 +2396,12 @@ export class ComprobanteService {
       mtoOperInafectas: mtoOpInafectas,
       mtoOperExoneradas: mtoOpExoneradas,
       medioPago: medioPagoValido,
+      paymentDetails: paymentDetails ?? Prisma.JsonNull,
       mtoIGV: totalIGV,
       valorVenta,
       totalImpuestos: totalIGV,
       subTotal,
+      mtoDescuentoGlobal: descuentoGlobal > 0 ? descuentoGlobal : 0,
       mtoImpVenta,
       estadoEnvioSunat: 'NO_APLICA' as string,
       estadoPago: estadoPagoInicial,
@@ -2302,20 +2436,16 @@ export class ComprobanteService {
 
     const comp = await this.crearComprobanteConReintento(dataBase, tipoDoc, null, empresaId);
 
-    // Crear registro de pago automáticamente si hay adelanto
-    if (
-      tipoDoc !== 'COT' &&
-      adelantoNormalizado > 0
-    ) {
-      await this.prisma.pago.create({
-        data: {
-          comprobanteId: comp.id,
-          empresaId,
-          monto: adelantoNormalizado,
-          medioPago: medioPagoValido,
-          observacion: 'Pago adelantado registrado automáticamente',
-          referencia: `${tipoDoc}-${comp.serie}-${comp.correlativo}`,
-        },
+    if (montoPagadoInicial > 0) {
+      await this.registrarPagosDeEmision({
+        comprobanteId: comp.id,
+        empresaId,
+        usuarioId,
+        medioPago: medioPagoValido,
+        paymentDetails,
+        montoPagado: montoPagadoInicial,
+        documento: `${tipoDoc}-${comp.serie}-${comp.correlativo}`,
+        fecha,
       });
     }
 
