@@ -546,7 +546,18 @@ export class UsersService {
             lte: new Date(`${fechaFin}T23:59:59-05:00`),
           },
         },
-        include: { cliente: { select: { nombre: true } } },
+        include: {
+          cliente: { select: { nombre: true } },
+          detalles: {
+            select: {
+              productoId: true,
+              descripcion: true,
+              cantidad: true,
+              mtoValorVenta: true,
+              igv: true,
+            },
+          },
+        },
         orderBy: { fechaEmision: 'desc' },
       }),
     ]);
@@ -566,9 +577,37 @@ export class UsersService {
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([fecha, total]) => ({ fecha, total: Number(total.toFixed(2)) }));
 
+    // Agregar productos vendidos por este vendedor en el período (para decidir campañas)
+    const productosMap = new Map<
+      string,
+      { productoId: number | null; descripcion: string; cantidad: number; monto: number }
+    >();
+    for (const c of comprobantes) {
+      for (const d of (c as any).detalles ?? []) {
+        const key = d.productoId ? `p:${d.productoId}` : `d:${d.descripcion}`;
+        const actual = productosMap.get(key) ?? {
+          productoId: d.productoId ?? null,
+          descripcion: d.descripcion,
+          cantidad: 0,
+          monto: 0,
+        };
+        actual.cantidad += Number(d.cantidad || 0);
+        actual.monto += Number(d.mtoValorVenta || 0) + Number(d.igv || 0);
+        productosMap.set(key, actual);
+      }
+    }
+    const productos = Array.from(productosMap.values())
+      .map((p) => ({
+        ...p,
+        cantidad: Number(p.cantidad.toFixed(2)),
+        monto: Number(p.monto.toFixed(2)),
+      }))
+      .sort((a, b) => b.cantidad - a.cantidad);
+
     return {
       usuario,
       chartData,
+      productos,
       comprobantes: comprobantes.map((c) => ({
         id: c.id,
         serie: c.serie,

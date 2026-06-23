@@ -1485,6 +1485,71 @@ export class ProductoService {
     return { url, signedUrl };
   }
 
+  // Sube la imagen UNA sola vez y la asigna a TODAS las variantes (tallas) del color.
+  // Evita crear un archivo S3 por cada talla: una sola foto compartida por color.
+  async subirImagenColorVariantes(
+    empresaId: number,
+    productoPadreId: number,
+    color: string,
+    file: { buffer: Buffer; mimetype?: string },
+  ) {
+    const padre = await this.prisma.producto.findFirst({
+      where: { id: productoPadreId, empresaId },
+    });
+    if (!padre) throw new NotFoundException('Producto no encontrado');
+    if (!file || !file.buffer)
+      throw new ForbiddenException('Archivo no proporcionado');
+    if (!color || !String(color).trim())
+      throw new ForbiddenException('Color no proporcionado');
+    const ct = file.mimetype || 'image/jpeg';
+    if (!/^image\//i.test(ct))
+      throw new ForbiddenException('El archivo debe ser una imagen');
+
+    // Nombre de la opción de color (ej. "Color")
+    const opciones = Array.isArray((padre as any).opcionesAtributos)
+      ? ((padre as any).opcionesAtributos as any[])
+      : [];
+    const colorOption = opciones.find((op) =>
+      /color|colour/i.test(String(op?.nombre || '')),
+    );
+    const colorKey = colorOption?.nombre || 'Color';
+    const target = String(color).trim().toLowerCase();
+
+    // Subir una sola vez (key bajo el producto padre)
+    const s3Key = this.s3.generateProductoImageKey(
+      empresaId,
+      productoPadreId,
+      ct,
+      false,
+    );
+    const url = await this.s3.uploadImage(file.buffer, s3Key, ct);
+
+    // Asignar la MISMA url a todas las variantes activas de ese color
+    const variantes = await this.prisma.producto.findMany({
+      where: { productoPadreId, empresaId },
+      select: { id: true, valoresAtributos: true },
+    });
+    const idsDelColor = variantes
+      .filter((v) => {
+        const vals = (v.valoresAtributos as any) || {};
+        return String(vals[colorKey] || '').trim().toLowerCase() === target;
+      })
+      .map((v) => v.id);
+
+    if (idsDelColor.length > 0) {
+      await this.prisma.producto.updateMany({
+        where: { id: { in: idsDelColor } },
+        data: { imagenUrl: url },
+      });
+    }
+
+    const idx = url.indexOf('amazonaws.com/');
+    const objKey =
+      idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
+    const signedUrl = objKey ? await this.s3.getSignedGetUrl(objKey, 600) : url;
+    return { url, signedUrl, variantesActualizadas: idsDelColor };
+  }
+
   async subirImagenExtra(
     empresaId: number,
     productoId: number,

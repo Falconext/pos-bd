@@ -60,6 +60,23 @@ const TEMPLATE_IMAGE_FIELDS = new Set([
   'autopartesWidgetOneImageUrl',
   'autopartesWidgetTwoImageUrl',
   'autopartesWidgetThreeImageUrl',
+  'urbanoHeroImg',
+  'urbanoCat1Img',
+  'urbanoCat2Img',
+  'urbanoCat3Img',
+  'urbanoCat4Img',
+  'urbanoBottomBannerImg',
+  'urbanoShopTheLookImg',
+  'urbanoFeatureModelImg',
+  'urbanoGallery1',
+  'urbanoGallery2',
+  'urbanoGallery3',
+  'urbanoGallery4',
+  'urbanoGallery5',
+  'urbanoProductMainImg',
+  'urbanoProductMacroImg',
+  'urbanoProductModel1Img',
+  'urbanoProductModel2Img',
 ]);
 
 interface CulqiChargeResponse {
@@ -955,6 +972,7 @@ export class TiendaService {
           categoriaId: producto.categoriaId,
           id: { not: id },
           estado: 'ACTIVO',
+          productoPadreId: null, // excluir variantes hijas (color/talla)
           AND: [this.whereStockPublico()],
         },
         take: 20, // Fetch more to shuffle
@@ -977,6 +995,7 @@ export class TiendaService {
           empresaId: tienda.id,
           id: { not: id }, // and not in related? (simplified for now)
           estado: 'ACTIVO',
+          productoPadreId: null, // excluir variantes hijas (color/talla)
           AND: [this.whereStockPublico()],
         },
         take: 20,
@@ -1067,6 +1086,7 @@ export class TiendaService {
       },
       opcionesAtributos: true,
       variantes: {
+        where: { estado: 'ACTIVO' as const },
         select: {
           id: true,
           codigo: true,

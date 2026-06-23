@@ -60,6 +60,31 @@ function resolverMetodoPago(pagos: { medioPago: string; monto: number }[], medio
 
 const ESTADOS_PAGADO = new Set(['PAGADO', 'PAGADO_PAGO', 'COMPLETADO']);
 const ESTADOS_PARCIAL = new Set(['PAGO_PARCIAL', 'PARCIAL']);
+const TIPOS_NO_VENTA_FINAL = new Set(['07', 'NP', 'OT']);
+
+function calcularSaldoRealComprobante(comprobante: {
+    mtoImpVenta: any;
+    estadoPago: string | null;
+    saldo: any;
+    adelanto?: any;
+    pagos?: { monto: number }[];
+}) {
+    const mtoImpVentaNum = Number(comprobante.mtoImpVenta ?? 0);
+    const epRaw = comprobante.estadoPago ?? '';
+    const saldoDB = Number(comprobante.saldo ?? 0);
+    const adelantoNum = Number(comprobante.adelanto ?? 0);
+    const totalPagadoPagos = (comprobante.pagos ?? []).reduce((s, p) => s + Number(p.monto ?? 0), 0);
+
+    if (saldoDB > 0) return saldoDB;
+    if (ESTADOS_PAGADO.has(epRaw)) return 0;
+    if (ESTADOS_PARCIAL.has(epRaw) || epRaw === 'PAGO_PARCIAL') {
+        return Math.max(0, mtoImpVentaNum - totalPagadoPagos - adelantoNum);
+    }
+    if (epRaw === 'PENDIENTE_PAGO') {
+        return Math.max(0, mtoImpVentaNum - totalPagadoPagos);
+    }
+    return 0;
+}
 
 function resolverEstadoPagoComprobante(
     mtoImpVenta: number,
@@ -89,6 +114,69 @@ function resolverEstadoPagoComprobante(
 export class VentasService {
     constructor(private readonly prisma: PrismaService) {}
 
+    private async resumenPorCobrarGlobal(params: { empresaId: number; sedeId?: number; usuarioId?: number }) {
+        const { empresaId, sedeId, usuarioId } = params;
+        const sedeFilter = sedeId ? { sedeId } : {};
+        const comprobanteUsuarioFilter = usuarioId ? { usuarioId } : {};
+        const pedidoUsuarioFilter = usuarioId ? { vendedorId: usuarioId } : {};
+
+        const [comprobantes, pedidos] = await Promise.all([
+            this.prisma.comprobante.findMany({
+                where: {
+                    empresaId,
+                    ...sedeFilter,
+                    ...comprobanteUsuarioFilter,
+                    tipoDoc: { in: [...TIPOS_SUNAT, ...TIPOS_INFORMALES] },
+                    estadoEnvioSunat: { not: 'ANULADO' },
+                    estadoPago: { not: 'ANULADO' as any },
+                    OR: [
+                        { saldo: { gt: 0 } },
+                        { estadoPago: { in: ['PENDIENTE_PAGO', 'PAGO_PARCIAL'] as any } },
+                    ],
+                },
+                select: {
+                    id: true,
+                    tipoDoc: true,
+                    mtoImpVenta: true,
+                    estadoPago: true,
+                    saldo: true,
+                    adelanto: true,
+                    pagos: { select: { monto: true } },
+                    comprobantesDerivados: { select: { id: true } },
+                },
+            }),
+            this.prisma.pedidoTienda.findMany({
+                where: {
+                    empresaId,
+                    ...sedeFilter,
+                    ...pedidoUsuarioFilter,
+                    estado: { not: 'CANCELADO' },
+                    saldoPendiente: { gt: 0 },
+                },
+                select: {
+                    id: true,
+                    saldoPendiente: true,
+                },
+            }),
+        ]);
+
+        const comprobantesPendientes = comprobantes
+            .filter((c) => !TIPOS_NO_VENTA_FINAL.has(c.tipoDoc))
+            .filter((c) => (c.comprobantesDerivados ?? []).length === 0)
+            .map((c) => calcularSaldoRealComprobante(c))
+            .filter((saldo) => saldo > 0.01);
+
+        const saldosPedidos = pedidos
+            .map((p) => Number(p.saldoPendiente ?? 0))
+            .filter((saldo) => saldo > 0.01);
+
+        const pendientes = [...comprobantesPendientes, ...saldosPedidos];
+        return {
+            cantidad: pendientes.length,
+            total: Number(pendientes.reduce((sum, saldo) => sum + saldo, 0).toFixed(2)),
+        };
+    }
+
     async panelVentas(params: { empresaId: number; fecha: string; sedeId?: number; usuarioId?: number }) {
         const { empresaId, fecha, sedeId, usuarioId } = params;
 
@@ -99,7 +187,7 @@ export class VentasService {
         const comprobanteUsuarioFilter = usuarioId ? { usuarioId } : {};
         const pedidoUsuarioFilter = usuarioId ? { vendedorId: usuarioId } : {};
 
-        const [comprobantesRaw, pedidosRaw] = await Promise.all([
+        const [comprobantesRaw, pedidosRaw, porCobrarGlobal] = await Promise.all([
             this.prisma.comprobante.findMany({
                 where: {
                     empresaId,
@@ -197,32 +285,18 @@ export class VentasService {
                     },
                 },
             }),
+            this.resumenPorCobrarGlobal({ empresaId, sedeId, usuarioId }),
         ]);
 
         const comprobantesNorm = comprobantesRaw.map((c) => {
             const esSunat = TIPOS_SUNAT.includes(c.tipoDoc);
             const pagos = (c.pagos ?? []) as { medioPago: string; monto: number }[];
             const derivado = (c.comprobantesDerivados ?? [])[0] ?? null;
-            const mtoImpVentaNum = Number(c.mtoImpVenta ?? 0);
             const epRaw = (c.estadoPago as string) ?? '';
-            const saldoDB = Number(c.saldo ?? 0);
-            const adelantoNum = Number((c as any).adelanto ?? 0);
-            const totalPagadoPagos = pagos.reduce((s, p) => s + (p.monto ?? 0), 0);
             // Compute saldo real: if DB saldo is correctly set, use it;
             // otherwise derive from estadoPago + pagos + adelanto (handles old NPs
             // created before saldo was properly initialized on the comprobante)
-            let saldoReal: number;
-            if (saldoDB > 0) {
-                saldoReal = saldoDB;
-            } else if (ESTADOS_PAGADO.has(epRaw)) {
-                saldoReal = 0;
-            } else if (ESTADOS_PARCIAL.has(epRaw) || epRaw === 'PAGO_PARCIAL') {
-                saldoReal = Math.max(0, mtoImpVentaNum - totalPagadoPagos - adelantoNum);
-            } else if (epRaw === 'PENDIENTE_PAGO') {
-                saldoReal = Math.max(0, mtoImpVentaNum - totalPagadoPagos);
-            } else {
-                saldoReal = 0;
-            }
+            const saldoReal = calcularSaldoRealComprobante({ ...c, estadoPago: epRaw, pagos });
 
             // Comprobante informal que ya fue convertido a boleta/factura
             const esConvertida = derivado != null;
@@ -348,6 +422,12 @@ export class VentasService {
             (a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime(),
         );
 
-        return { data, total: data.length };
+        return {
+            data,
+            total: data.length,
+            resumen: {
+                porCobrarGlobal,
+            },
+        };
     }
 }

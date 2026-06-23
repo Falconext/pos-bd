@@ -575,6 +575,22 @@ export class ProductoController {
     return this.service.subirImagenDesdeUrl(user.empresaId, id, body.url);
   }
 
+  // Sube una imagen y la aplica a todas las tallas del color (una sola foto por color)
+  @Post(':id/imagen-color')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  @UseInterceptors(FileInterceptor('file', imageUploadOptions))
+  async subirImagenColor(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: { color: string },
+  ) {
+    return this.service.subirImagenColorVariantes(user.empresaId, id, body.color, {
+      buffer: file?.buffer,
+      mimetype: file?.mimetype,
+    });
+  }
+
   // Catálogo optimizado para POS farmacia/botica/droguería — con FEFO, vencimientos y receta
   @Get('catalogo-farmacia')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
