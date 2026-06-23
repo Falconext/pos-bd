@@ -205,6 +205,12 @@ export class TiendaService {
             nombre: true,
           },
         },
+        rubro: {
+          select: {
+            id: true,
+            nombre: true,
+          },
+        },
       },
     });
 
@@ -663,6 +669,12 @@ export class TiendaService {
             imagenesExtra: Array.isArray(product.imagenesExtra)
               ? await Promise.all(product.imagenesExtra.map((url: string) => signIfS3(url)))
               : product.imagenesExtra,
+            variantes: Array.isArray(product.variantes)
+              ? await Promise.all(product.variantes.map(async (variant: any) => ({
+                  ...variant,
+                  imagenUrl: await signIfS3(variant.imagenUrl),
+                })))
+              : product.variantes,
           })),
         );
       };
@@ -683,9 +695,21 @@ export class TiendaService {
         ratingAvg: true,
         ratingCount: true,
         atributosTecnicos: true,
+        opcionesAtributos: true,
         categoria: { select: { id: true, nombre: true } },
         unidadMedida: { select: { codigo: true, nombre: true } },
         marca: { select: { id: true, nombre: true } },
+        variantes: {
+          select: {
+            id: true,
+            codigo: true,
+            descripcion: true,
+            precioUnitario: true,
+            stock: true,
+            valoresAtributos: true,
+            imagenUrl: true,
+          },
+        },
       } as const;
 
       const baseOrder = [{ destacado: 'desc' as const }, { descripcion: 'asc' as const }];
@@ -1111,11 +1135,18 @@ export class TiendaService {
     const imagenesExtraFirmadas = Array.isArray((producto as any).imagenesExtra)
       ? await Promise.all(((producto as any).imagenesExtra as string[]).map((u) => signIfS3(u)))
       : (producto as any).imagenesExtra;
+    const variantesFirmadas = Array.isArray((producto as any).variantes)
+      ? await Promise.all((producto as any).variantes.map(async (variant: any) => ({
+          ...variant,
+          imagenUrl: await signIfS3(variant.imagenUrl),
+        })))
+      : (producto as any).variantes;
 
     return {
       ...producto,
       imagenUrl: await signIfS3((producto as any).imagenUrl as any),
       imagenesExtra: imagenesExtraFirmadas as any,
+      variantes: variantesFirmadas as any,
       fichaTecnica: await this.construirFichaTecnicaPublica(empresa, producto as any),
     } as any;
   }

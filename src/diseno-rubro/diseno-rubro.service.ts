@@ -77,18 +77,26 @@ export class DisenoRubroService {
 
         if (!empresa) return null;
 
-        // Si hay override, mezclar con el diseño base
-        // Rubro.disenos es DisenoRubro? (relación 1-1, no array)
+        // Si hay override, mezclar con el diseño base.
+        // La plantilla base pertenece al rubro y no debe ser reemplazada por overrides de empresa.
         const disenoBase = empresa.rubro?.disenos || null;
+        const override = empresa.disenoOverride
+            ? (typeof empresa.disenoOverride === 'string'
+                ? JSON.parse(empresa.disenoOverride)
+                : empresa.disenoOverride as object)
+            : null;
 
-        // Si hay override en empresa, usarlo
-        if (empresa.disenoOverride) {
-            return {
+        if (override) {
+            const merged: any = {
                 ...disenoBase,
-                ...(typeof empresa.disenoOverride === 'string'
-                    ? JSON.parse(empresa.disenoOverride)
-                    : empresa.disenoOverride as object),
+                ...override,
             };
+
+            if ((disenoBase as any)?.plantillaId) {
+                merged.plantillaId = (disenoBase as any).plantillaId;
+            }
+
+            return merged;
         }
 
         return disenoBase;
