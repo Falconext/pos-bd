@@ -28,4 +28,8 @@ export class ListClienteDto {
   @IsString()
   @IsIn(['asc', 'desc'])
   order?: 'asc' | 'desc' = 'desc';
+
+  @IsOptional()
+  @IsString()
+  persona?: any;
 }

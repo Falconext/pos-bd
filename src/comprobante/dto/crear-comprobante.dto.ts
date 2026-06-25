@@ -65,6 +65,17 @@ class DetalleDto {
   @IsString()
   medicoNombre?: string;
 
+  // FKs opcionales — enlazan con entidades Doctor/Cliente registradas
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  medicoId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  pacienteId?: number;
+
   @IsOptional()
   numerosSerie?: string | string[];
 }

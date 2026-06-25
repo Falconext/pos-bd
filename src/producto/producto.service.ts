@@ -31,6 +31,19 @@ export class ProductoService {
     return String(atributosTecnicos?.tipoProducto || '').toUpperCase() === 'SERVICIO';
   }
 
+  private parseImagenesExtra(value: unknown): string[] {
+    if (Array.isArray(value)) return value.filter((url): url is string => typeof url === 'string' && url.trim().length > 0);
+    if (typeof value !== 'string' || !value.trim()) return [];
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed)
+        ? parsed.filter((url): url is string => typeof url === 'string' && url.trim().length > 0)
+        : [];
+    } catch {
+      return value.trim() ? [value.trim()] : [];
+    }
+  }
+
   private async generarCodigoProducto(empresaId: number, prefijo = 'PR') {
     const productos = await this.prisma.producto.findMany({
       where: { empresaId, codigo: { startsWith: prefijo } },
@@ -137,6 +150,11 @@ export class ProductoService {
       productoPadreId?: number;
       variantesConfig?: VarianteConfig[];
       publicarEnTienda?: boolean;
+      visibleEnSede?: boolean;
+      vendibleEnSede?: boolean;
+      precioUnitarioSede?: number | null;
+      precioOfertaSede?: number | null;
+      ubicacionSede?: string | null;
     },
     empresaId: number,
     sedeId?: number,
@@ -179,6 +197,11 @@ export class ProductoService {
       atributosTecnicos,
       descripcionLarga,
       publicarEnTienda,
+      visibleEnSede,
+      vendibleEnSede,
+      precioUnitarioSede,
+      precioOfertaSede,
+      ubicacionSede,
     } = data;
 
     const porcentajes = this.normalizarPorcentajes(
@@ -371,7 +394,7 @@ export class ProductoService {
       const sedes = await this.prisma.sede.findMany({
         where: { empresaId, activo: true },
       });
-      if (!esServicio && sedes.length > 0) {
+      if (sedes.length > 0) {
         const sedePrincipalId = sedes.find((s) => s.esPrincipal)?.id;
         // La sede que recibe el stock inicial: la del usuario actual, o la principal como fallback.
         const sedeConStock = sedeId ?? sedePrincipalId;
@@ -379,9 +402,20 @@ export class ProductoService {
           data: sedes.map((s) => ({
             productoId: nuevo.id,
             sedeId: s.id,
-            stock: s.id === sedeConStock ? (stock ?? 0) : 0,
+            stock: !esServicio && s.id === sedeConStock ? (stock ?? 0) : 0,
             stockMinimo: stockMinimo ?? 0,
             stockMaximo: stockMaximo ?? null,
+            visibleEnSede: s.id === sedeConStock ? (visibleEnSede ?? true) : true,
+            vendibleEnSede: s.id === sedeConStock ? (vendibleEnSede ?? true) : true,
+            precioUnitarioOverride:
+              s.id === sedeConStock && precioUnitarioSede != null
+                ? new Decimal(precioUnitarioSede)
+                : null,
+            precioOfertaOverride:
+              s.id === sedeConStock && precioOfertaSede != null
+                ? new Decimal(precioOfertaSede)
+                : null,
+            ubicacion: s.id === sedeConStock ? (ubicacionSede || null) : null,
           })),
         });
       }
@@ -406,6 +440,8 @@ export class ProductoService {
     marcaId?: number;
     categoriaId?: number;
     incluirVariantes?: string | boolean;
+    soloVendibles?: boolean;
+    usarPrecioSede?: boolean;
   }) {
     const {
       empresaId,
@@ -449,6 +485,16 @@ export class ProductoService {
       where.productoPadreId = null;
     }
 
+    if (params.sedeId && params.soloVendibles) {
+      where.stocks = {
+        some: {
+          sedeId: params.sedeId,
+          visibleEnSede: true,
+          vendibleEnSede: true,
+        },
+      };
+    }
+
     const [productosRaw, total] = await Promise.all([
       this.prisma.producto.findMany({
         where,
@@ -472,6 +518,11 @@ export class ProductoService {
               stockMinimo: true,
               stockMaximo: true,
               sedeId: true,
+              ubicacion: true,
+              visibleEnSede: true,
+              vendibleEnSede: true,
+              precioUnitarioOverride: true,
+              precioOfertaOverride: true,
             },
           },
           costoPromedio: true,
@@ -521,6 +572,10 @@ export class ProductoService {
                 select: {
                   stock: true,
                   sedeId: true,
+                  visibleEnSede: true,
+                  vendibleEnSede: true,
+                  precioUnitarioOverride: true,
+                  precioOfertaOverride: true,
                 },
               },
             },
@@ -627,6 +682,15 @@ export class ProductoService {
           : p.stocks.length > 0
             ? p.stocks.reduce((sum, s) => sum + (s.stockMinimo || 0), 0)
             : ((p as any).stockMinimo ?? 0);
+        const stockSede = params.sedeId ? (p.stocks[0] as any | undefined) : undefined;
+        const precioUnitarioEfectivo =
+          params.usarPrecioSede && stockSede?.precioUnitarioOverride != null
+            ? Number(stockSede.precioUnitarioOverride)
+            : Number(p.precioUnitario);
+        const precioOfertaEfectivo =
+          params.usarPrecioSede && stockSede?.precioOfertaOverride != null
+            ? Number(stockSede.precioOfertaOverride)
+            : (p.precioOferta != null ? Number(p.precioOferta) : null);
         const reservado = reservadoPorProducto.get(p.id) ?? 0;
         const cupoProvision = Math.floor(
           (stockTotal * (p.porcentajeProvision ?? 0)) / 100,
@@ -643,10 +707,34 @@ export class ProductoService {
               : Array.isArray(variante.stocks) && variante.stocks.length > 0
                 ? variante.stocks.reduce((sum: number, stockRow: any) => sum + Number(stockRow.stock || 0), 0)
                 : Number(variante.stock || 0);
+            const varianteStockSede = params.sedeId ? variante.stocks?.[0] : undefined;
+            const variantePrecioUnitario =
+              params.usarPrecioSede && varianteStockSede?.precioUnitarioOverride != null
+                ? Number(varianteStockSede.precioUnitarioOverride)
+                : Number(variante.precioUnitario);
+            const variantePrecioOferta =
+              params.usarPrecioSede && varianteStockSede?.precioOfertaOverride != null
+                ? Number(varianteStockSede.precioOfertaOverride)
+                : (variante.precioOferta != null ? Number(variante.precioOferta) : null);
 
             return {
               ...variante,
               stock: varianteStock,
+              precioUnitario: variantePrecioUnitario,
+              precioOferta: variantePrecioOferta,
+              sedeStockConfig: varianteStockSede
+                ? {
+                    sedeId: varianteStockSede.sedeId,
+                    visibleEnSede: varianteStockSede.visibleEnSede,
+                    vendibleEnSede: varianteStockSede.vendibleEnSede,
+                    precioUnitarioSede: varianteStockSede.precioUnitarioOverride != null
+                      ? Number(varianteStockSede.precioUnitarioOverride)
+                      : null,
+                    precioOfertaSede: varianteStockSede.precioOfertaOverride != null
+                      ? Number(varianteStockSede.precioOfertaOverride)
+                      : null,
+                  }
+                : null,
               imagenUrl: varianteImagenUrl,
               imagenUrlDisplay: await signIfS3(varianteImagenUrl),
             };
@@ -656,11 +744,31 @@ export class ProductoService {
         return {
           ...p,
           variantes,
+          precioUnitario: precioUnitarioEfectivo,
+          precioOferta: precioOfertaEfectivo,
           stock: stockDisponibleVenta,
           stockBase: stockTotal,
           stockReservado: reservado,
           stockDisponibleVenta,
           stockMinimo: stockMinimo,
+          stockMaximo: stockSede?.stockMaximo ?? (p as any).stockMaximo ?? null,
+          sedeStockConfig: stockSede
+            ? {
+                sedeId: stockSede.sedeId,
+                stock: stockSede.stock,
+                stockMinimo: stockSede.stockMinimo ?? 0,
+                stockMaximo: stockSede.stockMaximo ?? null,
+                ubicacionSede: stockSede.ubicacion ?? null,
+                visibleEnSede: stockSede.visibleEnSede,
+                vendibleEnSede: stockSede.vendibleEnSede,
+                precioUnitarioSede: stockSede.precioUnitarioOverride != null
+                  ? Number(stockSede.precioUnitarioOverride)
+                  : null,
+                precioOfertaSede: stockSede.precioOfertaOverride != null
+                  ? Number(stockSede.precioOfertaOverride)
+                  : null,
+              }
+            : null,
           costoUnitario: Number(p.costoPromedio) || 0,
           costoFijo: Number((p as any).costoFijo) || 0,
           comisionPorVenta: Number((p as any).comisionPorVenta) || 0,
@@ -701,6 +809,13 @@ export class ProductoService {
       empresaId,
       estado: EstadoType.ACTIVO,
       ...(categoriaId ? { categoriaId: Number(categoriaId) } : {}),
+      stocks: {
+        some: {
+          sedeId,
+          visibleEnSede: true,
+          vendibleEnSede: true,
+        },
+      },
       ...(searchTerm
         ? {
             OR: [
@@ -744,7 +859,13 @@ export class ProductoService {
           unidadMedida: { select: { codigo: true } },
           stocks: {
             where: { sedeId },
-            select: { stock: true },
+            select: {
+              stock: true,
+              visibleEnSede: true,
+              vendibleEnSede: true,
+              precioUnitarioOverride: true,
+              precioOfertaOverride: true,
+            },
           },
           lotes: {
             where: {
@@ -792,6 +913,10 @@ export class ProductoService {
       const stockBase = stockTotalLotes > 0
         ? stockTotalLotes
         : (p.stocks[0]?.stock ?? (p as any).stock ?? 0);
+      const stockSede = p.stocks[0] as any | undefined;
+      const precioUnitario = stockSede?.precioUnitarioOverride != null
+        ? Number(stockSede.precioUnitarioOverride)
+        : Number(p.precioUnitario);
       const reservado = reservadoPorProducto.get(p.id) ?? 0;
       const cupoProvision = Math.floor(
         (stockBase * (p.porcentajeProvision ?? 0)) / 100,
@@ -812,7 +937,7 @@ export class ProductoService {
         codigo: p.codigo,
         descripcion: p.descripcion,
         imagenUrl: p.imagenUrl,
-        precioUnitario: Number(p.precioUnitario),
+        precioUnitario,
         igvPorcentaje: Number(p.igvPorcentaje),
         tipoAfectacionIGV: p.tipoAfectacionIGV,
         unidadCodigo: (p as any).unidadMedida?.codigo ?? '',
@@ -874,8 +999,45 @@ export class ProductoService {
       },
     });
     if (!producto) throw new NotFoundException('Producto no encontrado');
+
+    const normalizePersistentImageUrl = (url?: string | null) => {
+      if (!url) return url as any;
+      return url.includes('amazonaws.com/') ? url.split('?')[0] : url;
+    };
+
+    const signIfS3 = async (url?: string | null) => {
+      const persistentUrl = normalizePersistentImageUrl(url);
+      if (!persistentUrl) return persistentUrl as any;
+      try {
+        const idx = persistentUrl.indexOf('amazonaws.com/');
+        if (idx === -1) return persistentUrl as any;
+        const key = persistentUrl.substring(idx + 'amazonaws.com/'.length);
+        if (!key) return persistentUrl as any;
+        const signed = await this.s3.getSignedGetUrl(key, 600);
+        return signed || (persistentUrl as any);
+      } catch {
+        return url as any;
+      }
+    };
+
+    const imagenUrl = normalizePersistentImageUrl((producto as any).imagenUrl as string | null);
+    const variantes = await Promise.all(
+      (((producto as any).variantes as any[]) || []).map(async (variante: any) => {
+        const varianteImagenUrl = normalizePersistentImageUrl(variante.imagenUrl as string | null);
+        return {
+          ...variante,
+          imagenUrl: varianteImagenUrl,
+          imagenUrlDisplay: await signIfS3(varianteImagenUrl),
+        };
+      }),
+    );
+
     return {
       ...producto,
+      variantes,
+      imagenUrl,
+      imagenUrlDisplay: await signIfS3(imagenUrl),
+      imagenesExtra: this.parseImagenesExtra((producto as any).imagenesExtra),
       costoUnitario: Number((producto as any).costoPromedio) || 0,
     };
   }
@@ -1129,6 +1291,11 @@ export class ProductoService {
       variantesConfig?: VarianteConfig[];
       descripcionLarga?: string | null;
       publicarEnTienda?: boolean;
+      visibleEnSede?: boolean;
+      vendibleEnSede?: boolean;
+      precioUnitarioSede?: number | null;
+      precioOfertaSede?: number | null;
+      ubicacionSede?: string | null;
 
       sedeId?: number; // Nueva propiedad opcional para identificar dónde se ajusta el stock
     },
@@ -1301,6 +1468,84 @@ export class ProductoService {
           },
         });
       }
+    }
+
+    const debeActualizarPoliticaSede =
+      data.sedeId &&
+      (
+        data.visibleEnSede !== undefined ||
+        data.vendibleEnSede !== undefined ||
+        data.precioUnitarioSede !== undefined ||
+        data.precioOfertaSede !== undefined ||
+        data.ubicacionSede !== undefined ||
+        data.stockMinimo !== undefined ||
+        data.stockMaximo !== undefined
+      );
+
+    if (debeActualizarPoliticaSede) {
+      const sedePoliticaId = Number(data.sedeId);
+      const sede = await this.prisma.sede.findFirst({
+        where: { id: sedePoliticaId, empresaId: data.empresaId, activo: true },
+        select: { id: true },
+      });
+      if (!sede) {
+        throw new BadRequestException('La sede indicada no pertenece a la empresa o no está activa');
+      }
+
+      const updateSedeStock: any = {
+        ...(data.visibleEnSede !== undefined
+          ? { visibleEnSede: Boolean(data.visibleEnSede) }
+          : {}),
+        ...(data.vendibleEnSede !== undefined
+          ? { vendibleEnSede: Boolean(data.vendibleEnSede) }
+          : {}),
+        ...(data.precioUnitarioSede !== undefined
+          ? {
+              precioUnitarioOverride:
+                data.precioUnitarioSede === null
+                  ? null
+                  : new Decimal(data.precioUnitarioSede),
+            }
+          : {}),
+        ...(data.precioOfertaSede !== undefined
+          ? {
+              precioOfertaOverride:
+                data.precioOfertaSede === null
+                  ? null
+                  : new Decimal(data.precioOfertaSede),
+            }
+          : {}),
+        ...(data.ubicacionSede !== undefined
+          ? { ubicacion: data.ubicacionSede || null }
+          : {}),
+        ...(data.stockMinimo !== undefined
+          ? { stockMinimo: data.stockMinimo }
+          : {}),
+        ...(data.stockMaximo !== undefined
+          ? { stockMaximo: data.stockMaximo }
+          : {}),
+      };
+
+      await this.prisma.productoStock.upsert({
+        where: {
+          productoId_sedeId: { productoId: data.id, sedeId: sedePoliticaId },
+        },
+        update: updateSedeStock,
+        create: {
+          productoId: data.id,
+          sedeId: sedePoliticaId,
+          stock: esServicio ? 0 : (data.stock ?? 0),
+          stockMinimo: data.stockMinimo ?? 0,
+          stockMaximo: data.stockMaximo ?? null,
+          visibleEnSede: data.visibleEnSede ?? true,
+          vendibleEnSede: data.vendibleEnSede ?? true,
+          precioUnitarioOverride:
+            data.precioUnitarioSede != null ? new Decimal(data.precioUnitarioSede) : null,
+          precioOfertaOverride:
+            data.precioOfertaSede != null ? new Decimal(data.precioOfertaSede) : null,
+          ubicacion: data.ubicacionSede || null,
+        },
+      });
     }
 
     const normalizePersistentImageUrl = (url: string) =>
@@ -1573,13 +1818,11 @@ export class ProductoService {
     );
     const url = await this.s3.uploadImage(file.buffer, key, ct);
 
-    const actuales: string[] = Array.isArray((producto as any).imagenesExtra)
-      ? (producto as any).imagenesExtra
-      : [];
+    const actuales = this.parseImagenesExtra((producto as any).imagenesExtra);
     const nuevas = [...actuales, url];
     await this.prisma.producto.update({
       where: { id: productoId },
-      data: { imagenesExtra: nuevas as any },
+      data: { imagenesExtra: JSON.stringify(nuevas) },
     });
     const idx = url.indexOf('amazonaws.com/');
     const objKey =

@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   Length,
+  IsNumber,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 
@@ -57,4 +58,16 @@ export class CreateUserDto {
   @IsString()
   @IsIn(['FACTURACION', 'HOTEL'])
   sistemaProducto?: string;
+
+  @IsOptional()
+  @IsNumber()
+  comisionGlobal?: number;
+
+  @IsOptional()
+  @IsNumber()
+  comisionGlobalFija?: number;
+
+  @IsOptional()
+  @IsNumber()
+  comisionGlobalVenta?: number;
 }

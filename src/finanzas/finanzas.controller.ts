@@ -14,10 +14,17 @@ export class FinanzasController {
     @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
     async getResumenEcommerce(
         @User() user: any,
-        @Query('mes', ParseIntPipe) mes: number,
-        @Query('anio', ParseIntPipe) anio: number,
+        @Query('fechaInicio') fechaInicio?: string,
+        @Query('fechaFin') fechaFin?: string,
+        @Query('sedeId') sedeIdQuery?: string,
     ) {
-        return this.finanzasService.getResumenEcommerce(user.empresaId, mes, anio);
+        const empresaId = user.empresaId;
+        const isAdmin = user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
+        const sedeId = isAdmin
+            ? (sedeIdQuery ? Number(sedeIdQuery) : null)
+            : (user.sedeId ?? null);
+
+        return this.finanzasService.getResumenEcommerce(empresaId, fechaInicio, fechaFin, sedeId);
     }
 
     @Get('resumen')

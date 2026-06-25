@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   Length,
+  IsNumber,
 } from 'class-validator';
 
 export class UpdateUserDto {
@@ -54,4 +55,16 @@ export class UpdateUserDto {
   @IsString()
   @IsIn(['FACTURACION', 'HOTEL'])
   sistemaProducto?: string | null;
+
+  @IsOptional()
+  @IsNumber()
+  comisionGlobal?: number;
+
+  @IsOptional()
+  @IsNumber()
+  comisionGlobalFija?: number;
+
+  @IsOptional()
+  @IsNumber()
+  comisionGlobalVenta?: number;
 }

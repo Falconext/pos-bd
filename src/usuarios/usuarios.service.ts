@@ -63,6 +63,9 @@ export class UsersService {
         rol: 'USUARIO_EMPRESA',
         empresaId: empresaIdFromToken,
         permisos: permisos ? JSON.stringify(permisos) : null,
+        comisionGlobal: dto.comisionGlobal !== undefined ? dto.comisionGlobal : null,
+        comisionGlobalFija: dto.comisionGlobalFija !== undefined ? dto.comisionGlobalFija : null,
+        comisionGlobalVenta: dto.comisionGlobalVenta !== undefined ? dto.comisionGlobalVenta : null,
       },
       select: {
         id: true,
@@ -74,6 +77,9 @@ export class UsersService {
         empresaId: true,
         permisos: true,
         estado: true,
+        comisionGlobal: true,
+        comisionGlobalFija: true,
+        comisionGlobalVenta: true,
       },
     });
 
@@ -139,6 +145,9 @@ export class UsersService {
           empresaId: true,
           estado: true,
           permisos: true,
+          comisionGlobal: true,
+          comisionGlobalFija: true,
+          comisionGlobalVenta: true,
           sedesAsignadas: {
             select: {
               sede: {
@@ -176,7 +185,7 @@ export class UsersService {
   }
 
   async update(dto: UpdateUserDto, empresaId: number) {
-    const { id, nombre, email, dni, celular, permisos, sedeIds, subModuloIds } = dto;
+    const { id, nombre, email, dni, celular, permisos, sedeIds, subModuloIds, comisionGlobal, comisionGlobalFija, comisionGlobalVenta } = dto;
 
     const usuario = await this.prisma.usuario.findUnique({ where: { id } });
     if (!usuario) throw new NotFoundException('Usuario no encontrado');
@@ -191,6 +200,9 @@ export class UsersService {
         dni,
         celular,
         permisos: permisos ? JSON.stringify(permisos) : undefined,
+        comisionGlobal: comisionGlobal !== undefined ? comisionGlobal : undefined,
+        comisionGlobalFija: comisionGlobalFija !== undefined ? comisionGlobalFija : undefined,
+        comisionGlobalVenta: comisionGlobalVenta !== undefined ? comisionGlobalVenta : undefined,
       },
       select: {
         id: true,
@@ -202,6 +214,9 @@ export class UsersService {
         empresaId: true,
         permisos: true,
         estado: true,
+        comisionGlobal: true,
+        comisionGlobalFija: true,
+        comisionGlobalVenta: true,
       },
     });
 
@@ -239,6 +254,9 @@ export class UsersService {
         empresaId: true,
         permisos: true,
         estado: true,
+        comisionGlobal: true,
+        comisionGlobalFija: true,
+        comisionGlobalVenta: true,
         sedesAsignadas: {
           select: { sede: { select: { id: true, nombre: true, codigo: true, esPrincipal: true } } },
         },

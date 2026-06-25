@@ -24,6 +24,14 @@ export class ComisionesService {
   }): Promise<void> {
     const { comprobanteId, empresaId, vendedorId, fechaEmision, detalles } = params;
 
+    const vendedor = await this.prisma.usuario.findUnique({
+      where: { id: vendedorId },
+      select: { comisionGlobal: true, comisionGlobalFija: true, comisionGlobalVenta: true }
+    });
+    const comisionGlobalPct = Number(vendedor?.comisionGlobal ?? 0);
+    const comisionGlobalFija = Number(vendedor?.comisionGlobalFija ?? 0);
+    const comisionGlobalVenta = Number(vendedor?.comisionGlobalVenta ?? 0);
+
     // Obtener la configuración de comisión de cada producto vendido
     const productoIds = detalles
       .map((d) => d.productoId)
@@ -68,13 +76,18 @@ export class ComisionesService {
       const comisionFija = Number(producto.comisionPorVenta ?? 0);
       const comisionPct = Number(producto.comisionPorcentaje ?? 0);
 
-      // Calcular monto: primero se usa comisión fija, si no hay → porcentaje sobre precio
+      // Calcular monto: primero se usa comisión fija (producto), luego % (producto), luego comisión fija (vendedor), luego % (vendedor)
       let montoComision = 0;
       if (comisionFija > 0) {
         montoComision = comisionFija * detalle.cantidad;
       } else if (comisionPct > 0) {
         montoComision =
           (comisionPct / 100) * detalle.mtoPrecioUnitario * detalle.cantidad;
+      } else if (comisionGlobalFija > 0) {
+        montoComision = comisionGlobalFija * detalle.cantidad;
+      } else if (comisionGlobalPct > 0) {
+        montoComision =
+          (comisionGlobalPct / 100) * detalle.mtoPrecioUnitario * detalle.cantidad;
       }
 
       if (montoComision <= 0) continue;
@@ -89,6 +102,21 @@ export class ComisionesService {
         cantidad: String(detalle.cantidad),
         montoComision: montoComision.toFixed(2),
         descripcion: producto.descripcion,
+      });
+    }
+
+    // Agregar la comisión por comprobante/venta (si tiene configurada)
+    if (comisionGlobalVenta > 0) {
+      comisionesACrear.push({
+        vendedorId,
+        comprobanteId,
+        productoId: null, // Representa la venta global
+        empresaId,
+        mes,
+        anio,
+        cantidad: "1",
+        montoComision: comisionGlobalVenta.toFixed(2),
+        descripcion: "Comisión Fija por Venta",
       });
     }
 

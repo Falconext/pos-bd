@@ -1,11 +1,12 @@
 import {
   IsEmail,
   IsEnum,
+  IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
 } from 'class-validator';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 
 export class CreateClienteDto {
   @IsString()
@@ -55,6 +56,24 @@ export class CreateClienteDto {
   @IsString()
   distrito: string;
 
-  @IsEnum(['CLIENTE', 'CLIENTE_PROVEEDOR', 'PROVEEDOR'])
-  persona?: 'CLIENTE' | 'CLIENTE_PROVEEDOR' | 'PROVEEDOR';
+  @IsEnum(['CLIENTE', 'CLIENTE_PROVEEDOR', 'PROVEEDOR', 'EMPRESA'])
+  persona?: 'CLIENTE' | 'CLIENTE_PROVEEDOR' | 'PROVEEDOR' | 'EMPRESA';
+
+  // Campos médicos opcionales (farmacia/clínica)
+  @IsOptional()
+  @IsString()
+  grupoSanguineo?: string;
+
+  @IsOptional()
+  @IsString()
+  alergias?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => (value === '' ? undefined : value))
+  fechaNacimiento?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  medicoTratanteId?: number;
 }

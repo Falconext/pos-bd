@@ -51,6 +51,15 @@ const normalizeCodeToken = (value: string) =>
     .slice(0, 4)
     .toUpperCase();
 
+const hasOwn = (value: unknown, key: string) =>
+  Boolean(value && typeof value === 'object' && Object.prototype.hasOwnProperty.call(value, key));
+
+const normalizeNullableStringUpdate = (value: unknown) => {
+  if (typeof value !== 'string') return value === null ? null : undefined;
+  const clean = value.trim();
+  return clean ? clean : null;
+};
+
 export async function sincronizarVariantes(
   prisma: PrismaClient,
   productoPadre: any,
@@ -86,9 +95,17 @@ export async function sincronizarVariantes(
                    Object.keys(valAttr).every(k => valAttr[k] === combo[k]);
         });
 
-        const precioUnitario = Number(config?.precioUnitario ?? productoPadre.precioUnitario);
+        // Si no llega config para esta combinación, NO resetear el precio al del padre:
+        // preservar el precio de la variante existente (evita aplanar precios por payloads incompletos).
+        const precioUnitario = config?.precioUnitario != null
+            ? Number(config.precioUnitario)
+            : (existe ? Number((existe as any).precioUnitario ?? productoPadre.precioUnitario) : Number(productoPadre.precioUnitario));
         const valorUnitario = Number((precioUnitario / (1 + Number(productoPadre.igvPorcentaje || 18) / 100)).toFixed(2));
-        const stock = Number(config?.stock ?? 0);
+        // Si no llega config para esta combinación, NO resetear el stock a 0:
+        // preservar el stock de la variante existente (evita borrar stock por payloads incompletos).
+        const stock = config?.stock != null
+            ? Number(config.stock)
+            : (existe ? Number((existe as any).stock ?? 0) : 0);
         const codigoSugerido = `${productoPadre.codigo}-${Object.values(combo).map((value) => normalizeCodeToken(String(value))).filter(Boolean).join('-')}`;
         const codigo = String(config?.codigo || codigoSugerido).slice(0, 60);
         const descripcion = `${productoPadre.descripcion} - ${Object.values(combo).join(' / ')}`;
@@ -108,7 +125,7 @@ export async function sincronizarVariantes(
             valoresAtributos: combo,
             porcentajeVenta: productoPadre.porcentajeVenta,
             porcentajeProvision: productoPadre.porcentajeProvision,
-            imagenUrl: config?.imagenUrl || undefined,
+            imagenUrl: hasOwn(config, 'imagenUrl') ? normalizeNullableStringUpdate(config?.imagenUrl) : undefined,
             codigoBarras: config?.codigoBarras || undefined,
             publicarEnTienda: productoPadre.publicarEnTienda ?? true,
         };

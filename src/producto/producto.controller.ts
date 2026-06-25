@@ -673,6 +673,8 @@ export class ProductoController {
       order: query.order,
       marcaId: query.marcaId,
       categoriaId: query.categoriaId,
+      soloVendibles: query.soloVendibles,
+      usarPrecioSede: query.usarPrecioSede,
     });
     res.locals.message = 'Productos listados correctamente';
     return resultado;

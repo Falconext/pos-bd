@@ -104,6 +104,35 @@ export class TiendaService {
     private readonly whatsapp: WhatsAppService,
   ) { }
 
+  private parseImagenesExtra(value: unknown): string[] {
+    if (Array.isArray(value)) return value.filter((url): url is string => typeof url === 'string' && url.trim().length > 0);
+    if (typeof value !== 'string' || !value.trim()) return [];
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed)
+        ? parsed.filter((url): url is string => typeof url === 'string' && url.trim().length > 0)
+        : [];
+    } catch {
+      return value.trim() ? [value.trim()] : [];
+    }
+  }
+
+  private async firmarGaleriaPorColor(atributosTecnicos: any, signIfS3: (url?: string | null) => Promise<string | null>) {
+    if (!atributosTecnicos || typeof atributosTecnicos !== 'object' || Array.isArray(atributosTecnicos)) {
+      return atributosTecnicos;
+    }
+    const galeria = atributosTecnicos.galeriaPorColor;
+    if (!galeria || typeof galeria !== 'object' || Array.isArray(galeria)) {
+      return atributosTecnicos;
+    }
+    const galeriaFirmada: Record<string, string[]> = {};
+    for (const [color, urls] of Object.entries(galeria)) {
+      const lista = Array.isArray(urls) ? urls.filter((url): url is string => typeof url === 'string') : [];
+      galeriaFirmada[color] = (await Promise.all(lista.map((url) => signIfS3(url)))).filter(Boolean) as string[];
+    }
+    return { ...atributosTecnicos, galeriaPorColor: galeriaFirmada };
+  }
+
   private handlePedidoSchemaError(error: unknown): never {
     if (
       typeof error === 'object' &&
@@ -679,20 +708,22 @@ export class TiendaService {
         );
 
         return Promise.all(
-          itemsRaw.map(async (product: any) => ({
-            ...product,
-            ...(ratingByProduct.get(product.id) || { ratingAvg: 0, ratingCount: 0 }),
-            imagenUrl: await signIfS3(product.imagenUrl),
-            imagenesExtra: Array.isArray(product.imagenesExtra)
-              ? await Promise.all(product.imagenesExtra.map((url: string) => signIfS3(url)))
-              : product.imagenesExtra,
-            variantes: Array.isArray(product.variantes)
-              ? await Promise.all(product.variantes.map(async (variant: any) => ({
-                  ...variant,
-                  imagenUrl: await signIfS3(variant.imagenUrl),
-                })))
-              : product.variantes,
-          })),
+          itemsRaw.map(async (product: any) => {
+            const imagenesExtra = this.parseImagenesExtra(product.imagenesExtra);
+            return {
+              ...product,
+              ...(ratingByProduct.get(product.id) || { ratingAvg: 0, ratingCount: 0 }),
+              imagenUrl: await signIfS3(product.imagenUrl),
+              imagenesExtra: await Promise.all(imagenesExtra.map((url) => signIfS3(url))),
+              atributosTecnicos: await this.firmarGaleriaPorColor(product.atributosTecnicos, signIfS3),
+              variantes: Array.isArray(product.variantes)
+                ? await Promise.all(product.variantes.map(async (variant: any) => ({
+                    ...variant,
+                    imagenUrl: await signIfS3(variant.imagenUrl),
+                  })))
+                : product.variantes,
+            };
+          }),
         );
       };
 
@@ -1152,9 +1183,9 @@ export class TiendaService {
       } catch { return url as any; }
     };
 
-    const imagenesExtraFirmadas = Array.isArray((producto as any).imagenesExtra)
-      ? await Promise.all(((producto as any).imagenesExtra as string[]).map((u) => signIfS3(u)))
-      : (producto as any).imagenesExtra;
+    const imagenesExtra = this.parseImagenesExtra((producto as any).imagenesExtra);
+    const imagenesExtraFirmadas = await Promise.all(imagenesExtra.map((u) => signIfS3(u)));
+    const atributosTecnicosFirmados = await this.firmarGaleriaPorColor((producto as any).atributosTecnicos, signIfS3);
     const variantesFirmadas = Array.isArray((producto as any).variantes)
       ? await Promise.all((producto as any).variantes.map(async (variant: any) => ({
           ...variant,
@@ -1166,6 +1197,7 @@ export class TiendaService {
       ...producto,
       imagenUrl: await signIfS3((producto as any).imagenUrl as any),
       imagenesExtra: imagenesExtraFirmadas as any,
+      atributosTecnicos: atributosTecnicosFirmados,
       variantes: variantesFirmadas as any,
       fichaTecnica: await this.construirFichaTecnicaPublica(empresa, producto as any),
     } as any;

@@ -178,33 +178,38 @@ export class FinanzasService {
         return labels[metodo] || 'Ingreso registrado por método de pago.';
     }
 
-    async getResumenEcommerce(empresaId: number, mes: number, anio: number) {
-        const inicioMes = new Date(anio, mes - 1, 1);
-        const finMes = new Date(anio, mes, 0, 23, 59, 59);
+    async getResumenEcommerce(empresaId: number, fechaInicioStr?: string, fechaFinStr?: string, sedeId?: number | null) {
+        const hoy = new Date();
+        const inicioRango = fechaInicioStr ? new Date(`${fechaInicioStr}T00:00:00`) : new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+        const finRango = fechaFinStr ? new Date(`${fechaFinStr}T23:59:59.999`) : new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0, 23, 59, 59, 999);
+
+        const comprobanteWhere: any = {
+            empresaId,
+            estadoEnvioSunat: { not: 'ANULADO' },
+            fechaEmision: { gte: inicioRango, lte: finRango },
+        };
+        if (sedeId) {
+            comprobanteWhere.sedeId = sedeId;
+        }
 
         // Detalles de ventas del mes con info de producto
         const detalles = await this.prisma.detalleComprobante.findMany({
             where: {
-                comprobante: {
-                    empresaId,
-                    estadoEnvioSunat: { not: 'ANULADO' },
-                    fechaEmision: { gte: inicioMes, lte: finMes },
-                },
+                comprobante: comprobanteWhere,
             },
             include: {
                 producto: { select: { id: true, descripcion: true, costoPromedio: true, costoFijo: true } },
             },
         });
 
-        // Gasto de publicidad real hasta hoy por producto en el mes
-        const hoy = new Date();
-        const finReal = hoy < finMes ? hoy : finMes;
+        // Gasto de publicidad real hasta hoy por producto en el rango
+        const finReal = hoy < finRango ? hoy : finRango;
         const campanas = await this.prisma.campanaMarketing.findMany({ where: { empresaId } });
         const gastoAdsPorProducto = new Map<number, number>();
         let gastoAdsTotal = 0;
         for (const c of campanas) {
             if (c.estado === 'PAUSADA' || !c.productoId) continue;
-            const inicio = c.fechaInicio > inicioMes ? c.fechaInicio : inicioMes;
+            const inicio = c.fechaInicio > inicioRango ? c.fechaInicio : inicioRango;
             if (inicio > finReal) continue;
             const dias = Math.max(0, Math.ceil((finReal.getTime() - inicio.getTime()) / 86400000));
             const gasto = Number(c.presupuestoDiario) * dias;
@@ -212,9 +217,14 @@ export class FinanzasService {
             gastoAdsTotal += gasto;
         }
 
-        // Comisiones pagadas/pendientes del mes
+        // Comisiones pagadas/pendientes del rango
+        const comisionesWhere: any = {
+            empresaId,
+            comprobante: comprobanteWhere,
+        };
+        
         const comisionesAgg = await this.prisma.comisionVendedor.aggregate({
-            where: { empresaId, mes, anio },
+            where: comisionesWhere,
             _sum: { montoComision: true },
         });
         const totalComisiones = Number(comisionesAgg._sum.montoComision ?? 0);
@@ -275,7 +285,7 @@ export class FinanzasService {
             .sort((a, b) => b.ingresos - a.ingresos);
 
         return {
-            mes, anio,
+            fechaInicio: fechaInicioStr, fechaFin: fechaFinStr,
             resumen: {
                 ingresos: Math.round(ingresos * 100) / 100,
                 costoMercaderia: Math.round(costoMercaderia * 100) / 100,

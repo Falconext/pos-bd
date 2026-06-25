@@ -105,6 +105,28 @@ export class UpdateProductoDto {
   @Type(() => Number)
   stockMaximo?: number;
 
+  @IsOptional()
+  @IsBoolean()
+  visibleEnSede?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  vendibleEnSede?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
+  precioUnitarioSede?: number | null;
+
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
+  precioOfertaSede?: number | null;
+
+  @IsOptional()
+  @IsString()
+  ubicacionSede?: string | null;
+
   // Campos Farmacia
   @IsOptional()
   @IsString()

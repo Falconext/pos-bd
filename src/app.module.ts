@@ -8,6 +8,7 @@ import { UsersModule } from './usuarios/usuarios.module';
 import { EmpresaModule } from './empresa/empresa.module';
 import { CategoriaModule } from './categoria/categoria.module';
 import { ClienteModule } from './cliente/cliente.module';
+import { DoctorModule } from './doctor/doctor.module';
 import { ProductoModule } from './producto/producto.module';
 import { ComprobanteModule } from './comprobante/comprobante.module';
 import { KardexModule } from './kardex/kardex.module';
@@ -60,6 +61,7 @@ import { ShalomModule } from './shalom/shalom.module';
     CategoriaModule,
     ProductoModule,
     ClienteModule,
+    DoctorModule,
     ComprobanteModule,
     KardexModule,
     PagoModule,

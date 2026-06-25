@@ -63,6 +63,28 @@ export class CreateProductoDto {
   stockMaximo?: number;
 
   @IsOptional()
+  @IsBoolean()
+  visibleEnSede?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  vendibleEnSede?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
+  precioUnitarioSede?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
+  precioOfertaSede?: number;
+
+  @IsOptional()
+  @IsString()
+  ubicacionSede?: string;
+
+  @IsOptional()
   @IsString()
   imagenUrl?: string;
 

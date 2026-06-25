@@ -209,6 +209,7 @@ model Empresa {
   productoReviews     ProductoReview[]
   fichasTecnicas      FichaTecnicaPlantilla[]
   cuentasBancarias    CuentaBancaria[]
+  doctors             Doctor[]
 
   @@index([providerToken])
   @@index([slugTienda])
@@ -273,6 +274,9 @@ model Usuario {
   movimientosProduccion  MovimientoProduccion[]
   comisiones             ComisionVendedor[]
   campanas               CampanaMarketing[]
+  comisionGlobal         Decimal?                @db.Decimal(12, 2)
+  comisionGlobalFija     Decimal?                @db.Decimal(12, 2)
+  comisionGlobalVenta    Decimal?                @db.Decimal(12, 2)
 }
 
 model Categoria {
@@ -595,12 +599,35 @@ model Cliente {
   provincia       String?
   ubigeo          String?
   persona         PersonaType    @default(CLIENTE)
+  // Campos médicos (farmacia/clínica) — opcionales, no afectan otros rubros
+  grupoSanguineo  String?
+  alergias        String?
+  fechaNacimiento DateTime?
+  medicoTratanteId Int?
   empresa         Empresa?       @relation(fields: [empresaId], references: [id])
   tipoDocumento   TipoDocumento? @relation(fields: [tipoDocumentoId], references: [id])
+  medicoTratante  Doctor?        @relation("PacienteMedico", fields: [medicoTratanteId], references: [id])
   compras         Compra[]
   comprobantes    Comprobante[]
   guiasRemision   GuiaRemision[]
   productoReviews ProductoReview[]
+  detallesComosPaciente DetalleComprobante[] @relation("PacienteDetalle")
+}
+
+model Doctor {
+  id           Int      @id @default(autoincrement())
+  empresaId    Int
+  nombre       String
+  cmp          String?
+  especialidad String?
+  telefono     String?
+  email        String?
+  estado       EstadoType @default(ACTIVO)
+  empresa      Empresa  @relation(fields: [empresaId], references: [id])
+  pacientes    Cliente[] @relation("PacienteMedico")
+  detalles     DetalleComprobante[] @relation("MedicoDetalle")
+
+  @@index([empresaId])
 }
 
 model TipoOperacion {
@@ -748,9 +775,14 @@ model DetalleComprobante {
   dniPaciente       String?
   nombrePaciente    String?
   medicoNombre      String?
+  // FKs opcionales — enlazan con entidades Doctor/Cliente si existen; los campos String se mantienen como fallback
+  medicoId          Int?
+  pacienteId        Int?
   comprobante       Comprobante   @relation(fields: [comprobanteId], references: [id])
   producto          Producto?     @relation(fields: [productoId], references: [id])
   lote              ProductoLote? @relation(fields: [loteId], references: [id])
+  medico            Doctor?       @relation("MedicoDetalle", fields: [medicoId], references: [id])
+  paciente          Cliente?      @relation("PacienteDetalle", fields: [pacienteId], references: [id])
   seriesVendidas    ProductoSerie[]
 }
 
@@ -1366,13 +1398,17 @@ model UsuarioSubModulo {
 }
 
 model ProductoStock {
-  id          Int     @id @default(autoincrement())
-  productoId  Int
-  sedeId      Int
-  stock       Int     @default(0)
-  stockMinimo Int?    @default(0)
-  stockMaximo Int?
-  ubicacion   String?
+  id                     Int      @id @default(autoincrement())
+  productoId             Int
+  sedeId                 Int
+  stock                  Int      @default(0)
+  stockMinimo            Int?     @default(0)
+  stockMaximo            Int?
+  ubicacion              String?
+  visibleEnSede          Boolean  @default(true)
+  vendibleEnSede         Boolean  @default(true)
+  precioUnitarioOverride Decimal?
+  precioOfertaOverride   Decimal?
 
   producto Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
   sede     Sede     @relation(fields: [sedeId], references: [id], onDelete: Cascade)
@@ -1546,6 +1582,7 @@ enum PersonaType {
   CLIENTE
   CLIENTE_PROVEEDOR
   PROVEEDOR
+  EMPRESA
 }
 
 enum EstadoSunat {
