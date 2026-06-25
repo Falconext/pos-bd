@@ -201,6 +201,7 @@ model Empresa {
   notas               NotaEmpresa[]
   logs                EmpresaLog[]
   gastosOperativos    GastoOperativo[]
+  ingresosManual      IngresoManual[]
   comisionesVendedor  ComisionVendedor[]
   campanas            CampanaMarketing[]
   series              EmpresaSerie[]
@@ -2072,6 +2073,22 @@ model EmpresaLog {
   @@index([creadoEn])
 }
 
+model IngresoManual {
+  id            Int      @id @default(autoincrement())
+  empresaId     Int
+  concepto      String
+  tipo          String   // VENTA, PRESTAMO, INVERSION, CAPITAL, OTROS
+  monto         Decimal  @db.Decimal(12, 2)
+  fecha         DateTime
+  descripcion   String?
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+  empresa       Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  @@index([empresaId, fecha])
+  @@index([empresaId, tipo])
+}
+
 model IngresoSistema {
   id            Int      @id @default(autoincrement())
   concepto      String
@@ -2155,6 +2172,13 @@ enum EstadoCampana {
   PAUSADA
 }
 
+enum FrecuenciaPresupuesto {
+  DIARIO
+  SEMANAL
+  MENSUAL
+  TOTAL
+}
+
 model CampanaMarketing {
   id                Int            @id @default(autoincrement())
   empresaId         Int
@@ -2163,9 +2187,13 @@ model CampanaMarketing {
   productoId        Int?
   vendedorId        Int?
   comprobanteId     Int?
-  presupuestoDiario Decimal        @db.Decimal(10, 2)
+  presupuestoDiario Decimal        @db.Decimal(10, 2) // Guardará el prorrateo diario internamente
+  presupuestoOriginal Decimal?     @db.Decimal(10, 2) // Guardará el monto original introducido (ej. 140 semanal)
+  tipoPresupuesto   FrecuenciaPresupuesto @default(DIARIO)
   moneda            String         @default("PEN")
   fechaInicio       DateTime
+  fechaFin          DateTime?
+  esRecurrente      Boolean        @default(false)
   estado            EstadoCampana  @default(ACTIVA)
   creadoEn          DateTime       @default(now())
   actualizadoEn     DateTime       @updatedAt

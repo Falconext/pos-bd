@@ -301,4 +301,107 @@ export class FinanzasService {
             productos,
         };
     }
+
+    // ─── Ingresos Manuales ────────────────────────────────────────────────────
+
+    async listarIngresos(empresaId: number, fechaInicio?: string, fechaFin?: string, tipo?: string) {
+        const rango = this.parseRange(fechaInicio, fechaFin);
+        const items = await this.prisma.ingresoManual.findMany({
+            where: {
+                empresaId,
+                fecha: rango,
+                ...(tipo && tipo !== 'TODOS' ? { tipo } : {}),
+            },
+            orderBy: { fecha: 'desc' },
+        });
+        const total = items.reduce((s, i) => s + Number(i.monto), 0);
+        return { items, total };
+    }
+
+    async crearIngreso(empresaId: number, body: { concepto: string; tipo: string; monto: number; fecha: string; descripcion?: string }) {
+        return this.prisma.ingresoManual.create({
+            data: {
+                empresaId,
+                concepto: body.concepto,
+                tipo: body.tipo,
+                monto: body.monto,
+                fecha: new Date(`${body.fecha}T12:00:00.000-05:00`),
+                descripcion: body.descripcion,
+            },
+        });
+    }
+
+    async actualizarIngreso(empresaId: number, id: number, body: Partial<{ concepto: string; tipo: string; monto: number; fecha: string; descripcion: string }>) {
+        return this.prisma.ingresoManual.updateMany({
+            where: { id, empresaId },
+            data: {
+                ...(body.concepto !== undefined ? { concepto: body.concepto } : {}),
+                ...(body.tipo !== undefined ? { tipo: body.tipo } : {}),
+                ...(body.monto !== undefined ? { monto: body.monto } : {}),
+                ...(body.fecha !== undefined ? { fecha: new Date(`${body.fecha}T12:00:00.000-05:00`) } : {}),
+                ...(body.descripcion !== undefined ? { descripcion: body.descripcion } : {}),
+            },
+        });
+    }
+
+    async eliminarIngreso(empresaId: number, id: number) {
+        return this.prisma.ingresoManual.deleteMany({ where: { id, empresaId } });
+    }
+
+    // ─── Egresos (GastoOperativo por rango de fecha) ─────────────────────────
+
+    async listarEgresos(empresaId: number, fechaInicio?: string, fechaFin?: string, categoria?: string) {
+        const rango = this.parseRange(fechaInicio, fechaFin);
+        const items = await this.prisma.gastoOperativo.findMany({
+            where: {
+                empresaId,
+                OR: [
+                    { fecha: rango },
+                    {
+                        recurrenteDiario: true,
+                        fechaInicio: { lte: rango.lte },
+                        OR: [{ fechaFin: null }, { fechaFin: { gte: rango.gte } }],
+                    },
+                ],
+                ...(categoria && categoria !== 'TODOS' ? { categoria: categoria as any } : {}),
+            },
+            orderBy: { fecha: 'desc' },
+        });
+        const total = items.reduce((s, i) => s + Number(i.monto), 0);
+        return { items, total };
+    }
+
+    async crearEgreso(empresaId: number, body: { categoria: string; etiqueta?: string; monto: number; fecha: string; descripcion?: string }) {
+        const fechaDate = new Date(`${body.fecha}T12:00:00.000-05:00`);
+        return this.prisma.gastoOperativo.create({
+            data: {
+                empresaId,
+                mes: fechaDate.getMonth() + 1,
+                anio: fechaDate.getFullYear(),
+                fecha: fechaDate,
+                categoria: body.categoria as any,
+                etiqueta: body.etiqueta,
+                monto: body.monto,
+                descripcion: body.descripcion,
+            },
+        });
+    }
+
+    async actualizarEgreso(empresaId: number, id: number, body: Partial<{ categoria: string; etiqueta: string; monto: number; fecha: string; descripcion: string }>) {
+        const extraDate = body.fecha ? { mes: new Date(`${body.fecha}T12:00:00.000-05:00`).getMonth() + 1, anio: new Date(`${body.fecha}T12:00:00.000-05:00`).getFullYear(), fecha: new Date(`${body.fecha}T12:00:00.000-05:00`) } : {};
+        return this.prisma.gastoOperativo.updateMany({
+            where: { id, empresaId },
+            data: {
+                ...extraDate,
+                ...(body.categoria !== undefined ? { categoria: body.categoria as any } : {}),
+                ...(body.etiqueta !== undefined ? { etiqueta: body.etiqueta } : {}),
+                ...(body.monto !== undefined ? { monto: body.monto } : {}),
+                ...(body.descripcion !== undefined ? { descripcion: body.descripcion } : {}),
+            },
+        });
+    }
+
+    async eliminarEgreso(empresaId: number, id: number) {
+        return this.prisma.gastoOperativo.deleteMany({ where: { id, empresaId } });
+    }
 }

@@ -1,7 +1,10 @@
 import { IsString, IsEnum, IsOptional, IsNumber, IsDateString, Min } from 'class-validator';
-import { PlataformaAds, EstadoCampana } from '@prisma/client';
+import { PartialType } from '@nestjs/mapped-types';
+import { CreateCampanaDto } from './create-campana.dto';
+import { PlataformaAds, EstadoCampana, FrecuenciaPresupuesto } from '@prisma/client';
+import { IsBoolean } from 'class-validator';
 
-export class UpdateCampanaDto {
+export class UpdateCampanaDto extends PartialType(CreateCampanaDto) {
   @IsOptional()
   @IsString()
   nombre?: string;
@@ -18,6 +21,23 @@ export class UpdateCampanaDto {
   @IsNumber()
   @Min(0.01)
   presupuestoDiario?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0.01)
+  presupuestoOriginal?: number;
+
+  @IsOptional()
+  @IsEnum(FrecuenciaPresupuesto)
+  tipoPresupuesto?: FrecuenciaPresupuesto;
+
+  @IsOptional()
+  @IsDateString()
+  fechaFin?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  esRecurrente?: boolean;
 
   @IsOptional()
   @IsString()

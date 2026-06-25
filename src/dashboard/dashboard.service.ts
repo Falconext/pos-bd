@@ -65,7 +65,7 @@ export class DashboardService {
         ...(fechaEmision ? { fechaEmision } : {}),
       };
 
-      const [totalIngresosPositivo, totalIngresosNC, totalComprobantes, totalGuias, totalClientes, totalProductos] =
+      const [totalIngresosPositivo, totalIngresosNC, totalComprobantes, totalGuias, totalClientes, totalProductos, ingresosManuales] =
         await Promise.all([
           // Suma facturas/boletas/informales (positivos)
           this.prisma.comprobante.aggregate({
@@ -88,13 +88,24 @@ export class DashboardService {
               codigo: { notIn: ['DGD', 'IPM', 'PLD'] },
             },
           }),
+          this.prisma.ingresoManual.findMany({
+            where: {
+              empresaId,
+              ...(fechaEmision ? { fecha: fechaEmision } : {}),
+            }
+          }),
         ]);
 
       const elapsed = Date.now() - startTime;
       console.log(`[Dashboard] headerResumen completed in ${elapsed}ms for empresa ${empresaId}`);
 
+      const TIPOS_FINANCIAMIENTO = ['PRESTAMO', 'INVERSION', 'CAPITAL'];
+      const otrosIngresos = ingresosManuales.reduce(
+        (sum, i) => sum + (TIPOS_FINANCIAMIENTO.includes(i.tipo) ? 0 : Number(i.monto)), 0
+      );
+
       return {
-        totalIngresos: Number(totalIngresosPositivo._sum.mtoImpVenta ?? 0) - Number(totalIngresosNC._sum.mtoImpVenta ?? 0),
+        totalIngresos: Number(totalIngresosPositivo._sum.mtoImpVenta ?? 0) - Number(totalIngresosNC._sum.mtoImpVenta ?? 0) + otrosIngresos,
         totalComprobantes: totalComprobantes + totalGuias,
         totalClientes,
         totalProductos,
@@ -280,7 +291,9 @@ export class DashboardService {
       ...(sedeId ? { sedeId } : {}),
     };
 
-    const [ventasCurr, ventasPrev, ventasNCCurr, ventasNCPrev] = await Promise.all([
+    const TIPOS_FINANCIAMIENTO = ['PRESTAMO', 'INVERSION', 'CAPITAL'];
+
+    const [ventasCurr, ventasPrev, ventasNCCurr, ventasNCPrev, ingresosManualesCurr, ingresosManualesPrev] = await Promise.all([
       this.prisma.comprobante.aggregate({
         _sum: { mtoImpVenta: true },
         where: { ...baseComprobanteWhere, fechaEmision: currentRange, tipoDoc: { notIn: ['07'] } },
@@ -297,10 +310,23 @@ export class DashboardService {
         _sum: { mtoImpVenta: true },
         where: { ...baseComprobanteWhere, fechaEmision: prevRange, tipoDoc: '07' },
       }),
+      this.prisma.ingresoManual.findMany({
+        where: { empresaId, fecha: currentRange }
+      }),
+      this.prisma.ingresoManual.findMany({
+        where: { empresaId, fecha: prevRange }
+      }),
     ]);
 
-    const ingresosCurr = Number(ventasCurr._sum.mtoImpVenta ?? 0) - Number(ventasNCCurr._sum.mtoImpVenta ?? 0);
-    const ingresosPrev = Number(ventasPrev._sum.mtoImpVenta ?? 0) - Number(ventasNCPrev._sum.mtoImpVenta ?? 0);
+    const otrosIngresosCurr = ingresosManualesCurr.reduce(
+      (sum, i) => sum + (TIPOS_FINANCIAMIENTO.includes(i.tipo) ? 0 : Number(i.monto)), 0
+    );
+    const otrosIngresosPrev = ingresosManualesPrev.reduce(
+      (sum, i) => sum + (TIPOS_FINANCIAMIENTO.includes(i.tipo) ? 0 : Number(i.monto)), 0
+    );
+
+    const ingresosCurr = Number(ventasCurr._sum.mtoImpVenta ?? 0) - Number(ventasNCCurr._sum.mtoImpVenta ?? 0) + otrosIngresosCurr;
+    const ingresosPrev = Number(ventasPrev._sum.mtoImpVenta ?? 0) - Number(ventasNCPrev._sum.mtoImpVenta ?? 0) + otrosIngresosPrev;
     const ventasTrend = ingresosPrev === 0 ? 100 : ((ingresosCurr - ingresosPrev) / ingresosPrev) * 100;
 
     const [pedidosCurr, pedidosPrev] = await Promise.all([
@@ -452,8 +478,90 @@ export class DashboardService {
       .filter(p => p.stock <= (p.stockMinimo ?? 0))
       .slice(0, 4);
 
-    const gastosCurr = Number(comprasRows._sum.total ?? 0);
-    const gastosPrev = Number(comprasPrevRows._sum.total ?? 0);
+    const comprasCurr = Number(comprasRows._sum.total ?? 0);
+    const comprasPrev = Number(comprasPrevRows._sum.total ?? 0);
+
+    // -- Gastos Operativos --
+    const [gastosOpCurrRows, gastosOpPrevRows] = await Promise.all([
+      this.prisma.gastoOperativo.findMany({
+        where: {
+          empresaId,
+          OR: [
+            { fecha: currentRange },
+            {
+              recurrenteDiario: true,
+              fechaInicio: { lte: currentRange.lte },
+              OR: [{ fechaFin: null }, { fechaFin: { gte: currentRange.gte } }],
+            },
+          ],
+        },
+      }),
+      this.prisma.gastoOperativo.findMany({
+        where: {
+          empresaId,
+          OR: [
+            { fecha: prevRange },
+            {
+              recurrenteDiario: true,
+              fechaInicio: { lte: prevRange.lte },
+              OR: [{ fechaFin: null }, { fechaFin: { gte: prevRange.gte } }],
+            },
+          ],
+        },
+      })
+    ]);
+
+    const calculateGastoOp = (rows: any[], gte: Date, lte: Date) => {
+       let total = 0;
+       const limitStart = gte.getTime();
+       const limitEnd = lte.getTime();
+       for (const g of rows) {
+          if (!g.recurrenteDiario) {
+             total += Number(g.monto);
+          } else {
+             const start = g.fechaInicio.getTime() > limitStart ? g.fechaInicio.getTime() : limitStart;
+             const fin = (g.fechaFin && g.fechaFin.getTime() < limitEnd) ? g.fechaFin.getTime() : limitEnd;
+             if (start <= fin) {
+                const dias = Math.max(0, Math.ceil((fin - start) / 86400000));
+                total += Number(g.monto) * dias;
+             }
+          }
+       }
+       return total;
+    };
+
+    const gastoOpCurr = calculateGastoOp(gastosOpCurrRows, currentRange.gte, currentRange.lte);
+    const gastoOpPrev = calculateGastoOp(gastosOpPrevRows, prevRange.gte, prevRange.lte);
+
+    // -- Campañas Marketing --
+    const campanas = await this.prisma.campanaMarketing.findMany({
+      where: { empresaId }
+    });
+
+    const calculateMarketing = (campanas: any[], gte: Date, lte: Date) => {
+       let total = 0;
+       const limitStart = gte.getTime();
+       const limitEnd = lte.getTime();
+       for (const c of campanas) {
+          if (c.estado === 'PAUSADA') continue;
+          const inicio = c.fechaInicio.getTime() > limitStart ? c.fechaInicio.getTime() : limitStart;
+          let limiteCampana = limitEnd;
+          if (c.fechaFin && !c.esRecurrente) {
+             limiteCampana = c.fechaFin.getTime() < limitEnd ? c.fechaFin.getTime() : limitEnd;
+          }
+          if (inicio <= limiteCampana) {
+             const dias = Math.max(0, Math.ceil((limiteCampana - inicio) / 86400000));
+             total += Number(c.presupuestoDiario) * dias;
+          }
+       }
+       return total;
+    };
+
+    const marketingCurr = calculateMarketing(campanas, currentRange.gte, currentRange.lte);
+    const marketingPrev = calculateMarketing(campanas, prevRange.gte, prevRange.lte);
+
+    const gastosCurr = comprasCurr + gastoOpCurr + marketingCurr;
+    const gastosPrev = comprasPrev + gastoOpPrev + marketingPrev;
     const gananciasCurr = ingresosCurr - gastosCurr;
     const gananciasPrev = ingresosPrev - gastosPrev;
 

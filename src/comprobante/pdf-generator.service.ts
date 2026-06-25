@@ -240,6 +240,7 @@ export class PdfGeneratorService {
     // Totales
     mtoOperGravadas: string;
     mtoIGV: string;
+    mtoOperExoneradas?: string;
     mtoOperInafectas?: string;
     mtoImpVenta: string;
     descuento?: string;
@@ -360,6 +361,8 @@ export class PdfGeneratorService {
     mtoOperGravadas: string;
     mtoIGV: string;
     subTotal: string;
+    mtoOperExoneradas?: string;
+    mtoOperInafectas?: string;
     mtoImpVenta: string;
     descuento?: string;
     totalEnLetras?: string;

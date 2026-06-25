@@ -66,8 +66,13 @@ export class CampanasService {
         return this.buildCampana(c, 0, 0, 0, 0);
       }
 
-      // Días realmente transcurridos hasta hoy (lo que se ha gastado)
-      const finReal = hoy < finMes ? hoy : finMes;
+      // Si no es recurrente y tiene fechaFin, el gasto se detiene allí.
+      let limiteFin = finMes;
+      if ((c as any).fechaFin && !(c as any).esRecurrente) {
+        limiteFin = (c as any).fechaFin < finMes ? (c as any).fechaFin : finMes;
+      }
+      
+      const finReal = hoy < limiteFin ? hoy : limiteFin;
       const diasTranscurridos = Math.max(
         0,
         Math.ceil((finReal.getTime() - inicio.getTime()) / (1000 * 60 * 60 * 24)),
@@ -152,6 +157,10 @@ export class CampanasService {
       presupuestoDiario: Number(c.presupuestoDiario),
       moneda: c.moneda,
       fechaInicio: c.fechaInicio.toISOString().slice(0, 10),
+      fechaFin: (c as any).fechaFin ? (c as any).fechaFin.toISOString().slice(0, 10) : undefined,
+      tipoPresupuesto: (c as any).tipoPresupuesto || 'DIARIO',
+      presupuestoOriginal: (c as any).presupuestoOriginal ? Number((c as any).presupuestoOriginal) : Number(c.presupuestoDiario),
+      esRecurrente: (c as any).esRecurrente || false,
       estado: c.estado,
       diasActivos: diasTranscurridos,
       diasProyectados,
@@ -171,31 +180,61 @@ export class CampanasService {
     };
   }
 
-  async crear(empresaId: number, dto: CreateCampanaDto) {
+  async crear(empresaId: number, dto: any) {
+    const pOrig = dto.presupuestoOriginal ?? dto.presupuestoDiario;
+    let pDiario = pOrig;
+    if (dto.tipoPresupuesto === 'SEMANAL') pDiario = pOrig / 7;
+    else if (dto.tipoPresupuesto === 'MENSUAL') pDiario = pOrig / 30;
+    else if (dto.tipoPresupuesto === 'TOTAL' && dto.fechaFin) {
+       const d = Math.max(1, Math.ceil((new Date(`${dto.fechaFin}T05:00:00.000Z`).getTime() - new Date(`${dto.fechaInicio}T05:00:00.000Z`).getTime()) / 86400000));
+       pDiario = pOrig / d;
+    }
+
     return this.prisma.campanaMarketing.create({
       data: {
         empresaId,
         nombre: dto.nombre,
         plataforma: dto.plataforma,
         productoId: dto.productoId ?? null,
-        presupuestoDiario: dto.presupuestoDiario,
-        moneda: dto.moneda ?? 'PEN',
+        presupuestoDiario: pDiario,
+        presupuestoOriginal: pOrig,
+        tipoPresupuesto: dto.tipoPresupuesto ?? 'DIARIO',
         fechaInicio: new Date(`${dto.fechaInicio}T05:00:00.000Z`),
+        fechaFin: dto.fechaFin ? new Date(`${dto.fechaFin}T23:59:59.999Z`) : null,
+        esRecurrente: dto.esRecurrente ?? false,
+        moneda: dto.moneda ?? 'PEN',
       },
     });
   }
 
-  async actualizar(empresaId: number, id: number, dto: UpdateCampanaDto) {
+  async actualizar(empresaId: number, id: number, dto: any) {
     await this.verificarPropietario(empresaId, id);
+
+    let pDiario = dto.presupuestoDiario;
+    if (dto.presupuestoOriginal && dto.tipoPresupuesto) {
+      const pOrig = dto.presupuestoOriginal;
+      pDiario = pOrig;
+      if (dto.tipoPresupuesto === 'SEMANAL') pDiario = pOrig / 7;
+      else if (dto.tipoPresupuesto === 'MENSUAL') pDiario = pOrig / 30;
+      else if (dto.tipoPresupuesto === 'TOTAL' && dto.fechaFin) {
+         const d = Math.max(1, Math.ceil((new Date(`${dto.fechaFin}T05:00:00.000Z`).getTime() - (dto.fechaInicio ? new Date(`${dto.fechaInicio}T05:00:00.000Z`) : new Date()).getTime()) / 86400000));
+         pDiario = pOrig / d;
+      }
+    }
+
     return this.prisma.campanaMarketing.update({
       where: { id },
       data: {
         ...(dto.nombre && { nombre: dto.nombre }),
         ...(dto.plataforma && { plataforma: dto.plataforma }),
         ...('productoId' in dto && { productoId: dto.productoId }),
-        ...(dto.presupuestoDiario && { presupuestoDiario: dto.presupuestoDiario }),
+        ...(pDiario && { presupuestoDiario: pDiario }),
+        ...(dto.presupuestoOriginal && { presupuestoOriginal: dto.presupuestoOriginal }),
+        ...(dto.tipoPresupuesto && { tipoPresupuesto: dto.tipoPresupuesto }),
         ...(dto.moneda && { moneda: dto.moneda }),
         ...(dto.fechaInicio && { fechaInicio: new Date(`${dto.fechaInicio}T05:00:00.000Z`) }),
+        ...(dto.fechaFin !== undefined && { fechaFin: dto.fechaFin ? new Date(`${dto.fechaFin}T23:59:59.999Z`) : null }),
+        ...(dto.esRecurrente !== undefined && { esRecurrente: dto.esRecurrente }),
         ...(dto.estado && { estado: dto.estado }),
       },
     });

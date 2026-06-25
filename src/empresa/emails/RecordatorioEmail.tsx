@@ -1,7 +1,13 @@
 import * as React from 'react';
 import {
-  Body, Column, Container, Head, Hr, Html,
-  Preview, Row, Section, Text,
+  Body,
+  Container,
+  Head,
+  Hr,
+  Html,
+  Preview,
+  Section,
+  Text,
 } from '@react-email/components';
 
 export interface RecordatorioEmailProps {
@@ -15,182 +21,194 @@ export interface RecordatorioEmailProps {
 }
 
 const main: React.CSSProperties = {
-  backgroundColor: '#fffbeb',
-  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  backgroundColor: '#111111',
+  fontFamily:
+    '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  margin: 0,
+  padding: 0,
 };
 
-const container: React.CSSProperties = {
+const outer: React.CSSProperties = {
   margin: '0 auto',
-  padding: '40px 20px',
-  maxWidth: '600px',
+  padding: '40px 16px 48px',
+  maxWidth: '560px',
+};
+
+const brandName: React.CSSProperties = {
+  color: '#ffffff',
+  fontSize: '16px',
+  fontWeight: '700',
+  margin: '0 0 24px 0',
 };
 
 const card: React.CSSProperties = {
   backgroundColor: '#ffffff',
-  borderRadius: '20px',
-  overflow: 'hidden',
-  boxShadow: '0 4px 24px rgba(245,158,11,0.12)',
-};
-
-const header: React.CSSProperties = {
-  background: 'linear-gradient(135deg, #d97706 0%, #f59e0b 50%, #fbbf24 100%)',
-  padding: '44px 40px 40px',
-  textAlign: 'center' as const,
-};
-
-const emojiStyle: React.CSSProperties = {
-  fontSize: '48px',
-  lineHeight: '1',
-  margin: '0 0 16px 0',
-  display: 'block',
-};
-
-const headerTitle: React.CSSProperties = {
-  color: '#ffffff',
-  fontSize: '26px',
-  fontWeight: '800',
-  margin: '0 0 8px 0',
-  letterSpacing: '-0.5px',
-};
-
-const headerSubtitle: React.CSSProperties = {
-  color: 'rgba(255,255,255,0.90)',
-  fontSize: '14px',
-  margin: '0',
-};
-
-const body: React.CSSProperties = {
-  padding: '36px 40px',
-};
-
-const greeting: React.CSSProperties = {
-  fontSize: '16px',
-  color: '#111827',
-  margin: '0 0 24px 0',
-  lineHeight: '1.7',
-};
-
-const countdownBox: React.CSSProperties = {
-  background: 'linear-gradient(135deg, #fffbeb, #fef3c7)',
-  border: '2px solid #fde68a',
-  borderRadius: '16px',
-  padding: '28px',
-  marginBottom: '28px',
-  textAlign: 'center' as const,
-};
-
-const countdownNumber: React.CSSProperties = {
-  fontSize: '64px',
-  fontWeight: '900',
-  color: '#d97706',
-  margin: '0',
-  lineHeight: '1',
-  letterSpacing: '-2px',
-};
-
-const countdownLabel: React.CSSProperties = {
-  fontSize: '14px',
-  color: '#92400e',
-  fontWeight: '600',
-  margin: '8px 0 0 0',
-  textTransform: 'uppercase' as const,
-  letterSpacing: '0.1em',
-};
-
-const dateBox: React.CSSProperties = {
-  backgroundColor: '#fff7ed',
-  border: '1px solid #fed7aa',
-  borderRadius: '10px',
-  padding: '14px 20px',
-  marginBottom: '24px',
-  textAlign: 'center' as const,
-};
-
-const dateLabel: React.CSSProperties = {
-  fontSize: '11px',
-  color: '#c2410c',
-  fontWeight: '700',
-  textTransform: 'uppercase' as const,
-  letterSpacing: '0.08em',
-  margin: '0 0 4px 0',
-};
-
-const dateValue: React.CSSProperties = {
-  fontSize: '18px',
-  color: '#7c2d12',
-  fontWeight: '800',
-  margin: '0',
-};
-
-const stepsBox: React.CSSProperties = {
-  backgroundColor: '#f9fafb',
   borderRadius: '14px',
-  padding: '20px 24px',
-  marginBottom: '28px',
-  border: '1px solid #e5e7eb',
+  overflow: 'hidden',
+  marginBottom: '16px',
 };
 
-const stepItem: React.CSSProperties = {
-  marginBottom: '12px',
+const cardPad: React.CSSProperties = {
+  padding: '28px 32px',
 };
 
-const stepText: React.CSSProperties = {
-  fontSize: '14px',
-  color: '#374151',
-  margin: '0',
-  lineHeight: '1.5',
-};
-
-const warningBox: React.CSSProperties = {
-  backgroundColor: '#fef2f2',
-  border: '1px solid #fecaca',
-  borderRadius: '10px',
-  padding: '14px 18px',
-  marginBottom: '28px',
-};
-
-const warningText: React.CSSProperties = {
+const eyebrow: React.CSSProperties = {
   fontSize: '13px',
-  color: '#b91c1c',
-  margin: '0',
+  color: '#6b7280',
+  margin: '0 0 6px 0',
+};
+
+const titleText: React.CSSProperties = {
+  fontSize: '34px',
+  fontWeight: '800',
+  color: '#111827',
+  margin: '0 0 8px 0',
+  letterSpacing: '-1px',
+  lineHeight: '1.05',
+};
+
+const subtitle: React.CSSProperties = {
+  fontSize: '14px',
+  color: '#6b7280',
+  margin: '0 0 20px 0',
   lineHeight: '1.6',
 };
 
-const extraBox: React.CSSProperties = {
-  backgroundColor: '#fffbeb',
-  borderLeft: '4px solid #f59e0b',
-  borderRadius: '0 10px 10px 0',
-  padding: '14px 18px',
-  marginBottom: '28px',
+const ctaLink: React.CSSProperties = {
+  backgroundColor: '#111111',
+  color: '#ffffff',
+  display: 'inline-block',
+  fontSize: '13px',
+  fontWeight: '700',
+  letterSpacing: '0.02em',
+  textDecoration: 'none',
+  padding: '13px 18px',
+  borderRadius: '10px',
 };
 
-const extraText: React.CSSProperties = {
-  fontSize: '14px',
-  color: '#374151',
-  margin: '0',
-  lineHeight: '1.7',
-};
-
-const hr: React.CSSProperties = {
+const divider: React.CSSProperties = {
   border: 'none',
   borderTop: '1px solid #e5e7eb',
-  margin: '0 0 20px 0',
+  margin: '0',
 };
 
-const footer: React.CSSProperties = {
-  fontSize: '12px',
-  color: '#9ca3af',
-  textAlign: 'center' as const,
+const metaLabel: React.CSSProperties = {
+  fontSize: '13px',
+  color: '#6b7280',
+  margin: '0',
+  padding: '10px 0',
+};
+
+const metaValue: React.CSSProperties = {
+  fontSize: '13px',
+  color: '#111827',
+  fontWeight: '600',
+  margin: '0',
+  padding: '10px 0',
+  textAlign: 'right' as const,
+};
+
+const detailTitle: React.CSSProperties = {
+  fontSize: '16px',
+  fontWeight: '800',
+  color: '#111827',
+  margin: '0 0 6px 0',
+};
+
+const detailText: React.CSSProperties = {
+  fontSize: '14px',
+  color: '#374151',
+  lineHeight: '1.7',
+  margin: '0',
+};
+
+const itemTitle: React.CSSProperties = {
+  fontSize: '14px',
+  color: '#111827',
+  fontWeight: '700',
+  margin: '0 0 4px 0',
+};
+
+const itemText: React.CSSProperties = {
+  fontSize: '13px',
+  color: '#6b7280',
   lineHeight: '1.6',
   margin: '0',
 };
 
-const footerBrand: React.CSSProperties = {
+const alertBox = (tone: 'danger' | 'warning' | 'ok'): React.CSSProperties => ({
+  backgroundColor:
+    tone === 'danger' ? '#fef2f2' : tone === 'warning' ? '#fffbeb' : '#ecfdf5',
+  border:
+    tone === 'danger'
+      ? '1px solid #fecaca'
+      : tone === 'warning'
+        ? '1px solid #fde68a'
+        : '1px solid #bbf7d0',
+  borderRadius: '12px',
+  padding: '14px 16px',
+  margin: '16px 0 0 0',
+});
+
+const alertText = (tone: 'danger' | 'warning' | 'ok'): React.CSSProperties => ({
+  color:
+    tone === 'danger' ? '#991b1b' : tone === 'warning' ? '#92400e' : '#166534',
   fontSize: '13px',
-  fontWeight: '700',
-  color: '#d97706',
+  lineHeight: '1.6',
+  margin: '0',
+});
+
+const footerText: React.CSSProperties = {
+  fontSize: '13px',
+  color: '#6b7280',
   textAlign: 'center' as const,
-  margin: '0 0 4px 0',
+  lineHeight: '1.6',
+  margin: '20px 0 4px 0',
+};
+
+const footerLink: React.CSSProperties = {
+  color: '#6366f1',
+  textDecoration: 'underline',
+};
+
+const getSubscriptionCopy = (diasRestantes: number) => {
+  if (diasRestantes < 0) {
+    const days = Math.abs(diasRestantes);
+    return {
+      tone: 'danger' as const,
+      headline: 'Plan vencido',
+      status: `Venció hace ${days} día${days === 1 ? '' : 's'}`,
+      preview: 'Tu suscripción venció. Renueva para mantener el servicio activo.',
+      message:
+        'Tu suscripción ya venció. Mientras la empresa siga activa, te enviamos este recordatorio para que puedas regularizarla antes de que el acceso se vea afectado.',
+      recommendation:
+        'Prioriza la renovación hoy para evitar bloqueos operativos en facturación, inventario, ventas y tienda virtual.',
+    };
+  }
+
+  if (diasRestantes === 0) {
+    return {
+      tone: 'warning' as const,
+      headline: 'Vence hoy',
+      status: 'Último día disponible',
+      preview: 'Tu suscripción vence hoy. Renueva para continuar sin interrupciones.',
+      message:
+        'Tu suscripción vence hoy. Te recomendamos renovarla antes del cierre del día para mantener todos tus módulos disponibles.',
+      recommendation:
+        'Confirma el pago con soporte y solicita la ampliación de tu fecha de expiración.',
+    };
+  }
+
+  return {
+    tone: diasRestantes <= 7 ? ('warning' as const) : ('ok' as const),
+    headline: `Vence en ${diasRestantes} día${diasRestantes === 1 ? '' : 's'}`,
+    status: 'Renovación pendiente',
+    preview: `Tu suscripción vence en ${diasRestantes} día${diasRestantes === 1 ? '' : 's'}.`,
+    message:
+      'Tu suscripción está próxima a vencer. Puedes renovarla con anticipación para que el negocio continúe operando sin pausas.',
+    recommendation:
+      'Revisa el plan actual, confirma si deseas mantenerlo o actualizarlo, y coordina el pago con soporte.',
+  };
 };
 
 export const RecordatorioEmail: React.FC<RecordatorioEmailProps> = ({
@@ -202,99 +220,115 @@ export const RecordatorioEmail: React.FC<RecordatorioEmailProps> = ({
   appName,
   mensajeExtra,
 }) => {
-  const urgente = diasRestantes <= 3;
+  const copy = getSubscriptionCopy(diasRestantes);
+  const soporteUrl = 'https://wa.me/5191065217';
 
   return (
     <Html lang="es">
       <Head />
-      <Preview>{`⏰ Tu suscripción de ${empresaNombre} vence en ${diasRestantes} día${diasRestantes !== 1 ? 's' : ''}. ¡Renueva ahora!`}</Preview>
+      <Preview>{`${copy.preview} ${empresaNombre}`}</Preview>
       <Body style={main}>
-        <Container style={container}>
+        <Container style={outer}>
+          <p style={brandName}>{appName}</p>
+
           <div style={card}>
-            {/* Header */}
-            <div style={header}>
-              <p style={emojiStyle}>{urgente ? '🚨' : '⏰'}</p>
-              <p style={headerTitle}>{urgente ? '¡Vence muy pronto!' : 'Tu suscripción vence pronto'}</p>
-              <p style={headerSubtitle}>{empresaNombre} · {planNombre || 'Suscripción activa'}</p>
+            <div style={cardPad}>
+              <p style={eyebrow}>Recordatorio de suscripción</p>
+              <p style={titleText}>{copy.headline}</p>
+              <p style={subtitle}>
+                Hola, <strong>{adminNombre}</strong>. {copy.message}
+              </p>
+
+              <a href={soporteUrl} style={ctaLink} target="_blank" rel="noreferrer">
+                Coordinar renovación
+              </a>
             </div>
 
-            {/* Body */}
-            <div style={body}>
-              <Text style={greeting}>
-                Hola, <strong>{adminNombre}</strong>. Te escribimos para recordarte que la suscripción de{' '}
-                <strong>{empresaNombre}</strong> está próxima a vencer. Te recomendamos renovar
-                a la brevedad para evitar cualquier interrupción en tu servicio.
-              </Text>
+            <Hr style={divider} />
 
-              {/* Countdown */}
-              <div style={countdownBox}>
-                <p style={countdownNumber}>{diasRestantes}</p>
-                <p style={countdownLabel}>{diasRestantes === 1 ? 'día restante' : 'días restantes'}</p>
+            <div style={cardPad}>
+              <table width="100%" cellPadding={0} cellSpacing={0} style={{ borderCollapse: 'collapse' }}>
+                <tbody>
+                  <tr>
+                    <td style={metaLabel}>Empresa</td>
+                    <td style={metaValue}>{empresaNombre}</td>
+                  </tr>
+                  <tr style={{ borderTop: '1px solid #f3f4f6' }}>
+                    <td style={metaLabel}>Plan actual</td>
+                    <td style={metaValue}>{planNombre || 'Suscripción activa'}</td>
+                  </tr>
+                  <tr style={{ borderTop: '1px solid #f3f4f6' }}>
+                    <td style={metaLabel}>Fecha de vencimiento</td>
+                    <td style={metaValue}>{fechaExpiracion || 'Por confirmar'}</td>
+                  </tr>
+                  <tr style={{ borderTop: '1px solid #f3f4f6' }}>
+                    <td style={metaLabel}>Estado</td>
+                    <td style={metaValue}>{copy.status}</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <div style={alertBox(copy.tone)}>
+                <p style={alertText(copy.tone)}>
+                  <strong>Recomendación:</strong> {copy.recommendation}
+                </p>
               </div>
-
-              {/* Date */}
-              <div style={dateBox}>
-                <p style={dateLabel}>Fecha de vencimiento</p>
-                <p style={dateValue}>{fechaExpiracion}</p>
-              </div>
-
-              {/* Steps */}
-              <div style={stepsBox}>
-                <Section>
-                  <Text style={{ ...stepText, fontWeight: '700', marginBottom: '12px', color: '#111827' }}>
-                    ¿Cómo renovar?
-                  </Text>
-                  <Row style={stepItem}>
-                    <Column style={{ width: '28px' }}>
-                      <span style={{ fontSize: '16px' }}>1️⃣</span>
-                    </Column>
-                    <Column>
-                      <p style={stepText}>Comunícate con nuestro equipo de soporte.</p>
-                    </Column>
-                  </Row>
-                  <Row style={stepItem}>
-                    <Column style={{ width: '28px' }}>
-                      <span style={{ fontSize: '16px' }}>2️⃣</span>
-                    </Column>
-                    <Column>
-                      <p style={stepText}>Confirma el plan que deseas mantener o cambiar.</p>
-                    </Column>
-                  </Row>
-                  <Row>
-                    <Column style={{ width: '28px' }}>
-                      <span style={{ fontSize: '16px' }}>3️⃣</span>
-                    </Column>
-                    <Column>
-                      <p style={stepText}>Realiza el pago y tu cuenta se actualiza de inmediato.</p>
-                    </Column>
-                  </Row>
-                </Section>
-              </div>
-
-              {urgente && (
-                <div style={warningBox}>
-                  <p style={warningText}>
-                    ⚠️ <strong>Atención:</strong> Al vencer el plan, el acceso al sistema quedará
-                    suspendido temporalmente hasta que se complete la renovación.
-                  </p>
-                </div>
-              )}
-
-              {mensajeExtra && (
-                <div style={extraBox}>
-                  <p style={extraText}>{mensajeExtra}</p>
-                </div>
-              )}
-
-              <Hr style={hr} />
-
-              <p style={footerBrand}>{appName}</p>
-              <Text style={footer}>
-                Este recordatorio fue enviado al administrador de <strong>{empresaNombre}</strong>.
-                Si ya realizaste el pago, puedes ignorar este mensaje.
-              </Text>
             </div>
           </div>
+
+          <div style={card}>
+            <div style={cardPad}>
+              <p style={detailTitle}>Qué se mantiene activo al renovar</p>
+              <p style={{ ...detailText, marginBottom: '18px' }}>
+                La renovación asegura continuidad para los procesos diarios del negocio.
+              </p>
+
+              <Section>
+                <table width="100%" cellPadding={0} cellSpacing={0} style={{ borderCollapse: 'collapse' }}>
+                  <tbody>
+                    <tr>
+                      <td style={{ padding: '12px 0', verticalAlign: 'top', width: '50%' }}>
+                        <p style={itemTitle}>Facturación y ventas</p>
+                        <p style={itemText}>Emisión, historial, pagos y seguimiento comercial.</p>
+                      </td>
+                      <td style={{ padding: '12px 0 12px 18px', verticalAlign: 'top', width: '50%' }}>
+                        <p style={itemTitle}>Inventario y reportes</p>
+                        <p style={itemText}>Stock, kardex, finanzas y control operativo.</p>
+                      </td>
+                    </tr>
+                    <tr style={{ borderTop: '1px solid #f3f4f6' }}>
+                      <td style={{ padding: '12px 0', verticalAlign: 'top', width: '50%' }}>
+                        <p style={itemTitle}>Usuarios y sedes</p>
+                        <p style={itemText}>Accesos del equipo, permisos, sedes y almacenes.</p>
+                      </td>
+                      <td style={{ padding: '12px 0 12px 18px', verticalAlign: 'top', width: '50%' }}>
+                        <p style={itemTitle}>Tienda virtual</p>
+                        <p style={itemText}>Catálogo, pedidos y presencia digital del negocio.</p>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </Section>
+            </div>
+          </div>
+
+          {mensajeExtra && (
+            <div style={card}>
+              <div style={cardPad}>
+                <p style={detailTitle}>Mensaje adicional</p>
+                <p style={detailText}>{mensajeExtra}</p>
+              </div>
+            </div>
+          )}
+
+          <Text style={footerText}>
+            Este correo fue enviado al administrador de <strong>{empresaNombre}</strong>.
+            Si ya renovaste tu plan, puedes ignorarlo o escribir a{' '}
+            <a href={soporteUrl} style={footerLink} target="_blank" rel="noreferrer">
+              soporte
+            </a>
+            .
+          </Text>
         </Container>
       </Body>
     </Html>

@@ -10,6 +10,12 @@ export interface GastoPorCategoria {
   monto: number;
 }
 
+export interface OtroIngreso {
+  concepto: string;
+  tipo: string;
+  monto: number;
+}
+
 export interface PnlResponse {
   periodo: { mes: number; anio: number; label: string };
   ventasNetas: number;
@@ -21,6 +27,8 @@ export interface PnlResponse {
   lineasServicio: number;
   gananciaBruta: number;
   margenBruto: number;
+  otrosIngresos: number;
+  otrosIngresosDetalle: OtroIngreso[];
   gastosTotales: number;
   gastoPublicidad: number;
   gastosPorCategoria: GastoPorCategoria[];
@@ -28,7 +36,7 @@ export interface PnlResponse {
   margenNeto: number;
   resumenDiario: RentabilidadDia[];
   comparacion: {
-    mesAnterior: { gananciaNeta: number; margenNeto: number } | null;
+    mesAnterior: { gananciaNeta: number; margenNeto: number; otrosIngresos: number } | null;
     variacionMonto: number | null;
     variacionPorcentaje: number | null;
   };
@@ -332,12 +340,15 @@ export class AnalisisFinancieroService {
     };
   }
 
+  private readonly TIPOS_FINANCIAMIENTO = ['PRESTAMO', 'INVERSION', 'CAPITAL'];
+
   /** Computes P&L figures from pre-fetched raw data. */
   private calcularPnl(
     comprobantes: ComprobantePnl[],
     gastosRaw: GastoPnl[],
     mes: number,
     anio: number,
+    otrosIngresos: number = 0,
   ) {
     const gastosAplicados = this.expandirGastosPeriodo(gastosRaw, mes, anio);
     const documentosVenta = comprobantes.filter((c) =>
@@ -489,10 +500,11 @@ export class AnalisisFinancieroService {
       .filter((g) => g.categoria === 'PUBLICIDAD')
       .reduce((acc, g) => acc + g.monto, 0);
 
-    const gananciaNeta = gananciaBruta - gastosTotales;
+    const gananciaNeta = gananciaBruta + otrosIngresos - gastosTotales;
     const margenBruto =
       ventasNetas > 0 ? (gananciaBruta / ventasNetas) * 100 : 0;
-    const margenNeto = ventasNetas > 0 ? (gananciaNeta / ventasNetas) * 100 : 0;
+    const ingresosTotales = ventasNetas + otrosIngresos;
+    const margenNeto = ingresosTotales > 0 ? (gananciaNeta / ingresosTotales) * 100 : 0;
 
     return {
       ventasNetas: this.r2(ventasNetas),
@@ -504,6 +516,7 @@ export class AnalisisFinancieroService {
       lineasServicio: costosProducto.lineasServicio,
       gananciaBruta: this.r2(gananciaBruta),
       margenBruto: this.r2(margenBruto),
+      otrosIngresos: this.r2(otrosIngresos),
       gastosTotales: this.r2(gastosTotales),
       gastoPublicidad: this.r2(gastoPublicidad),
       gastosPorCategoria,
@@ -519,7 +532,7 @@ export class AnalisisFinancieroService {
   private async fetchPeriodData(empresaId: number, mes: number, anio: number) {
     const range = this.periodoToRange(mes, anio);
     const gastoWhere = this.buildGastoPeriodoWhere(empresaId, mes, anio);
-    const [comprobantes, gastos, campanas] = await Promise.all([
+    const [comprobantes, gastos, campanas, ingresosManuales] = await Promise.all([
       this.prisma.comprobante.findMany({
         where: {
           empresaId,
@@ -561,7 +574,26 @@ export class AnalisisFinancieroService {
         where: { empresaId },
         select: { nombre: true, plataforma: true, presupuestoDiario: true, fechaInicio: true, estado: true },
       }),
+      this.prisma.ingresoManual.findMany({
+        where: {
+          empresaId,
+          fecha: { gte: range.gte, lte: range.lte },
+          tipo: { notIn: this.TIPOS_FINANCIAMIENTO },
+        },
+        select: { concepto: true, tipo: true, monto: true },
+        orderBy: { creadoEn: 'desc' },
+      }),
     ]);
+
+    const otrosIngresos = ingresosManuales.reduce(
+      (sum, i) => sum + this.toNumber(i.monto as any),
+      0,
+    );
+    const otrosIngresosDetalle = ingresosManuales.map((i) => ({
+      concepto: i.concepto,
+      tipo: i.tipo,
+      monto: this.r2(this.toNumber(i.monto as any)),
+    }));
 
     // Inject active campaign spend as virtual daily PUBLICIDAD gastos
     const inicioMes = new Date(anio, mes - 1, 1);
@@ -586,7 +618,10 @@ export class AnalisisFinancieroService {
       });
     }
 
-    return this.calcularPnl(comprobantes, gastosConCampanas, mes, anio);
+    return {
+      ...this.calcularPnl(comprobantes, gastosConCampanas, mes, anio, otrosIngresos),
+      otrosIngresosDetalle,
+    };
   }
 
   /** GET /pnl — P&L for a single mes/anio period. */
@@ -603,7 +638,7 @@ export class AnalisisFinancieroService {
     ]);
 
     const tieneAnterior =
-      pnlAnterior.ventasNetas > 0 || pnlAnterior.gastosTotales > 0;
+      pnlAnterior.ventasNetas > 0 || pnlAnterior.gastosTotales > 0 || pnlAnterior.otrosIngresos > 0;
     const variacionMonto = tieneAnterior
       ? this.r2(pnl.gananciaNeta - pnlAnterior.gananciaNeta)
       : null;
@@ -624,6 +659,7 @@ export class AnalisisFinancieroService {
           ? {
               gananciaNeta: pnlAnterior.gananciaNeta,
               margenNeto: pnlAnterior.margenNeto,
+              otrosIngresos: pnlAnterior.otrosIngresos,
             }
           : null,
         variacionMonto,
@@ -650,7 +686,7 @@ export class AnalisisFinancieroService {
     const rangeLte = this.periodoToRange(mesActual, anioActual).lte;
 
     // Single query per entity covering the full window
-    const [comprobantes, gastos] = await Promise.all([
+    const [comprobantes, gastos, todosIngresosManuales] = await Promise.all([
       this.prisma.comprobante.findMany({
         where: {
           empresaId,
@@ -697,6 +733,14 @@ export class AnalisisFinancieroService {
           anio: true,
         },
       }),
+      this.prisma.ingresoManual.findMany({
+        where: {
+          empresaId,
+          fecha: { gte: rangeGte, lte: rangeLte },
+          tipo: { notIn: this.TIPOS_FINANCIAMIENTO },
+        },
+        select: { fecha: true, monto: true },
+      }),
     ]);
 
     // Build result iterating backwards from current month
@@ -717,7 +761,14 @@ export class AnalisisFinancieroService {
           this.gastoRecurrenteCubrePeriodo(g, range.gte, range.lte),
       );
 
-      const pnl = this.calcularPnl(comprobantesDelMes, gastosDelMes, mes, anio);
+      const otrosIngresosDelMes = todosIngresosManuales
+        .filter((i) => {
+          const t = i.fecha.getTime();
+          return t >= range.gte.getTime() && t <= range.lte.getTime();
+        })
+        .reduce((sum, i) => sum + this.toNumber(i.monto as any), 0);
+
+      const pnl = this.calcularPnl(comprobantesDelMes, gastosDelMes, mes, anio, otrosIngresosDelMes);
 
       resultado.push({
         mes,
@@ -807,6 +858,25 @@ export class AnalisisFinancieroService {
     return this.prisma.gastoOperativo.findMany({
       where: gastoWhere,
       orderBy: [{ fecha: 'desc' }, { creadoEn: 'desc' }],
+    });
+  }
+
+  /** GET /gastos/historial — list all operative expenses optionally by date range. */
+  async historialGastos(
+    empresaId: number,
+    fechaInicio?: string,
+    fechaFin?: string,
+  ): Promise<GastoOperativo[]> {
+    const where: any = { empresaId };
+    if (fechaInicio && fechaFin) {
+      const start = new Date(`${fechaInicio}T00:00:00.000-05:00`);
+      const end = new Date(`${fechaFin}T23:59:59.999-05:00`);
+      where.fecha = { gte: start, lte: end };
+    }
+    return this.prisma.gastoOperativo.findMany({
+      where,
+      orderBy: [{ fecha: 'desc' }, { creadoEn: 'desc' }],
+      take: 500,
     });
   }
 

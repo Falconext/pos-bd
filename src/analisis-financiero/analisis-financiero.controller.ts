@@ -49,6 +49,16 @@ export class AnalisisFinancieroController {
     return this.service.listarGastos(user.empresaId, query.mes, query.anio);
   }
 
+  /** GET /analisis-financiero/gastos/historial */
+  @Get('gastos/historial')
+  historialGastos(
+    @User() user: any,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
+  ) {
+    return this.service.historialGastos(user.empresaId, fechaInicio, fechaFin);
+  }
+
   /** POST /analisis-financiero/gastos */
   @Post('gastos')
   crearGasto(@User() user: any, @Body() dto: CrearGastoDto) {

@@ -548,6 +548,18 @@ export class ProductoService {
           preciosMayorista: true,
           atributosTecnicos: true,
           codigoBarras: true,
+          codigoDigemid: true,
+          requiereReceta: true,
+          controlado: true,
+          refrigerado: true,
+          principioActivo: true,
+          concentracion: true,
+          presentacion: true,
+          laboratorio: true,
+          factorConversion: true,
+          unidadCompra: true,
+          unidadVenta: true,
+          descripcionLarga: true,
           publicarEnTienda: true,
           productoPadreId: true,
           opcionesAtributos: true,
@@ -907,10 +919,37 @@ export class ProductoService {
     );
 
     const hoy = new Date();
+
+    // Lotes VENCIDOS con stock: se excluyen de la venta (p.lotes ya los filtra),
+    // pero los detectamos aparte para (1) dar un mensaje correcto en el POS y
+    // (2) NO caer al stock plano en productos que sí gestionan lotes.
+    const lotesVencidosAgrupados =
+      productoIds.length > 0
+        ? await this.prisma.productoLote.groupBy({
+            by: ['productoId'],
+            where: {
+              productoId: { in: productoIds },
+              activo: true,
+              stockActual: { gt: 0 },
+              fechaVencimiento: { lte: hoy },
+            },
+            _sum: { stockActual: true },
+          })
+        : [];
+    const stockVencidoPorProducto = new Map<number, number>(
+      lotesVencidosAgrupados.map((l) => [l.productoId, Number(l._sum.stockActual ?? 0)]),
+    );
+
     const productos = productosRaw.map((p) => {
       const loteFefo = p.lotes[0] ?? null; // primer lote FEFO (más próximo a vencer)
       const stockTotalLotes = p.lotes.reduce((sum, l) => sum + Number(l.stockActual ?? 0), 0);
-      const stockBase = stockTotalLotes > 0
+      const stockVencido = stockVencidoPorProducto.get(p.id) ?? 0;
+      const tieneLotesVencidos = stockVencido > 0;
+      // Un producto "gestiona lotes" si tiene lotes vigentes o vencidos. En ese
+      // caso el stock vendible es SOLO el de lotes vigentes (puede ser 0). Solo
+      // cae al stock plano cuando el producto nunca tuvo lotes.
+      const esLoteGestionado = stockTotalLotes > 0 || tieneLotesVencidos;
+      const stockBase = esLoteGestionado
         ? stockTotalLotes
         : (p.stocks[0]?.stock ?? (p as any).stock ?? 0);
       const stockSede = p.stocks[0] as any | undefined;
@@ -952,6 +991,8 @@ export class ProductoService {
         stock: stockDisponibleVenta,
         stockDisponibleVenta,
         stockReservado: reservado,
+        tieneLotesVencidos,
+        stockVencido,
         loteFefoCostoUnitario: loteFefo?.costoUnitario ? Number(loteFefo.costoUnitario) : null,
         lotesDisponibles: p.lotes.map((l) => ({
           loteId: l.id,

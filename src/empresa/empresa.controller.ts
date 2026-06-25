@@ -190,6 +190,18 @@ export class EmpresaController {
     return result;
   }
 
+  @Post(':id/recordatorio-whatsapp')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  async enviarRecordatorioWhatsapp(
+    @Param('id', ParseIntPipe) id: number,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.empresaService.enviarWhatsappRecordatorio(id);
+    res.locals.message = `WhatsApp enviado a ${result.enviados} administrador(es)`;
+    return result;
+  }
+
   // ── Historial / Auditoría ──────────────────────────────────────────────────
 
   @Get(':id/log')

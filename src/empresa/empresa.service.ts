@@ -12,6 +12,7 @@ import { CreateEmpresaDto } from './dto/create-empresa.dto';
 import { UpdateEmpresaDto } from './dto/update-empresa.dto';
 import { CreateCuentaBancariaDto, UpdateCuentaBancariaDto } from './dto/cuenta-bancaria.dto';
 import { SedeService } from '../sede/sede.service';
+import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import axios from 'axios';
 
 function parseDDMMYYYY(input: string): Date {
@@ -35,6 +36,42 @@ function parseDDMMYYYY(input: string): Date {
     }
     return new Date(Date.UTC(yyyy, mm - 1, dd));
   }
+}
+
+function formatDateEsPeDateOnly(value?: Date | null): string {
+  if (!value) return '';
+  const [yyyy, mm, dd] = value.toISOString().slice(0, 10).split('-');
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+function getDaysRemainingDateOnly(value?: Date | null): number {
+  if (!value) return 0;
+  const [yyyy, mm, dd] = value.toISOString().slice(0, 10).split('-').map(Number);
+  const today = new Date();
+  const todayUtc = Date.UTC(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate(),
+  );
+  const targetUtc = Date.UTC(yyyy, mm - 1, dd);
+  return Math.ceil((targetUtc - todayUtc) / 86400000);
+}
+
+function formatDaysLabel(days: number): string {
+  const abs = Math.abs(days);
+  const label = `${abs} día${abs === 1 ? '' : 's'}`;
+  if (days < 0) return `venció hace ${label}`;
+  if (days === 0) return 'vence hoy';
+  return `vence en ${label}`;
+}
+
+function buildReminderSubject(days: number, empresaNombre: string): string {
+  if (days < 0) {
+    const expiredDays = Math.abs(days);
+    return `Tu suscripción venció hace ${expiredDays} día${expiredDays === 1 ? '' : 's'} — ${empresaNombre}`;
+  }
+  if (days === 0) return `Tu suscripción vence hoy — ${empresaNombre}`;
+  return `Tu suscripción vence en ${days} día${days === 1 ? '' : 's'} — ${empresaNombre}`;
 }
 
 function normalizeBrand(value?: string | null): 'falconext' | 'krezka' {
@@ -73,6 +110,29 @@ function esPlanPermitidoParaPrecioFefo(planNombre?: string | null): boolean {
   return raw.includes('NEGOCIO') || raw.includes('CORPORAT');
 }
 
+function isDemoBillingUrl(value?: string | null): boolean {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (!normalized) return false;
+  return /(demo|sandbox|homolog|homologacion|beta|test|testing|staging|qa)/i.test(
+    normalized,
+  );
+}
+
+function resolveAmbienteFacturacion(empresa: {
+  usaDemo?: boolean | null;
+  billingApiBaseUrl?: string | null;
+  billingApiDemoBaseUrl?: string | null;
+}): 'DEMO' | 'PRODUCCIÓN' {
+  const effectiveUrl = String(
+    empresa.usaDemo
+      ? empresa.billingApiDemoBaseUrl || empresa.billingApiBaseUrl || ''
+      : empresa.billingApiBaseUrl || '',
+  ).trim();
+
+  if (empresa.usaDemo || isDemoBillingUrl(effectiveUrl)) return 'DEMO';
+  return 'PRODUCCIÓN';
+}
+
 interface HotelSyncPayload {
   mypeEmpresaId: number;
   mypeUsuarioId?: number;
@@ -100,6 +160,7 @@ export class EmpresaService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly sedeService: SedeService,
+    private readonly whatsappService: WhatsAppService,
   ) {}
 
   private async asegurarSedePrincipalPorDefecto(
@@ -636,6 +697,10 @@ export class EmpresaService {
           slugTienda: true,
           brand: true,
           producto: true,
+          usaDemo: true,
+          billingProvider: true,
+          billingApiBaseUrl: true,
+          billingApiDemoBaseUrl: true,
           hotelTenantId: true,
           hotelAdminUserId: true,
           hotelSyncAt: true,
@@ -653,6 +718,15 @@ export class EmpresaService {
               id: true,
               nombre: true,
             },
+          },
+          usuarios: {
+            where: { rol: 'ADMIN_EMPRESA', estado: 'ACTIVO' },
+            orderBy: { id: 'asc' },
+            select: {
+              nombre: true,
+              celular: true,
+            },
+            take: 1,
           },
         },
       }),
@@ -674,10 +748,14 @@ export class EmpresaService {
         slugTienda: e.slugTienda,
         brand: e.brand,
         producto: e.producto,
+        usaDemo: e.usaDemo,
+        billingProvider: e.billingProvider,
+        ambienteFacturacion: resolveAmbienteFacturacion(e),
         hotelTenantId: e.hotelTenantId,
         hotelAdminUserId: e.hotelAdminUserId,
         hotelSyncAt: e.hotelSyncAt,
         rubro: e.rubro,
+        usuarios: e.usuarios,
         plan: {
           nombre: e.plan.nombre,
           costo: e.plan.costo,
@@ -1246,6 +1324,11 @@ export class EmpresaService {
       include: { plan: { select: { nombre: true } } },
     });
     if (!empresa) throw new NotFoundException('Empresa no encontrada');
+    if (tipo === 'RECORDATORIO' && empresa.estado !== 'ACTIVO') {
+      throw new BadRequestException(
+        'Solo se envían recordatorios a empresas activas',
+      );
+    }
 
     const admins = await this.prisma.usuario.findMany({
       where: { empresaId, rol: 'ADMIN_EMPRESA', estado: 'ACTIVO' },
@@ -1260,10 +1343,8 @@ export class EmpresaService {
     const appName = empresa.brand === 'krezka' ? 'Krezka' : 'Falconext';
     const planNombre = (empresa.plan as any)?.nombre ?? '';
     const fechaExp = empresa.fechaExpiracion;
-    const fechaExpiracion = fechaExp?.toLocaleDateString('es-PE') ?? '';
-    const diasRestantes = fechaExp
-      ? Math.ceil((fechaExp.getTime() - Date.now()) / 86400000)
-      : 30;
+    const fechaExpiracion = formatDateEsPeDateOnly(fechaExp);
+    const diasRestantes = getDaysRemainingDateOnly(fechaExp);
 
     let enviados = 0;
     for (const admin of admins) {
@@ -1282,6 +1363,75 @@ export class EmpresaService {
       enviados++;
     }
     return { enviados };
+  }
+
+  async enviarWhatsappRecordatorio(empresaId: number) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      include: { plan: { select: { nombre: true } } },
+    });
+    if (!empresa) throw new NotFoundException('Empresa no encontrada');
+    if (empresa.estado !== 'ACTIVO') {
+      throw new BadRequestException(
+        'Solo se envían recordatorios a empresas activas',
+      );
+    }
+
+    const admins = await this.prisma.usuario.findMany({
+      where: {
+        empresaId,
+        rol: 'ADMIN_EMPRESA',
+        estado: 'ACTIVO',
+      },
+      select: { nombre: true, celular: true },
+    });
+
+    const adminsConCelular = admins.filter((admin) =>
+      String(admin.celular ?? '').replace(/\D/g, '').length >= 9,
+    );
+    if (!adminsConCelular.length) {
+      throw new NotFoundException(
+        'La empresa no tiene administradores activos con celular',
+      );
+    }
+
+    const empresaNombre = empresa.nombreComercial || empresa.razonSocial;
+    const appName = empresa.brand === 'krezka' ? 'Krezka' : 'Falconext';
+    const planNombre = (empresa.plan as any)?.nombre ?? '';
+    const fechaExpiracion = formatDateEsPeDateOnly(empresa.fechaExpiracion);
+    const diasRestantes = getDaysRemainingDateOnly(empresa.fechaExpiracion);
+    const estadoVencimiento = formatDaysLabel(diasRestantes);
+    const errores: string[] = [];
+    let enviados = 0;
+
+    for (const admin of adminsConCelular) {
+      const mensaje = [
+        `Hola ${admin.nombre || 'equipo'}, te recordamos que la suscripción de ${empresaNombre} en ${appName} ${estadoVencimiento}.`,
+        planNombre ? `Plan actual: ${planNombre}.` : '',
+        fechaExpiracion ? `Fecha de vencimiento: ${fechaExpiracion}.` : '',
+        'Renueva a tiempo para mantener activo tu acceso, facturación, inventario y tienda virtual.',
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      const result = await this.whatsappService.enviarTexto(
+        admin.celular!,
+        mensaje,
+      );
+      if (result.success) {
+        enviados++;
+      } else {
+        errores.push(result.error || `No se pudo enviar a ${admin.celular}`);
+      }
+    }
+
+    if (enviados === 0) {
+      throw new BadRequestException(
+        errores[0] || 'No se pudo enviar el recordatorio por WhatsApp',
+      );
+    }
+
+    return { enviados, errores };
   }
 
   private async enviarEmailPlantilla(
@@ -1359,7 +1509,7 @@ export class EmpresaService {
       const { RecordatorioEmail } = await import(
         './emails/RecordatorioEmail.js'
       );
-      asunto = `⏰ Recordatorio: tu suscripción vence en ${diasRestantes} día${diasRestantes !== 1 ? 's' : ''} — ${empresaNombre}`;
+      asunto = buildReminderSubject(diasRestantes, empresaNombre);
       html = await render(
         (RecordatorioEmail as any)({
           empresaNombre,

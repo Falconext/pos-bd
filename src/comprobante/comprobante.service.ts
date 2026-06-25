@@ -1129,7 +1129,7 @@ export class ComprobanteService {
   }
 
   /**
-   * Valida receta médica y datos de controlados para rubros farmacia/botica.
+   * Valida receta médica y datos de controlados para rubros farmacia/botica/droguería.
    * Rechaza la emisión en backend (el frontend solo hace UX).
    */
   private async validarRecetasSiFarmacia(detalles: any[], empresaId: number): Promise<void> {
@@ -1138,10 +1138,13 @@ export class ComprobanteService {
       select: { rubro: { select: { nombre: true } } },
     });
     const rubroNombre = empresa?.rubro?.nombre?.toLowerCase() ?? '';
-    const esFarmaciaRetail =
-      rubroNombre.includes('farmacia') || rubroNombre.includes('botica');
+    const habilitaRecetaMedica =
+      rubroNombre.includes('farmacia') ||
+      rubroNombre.includes('botica') ||
+      rubroNombre.includes('drogueria') ||
+      rubroNombre.includes('droguería');
 
-    if (!esFarmaciaRetail) return;
+    if (!habilitaRecetaMedica) return;
 
     const productIds = detalles
       .map((d) => Number(d.productoId))
@@ -1208,7 +1211,7 @@ export class ComprobanteService {
   }
 
   private async validarStockDisponibleParaVenta(
-    detalles: Array<{ productoId: number; cantidad: number }>,
+    detalles: Array<{ productoId: number | null; cantidad: number; loteId?: number | null }>,
     data: {
       empresaId: number;
       usuarioId?: number;
@@ -1239,6 +1242,7 @@ export class ComprobanteService {
           atributosTecnicos: true,
           porcentajeVenta: true,
           porcentajeProvision: true,
+          factorConversion: true,
         },
       });
 
@@ -1246,6 +1250,49 @@ export class ComprobanteService {
         throw new BadRequestException('El producto no existe o no pertenece a la empresa');
       }
       if (this.esProductoServicio(producto.atributosTecnicos as any)) continue;
+
+      // Fraccionamiento: el lote guarda stock en unidad base (ej. tabletas).
+      // Si se vende por CAJA (sin unidadVenta), descontar cantidad × factor.
+      const factorConv = Number((producto as any).factorConversion ?? 1);
+      const cantidadLote = factorConv > 1 && !(item as any).unidadVenta ? cantidad * factorConv : cantidad;
+
+      if (item.loteId != null) {
+        const lote = await this.prisma.productoLote.findFirst({
+          where: {
+            id: Number(item.loteId),
+            productoId,
+            producto: { empresaId: data.empresaId },
+          },
+          select: {
+            lote: true,
+            activo: true,
+            stockActual: true,
+            fechaVencimiento: true,
+          },
+        });
+
+        if (!lote) {
+          throw new BadRequestException(
+            `El lote seleccionado para "${producto.descripcion}" no existe o no pertenece al producto`,
+          );
+        }
+        if (!lote.activo) {
+          throw new BadRequestException(
+            `El lote ${lote.lote} de "${producto.descripcion}" está inactivo`,
+          );
+        }
+        if (lote.fechaVencimiento && lote.fechaVencimiento < new Date()) {
+          throw new BadRequestException(
+            `El lote ${lote.lote} de "${producto.descripcion}" está vencido`,
+          );
+        }
+        if ((lote.stockActual ?? 0) < cantidadLote) {
+          throw new BadRequestException(
+            `Stock insuficiente en lote ${lote.lote} para "${producto.descripcion}". Disponible: ${lote.stockActual ?? 0}, solicitado: ${cantidadLote}.`,
+          );
+        }
+        continue;
+      }
 
       const stockSede = await this.prisma.productoStock.findUnique({
         where: { productoId_sedeId: { productoId, sedeId } },
@@ -1299,10 +1346,15 @@ export class ComprobanteService {
 
       const producto = await this.prisma.producto.findFirst({
         where: { id: productoId, empresaId: data.empresaId },
-        select: { stock: true, costoPromedio: true, atributosTecnicos: true },
+        select: { stock: true, costoPromedio: true, atributosTecnicos: true, factorConversion: true },
       });
       if (!producto) continue;
       if (this.esProductoServicio(producto.atributosTecnicos as any)) continue;
+
+      // Fraccionamiento: el lote está en unidad base. Si se vende por CAJA (sin unidadVenta),
+      // descontar del lote cantidad × factor (el kardex/Producto.stock se mantiene en cajas).
+      const factorConvVenta = Number((producto as any).factorConversion ?? 1);
+      const cantidadLote = factorConvVenta > 1 && !(item as any).unidadVenta ? cantidad * factorConvVenta : cantidad;
 
       // Registrar movimiento de kardex si se proporcionan los datos
       if (data && this.kardexService) {
@@ -1328,14 +1380,14 @@ export class ComprobanteService {
             await this.prisma.$transaction(async (tx) => {
               await this.loteService.descontarStockLoteEnTx(tx, {
                 loteId: Number(item.loteId),
-                cantidad,
+                cantidad: cantidadLote,
                 movimientoKardexId: movimiento.id,
               });
             });
           } else {
             await this.loteService.descontarStockLote(
               productoId,
-              cantidad,
+              cantidadLote,
               movimiento.id,
             );
           }
@@ -1442,6 +1494,63 @@ export class ComprobanteService {
     }
   }
 
+  private normalizarCuotasCredito(
+    montoCredito: number,
+    cuotas?: any[],
+    fechaVencimientoCredito?: string | Date,
+  ): Array<{ monto: number; fechaVencimiento: string }> {
+    const totalCredito = this.round2(Number(montoCredito || 0));
+    if (totalCredito <= 0) return [];
+
+    const cuotasValidas = Array.isArray(cuotas) ? cuotas : [];
+    const normalizadas = cuotasValidas
+      .map((cuota) => ({
+        monto: this.round2(Number(cuota?.monto ?? 0)),
+        fechaVencimiento: String(cuota?.fechaVencimiento ?? '').slice(0, 10),
+      }))
+      .filter((cuota) => cuota.monto > 0 || cuota.fechaVencimiento);
+
+    if (normalizadas.length === 0) {
+      if (!fechaVencimientoCredito) {
+        throw new BadRequestException(
+          'La factura al crédito requiere fecha de vencimiento o cronograma de cuotas',
+        );
+      }
+      const fecha = new Date(fechaVencimientoCredito);
+      if (Number.isNaN(fecha.getTime())) {
+        throw new BadRequestException('Fecha de vencimiento de crédito inválida');
+      }
+      return [
+        {
+          monto: totalCredito,
+          fechaVencimiento: fecha.toISOString().slice(0, 10),
+        },
+      ];
+    }
+
+    for (const cuota of normalizadas) {
+      if (cuota.monto <= 0) {
+        throw new BadRequestException('Todas las cuotas deben tener monto mayor a cero');
+      }
+      const fecha = new Date(cuota.fechaVencimiento);
+      if (!cuota.fechaVencimiento || Number.isNaN(fecha.getTime())) {
+        throw new BadRequestException('Todas las cuotas deben tener fecha de vencimiento válida');
+      }
+      cuota.fechaVencimiento = fecha.toISOString().slice(0, 10);
+    }
+
+    const sumaCuotas = this.round2(
+      normalizadas.reduce((sum, cuota) => sum + cuota.monto, 0),
+    );
+    if (Math.abs(sumaCuotas - totalCredito) > 0.01) {
+      throw new BadRequestException(
+        `La suma de cuotas (S/ ${sumaCuotas.toFixed(2)}) debe ser igual al saldo a crédito (S/ ${totalCredito.toFixed(2)})`,
+      );
+    }
+
+    return normalizadas;
+  }
+
   async crearFormal(
     input: any,
     empresaId: number,
@@ -1476,6 +1585,7 @@ export class ComprobanteService {
       retencionPorcentaje,
       comprobanteOrigenId,
       paymentDetails,
+      fechaVencimientoCredito,
     } = input;
 
     // Cuando se convierte desde un informal (NV, TICKET, etc.) el stock ya fue descontado
@@ -1601,6 +1711,10 @@ export class ComprobanteService {
       await this.validarDetallePago(paymentDetails, medioPago, mtoImpVenta, empresaId);
     }
 
+    const cuotasCredito = esPagoCredito
+      ? this.normalizarCuotasCredito(saldoInicial, cuotas, fechaVencimientoCredito)
+      : null;
+
     const dataBase: any = {
       tipoOperacionId: tipoOperacionIdFinal ?? undefined,
       tipoDetraccionId: tipoDetraccionId ?? undefined,
@@ -1608,7 +1722,7 @@ export class ComprobanteService {
       cuentaBancoNacion: cuentaBancoNacion ?? null,
       porcentajeDetraccion: finalPorcentajeDetraccion ? Number(finalPorcentajeDetraccion) : null,
       montoDetraccion: finalMontoDetraccion ? Number(finalMontoDetraccion) : null,
-      cuotas: cuotas ?? Prisma.JsonNull,
+      cuotas: cuotasCredito ?? Prisma.JsonNull,
       tipoDoc: formalTipo,
       fechaEmision: fecha,
       formaPagoTipo,
@@ -1633,6 +1747,10 @@ export class ComprobanteService {
       estadoEnvioSunat: 'PENDIENTE' as string,
       estadoPago: estadoPagoInicial,
       saldo: saldoInicial,
+      fechaVencimientoCredito:
+        esPagoCredito && fechaVencimientoCredito
+          ? new Date(fechaVencimientoCredito)
+          : undefined,
       ...(formalTipo === '08'
         ? {
           tipDocAfectado: tipDocAfectado ?? null,
@@ -2933,6 +3051,7 @@ export class ComprobanteService {
       isDocumentoFiscal,
       mtoOperGravadas: Number(full.mtoOperGravadas || 0).toFixed(2),
       mtoIGV: Number(full.mtoIGV || 0).toFixed(2),
+      mtoOperExoneradas: Number((full as any).mtoOperExoneradas || 0).toFixed(2),
       mtoOperInafectas: Number((full as any).mtoOperInafectas || 0).toFixed(2),
       mtoImpVenta: mtoImpVenta.toFixed(2),
       descuento,
