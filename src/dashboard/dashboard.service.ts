@@ -456,13 +456,18 @@ export class DashboardService {
           },
         }),
         this.prisma.comprobante.aggregate({
-          _sum: { mtoImpVenta: true },
+          // Suma el saldo pendiente (no el total), igual que Cuentas por Cobrar.
+          _sum: { saldo: true },
           _count: { id: true },
           where: {
             empresaId,
             ...(sedeId ? { sedeId } : {}),
             estadoPago: { in: [EstadoPago.PENDIENTE_PAGO, EstadoPago.PAGO_PARCIAL] },
-            tipoDoc: { notIn: [...TIPOS_INFORMALES_ARRAY, '07'] },
+            // Incluye notas de venta y demás receivables; excluye pedidos
+            // preliminares (NP), cotizaciones (COT) y notas de crédito (07).
+            tipoDoc: { notIn: ['NP', 'COT', '07'] },
+            estadoEnvioSunat: { not: EstadoSunat.ANULADO },
+            saldo: { gt: 0 },
           },
         }),
         this.prisma.pedidoTienda.count({
@@ -606,7 +611,7 @@ export class DashboardService {
         },
         cuentasCobrar: {
           cantidad: cuentasCobrarAgg._count.id,
-          total: Number(cuentasCobrarAgg._sum.mtoImpVenta ?? 0),
+          total: Number(cuentasCobrarAgg._sum.saldo ?? 0),
         },
         pedidosTiendaPendientes: pedidosTiendaCount,
       },

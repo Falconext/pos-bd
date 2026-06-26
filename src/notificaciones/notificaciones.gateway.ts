@@ -19,6 +19,10 @@ const allowedSocketOrigins = [
   'https://app.falconext.pe',
   'https://app.krezka.com',
   'https://www.krezka.com',
+  // Reseller white-label: Jamble POS (dominio propio del cliente reseller)
+  'https://app.jamblepos.com',
+  'https://www.jamblepos.com',
+  'https://jamblepos.com',
   process.env.FRONTEND_URL,
   ...(process.env.CORS_EXTRA_ORIGINS || '')
     .split(',')
