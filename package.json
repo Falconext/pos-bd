@@ -20,6 +20,7 @@
     "sync:plans": "npx ts-node prisma/seeds/update-planes-v2.ts",
     "migrate:sedes": "npx ts-node src/scripts/migrate-sedes.ts",
     "reset:stock": "npx ts-node src/scripts/reset-stock-50.ts",
+    "diagnose:empresa-scope": "npx ts-node src/scripts/diagnose-empresa-scope.ts",
     "seed:digemid": "npx ts-node -r tsconfig-paths/register src/scripts/seed-digemid.ts",
     "postinstall": "prisma generate",
     "migrate:deploy": "prisma migrate deploy",

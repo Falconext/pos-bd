@@ -27,6 +27,10 @@ export class CreatePlanDto {
     @Min(1)
     duracionDias: number;
 
+    @IsString()
+    @IsOptional()
+    tipoFacturacion?: string;
+
     // Límites
     @IsNumber()
     @IsOptional()
@@ -84,6 +88,10 @@ export class CreatePlanDto {
     @IsBoolean()
     @IsOptional()
     tieneGestionProvisiones?: boolean;
+
+    @IsBoolean()
+    @IsOptional()
+    tieneDescripcionRica?: boolean;
 
     @IsObject()
     @IsOptional()
