@@ -182,6 +182,14 @@ export class CrearComprobanteDto {
   @IsNumber()
   montoDescuentoGlobal?: number;
 
+  // Descuento global enviado por los clientes (web/mobile/desktop).
+  // El cálculo real usa montoDescuentoGlobal; se acepta para no rechazar el payload.
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  descuento?: number;
+
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
