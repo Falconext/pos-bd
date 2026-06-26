@@ -109,7 +109,7 @@ export class PagoService {
   async obtenerPagos(comprobanteId: number) {
     const comprobante = await this.prisma.comprobante.findUnique({
       where: { id: comprobanteId },
-      include: { pagos: { orderBy: { fecha: 'desc' } } },
+      include: { pagos: { orderBy: { fecha: 'desc' }, include: { usuario: { select: { nombre: true } } } } },
     });
 
     if (!comprobante) {

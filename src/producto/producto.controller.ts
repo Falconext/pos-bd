@@ -26,7 +26,10 @@ import { CreateProductoDto } from './dto/create-producto.dto';
 import { ListProductoDto } from './dto/list-producto.dto';
 import { UpdateProductoDto } from './dto/update-producto.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { imageUploadOptions } from '../common/utils/multer.config';
+import {
+  excelUploadOptions,
+  imageUploadOptions,
+} from '../common/utils/multer.config';
 import { GeminiService } from '../gemini/gemini.service';
 import { ProductoLoteService } from './producto-lote.service';
 import { CrearLoteDto } from './dto/lote.dto';
@@ -35,7 +38,10 @@ import { KardexService } from '../kardex/kardex.service';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('productos')
 export class ProductoController {
-  private readonly imageSearchCache = new Map<string, { bestUrl: string; candidates: string[]; cachedAt: number }>();
+  private readonly imageSearchCache = new Map<
+    string,
+    { bestUrl: string; candidates: string[]; cachedAt: number }
+  >();
   private readonly IMAGE_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 días
 
   constructor(
@@ -111,7 +117,15 @@ export class ProductoController {
     const cacheKey = `${nombre}|${marca}|${categoria}`.toLowerCase().trim();
     const cached = this.imageSearchCache.get(cacheKey);
     if (cached && Date.now() - cached.cachedAt < this.IMAGE_CACHE_TTL) {
-      void this.service.guardarImagenMemorizada({ empresaId: user.empresaId, nombre, marca, categoria, url: cached.bestUrl }).catch(() => {});
+      void this.service
+        .guardarImagenMemorizada({
+          empresaId: user.empresaId,
+          nombre,
+          marca,
+          categoria,
+          url: cached.bestUrl,
+        })
+        .catch(() => {});
       return {
         success: true,
         url: cached.bestUrl,
@@ -273,12 +287,19 @@ export class ProductoController {
       rawImages: ImageResult[],
       rankedByUrl: Map<string, any>,
       curatedGlobal: Set<string>,
-    ): { bestLocal: { url: string; score: number; tokenMatches: number } | null; curated: string[] } => {
+    ): {
+      bestLocal: { url: string; score: number; tokenMatches: number } | null;
+      curated: string[];
+    } => {
       const candidates = rawImages
         .filter((img) => !!img?.url && /^https?:\/\//i.test(String(img.url)))
         .map((img) => {
           const ranking = scoreImage(img);
-          return { img, score: ranking.score, tokenMatches: ranking.tokenMatches };
+          return {
+            img,
+            score: ranking.score,
+            tokenMatches: ranking.tokenMatches,
+          };
         })
         .sort((a, b) => b.score - a.score);
 
@@ -287,7 +308,15 @@ export class ProductoController {
         const url = String(c.img.url);
         const prev = rankedByUrl.get(url);
         if (!prev || c.score > prev.score) {
-          rankedByUrl.set(url, { url, title: c.img.title, alt: c.img.alt, width: c.img.width, height: c.img.height, score: c.score, tokenMatches: c.tokenMatches });
+          rankedByUrl.set(url, {
+            url,
+            title: c.img.title,
+            alt: c.img.alt,
+            width: c.img.width,
+            height: c.img.height,
+            score: c.score,
+            tokenMatches: c.tokenMatches,
+          });
         }
       }
 
@@ -300,16 +329,34 @@ export class ProductoController {
 
       const best = candidates[0];
       return {
-        bestLocal: best?.img?.url ? { url: String(best.img.url), score: best.score, tokenMatches: best.tokenMatches } : null,
+        bestLocal: best?.img?.url
+          ? {
+              url: String(best.img.url),
+              score: best.score,
+              tokenMatches: best.tokenMatches,
+            }
+          : null,
         curated: curatedList,
       };
     };
 
     try {
-      const canonicalName = normalize(nombre).split(' ').map(canonicalToken).join(' ');
-      const canonicalBrand = normalize(marca).split(' ').map(canonicalToken).join(' ');
-      const canonicalCategory = normalize(categoria).split(' ').map(canonicalToken).join(' ');
-      const queryContext = [canonicalName, canonicalBrand, canonicalCategory].filter(Boolean).join(' ').trim();
+      const canonicalName = normalize(nombre)
+        .split(' ')
+        .map(canonicalToken)
+        .join(' ');
+      const canonicalBrand = normalize(marca)
+        .split(' ')
+        .map(canonicalToken)
+        .join(' ');
+      const canonicalCategory = normalize(categoria)
+        .split(' ')
+        .map(canonicalToken)
+        .join(' ');
+      const queryContext = [canonicalName, canonicalBrand, canonicalCategory]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
 
       const queries = Array.from(
         new Set(
@@ -321,9 +368,24 @@ export class ProductoController {
         ),
       );
 
-      let bestGlobal: { url: string; score: number; tokenMatches: number } | null = null;
+      let bestGlobal: {
+        url: string;
+        score: number;
+        tokenMatches: number;
+      } | null = null;
       const curatedGlobal = new Set<string>();
-      const rankedByUrl = new Map<string, { url: string; title?: string; alt?: string; width?: number; height?: number; score: number; tokenMatches: number }>();
+      const rankedByUrl = new Map<
+        string,
+        {
+          url: string;
+          title?: string;
+          alt?: string;
+          width?: number;
+          height?: number;
+          score: number;
+          tokenMatches: number;
+        }
+      >();
 
       for (const query of queries) {
         // Provider 1: Serper (Google Images real, 2500 gratis sin CC)
@@ -333,18 +395,39 @@ export class ProductoController {
             const serperResp = await axios.post(
               'https://google.serper.dev/images',
               { q: query, gl: 'pe', hl: 'es', num: 10 },
-              { headers: { 'X-API-KEY': serperKey, 'Content-Type': 'application/json' }, timeout: 10000 },
+              {
+                headers: {
+                  'X-API-KEY': serperKey,
+                  'Content-Type': 'application/json',
+                },
+                timeout: 10000,
+              },
             );
-            const serperImages: ImageResult[] = ((serperResp.data as any)?.images || []).map((img: any) => ({
+            const serperImages: ImageResult[] = (
+              (serperResp.data as any)?.images || []
+            ).map((img: any) => ({
               url: img?.imageUrl || '',
               title: img?.title || '',
               alt: img?.title || '',
               width: Number(img?.imageWidth || 0) || undefined,
               height: Number(img?.imageHeight || 0) || undefined,
             }));
-            const { bestLocal } = processImageResults(serperImages, rankedByUrl, curatedGlobal);
-            if (bestLocal && (!bestGlobal || bestLocal.score > bestGlobal.score)) bestGlobal = bestLocal;
-            if (bestLocal && bestLocal.score >= 6 && bestLocal.tokenMatches >= 1) break;
+            const { bestLocal } = processImageResults(
+              serperImages,
+              rankedByUrl,
+              curatedGlobal,
+            );
+            if (
+              bestLocal &&
+              (!bestGlobal || bestLocal.score > bestGlobal.score)
+            )
+              bestGlobal = bestLocal;
+            if (
+              bestLocal &&
+              bestLocal.score >= 6 &&
+              bestLocal.tokenMatches >= 1
+            )
+              break;
           } catch {
             // Continuar con siguiente provider
           }
@@ -355,11 +438,26 @@ export class ProductoController {
         const cseCx = process.env.GOOGLE_CSE_CX;
         if (cseApiKey && cseCx) {
           try {
-            const cseResp = await axios.get('https://www.googleapis.com/customsearch/v1', {
-              params: { key: cseApiKey, cx: cseCx, searchType: 'image', q: query, num: 10, imgType: 'photo', safe: 'medium', gl: 'pe', hl: 'es' },
-              timeout: 10000,
-            });
-            const cseItems: any[] = Array.isArray((cseResp.data as any)?.items) ? (cseResp.data as any).items : [];
+            const cseResp = await axios.get(
+              'https://www.googleapis.com/customsearch/v1',
+              {
+                params: {
+                  key: cseApiKey,
+                  cx: cseCx,
+                  searchType: 'image',
+                  q: query,
+                  num: 10,
+                  imgType: 'photo',
+                  safe: 'medium',
+                  gl: 'pe',
+                  hl: 'es',
+                },
+                timeout: 10000,
+              },
+            );
+            const cseItems: any[] = Array.isArray((cseResp.data as any)?.items)
+              ? (cseResp.data as any).items
+              : [];
             const cseImages: ImageResult[] = cseItems.map((item: any) => ({
               url: item?.link || '',
               title: item?.title || '',
@@ -367,9 +465,22 @@ export class ProductoController {
               width: Number(item?.image?.width || 0) || undefined,
               height: Number(item?.image?.height || 0) || undefined,
             }));
-            const { bestLocal } = processImageResults(cseImages, rankedByUrl, curatedGlobal);
-            if (bestLocal && (!bestGlobal || bestLocal.score > bestGlobal.score)) bestGlobal = bestLocal;
-            if (bestLocal && bestLocal.score >= 6 && bestLocal.tokenMatches >= 1) break;
+            const { bestLocal } = processImageResults(
+              cseImages,
+              rankedByUrl,
+              curatedGlobal,
+            );
+            if (
+              bestLocal &&
+              (!bestGlobal || bestLocal.score > bestGlobal.score)
+            )
+              bestGlobal = bestLocal;
+            if (
+              bestLocal &&
+              bestLocal.score >= 6 &&
+              bestLocal.tokenMatches >= 1
+            )
+              break;
           } catch {
             // Continuar con siguiente provider
           }
@@ -379,21 +490,51 @@ export class ProductoController {
         const braveApiKey = process.env.BRAVE_SEARCH_API_KEY;
         if (braveApiKey) {
           try {
-            const braveResp = await axios.get('https://api.search.brave.com/res/v1/images/search', {
-              params: { q: query, count: 20, country: 'PE', search_lang: 'es', safesearch: 'strict', spellcheck: true },
-              headers: { 'X-Subscription-Token': braveApiKey },
-              timeout: 10000,
-            });
-            const braveItems: any[] = Array.isArray((braveResp.data as any)?.results) ? (braveResp.data as any).results : [];
+            const braveResp = await axios.get(
+              'https://api.search.brave.com/res/v1/images/search',
+              {
+                params: {
+                  q: query,
+                  count: 20,
+                  country: 'PE',
+                  search_lang: 'es',
+                  safesearch: 'strict',
+                  spellcheck: true,
+                },
+                headers: { 'X-Subscription-Token': braveApiKey },
+                timeout: 10000,
+              },
+            );
+            const braveItems: any[] = Array.isArray(
+              (braveResp.data as any)?.results,
+            )
+              ? (braveResp.data as any).results
+              : [];
             const braveImages: ImageResult[] = braveItems.map((item: any) => ({
-              url: item?.properties?.url || item?.url || item?.thumbnail?.src || '',
+              url:
+                item?.properties?.url ||
+                item?.url ||
+                item?.thumbnail?.src ||
+                '',
               title: item?.title || item?.page_title || '',
               alt: item?.description || item?.alt || '',
-              width: Number(item?.properties?.width || item?.width || 0) || undefined,
-              height: Number(item?.properties?.height || item?.height || 0) || undefined,
+              width:
+                Number(item?.properties?.width || item?.width || 0) ||
+                undefined,
+              height:
+                Number(item?.properties?.height || item?.height || 0) ||
+                undefined,
             }));
-            const { bestLocal } = processImageResults(braveImages, rankedByUrl, curatedGlobal);
-            if (bestLocal && (!bestGlobal || bestLocal.score > bestGlobal.score)) bestGlobal = bestLocal;
+            const { bestLocal } = processImageResults(
+              braveImages,
+              rankedByUrl,
+              curatedGlobal,
+            );
+            if (
+              bestLocal &&
+              (!bestGlobal || bestLocal.score > bestGlobal.score)
+            )
+              bestGlobal = bestLocal;
           } catch {
             // Continuar
           }
@@ -404,19 +545,44 @@ export class ProductoController {
         if (pixabayKey) {
           try {
             const pixabayResp = await axios.get('https://pixabay.com/api/', {
-              params: { key: pixabayKey, q: query, image_type: 'photo', per_page: 10, safesearch: true, lang: 'es' },
+              params: {
+                key: pixabayKey,
+                q: query,
+                image_type: 'photo',
+                per_page: 10,
+                safesearch: true,
+                lang: 'es',
+              },
               timeout: 8000,
             });
-            const pixabayHits: any[] = Array.isArray((pixabayResp.data as any)?.hits) ? (pixabayResp.data as any).hits : [];
-            const pixabayImages: ImageResult[] = pixabayHits.map((hit: any) => ({
-              url: hit?.largeImageURL || hit?.webformatURL || '',
-              title: hit?.tags || '',
-              alt: hit?.tags || '',
-              width: Number(hit?.imageWidth || hit?.webformatWidth || 0) || undefined,
-              height: Number(hit?.imageHeight || hit?.webformatHeight || 0) || undefined,
-            }));
-            const { bestLocal } = processImageResults(pixabayImages, rankedByUrl, curatedGlobal);
-            if (bestLocal && (!bestGlobal || bestLocal.score > bestGlobal.score)) bestGlobal = bestLocal;
+            const pixabayHits: any[] = Array.isArray(
+              (pixabayResp.data as any)?.hits,
+            )
+              ? (pixabayResp.data as any).hits
+              : [];
+            const pixabayImages: ImageResult[] = pixabayHits.map(
+              (hit: any) => ({
+                url: hit?.largeImageURL || hit?.webformatURL || '',
+                title: hit?.tags || '',
+                alt: hit?.tags || '',
+                width:
+                  Number(hit?.imageWidth || hit?.webformatWidth || 0) ||
+                  undefined,
+                height:
+                  Number(hit?.imageHeight || hit?.webformatHeight || 0) ||
+                  undefined,
+              }),
+            );
+            const { bestLocal } = processImageResults(
+              pixabayImages,
+              rankedByUrl,
+              curatedGlobal,
+            );
+            if (
+              bestLocal &&
+              (!bestGlobal || bestLocal.score > bestGlobal.score)
+            )
+              bestGlobal = bestLocal;
           } catch {
             // Continuar
           }
@@ -425,8 +591,20 @@ export class ProductoController {
 
       // Helper para guardar resultado en caché en memoria + DB automáticamente
       const guardarEnCache = (url: string, candidates: string[]) => {
-        this.imageSearchCache.set(cacheKey, { bestUrl: url, candidates, cachedAt: Date.now() });
-        void this.service.guardarImagenMemorizada({ empresaId: user.empresaId, nombre, marca, categoria, url }).catch(() => {});
+        this.imageSearchCache.set(cacheKey, {
+          bestUrl: url,
+          candidates,
+          cachedAt: Date.now(),
+        });
+        void this.service
+          .guardarImagenMemorizada({
+            empresaId: user.empresaId,
+            nombre,
+            marca,
+            categoria,
+            url,
+          })
+          .catch(() => {});
       };
 
       // Gemini decide la mejor candidata (si está disponible), usando las mejores heurísticas.
@@ -450,7 +628,8 @@ export class ProductoController {
 
         if (geminiChoice?.url) {
           const globalCandidates = Array.from(curatedGlobal).slice(0, 5);
-          const candidates = globalCandidates.length > 0 ? globalCandidates : [geminiChoice.url];
+          const candidates =
+            globalCandidates.length > 0 ? globalCandidates : [geminiChoice.url];
           guardarEnCache(geminiChoice.url, candidates);
           return {
             success: true,
@@ -464,7 +643,8 @@ export class ProductoController {
 
       const globalCandidates = Array.from(curatedGlobal).slice(0, 5);
       if (bestGlobal?.url && bestGlobal.score >= 6) {
-        const candidates = globalCandidates.length > 0 ? globalCandidates : [bestGlobal.url];
+        const candidates =
+          globalCandidates.length > 0 ? globalCandidates : [bestGlobal.url];
         guardarEnCache(bestGlobal.url, candidates);
         return {
           success: true,
@@ -479,14 +659,16 @@ export class ProductoController {
         guardarEnCache(globalCandidates[0], globalCandidates);
         return {
           success: false,
-          message: 'No hubo coincidencia exacta, pero encontré opciones sugeridas.',
+          message:
+            'No hubo coincidencia exacta, pero encontré opciones sugeridas.',
           candidates: globalCandidates,
         };
       }
 
       return {
         success: false,
-        message: 'No se encontraron imágenes suficientemente relacionadas para este producto.',
+        message:
+          'No se encontraron imágenes suficientemente relacionadas para este producto.',
         candidates: [],
       };
     } catch (e: any) {
@@ -585,10 +767,15 @@ export class ProductoController {
     @UploadedFile() file: Express.Multer.File,
     @Body() body: { color: string },
   ) {
-    return this.service.subirImagenColorVariantes(user.empresaId, id, body.color, {
-      buffer: file?.buffer,
-      mimetype: file?.mimetype,
-    });
+    return this.service.subirImagenColorVariantes(
+      user.empresaId,
+      id,
+      body.color,
+      {
+        buffer: file?.buffer,
+        mimetype: file?.mimetype,
+      },
+    );
   }
 
   // Catálogo optimizado para POS farmacia/botica/droguería — con FEFO, vencimientos y receta
@@ -649,7 +836,10 @@ export class ProductoController {
     @Param('id', ParseIntPipe) id: number,
     @Body() body: any,
   ) {
-    return this.service.guardarPlantillaFichaTecnica(user.empresaId, { ...body, id });
+    return this.service.guardarPlantillaFichaTecnica(user.empresaId, {
+      ...body,
+      id,
+    });
   }
 
   @Get()
@@ -659,9 +849,12 @@ export class ProductoController {
     @Query() query: ListProductoDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const isAdmin = user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
+    const isAdmin =
+      user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
     const sedeId = isAdmin
-      ? query.sedeId ? Number(query.sedeId) : null
+      ? query.sedeId
+        ? Number(query.sedeId)
+        : null
       : user.sedeId;
     const resultado = await this.service.listar({
       empresaId: user.empresaId,
@@ -683,7 +876,10 @@ export class ProductoController {
   @Get('codigo-siguiente')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async codigoSiguiente(@User() user: any) {
-    const codigo = await this.service.obtenerSiguienteCodigo(user.empresaId, 'PR');
+    const codigo = await this.service.obtenerSiguienteCodigo(
+      user.empresaId,
+      'PR',
+    );
     return { codigo };
   }
 
@@ -695,7 +891,10 @@ export class ProductoController {
     @Res() res: Response,
   ) {
     const buffer = await this.service.exportar(user.empresaId, search);
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
     res.setHeader('Content-Disposition', 'attachment; filename=productos.xlsx');
     res.status(200).send(buffer);
   }
@@ -704,8 +903,14 @@ export class ProductoController {
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async plantilla(@Res() res: Response) {
     const buffer = await this.service.plantilla();
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename=plantilla_productos.xlsx');
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename=plantilla_productos.xlsx',
+    );
     res.status(200).send(buffer);
   }
 
@@ -729,7 +934,10 @@ export class ProductoController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const sedeIdNum = sedeId ? parseInt(sedeId, 10) : undefined;
-    const eliminados = await this.service.eliminarTodo(user.empresaId, sedeIdNum);
+    const eliminados = await this.service.eliminarTodo(
+      user.empresaId,
+      sedeIdNum,
+    );
     res.locals.message = `Se eliminaron (lógicamente) ${eliminados.count} productos correctamente`;
     return eliminados;
   }
@@ -775,7 +983,11 @@ export class ProductoController {
     @User() user: any,
     @Body() body: { publicarEnTienda: boolean },
   ) {
-    return this.service.togglePublicarEnTienda(id, user.empresaId, body.publicarEnTienda);
+    return this.service.togglePublicarEnTienda(
+      id,
+      user.empresaId,
+      body.publicarEnTienda,
+    );
   }
 
   @Patch(':id/estado')
@@ -786,7 +998,11 @@ export class ProductoController {
     @Body() body: { estado: 'ACTIVO' | 'INACTIVO' | 'PLACEHOLDER' },
     @Res({ passthrough: true }) res: Response,
   ) {
-    const actualizado = await this.service.cambiarEstado(id, user.empresaId, body.estado as any);
+    const actualizado = await this.service.cambiarEstado(
+      id,
+      user.empresaId,
+      body.estado as any,
+    );
     res.locals.message = `Producto ${body.estado === 'ACTIVO' ? 'activado' : body.estado === 'INACTIVO' ? 'desactivado' : 'actualizado'} correctamente`;
     return actualizado;
   }
@@ -805,10 +1021,15 @@ export class ProductoController {
 
   @Post('importar')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', excelUploadOptions))
   async cargarMasivo(@UploadedFile() file: any, @User() user: any) {
     if (!file) {
-      return { total: 0, exitosos: 0, fallidos: 0, detalles: [{ error: 'No se proporcionó un archivo Excel' }] };
+      return {
+        total: 0,
+        exitosos: 0,
+        fallidos: 0,
+        detalles: [{ error: 'No se proporcionó un archivo Excel' }],
+      };
     }
     return this.service.cargaMasiva(file.buffer, user.empresaId);
   }

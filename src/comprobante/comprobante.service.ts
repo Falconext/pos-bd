@@ -7,7 +7,13 @@ import {
   Logger,
   Optional,
 } from '@nestjs/common';
-import { Prisma, EstadoProductoSerie, EstadoReserva, EstadoSunat, EstadoType } from '@prisma/client';
+import {
+  Prisma,
+  EstadoProductoSerie,
+  EstadoReserva,
+  EstadoSunat,
+  EstadoType,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { KardexService } from '../kardex/kardex.service';
 import { InventarioNotificacionesService } from '../notificaciones/inventario-notificaciones.service';
@@ -16,7 +22,10 @@ import { PdfGeneratorService } from './pdf-generator.service';
 import { numeroALetras } from './utils/numero-a-letras';
 import { ProductoLoteService } from '../producto/producto-lote.service';
 import { EnviarSunatService } from './enviar-sunat.service';
-import { isJambleProvider, resolveBillingProvider } from '../common/utils/billing-provider';
+import {
+  isJambleProvider,
+  resolveBillingProvider,
+} from '../common/utils/billing-provider';
 import { ComisionesService } from '../comisiones/comisiones.service';
 
 @Injectable()
@@ -26,21 +35,32 @@ export class ComprobanteService {
   private readonly adminSistemaRole = 'ADMIN_SISTEMA';
 
   private esProductoServicio(atributosTecnicos?: Record<string, any> | null) {
-    return String(atributosTecnicos?.tipoProducto || '').toUpperCase() === 'SERVICIO';
+    return (
+      String(atributosTecnicos?.tipoProducto || '').toUpperCase() === 'SERVICIO'
+    );
   }
 
-  private getJambleCorrelativoFloor(empresaId: number, serie: string): number | null {
+  private getJambleCorrelativoFloor(
+    empresaId: number,
+    serie: string,
+  ): number | null {
     // Format:
     // JAMBLE_CORRELATIVO_FLOOR="43:B001:60,43:F001:16,50:B001:120"
     const raw = String(process.env.JAMBLE_CORRELATIVO_FLOOR || '').trim();
     if (!raw) return null;
 
-    const entries = raw.split(',').map((v) => v.trim()).filter(Boolean);
+    const entries = raw
+      .split(',')
+      .map((v) => v.trim())
+      .filter(Boolean);
     for (const entry of entries) {
-      const [empresa, serieCfg, floor] = entry.split(':').map((v) => String(v || '').trim());
+      const [empresa, serieCfg, floor] = entry
+        .split(':')
+        .map((v) => String(v || '').trim());
       if (!empresa || !serieCfg || !floor) continue;
       if (Number(empresa) !== empresaId) continue;
-      if (serieCfg.toUpperCase() !== String(serie || '').toUpperCase()) continue;
+      if (serieCfg.toUpperCase() !== String(serie || '').toUpperCase())
+        continue;
       const value = Number(floor);
       if (!Number.isNaN(value) && value > 0) return value;
     }
@@ -58,13 +78,19 @@ export class ComprobanteService {
     @Inject(forwardRef(() => EnviarSunatService))
     private readonly enviarSunatService: EnviarSunatService,
     @Optional() private readonly comisionesService: ComisionesService,
-  ) { }
+  ) {}
 
   private normalizarMedioPago(value?: string) {
-    return String(value || 'EFECTIVO').trim().toUpperCase();
+    return String(value || 'EFECTIVO')
+      .trim()
+      .toUpperCase();
   }
 
-  private normalizarDetallePago(input: any, medioPago: string, montoObjetivo: number) {
+  private normalizarDetallePago(
+    input: any,
+    medioPago: string,
+    montoObjetivo: number,
+  ) {
     const objetivo = Math.max(0, this.round2(Number(montoObjetivo || 0)));
     const source = input && typeof input === 'object' ? input : {};
     const rawLines = Array.isArray(source.splitPayments)
@@ -73,53 +99,76 @@ export class ComprobanteService {
         ? source.pagos
         : [];
 
-    const lines = rawLines.length > 0
-      ? rawLines
-      : [{
-        method: source.method || medioPago,
-        amount: source.amount || objetivo,
-        referencia: source.referencia,
-        cuentaBancariaId: source.cuentaBancariaId,
-        tarjetaMarca: source.tarjetaMarca,
-        tarjetaTipo: source.tarjetaTipo,
-        tarjetaUltimos4: source.tarjetaUltimos4,
-      }];
+    const lines =
+      rawLines.length > 0
+        ? rawLines
+        : [
+            {
+              method: source.method || medioPago,
+              amount: source.amount || objetivo,
+              referencia: source.referencia,
+              cuentaBancariaId: source.cuentaBancariaId,
+              tarjetaMarca: source.tarjetaMarca,
+              tarjetaTipo: source.tarjetaTipo,
+              tarjetaUltimos4: source.tarjetaUltimos4,
+            },
+          ];
 
     let restante = objetivo;
     return lines
       .map((line: any) => {
         const requestedAmount = this.round2(Number(line?.amount || 0));
-        const amount = rawLines.length > 0 ? Math.min(requestedAmount, restante) : objetivo;
+        const amount =
+          rawLines.length > 0 ? Math.min(requestedAmount, restante) : objetivo;
         restante = this.round2(restante - amount);
         return {
           method: this.normalizarMedioPago(line?.method),
           amount,
           referencia: String(line?.referencia || '').trim() || null,
-          cuentaBancariaId: line?.cuentaBancariaId ? Number(line.cuentaBancariaId) : null,
+          cuentaBancariaId: line?.cuentaBancariaId
+            ? Number(line.cuentaBancariaId)
+            : null,
           tarjetaMarca: String(line?.tarjetaMarca || '').trim() || null,
           tarjetaTipo: String(line?.tarjetaTipo || '').trim() || null,
-          tarjetaUltimos4: String(line?.tarjetaUltimos4 || '').replace(/\D/g, '').slice(-4) || null,
+          tarjetaUltimos4:
+            String(line?.tarjetaUltimos4 || '')
+              .replace(/\D/g, '')
+              .slice(-4) || null,
         };
       })
       .filter((line: any) => line.amount > 0);
   }
 
-  private async validarDetallePago(input: any, medioPago: string, montoObjetivo: number, empresaId: number) {
+  private async validarDetallePago(
+    input: any,
+    medioPago: string,
+    montoObjetivo: number,
+    empresaId: number,
+  ) {
     const lines = this.normalizarDetallePago(input, medioPago, montoObjetivo);
     for (const line of lines) {
-      if (['TRANSFERENCIA', 'TARJETA'].includes(line.method) && !line.referencia) {
-        throw new BadRequestException(`El pago por ${line.method} requiere número de operación o voucher`);
+      if (
+        ['TRANSFERENCIA', 'TARJETA'].includes(line.method) &&
+        !line.referencia
+      ) {
+        throw new BadRequestException(
+          `El pago por ${line.method} requiere número de operación o voucher`,
+        );
       }
       if (line.method === 'TRANSFERENCIA') {
         if (!line.cuentaBancariaId) {
-          throw new BadRequestException('El pago por transferencia requiere cuenta bancaria destino');
+          throw new BadRequestException(
+            'El pago por transferencia requiere cuenta bancaria destino',
+          );
         }
         const cuenta = await this.prisma.cuentaBancaria.findFirst({
           where: { id: line.cuentaBancariaId, empresaId, activo: true },
           select: { id: true },
         });
         if (!cuenta) {
-          throw new BadRequestException('La cuenta bancaria destino no pertenece a la empresa o está inactiva');
+          throw new BadRequestException(
+            'La cuenta bancaria destino no pertenece a la empresa o está inactiva',
+          );
         }
       }
     }
@@ -219,7 +268,8 @@ export class ComprobanteService {
           : undefined;
       const validEstadosSunat = new Set(Object.values(EstadoSunat));
       const estadoSunatFilter =
-        normalizedEstado && validEstadosSunat.has(normalizedEstado as EstadoSunat)
+        normalizedEstado &&
+        validEstadosSunat.has(normalizedEstado as EstadoSunat)
           ? (normalizedEstado as EstadoSunat)
           : undefined;
 
@@ -277,7 +327,9 @@ export class ComprobanteService {
         });
         if (esPrincipal) {
           // Legacy comprobantes were created with sedeId=null before the JWT fix
-          sedeFilter = { AND: [{ OR: [{ sedeId: params.sedeId }, { sedeId: null }] }] };
+          sedeFilter = {
+            AND: [{ OR: [{ sedeId: params.sedeId }, { sedeId: null }] }],
+          };
         } else {
           sedeFilter = { sedeId: params.sedeId };
         }
@@ -290,29 +342,33 @@ export class ComprobanteService {
         tipoDoc: { in: tipoDoc ? [tipoDoc] : tiposPermitidos },
         ...(search
           ? {
-            OR: [
-              { serie: { contains: search, mode: 'insensitive' } },
-              ...(Number.isNaN(+search)
-                ? []
-                : [{ correlativo: parseInt(search, 10) }]),
-              {
-                cliente: { nroDoc: { contains: search, mode: 'insensitive' } },
-              },
-              {
-                cliente: { nombre: { contains: search, mode: 'insensitive' } },
-              },
-            ],
-          }
+              OR: [
+                { serie: { contains: search, mode: 'insensitive' } },
+                ...(Number.isNaN(+search)
+                  ? []
+                  : [{ correlativo: parseInt(search, 10) }]),
+                {
+                  cliente: {
+                    nroDoc: { contains: search, mode: 'insensitive' },
+                  },
+                },
+                {
+                  cliente: {
+                    nombre: { contains: search, mode: 'insensitive' },
+                  },
+                },
+              ],
+            }
           : {}),
         ...(fechaInicio || fechaFin
           ? {
-            fechaEmision: {
-              ...(adjustedFechaInicio
-                ? { gte: adjustedFechaInicio as any }
-                : {}),
-              ...(adjustedFechaFin ? { lte: adjustedFechaFin as any } : {}),
-            },
-          }
+              fechaEmision: {
+                ...(adjustedFechaInicio
+                  ? { gte: adjustedFechaInicio as any }
+                  : {}),
+                ...(adjustedFechaFin ? { lte: adjustedFechaFin as any } : {}),
+              },
+            }
           : {}),
         ...(tipoComprobante === 'FORMAL' && estadoSunatFilter
           ? { estadoEnvioSunat: estadoSunatFilter }
@@ -330,11 +386,19 @@ export class ComprobanteService {
           orderBy: [{ [sort]: order }, { id: 'desc' }] as any,
           include: {
             cliente: {
-              select: { id: true, nombre: true, nroDoc: true, persona: true },
+              select: {
+                id: true,
+                nombre: true,
+                nroDoc: true,
+                persona: true,
+                telefono: true,
+              },
             },
             detalles: {
               select: {
-                producto: { select: { id: true, descripcion: true, imagenUrl: true } },
+                producto: {
+                  select: { id: true, descripcion: true, imagenUrl: true },
+                },
                 unidad: true,
                 descripcion: true,
                 cantidad: true,
@@ -394,7 +458,9 @@ export class ComprobanteService {
 
       return { comprobantes: mapped, total: totalDb, page, limit };
     } catch (error: any) {
-      this.logger.error(`Error al listar comprobantes: ${error?.message || 'Error desconocido'}`);
+      this.logger.error(
+        `Error al listar comprobantes: ${error?.message || 'Error desconocido'}`,
+      );
       throw error;
     }
   }
@@ -404,7 +470,14 @@ export class ComprobanteService {
     tipoDoc: string,
     tipDocAfectado?: string,
   ) {
-    console.log('[ComprobanteService.siguienteCorrelativo] empresaId:', empresaId, 'tipoDoc:', tipoDoc, 'tipDocAfectado:', tipDocAfectado);
+    console.log(
+      '[ComprobanteService.siguienteCorrelativo] empresaId:',
+      empresaId,
+      'tipoDoc:',
+      tipoDoc,
+      'tipDocAfectado:',
+      tipDocAfectado,
+    );
 
     try {
       const tiposValidos = [
@@ -432,17 +505,36 @@ export class ComprobanteService {
         tipDocAfectado ?? null,
         empresaId,
       );
-      console.log('[ComprobanteService.siguienteCorrelativo] Success - serie:', serie, 'correlativo:', correlativo);
+      console.log(
+        '[ComprobanteService.siguienteCorrelativo] Success - serie:',
+        serie,
+        'correlativo:',
+        correlativo,
+      );
       return { serie, correlativo };
     } catch (error: any) {
-      console.error('[ComprobanteService.siguienteCorrelativo] ❌ ERROR:', error.message);
-      console.error('[ComprobanteService.siguienteCorrelativo] Error code:', error.code);
-      console.error('[ComprobanteService.siguienteCorrelativo] Full error:', JSON.stringify(error, null, 2));
+      console.error(
+        '[ComprobanteService.siguienteCorrelativo] ❌ ERROR:',
+        error.message,
+      );
+      console.error(
+        '[ComprobanteService.siguienteCorrelativo] Error code:',
+        error.code,
+      );
+      console.error(
+        '[ComprobanteService.siguienteCorrelativo] Full error:',
+        JSON.stringify(error, null, 2),
+      );
       throw error;
     }
   }
 
-  async detalle(empresaId: number, serie: string, correlativo: number, sedeId?: number) {
+  async detalle(
+    empresaId: number,
+    serie: string,
+    correlativo: number,
+    sedeId?: number,
+  ) {
     const comp = await this.prisma.comprobante.findFirst({
       where: { empresaId, serie, correlativo, ...(sedeId ? { sedeId } : {}) },
       include: {
@@ -453,7 +545,7 @@ export class ComprobanteService {
             lote: { select: { lote: true, fechaVencimiento: true } },
           },
         },
-        pagos: true
+        pagos: true,
       },
     });
     if (!comp) throw new NotFoundException('Comprobante no encontrado');
@@ -485,10 +577,10 @@ export class ComprobanteService {
                 id: true,
                 descripcion: true,
                 imagenUrl: true,
-              }
+              },
             },
             lote: { select: { lote: true, fechaVencimiento: true } },
-          }
+          },
         },
         usuario: {
           select: {
@@ -513,18 +605,19 @@ export class ComprobanteService {
       },
       select: {
         productoId: true,
-        lote: true,             // Legacy / Simple
+        lote: true, // Legacy / Simple
         fechaVencimiento: true, // Legacy / Simple
-        movimientoLotes: {       // Sistema de Lotes Complejo
+        movimientoLotes: {
+          // Sistema de Lotes Complejo
           select: {
             lote: {
               select: {
                 lote: true,
                 fechaVencimiento: true,
-              }
-            }
-          }
-        }
+              },
+            },
+          },
+        },
       },
     });
 
@@ -581,7 +674,12 @@ export class ComprobanteService {
     // - Factura (01): SUNAT exige Nota de Crédito, nunca baja directa
     // - Nota de Débito (08): ídem, use Nota de Crédito
     if (isFormal && comp.estadoEnvioSunat === 'EMITIDO') {
-      const tipoNombre = comp.tipoDoc === '01' ? 'Factura' : comp.tipoDoc === '03' ? 'Boleta' : 'Nota de Débito';
+      const tipoNombre =
+        comp.tipoDoc === '01'
+          ? 'Factura'
+          : comp.tipoDoc === '03'
+            ? 'Boleta'
+            : 'Nota de Débito';
       throw new BadRequestException(
         `Una ${tipoNombre} ya aceptada por SUNAT debe anularse emitiendo una Nota de Crédito. Use el botón "Generar NC (Anular)".`,
       );
@@ -698,7 +796,11 @@ export class ComprobanteService {
     return Array.from(
       new Set(
         raw
-          .map((serie) => String(serie ?? '').trim().toUpperCase())
+          .map((serie) =>
+            String(serie ?? '')
+              .trim()
+              .toUpperCase(),
+          )
           .filter(Boolean),
       ),
     );
@@ -719,8 +821,14 @@ export class ComprobanteService {
 
   private productoRequiereSerie(producto: any): boolean {
     const attrs = this.atributosProducto(producto);
-    const control = String(attrs.controlSeries ?? attrs.requiereSerie ?? '').toLowerCase();
-    return attrs.controlSeries === true || attrs.requiereSerie === true || ['true', 'si', 'sí', '1'].includes(control);
+    const control = String(
+      attrs.controlSeries ?? attrs.requiereSerie ?? '',
+    ).toLowerCase();
+    return (
+      attrs.controlSeries === true ||
+      attrs.requiereSerie === true ||
+      ['true', 'si', 'sí', '1'].includes(control)
+    );
   }
 
   private garantiaMesesProducto(producto: any): number | undefined {
@@ -729,13 +837,23 @@ export class ComprobanteService {
     return Number.isFinite(meses) && meses > 0 ? Math.trunc(meses) : undefined;
   }
 
-  private async validarSeriesComprobante(detalles: any[], empresaId: number, esVenta = true) {
+  private async validarSeriesComprobante(
+    detalles: any[],
+    empresaId: number,
+    esVenta = true,
+  ) {
     if (!esVenta) return;
 
-    const seriesSolicitadas = detalles.flatMap((detalle) => detalle.numerosSerie ?? []);
-    const duplicadas = seriesSolicitadas.filter((serie, index) => seriesSolicitadas.indexOf(serie) !== index);
+    const seriesSolicitadas = detalles.flatMap(
+      (detalle) => detalle.numerosSerie ?? [],
+    );
+    const duplicadas = seriesSolicitadas.filter(
+      (serie, index) => seriesSolicitadas.indexOf(serie) !== index,
+    );
     if (duplicadas.length > 0) {
-      throw new BadRequestException(`Series duplicadas en el comprobante: ${Array.from(new Set(duplicadas)).join(', ')}`);
+      throw new BadRequestException(
+        `Series duplicadas en el comprobante: ${Array.from(new Set(duplicadas)).join(', ')}`,
+      );
     }
 
     for (const detalle of detalles) {
@@ -744,16 +862,25 @@ export class ComprobanteService {
       const numerosSerie = this.normalizarNumerosSerie(detalle.numerosSerie);
       const requiereSerie = Boolean(detalle.requiereSerie);
 
-      if ((requiereSerie || numerosSerie.length > 0) && (!Number.isInteger(cantidad) || cantidad <= 0)) {
-        throw new BadRequestException(`El producto "${detalle.descripcion}" requiere cantidad entera para controlar series.`);
+      if (
+        (requiereSerie || numerosSerie.length > 0) &&
+        (!Number.isInteger(cantidad) || cantidad <= 0)
+      ) {
+        throw new BadRequestException(
+          `El producto "${detalle.descripcion}" requiere cantidad entera para controlar series.`,
+        );
       }
 
       if (requiereSerie && numerosSerie.length !== cantidad) {
-        throw new BadRequestException(`El producto "${detalle.descripcion}" requiere ${cantidad} serie(s). Recibidas: ${numerosSerie.length}.`);
+        throw new BadRequestException(
+          `El producto "${detalle.descripcion}" requiere ${cantidad} serie(s). Recibidas: ${numerosSerie.length}.`,
+        );
       }
 
       if (numerosSerie.length > 0 && numerosSerie.length !== cantidad) {
-        throw new BadRequestException(`La cantidad de series de "${detalle.descripcion}" debe coincidir con la cantidad vendida.`);
+        throw new BadRequestException(
+          `La cantidad de series de "${detalle.descripcion}" debe coincidir con la cantidad vendida.`,
+        );
       }
     }
 
@@ -768,18 +895,31 @@ export class ComprobanteService {
     });
 
     for (const existente of existentes) {
-      const detalle = detalles.find((d) => (d.numerosSerie ?? []).includes(existente.numeroSerie));
+      const detalle = detalles.find((d) =>
+        (d.numerosSerie ?? []).includes(existente.numeroSerie),
+      );
       if (!detalle) continue;
       if (existente.productoId !== Number(detalle.productoId)) {
-        throw new BadRequestException(`La serie ${existente.numeroSerie} pertenece a otro producto.`);
+        throw new BadRequestException(
+          `La serie ${existente.numeroSerie} pertenece a otro producto.`,
+        );
       }
-      if (existente.estado === EstadoProductoSerie.VENDIDO || existente.estado === EstadoProductoSerie.BAJA) {
-        throw new BadRequestException(`La serie ${existente.numeroSerie} no está disponible.`);
+      if (
+        existente.estado === EstadoProductoSerie.VENDIDO ||
+        existente.estado === EstadoProductoSerie.BAJA
+      ) {
+        throw new BadRequestException(
+          `La serie ${existente.numeroSerie} no está disponible.`,
+        );
       }
     }
   }
 
-  private async registrarSeriesVendidas(comprobanteId: number, empresaId: number, sedeId?: number | null) {
+  private async registrarSeriesVendidas(
+    comprobanteId: number,
+    empresaId: number,
+    sedeId?: number | null,
+  ) {
     const detalles = await this.prisma.detalleComprobante.findMany({
       where: { comprobanteId, numerosSerie: { not: Prisma.JsonNull } },
       select: {
@@ -840,7 +980,11 @@ export class ComprobanteService {
   ) {
     let intento = 0;
     while (intento < maxIntentos) {
-      const { serie, correlativo } = await this.obtenerSerieYCorrelativo(tipoDoc, tipDocAfectado, empresaId);
+      const { serie, correlativo } = await this.obtenerSerieYCorrelativo(
+        tipoDoc,
+        tipDocAfectado,
+        empresaId,
+      );
       try {
         return await this.prisma.comprobante.create({
           data: { ...data, serie, correlativo },
@@ -853,7 +997,9 @@ export class ComprobanteService {
         throw err;
       }
     }
-    throw new BadRequestException('No se pudo generar el correlativo. Intente de nuevo.');
+    throw new BadRequestException(
+      'No se pudo generar el correlativo. Intente de nuevo.',
+    );
   }
 
   private async obtenerSerieYCorrelativo(
@@ -861,7 +1007,14 @@ export class ComprobanteService {
     tipDocAfectado: string | null,
     empresaId: number,
   ) {
-    console.log('[obtenerSerieYCorrelativo] tipoDoc:', tipoDoc, 'tipDocAfectado:', tipDocAfectado, 'empresaId:', empresaId);
+    console.log(
+      '[obtenerSerieYCorrelativo] tipoDoc:',
+      tipoDoc,
+      'tipDocAfectado:',
+      tipDocAfectado,
+      'empresaId:',
+      empresaId,
+    );
 
     try {
       const empresaProvider = await this.prisma.empresa.findUnique({
@@ -936,7 +1089,11 @@ export class ComprobanteService {
       });
       let correlativo = ultimo ? Number(ultimo.correlativo) + 1 : 1;
 
-      if (!ultimo && configuredSerie?.correlativo && correlativo < configuredSerie.correlativo) {
+      if (
+        !ultimo &&
+        configuredSerie?.correlativo &&
+        correlativo < configuredSerie.correlativo
+      ) {
         correlativo = configuredSerie.correlativo;
       }
 
@@ -947,13 +1104,21 @@ export class ComprobanteService {
         }
       }
 
-      console.log('[obtenerSerieYCorrelativo] Success - ultimo:', ultimo?.id, 'nuevo correlativo:', correlativo);
+      console.log(
+        '[obtenerSerieYCorrelativo] Success - ultimo:',
+        ultimo?.id,
+        'nuevo correlativo:',
+        correlativo,
+      );
 
       return { serie, correlativo };
     } catch (error: any) {
       console.error('[obtenerSerieYCorrelativo] ❌ ERROR:', error.message);
       console.error('[obtenerSerieYCorrelativo] Error code:', error.code);
-      console.error('[obtenerSerieYCorrelativo] Full error:', JSON.stringify(error, null, 2));
+      console.error(
+        '[obtenerSerieYCorrelativo] Full error:',
+        JSON.stringify(error, null, 2),
+      );
       throw error;
     }
   }
@@ -965,15 +1130,21 @@ export class ComprobanteService {
 
     for (const s of serviceDetalles) {
       if (!String(s.descripcion ?? '').trim()) {
-        throw new BadRequestException('Los ítems de servicio (sin productoId) requieren una descripción.');
+        throw new BadRequestException(
+          'Los ítems de servicio (sin productoId) requieren una descripción.',
+        );
       }
       const cantidad = Number(s.cantidad);
       const precioConIgv = Number(s.nuevoValorUnitario);
       if (!Number.isFinite(cantidad) || cantidad <= 0) {
-        throw new BadRequestException(`Cantidad inválida para "${s.descripcion}"`);
+        throw new BadRequestException(
+          `Cantidad inválida para "${s.descripcion}"`,
+        );
       }
       if (!Number.isFinite(precioConIgv) || precioConIgv < 0) {
-        throw new BadRequestException(`Precio inválido para "${s.descripcion}"`);
+        throw new BadRequestException(
+          `Precio inválido para "${s.descripcion}"`,
+        );
       }
     }
 
@@ -1005,9 +1176,14 @@ export class ComprobanteService {
         where: { id: { in: productosFaltantes } },
         select: { id: true, descripcion: true, estado: true, empresaId: true },
       });
-      const productosRealmenteFaltantes = productosInactivos.filter(p => p.estado !== 'PLACEHOLDER' as any);
+      const productosRealmenteFaltantes = productosInactivos.filter(
+        (p) => p.estado !== ('PLACEHOLDER' as any),
+      );
 
-      if (productosRealmenteFaltantes.length > 0 || productosFaltantes.length > productosInactivos.length) {
+      if (
+        productosRealmenteFaltantes.length > 0 ||
+        productosFaltantes.length > productosInactivos.length
+      ) {
         const detalleError =
           productosRealmenteFaltantes.length > 0
             ? `Productos encontrados pero inactivos: ${productosRealmenteFaltantes.map((p) => `ID ${p.id} (${p.descripcion}) - Estado: ${p.estado}`).join('; ')}`
@@ -1025,10 +1201,14 @@ export class ComprobanteService {
       if (item.productoId == null) {
         const cantidad = Number(item.cantidad);
         const precioConIgv = Number(item.nuevoValorUnitario);
-        const unidadLibre = String(item.unidadVenta || item.unidad || 'ZZ').trim().toUpperCase();
+        const unidadLibre = String(item.unidadVenta || item.unidad || 'ZZ')
+          .trim()
+          .toUpperCase();
         const igvPct = 18;
         const valorUnitario = this.round2(precioConIgv / 1.18);
-        const igvMonto = this.round2(precioConIgv * cantidad - valorUnitario * cantidad);
+        const igvMonto = this.round2(
+          precioConIgv * cantidad - valorUnitario * cantidad,
+        );
         const mtoValorVenta = this.round2(valorUnitario * cantidad);
         mtoOperGravadas += valorUnitario * cantidad;
         totalIGV += igvMonto;
@@ -1051,7 +1231,9 @@ export class ComprobanteService {
       const productoId = Number(item.productoId);
       const prod = productos.find((p) => p.id === productoId)!;
       const cantidad = Number(item.cantidad);
-      const numerosSerie = this.normalizarNumerosSerie(item.numerosSerie ?? item.series);
+      const numerosSerie = this.normalizarNumerosSerie(
+        item.numerosSerie ?? item.series,
+      );
       const requiereSerie = this.productoRequiereSerie(prod);
       const descripcion = item.descripcion ?? (prod as any).descripcion;
       const precioConIgv =
@@ -1132,7 +1314,10 @@ export class ComprobanteService {
    * Valida receta médica y datos de controlados para rubros farmacia/botica/droguería.
    * Rechaza la emisión en backend (el frontend solo hace UX).
    */
-  private async validarRecetasSiFarmacia(detalles: any[], empresaId: number): Promise<void> {
+  private async validarRecetasSiFarmacia(
+    detalles: any[],
+    empresaId: number,
+  ): Promise<void> {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
       select: { rubro: { select: { nombre: true } } },
@@ -1152,7 +1337,12 @@ export class ComprobanteService {
 
     const productos = await this.prisma.producto.findMany({
       where: { id: { in: productIds }, empresaId },
-      select: { id: true, descripcion: true, requiereReceta: true, controlado: true },
+      select: {
+        id: true,
+        descripcion: true,
+        requiereReceta: true,
+        controlado: true,
+      },
     });
     const productoMap = new Map(productos.map((p) => [p.id, p]));
 
@@ -1204,14 +1394,20 @@ export class ComprobanteService {
     }
 
     if (!sedeId) {
-      throw new BadRequestException('No se pudo determinar la sede para descontar stock');
+      throw new BadRequestException(
+        'No se pudo determinar la sede para descontar stock',
+      );
     }
 
     return sedeId;
   }
 
   private async validarStockDisponibleParaVenta(
-    detalles: Array<{ productoId: number | null; cantidad: number; loteId?: number | null }>,
+    detalles: Array<{
+      productoId: number | null;
+      cantidad: number;
+      loteId?: number | null;
+    }>,
     data: {
       empresaId: number;
       usuarioId?: number;
@@ -1227,10 +1423,14 @@ export class ComprobanteService {
       const cantidad = Number(item.cantidad);
 
       if (!Number.isFinite(productoId) || productoId <= 0) {
-        throw new BadRequestException(`productoId inválido para descontar stock: ${item.productoId}`);
+        throw new BadRequestException(
+          `productoId inválido para descontar stock: ${item.productoId}`,
+        );
       }
       if (!Number.isFinite(cantidad) || cantidad <= 0) {
-        throw new BadRequestException(`Cantidad inválida para descontar stock: ${item.cantidad}`);
+        throw new BadRequestException(
+          `Cantidad inválida para descontar stock: ${item.cantidad}`,
+        );
       }
 
       const producto = await this.prisma.producto.findFirst({
@@ -1247,14 +1447,19 @@ export class ComprobanteService {
       });
 
       if (!producto) {
-        throw new BadRequestException('El producto no existe o no pertenece a la empresa');
+        throw new BadRequestException(
+          'El producto no existe o no pertenece a la empresa',
+        );
       }
       if (this.esProductoServicio(producto.atributosTecnicos as any)) continue;
 
       // Fraccionamiento: el lote guarda stock en unidad base (ej. tabletas).
       // Si se vende por CAJA (sin unidadVenta), descontar cantidad × factor.
       const factorConv = Number((producto as any).factorConversion ?? 1);
-      const cantidadLote = factorConv > 1 && !(item as any).unidadVenta ? cantidad * factorConv : cantidad;
+      const cantidadLote =
+        factorConv > 1 && !(item as any).unidadVenta
+          ? cantidad * factorConv
+          : cantidad;
 
       if (item.loteId != null) {
         const lote = await this.prisma.productoLote.findFirst({
@@ -1314,7 +1519,10 @@ export class ComprobanteService {
         (stockBase * (producto.porcentajeProvision ?? 0)) / 100,
       );
       const cupoVenta = Math.max(0, stockBase - cupoProvision);
-      const disponibleVenta = Math.max(0, Math.min(stockBase - reservado, cupoVenta));
+      const disponibleVenta = Math.max(
+        0,
+        Math.min(stockBase - reservado, cupoVenta),
+      );
 
       if (disponibleVenta < cantidad) {
         throw new BadRequestException(
@@ -1326,16 +1534,21 @@ export class ComprobanteService {
     return sedeId;
   }
 
-  private async ajustarStock(detalles: any[], data?: {
-    empresaId: number;
-    comprobanteId: number;
-    concepto: string;
+  private async ajustarStock(
+    detalles: any[],
+    data?: {
+      empresaId: number;
+      comprobanteId: number;
+      concepto: string;
 
-    usuarioId?: number;
-    sedeId?: number;
-  }) {
+      usuarioId?: number;
+      sedeId?: number;
+    },
+  ) {
     if (!data) {
-      throw new BadRequestException('No se recibieron datos para descontar stock');
+      throw new BadRequestException(
+        'No se recibieron datos para descontar stock',
+      );
     }
 
     const sedeId = await this.validarStockDisponibleParaVenta(detalles, data);
@@ -1346,7 +1559,12 @@ export class ComprobanteService {
 
       const producto = await this.prisma.producto.findFirst({
         where: { id: productoId, empresaId: data.empresaId },
-        select: { stock: true, costoPromedio: true, atributosTecnicos: true, factorConversion: true },
+        select: {
+          stock: true,
+          costoPromedio: true,
+          atributosTecnicos: true,
+          factorConversion: true,
+        },
       });
       if (!producto) continue;
       if (this.esProductoServicio(producto.atributosTecnicos as any)) continue;
@@ -1354,7 +1572,10 @@ export class ComprobanteService {
       // Fraccionamiento: el lote está en unidad base. Si se vende por CAJA (sin unidadVenta),
       // descontar del lote cantidad × factor (el kardex/Producto.stock se mantiene en cajas).
       const factorConvVenta = Number((producto as any).factorConversion ?? 1);
-      const cantidadLote = factorConvVenta > 1 && !(item as any).unidadVenta ? cantidad * factorConvVenta : cantidad;
+      const cantidadLote =
+        factorConvVenta > 1 && !(item as any).unidadVenta
+          ? cantidad * factorConvVenta
+          : cantidad;
 
       // Registrar movimiento de kardex si se proporcionan los datos
       if (data && this.kardexService) {
@@ -1401,19 +1622,25 @@ export class ComprobanteService {
             sedeId,
           );
         } catch (error) {
-          console.error('Error al notificar inventario después de venta:', error);
+          console.error(
+            'Error al notificar inventario después de venta:',
+            error,
+          );
         }
       }
     }
   }
 
-  private async revertirStock(detalles: any[], data?: {
-    empresaId: number;
-    comprobanteId: number;
-    concepto: string;
+  private async revertirStock(
+    detalles: any[],
+    data?: {
+      empresaId: number;
+      comprobanteId: number;
+      concepto: string;
 
-    usuarioId?: number;
-  }) {
+      usuarioId?: number;
+    },
+  ) {
     // Resolver Sede ID (similar a ajustarStock)
     // Nota: Idealmente deberíamos revertir en la MISMA sede donde se hizo la salida.
     // Para eso, deberíamos consultar el movimiento original.
@@ -1429,7 +1656,7 @@ export class ComprobanteService {
         // Relación con lotes (falta definirla en schema si no existe, pero asumimos que existe o la consultamos aparte)
         // Si la relación en prisma schema no se llama 'movimientosLote', hay que consultarla manualmente.
         // Asumiremos consulta manual para seguridad si no conozco el schema exacto.
-      }
+      },
     });
 
     for (const item of detalles) {
@@ -1445,32 +1672,47 @@ export class ComprobanteService {
             try {
               const costoUnitario = Number(producto.costoPromedio) || 0;
 
-              const movimientoIngreso = await this.kardexService.registrarMovimiento({
-                productoId: item.productoId,
-                empresaId: data.empresaId,
-                tipoMovimiento: 'INGRESO',
-                concepto: data.concepto,
-                cantidad: item.cantidad,
-                comprobanteId: data.comprobanteId,
-                costoUnitario: costoUnitario,
-                usuarioId: data.usuarioId,
-                sedeId: movimientosOriginales.find(m => m.productoId === item.productoId)?.sedeId
-                  || (await this.prisma.sede.findFirst({ where: { empresaId: data?.empresaId, esPrincipal: true }, select: { id: true } }))?.id
-                  || 1,
-              });
+              const movimientoIngreso =
+                await this.kardexService.registrarMovimiento({
+                  productoId: item.productoId,
+                  empresaId: data.empresaId,
+                  tipoMovimiento: 'INGRESO',
+                  concepto: data.concepto,
+                  cantidad: item.cantidad,
+                  comprobanteId: data.comprobanteId,
+                  costoUnitario: costoUnitario,
+                  usuarioId: data.usuarioId,
+                  sedeId:
+                    movimientosOriginales.find(
+                      (m) => m.productoId === item.productoId,
+                    )?.sedeId ||
+                    (
+                      await this.prisma.sede.findFirst({
+                        where: {
+                          empresaId: data?.empresaId,
+                          esPrincipal: true,
+                        },
+                        select: { id: true },
+                      })
+                    )?.id ||
+                    1,
+                });
 
               // --- REVERSIÓN DETALLADA DE LOTES ---
               if (this.loteService) {
                 // Buscar si hubo salida de lotes para este producto en este comprobante
-                const movOriginal = movimientosOriginales.find(m => m.productoId === item.productoId);
+                const movOriginal = movimientosOriginales.find(
+                  (m) => m.productoId === item.productoId,
+                );
 
                 if (movOriginal) {
                   // Buscar detalles de lote para ese movimiento
                   // Nombre de tabla en prisma suele ser camelCase. movimientoKardexLote ??
                   // Usaré consulta directa a la tabla intermedia
-                  const movimientosLote = await this.prisma.movimientoKardexLote.findMany({
-                    where: { movimientoId: movOriginal.id }
-                  });
+                  const movimientosLote =
+                    await this.prisma.movimientoKardexLote.findMany({
+                      where: { movimientoId: movOriginal.id },
+                    });
 
                   if (movimientosLote.length > 0) {
                     // Hay lotes involucrados. Devolver el stock a cada uno.
@@ -1478,15 +1720,17 @@ export class ComprobanteService {
                       await this.loteService.aumentarStockLote(
                         ml.productoLoteId,
                         ml.cantidad, // Devolver la cantidad exacta que salió de este lote
-                        movimientoIngreso.id // Ligar al nuevo movimiento de anulación
+                        movimientoIngreso.id, // Ligar al nuevo movimiento de anulación
                       );
                     }
                   }
                 }
               }
-
             } catch (error) {
-              console.error('Error al registrar movimiento de kardex (reversión):', error);
+              console.error(
+                'Error al registrar movimiento de kardex (reversión):',
+                error,
+              );
             }
           }
         }
@@ -1518,7 +1762,9 @@ export class ComprobanteService {
       }
       const fecha = new Date(fechaVencimientoCredito);
       if (Number.isNaN(fecha.getTime())) {
-        throw new BadRequestException('Fecha de vencimiento de crédito inválida');
+        throw new BadRequestException(
+          'Fecha de vencimiento de crédito inválida',
+        );
       }
       return [
         {
@@ -1530,11 +1776,15 @@ export class ComprobanteService {
 
     for (const cuota of normalizadas) {
       if (cuota.monto <= 0) {
-        throw new BadRequestException('Todas las cuotas deben tener monto mayor a cero');
+        throw new BadRequestException(
+          'Todas las cuotas deben tener monto mayor a cero',
+        );
       }
       const fecha = new Date(cuota.fechaVencimiento);
       if (!cuota.fechaVencimiento || Number.isNaN(fecha.getTime())) {
-        throw new BadRequestException('Todas las cuotas deben tener fecha de vencimiento válida');
+        throw new BadRequestException(
+          'Todas las cuotas deben tener fecha de vencimiento válida',
+        );
       }
       cuota.fechaVencimiento = fecha.toISOString().slice(0, 10);
     }
@@ -1599,17 +1849,22 @@ export class ComprobanteService {
         select: { id: true, tipoDoc: true },
       });
       if (!origen) {
-        throw new BadRequestException('El comprobante de origen no existe o no pertenece a esta empresa');
+        throw new BadRequestException(
+          'El comprobante de origen no existe o no pertenece a esta empresa',
+        );
       }
       const tiposInformales = ['NV', 'TICKET', 'NP', 'OT', 'RH', 'CP'];
       if (!tiposInformales.includes(origen.tipoDoc)) {
-        throw new BadRequestException('El comprobante de origen no es de tipo informal');
+        throw new BadRequestException(
+          'El comprobante de origen no es de tipo informal',
+        );
       }
     }
 
     // Map retencion fields to detraccion fields if present
     const finalMontoDetraccion = retencionMonto || montoDetraccion;
-    const finalPorcentajeDetraccion = retencionPorcentaje || porcentajeDetraccion;
+    const finalPorcentajeDetraccion =
+      retencionPorcentaje || porcentajeDetraccion;
 
     // ============= VALIDACIÓN DE LÍMITE DE COMPROBANTES =============
     // Solo validar para Facturas (01) y Boletas (03), no para notas
@@ -1618,7 +1873,7 @@ export class ComprobanteService {
       if (!usageStats.puedeEmitir) {
         throw new BadRequestException(
           `Has alcanzado el límite de ${usageStats.limiteMaximo} comprobantes mensuales de tu plan "${usageStats.plan}". ` +
-          `Para continuar emitiendo comprobantes, contacta a soporte para actualizar tu plan.`
+            `Para continuar emitiendo comprobantes, contacta a soporte para actualizar tu plan.`,
         );
       }
     }
@@ -1650,9 +1905,18 @@ export class ComprobanteService {
       throw new BadRequestException('clienteId es requerido');
     }
 
-    const { detalleFinal, mtoOperGravadas, mtoOpExoneradas, mtoOpInafectas, totalIGV } =
-      await this.cargarProductosYDetalles(detalles, empresaId);
-    await this.validarSeriesComprobante(detalleFinal, empresaId, !esConversionDesdeInformal);
+    const {
+      detalleFinal,
+      mtoOperGravadas,
+      mtoOpExoneradas,
+      mtoOpInafectas,
+      totalIGV,
+    } = await this.cargarProductosYDetalles(detalles, empresaId);
+    await this.validarSeriesComprobante(
+      detalleFinal,
+      empresaId,
+      !esConversionDesdeInformal,
+    );
 
     // Validar cliente si viene explícito
     if (clienteName !== 'CLIENTES VARIOS' && finalClienteId) {
@@ -1679,7 +1943,9 @@ export class ComprobanteService {
       }
     }
 
-    const valorVenta = this.round2(mtoOperGravadas + mtoOpExoneradas + mtoOpInafectas);
+    const valorVenta = this.round2(
+      mtoOperGravadas + mtoOpExoneradas + mtoOpInafectas,
+    );
     const subTotal = this.round2(valorVenta + totalIGV);
     const mtoImpVenta = subTotal;
 
@@ -1693,7 +1959,9 @@ export class ComprobanteService {
     const esPagoContado = !esPagoCredito; // Si no es crédito, es contado
 
     // Calcular descuento por detracción/retención
-    const montoDescontado = finalMontoDetraccion ? Number(finalMontoDetraccion) : 0;
+    const montoDescontado = finalMontoDetraccion
+      ? Number(finalMontoDetraccion)
+      : 0;
 
     let estadoPagoInicial: string;
     let saldoInicial: number;
@@ -1708,11 +1976,20 @@ export class ComprobanteService {
     }
 
     if (esPagoContado) {
-      await this.validarDetallePago(paymentDetails, medioPago, mtoImpVenta, empresaId);
+      await this.validarDetallePago(
+        paymentDetails,
+        medioPago,
+        mtoImpVenta,
+        empresaId,
+      );
     }
 
     const cuotasCredito = esPagoCredito
-      ? this.normalizarCuotasCredito(saldoInicial, cuotas, fechaVencimientoCredito)
+      ? this.normalizarCuotasCredito(
+          saldoInicial,
+          cuotas,
+          fechaVencimientoCredito,
+        )
       : null;
 
     const dataBase: any = {
@@ -1720,8 +1997,12 @@ export class ComprobanteService {
       tipoDetraccionId: tipoDetraccionId ?? undefined,
       medioPagoDetraccionId: medioPagoDetraccionId ?? undefined,
       cuentaBancoNacion: cuentaBancoNacion ?? null,
-      porcentajeDetraccion: finalPorcentajeDetraccion ? Number(finalPorcentajeDetraccion) : null,
-      montoDetraccion: finalMontoDetraccion ? Number(finalMontoDetraccion) : null,
+      porcentajeDetraccion: finalPorcentajeDetraccion
+        ? Number(finalPorcentajeDetraccion)
+        : null,
+      montoDetraccion: finalMontoDetraccion
+        ? Number(finalMontoDetraccion)
+        : null,
       cuotas: cuotasCredito ?? Prisma.JsonNull,
       tipoDoc: formalTipo,
       fechaEmision: fecha,
@@ -1753,10 +2034,10 @@ export class ComprobanteService {
           : undefined,
       ...(formalTipo === '08'
         ? {
-          tipDocAfectado: tipDocAfectado ?? null,
-          numDocAfectado: numDocAfectado ?? null,
-          motivoId: motivoId ?? null,
-        }
+            tipDocAfectado: tipDocAfectado ?? null,
+            numDocAfectado: numDocAfectado ?? null,
+            motivoId: motivoId ?? null,
+          }
         : {}),
       detalles: { create: this.limpiarDetalleParaPersistencia(detalleFinal) },
       leyendas: { create: [{ code: '1000', value: leyenda }] },
@@ -1826,7 +2107,10 @@ export class ComprobanteService {
           })),
         });
       } catch (err) {
-        console.warn('[crearFormal] Error al registrar comisiones:', err?.message);
+        console.warn(
+          '[crearFormal] Error al registrar comisiones:',
+          err?.message,
+        );
       }
     }
 
@@ -1850,7 +2134,9 @@ export class ComprobanteService {
    */
   async eliminarComprobante(id: number) {
     // Borrar hijos sin cascade antes de eliminar el padre
-    await this.prisma.detalleComprobante.deleteMany({ where: { comprobanteId: id } });
+    await this.prisma.detalleComprobante.deleteMany({
+      where: { comprobanteId: id },
+    });
     await this.prisma.leyenda.deleteMany({ where: { comprobanteId: id } });
     await this.prisma.movimientoKardex.updateMany({
       where: { comprobanteId: id },
@@ -1884,7 +2170,12 @@ export class ComprobanteService {
       if (!uid) return; // sin usuario no se puede crear la notificación
 
       const correlativoStr = String(params.correlativo).padStart(8, '0');
-      const tipoLabel: Record<string, string> = { '01': 'Factura', '03': 'Boleta', '07': 'Nota de Crédito', '08': 'Nota de Débito' };
+      const tipoLabel: Record<string, string> = {
+        '01': 'Factura',
+        '03': 'Boleta',
+        '07': 'Nota de Crédito',
+        '08': 'Nota de Débito',
+      };
       const tipo = tipoLabel[params.tipoDoc] ?? 'Comprobante';
 
       await this.prisma.notificacion.create({
@@ -1898,7 +2189,10 @@ export class ComprobanteService {
         },
       });
     } catch (logErr: any) {
-      console.warn('[guardarLogErrorFatal] No se pudo guardar el log:', logErr?.message);
+      console.warn(
+        '[guardarLogErrorFatal] No se pudo guardar el log:',
+        logErr?.message,
+      );
     }
   }
 
@@ -1931,7 +2225,9 @@ export class ComprobanteService {
         });
       } catch (stockErr: any) {
         // No bloquear el borrado si el stock falla — registrar y continuar
-        console.warn(`[descartarComprobante] No se pudo revertir stock para ${id}: ${stockErr.message}`);
+        console.warn(
+          `[descartarComprobante] No se pudo revertir stock para ${id}: ${stockErr.message}`,
+        );
       }
     }
 
@@ -1945,7 +2241,9 @@ export class ComprobanteService {
       });
       if (movimientos.length) {
         const movIds = movimientos.map((m) => m.id);
-        await tx.movimientoKardexLote.deleteMany({ where: { movimientoId: { in: movIds } } });
+        await tx.movimientoKardexLote.deleteMany({
+          where: { movimientoId: { in: movIds } },
+        });
         await tx.movimientoKardex.deleteMany({ where: { id: { in: movIds } } });
       }
 
@@ -1957,10 +2255,18 @@ export class ComprobanteService {
       await tx.comprobante.delete({ where: { id } });
     });
 
-    return { message: 'Comprobante eliminado y stock revertido', eliminado: true };
+    return {
+      message: 'Comprobante eliminado y stock revertido',
+      eliminado: true,
+    };
   }
 
-  async crearNotaCredito(input: any, empresaId: number, usuarioId?: number, sedeId?: number) {
+  async crearNotaCredito(
+    input: any,
+    empresaId: number,
+    usuarioId?: number,
+    sedeId?: number,
+  ) {
     const {
       fechaEmision,
       formaPagoTipo,
@@ -2355,7 +2661,9 @@ export class ComprobanteService {
     // 12) Actualizar estado del comprobante afectado según motivo
     if (['01', '06'].includes(motivoNota.codigo)) {
       // Eliminar pagos del comprobante original — la NC lo anula totalmente
-      await this.prisma.pago.deleteMany({ where: { comprobanteId: afectado.id } });
+      await this.prisma.pago.deleteMany({
+        where: { comprobanteId: afectado.id },
+      });
 
       await this.prisma.comprobante.update({
         where: { id: afectado.id },
@@ -2370,7 +2678,12 @@ export class ComprobanteService {
     return nota;
   }
 
-  async crearInformal(input: any, empresaId: number, usuarioId?: number, sedeId?: number) {
+  async crearInformal(
+    input: any,
+    empresaId: number,
+    usuarioId?: number,
+    sedeId?: number,
+  ) {
     const {
       fechaEmision,
       formaPagoTipo,
@@ -2388,6 +2701,7 @@ export class ComprobanteService {
       fechaRecojo,
       vuelto,
       fechaVencimientoCredito,
+      cuotas,
       paymentDetails,
       montoDescuentoGlobal,
     } = input;
@@ -2411,12 +2725,25 @@ export class ComprobanteService {
     } else if (!finalClienteId) {
       throw new BadRequestException('clienteId es requerido');
     }
-    const { detalleFinal, mtoOperGravadas, mtoOpExoneradas, mtoOpInafectas, totalIGV } =
-      await this.cargarProductosYDetalles(detalles, empresaId);
-    await this.validarSeriesComprobante(detalleFinal, empresaId, tipoDoc !== 'COT');
-    const valorVenta = this.round2(mtoOperGravadas + mtoOpExoneradas + mtoOpInafectas);
+    const {
+      detalleFinal,
+      mtoOperGravadas,
+      mtoOpExoneradas,
+      mtoOpInafectas,
+      totalIGV,
+    } = await this.cargarProductosYDetalles(detalles, empresaId);
+    await this.validarSeriesComprobante(
+      detalleFinal,
+      empresaId,
+      tipoDoc !== 'COT',
+    );
+    const valorVenta = this.round2(
+      mtoOperGravadas + mtoOpExoneradas + mtoOpInafectas,
+    );
     const subTotal = this.round2(valorVenta + totalIGV);
-    const descuentoGlobal = this.round2(Math.max(0, Number(montoDescuentoGlobal ?? 0)));
+    const descuentoGlobal = this.round2(
+      Math.max(0, Number(montoDescuentoGlobal ?? 0)),
+    );
     const mtoImpVenta = this.round2(Math.max(0, subTotal - descuentoGlobal));
     const fecha = new Date(fechaEmision);
 
@@ -2450,7 +2777,14 @@ export class ComprobanteService {
     // 3. formaPagoTipo = CREDITO → PENDIENTE_PAGO (independiente del medioPago)
     // 4. medioPago al contado → COMPLETADO
     // 5. resto → PENDIENTE_PAGO
-    const pagosAlContado = ['EFECTIVO', 'YAPE', 'PLIN', 'TRANSFERENCIA', 'TARJETA', 'MIXTO'];
+    const pagosAlContado = [
+      'EFECTIVO',
+      'YAPE',
+      'PLIN',
+      'TRANSFERENCIA',
+      'TARJETA',
+      'MIXTO',
+    ];
     const esCreditoPorTipo = (formaPagoTipo ?? '').toUpperCase() === 'CREDITO';
     const adelantoNormalizado = adelanto ? Math.max(Number(adelanto), 0) : 0;
     let estadoPagoInicial = 'COMPLETADO' as any;
@@ -2481,11 +2815,21 @@ export class ComprobanteService {
       saldoInicial = mtoImpVenta;
     }
 
-    const montoPagadoInicial = tipoDoc !== 'COT'
-      ? (adelantoNormalizado > 0 ? Math.min(adelantoNormalizado, mtoImpVenta) : (estadoPagoInicial === 'COMPLETADO' ? mtoImpVenta : 0))
-      : 0;
+    const montoPagadoInicial =
+      tipoDoc !== 'COT'
+        ? adelantoNormalizado > 0
+          ? Math.min(adelantoNormalizado, mtoImpVenta)
+          : estadoPagoInicial === 'COMPLETADO'
+            ? mtoImpVenta
+            : 0
+        : 0;
     if (montoPagadoInicial > 0) {
-      await this.validarDetallePago(paymentDetails, medioPagoValido, montoPagadoInicial, empresaId);
+      await this.validarDetallePago(
+        paymentDetails,
+        medioPagoValido,
+        montoPagadoInicial,
+        empresaId,
+      );
     }
 
     // Si no viene sedeId, intentar usar la sede principal de la empresa
@@ -2493,10 +2837,25 @@ export class ComprobanteService {
     if (!finalSedeId) {
       const principal = await this.prisma.sede.findFirst({
         where: { empresaId, esPrincipal: true },
-        select: { id: true }
+        select: { id: true },
       });
       if (principal) finalSedeId = principal.id;
     }
+
+    // Crédito: normalizar cronograma de cuotas (o una única cuota a partir de
+    // la fecha de vencimiento) para persistirlo igual que el path formal.
+    // Defensivo: solo cuando llega información de cuotas o fecha, evitando
+    // romper integraciones (sync) que crean crédito informal sin cronograma.
+    const tieneInfoCredito =
+      (Array.isArray(cuotas) && cuotas.length > 0) || !!fechaVencimientoCredito;
+    const cuotasCredito =
+      esCreditoPorTipo && saldoInicial > 0 && tieneInfoCredito
+        ? this.normalizarCuotasCredito(
+            saldoInicial,
+            cuotas,
+            fechaVencimientoCredito,
+          )
+        : null;
 
     const dataBase: any = {
       tipoOperacionId: tipoOperacionIdFinal ?? undefined,
@@ -2505,6 +2864,7 @@ export class ComprobanteService {
       formaPagoTipo,
       formaPagoMoneda,
       tipoMoneda,
+      cuotas: cuotasCredito ?? Prisma.JsonNull,
       observaciones: observaciones ?? null,
       clienteId: finalClienteId,
       empresaId,
@@ -2524,11 +2884,18 @@ export class ComprobanteService {
       estadoEnvioSunat: 'NO_APLICA' as string,
       estadoPago: estadoPagoInicial,
       saldo: saldoInicial,
-      adelanto: tipoDoc !== 'COT' && adelantoNormalizado > 0 ? adelantoNormalizado : undefined,
+      adelanto:
+        tipoDoc !== 'COT' && adelantoNormalizado > 0
+          ? adelantoNormalizado
+          : undefined,
       fechaRecojo:
-        (tipoDoc === 'NP' || tipoDoc === 'OT') && fechaRecojo ? new Date(fechaRecojo) : undefined,
+        (tipoDoc === 'NP' || tipoDoc === 'OT') && fechaRecojo
+          ? new Date(fechaRecojo)
+          : undefined,
       fechaVencimientoCredito:
-        esCreditoPorTipo && fechaVencimientoCredito ? new Date(fechaVencimientoCredito) : undefined,
+        esCreditoPorTipo && fechaVencimientoCredito
+          ? new Date(fechaVencimientoCredito)
+          : undefined,
       vuelto: vuelto != null ? Number(vuelto) : 0,
       // Campos de cotización
       cotizIncluirImagenes: input.cotizIncluirImagenes ?? false,
@@ -2552,7 +2919,12 @@ export class ComprobanteService {
       });
     }
 
-    const comp = await this.crearComprobanteConReintento(dataBase, tipoDoc, null, empresaId);
+    const comp = await this.crearComprobanteConReintento(
+      dataBase,
+      tipoDoc,
+      null,
+      empresaId,
+    );
 
     if (montoPagadoInicial > 0) {
       await this.registrarPagosDeEmision({
@@ -2595,7 +2967,10 @@ export class ComprobanteService {
           })),
         });
       } catch (err) {
-        console.warn('[crearInformal] Error al registrar comisiones:', err?.message);
+        console.warn(
+          '[crearInformal] Error al registrar comisiones:',
+          err?.message,
+        );
       }
     }
 
@@ -2625,19 +3000,33 @@ export class ComprobanteService {
     let finalClienteId: number | null = clienteId ?? null;
     if (clienteName === 'CLIENTES VARIOS') {
       const clienteVarios = await this.prisma.cliente.findFirst({
-        where: { nombre: 'CLIENTES VARIOS', empresaId, estado: 'ACTIVO' as any },
+        where: {
+          nombre: 'CLIENTES VARIOS',
+          empresaId,
+          estado: 'ACTIVO' as any,
+        },
         select: { id: true },
       });
       if (!clienteVarios) {
-        throw new BadRequestException("No existe el cliente 'CLIENTES VARIOS' ACTIVO");
+        throw new BadRequestException(
+          "No existe el cliente 'CLIENTES VARIOS' ACTIVO",
+        );
       }
       finalClienteId = clienteVarios.id;
     } else if (!finalClienteId) {
       throw new BadRequestException('clienteId es requerido');
     }
 
-    const { detalleFinal, mtoOperGravadas, mtoOpExoneradas, mtoOpInafectas, totalIGV } = await this.cargarProductosYDetalles(detalles, empresaId);
-    const valorVenta = this.round2(mtoOperGravadas + mtoOpExoneradas + mtoOpInafectas);
+    const {
+      detalleFinal,
+      mtoOperGravadas,
+      mtoOpExoneradas,
+      mtoOpInafectas,
+      totalIGV,
+    } = await this.cargarProductosYDetalles(detalles, empresaId);
+    const valorVenta = this.round2(
+      mtoOperGravadas + mtoOpExoneradas + mtoOpInafectas,
+    );
     const subTotal = this.round2(valorVenta + totalIGV);
     const mtoImpVenta = subTotal;
     const fecha = new Date(fechaEmision);
@@ -2698,7 +3087,12 @@ export class ComprobanteService {
     });
   }
 
-  async crearOT(input: any, empresaId: number, usuarioId?: number, sedeId?: number) {
+  async crearOT(
+    input: any,
+    empresaId: number,
+    usuarioId?: number,
+    sedeId?: number,
+  ) {
     const {
       productoId,
       cantidad,
@@ -2886,7 +3280,7 @@ export class ComprobanteService {
     // Obtener el plan de la empresa
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
-      include: { plan: true }
+      include: { plan: true },
     });
 
     if (!empresa) {
@@ -2898,7 +3292,15 @@ export class ComprobanteService {
     // Calcular inicio y fin del mes actual
     const now = new Date();
     const inicioMes = new Date(now.getFullYear(), now.getMonth(), 1);
-    const finMes = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    const finMes = new Date(
+      now.getFullYear(),
+      now.getMonth() + 1,
+      0,
+      23,
+      59,
+      59,
+      999,
+    );
 
     // Contar comprobantes SUNAT del mes actual
     // Facturas (01), Boletas (03), Notas Crédito (07), Notas Débito (08) con estado EMITIDO o ANULADO
@@ -2917,24 +3319,28 @@ export class ComprobanteService {
           ...(sedeId ? { sedeId } : {}),
           tipoDoc: { in: ['01', '03'] },
           estadoEnvioSunat: { in: ESTADOS_CONTABLES },
-          creadoEn: { gte: inicioMes, lte: finMes }
-        }
+          creadoEn: { gte: inicioMes, lte: finMes },
+        },
       }),
       this.prisma.guiaRemision.count({
         where: {
           empresaId,
           estadoSunat: { in: ESTADOS_CONTABLES },
-          creadoEn: { gte: inicioMes, lte: finMes }
-        }
-      })
+          creadoEn: { gte: inicioMes, lte: finMes },
+        },
+      }),
     ]);
 
     const comprobantesEmitidos = facturasYBoletas + guiasRemision;
 
     const esIlimitado = limiteMaximo === 0;
-    const porcentajeUso = esIlimitado ? 0 : Math.round((comprobantesEmitidos / limiteMaximo) * 100);
+    const porcentajeUso = esIlimitado
+      ? 0
+      : Math.round((comprobantesEmitidos / limiteMaximo) * 100);
     const puedeEmitir = esIlimitado || comprobantesEmitidos < limiteMaximo;
-    const restantes = esIlimitado ? null : Math.max(0, limiteMaximo - comprobantesEmitidos);
+    const restantes = esIlimitado
+      ? null
+      : Math.max(0, limiteMaximo - comprobantesEmitidos);
 
     return {
       comprobantesEmitidos,
@@ -2948,7 +3354,7 @@ export class ComprobanteService {
       mesActual: inicioMes.toISOString().slice(0, 7),
       alerta80: !esIlimitado && porcentajeUso >= 80 && porcentajeUso < 100,
       limiteAlcanzado: !esIlimitado && porcentajeUso >= 100,
-      plan: empresa.plan?.nombre || 'Sin plan'
+      plan: empresa.plan?.nombre || 'Sin plan',
     };
   }
 
@@ -2968,18 +3374,32 @@ export class ComprobanteService {
     });
   }
 
-  private async buildPdfBufferInformal(id: number): Promise<{ buffer: Buffer; key: string }> {
+  private async buildPdfBufferInformal(
+    id: number,
+  ): Promise<{ buffer: Buffer; key: string }> {
     const full = await this.cargarComprobanteCompleto(id);
     if (!full) throw new NotFoundException('Comprobante no encontrado');
 
     const tipoDocMap: Record<string, string> = {
-      '01': 'FACTURA', '03': 'BOLETA', '07': 'NOTA DE CRÉDITO', '08': 'NOTA DE DÉBITO',
-      TICKET: 'TICKET', NV: 'NOTA DE VENTA', RH: 'RECIBO POR HONORARIOS',
-      CP: 'COMPROBANTE DE PAGO', NP: 'NOTA DE PEDIDO', OT: 'ORDEN DE TRABAJO', COT: 'COTIZACIÓN',
+      '01': 'FACTURA',
+      '03': 'BOLETA',
+      '07': 'NOTA DE CRÉDITO',
+      '08': 'NOTA DE DÉBITO',
+      TICKET: 'TICKET',
+      NV: 'NOTA DE VENTA',
+      RH: 'RECIBO POR HONORARIOS',
+      CP: 'COMPROBANTE DE PAGO',
+      NP: 'NOTA DE PEDIDO',
+      OT: 'ORDEN DE TRABAJO',
+      COT: 'COTIZACIÓN',
     };
     const fecha = new Date(full.fechaEmision as any);
     const pagosAlContado = ['EFECTIVO', 'YAPE', 'PLIN'];
-    const formaPago = pagosAlContado.includes((full.medioPago || '').toUpperCase()) ? 'CONTADO' : 'CRÉDITO';
+    const formaPago = pagosAlContado.includes(
+      (full.medioPago || '').toUpperCase(),
+    )
+      ? 'CONTADO'
+      : 'CRÉDITO';
 
     const buildLogoDataUrl = (raw?: string | null): string | undefined => {
       if (!raw) return undefined;
@@ -3003,12 +3423,13 @@ export class ComprobanteService {
       precioUnitario: Number(d.mtoPrecioUnitario || 0).toFixed(2),
       total: Number((d.mtoPrecioUnitario || 0) * d.cantidad).toFixed(2),
       imagenUrl: buildLogoDataUrl(d.producto?.imagenUrl || d.imagenUrl),
-      lotes: d.lotes?.map((l: any) => ({
-        lote: l.lote,
-        fechaVencimiento: l.fechaVencimiento
-          ? new Date(l.fechaVencimiento).toLocaleDateString('es-PE')
-          : '',
-      })) || undefined,
+      lotes:
+        d.lotes?.map((l: any) => ({
+          lote: l.lote,
+          fechaVencimiento: l.fechaVencimiento
+            ? new Date(l.fechaVencimiento).toLocaleDateString('es-PE')
+            : '',
+        })) || undefined,
     }));
 
     const mtoImpVenta = Number(full.mtoImpVenta || 0);
@@ -3018,11 +3439,15 @@ export class ComprobanteService {
     // Retención
     const obs = (full.observaciones || '').toUpperCase();
     const hasRetentionText = obs.includes('RETENCIÓN') && obs.includes('3%');
-    const retencionMonto = hasRetentionText ? Number((mtoImpVenta * 0.03).toFixed(2)) : 0;
+    const retencionMonto = hasRetentionText
+      ? Number((mtoImpVenta * 0.03).toFixed(2))
+      : 0;
     const shouldShowRetention = hasRetentionText && retencionMonto > 0;
 
     const ahora = new Date();
-    const fechaImpresion = ahora.toLocaleDateString('es-PE') + ' ' +
+    const fechaImpresion =
+      ahora.toLocaleDateString('es-PE') +
+      ' ' +
       ahora.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
 
     const pdfData: any = {
@@ -3033,16 +3458,24 @@ export class ComprobanteService {
       ruc: full.empresa.ruc,
       direccion: (full.empresa.direccion || '').toUpperCase(),
       rubro: full.empresa.rubro?.nombre?.toUpperCase() || '',
-      celular: ((full.empresa as any).celular || (full.empresa as any).telefono || '').toString(),
+      celular: (
+        (full.empresa as any).celular ||
+        (full.empresa as any).telefono ||
+        ''
+      ).toString(),
       email: ((full.empresa as any).email || '').toString(),
       logo: buildLogoDataUrl((full.empresa as any).logo),
       tipoDocumento: tipoDocMap[full.tipoDoc] || 'COMPROBANTE',
       serie: full.serie,
       correlativo: String(full.correlativo).padStart(8, '0'),
       fecha: fecha.toLocaleDateString('es-PE'),
-      hora: fecha.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }),
+      hora: fecha.toLocaleTimeString('es-PE', {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
       clienteNombre: (full.cliente?.nombre || 'CLIENTES VARIOS').toUpperCase(),
-      clienteTipoDoc: full.cliente?.tipoDocumento?.codigo === '6' ? 'RUC' : 'DNI',
+      clienteTipoDoc:
+        full.cliente?.tipoDocumento?.codigo === '6' ? 'RUC' : 'DNI',
       clienteNumDoc: full.cliente?.nroDoc || '',
       clienteDireccion: (full.cliente?.direccion || '-').toUpperCase(),
       clienteEmail: (full.cliente as any)?.email || undefined,
@@ -3051,7 +3484,9 @@ export class ComprobanteService {
       isDocumentoFiscal,
       mtoOperGravadas: Number(full.mtoOperGravadas || 0).toFixed(2),
       mtoIGV: Number(full.mtoIGV || 0).toFixed(2),
-      mtoOperExoneradas: Number((full as any).mtoOperExoneradas || 0).toFixed(2),
+      mtoOperExoneradas: Number((full as any).mtoOperExoneradas || 0).toFixed(
+        2,
+      ),
       mtoOperInafectas: Number((full as any).mtoOperInafectas || 0).toFixed(2),
       mtoImpVenta: mtoImpVenta.toFixed(2),
       descuento,
@@ -3061,7 +3496,9 @@ export class ComprobanteService {
       vuelto: Number((full as any).vuelto || 0).toFixed(2),
       pagado: (mtoImpVenta + Number((full as any).vuelto || 0)).toFixed(2),
       vendedor: (full.usuario?.nombre || 'ADMIN').toUpperCase(),
-      observaciones: full.observaciones ? full.observaciones.toUpperCase() : undefined,
+      observaciones: full.observaciones
+        ? full.observaciones.toUpperCase()
+        : undefined,
       shouldShowRetention,
       retencionMonto: retencionMonto.toFixed(2),
       importeNeto: (mtoImpVenta - retencionMonto).toFixed(2),
@@ -3069,7 +3506,9 @@ export class ComprobanteService {
       tipoDetraccion: full.tipoDetraccion
         ? `${full.tipoDetraccion.codigo} - ${full.tipoDetraccion.descripcion} (${full.tipoDetraccion.porcentaje}%)`
         : undefined,
-      montoDetraccion: full.montoDetraccion ? Number(full.montoDetraccion).toFixed(2) : undefined,
+      montoDetraccion: full.montoDetraccion
+        ? Number(full.montoDetraccion).toFixed(2)
+        : undefined,
       cuentaBancoNacion: full.cuentaBancoNacion || undefined,
       medioPagoDetraccion: full.medioPagoDetraccion
         ? `${full.medioPagoDetraccion.codigo} - ${full.medioPagoDetraccion.descripcion}`
@@ -3093,13 +3532,19 @@ export class ComprobanteService {
           const tipo = (full as any).cotizTipoPago || 'CONTADO';
           const adelanto = (full as any).cotizAdelanto || 0;
           const map: Record<string, string> = {
-            CONTADO: 'CONTADO', CREDITO_30: 'CRÉDITO 30 DÍAS',
-            CREDITO_60: 'CRÉDITO 60 DÍAS', CREDITO_90: 'CRÉDITO 90 DÍAS',
+            CONTADO: 'CONTADO',
+            CREDITO_30: 'CRÉDITO 30 DÍAS',
+            CREDITO_60: 'CRÉDITO 60 DÍAS',
+            CREDITO_90: 'CRÉDITO 90 DÍAS',
           };
-          return tipo === 'ADELANTO' ? `ADELANTO ${adelanto}%` : (map[tipo] || tipo);
+          return tipo === 'ADELANTO'
+            ? `ADELANTO ${adelanto}%`
+            : map[tipo] || tipo;
         })(),
         subTotal: Number(full.subTotal || 0).toFixed(2),
-        descuento: full.mtoDescuentoGlobal ? Number(full.mtoDescuentoGlobal).toFixed(2) : undefined,
+        descuento: full.mtoDescuentoGlobal
+          ? Number(full.mtoDescuentoGlobal).toFixed(2)
+          : undefined,
         validez: full.cotizVigencia ? `${full.cotizVigencia} días` : '7 días',
         cotizTerminos: full.cotizTerminos || undefined,
         clienteEmail: (full.cliente as any)?.email || '-',
@@ -3109,8 +3554,13 @@ export class ComprobanteService {
         cci: (full.empresa as any).cci || undefined,
         monedaCuenta: (full.empresa as any).monedaCuenta || 'SOLES',
         includeProductImages: !!(full as any).cotizIncluirImagenes,
-        usuario: usuarioNombre ? `${usuarioNombre} ${fechaImpresion}` : fechaImpresion,
-        sistemaUrl: process.env.APP_URL || process.env.FRONTEND_URL || 'https://falconext.pe',
+        usuario: usuarioNombre
+          ? `${usuarioNombre} ${fechaImpresion}`
+          : fechaImpresion,
+        sistemaUrl:
+          process.env.APP_URL ||
+          process.env.FRONTEND_URL ||
+          'https://falconext.pe',
         sistemaNombre: process.env.APP_NAME || 'Falconext',
       };
       buffer = await this.pdfGenerator.generarPDFCotizacion(cotizacionData);
@@ -3119,7 +3569,11 @@ export class ComprobanteService {
     }
 
     const key = this.s3Service.generateComprobanteKey(
-      full.empresaId, full.tipoDoc, full.serie, full.correlativo, 'pdf',
+      full.empresaId,
+      full.tipoDoc,
+      full.serie,
+      full.correlativo,
+      'pdf',
     );
     return { buffer, key };
   }
@@ -3152,10 +3606,15 @@ export class ComprobanteService {
     if (this.s3Service.isEnabled()) {
       try {
         const url = await this.s3Service.uploadPDF(buffer, key);
-        await this.prisma.comprobante.update({ where: { id }, data: { s3PdfUrl: url } });
+        await this.prisma.comprobante.update({
+          where: { id },
+          data: { s3PdfUrl: url },
+        });
         return url;
       } catch (error) {
-        this.logger.warn(`No se pudo subir PDF a S3: ${error.message}. Usando URL temporal.`);
+        this.logger.warn(
+          `No se pudo subir PDF a S3: ${error.message}. Usando URL temporal.`,
+        );
       }
     }
 
@@ -3221,8 +3680,19 @@ export class ComprobanteService {
   private tokenPdf(id: number): string {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const crypto = require('crypto');
-    const secret = process.env.JWT_SECRET || 'fallback-pdf-secret';
-    return crypto.createHmac('sha256', secret).update(`pdf:${id}`).digest('hex');
+    const secret = process.env.PDF_TOKEN_SECRET || process.env.JWT_SECRET;
+    if (
+      !secret ||
+      (process.env.NODE_ENV === 'production' && secret.length < 32)
+    ) {
+      throw new Error(
+        'PDF_TOKEN_SECRET o JWT_SECRET debe tener al menos 32 caracteres.',
+      );
+    }
+    return crypto
+      .createHmac('sha256', secret)
+      .update(`pdf:${id}`)
+      .digest('hex');
   }
 
   generarUrlPdfPublico(id: number): string {
@@ -3235,11 +3705,12 @@ export class ComprobanteService {
     return token === this.tokenPdf(id);
   }
 
-  private getPlatformWhatsAppCredentials(): { token: string; phoneNumberId: string } {
+  private getPlatformWhatsAppCredentials(): {
+    token: string;
+    phoneNumberId: string;
+  } {
     const token =
-      process.env.WHATSAPP_TOKEN ||
-      process.env.META_WHATSAPP_TOKEN ||
-      '';
+      process.env.WHATSAPP_TOKEN || process.env.META_WHATSAPP_TOKEN || '';
 
     const phoneNumberId =
       process.env.WHATSAPP_PHONE_ID ||
@@ -3266,7 +3737,9 @@ export class ComprobanteService {
     });
 
     if (!empresa?.whatsappActivo || empresa?.whatsappProvider === 'DISABLED') {
-      throw new BadRequestException('WhatsApp está deshabilitado para esta empresa.');
+      throw new BadRequestException(
+        'WhatsApp está deshabilitado para esta empresa.',
+      );
     }
 
     if (empresa.whatsappProvider === 'EMPRESA') {
@@ -3318,15 +3791,26 @@ export class ComprobanteService {
   ): Promise<void> {
     const comp = await this.cargarComprobanteCompleto(id);
     if (!comp) throw new NotFoundException('Comprobante no encontrado');
-    if (context?.rol !== 'ADMIN_SISTEMA' && context?.empresaId && comp.empresaId !== context.empresaId) {
+    if (
+      context?.rol !== 'ADMIN_SISTEMA' &&
+      context?.empresaId &&
+      comp.empresaId !== context.empresaId
+    ) {
       throw new NotFoundException('Comprobante no encontrado');
     }
 
-    const { token, phoneNumberId, source } = await this.getWhatsAppCredentials(comp.empresaId);
+    const { token, phoneNumberId, source } = await this.getWhatsAppCredentials(
+      comp.empresaId,
+    );
 
     const tipoDocMap: Record<string, string> = {
-      TICKET: 'Ticket', NV: 'Nota de Venta', RH: 'Recibo por Honorarios',
-      CP: 'Comprobante de Pago', NP: 'Nota de Pedido', OT: 'Orden de Trabajo', COT: 'Cotización',
+      TICKET: 'Ticket',
+      NV: 'Nota de Venta',
+      RH: 'Recibo por Honorarios',
+      CP: 'Comprobante de Pago',
+      NP: 'Nota de Pedido',
+      OT: 'Orden de Trabajo',
+      COT: 'Cotización',
     };
     const tipoPretty = tipoDocMap[comp.tipoDoc] || comp.tipoDoc;
     const serie = comp.serie;
@@ -3348,7 +3832,8 @@ export class ComprobanteService {
     let pdfBuffer: Buffer;
     if (comp.s3PdfUrl) {
       const s3Res = await fetch(comp.s3PdfUrl);
-      if (!s3Res.ok) throw new BadRequestException('No se pudo descargar el PDF desde S3');
+      if (!s3Res.ok)
+        throw new BadRequestException('No se pudo descargar el PDF desde S3');
       pdfBuffer = Buffer.from(await s3Res.arrayBuffer());
     } else {
       ({ buffer: pdfBuffer } = await this.buildPdfBufferInformal(id));
@@ -3384,7 +3869,11 @@ export class ComprobanteService {
         'No se pudo subir el PDF a WhatsApp',
       );
 
-      if (errorType === 'OAuthException' || errorCode === 190 || errorSubcode === 463) {
+      if (
+        errorType === 'OAuthException' ||
+        errorCode === 190 ||
+        errorSubcode === 463
+      ) {
         throw new BadRequestException(
           `Error de autenticación en WhatsApp Cloud API. ${formattedUploadError}`,
         );
@@ -3393,12 +3882,15 @@ export class ComprobanteService {
       throw new BadRequestException(formattedUploadError);
     }
 
-    const { id: mediaId } = await uploadRes.json() as { id: string };
+    const { id: mediaId } = (await uploadRes.json()) as { id: string };
 
     // ── Paso 3: Enviar el documento usando el media ID ────────────────────────
     const sendRes = await fetch(`${apiBase}/messages`, {
       method: 'POST',
-      headers: { Authorization: authHeader, 'Content-Type': 'application/json' },
+      headers: {
+        Authorization: authHeader,
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({
         messaging_product: 'whatsapp',
         to,
@@ -3417,7 +3909,11 @@ export class ComprobanteService {
         `Error al enviar WhatsApp (HTTP ${sendRes.status})`,
       );
 
-      if (errorType === 'OAuthException' || errorCode === 190 || errorSubcode === 463) {
+      if (
+        errorType === 'OAuthException' ||
+        errorCode === 190 ||
+        errorSubcode === 463
+      ) {
         throw new BadRequestException(
           `Error de autenticación en WhatsApp Cloud API. ${formattedSendError}`,
         );
@@ -3426,7 +3922,9 @@ export class ComprobanteService {
       throw new BadRequestException(formattedSendError);
     }
 
-    const sendPayload = await sendRes.json().catch(() => null) as { messages?: Array<{ id?: string }> } | null;
+    const sendPayload = (await sendRes.json().catch(() => null)) as {
+      messages?: Array<{ id?: string }>;
+    } | null;
     const mensajeId = sendPayload?.messages?.[0]?.id;
     if (context?.usuarioId) {
       await this.prisma.whatsAppEnvio.create({
@@ -3443,7 +3941,9 @@ export class ComprobanteService {
       });
     }
 
-    this.logger.log(`✅ WhatsApp comprobante enviado (${source}) comprobanteId=${id} destino=${to}`);
+    this.logger.log(
+      `✅ WhatsApp comprobante enviado (${source}) comprobanteId=${id} destino=${to}`,
+    );
   }
 
   // ─── Enviar por email ─────────────────────────────────────────────────────
@@ -3455,12 +3955,18 @@ export class ComprobanteService {
   ): Promise<void> {
     const resendKey = process.env.RESEND_API_KEY;
     if (!resendKey) {
-      throw new BadRequestException('Correo no configurado. Agrega RESEND_API_KEY en el .env del backend.');
+      throw new BadRequestException(
+        'Correo no configurado. Agrega RESEND_API_KEY en el .env del backend.',
+      );
     }
 
     const comp = await this.cargarComprobanteCompleto(id);
     if (!comp) throw new NotFoundException('Comprobante no encontrado');
-    if (context?.rol !== this.adminSistemaRole && context?.empresaId && comp.empresaId !== context.empresaId) {
+    if (
+      context?.rol !== this.adminSistemaRole &&
+      context?.empresaId &&
+      comp.empresaId !== context.empresaId
+    ) {
       throw new NotFoundException('Comprobante no encontrado');
     }
 
@@ -3469,15 +3975,21 @@ export class ComprobanteService {
     let buffer: Buffer;
     if (comp.s3PdfUrl) {
       const s3Res = await fetch(comp.s3PdfUrl);
-      if (!s3Res.ok) throw new BadRequestException('No se pudo descargar el PDF desde S3');
+      if (!s3Res.ok)
+        throw new BadRequestException('No se pudo descargar el PDF desde S3');
       buffer = Buffer.from(await s3Res.arrayBuffer());
     } else {
       ({ buffer } = await this.buildPdfBufferInformal(id));
     }
 
     const tipoDocMap: Record<string, string> = {
-      TICKET: 'Ticket', NV: 'Nota de Venta', RH: 'Recibo por Honorarios',
-      CP: 'Comprobante de Pago', NP: 'Nota de Pedido', OT: 'Orden de Trabajo', COT: 'Cotización',
+      TICKET: 'Ticket',
+      NV: 'Nota de Venta',
+      RH: 'Recibo por Honorarios',
+      CP: 'Comprobante de Pago',
+      NP: 'Nota de Pedido',
+      OT: 'Orden de Trabajo',
+      COT: 'Cotización',
     };
     const tipoPretty = tipoDocMap[comp.tipoDoc] || comp.tipoDoc;
     const serie = comp.serie;
@@ -3487,14 +3999,20 @@ export class ComprobanteService {
     const empresaRuc = comp.empresa.ruc ?? '';
     const empresaDireccion = comp.empresa.direccion ?? undefined;
     const clienteNombre = comp.cliente?.nombre || 'Cliente';
-    const fecha = new Date(comp.fechaEmision).toLocaleDateString('es-PE', { day: '2-digit', month: 'long', year: 'numeric' });
+    const fecha = new Date(comp.fechaEmision).toLocaleDateString('es-PE', {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+    });
     const pdfUrl = comp.s3PdfUrl || this.generarUrlPdfPublico(id);
 
     const productos = (comp.detalles ?? []).map((item: any) => ({
       descripcion: item.descripcion,
       cantidad: Number(item.cantidad),
       unidad: item.unidad || undefined,
-      precioUnitario: Number(item.mtoPrecioUnitario || item.mtoValorUnitario || 0).toFixed(2),
+      precioUnitario: Number(
+        item.mtoPrecioUnitario || item.mtoValorUnitario || 0,
+      ).toFixed(2),
       total: Number(item.mtoValorVenta || 0).toFixed(2),
     }));
 
@@ -3503,21 +4021,30 @@ export class ComprobanteService {
         const tipo = (comp as any).cotizTipoPago || 'CONTADO';
         const adelanto = (comp as any).cotizAdelanto || 0;
         const map: Record<string, string> = {
-          CONTADO: 'Contado', CREDITO_30: 'Crédito 30 días',
-          CREDITO_60: 'Crédito 60 días', CREDITO_90: 'Crédito 90 días',
+          CONTADO: 'Contado',
+          CREDITO_30: 'Crédito 30 días',
+          CREDITO_60: 'Crédito 60 días',
+          CREDITO_90: 'Crédito 90 días',
         };
-        return tipo === 'ADELANTO' ? `Adelanto ${adelanto}%` : (map[tipo] || tipo);
+        return tipo === 'ADELANTO'
+          ? `Adelanto ${adelanto}%`
+          : map[tipo] || tipo;
       }
       return (comp as any).medioPago || undefined;
     })();
 
-    const mtoOperGravadas = comp.mtoOperGravadas ? Number(comp.mtoOperGravadas).toFixed(2) : undefined;
-    const mtoIGV = comp.mtoIGV ? Number(comp.mtoIGV).toFixed(2) : undefined;
-    const descuento = comp.mtoDescuentoGlobal && Number(comp.mtoDescuentoGlobal) > 0
-      ? Number(comp.mtoDescuentoGlobal).toFixed(2)
+    const mtoOperGravadas = comp.mtoOperGravadas
+      ? Number(comp.mtoOperGravadas).toFixed(2)
       : undefined;
-    const empresaEmail = (comp as any).usuario?.email || (comp.empresa as any).email || undefined;
-    const sistemaUrl = process.env.APP_URL || process.env.FRONTEND_URL || 'https://falconext.pe';
+    const mtoIGV = comp.mtoIGV ? Number(comp.mtoIGV).toFixed(2) : undefined;
+    const descuento =
+      comp.mtoDescuentoGlobal && Number(comp.mtoDescuentoGlobal) > 0
+        ? Number(comp.mtoDescuentoGlobal).toFixed(2)
+        : undefined;
+    const empresaEmail =
+      (comp as any).usuario?.email || (comp.empresa as any).email || undefined;
+    const sistemaUrl =
+      process.env.APP_URL || process.env.FRONTEND_URL || 'https://falconext.pe';
     const sistemaNombre = process.env.APP_NAME || 'Falconext';
 
     const { Resend } = await import('resend');
@@ -3548,7 +4075,10 @@ export class ComprobanteService {
     );
 
     const resend = new Resend(resendKey);
-    const fromEmail = process.env.RESEND_FROM_EMAIL || process.env.MAIL_FROM || 'facturacion@falconext.pe';
+    const fromEmail =
+      process.env.RESEND_FROM_EMAIL ||
+      process.env.MAIL_FROM ||
+      'facturacion@falconext.pe';
     const { error } = await resend.emails.send({
       from: `${empresaNombre} <${fromEmail}>`,
       to: destinatario,

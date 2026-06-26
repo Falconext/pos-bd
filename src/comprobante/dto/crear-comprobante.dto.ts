@@ -235,6 +235,10 @@ export class CrearComprobanteDto {
   cuotas?: any[];
 
   @IsOptional()
+  @IsString()
+  fechaVencimientoCredito?: string;
+
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   retencionMonto?: number;

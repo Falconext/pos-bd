@@ -7,17 +7,29 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import * as express from 'express';
 import { PrismaService } from './prisma/prisma.service';
 import { initializeDatabase } from './common/utils/init-db';
+import { httpSecurityHeaders } from './common/security/http-security.middleware';
+import { authRateLimit } from './common/security/rate-limit.middleware';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
   process.env.TZ = 'America/Lima';
+  const nodeEnv = process.env.NODE_ENV || 'development';
+  const isProduction = nodeEnv === 'production';
   const app = await NestFactory.create(AppModule, {
     bodyParser: false, // Desactivamos el body parser por defecto
   });
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
 
   // Configurar límites de payload
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+  app.use(httpSecurityHeaders(isProduction));
+  app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '10mb' }));
+  app.use(
+    express.urlencoded({
+      extended: true,
+      limit: process.env.URLENCODED_BODY_LIMIT || '2mb',
+    }),
+  );
+  app.use(authRateLimit());
 
   const extraCorsOrigins = String(process.env.CORS_EXTRA_ORIGINS || '')
     .split(',')
@@ -32,8 +44,8 @@ async function bootstrap() {
     'http://app.jamble.peru:5174',
     'https://app.jamble.peru',
     'http://192.168.100.16:4000',
-    'tauri://localhost',  // Desktop app
-    'https://tauri.localhost',  // Desktop app (Windows)
+    'tauri://localhost', // Desktop app
+    'https://tauri.localhost', // Desktop app (Windows)
     'https://falconext-mype-production.up.railway.app',
     // Production domains
     'https://falconext.pe',
@@ -50,11 +62,24 @@ async function bootstrap() {
       // Allow requests with no origin (like mobile apps, Postman, curl)
       if (!origin) return callback(null, true);
 
-      if (allowedOrigins.includes(origin)) {
+      const isLocalDevelopmentOrigin =
+        /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/.test(origin) ||
+        /^https?:\/\/192\.168\.\d+\.\d+(?::\d+)?$/.test(origin) ||
+        /^https?:\/\/10\.\d+\.\d+\.\d+(?::\d+)?$/.test(origin) ||
+        /^https?:\/\/172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+(?::\d+)?$/.test(
+          origin,
+        ) ||
+        origin.startsWith('tauri://') ||
+        origin.startsWith('capacitor://');
+
+      if (
+        allowedOrigins.includes(origin) ||
+        (!isProduction && isLocalDevelopmentOrigin)
+      ) {
         callback(null, true);
       } else {
-        console.warn(`CORS: Origin ${origin} not allowed`);
-        callback(null, true); // Allow temporarily for desktop/debugging
+        logger.warn(`CORS bloqueado para origin: ${origin}`);
+        callback(new Error('Not allowed by CORS'), false);
       }
     },
     credentials: true,
@@ -62,7 +87,16 @@ async function bootstrap() {
     allowedHeaders: ['Authorization', 'Content-Type', 'Accept'],
   });
 
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted:
+        process.env.VALIDATION_ALLOW_EXTRA_FIELDS !== 'true',
+      transform: true,
+      transformOptions: { enableImplicitConversion: true },
+      validationError: { target: false, value: false },
+    }),
+  );
   app.useGlobalInterceptors(new ResponseInterceptor());
   app.useGlobalFilters(new HttpExceptionFilter());
   app.setGlobalPrefix('api');

@@ -7,24 +7,59 @@ import {
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { Logger } from '@nestjs/common';
+import { resolveJwtSecret } from '../auth/jwt-secret';
+
+const allowedSocketOrigins = [
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:3000',
+  'https://falconext.pe',
+  'https://www.falconext.pe',
+  'https://app.falconext.pe',
+  'https://app.krezka.com',
+  'https://www.krezka.com',
+  process.env.FRONTEND_URL,
+  ...(process.env.CORS_EXTRA_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+].filter(Boolean);
+
+function isAllowedSocketOrigin(origin?: string): boolean {
+  if (!origin) return true;
+  if (allowedSocketOrigins.includes(origin)) return true;
+  if (process.env.NODE_ENV === 'production') return false;
+  return (
+    /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/.test(origin) ||
+    /^https?:\/\/192\.168\.\d+\.\d+(?::\d+)?$/.test(origin) ||
+    /^https?:\/\/10\.\d+\.\d+\.\d+(?::\d+)?$/.test(origin) ||
+    /^https?:\/\/172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+(?::\d+)?$/.test(origin)
+  );
+}
 
 @WebSocketGateway({
   cors: {
-    origin: '*',
+    origin: (origin, callback) => {
+      if (isAllowedSocketOrigin(origin)) return callback(null, true);
+      callback(new Error('Not allowed by CORS'), false);
+    },
     credentials: true,
   },
 })
 export class NotificacionesGateway
-  implements OnGatewayConnection, OnGatewayDisconnect {
+  implements OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer()
   server: Server;
 
+  private readonly logger = new Logger(NotificacionesGateway.name);
   private usuariosConectados = new Map<number, string[]>(); // usuarioId -> socketIds[]
 
   constructor(
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
-  ) { }
+  ) {}
 
   async handleConnection(client: Socket) {
     try {
@@ -35,7 +70,7 @@ export class NotificacionesGateway
         return;
       }
 
-      const secret = this.configService.get<string>('JWT_SECRET', 'secret');
+      const secret = resolveJwtSecret(this.configService);
       const payload = await this.jwtService.verifyAsync(token, { secret });
 
       const usuarioId = payload.sub;
@@ -47,10 +82,12 @@ export class NotificacionesGateway
       }
       this.usuariosConectados.get(usuarioId)!.push(client.id);
 
-      console.log(`✅ Usuario ${usuarioId} conectado (socket: ${client.id})`);
-      console.log(`📊 Usuarios conectados: ${this.usuariosConectados.size}`);
+      this.logger.debug(
+        `Usuario ${usuarioId} conectado (socket: ${client.id})`,
+      );
+      this.logger.debug(`Usuarios conectados: ${this.usuariosConectados.size}`);
     } catch (error) {
-      console.error('❌ Error en autenticación WebSocket:', error);
+      this.logger.warn('Error en autenticacion WebSocket');
       client.disconnect();
     }
   }
@@ -73,8 +110,10 @@ export class NotificacionesGateway
         }
       }
 
-      console.log(`❌ Usuario ${usuarioId} desconectado (socket: ${client.id})`);
-      console.log(`📊 Usuarios conectados: ${this.usuariosConectados.size}`);
+      this.logger.debug(
+        `Usuario ${usuarioId} desconectado (socket: ${client.id})`,
+      );
+      this.logger.debug(`Usuarios conectados: ${this.usuariosConectados.size}`);
     }
   }
 
@@ -86,7 +125,9 @@ export class NotificacionesGateway
       sockets.forEach((socketId) => {
         this.server.to(socketId).emit('nueva-notificacion', notificacion);
       });
-      console.log(`📬 Notificación enviada a usuario ${usuarioId} (${sockets.length} conexiones)`);
+      console.log(
+        `📬 Notificación enviada a usuario ${usuarioId} (${sockets.length} conexiones)`,
+      );
     } else {
       console.log(`⚠️ Usuario ${usuarioId} no está conectado`);
     }

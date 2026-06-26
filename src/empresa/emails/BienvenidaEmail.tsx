@@ -1,256 +1,347 @@
 import * as React from 'react';
 import {
-  Body, Button, Column, Container, Head, Hr, Html,
-  Preview, Row, Section, Text,
+  Body,
+  Container,
+  Head,
+  Hr,
+  Html,
+  Preview,
+  Section,
+  Text,
 } from '@react-email/components';
 
 export interface BienvenidaEmailProps {
   empresaNombre: string;
   adminNombre: string;
+  adminEmail?: string;
   planNombre?: string;
+  planCosto?: string;
+  planFeatures?: string[];
+  fechaActivacion?: string;
+  fechaExpiracion?: string;
+  accessUrl?: string;
   appName: string;
+  costoInstalacion?: string;
   mensajeExtra?: string;
 }
 
 const main: React.CSSProperties = {
-  backgroundColor: '#f0fdf4',
-  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  backgroundColor: '#111111',
+  fontFamily:
+    '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  margin: 0,
+  padding: 0,
 };
 
-const container: React.CSSProperties = {
+const outer: React.CSSProperties = {
   margin: '0 auto',
-  padding: '40px 20px',
-  maxWidth: '600px',
+  padding: '40px 16px 48px',
+  maxWidth: '560px',
+};
+
+const brandName: React.CSSProperties = {
+  color: '#ffffff',
+  fontSize: '16px',
+  fontWeight: '700',
+  margin: '0 0 24px 0',
 };
 
 const card: React.CSSProperties = {
   backgroundColor: '#ffffff',
-  borderRadius: '20px',
-  overflow: 'hidden',
-  boxShadow: '0 4px 24px rgba(16,185,129,0.10)',
-};
-
-const header: React.CSSProperties = {
-  background: 'linear-gradient(135deg, #059669 0%, #10b981 50%, #34d399 100%)',
-  padding: '44px 40px 40px',
-  textAlign: 'center' as const,
-};
-
-const emojiStyle: React.CSSProperties = {
-  fontSize: '48px',
-  lineHeight: '1',
-  margin: '0 0 16px 0',
-  display: 'block',
-};
-
-const headerTitle: React.CSSProperties = {
-  color: '#ffffff',
-  fontSize: '26px',
-  fontWeight: '800',
-  margin: '0 0 8px 0',
-  letterSpacing: '-0.5px',
-};
-
-const headerSubtitle: React.CSSProperties = {
-  color: 'rgba(255,255,255,0.85)',
-  fontSize: '14px',
-  margin: '0',
-  fontWeight: '500',
-};
-
-const body: React.CSSProperties = {
-  padding: '36px 40px',
-};
-
-const greeting: React.CSSProperties = {
-  fontSize: '16px',
-  color: '#111827',
-  margin: '0 0 20px 0',
-  lineHeight: '1.7',
-};
-
-const featureGrid: React.CSSProperties = {
-  backgroundColor: '#f0fdf4',
   borderRadius: '14px',
-  padding: '24px',
-  marginBottom: '28px',
-  border: '1px solid #bbf7d0',
+  overflow: 'hidden',
+  marginBottom: '16px',
 };
 
-const featureItem: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'flex-start',
-  marginBottom: '14px',
+const cardPad: React.CSSProperties = {
+  padding: '28px 32px',
 };
 
-const featureIcon: React.CSSProperties = {
-  width: '32px',
-  height: '32px',
-  borderRadius: '8px',
-  backgroundColor: '#d1fae5',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  fontSize: '16px',
-  marginRight: '12px',
-  flexShrink: 0,
-  lineHeight: '32px',
-  textAlign: 'center' as const,
+const eyebrow: React.CSSProperties = {
+  fontSize: '13px',
+  color: '#6b7280',
+  margin: '0 0 6px 0',
 };
 
-const featureText: React.CSSProperties = {
+const titleText: React.CSSProperties = {
+  fontSize: '34px',
+  fontWeight: '800',
+  color: '#111827',
+  margin: '0 0 8px 0',
+  letterSpacing: '-1px',
+  lineHeight: '1.05',
+};
+
+const subtitle: React.CSSProperties = {
   fontSize: '14px',
-  color: '#374151',
-  margin: '0',
-  lineHeight: '1.5',
-  paddingTop: '6px',
+  color: '#6b7280',
+  margin: '0 0 20px 0',
+  lineHeight: '1.6',
 };
 
-const planBadge: React.CSSProperties = {
+const ctaLink: React.CSSProperties = {
+  backgroundColor: '#111111',
+  color: '#ffffff',
   display: 'inline-block',
-  backgroundColor: '#ecfdf5',
-  border: '1.5px solid #6ee7b7',
-  color: '#059669',
   fontSize: '13px',
   fontWeight: '700',
-  padding: '6px 16px',
-  borderRadius: '99px',
-  marginBottom: '28px',
-};
-
-const ctaButton: React.CSSProperties = {
-  backgroundColor: '#059669',
-  borderRadius: '12px',
-  color: '#ffffff',
-  display: 'block',
-  fontSize: '15px',
-  fontWeight: '700',
-  textAlign: 'center' as const,
-  padding: '15px 32px',
+  letterSpacing: '0.02em',
   textDecoration: 'none',
-  margin: '0 0 28px 0',
+  padding: '13px 18px',
+  borderRadius: '10px',
 };
 
-const extraBox: React.CSSProperties = {
-  backgroundColor: '#f8fafc',
-  borderLeft: '4px solid #10b981',
-  borderRadius: '0 10px 10px 0',
-  padding: '14px 18px',
-  marginBottom: '28px',
-};
-
-const extraText: React.CSSProperties = {
-  fontSize: '14px',
-  color: '#374151',
-  margin: '0',
-  lineHeight: '1.7',
-};
-
-const hr: React.CSSProperties = {
+const divider: React.CSSProperties = {
   border: 'none',
   borderTop: '1px solid #e5e7eb',
-  margin: '0 0 20px 0',
+  margin: '0',
 };
 
-const footer: React.CSSProperties = {
-  fontSize: '12px',
-  color: '#9ca3af',
-  textAlign: 'center' as const,
+const metaLabel: React.CSSProperties = {
+  fontSize: '13px',
+  color: '#6b7280',
+  margin: '0',
+  padding: '10px 0',
+};
+
+const metaValue: React.CSSProperties = {
+  fontSize: '13px',
+  color: '#111827',
+  fontWeight: '600',
+  margin: '0',
+  padding: '10px 0',
+  textAlign: 'right' as const,
+};
+
+const detailTitle: React.CSSProperties = {
+  fontSize: '16px',
+  fontWeight: '800',
+  color: '#111827',
+  margin: '0 0 6px 0',
+};
+
+const detailText: React.CSSProperties = {
+  fontSize: '14px',
+  color: '#374151',
+  lineHeight: '1.7',
+  margin: '0',
+};
+
+const itemTitle: React.CSSProperties = {
+  fontSize: '14px',
+  color: '#111827',
+  fontWeight: '700',
+  margin: '0 0 4px 0',
+};
+
+const itemText: React.CSSProperties = {
+  fontSize: '13px',
+  color: '#6b7280',
   lineHeight: '1.6',
   margin: '0',
 };
 
-const footerBrand: React.CSSProperties = {
+const alertBox: React.CSSProperties = {
+  backgroundColor: '#ecfdf5',
+  border: '1px solid #bbf7d0',
+  borderRadius: '12px',
+  padding: '14px 16px',
+  margin: '16px 0 0 0',
+};
+
+const alertText: React.CSSProperties = {
+  color: '#166534',
   fontSize: '13px',
-  fontWeight: '700',
-  color: '#059669',
+  lineHeight: '1.6',
+  margin: '0',
+};
+
+const footerText: React.CSSProperties = {
+  fontSize: '13px',
+  color: '#6b7280',
   textAlign: 'center' as const,
-  margin: '0 0 4px 0',
+  lineHeight: '1.6',
+  margin: '20px 0 4px 0',
+};
+
+const footerLink: React.CSSProperties = {
+  color: '#6366f1',
+  textDecoration: 'underline',
 };
 
 export const BienvenidaEmail: React.FC<BienvenidaEmailProps> = ({
   empresaNombre,
   adminNombre,
+  adminEmail,
   planNombre,
+  planCosto,
+  planFeatures = [],
+  fechaActivacion,
+  fechaExpiracion,
+  accessUrl = 'https://app.falconext.pe',
   appName,
+  costoInstalacion,
   mensajeExtra,
-}) => (
-  <Html lang="es">
-    <Head />
-    <Preview>¡Bienvenido/a a {appName}! Tu cuenta de {empresaNombre} ya está lista.</Preview>
-    <Body style={main}>
-      <Container style={container}>
-        <div style={card}>
-          {/* Header */}
-          <div style={header}>
-            <p style={emojiStyle}>🎉</p>
-            <p style={headerTitle}>¡Bienvenido/a a {appName}!</p>
-            <p style={headerSubtitle}>{empresaNombre} · Tu cuenta está activa</p>
-          </div>
+}) => {
+  const resetUrl = `${accessUrl.replace(/\/$/, '')}/forgot-password`;
 
-          {/* Body */}
-          <div style={body}>
-            <Text style={greeting}>
-              Hola, <strong>{adminNombre}</strong>. Estamos muy contentos de tenerte con nosotros.
-              Tu cuenta de <strong>{empresaNombre}</strong> ha sido activada exitosamente y ya puedes
-              empezar a usar todas las funcionalidades del sistema.
-            </Text>
+  return (
+    <Html lang="es">
+      <Head />
+      <Preview>
+        Bienvenido a {appName}. La cuenta de {empresaNombre} ya está lista.
+      </Preview>
+      <Body style={main}>
+        <Container style={outer}>
+          <p style={brandName}>{appName}</p>
 
-            {planNombre && (
-              <div style={{ textAlign: 'center' as const, marginBottom: '24px' }}>
-                <span style={planBadge}>Plan activo: {planNombre}</span>
+          <div style={card}>
+            <div style={cardPad}>
+              <p style={eyebrow}>Cuenta activada</p>
+              <p style={titleText}>Bienvenido a {appName}</p>
+              <p style={subtitle}>
+                Hola, <strong>{adminNombre}</strong>. La cuenta de{' '}
+                <strong>{empresaNombre}</strong> ya quedó habilitada para operar
+                ventas, inventario, facturación y gestión del negocio.
+              </p>
+
+              <a href={accessUrl} style={ctaLink} target="_blank" rel="noreferrer">
+                Ingresar a mi panel
+              </a>
+            </div>
+
+            <Hr style={divider} />
+
+            <div style={cardPad}>{/* sección: datos de la cuenta */}
+              <table width="100%" cellPadding={0} cellSpacing={0} style={{ borderCollapse: 'collapse' }}>
+                <tbody>
+                  <tr>
+                    <td style={metaLabel}>Empresa</td>
+                    <td style={metaValue}>{empresaNombre}</td>
+                  </tr>
+                  <tr style={{ borderTop: '1px solid #f3f4f6' }}>
+                    <td style={metaLabel}>Administrador</td>
+                    <td style={metaValue}>{adminEmail || adminNombre}</td>
+                  </tr>
+                  <tr style={{ borderTop: '1px solid #f3f4f6' }}>
+                    <td style={metaLabel}>Plan contratado</td>
+                    <td style={metaValue}>{planNombre || 'Plan activo'}</td>
+                  </tr>
+                  <tr style={{ borderTop: '1px solid #f3f4f6' }}>
+                    <td style={metaLabel}>Fecha de activación</td>
+                    <td style={metaValue}>{fechaActivacion || 'Registrada'}</td>
+                  </tr>
+                  <tr style={{ borderTop: '1px solid #f3f4f6' }}>
+                    <td style={metaLabel}>Vigencia</td>
+                    <td style={metaValue}>{fechaExpiracion || 'Por confirmar'}</td>
+                  </tr>
+                  {planCosto && (
+                    <tr style={{ borderTop: '1px solid #f3f4f6' }}>
+                      <td style={metaLabel}>Inversión</td>
+                      <td style={metaValue}>{planCosto}</td>
+                    </tr>
+                  )}
+                  {costoInstalacion && (
+                    <tr style={{ borderTop: '1px solid #f3f4f6' }}>
+                      <td style={metaLabel}>Coste de instalación</td>
+                      <td style={metaValue}>{costoInstalacion}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+
+              <div style={alertBox}>
+                <p style={alertText}>
+                  <strong>Acceso seguro:</strong> si necesitas crear o recuperar tu
+                  contraseña, usa la opción de recuperación desde el panel. Por
+                  seguridad no enviamos contraseñas por correo.
+                </p>
               </div>
-            )}
+            </div>
 
-            {/* Features */}
-            <div style={featureGrid}>
+            <Hr style={divider} />
+
+            <div style={cardPad}>
+              <p style={detailTitle}>Primeros pasos recomendados</p>
+              <p style={{ ...detailText, marginBottom: '18px' }}>
+                Te sugerimos dejar lista la configuración base antes de iniciar la
+                operación diaria.
+              </p>
+
               <Section>
-                <Row style={featureItem}>
-                  <Column style={{ width: '44px' }}>
-                    <div style={featureIcon}>🧾</div>
-                  </Column>
-                  <Column>
-                    <p style={featureText}><strong>Facturación electrónica</strong> — Emite comprobantes con validez ante SUNAT de forma rápida y sencilla.</p>
-                  </Column>
-                </Row>
-                <Row style={featureItem}>
-                  <Column style={{ width: '44px' }}>
-                    <div style={featureIcon}>📦</div>
-                  </Column>
-                  <Column>
-                    <p style={featureText}><strong>Inventario y productos</strong> — Controla tu stock en tiempo real desde cualquier dispositivo.</p>
-                  </Column>
-                </Row>
-                <Row style={{ ...featureItem, marginBottom: '0' }}>
-                  <Column style={{ width: '44px' }}>
-                    <div style={featureIcon}>📊</div>
-                  </Column>
-                  <Column>
-                    <p style={featureText}><strong>Reportes y finanzas</strong> — Visualiza tus ventas, gastos y rentabilidad en tiempo real.</p>
-                  </Column>
-                </Row>
+                <table width="100%" cellPadding={0} cellSpacing={0} style={{ borderCollapse: 'collapse' }}>
+                  <tbody>
+                    <tr>
+                      <td style={{ padding: '12px 0', verticalAlign: 'top', width: '50%' }}>
+                        <p style={itemTitle}>Datos fiscales y series</p>
+                        <p style={itemText}>Revisa RUC, dirección fiscal, certificados y numeración.</p>
+                      </td>
+                      <td style={{ padding: '12px 0 12px 18px', verticalAlign: 'top', width: '50%' }}>
+                        <p style={itemTitle}>Productos y precios</p>
+                        <p style={itemText}>Carga inventario, costos, categorías, marcas y stock inicial.</p>
+                      </td>
+                    </tr>
+                    <tr style={{ borderTop: '1px solid #f3f4f6' }}>
+                      <td style={{ padding: '12px 0', verticalAlign: 'top', width: '50%' }}>
+                        <p style={itemTitle}>Equipo y sedes</p>
+                        <p style={itemText}>Crea usuarios, permisos, sedes y almacenes según tu operación.</p>
+                      </td>
+                      <td style={{ padding: '12px 0 12px 18px', verticalAlign: 'top', width: '50%' }}>
+                        <p style={itemTitle}>Pagos y tienda virtual</p>
+                        <p style={itemText}>Configura cuentas bancarias, métodos de pago y catálogo online.</p>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
               </Section>
             </div>
 
-            {mensajeExtra && (
-              <div style={extraBox}>
-                <p style={extraText}>{mensajeExtra}</p>
-              </div>
+            {planFeatures.length > 0 && (
+              <>
+                <Hr style={divider} />
+                <div style={cardPad}>
+                  <p style={detailTitle}>Incluido en tu plan</p>
+                  <table width="100%" cellPadding={0} cellSpacing={0} style={{ borderCollapse: 'collapse' }}>
+                    <tbody>
+                      {planFeatures.slice(0, 8).map((feature, index) => (
+                        <tr key={feature} style={index > 0 ? { borderTop: '1px solid #f3f4f6' } : undefined}>
+                          <td style={metaLabel}>Módulo {index + 1}</td>
+                          <td style={metaValue}>{feature}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
 
-            <Hr style={hr} />
-
-            {/* Footer */}
-            <p style={footerBrand}>{appName}</p>
-            <Text style={footer}>
-              Este correo fue enviado a la cuenta de administrador de <strong>{empresaNombre}</strong>.
-              Si tienes alguna pregunta, nuestro equipo está disponible para ayudarte.
-            </Text>
+            {mensajeExtra && (
+              <>
+                <Hr style={divider} />
+                <div style={cardPad}>
+                  <p style={detailTitle}>Mensaje adicional</p>
+                  <p style={detailText}>{mensajeExtra}</p>
+                </div>
+              </>
+            )}
           </div>
-        </div>
-      </Container>
-    </Body>
-  </Html>
-);
+
+          <Text style={footerText}>
+            Este correo fue enviado al administrador de <strong>{empresaNombre}</strong>.
+            Ingresa desde{' '}
+            <a href={accessUrl} style={footerLink} target="_blank" rel="noreferrer">
+              tu panel
+            </a>{' '}
+            o recupera tu acceso desde{' '}
+            <a href={resetUrl} style={footerLink} target="_blank" rel="noreferrer">
+              recuperación de contraseña
+            </a>
+            .
+          </Text>
+        </Container>
+      </Body>
+    </Html>
+  );
+};
 
 export default BienvenidaEmail;

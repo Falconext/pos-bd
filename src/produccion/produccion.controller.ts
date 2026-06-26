@@ -24,6 +24,7 @@ import { RegistrarEjecucionOrdenDto } from './dto/registrar-ejecucion-orden.dto'
 import { UpdateMetodoSalidaDto } from './dto/update-metodo-salida.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
+import { excelUploadOptions } from '../common/utils/multer.config';
 
 type RequestConUsuario = {
   user: {
@@ -41,10 +42,7 @@ type RequestConUsuario = {
 export class ProduccionController {
   constructor(private readonly produccionService: ProduccionService) {}
 
-  private resolverEmpresaId(
-    req: RequestConUsuario,
-    empresaIdQuery?: string,
-  ) {
+  private resolverEmpresaId(req: RequestConUsuario, empresaIdQuery?: string) {
     const empresaToken = req?.user?.empresaId;
     if (empresaToken) return Number(empresaToken);
 
@@ -211,9 +209,8 @@ export class ProduccionController {
     @Res() res: Response,
   ) {
     const empresaId = this.resolverEmpresaId(req, empresaIdQuery);
-    const buffer = await this.produccionService.generarPlantillaCargaMasiva(
-      empresaId,
-    );
+    const buffer =
+      await this.produccionService.generarPlantillaCargaMasiva(empresaId);
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -226,7 +223,7 @@ export class ProduccionController {
   }
 
   @Post('importar-plantilla')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', excelUploadOptions))
   async importarPlantilla(
     @Request() req: RequestConUsuario,
     @UploadedFile() file: Express.Multer.File,

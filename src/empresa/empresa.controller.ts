@@ -178,6 +178,10 @@ export class EmpresaController {
       mensajeCustom?: string;
       tituloPromo?: string;
       etiqueta?: string;
+      pagoConcepto?: string;
+      pagoMonto?: string;
+      pagoReferencia?: string;
+      costoInstalacion?: string;
     },
     @Res({ passthrough: true }) res: Response,
   ) {
@@ -185,6 +189,10 @@ export class EmpresaController {
       mensajeCustom: body.mensajeCustom,
       tituloPromo: body.tituloPromo,
       etiqueta: body.etiqueta,
+      pagoConcepto: body.pagoConcepto,
+      pagoMonto: body.pagoMonto,
+      pagoReferencia: body.pagoReferencia,
+      costoInstalacion: body.costoInstalacion,
     });
     res.locals.message = `Email enviado a ${result.enviados} administrador(es)`;
     return result;

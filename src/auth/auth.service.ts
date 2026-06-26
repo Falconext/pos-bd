@@ -63,7 +63,7 @@ export class AuthService {
       where: { email },
       include: { empresa: true },
     } as any);
-    if (!user) throw new NotFoundException('Usuario no encontrado');
+    if (!user) throw new UnauthorizedException('Credenciales inválidas');
     if (user.estado !== 'ACTIVO')
       throw new ForbiddenException('Cuenta inactiva');
 
@@ -83,7 +83,7 @@ export class AuthService {
     }
 
     const isValid = await bcrypt.compare(password, user.password);
-    if (!isValid) throw new UnauthorizedException('Contraseña incorrecta');
+    if (!isValid) throw new UnauthorizedException('Credenciales inválidas');
 
     // ── Brand validation ─────────────────────────────────────────
     // ADMIN_SISTEMA y RESELLER no tienen empresa, pueden entrar desde cualquier frontend
@@ -236,7 +236,11 @@ export class AuthService {
     if (isAdmin) {
       // ADMIN_EMPRESA puede seleccionar cualquier sede activa de su empresa
       sede = await this.prisma.sede.findFirst({
-        where: { id: sedeId, empresaId: user.empresaId ?? undefined, activo: true },
+        where: {
+          id: sedeId,
+          empresaId: user.empresaId ?? undefined,
+          activo: true,
+        },
       });
       if (!sede) throw new ForbiddenException('Sede no encontrada o inactiva');
     } else {
@@ -245,8 +249,10 @@ export class AuthService {
         where: { usuarioId_sedeId: { usuarioId: userId, sedeId } },
         include: { sede: true },
       });
-      if (!usuarioSede) throw new ForbiddenException('No tienes acceso a esta sede');
-      if (!usuarioSede.sede.activo) throw new ForbiddenException('Esta sede está inactiva');
+      if (!usuarioSede)
+        throw new ForbiddenException('No tienes acceso a esta sede');
+      if (!usuarioSede.sede.activo)
+        throw new ForbiddenException('Esta sede está inactiva');
       sede = usuarioSede.sede;
     }
 
@@ -481,13 +487,19 @@ export class AuthService {
 
     if ((usuario as any).empresa?.plan?.features) {
       (usuario as any).empresa.plan.features = Object.fromEntries(
-        (usuario as any).empresa.plan.features.map((feature: any) => [feature.featureKey, feature.enabled]),
+        (usuario as any).empresa.plan.features.map((feature: any) => [
+          feature.featureKey,
+          feature.enabled,
+        ]),
       );
     }
 
     if ((usuario as any).empresa?.rubro?.features) {
       (usuario as any).empresa.rubro.features = Object.fromEntries(
-        (usuario as any).empresa.rubro.features.map((feature: any) => [feature.featureKey, feature.enabledByDefault]),
+        (usuario as any).empresa.rubro.features.map((feature: any) => [
+          feature.featureKey,
+          feature.enabledByDefault,
+        ]),
       );
     }
 
@@ -650,12 +662,18 @@ export class AuthService {
     if (usuario?.empresa) {
       if (usuario.empresa.plan?.features) {
         usuario.empresa.plan.features = Object.fromEntries(
-          usuario.empresa.plan.features.map((feature: any) => [feature.featureKey, feature.enabled]),
+          usuario.empresa.plan.features.map((feature: any) => [
+            feature.featureKey,
+            feature.enabled,
+          ]),
         );
       }
       if (usuario.empresa.rubro?.features) {
         usuario.empresa.rubro.features = Object.fromEntries(
-          usuario.empresa.rubro.features.map((feature: any) => [feature.featureKey, feature.enabledByDefault]),
+          usuario.empresa.rubro.features.map((feature: any) => [
+            feature.featureKey,
+            feature.enabledByDefault,
+          ]),
         );
       }
       usuario.empresa.whatsappApiTokenConfigured = Boolean(

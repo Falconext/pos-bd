@@ -101,6 +101,13 @@ function mapHotelPlanName(planNombre?: string | null): string {
   return raw.replace(/\s+/g, '_');
 }
 
+function resolveAppAccessUrl(empresa?: { brand?: string | null; producto?: string | null }): string {
+  if (process.env.APP_WEB_URL) return process.env.APP_WEB_URL;
+  if (process.env.FRONTEND_URL) return process.env.FRONTEND_URL;
+  if (normalizeBrand(empresa?.brand) === 'krezka') return 'https://app.krezka.com';
+  return 'https://app.falconext.pe';
+}
+
 function esPlanPermitidoParaPrecioFefo(planNombre?: string | null): boolean {
   const raw = String(planNombre ?? '')
     .toUpperCase()
@@ -724,6 +731,7 @@ export class EmpresaService {
             orderBy: { id: 'asc' },
             select: {
               nombre: true,
+              email: true,
               celular: true,
             },
             take: 1,
@@ -1317,11 +1325,29 @@ export class EmpresaService {
       mensajeCustom?: string;
       tituloPromo?: string;
       etiqueta?: string;
+      pagoConcepto?: string;
+      pagoMonto?: string;
+      pagoReferencia?: string;
+      costoInstalacion?: string;
     } = {},
   ) {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
-      include: { plan: { select: { nombre: true } } },
+      include: {
+        plan: {
+          select: {
+            nombre: true,
+            costo: true,
+            duracionDias: true,
+            tipoFacturacion: true,
+            tieneTienda: true,
+            tieneTicketera: true,
+            tieneGestionLotes: true,
+            maxSedes: true,
+            limiteUsuarios: true,
+          },
+        },
+      },
     });
     if (!empresa) throw new NotFoundException('Empresa no encontrada');
     if (tipo === 'RECORDATORIO' && empresa.estado !== 'ACTIVO') {
@@ -1344,7 +1370,30 @@ export class EmpresaService {
     const planNombre = (empresa.plan as any)?.nombre ?? '';
     const fechaExp = empresa.fechaExpiracion;
     const fechaExpiracion = formatDateEsPeDateOnly(fechaExp);
+    const fechaActivacion = formatDateEsPeDateOnly(empresa.fechaActivacion);
     const diasRestantes = getDaysRemainingDateOnly(fechaExp);
+    const accessUrl = resolveAppAccessUrl(empresa);
+    const planCosto = (empresa.plan as any)?.costo != null ? `S/ ${Number((empresa.plan as any).costo).toFixed(2)}` : '';
+    const planFeatures = [
+      (empresa.plan as any)?.maxSedes ? `Hasta ${(empresa.plan as any).maxSedes} sede${Number((empresa.plan as any).maxSedes) === 1 ? '' : 's'}` : '',
+      (empresa.plan as any)?.limiteUsuarios ? `Hasta ${(empresa.plan as any).limiteUsuarios} usuario${Number((empresa.plan as any).limiteUsuarios) === 1 ? '' : 's'}` : '',
+      (empresa.plan as any)?.tieneTienda ? 'Tienda virtual incluida' : '',
+      (empresa.plan as any)?.tieneTicketera ? 'Compatible con ticketera' : '',
+      (empresa.plan as any)?.tieneGestionLotes ? 'Gestión de lotes' : '',
+    ].filter(Boolean);
+
+    // Normaliza un monto ingresado libremente a formato Soles "S/ X.XX"
+    const formatSoles = (valor?: string): string | undefined => {
+      if (!valor) return undefined;
+      let limpio = String(valor).replace(/[^0-9.,]/g, '');
+      // Si trae coma y punto, la coma es separador de miles; si solo coma, es decimal
+      limpio = limpio.includes(',') && limpio.includes('.')
+        ? limpio.replace(/,/g, '')
+        : limpio.replace(',', '.');
+      const num = parseFloat(limpio);
+      return Number.isNaN(num) ? valor : `S/ ${num.toFixed(2)}`;
+    };
+    const costoInstalacion = formatSoles(opts.costoInstalacion);
 
     let enviados = 0;
     for (const admin of admins) {
@@ -1356,8 +1405,17 @@ export class EmpresaService {
         tituloPromo: opts.tituloPromo,
         etiqueta: opts.etiqueta,
         fechaExpiracion,
+        fechaActivacion,
         diasRestantes,
         planNombre,
+        planCosto,
+        planFeatures,
+        adminEmail: admin.email,
+        accessUrl,
+        pagoConcepto: opts.pagoConcepto,
+        pagoMonto: opts.pagoMonto,
+        pagoReferencia: opts.pagoReferencia,
+        costoInstalacion,
         appName,
       });
       enviados++;
@@ -1444,8 +1502,17 @@ export class EmpresaService {
       tituloPromo?: string;
       etiqueta?: string;
       fechaExpiracion?: string;
+      fechaActivacion?: string;
       diasRestantes?: number;
       planNombre?: string;
+      planCosto?: string;
+      planFeatures?: string[];
+      adminEmail?: string;
+      accessUrl?: string;
+      pagoConcepto?: string;
+      pagoMonto?: string;
+      pagoReferencia?: string;
+      costoInstalacion?: string;
       autorNombre?: string;
       appName: string;
     },
@@ -1469,8 +1536,17 @@ export class EmpresaService {
       tituloPromo,
       etiqueta,
       fechaExpiracion,
+      fechaActivacion,
       diasRestantes = 7,
       planNombre,
+      planCosto,
+      planFeatures,
+      adminEmail,
+      accessUrl,
+      pagoConcepto,
+      pagoMonto,
+      pagoReferencia,
+      costoInstalacion,
       autorNombre,
       appName,
     } = opts;
@@ -1485,8 +1561,15 @@ export class EmpresaService {
         (BienvenidaEmail as any)({
           empresaNombre,
           adminNombre,
+          adminEmail,
           planNombre,
+          planCosto,
+          planFeatures,
+          fechaActivacion,
+          fechaExpiracion,
+          accessUrl,
           appName,
+          costoInstalacion,
           mensajeExtra: mensajeCustom,
         }),
       );
@@ -1500,7 +1583,11 @@ export class EmpresaService {
           empresaNombre,
           adminNombre,
           planNombre,
+          planCosto,
           fechaExpiracion,
+          pagoConcepto,
+          pagoMonto,
+          pagoReferencia,
           appName,
           mensajeExtra: mensajeCustom,
         }),

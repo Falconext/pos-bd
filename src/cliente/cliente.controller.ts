@@ -26,6 +26,7 @@ import { CreateClienteDto } from './dto/create-cliente.dto';
 import { ListClienteDto } from './dto/list-cliente.dto';
 import { UpdateClienteDto } from './dto/update-cliente.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { excelUploadOptions } from '../common/utils/multer.config';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @UsePipes(new ValidationPipe({ transform: true }))
@@ -34,7 +35,7 @@ export class ClienteController {
   constructor(private readonly service: ClienteService) {}
 
   @Post()
-  @Roles('ADMIN_EMPRESA','USUARIO_EMPRESA')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async crear(
     @Body() dto: CreateClienteDto,
     @User() user: any,
@@ -49,7 +50,7 @@ export class ClienteController {
   }
 
   @Get()
-  @Roles('ADMIN_EMPRESA','USUARIO_EMPRESA')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async listar(
     @User() user: any,
     @Query() query: ListClienteDto,
@@ -96,7 +97,7 @@ export class ClienteController {
   }
 
   @Get('exportar')
-  @Roles('ADMIN_EMPRESA','USUARIO_EMPRESA')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async exportarArchivoEmpresa(
     @User() user: any,
     @Query('search') search: string | undefined,
@@ -112,8 +113,8 @@ export class ClienteController {
   }
 
   @Post('importar')
-  @Roles('ADMIN_EMPRESA','USUARIO_EMPRESA')
-  @UseInterceptors(FileInterceptor('file'))
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  @UseInterceptors(FileInterceptor('file', excelUploadOptions))
   async cargarMasivo(@UploadedFile() file: any, @User() user: any) {
     if (!file) {
       return {
@@ -128,7 +129,7 @@ export class ClienteController {
 
   // Rutas con parámetros dinámicos al final
   @Get(':id')
-  @Roles('ADMIN_EMPRESA','USUARIO_EMPRESA')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async obtenerPorId(
     @Param('id', ParseIntPipe) id: number,
     @User() user: any,
@@ -140,7 +141,7 @@ export class ClienteController {
   }
 
   @Put(':id')
-  @Roles('ADMIN_EMPRESA','USUARIO_EMPRESA')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async actualizar(
     @Param('id', ParseIntPipe) id: number,
     @User() user: any,
@@ -157,7 +158,7 @@ export class ClienteController {
   }
 
   @Patch(':id/estado')
-  @Roles('ADMIN_EMPRESA','USUARIO_EMPRESA')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async cambiarEstado(
     @Param('id', ParseIntPipe) id: number,
     @User() user: any,
