@@ -93,9 +93,14 @@ async function bootstrap() {
 
   app.useGlobalPipes(
     new ValidationPipe({
+      // whitelist descarta los campos no declarados en el DTO (protege contra
+      // mass-assignment). forbidNonWhitelisted los RECHAZA con error 400; lo
+      // dejamos desactivado por defecto porque el frontend envía campos de UI
+      // (nombres de display, ids de relación) en sus payloads. Para validación
+      // estricta, setear VALIDATION_FORBID_EXTRA_FIELDS=true.
       whitelist: true,
       forbidNonWhitelisted:
-        process.env.VALIDATION_ALLOW_EXTRA_FIELDS !== 'true',
+        process.env.VALIDATION_FORBID_EXTRA_FIELDS === 'true',
       transform: true,
       transformOptions: { enableImplicitConversion: true },
       validationError: { target: false, value: false },
