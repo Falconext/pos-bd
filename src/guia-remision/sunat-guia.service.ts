@@ -45,6 +45,7 @@ export class SunatGuiaService {
         }
 
         // 2. Firmar XML
+        console.log(xmlContent);
         const signResponse = await this.qpseClient.firmarXML({
             accessToken,
             xmlFilename,
@@ -360,6 +361,10 @@ export class SunatGuiaService {
             };
         }
 
+        stage['cac:LoadingTransportEvent'] = {
+            'cbc:OccurrenceDate': { _text: this.formatDate(guia.fechaInicioTraslado) }
+        };
+
         if (guia.modoTransporte === '02' && String(guia.conductorNumDoc || '').trim()) {
             stage['cac:DriverPerson'] = [this.buildDriverPerson(guia)];
         }
@@ -386,6 +391,9 @@ export class SunatGuiaService {
                     },
                     ...(guia.transportistaMTC ? { 'cbc:CompanyID': { _text: guia.transportistaMTC } } : {}),
                 },
+            },
+            'cac:LoadingTransportEvent': {
+                'cbc:OccurrenceDate': { _text: this.formatDate(guia.fechaInicioTraslado) }
             },
             'cac:DriverPerson': [this.buildDriverPerson(guia)],
         };

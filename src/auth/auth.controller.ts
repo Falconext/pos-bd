@@ -36,12 +36,12 @@ export class AuthController {
   @Post('select-sede')
   async selectSede(
     @User() user: any,
-    @Body() body: { sedeId: number },
+    @Body('sedeId') sedeId: number,
     @Res({ passthrough: true }) res: Response,
   ) {
     const result = await this.authService.selectSede(
       user.id ?? user.sub,
-      Number(body.sedeId),
+      Number(sedeId),
     );
     res.locals.message = 'Sede seleccionada correctamente';
     return result;

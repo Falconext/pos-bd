@@ -57,6 +57,7 @@ export class DashboardService {
         empresaId,
         ...(sedeId ? { sedeId } : {}),
         ...(fechaEmision ? { fechaEmision } : {}),
+        estadoEnvioSunat: { not: 'ANULADO' as any },
         ...this.filtroExcluirConvertidos,
       };
 
@@ -101,7 +102,7 @@ export class DashboardService {
 
       const TIPOS_FINANCIAMIENTO = ['PRESTAMO', 'INVERSION', 'CAPITAL'];
       const otrosIngresos = ingresosManuales.reduce(
-        (sum, i) => sum + (TIPOS_FINANCIAMIENTO.includes(i.tipo) ? 0 : Number(i.monto)), 0
+        (sum: number, i: any) => sum + (TIPOS_FINANCIAMIENTO.includes(i.tipo) ? 0 : Number(i.monto)), 0
       );
 
       return {
@@ -130,6 +131,7 @@ export class DashboardService {
         empresaId,
         ...(sedeId ? { sedeId } : {}),
         ...(fechaEmision ? { fechaEmision } : {}),
+        estadoEnvioSunat: { not: 'ANULADO' as any },
         ...this.filtroExcluirConvertidos,
       },
       _sum: { mtoImpVenta: true },
@@ -183,6 +185,7 @@ export class DashboardService {
         empresaId,
         ...(sedeId ? { sedeId } : {}),
         ...(fechaEmision ? { fechaEmision } : {}),
+        estadoEnvioSunat: { not: 'ANULADO' as any },
         ...this.filtroExcluirConvertidos,
       },
       _sum: { mtoImpVenta: true },
@@ -220,6 +223,7 @@ export class DashboardService {
         empresaId,
         ...(sedeId ? { sedeId } : {}),
         ...(fechaEmision ? { fechaEmision } : {}),
+        estadoEnvioSunat: { not: 'ANULADO' as any },
         ...this.filtroExcluirConvertidos,
       },
       select: { id: true },
@@ -283,6 +287,7 @@ export class DashboardService {
     const baseComprobanteWhere = {
       empresaId,
       ...(sedeId ? { sedeId } : {}),
+      estadoEnvioSunat: { not: 'ANULADO' as any },
       ...this.filtroExcluirConvertidos,
     };
 
@@ -319,14 +324,14 @@ export class DashboardService {
     ]);
 
     const otrosIngresosCurr = ingresosManualesCurr.reduce(
-      (sum, i) => sum + (TIPOS_FINANCIAMIENTO.includes(i.tipo) ? 0 : Number(i.monto)), 0
+      (sum: number, i: any) => sum + (TIPOS_FINANCIAMIENTO.includes(i.tipo) ? 0 : Number(i.monto)), 0
     );
     const otrosIngresosPrev = ingresosManualesPrev.reduce(
-      (sum, i) => sum + (TIPOS_FINANCIAMIENTO.includes(i.tipo) ? 0 : Number(i.monto)), 0
+      (sum: number, i: any) => sum + (TIPOS_FINANCIAMIENTO.includes(i.tipo) ? 0 : Number(i.monto)), 0
     );
 
-    const ingresosCurr = Number(ventasCurr._sum.mtoImpVenta ?? 0) - Number(ventasNCCurr._sum.mtoImpVenta ?? 0) + otrosIngresosCurr;
-    const ingresosPrev = Number(ventasPrev._sum.mtoImpVenta ?? 0) - Number(ventasNCPrev._sum.mtoImpVenta ?? 0) + otrosIngresosPrev;
+    const ingresosCurr = Number(ventasCurr._sum?.mtoImpVenta ?? 0) - Number(ventasNCCurr._sum?.mtoImpVenta ?? 0) + otrosIngresosCurr;
+    const ingresosPrev = Number(ventasPrev._sum?.mtoImpVenta ?? 0) - Number(ventasNCPrev._sum?.mtoImpVenta ?? 0) + otrosIngresosPrev;
     const ventasTrend = ingresosPrev === 0 ? 100 : ((ingresosCurr - ingresosPrev) / ingresosPrev) * 100;
 
     const [pedidosCurr, pedidosPrev] = await Promise.all([
@@ -336,14 +341,14 @@ export class DashboardService {
     const pedidosTrend = pedidosPrev === 0 ? 100 : ((pedidosCurr - pedidosPrev) / pedidosPrev) * 100;
 
     const clientesNuevosCurrRows = await this.clientesNuevos(empresaId, fechaInicio, fechaFin, sedeId);
-    const clientesNuevosCurr = clientesNuevosCurrRows.reduce((acc, curr) => acc + curr.nuevos, 0);
+    const clientesNuevosCurr = clientesNuevosCurrRows.reduce((acc: number, curr: any) => acc + curr.nuevos, 0);
 
     const prevStartStr = prevRange.gte.toISOString().slice(0, 10);
     const prevEndStr = prevRange.lte.toISOString().slice(0, 10);
     let clientesNuevosPrev = 0;
     try {
       const clientesNuevosPrevRows = await this.clientesNuevos(empresaId, prevStartStr, prevEndStr, sedeId);
-      clientesNuevosPrev = clientesNuevosPrevRows.reduce((acc, curr) => acc + curr.nuevos, 0);
+      clientesNuevosPrev = clientesNuevosPrevRows.reduce((acc: number, curr: any) => acc + curr.nuevos, 0);
     } catch (e) {
       clientesNuevosPrev = 0;
     }
@@ -361,7 +366,7 @@ export class DashboardService {
     const mapDaily = new Map<string, number>();
     for (const r of dailyVentasRows) {
       const f = this.toFechaLima(r.fechaEmision);
-      mapDaily.set(f, (mapDaily.get(f) || 0) + Number(r._sum.mtoImpVenta ?? 0));
+      mapDaily.set(f, (mapDaily.get(f) || 0) + Number(r._sum?.mtoImpVenta ?? 0));
     }
     const chartVentas = Array.from(mapDaily.entries())
       .map(([date, total]) => ({ date, total: Math.max(0, total) }))
@@ -380,7 +385,7 @@ export class DashboardService {
     let sumOtros = 0;
     for (const r of ventasCanalRows) {
       const m = (r.medioPago || '').toString().toUpperCase();
-      const t = Number(r._sum.mtoImpVenta ?? 0);
+      const t = Number(r._sum?.mtoImpVenta ?? 0);
       if (m === 'TARJETA') sumTarjeta += t;
       else if (m === 'TRANSFERENCIA') sumTransferencia += t;
       else if (m === 'YAPE' || m === 'PLIN') sumRedes += t;
@@ -402,7 +407,7 @@ export class DashboardService {
       take: 4,
       include: { cliente: { select: { nombre: true } } },
     });
-    const actividad = recientes.map((r) => ({
+    const actividad = recientes.map((r: any) => ({
       id: r.id,
       tipo: r.tipoDoc === '07' ? 'Reembolso procesado' : 'Nueva venta',
       descripcion: `#${r.serie}-${r.correlativo}`,
@@ -633,7 +638,11 @@ export class DashboardService {
     // Filtrar por sede si corresponde
     const rows = await this.prisma.comprobante.groupBy({
       by: ['clienteId'],
-      where: { empresaId, ...(sedeId ? { sedeId } : {}) },
+      where: { 
+        empresaId, 
+        ...(sedeId ? { sedeId } : {}),
+        estadoEnvioSunat: { not: 'ANULADO' }
+      },
       _min: { fechaEmision: true },
     });
     const counts = new Map<string, number>();
