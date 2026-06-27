@@ -25,8 +25,11 @@ export function detectarFuncionesRubro(
 ): RubroFeatures {
   const nombre = nombreRubro.toLowerCase();
 
-  // FARMACIA / BOTICA
-  const esFarmacia = nombre.includes('farmacia') || nombre.includes('botica');
+  // FARMACIA / BOTICA / MEDICAMENTOS
+  const esFarmacia =
+    nombre.includes('farmacia') ||
+    nombre.includes('botica') ||
+    nombre.includes('medicament');
 
   // BODEGA / SUPERMARKET / MINIMARKET
   const esBodega =
@@ -87,6 +90,7 @@ export function usaLotes(nombreRubro: string): boolean {
   return (
     nombre.includes('farmacia') ||
     nombre.includes('botica') ||
+    nombre.includes('medicament') ||
     nombre.includes('fabricación') ||
     nombre.includes('fabricacion') ||
     nombre.includes('manufactura') ||

@@ -21,6 +21,7 @@ import {
   ReporteRotacionResponse
 } from './dto/response-kardex.dto';
 import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
+import { parseFechaSoloDia } from '../common/utils/fecha';
 
 @Injectable()
 export class KardexService {
@@ -530,7 +531,7 @@ export class KardexService {
       usuarioId,
       observacion: ajusteDto.observacion,
       lote: ajusteDto.lote,
-      fechaVencimiento: ajusteDto.fechaVencimiento ? new Date(ajusteDto.fechaVencimiento) : undefined,
+      fechaVencimiento: ajusteDto.fechaVencimiento ? parseFechaSoloDia(ajusteDto.fechaVencimiento) : undefined,
     });
 
     return movimiento;
@@ -1423,6 +1424,7 @@ export class KardexService {
     const esFarmaceutico =
       rubroNombre.includes('farmacia') ||
       rubroNombre.includes('botica') ||
+      rubroNombre.includes('medicament') ||
       rubroNombre.includes('drogueria') ||
       rubroNombre.includes('droguería');
 

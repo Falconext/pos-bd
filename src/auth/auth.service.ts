@@ -234,6 +234,7 @@ export class AuthService {
     let sede: any;
 
     if (isAdmin) {
+      console.log(`[selectSede] isAdmin=true, userId=${userId}, user.empresaId=${user.empresaId}, sedeId=${sedeId}, typeof sedeId=${typeof sedeId}`);
       // ADMIN_EMPRESA puede seleccionar cualquier sede activa de su empresa
       sede = await this.prisma.sede.findFirst({
         where: {
@@ -242,7 +243,12 @@ export class AuthService {
           activo: true,
         },
       });
-      if (!sede) throw new ForbiddenException('Sede no encontrada o inactiva');
+      if (!sede) {
+         console.log(`[selectSede] sede NOT FOUND! Params -> id: ${sedeId}, empresaId: ${user.empresaId}`);
+         const debugSede = await this.prisma.sede.findUnique({ where: { id: sedeId } });
+         console.log(`[selectSede] Database actually has for id ${sedeId}:`, debugSede);
+         throw new ForbiddenException('Sede no encontrada o inactiva');
+      }
     } else {
       // USUARIO_EMPRESA: validar a través de la tabla de asignación
       const usuarioSede = await this.prisma.usuarioSede.findUnique({

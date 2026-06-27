@@ -128,6 +128,9 @@ export class ProductoService {
       concentracion?: string;
       presentacion?: string;
       laboratorio?: string;
+      requiereReceta?: boolean;
+      controlado?: boolean;
+      refrigerado?: boolean;
       unidadCompra?: string;
       unidadVenta?: string;
       factorConversion?: number | string;
@@ -180,6 +183,9 @@ export class ProductoService {
       concentracion,
       presentacion,
       laboratorio,
+      requiereReceta,
+      controlado,
+      refrigerado,
       unidadCompra,
       unidadVenta,
       factorConversion,
@@ -301,6 +307,9 @@ export class ProductoService {
           concentracion,
           presentacion,
           laboratorio,
+          requiereReceta: requiereReceta ?? undefined,
+          controlado: controlado ?? undefined,
+          refrigerado: refrigerado ?? undefined,
           unidadCompra,
           unidadVenta,
           factorConversion: factorConversion
@@ -360,6 +369,9 @@ export class ProductoService {
           concentracion,
           presentacion,
           laboratorio,
+          requiereReceta: requiereReceta ?? undefined,
+          controlado: controlado ?? undefined,
+          refrigerado: refrigerado ?? undefined,
           unidadCompra,
           unidadVenta,
           factorConversion: factorConversion ? Number(factorConversion) : 1,
@@ -684,13 +696,15 @@ export class ProductoService {
         // Si se pide una sede específica, usar SOLO ese stock.
         // Si no se pide sede, usar suma total como comportamiento histórico.
         const stockTotalBase = params.sedeId
-          ? (p.stocks[0]?.stock ?? (p as any).stock ?? 0)
+          ? (p.stocks[0]?.stock ?? 0) // if sedeId is specific, and no ProductoStock exists, stock is 0
           : p.stocks.length > 0
             ? p.stocks.reduce((sum, s) => sum + s.stock, 0)
             : ((p as any).stock ?? 0);
-        const stockTotal = usaStockLotes ? stockDesdeLotes : stockTotalBase;
+        // If a specific sede is requested, we MUST use the sede's specific stock from ProductoStock (stockTotalBase).
+        // Lotes don't have sedeId in this schema, so their sum is global.
+        const stockTotal = (usaStockLotes && !params.sedeId) ? stockDesdeLotes : stockTotalBase;
         const stockMinimo = params.sedeId
-          ? (p.stocks[0]?.stockMinimo ?? (p as any).stockMinimo ?? 0)
+          ? (p.stocks[0]?.stockMinimo ?? 0)
           : p.stocks.length > 0
             ? p.stocks.reduce((sum, s) => sum + (s.stockMinimo || 0), 0)
             : ((p as any).stockMinimo ?? 0);
@@ -715,7 +729,7 @@ export class ProductoService {
           ((p as any).variantes || []).map(async (variante: any) => {
             const varianteImagenUrl = normalizePersistentImageUrl(variante.imagenUrl as string | null);
             const varianteStock = params.sedeId
-              ? (variante.stocks?.[0]?.stock ?? variante.stock ?? 0)
+              ? (variante.stocks?.[0]?.stock ?? 0)
               : Array.isArray(variante.stocks) && variante.stocks.length > 0
                 ? variante.stocks.reduce((sum: number, stockRow: any) => sum + Number(stockRow.stock || 0), 0)
                 : Number(variante.stock || 0);
@@ -949,9 +963,9 @@ export class ProductoService {
       // caso el stock vendible es SOLO el de lotes vigentes (puede ser 0). Solo
       // cae al stock plano cuando el producto nunca tuvo lotes.
       const esLoteGestionado = stockTotalLotes > 0 || tieneLotesVencidos;
-      const stockBase = esLoteGestionado
-        ? stockTotalLotes
-        : (p.stocks[0]?.stock ?? (p as any).stock ?? 0);
+      // Lotes no tienen sedeId, así que su suma global no debe sobreescribir el stock real de la sede.
+      // Ya que en catalogoFarmacia siempre se filtra por sede, usamos estrictamente ProductoStock.
+      const stockBase = p.stocks[0]?.stock ?? 0;
       const stockSede = p.stocks[0] as any | undefined;
       const precioUnitario = stockSede?.precioUnitarioOverride != null
         ? Number(stockSede.precioUnitarioOverride)
@@ -1083,7 +1097,7 @@ export class ProductoService {
     };
   }
 
-  async getByBarcode(empresaId: number, codigoBarras: string) {
+  async getByBarcode(empresaId: number, codigoBarras: string, sedeId?: number) {
     // Determinar rubro para priorizar la fuente de búsqueda global correcta
     const empresa = await this.prisma.empresa.findFirst({
       where: { id: empresaId },
@@ -1093,6 +1107,7 @@ export class ProductoService {
     const esFarmaceutico =
       rubroNombre.includes('farmacia') ||
       rubroNombre.includes('botica') ||
+      rubroNombre.includes('medicament') ||
       rubroNombre.includes('drogueria') ||
       rubroNombre.includes('droguería');
 
@@ -1111,8 +1126,10 @@ export class ProductoService {
         precioUnitario: true,
         stock: true,
         stocks: {
+          where: sedeId ? { sedeId } : undefined,
           select: {
             stock: true,
+            sedeId: true,
           },
         },
         lotes: {
@@ -1146,10 +1163,12 @@ export class ProductoService {
       );
       const usaStockLotes = stockDesdeLotes > 0;
       const loteFefoActual = usaStockLotes ? producto.lotes[0] : null;
-      const stockBase = producto.stocks?.length
-        ? producto.stocks.reduce((sum, s) => sum + Number(s.stock || 0), 0)
-        : Number((producto as any).stock || 0);
-      const stockTotal = usaStockLotes ? stockDesdeLotes : stockBase;
+      const stockBase = sedeId 
+        ? (producto.stocks[0]?.stock ?? 0)
+        : producto.stocks?.length
+          ? producto.stocks.reduce((sum, s) => sum + Number(s.stock || 0), 0)
+          : Number((producto as any).stock || 0);
+      const stockTotal = (usaStockLotes && !sedeId) ? stockDesdeLotes : stockBase;
 
       return {
         ...producto,

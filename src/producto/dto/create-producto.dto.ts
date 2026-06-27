@@ -119,6 +119,18 @@ export class CreateProductoDto {
   @IsString()
   presentacion?: string;
 
+  @IsOptional()
+  @IsBoolean()
+  requiereReceta?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  controlado?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  refrigerado?: boolean;
+
   // 🆕 BODEGA/SUPERMARKET
   @IsOptional()
   @IsString()

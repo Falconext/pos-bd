@@ -93,6 +93,22 @@ export class CreatePlanDto {
     @IsOptional()
     tieneDescripcionRica?: boolean;
 
+    @IsBoolean()
+    @IsOptional()
+    tieneAnalisisFinancieroAvanzado?: boolean;
+
+    @IsBoolean()
+    @IsOptional()
+    tieneMultiplesSedes?: boolean;
+
+    @IsBoolean()
+    @IsOptional()
+    tieneAutoGenerarImagen?: boolean;
+
+    @IsBoolean()
+    @IsOptional()
+    tieneLocalizacion?: boolean;
+
     @IsObject()
     @IsOptional()
     features?: Record<string, boolean>;

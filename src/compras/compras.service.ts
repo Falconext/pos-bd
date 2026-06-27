@@ -5,6 +5,7 @@ import { ProductoLoteService } from '../producto/producto-lote.service';
 import { CrearCompraDto } from './dto/crear-compra.dto';
 import { Prisma } from '@prisma/client';
 import { XMLParser } from 'fast-xml-parser';
+import { parseFechaSoloDia } from '../common/utils/fecha';
 
 @Injectable()
 export class ComprasService {
@@ -92,7 +93,7 @@ export class ComprasService {
                 igv: totalLinea - sub,
                 total: totalLinea,
                 lote: item.lote,
-                fechaVencimiento: item.fechaVencimiento ? new Date(item.fechaVencimiento) : null,
+                fechaVencimiento: item.fechaVencimiento ? parseFechaSoloDia(item.fechaVencimiento) : null,
             });
         }
 
@@ -165,7 +166,7 @@ export class ComprasService {
                         usuarioId,
                         sedeId,
                         lote: item.lote,
-                        fechaVencimiento: item.fechaVencimiento ? new Date(item.fechaVencimiento) : undefined
+                        fechaVencimiento: item.fechaVencimiento ? parseFechaSoloDia(item.fechaVencimiento) : undefined
                     });
 
                     // Sincronizar ProductoLote para FEFO (sin double-contar stock global)
@@ -174,7 +175,7 @@ export class ComprasService {
                             productoId: item.productoId,
                             empresaId,
                             lote: item.lote,
-                            fechaVencimiento: new Date(item.fechaVencimiento),
+                            fechaVencimiento: parseFechaSoloDia(item.fechaVencimiento),
                             cantidad: Number(item.cantidad),
                             costoUnitario: costoNetoKardex,
                             movimientoKardexId: movimiento.id,

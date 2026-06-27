@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateSedeDto } from './dto/create-sede.dto';
 import { UpdateSedeDto } from './dto/update-sede.dto';
@@ -44,40 +44,22 @@ export class SedeService {
             },
         });
 
-        // Inicializar stock de la nueva sede copiando el stock de la sede principal
-        // (como punto de partida; luego cada sede gestiona su inventario de forma independiente)
-        const sedePrincipal = await this.prisma.sede.findFirst({
-            where: { empresaId, esPrincipal: true, activo: true, id: { not: sede.id } },
-        });
-
-        // Obtener stocks actuales de la sede principal (o en 0 si no hay sede principal aún)
-        const stocksPrincipal = sedePrincipal
-            ? await this.prisma.productoStock.findMany({
-                where: { sedeId: sedePrincipal.id },
-                select: { productoId: true, stock: true, stockMinimo: true, stockMaximo: true },
-              })
-            : [];
-
-        // Construir mapa para acceso rápido
-        const stockMap = new Map(stocksPrincipal.map(s => [s.productoId, s]));
-
+        // Nueva sede arranca con stock = 0 (en todas las sedes).
+        // El usuario traslada o compra stock según necesite.
+        // Esto evita duplicar datos fantasma y refleja la realidad física.
         const productos = await this.prisma.producto.findMany({
             where: { empresaId },
-            select: { id: true, stock: true, stockMinimo: true, stockMaximo: true },
+            select: { id: true, stockMinimo: true, stockMaximo: true },
         });
 
         if (productos.length > 0) {
-            const stocksData = productos.map(p => {
-                const ref = stockMap.get(p.id);
-                return {
-                    productoId: p.id,
-                    sedeId: sede.id,
-                    // Copiar stock de la sede principal; si no existe, usar el campo legacy del producto
-                    stock: ref ? ref.stock : (p.stock ?? 0),
-                    stockMinimo: ref ? (ref.stockMinimo ?? 0) : (p.stockMinimo ?? 0),
-                    stockMaximo: ref ? ref.stockMaximo : p.stockMaximo,
-                };
-            });
+            const stocksData = productos.map(p => ({
+                productoId: p.id,
+                sedeId: sede.id,
+                stock: 0, // Nuevo: siempre cero
+                stockMinimo: p.stockMinimo ?? 0,
+                stockMaximo: p.stockMaximo,
+            }));
             await this.prisma.productoStock.createMany({ data: stocksData });
         }
 
@@ -113,10 +95,21 @@ export class SedeService {
     }
 
     async remove(id: number) {
-        // Soft delete
-        return this.prisma.sede.update({
+        // Prevent deletion if there are associated records like Comprobantes
+        const comprobantes = await this.prisma.comprobante.findFirst({ where: { sedeId: id } });
+        const kardex = await this.prisma.movimientoKardex.findFirst({ where: { sedeId: id } });
+        if (comprobantes || kardex) {
+            throw new BadRequestException('No se puede eliminar la sede porque tiene operaciones o movimientos registrados. Debe desactivarla.');
+        }
+
+        // Delete dependencies
+        await this.prisma.productoStock.deleteMany({ where: { sedeId: id } });
+        await this.prisma.usuarioSede.deleteMany({ where: { sedeId: id } });
+        await this.prisma.usuario.updateMany({ where: { sedeId: id }, data: { sedeId: null } });
+
+        // Hard delete
+        return this.prisma.sede.delete({
             where: { id },
-            data: { activo: false },
         });
     }
 

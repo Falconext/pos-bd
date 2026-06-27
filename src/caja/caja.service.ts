@@ -424,7 +424,8 @@ export class CajaService {
         OR: [
           { adelanto: null },
           { adelanto: 0 }
-        ]
+        ],
+        pagos: { none: {} }
       },
       select: { mtoImpVenta: true, medioPago: true },
     });
@@ -438,6 +439,7 @@ export class CajaService {
         creadoEn: { gte: fechaInicio, lte: fechaFin },
         estadoEnvioSunat: { in: ['EMITIDO', 'PENDIENTE', 'REGISTRADO', 'ENVIADO'] as any },
         formaPagoTipo: 'Contado',
+        pagos: { none: {} }
       },
       select: { mtoImpVenta: true, medioPago: true },
     });

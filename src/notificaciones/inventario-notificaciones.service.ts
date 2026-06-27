@@ -483,7 +483,7 @@ export class InventarioNotificacionesService {
     const hoy = new Date();
     const en7dias = new Date(hoy.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-    const rubrosRegulados = ['farmacia', 'botica', 'drogueria', 'droguería'];
+    const rubrosRegulados = ['farmacia', 'botica', 'medicament', 'drogueria', 'droguería'];
 
     // Obtener empresas con rubros farmacéuticos
     const empresas = await this.prisma.empresa.findMany({

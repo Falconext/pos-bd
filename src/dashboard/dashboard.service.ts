@@ -88,7 +88,7 @@ export class DashboardService {
               codigo: { notIn: ['DGD', 'IPM', 'PLD'] },
             },
           }),
-          this.prisma.ingresoManual.findMany({
+          sedeId ? Promise.resolve([] as any[]) : this.prisma.ingresoManual.findMany({
             where: {
               empresaId,
               ...(fechaEmision ? { fecha: fechaEmision } : {}),
@@ -310,10 +310,10 @@ export class DashboardService {
         _sum: { mtoImpVenta: true },
         where: { ...baseComprobanteWhere, fechaEmision: prevRange, tipoDoc: '07' },
       }),
-      this.prisma.ingresoManual.findMany({
+      sedeId ? Promise.resolve([] as any[]) : this.prisma.ingresoManual.findMany({
         where: { empresaId, fecha: currentRange }
       }),
-      this.prisma.ingresoManual.findMany({
+      sedeId ? Promise.resolve([] as any[]) : this.prisma.ingresoManual.findMany({
         where: { empresaId, fecha: prevRange }
       }),
     ]);

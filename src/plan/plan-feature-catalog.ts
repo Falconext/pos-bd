@@ -8,7 +8,11 @@ export type PlanFeatureKey =
   | 'tieneTicketera'
   | 'tieneGestionLotes'
   | 'tieneGestionProvisiones'
-  | 'tieneDescripcionRica';
+  | 'tieneDescripcionRica'
+  | 'tieneAnalisisFinancieroAvanzado'
+  | 'tieneMultiplesSedes'
+  | 'tieneAutoGenerarImagen'
+  | 'tieneLocalizacion';
 
 export interface PlanFeatureCatalogItem {
   key: PlanFeatureKey;
@@ -102,6 +106,34 @@ export const PLAN_FEATURE_CATALOG: PlanFeatureCatalogItem[] = [
     group: 'tienda',
     icon: 'solar:document-text-bold-duotone',
     dependsOn: 'tieneTienda',
+  },
+  {
+    key: 'tieneAnalisisFinancieroAvanzado',
+    label: 'Análisis Financiero Avanzado',
+    description: 'Habilita simulador de ventas, punto de equilibrio y pronóstico financiero en productos.',
+    group: 'ventas',
+    icon: 'solar:chart-bold-duotone',
+  },
+  {
+    key: 'tieneMultiplesSedes',
+    label: 'Disponibilidad Multi-Sede',
+    description: 'Permite gestionar visibilidad y disponibilidad de productos por sede.',
+    group: 'operaciones',
+    icon: 'solar:buildings-bold-duotone',
+  },
+  {
+    key: 'tieneAutoGenerarImagen',
+    label: 'Auto-Generar Imágenes (IA)',
+    description: 'Habilita la generación automática de imágenes con Inteligencia Artificial.',
+    group: 'operaciones',
+    icon: 'solar:magic-stick-3-bold-duotone',
+  },
+  {
+    key: 'tieneLocalizacion',
+    label: 'Ubicación / Localización',
+    description: 'Permite registrar pasillos, estantes u otras referencias físicas por producto.',
+    group: 'inventario',
+    icon: 'solar:map-point-bold-duotone',
   },
 ];
 

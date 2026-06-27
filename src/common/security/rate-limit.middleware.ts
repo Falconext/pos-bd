@@ -36,6 +36,8 @@ function cleanup(now: number) {
 
 export function authRateLimit() {
   return (req: Request, res: Response, next: NextFunction) => {
+    if (req.method === 'OPTIONS') return next();
+
     const path = req.path || req.originalUrl || '';
     const isSensitive = SENSITIVE_PATHS.some((item) => path.startsWith(item));
     if (!isSensitive) return next();

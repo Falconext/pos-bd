@@ -20,17 +20,6 @@ async function bootstrap() {
   });
   app.getHttpAdapter().getInstance().set('trust proxy', 1);
 
-  // Configurar límites de payload
-  app.use(httpSecurityHeaders(isProduction));
-  app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '10mb' }));
-  app.use(
-    express.urlencoded({
-      extended: true,
-      limit: process.env.URLENCODED_BODY_LIMIT || '2mb',
-    }),
-  );
-  app.use(authRateLimit());
-
   const extraCorsOrigins = String(process.env.CORS_EXTRA_ORIGINS || '')
     .split(',')
     .map((origin) => origin.trim())
@@ -90,6 +79,19 @@ async function bootstrap() {
     methods: ['GET', 'POST', 'DELETE', 'PATCH', 'PUT', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type', 'Accept'],
   });
+
+  // Configurar límites de payload y middleware de seguridad
+  app.use(httpSecurityHeaders(isProduction));
+  app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '10mb' }));
+  app.use(
+    express.urlencoded({
+      extended: true,
+      limit: process.env.URLENCODED_BODY_LIMIT || '2mb',
+    }),
+  );
+  app.use(authRateLimit());
+
+
 
   app.useGlobalPipes(
     new ValidationPipe({

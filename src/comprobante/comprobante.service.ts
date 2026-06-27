@@ -1326,6 +1326,7 @@ export class ComprobanteService {
     const habilitaRecetaMedica =
       rubroNombre.includes('farmacia') ||
       rubroNombre.includes('botica') ||
+      rubroNombre.includes('medicament') ||
       rubroNombre.includes('drogueria') ||
       rubroNombre.includes('droguería');
 

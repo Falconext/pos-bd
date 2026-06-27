@@ -53,9 +53,34 @@ export class PlanService {
         }, {});
     }
 
+    private getPrismaPlanFeatureColumns() {
+        return [
+            'esPrueba', 'tieneTienda', 'tieneBanners', 'tieneGaleria', 'tieneCulqi',
+            'tieneDeliveryGPS', 'tieneTicketera', 'tieneGestionLotes',
+            'tieneGestionProvisiones', 'tieneDescripcionRica'
+        ];
+    }
+
     private omitVirtualPlanFields<T extends CreatePlanDto | UpdatePlanDto>(dto: T) {
         const { features, moduloIds, subModuloIds, ...planData } = dto;
+        const prismaColumns = new Set(this.getPrismaPlanFeatureColumns());
+        for (const key of getPlanFeatureKeys()) {
+            if (!prismaColumns.has(key)) {
+                delete (planData as any)[key];
+            }
+        }
         return planData;
+    }
+
+    private extractSchemaFeatures(features: Record<string, boolean>) {
+        const prismaColumns = new Set(this.getPrismaPlanFeatureColumns());
+        const result: Record<string, boolean> = {};
+        for (const [key, value] of Object.entries(features)) {
+            if (prismaColumns.has(key)) {
+                result[key] = value;
+            }
+        }
+        return result;
     }
 
     private withResolvedFeatures<T extends Record<string, unknown>>(plan: T) {
@@ -134,7 +159,7 @@ export class PlanService {
             const plan = await this.prisma.plan.create({
                 data: {
                     ...planData,
-                    ...features,
+                    ...this.extractSchemaFeatures(features),
                     producto,
                     plataforma,
                     features: {
@@ -269,7 +294,7 @@ export class PlanService {
                     where: { id },
                     data: {
                         ...planData,
-                        ...features,
+                        ...this.extractSchemaFeatures(features),
                         producto,
                         ...(plataforma !== undefined ? { plataforma } : {}),
                         features: {

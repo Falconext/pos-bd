@@ -34,6 +34,7 @@ import { GeminiService } from '../gemini/gemini.service';
 import { ProductoLoteService } from './producto-lote.service';
 import { CrearLoteDto } from './dto/lote.dto';
 import { KardexService } from '../kardex/kardex.service';
+import { parseFechaSoloDia } from '../common/utils/fecha';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('productos')
@@ -919,9 +920,11 @@ export class ProductoController {
   async getByBarcode(
     @Param('codigo') codigo: string,
     @User() user: any,
+    @Query('sedeId') sedeId: string,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const producto = await this.service.getByBarcode(user.empresaId, codigo);
+    const resolvedSedeId = sedeId ? Number(sedeId) : user.sedeId;
+    const producto = await this.service.getByBarcode(user.empresaId, codigo, resolvedSedeId);
     res.locals.message = 'Producto obtenido por código de barras';
     return producto;
   }
@@ -1064,7 +1067,7 @@ export class ProductoController {
     const lote = await this.loteService.crearLote({
       ...dto,
       empresaId: user.empresaId,
-      fechaVencimiento: new Date(dto.fechaVencimiento),
+      fechaVencimiento: parseFechaSoloDia(dto.fechaVencimiento),
       usuarioId: user.id,
     });
     res.locals.message = 'Lote creado correctamente';
@@ -1107,7 +1110,7 @@ export class ProductoController {
     const data: any = {};
     if (body.lote !== undefined) data.lote = body.lote;
     if (body.fechaVencimiento !== undefined)
-      data.fechaVencimiento = new Date(body.fechaVencimiento);
+      data.fechaVencimiento = parseFechaSoloDia(body.fechaVencimiento);
     if (body.costoUnitario !== undefined)
       data.costoUnitario = body.costoUnitario;
     if (body.proveedor !== undefined) data.proveedor = body.proveedor;

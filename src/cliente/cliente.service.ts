@@ -45,8 +45,17 @@ export class ClienteService {
     const existe = await this.prisma.cliente.findFirst({
       where: { nroDoc: data.nroDoc, empresaId: data.empresaId },
     });
-    if (existe)
-      throw new ForbiddenException('Ya existe un cliente con ese documento');
+    const nuevaPersona = (data.persona as PersonaType) || PersonaType.CLIENTE;
+    if (existe) {
+      if (existe.persona !== nuevaPersona && existe.persona !== 'CLIENTE_PROVEEDOR') {
+         // Upgrading from CLIENTE to PROVEEDOR or vice-versa
+         return this.prisma.cliente.update({
+            where: { id: existe.id },
+            data: { persona: 'CLIENTE_PROVEEDOR' }
+         });
+      }
+      throw new ForbiddenException(`Ya existe un ${existe.persona.toLowerCase()} con ese documento`);
+    }
 
     return this.prisma.cliente.create({
       data: {
