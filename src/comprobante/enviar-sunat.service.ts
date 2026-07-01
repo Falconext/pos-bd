@@ -84,19 +84,16 @@ export class EnviarSunatService {
   private readonly maxRetries = 12;       // 12 intentos × 5s = 60s máximo esperando SUNAT
   private readonly retryInterval = 5000;
 
-  // Casuística 1: Error de DATOS — SUNAT/QPSE rechaza explícitamente (XML inválido, RUC incorrecto, etc.)
-  // Máx 5 intentos con backoff corto → luego RECHAZADO definitivo
+
   private readonly MAX_DATA_ERROR_RETRIES = 5;
 
-  // Casuística 2: Error de RED — SUNAT caída, timeout, QPSE no disponible
-  // Máx 30 intentos (~30 días con backoff de 24h) → el usuario puede eliminar manualmente si quiere
+
   private readonly MAX_INFRA_ERROR_RETRIES = 30;
 
-  // Kept for backward compatibility reference only
+
   private readonly maxRetryAttempts = 10;
   private readonly maxRetryHours = 5;
 
-  // Debug: Set to true to simulate SUNAT failure for testing
   public simulateSunatFailure = false;
 
   private getJambleCorrelativoFloor(empresaId: number, serie: string): number | null {

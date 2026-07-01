@@ -17,6 +17,11 @@ export class DisenoRubroController {
         return this.disenoService.obtenerDisenoPorEmpresa(empresaId);
     }
 
+    @Get('plantillas/config')
+    async listarPlantillasConfig() {
+        return this.disenoService.listarPlantillasConfig();
+    }
+
     @Get(':rubroId')
     async obtenerDisenoRubro(@Param('rubroId') rubroId: string) {
         return this.disenoService.obtenerDisenoPorRubro(+rubroId);
@@ -29,6 +34,20 @@ export class DisenoRubroController {
     @Roles('ADMIN_SISTEMA')
     async listarTodos() {
         return this.disenoService.listarTodos();
+    }
+
+    @Post('plantillas/config/:plantillaId')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('ADMIN_SISTEMA')
+    async guardarPlantillaConfig(
+        @Param('plantillaId') plantillaId: string,
+        @Body() body: {
+            premium?: boolean;
+            precioSoles?: number;
+            premiumNote?: string;
+        },
+    ) {
+        return this.disenoService.guardarPlantillaConfig(plantillaId, body);
     }
 
     @Post(':rubroId')

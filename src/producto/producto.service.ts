@@ -325,12 +325,13 @@ export class ProductoService {
             comisionPorVenta != null ? new Decimal(comisionPorVenta) : undefined,
           comisionPorcentaje:
             comisionPorcentaje != null ? new Decimal(comisionPorcentaje) : undefined,
-          // Campos Ofertas
-          precioOferta: precioOferta ? new Decimal(precioOferta) : undefined,
-          fechaInicioOferta: fechaInicioOferta
-            ? new Date(fechaInicioOferta)
-            : undefined,
-          fechaFinOferta: fechaFinOferta ? new Date(fechaFinOferta) : undefined,
+          // Campos Ofertas — `null` explícito limpia la oferta; `undefined`/ausente la deja igual
+          precioOferta:
+            precioOferta === null ? null : precioOferta ? new Decimal(precioOferta) : undefined,
+          fechaInicioOferta:
+            fechaInicioOferta === null ? null : fechaInicioOferta ? new Date(fechaInicioOferta) : undefined,
+          fechaFinOferta:
+            fechaFinOferta === null ? null : fechaFinOferta ? new Date(fechaFinOferta) : undefined,
           preciosMayorista: preciosMayorista ?? undefined,
           atributosTecnicos: atributosTecnicos ?? undefined,
           opcionesAtributos: data.opcionesAtributos ?? undefined,
@@ -385,12 +386,13 @@ export class ProductoService {
             comisionPorVenta != null ? new Decimal(comisionPorVenta) : undefined,
           comisionPorcentaje:
             comisionPorcentaje != null ? new Decimal(comisionPorcentaje) : undefined,
-          // Campos Ofertas
-          precioOferta: precioOferta ? new Decimal(precioOferta) : undefined,
-          fechaInicioOferta: fechaInicioOferta
-            ? new Date(fechaInicioOferta)
-            : undefined,
-          fechaFinOferta: fechaFinOferta ? new Date(fechaFinOferta) : undefined,
+          // Campos Ofertas — `null` explícito limpia la oferta; `undefined`/ausente la deja igual
+          precioOferta:
+            precioOferta === null ? null : precioOferta ? new Decimal(precioOferta) : undefined,
+          fechaInicioOferta:
+            fechaInicioOferta === null ? null : fechaInicioOferta ? new Date(fechaInicioOferta) : undefined,
+          fechaFinOferta:
+            fechaFinOferta === null ? null : fechaFinOferta ? new Date(fechaFinOferta) : undefined,
           preciosMayorista: preciosMayorista ?? undefined,
           atributosTecnicos: atributosTecnicos ?? undefined,
           opcionesAtributos: data.opcionesAtributos ?? undefined,

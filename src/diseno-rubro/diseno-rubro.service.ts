@@ -1,9 +1,79 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+
+const DEFAULT_TEMPLATE_CONFIGS: Record<string, { premium: boolean; precioSoles: number; premiumNote?: string }> = {
+    maye: {
+        premium: true,
+        precioSoles: 199,
+        premiumNote: 'Compra única aparte del plan',
+    },
+};
 
 @Injectable()
 export class DisenoRubroService {
     constructor(private readonly prisma: PrismaService) { }
+
+    private normalizePlantillaConfig(row: any) {
+        return {
+            id: String(row.id),
+            premium: Boolean(row.premium),
+            precioSoles: Number(row.precioSoles || 0),
+            premiumNote: row.premiumNote || '',
+        };
+    }
+
+    async listarPlantillasConfig() {
+        const rows = await this.prisma.plantillaTiendaConfig.findMany({
+            orderBy: { id: 'asc' },
+        });
+
+        const map = new Map<string, any>();
+        Object.entries(DEFAULT_TEMPLATE_CONFIGS).forEach(([id, config]) => {
+            map.set(id, this.normalizePlantillaConfig({ id, ...config }));
+        });
+        rows.forEach(row => {
+            map.set(row.id, this.normalizePlantillaConfig(row));
+        });
+
+        return Array.from(map.values());
+    }
+
+    async obtenerPlantillaConfig(plantillaId: string) {
+        const id = String(plantillaId || '').trim();
+        if (!id) return null;
+
+        const row = await this.prisma.plantillaTiendaConfig.findUnique({ where: { id } });
+        if (row) return this.normalizePlantillaConfig(row);
+
+        const fallback = DEFAULT_TEMPLATE_CONFIGS[id];
+        return fallback ? this.normalizePlantillaConfig({ id, ...fallback }) : null;
+    }
+
+    async guardarPlantillaConfig(plantillaId: string, data: Record<string, any>) {
+        const id = String(plantillaId || '').trim();
+        if (!id) throw new BadRequestException('Plantilla inválida');
+
+        const premium = Boolean(data?.premium);
+        const precioSoles = Number(data?.precioSoles ?? 0);
+        if (!Number.isFinite(precioSoles) || precioSoles < 0) {
+            throw new BadRequestException('Precio inválido');
+        }
+        if (premium && precioSoles <= 0) {
+            throw new BadRequestException('Una plantilla premium debe tener un precio mayor a cero');
+        }
+
+        const premiumNote = typeof data?.premiumNote === 'string'
+            ? data.premiumNote.trim().slice(0, 160)
+            : '';
+
+        const saved = await this.prisma.plantillaTiendaConfig.upsert({
+            where: { id },
+            update: { premium, precioSoles, premiumNote },
+            create: { id, premium, precioSoles, premiumNote },
+        });
+
+        return this.normalizePlantillaConfig(saved);
+    }
 
     async obtenerDisenoPorRubro(rubroId: number) {
         const diseno = await this.prisma.disenoRubro.findUnique({
@@ -93,10 +163,29 @@ export class DisenoRubroService {
             };
 
             if ((disenoBase as any)?.plantillaId) {
-                merged.plantillaId = (disenoBase as any).plantillaId;
+                const permitidas = String((disenoBase as any).plantillaId)
+                    .split(',')
+                    .map(item => item.trim())
+                    .filter(Boolean);
+                const plantillaElegida = typeof (override as any).plantillaId === 'string'
+                    ? (override as any).plantillaId.trim()
+                    : '';
+                if (plantillaElegida && permitidas.includes(plantillaElegida)) {
+                    merged.plantillaId = plantillaElegida;
+                } else {
+                    merged.plantillaId = permitidas[0] || 'moderna';
+                }
             }
 
             return merged;
+        }
+
+        if (disenoBase && (disenoBase as any).plantillaId) {
+            const permitidas = String((disenoBase as any).plantillaId)
+                .split(',')
+                .map(item => item.trim())
+                .filter(Boolean);
+            (disenoBase as any).plantillaId = permitidas[0] || 'moderna';
         }
 
         return disenoBase;

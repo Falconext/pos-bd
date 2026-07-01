@@ -15,6 +15,7 @@ import { CrearPedidoDto } from './dto/crear-pedido.dto';
 import { ActualizarEstadoPedidoDto } from './dto/actualizar-pedido.dto';
 import { DisenoRubroService } from '../diseno-rubro/diseno-rubro.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { esRubroComputo, obtenerPlantillaComputo } from '../producto/ficha-tecnica-computo';
 
 const ESTADOS_ENVIO_NOTIFICABLES = new Set(['EN_CAMINO', 'EN_REPARTO', 'ENVIADO', 'ENTREGADO']);
@@ -77,7 +78,60 @@ const TEMPLATE_IMAGE_FIELDS = new Set([
   'urbanoProductMacroImg',
   'urbanoProductModel1Img',
   'urbanoProductModel2Img',
+  'mayeHeroImageUrl',
+  'mayeSideTopImageUrl',
+  'mayeSideBottomImageUrl',
+  'mayeVehicleImageUrl',
+  'mayeCatalogBannerUrl',
+  'mayePromoLeftImageUrl',
+  'mayePromoRightImageUrl',
+  'mayeCommunityImageUrl',
+  'mayeSupportImageUrl',
+  'mayeBrandsImageUrl',
+  'mayeCategory1ImageUrl',
+  'mayeCategory2ImageUrl',
+  'mayeCategory3ImageUrl',
+  'mayeWidgetOneImageUrl',
+  'mayeWidgetTwoImageUrl',
+  'mayeWidgetThreeImageUrl',
+  'mayeCatalogBannerImageUrl',
+  'tecnologiaHeroImageUrl',
+  'tecnologiaPromoLeftImageUrl',
+  'tecnologiaPromoRightImageUrl',
+  'tecnologiaCategoryImageUrl',
+  'tecnologiaProductImageUrl',
+  'tecnologiaCommunityImageUrl',
+  'tecnologiaSupportImageUrl',
+  'tecnologiaBrandsImageUrl',
+  'tecnologiaWidgetOneImageUrl',
+  'tecnologiaWidgetTwoImageUrl',
+  'tecnologiaWidgetThreeImageUrl',
+  'modaHeroImg',
+  'modaHeroImgMobile',
+  'modaPromoImg',
+  'modaTrend1Image',
+  'modaTrend2Image',
+  'modaTrend3Image',
+  'modaTrend4Image',
+  'modaStyle1Image',
+  'modaStyle2Image',
+  'modaStyle3Image',
+  'modaStyle4Image',
+  'modaStyle5Image',
+  'modaCollection1Image',
+  'modaCollection2Image',
+  'modaCollection3Image',
+  'modaCollection4Image',
 ]);
+
+const PREMIUM_TEMPLATE_PURCHASE_KEYS = [
+  'plantillasPremiumCompradas',
+  'premiumTemplatesPurchased',
+  'templatesComprados',
+  'plantillaPremiumComprada',
+  'templatePremiumPurchased',
+  'templateComprado',
+];
 
 interface CulqiChargeResponse {
   id: string;
@@ -102,6 +156,7 @@ export class TiendaService {
     private readonly s3: S3Service,
     private readonly disenoService: DisenoRubroService,
     private readonly whatsapp: WhatsAppService,
+    private readonly notificaciones: NotificacionesService,
   ) { }
 
   private parseImagenesExtra(value: unknown): string[] {
@@ -115,6 +170,104 @@ export class TiendaService {
     } catch {
       return value.trim() ? [value.trim()] : [];
     }
+  }
+
+  private parseDisenoOverride(value: unknown): Record<string, any> {
+    if (!value) return {};
+    if (typeof value === 'object') return value as Record<string, any>;
+    if (typeof value !== 'string') return {};
+
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed
+        : {};
+    } catch {
+      return {};
+    }
+  }
+
+  private getPurchasedPremiumTemplates(diseno: Record<string, any>): string[] {
+    const values = PREMIUM_TEMPLATE_PURCHASE_KEYS.flatMap((key) => {
+      const raw = diseno[key];
+      if (Array.isArray(raw)) return raw;
+      if (typeof raw === 'string') return raw.split(',');
+      return [];
+    });
+    const detailKeys = diseno.plantillasPremiumComprasDetalle && typeof diseno.plantillasPremiumComprasDetalle === 'object' && !Array.isArray(diseno.plantillasPremiumComprasDetalle)
+      ? Object.keys(diseno.plantillasPremiumComprasDetalle)
+      : [];
+
+    return Array.from(
+      new Set([...values, ...detailKeys].map((value) => String(value).trim()).filter(Boolean)),
+    );
+  }
+
+  private removePurchasedPremiumTemplate(diseno: Record<string, any>, plantillaId: string) {
+    const plantilla = String(plantillaId || '').trim();
+    const cleaned = { ...diseno };
+    const remaining = this.getPurchasedPremiumTemplates(cleaned).filter((id) => id !== plantilla);
+
+    PREMIUM_TEMPLATE_PURCHASE_KEYS.forEach((key) => delete cleaned[key]);
+    if (remaining.length > 0) {
+      cleaned.plantillasPremiumCompradas = remaining;
+    }
+
+    if (typeof cleaned.plantillaId === 'string') {
+      const selected = cleaned.plantillaId.split(',').map((id: string) => id.trim()).filter(Boolean);
+      const nextSelected = selected.filter((id: string) => id !== plantilla);
+      if (nextSelected.length > 0) {
+        cleaned.plantillaId = nextSelected.join(',');
+      } else {
+        delete cleaned.plantillaId;
+      }
+    }
+
+    const detalles = cleaned.plantillasPremiumComprasDetalle;
+    if (detalles && typeof detalles === 'object' && !Array.isArray(detalles)) {
+      delete detalles[plantilla];
+      if (Object.keys(detalles).length > 0) {
+        cleaned.plantillasPremiumComprasDetalle = detalles;
+      } else {
+        delete cleaned.plantillasPremiumComprasDetalle;
+      }
+    }
+
+    return { diseno: cleaned, remaining };
+  }
+
+  private removePremiumPurchaseFields(campos: Record<string, any>) {
+    const cleaned = { ...campos };
+    PREMIUM_TEMPLATE_PURCHASE_KEYS.forEach((key) => delete cleaned[key]);
+    return cleaned;
+  }
+
+  private async assertTemplateCanBeActivated(plantillaId: unknown, diseno: Record<string, any>) {
+    const id = typeof plantillaId === 'string' ? plantillaId.trim() : '';
+    if (!id) return;
+
+    const config = await this.disenoService.obtenerPlantillaConfig(id);
+    if (!config?.premium) return;
+
+    if (!this.getPurchasedPremiumTemplates(diseno).includes(id)) {
+      throw new ForbiddenException(
+        'Esta plantilla es premium. Debes comprarla antes de activarla en tu tienda.',
+      );
+    }
+  }
+
+  private async assertPremiumTemplateExists(plantillaId: string) {
+    const config = await this.disenoService.obtenerPlantillaConfig(plantillaId);
+    if (!config?.premium) {
+      throw new BadRequestException('Plantilla premium inválida');
+    }
+  }
+
+  private stripPrivateDesignFields(diseno: any) {
+    if (!diseno || typeof diseno !== 'object') return diseno || {};
+    const cleaned = { ...diseno };
+    PREMIUM_TEMPLATE_PURCHASE_KEYS.forEach((key) => delete cleaned[key]);
+    return cleaned;
   }
 
   private async firmarGaleriaPorColor(atributosTecnicos: any, signIfS3: (url?: string | null) => Promise<string | null>) {
@@ -295,15 +448,210 @@ export class TiendaService {
       where: { id: empresaId },
       select: { disenoOverride: true },
     });
-    const overrideActual = empresa?.disenoOverride
-      ? JSON.parse(empresa.disenoOverride as string)
-      : {};
-    const nuevoOverride = { ...overrideActual, ...campos };
+    const overrideActual = this.parseDisenoOverride(empresa?.disenoOverride);
+    const camposSeguros = this.removePremiumPurchaseFields(campos || {});
+    if (Object.prototype.hasOwnProperty.call(camposSeguros, 'plantillaId')) {
+      await this.assertTemplateCanBeActivated(camposSeguros.plantillaId, overrideActual);
+    }
+    const nuevoOverride = { ...overrideActual, ...camposSeguros };
     await this.prisma.empresa.update({
       where: { id: empresaId },
       data: { disenoOverride: JSON.stringify(nuevoOverride) },
     });
     return { success: true };
+  }
+
+  async activarCompraPlantillaPremium(
+    empresaId: number,
+    plantillaId: string,
+    actor?: { nombre?: string; email?: string; precioPagado?: number },
+  ) {
+    const plantilla = String(plantillaId || '').trim();
+    await this.assertPremiumTemplateExists(plantilla);
+
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { id: true, disenoOverride: true },
+    });
+    if (!empresa) {
+      throw new NotFoundException('Empresa no encontrada');
+    }
+
+    const overrideActual = this.parseDisenoOverride(empresa.disenoOverride);
+    const compradas = this.getPurchasedPremiumTemplates(overrideActual);
+    const plantillasPremiumCompradas = Array.from(new Set([...compradas, plantilla]));
+    const precioPagado = Number(actor?.precioPagado || 0);
+    const comprasDetalle = {
+      ...(overrideActual.plantillasPremiumComprasDetalle && typeof overrideActual.plantillasPremiumComprasDetalle === 'object'
+        ? overrideActual.plantillasPremiumComprasDetalle
+        : {}),
+      [plantilla]: {
+        precioPagado: Number.isFinite(precioPagado) ? precioPagado : 0,
+        activadoEn: new Date().toISOString(),
+        autorNombre: actor?.nombre || 'Sistema',
+        autorEmail: actor?.email || 'sistema@falconext.com',
+      },
+    };
+    const detallePrecio = Number.isFinite(precioPagado) && precioPagado > 0
+      ? ` por S/ ${precioPagado.toFixed(2)}`
+      : '';
+    const nuevoOverride = {
+      ...overrideActual,
+      plantillasPremiumCompradas,
+      plantillasPremiumComprasDetalle: comprasDetalle,
+      plantillaId: plantilla,
+    };
+
+    await this.prisma.$transaction([
+      this.prisma.empresa.update({
+        where: { id: empresaId },
+        data: { disenoOverride: JSON.stringify(nuevoOverride) },
+      }),
+      this.prisma.empresaLog.create({
+        data: {
+          empresaId,
+          accion: 'PLANTILLA_PREMIUM_ACTIVADA',
+          detalle: `Plantilla premium activada: ${plantilla}${detallePrecio}`,
+          autorNombre: actor?.nombre || 'Sistema',
+          autorEmail: actor?.email || 'sistema@falconext.com',
+        },
+      }),
+    ]);
+
+    return {
+      success: true,
+      plantillaId: plantilla,
+      plantillasPremiumCompradas,
+    };
+  }
+
+  async listarEmpresasConPlantillaPremium(plantillaId: string) {
+    const plantilla = String(plantillaId || '').trim();
+    const plantillaLower = plantilla.toLowerCase();
+    await this.assertPremiumTemplateExists(plantilla);
+
+    const [empresas, logs] = await Promise.all([
+      this.prisma.empresa.findMany({
+        select: {
+          id: true,
+          razonSocial: true,
+          nombreComercial: true,
+          slugTienda: true,
+          disenoOverride: true,
+        },
+        orderBy: [{ razonSocial: 'asc' }, { id: 'asc' }],
+      }),
+      this.prisma.empresaLog.findMany({
+        where: {
+          accion: { in: ['PLANTILLA_PREMIUM_ACTIVADA', 'PLANTILLA_PREMIUM_DESACTIVADA'] },
+        },
+        orderBy: { creadoEn: 'asc' },
+      }),
+    ]);
+
+    const estadoPorLog = new Map<number, any>();
+    logs.forEach((log) => {
+      const detalle = String(log.detalle || '');
+      if (!detalle.toLowerCase().includes(plantillaLower)) return;
+      if (log.accion === 'PLANTILLA_PREMIUM_ACTIVADA') {
+        estadoPorLog.set(log.empresaId, {
+          activado: true,
+          activadoEn: log.creadoEn?.toISOString?.() || log.creadoEn,
+          autorNombre: log.autorNombre,
+          autorEmail: log.autorEmail,
+        });
+      }
+      if (log.accion === 'PLANTILLA_PREMIUM_DESACTIVADA') {
+        estadoPorLog.set(log.empresaId, { activado: false });
+      }
+    });
+
+    const data = empresas
+      .map((empresa) => {
+        const diseno = this.parseDisenoOverride(empresa.disenoOverride);
+        const compraEnDiseno = this.getPurchasedPremiumTemplates(diseno).includes(plantilla);
+        const plantillasActivas = typeof diseno.plantillaId === 'string'
+          ? diseno.plantillaId.split(',').map((id: string) => id.trim()).filter(Boolean)
+          : [];
+        const usaPlantillaEnOverride = plantillasActivas.includes(plantilla);
+        const compraEnLog = estadoPorLog.get(empresa.id);
+        if (!compraEnDiseno && !compraEnLog?.activado && !usaPlantillaEnOverride) return null;
+        const detalle = diseno.plantillasPremiumComprasDetalle?.[plantilla] || {};
+        return {
+          empresaId: empresa.id,
+          nombre: empresa.nombreComercial || empresa.razonSocial || `Empresa #${empresa.id}`,
+          razonSocial: empresa.razonSocial,
+          slugTienda: empresa.slugTienda,
+          precioPagado: Number(detalle.precioPagado || 0),
+          activadoEn: detalle.activadoEn || compraEnLog?.activadoEn || null,
+          autorNombre: detalle.autorNombre || compraEnLog?.autorNombre || null,
+          autorEmail: detalle.autorEmail || compraEnLog?.autorEmail || null,
+        };
+      })
+      .filter(Boolean);
+
+    return { success: true, data };
+  }
+
+  async desactivarCompraPlantillaPremium(
+    empresaId: number,
+    plantillaId: string,
+    actor?: { nombre?: string; email?: string },
+  ) {
+    const plantilla = String(plantillaId || '').trim();
+    const plantillaLower = plantilla.toLowerCase();
+    await this.assertPremiumTemplateExists(plantilla);
+
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { id: true, disenoOverride: true },
+    });
+    if (!empresa) {
+      throw new NotFoundException('Empresa no encontrada');
+    }
+
+    const overrideActual = this.parseDisenoOverride(empresa.disenoOverride);
+    const tieneCompraEnDiseno = this.getPurchasedPremiumTemplates(overrideActual).includes(plantilla);
+    if (!tieneCompraEnDiseno) {
+      const logsPremium = await this.prisma.empresaLog.findMany({
+        where: {
+          empresaId,
+          accion: { in: ['PLANTILLA_PREMIUM_ACTIVADA', 'PLANTILLA_PREMIUM_DESACTIVADA'] },
+        },
+        orderBy: { creadoEn: 'desc' },
+      });
+      const ultimoLog = logsPremium.find((log) => String(log.detalle || '').toLowerCase().includes(plantillaLower));
+      const plantillasActivas = typeof overrideActual.plantillaId === 'string'
+        ? overrideActual.plantillaId.split(',').map((id: string) => id.trim()).filter(Boolean)
+        : [];
+      if (ultimoLog?.accion !== 'PLANTILLA_PREMIUM_ACTIVADA' && !plantillasActivas.includes(plantilla)) {
+        throw new BadRequestException('La empresa no tiene esta plantilla activada');
+      }
+    }
+
+    const { diseno: nuevoOverride, remaining } = this.removePurchasedPremiumTemplate(overrideActual, plantilla);
+
+    await this.prisma.$transaction([
+      this.prisma.empresa.update({
+        where: { id: empresaId },
+        data: { disenoOverride: JSON.stringify(nuevoOverride) },
+      }),
+      this.prisma.empresaLog.create({
+        data: {
+          empresaId,
+          accion: 'PLANTILLA_PREMIUM_DESACTIVADA',
+          detalle: `Plantilla premium desactivada: ${plantilla}`,
+          autorNombre: actor?.nombre || 'Sistema',
+          autorEmail: actor?.email || 'sistema@falconext.com',
+        },
+      }),
+    ]);
+
+    return {
+      success: true,
+      plantillaId: plantilla,
+      plantillasPremiumCompradas: remaining,
+    };
   }
 
   // ==================== UPLOADS (QRs) ====================
@@ -495,7 +843,7 @@ export class TiendaService {
 
       return {
         ...empresa,
-        diseno,
+        diseno: this.stripPrivateDesignFields(diseno),
       };
     } catch (e) {
       console.error('Error in obtenerTiendaPorSlug:', e);
@@ -736,6 +1084,9 @@ export class TiendaService {
         descripcion: true,
         descripcionLarga: true,
         precioUnitario: true,
+        precioOferta: true,
+        fechaInicioOferta: true,
+        fechaFinOferta: true,
         stock: true,
         imagenUrl: true,
         imagenesExtra: true,
@@ -1011,6 +1362,9 @@ export class TiendaService {
           id: true,
           descripcion: true,
           precioUnitario: true,
+          precioOferta: true,
+          fechaInicioOferta: true,
+          fechaFinOferta: true,
           imagenUrl: true,
           categoria: { select: { nombre: true } },
           stock: true,
@@ -1034,6 +1388,9 @@ export class TiendaService {
           id: true,
           descripcion: true,
           precioUnitario: true,
+          precioOferta: true,
+          fechaInicioOferta: true,
+          fechaFinOferta: true,
           imagenUrl: true,
           categoria: { select: { nombre: true } },
           stock: true,
@@ -1090,6 +1447,9 @@ export class TiendaService {
       descripcion: true,
       descripcionLarga: true,
       precioUnitario: true,
+      precioOferta: true,
+      fechaInicioOferta: true,
+      fechaFinOferta: true,
       stock: true,
       imagenUrl: true,
       imagenesExtra: true,
@@ -1587,8 +1947,6 @@ export class TiendaService {
     if (!empresa) {
       throw new NotFoundException('Tienda no encontrada');
     }
-
-    // Validar tipo de entrega
     const tipoEntrega = dto.tipoEntrega || 'RECOJO';
     if (tipoEntrega === 'RECOJO' && !empresa.aceptaRecojo) {
       throw new BadRequestException('Esta tienda no acepta pedidos para recojo');
@@ -1597,17 +1955,14 @@ export class TiendaService {
       throw new BadRequestException('Esta tienda no acepta pedidos con envío');
     }
 
-    // Validar dirección si es envío
     if (tipoEntrega === 'ENVIO' && !dto.clienteDireccion) {
       throw new BadRequestException('La dirección es obligatoria para pedidos con envío');
     }
 
-    // Calcular costo de envío
     const costoEnvio = tipoEntrega === 'ENVIO'
       ? Number(empresa.costoEnvioFijo || 0)
       : 0;
 
-    // Validar productos y calcular totales
     let subtotal = 0;
     const itemsData: {
       productoId: number;
@@ -1618,7 +1973,6 @@ export class TiendaService {
     }[] = [];
 
     for (const item of dto.items) {
-      // Buscar producto con fallback: priorizar publicados, sino ACTIVO con stock
       let producto = await this.prisma.producto.findFirst({
         where: {
           id: item.productoId,
@@ -1665,9 +2019,6 @@ export class TiendaService {
         observacion: item.observacion,
       });
     }
-
-    // Los precios ya incluyen IGV, así que extraemos el IGV del subtotal
-    // IGV = Subtotal - (Subtotal / 1.18)
     const igv = subtotal - (subtotal / 1.18);
     const total = subtotal + costoEnvio;
     const adelanto = dto.medioPago === 'TARJETA' ? total : Math.max(Number(dto.adelanto ?? 0), 0);
@@ -1679,7 +2030,6 @@ export class TiendaService {
         ? dto.agenciaEnvio?.trim() || null
         : 'RECOJO EN TIENDA';
 
-    // Validar monto mínimo de pedido (se evalúa después de calcular el total real)
     const minimoCompra = Number(empresa.minimoCompra || 0);
     if (minimoCompra > 0 && total < minimoCompra) {
       throw new BadRequestException(`El monto mínimo de pedido es S/ ${minimoCompra.toFixed(2)}`);
@@ -1779,7 +2129,152 @@ export class TiendaService {
       },
     });
 
+    // Notificar al empresario (in-app web/mobile + correo) y confirmar al cliente.
+    // Nunca debe romper la compra.
+    void this.notificarNuevoPedido(empresa.id, slug, pedido).catch((err) =>
+      this.logger.error(`No se pudo notificar el nuevo pedido ${pedido.id}: ${err?.message ?? err}`),
+    );
+
     return pedido;
+  }
+
+  /**
+   * Avisa al empresario de un nuevo pedido de tienda: notificación in-app en
+   * tiempo real (web + mobile via WebSocket) y correo con el resumen del pedido.
+   * Además envía un correo de confirmación al cliente si dejó su email.
+   * Tolerante a fallos: cualquier error se registra pero no interrumpe el flujo.
+   */
+  private async notificarNuevoPedido(empresaId: number, slug: string, pedido: any) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { nombreComercial: true, razonSocial: true, brand: true },
+    });
+    const empresaNombre = empresa?.nombreComercial || empresa?.razonSocial || 'Tu tienda';
+    const money = (v: any) => `S/ ${Number(v || 0).toFixed(2)}`;
+    const tipoEntregaLabel = pedido.tipoEntrega === 'ENVIO' ? 'Envío a domicilio' : 'Recojo en tienda';
+
+    // 1) Notificación in-app a los ADMIN_EMPRESA (se empuja por WebSocket a web + mobile)
+    try {
+      await this.notificaciones.notificarAdminsEmpresa({
+        empresaId,
+        tipo: 'INFO',
+        titulo: '🛒 Nuevo pedido en tu tienda',
+        mensaje: `${pedido.clienteNombre} realizó un pedido por ${money(pedido.total)} (${pedido.codigoSeguimiento}).`,
+        metaData: {
+          pedidoId: pedido.id,
+          codigoSeguimiento: pedido.codigoSeguimiento,
+          total: Number(pedido.total || 0),
+          tipoEntrega: pedido.tipoEntrega,
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`Notificación in-app de pedido ${pedido.id} falló: ${err?.message ?? err}`);
+    }
+
+    // 2) Correo al administrador de la empresa
+    try {
+      const resendKey = process.env.RESEND_API_KEY;
+      if (!resendKey) return;
+
+      const admin = await this.prisma.usuario.findFirst({
+        where: { empresaId, rol: 'ADMIN_EMPRESA', estado: 'ACTIVO' },
+        select: { nombre: true, email: true },
+        orderBy: { id: 'asc' },
+      });
+      if (!admin?.email) return;
+
+      const appName = empresa?.brand === 'krezka' ? 'Krezka' : 'Falconext';
+      const accessUrl = process.env.APP_URL || process.env.FRONTEND_URL || 'https://app.falconext.pe';
+      const fromEmail = process.env.RESEND_FROM_EMAIL || process.env.MAIL_FROM || 'noreply@falconext.pe';
+
+      const { Resend } = await import('resend');
+      const { render } = await import('@react-email/render');
+      const { NuevoPedidoEmail } = await import('./emails/NuevoPedidoEmail.js');
+      const resend = new Resend(resendKey);
+
+      const items = (pedido.items || []).map((it: any) => ({
+        descripcion: it?.producto?.descripcion || 'Producto',
+        cantidad: Number(it?.cantidad || 0),
+        subtotal: money(it?.subtotal),
+      }));
+
+      const html = await render(
+        (NuevoPedidoEmail as any)({
+          empresaNombre,
+          adminNombre: admin.nombre,
+          appName,
+          codigoSeguimiento: pedido.codigoSeguimiento,
+          clienteNombre: pedido.clienteNombre,
+          clienteTelefono: pedido.clienteTelefono,
+          clienteEmail: pedido.clienteEmail,
+          tipoEntrega: tipoEntregaLabel,
+          direccion: pedido.clienteDireccion,
+          medioPago: pedido.medioPago,
+          total: money(pedido.total),
+          items,
+          fecha: new Date(pedido.creadoEn || Date.now()).toLocaleString('es-PE', { timeZone: 'America/Lima' }),
+          accessUrl,
+        }),
+      );
+
+      const { error } = await resend.emails.send({
+        from: `${appName} <${fromEmail}>`,
+        to: admin.email,
+        subject: `🛒 Nuevo pedido en ${empresaNombre} — ${pedido.codigoSeguimiento}`,
+        html,
+      });
+      if (error) throw new Error(error.message);
+    } catch (err: any) {
+      this.logger.error(`Correo de nuevo pedido ${pedido.id} falló: ${err?.message ?? err}`);
+    }
+
+    // 3) Correo de confirmación al cliente (solo si dejó su email)
+    try {
+      const clienteEmail = String(pedido.clienteEmail || '').trim();
+      const resendKey = process.env.RESEND_API_KEY;
+      if (!resendKey || !clienteEmail) return;
+
+      const appName = empresa?.brand === 'krezka' ? 'Krezka' : 'Falconext';
+      const storeUrl = process.env.STORE_URL || process.env.APP_URL || process.env.FRONTEND_URL || 'https://app.falconext.pe';
+      const trackingUrl = `${storeUrl.replace(/\/$/, '')}/tienda/${slug}/seguimiento`;
+      const fromEmail = process.env.RESEND_FROM_EMAIL || process.env.MAIL_FROM || 'noreply@falconext.pe';
+
+      const { Resend } = await import('resend');
+      const { render } = await import('@react-email/render');
+      const { ConfirmacionPedidoClienteEmail } = await import('./emails/ConfirmacionPedidoClienteEmail.js');
+      const resend = new Resend(resendKey);
+
+      const items = (pedido.items || []).map((it: any) => ({
+        descripcion: it?.producto?.descripcion || 'Producto',
+        cantidad: Number(it?.cantidad || 0),
+        subtotal: money(it?.subtotal),
+      }));
+
+      const html = await render(
+        (ConfirmacionPedidoClienteEmail as any)({
+          empresaNombre,
+          appName,
+          clienteNombre: pedido.clienteNombre,
+          codigoSeguimiento: pedido.codigoSeguimiento,
+          tipoEntrega: tipoEntregaLabel,
+          direccion: pedido.clienteDireccion,
+          medioPago: pedido.medioPago,
+          total: money(pedido.total),
+          items,
+          trackingUrl,
+        }),
+      );
+
+      const { error } = await resend.emails.send({
+        from: `${empresaNombre} <${fromEmail}>`,
+        to: clienteEmail,
+        subject: `✅ Recibimos tu pedido — ${pedido.codigoSeguimiento}`,
+        html,
+      });
+      if (error) throw new Error(error.message);
+    } catch (err: any) {
+      this.logger.error(`Correo de confirmación al cliente del pedido ${pedido.id} falló: ${err?.message ?? err}`);
+    }
   }
 
   private generarCodigoSeguimiento(): string {

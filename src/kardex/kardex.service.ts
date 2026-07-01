@@ -143,9 +143,6 @@ export class KardexService {
     });
 
     if (!productoStock) {
-      // El registro de stock para esta sede no existe aún (p.ej. producto creado antes
-      // de la migración multi-sede). Crearlo inicializando con el stock global del producto
-      // para que el movimiento pueda registrarse correctamente.
       const stockFallback = await this.prisma.producto.findUnique({
         where: { id: data.productoId },
         select: { stock: true, costoPromedio: true },

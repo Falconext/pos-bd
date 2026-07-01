@@ -22,6 +22,7 @@ export class FinanzasService {
         fechaInicio?: string,
         fechaFin?: string,
         sedeId?: number,
+        usuarioId?: number,
     ) {
         const rangoFecha = this.parseRange(fechaInicio, fechaFin);
 
@@ -41,6 +42,7 @@ export class FinanzasService {
             where: {
                 empresaId,
                 ...(sedeId ? { sedeId } : {}),
+                ...(usuarioId ? { usuarioId } : {}),
                 estadoEnvioSunat: { notIn: ['ANULADO'] },
                 estadoPago: { notIn: ['COMPLETADO', 'ANULADO'] },
                 saldo: { gt: 0 },
@@ -58,6 +60,7 @@ export class FinanzasService {
                 fecha: rangoFecha,
                 comprobante: {
                     ...(sedeId ? { sedeId } : {}),
+                    ...(usuarioId ? { usuarioId } : {}),
                     estadoEnvioSunat: { not: 'ANULADO' },
                 },
             },
@@ -74,6 +77,7 @@ export class FinanzasService {
             where: {
                 empresaId,
                 ...(sedeId ? { sedeId } : {}),
+                ...(usuarioId ? { usuarioId } : {}),
                 fechaEmision: rangoFecha,
                 formaPagoTipo: { in: ['Contado', 'CONTADO', 'contado'] },
                 estadoEnvioSunat: { not: 'ANULADO' },

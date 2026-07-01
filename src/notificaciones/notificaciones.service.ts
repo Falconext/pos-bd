@@ -218,4 +218,36 @@ export class NotificacionesService {
       this.gateway.enviarNotificacionAUsuario(usuarioId, notificacion);
     }
   }
+
+  /**
+   * Notifica a todos los ADMIN_EMPRESA (activos) de una empresa. Crea la
+   * notificación en base y la empuja en tiempo real (web + mobile) por WebSocket.
+   */
+  async notificarAdminsEmpresa(params: {
+    empresaId: number;
+    tipo: 'INFO' | 'WARNING' | 'CRITICAL';
+    titulo: string;
+    mensaje: string;
+    metaData?: SunatNotifMeta | Record<string, any>;
+  }) {
+    const { empresaId, tipo, titulo, mensaje, metaData } = params;
+    const admins = await this.prisma.usuario.findMany({
+      where: { empresaId, rol: 'ADMIN_EMPRESA', estado: 'ACTIVO' },
+      select: { id: true },
+    });
+    for (const admin of admins) {
+      const notif = await this.prisma.notificacion.create({
+        data: {
+          usuarioId: admin.id,
+          empresaId,
+          tipo,
+          titulo,
+          mensaje,
+          leida: false,
+          metaData: (metaData as Prisma.InputJsonValue) ?? undefined,
+        },
+      });
+      this.gateway.enviarNotificacionAUsuario(admin.id, notif);
+    }
+  }
 }

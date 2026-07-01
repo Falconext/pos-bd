@@ -1166,6 +1166,15 @@ model DisenoRubro {
   @@index([rubroId])
 }
 
+model PlantillaTiendaConfig {
+  id             String   @id
+  premium        Boolean  @default(false)
+  precioSoles    Decimal  @default(0)
+  premiumNote    String?
+  creadoEn       DateTime @default(now())
+  actualizadoEn  DateTime @updatedAt
+}
+
 model Banner {
   id        Int      @id @default(autoincrement())
   empresaId Int

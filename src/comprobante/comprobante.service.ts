@@ -1570,17 +1570,12 @@ export class ComprobanteService {
       if (!producto) continue;
       if (this.esProductoServicio(producto.atributosTecnicos as any)) continue;
 
-      // Fraccionamiento: el lote está en unidad base. Si se vende por CAJA (sin unidadVenta),
-      // descontar del lote cantidad × factor (el kardex/Producto.stock se mantiene en cajas).
       const factorConvVenta = Number((producto as any).factorConversion ?? 1);
       const cantidadLote =
         factorConvVenta > 1 && !(item as any).unidadVenta
           ? cantidad * factorConvVenta
           : cantidad;
-
-      // Registrar movimiento de kardex si se proporcionan los datos
       if (data && this.kardexService) {
-        // Usar el costo promedio del producto en lugar del precio de venta
         const costoUnitario = Number(producto.costoPromedio) || 0;
 
         const movimiento = await this.kardexService.registrarMovimiento({

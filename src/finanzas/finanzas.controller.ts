@@ -34,17 +34,21 @@ export class FinanzasController {
         @Query('fechaInicio') fechaInicio?: string,
         @Query('fechaFin') fechaFin?: string,
         @Query('sedeId') sedeIdQuery?: string,
+        @Query('usuarioId') usuarioIdQuery?: string,
     ) {
         const empresaId = user.empresaId;
         const isAdmin = user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
         const sedeId = isAdmin
             ? (sedeIdQuery ? Number(sedeIdQuery) : null)
             : (user.sedeId ?? null);
+        // El filtro por vendedor solo aplica para administradores de empresa
+        const usuarioId = isAdmin ? (usuarioIdQuery ? Number(usuarioIdQuery) : null) : null;
         return this.finanzasService.getResumenFinanciero(
             empresaId,
             fechaInicio,
             fechaFin,
             sedeId,
+            usuarioId ?? undefined,
         );
     }
 

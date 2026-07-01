@@ -1,5 +1,6 @@
 import {
   Controller,
+  Delete,
   Get,
   Post,
   Patch,
@@ -18,6 +19,8 @@ import { TiendaService } from './tienda.service';
 import { ConfigurarTiendaDto } from './dto/configurar-tienda.dto';
 import { ActualizarEstadoPedidoDto } from './dto/actualizar-pedido.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 
 @Controller('tienda')
 @UseGuards(JwtAuthGuard)
@@ -41,6 +44,51 @@ export class TiendaController {
   @Patch('diseno')
   async actualizarDiseno(@Req() req: any, @Body() body: Record<string, any>) {
     return this.tiendaService.actualizarDiseno(req.user.empresaId, body);
+  }
+
+  @Post('admin/empresas/:empresaId/templates-premium/:plantillaId/activar')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  async activarCompraPlantillaPremium(
+    @Req() req: any,
+    @Param('empresaId') empresaId: string,
+    @Param('plantillaId') plantillaId: string,
+    @Body() body: { precioPagado?: number },
+  ) {
+    return this.tiendaService.activarCompraPlantillaPremium(
+      Number(empresaId),
+      plantillaId,
+      {
+        nombre: req.user?.nombre,
+        email: req.user?.email,
+        precioPagado: body?.precioPagado,
+      },
+    );
+  }
+
+  @Get('admin/templates-premium/:plantillaId/empresas')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  async listarEmpresasConPlantillaPremium(@Param('plantillaId') plantillaId: string) {
+    return this.tiendaService.listarEmpresasConPlantillaPremium(plantillaId);
+  }
+
+  @Delete('admin/empresas/:empresaId/templates-premium/:plantillaId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  async desactivarCompraPlantillaPremium(
+    @Req() req: any,
+    @Param('empresaId') empresaId: string,
+    @Param('plantillaId') plantillaId: string,
+  ) {
+    return this.tiendaService.desactivarCompraPlantillaPremium(
+      Number(empresaId),
+      plantillaId,
+      {
+        nombre: req.user?.nombre,
+        email: req.user?.email,
+      },
+    );
   }
 
   // ==================== PEDIDOS ====================
