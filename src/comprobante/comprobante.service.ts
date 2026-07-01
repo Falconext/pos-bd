@@ -1,3 +1,4 @@
+import { num, round3 } from '../common/utils/stock';
 import {
   BadRequestException,
   Injectable,
@@ -1492,9 +1493,9 @@ export class ComprobanteService {
             `El lote ${lote.lote} de "${producto.descripcion}" está vencido`,
           );
         }
-        if ((lote.stockActual ?? 0) < cantidadLote) {
+        if (num(lote.stockActual) < cantidadLote) {
           throw new BadRequestException(
-            `Stock insuficiente en lote ${lote.lote} para "${producto.descripcion}". Disponible: ${lote.stockActual ?? 0}, solicitado: ${cantidadLote}.`,
+            `Stock insuficiente en lote ${lote.lote} para "${producto.descripcion}". Disponible: ${num(lote.stockActual)}, solicitado: ${cantidadLote}.`,
           );
         }
         continue;
@@ -1505,7 +1506,7 @@ export class ComprobanteService {
         select: { stock: true },
       });
 
-      const stockBase = stockSede?.stock ?? producto.stock ?? 0;
+      const stockBase = num(stockSede?.stock ?? producto.stock);
       const reservasActivas = await this.prisma.reserva.aggregate({
         _sum: { cantidad: true },
         where: {
@@ -1515,7 +1516,7 @@ export class ComprobanteService {
           estado: { in: [EstadoReserva.PENDIENTE, EstadoReserva.CONFIRMADA] },
         },
       });
-      const reservado = reservasActivas._sum.cantidad ?? 0;
+      const reservado = num(reservasActivas._sum.cantidad);
       const cupoProvision = Math.floor(
         (stockBase * (producto.porcentajeProvision ?? 0)) / 100,
       );
@@ -1715,7 +1716,7 @@ export class ComprobanteService {
                     for (const ml of movimientosLote) {
                       await this.loteService.aumentarStockLote(
                         ml.productoLoteId,
-                        ml.cantidad, // Devolver la cantidad exacta que salió de este lote
+                        num(ml.cantidad), // Devolver la cantidad exacta que salió de este lote
                         movimientoIngreso.id, // Ligar al nuevo movimiento de anulación
                       );
                     }
@@ -1753,7 +1754,7 @@ export class ComprobanteService {
     if (normalizadas.length === 0) {
       if (!fechaVencimientoCredito) {
         throw new BadRequestException(
-          'La factura al crédito requiere fecha de vencimiento o cronograma de cuotas',
+          'La venta al crédito requiere fecha de vencimiento o cronograma de cuotas',
         );
       }
       const fecha = new Date(fechaVencimientoCredito);

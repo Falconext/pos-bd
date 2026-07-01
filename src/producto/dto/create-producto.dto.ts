@@ -38,7 +38,7 @@ export class CreateProductoDto {
   @Type(() => Number)
   igvPorcentaje?: number; // default 18
 
-  @IsInt()
+  @IsNumber({ maxDecimalPlaces: 3 })
   @Type(() => Number)
   stock: number;
 

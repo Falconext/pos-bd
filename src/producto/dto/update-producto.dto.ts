@@ -49,7 +49,7 @@ export class UpdateProductoDto {
   precioUnitario?: number;
 
   @IsOptional()
-  @IsInt()
+  @IsNumber({ maxDecimalPlaces: 3 })
   @Type(() => Number)
   stock?: number;
 

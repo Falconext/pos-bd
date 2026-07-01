@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsInt, IsString, IsOptional, Min, IsArray, ValidateNested } from 'class-validator';
+import { IsNotEmpty, IsInt, IsNumber, IsString, IsOptional, Min, IsArray, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class TrasladoItemDto {
@@ -8,8 +8,8 @@ export class TrasladoItemDto {
   productoId: number;
 
   @IsNotEmpty()
-  @IsInt()
-  @Min(1)
+  @IsNumber({ maxDecimalPlaces: 3 })
+  @Min(0.001)
   cantidad: number;
 
   @IsOptional()

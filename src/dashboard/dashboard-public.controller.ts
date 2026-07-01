@@ -55,7 +55,7 @@ export class DashboardPublicController {
 
         // Filter products where stock is at or below stockMinimo + 5
         return productos.filter(
-            (p) => p.stock <= (p.stockMinimo || 0) + 5 && p.stock >= 0,
+            (p) => Number(p.stock) <= (p.stockMinimo || 0) + 5 && Number(p.stock) >= 0,
         );
     }
 

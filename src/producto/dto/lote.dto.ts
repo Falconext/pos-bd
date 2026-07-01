@@ -16,7 +16,7 @@ export class CrearLoteDto {
     fechaVencimiento: string;
 
     @IsNotEmpty()
-    @IsInt()
+    @IsNumber({ maxDecimalPlaces: 3 })
     @Min(0)
     @Type(() => Number)
     stockInicial: number;
@@ -38,8 +38,8 @@ export class DescontarStockLoteDto {
     productoId: number;
 
     @IsNotEmpty()
-    @IsInt()
-    @Min(1)
+    @IsNumber({ maxDecimalPlaces: 3 })
+    @Min(0.001)
     @Type(() => Number)
     cantidad: number;
 

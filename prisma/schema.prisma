@@ -341,7 +341,7 @@ model Producto {
   precioUnitario           Decimal
   valorUnitario            Decimal
   igvPorcentaje            Decimal                       @default(18.00)
-  stock                    Int
+  stock                    Decimal                       @default(0) @db.Decimal(12, 3)
   estado                   EstadoType                    @default(ACTIVO)
   creadoEn                 DateTime                      @default(now())
   empresaId                Int?
@@ -910,9 +910,9 @@ model MovimientoKardex {
   tipoMovimiento        TipoMovimiento
   concepto              String
   comprobanteId         Int?
-  cantidad              Int
-  stockAnterior         Int
-  stockActual           Int
+  cantidad              Decimal                @default(0) @db.Decimal(12, 3)
+  stockAnterior         Decimal                @default(0) @db.Decimal(12, 3)
+  stockActual           Decimal                @default(0) @db.Decimal(12, 3)
   costoUnitario         Decimal?
   valorTotal            Decimal?
   fecha                 DateTime               @default(now())
@@ -1296,8 +1296,8 @@ model ProductoLote {
   lote                String
   fechaVencimiento    DateTime
   fechaIngreso        DateTime               @default(now())
-  stockActual         Int                    @default(0)
-  stockInicial        Int                    @default(0)
+  stockActual         Decimal                @default(0) @db.Decimal(12, 3)
+  stockInicial        Decimal                @default(0) @db.Decimal(12, 3)
   costoUnitario       Decimal?
   proveedor           String?
   activo              Boolean                @default(true)
@@ -1317,9 +1317,9 @@ model MovimientoKardexLote {
   id             Int              @id @default(autoincrement())
   productoLoteId Int
   movimientoId   Int
-  cantidad       Int
-  stockAnterior  Int
-  stockActual    Int
+  cantidad       Decimal          @default(0) @db.Decimal(12, 3)
+  stockAnterior  Decimal          @default(0) @db.Decimal(12, 3)
+  stockActual    Decimal          @default(0) @db.Decimal(12, 3)
   movimiento     MovimientoKardex @relation(fields: [movimientoId], references: [id], onDelete: Cascade)
   lote           ProductoLote     @relation(fields: [productoLoteId], references: [id], onDelete: Cascade)
 
@@ -1411,7 +1411,7 @@ model ProductoStock {
   id                     Int      @id @default(autoincrement())
   productoId             Int
   sedeId                 Int
-  stock                  Int      @default(0)
+  stock                  Decimal  @default(0) @db.Decimal(12, 3)
   stockMinimo            Int?     @default(0)
   stockMaximo            Int?
   ubicacion              String?

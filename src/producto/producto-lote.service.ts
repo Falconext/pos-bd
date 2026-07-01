@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
+import { num, round3 } from '../common/utils/stock';
 
 @Injectable()
 export class ProductoLoteService {
@@ -108,8 +109,8 @@ export class ProductoLoteService {
                     tipoMovimiento: 'INGRESO',
                     concepto: `Apertura Lote: ${data.lote}`,
                     cantidad: data.stockInicial,
-                    stockAnterior: productoActualizado.stock - data.stockInicial,
-                    stockActual: productoActualizado.stock,
+                    stockAnterior: round3(num(productoActualizado.stock) - num(data.stockInicial)),
+                    stockActual: num(productoActualizado.stock),
                     costoUnitario: data.costoUnitario || producto.costoPromedio || 0,
                     usuarioId: data.usuarioId,
                     comprobanteId: null,
@@ -168,8 +169,8 @@ export class ProductoLoteService {
                     productoLoteId: loteExistente.id,
                     movimientoId: params.movimientoKardexId,
                     cantidad: stockEnUnidad,
-                    stockAnterior: loteExistente.stockActual,
-                    stockActual: loteExistente.stockActual + stockEnUnidad,
+                    stockAnterior: num(loteExistente.stockActual),
+                    stockActual: round3(num(loteExistente.stockActual) + num(stockEnUnidad)),
                 },
             });
         } else {
@@ -228,7 +229,7 @@ export class ProductoLoteService {
             },
             data: {
                 stockActual: { decrement: cantidad },
-                ...(lote.stockActual - cantidad <= 0 ? { activo: false } : {}),
+                ...(num(lote.stockActual) - cantidad <= 0 ? { activo: false } : {}),
             },
         });
 
@@ -243,8 +244,8 @@ export class ProductoLoteService {
                 productoLoteId: loteId,
                 movimientoId: movimientoKardexId,
                 cantidad,
-                stockAnterior: lote.stockActual,
-                stockActual: lote.stockActual - cantidad,
+                stockAnterior: num(lote.stockActual),
+                stockActual: round3(num(lote.stockActual) - cantidad),
             },
         });
     }
@@ -269,7 +270,7 @@ export class ProductoLoteService {
             });
 
             if (!lote) throw new NotFoundException('Lote no encontrado');
-            if (lote.stockActual < cantidad) {
+            if (num(lote.stockActual) < cantidad) {
                 throw new BadRequestException(
                     `Stock insuficiente en el lote "${lote.lote}". Disponible: ${lote.stockActual}`,
                 );
@@ -301,7 +302,7 @@ export class ProductoLoteService {
             }
 
             // Verificar stock total disponible en lotes
-            const stockTotalLotes = lotesDisponibles.reduce((acc, l) => acc + l.stockActual, 0);
+            const stockTotalLotes = lotesDisponibles.reduce((acc, l) => acc + num(l.stockActual), 0);
             if (stockTotalLotes < cantidad) {
                 // Opción: Bloquear venta o permitir stock negativo global (pero lotes en 0).
                 // Regla Farmacia: No vender sin lote.
@@ -314,7 +315,7 @@ export class ProductoLoteService {
             for (const lote of lotesDisponibles) {
                 if (cantidadRestante <= 0) break;
 
-                const descuento = Math.min(lote.stockActual, cantidadRestante);
+                const descuento = Math.min(num(lote.stockActual), cantidadRestante);
                 lotesAfectados.push({ lote, cantidadAdescontar: descuento });
                 cantidadRestante -= descuento;
             }
@@ -377,8 +378,8 @@ export class ProductoLoteService {
                     productoLoteId: loteId,
                     movimientoId: movimientoKardexId,
                     cantidad,
-                    stockAnterior: lote.stockActual,
-                    stockActual: lote.stockActual + cantidad,
+                    stockAnterior: num(lote.stockActual),
+                    stockActual: round3(num(lote.stockActual) + cantidad),
                 },
             }),
         ]);
@@ -521,7 +522,7 @@ export class ProductoLoteService {
         }
 
         // Si ya está inactivo o sin stock, solo desactivamos sin movimiento
-        if (!lote.stockActual || lote.stockActual <= 0) {
+        if (!lote.stockActual || num(lote.stockActual) <= 0) {
             return this.prisma.productoLote.update({
                 where: { id: loteId },
                 data: { activo: false },
@@ -539,8 +540,8 @@ export class ProductoLoteService {
                     tipoMovimiento: 'SALIDA',
                     concepto: `Baja por Vencimiento/Deterioro (Lote: ${lote.lote})`,
                     cantidad: Number(lote.stockActual),
-                    stockAnterior: lote.producto.stock,
-                    stockActual: lote.producto.stock - Number(lote.stockActual),
+                    stockAnterior: num(lote.producto.stock),
+                    stockActual: round3(num(lote.producto.stock) - Number(lote.stockActual)),
                     fecha: new Date(),
                     costoUnitario: lote.costoUnitario,
                 },
@@ -625,7 +626,7 @@ export class ProductoLoteService {
         ]);
 
         const valorTotalInventario = valorAggregate.reduce(
-            (acc, l) => acc + l.stockActual * Number(l.costoUnitario ?? 0), 0
+            (acc, l) => acc + num(l.stockActual) * Number(l.costoUnitario ?? 0), 0
         );
 
         const [lotesRaw, total] = await Promise.all([
@@ -657,7 +658,7 @@ export class ProductoLoteService {
                 activo: l.activo,
                 creadoEn: l.creadoEn,
                 diasAlVencimiento,
-                valorEnStock: l.stockActual * Number(l.costoUnitario ?? 0),
+                valorEnStock: num(l.stockActual) * Number(l.costoUnitario ?? 0),
                 totalVentas: l.detallesComprobante.length,
                 producto: l.producto,
             };

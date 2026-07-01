@@ -725,7 +725,8 @@ export class TiendaService {
 
     const ext = ct.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg';
     const s3Key = `tiendas/empresa-${empresaId}/template/${campo}-${Date.now()}.${ext}`;
-    const url = await this.s3.uploadImage(file.buffer, s3Key, ct);
+    // Imágenes de plantilla (hero/banners de la tienda) a mayor resolución.
+    const url = await this.s3.uploadImage(file.buffer, s3Key, ct, 1920);
 
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
@@ -2001,7 +2002,7 @@ export class TiendaService {
       }
 
       const esServicio = String((producto.atributosTecnicos as any)?.tipoProducto || '').toUpperCase() === 'SERVICIO';
-      if (!esServicio && producto.stock < item.cantidad) {
+      if (!esServicio && Number(producto.stock) < item.cantidad) {
         throw new BadRequestException(
           `Stock insuficiente para ${producto.descripcion}. Disponible: ${producto.stock}`,
         );
@@ -2814,7 +2815,7 @@ export class TiendaService {
 
     // Calcular stock disponible
     const stockDisponible = combo.items.reduce((min, item) => {
-      const stockProducto = Math.floor(item.producto.stock / item.cantidad);
+      const stockProducto = Math.floor(Number(item.producto.stock) / item.cantidad);
       return Math.min(min, stockProducto);
     }, Infinity);
 

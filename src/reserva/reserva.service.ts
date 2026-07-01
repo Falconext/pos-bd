@@ -35,7 +35,7 @@ export class ReservaService {
       select: { stock: true },
     });
 
-    const stockBase = stockSede?.stock ?? producto.stock ?? 0;
+    const stockBase = Number(stockSede?.stock ?? producto.stock ?? 0);
 
     const whereReservas: Prisma.ReservaWhereInput = {
       empresaId,
@@ -50,7 +50,7 @@ export class ReservaService {
       where: whereReservas,
     });
 
-    const reservado = suma._sum.cantidad ?? 0;
+    const reservado = Number(suma._sum.cantidad ?? 0);
     const disponible = stockBase - reservado;
     const cupoProvision = Math.floor(
       (stockBase * (producto.porcentajeProvision ?? 0)) / 100,

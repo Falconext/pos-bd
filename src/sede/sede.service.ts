@@ -140,7 +140,7 @@ export class SedeService {
             const stockActual = await this.prisma.productoStock.findUnique({
                 where: { productoId_sedeId: { productoId: sp.productoId, sedeId } },
             });
-            if (stockActual && stockActual.stock === 0) {
+            if (stockActual && Number(stockActual.stock) === 0) {
                 await this.prisma.productoStock.update({
                     where: { productoId_sedeId: { productoId: sp.productoId, sedeId } },
                     data: {

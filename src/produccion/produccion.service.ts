@@ -1,3 +1,4 @@
+import { num, round3 } from '../common/utils/stock';
 import {
   BadRequestException,
   ForbiddenException,
@@ -329,13 +330,14 @@ export class ProduccionService {
       );
     }
 
-    const stockAnterior = productoStock.stock;
+    const stockAnterior = num(productoStock.stock);
     let stockActual = stockAnterior;
     if (data.tipoMovimiento === 'INGRESO') {
-      stockActual += data.cantidad;
+      stockActual += num(data.cantidad);
     } else {
-      stockActual -= data.cantidad;
+      stockActual -= num(data.cantidad);
     }
+    stockActual = round3(stockActual);
 
     if (stockActual < 0) {
       const producto = await tx.producto.findUnique({
@@ -402,11 +404,11 @@ export class ProduccionService {
         select: { costoPromedio: true },
       });
 
-      const stockActualGlobal = totalStock._sum.stock ?? 0;
-      const stockAnteriorGlobal = stockActualGlobal - data.cantidad;
+      const stockActualGlobal = num(totalStock._sum.stock);
+      const stockAnteriorGlobal = stockActualGlobal - num(data.cantidad);
       const costoAnterior = Number(producto?.costoPromedio ?? 0);
       const valorAnterior = stockAnteriorGlobal * costoAnterior;
-      const valorNuevo = data.cantidad * data.costoUnitario;
+      const valorNuevo = num(data.cantidad) * data.costoUnitario;
 
       if (stockActualGlobal > 0) {
         const nuevoCostoPromedio =

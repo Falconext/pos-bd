@@ -926,38 +926,48 @@ export class EmpresaService {
         data: updateData,
       });
 
-      // Actualizar datos del usuario administrador si se envían
       if (dto.usuario) {
-        // Buscar usuario admin de la empresa
         const adminUser = await this.prisma.usuario.findFirst({
           where: {
             empresaId: dto.id,
-            rol: { in: ['ADMIN_EMPRESA', 'ADMIN_SISTEMA'] },
+            rol: 'ADMIN_EMPRESA',
           },
+          orderBy: { id: 'asc' },
         });
 
+        const userData: any = {};
+        if (dto.usuario.nombre !== undefined)
+          userData.nombre = dto.usuario.nombre;
+        if (dto.usuario.email !== undefined)
+          userData.email = dto.usuario.email;
+        if (dto.usuario.dni !== undefined) userData.dni = dto.usuario.dni;
+        if (dto.usuario.celular !== undefined)
+          userData.celular = dto.usuario.celular;
+        if (dto.usuario.password && dto.usuario.password.length > 0) {
+          userData.password = await bcrypt.hash(dto.usuario.password, 10);
+        }
+
         if (adminUser) {
-          const userData: any = {};
-          if (dto.usuario.nombre !== undefined)
-            userData.nombre = dto.usuario.nombre;
-          if (dto.usuario.email !== undefined)
-            userData.email = dto.usuario.email;
-          if (dto.usuario.dni !== undefined) userData.dni = dto.usuario.dni;
-          if (dto.usuario.celular !== undefined)
-            userData.celular = dto.usuario.celular;
-
-          if (dto.usuario.password && dto.usuario.password.length > 0) {
-            // Assuming bcrypt is imported and available
-            // If not, you'll need to add `import * as bcrypt from 'bcrypt';` at the top
-            userData.password = await bcrypt.hash(dto.usuario.password, 10);
-          }
-
           if (Object.keys(userData).length > 0) {
             await this.prisma.usuario.update({
               where: { id: adminUser.id },
               data: userData,
             });
           }
+        } else if (dto.usuario.email) {
+          await this.prisma.usuario.create({
+            data: {
+              nombre: dto.usuario.nombre || 'Administrador',
+              email: dto.usuario.email,
+              dni: dto.usuario.dni || '00000000',
+              celular: dto.usuario.celular || '999999999',
+              password: userData.password || (await bcrypt.hash('admin123', 10)),
+              rol: 'ADMIN_EMPRESA',
+              estado: 'ACTIVO',
+              empresaId: dto.id,
+              permisos: '["*"]',
+            },
+          });
         }
       }
 
@@ -977,7 +987,7 @@ export class EmpresaService {
         });
       }
 
-      return empresaActualizada;
+      return this.obtenerPorId(dto.id);
     } catch (error: any) {
       if (
         error instanceof PrismaClientKnownRequestError &&

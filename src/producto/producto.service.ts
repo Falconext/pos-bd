@@ -1,3 +1,4 @@
+import { num } from '../common/utils/stock';
 import {
   BadRequestException,
   ForbiddenException,
@@ -698,10 +699,10 @@ export class ProductoService {
         // Si se pide una sede específica, usar SOLO ese stock.
         // Si no se pide sede, usar suma total como comportamiento histórico.
         const stockTotalBase = params.sedeId
-          ? (p.stocks[0]?.stock ?? 0) // if sedeId is specific, and no ProductoStock exists, stock is 0
+          ? num(p.stocks[0]?.stock) // if sedeId is specific, and no ProductoStock exists, stock is 0
           : p.stocks.length > 0
-            ? p.stocks.reduce((sum, s) => sum + s.stock, 0)
-            : ((p as any).stock ?? 0);
+            ? p.stocks.reduce((sum, s) => sum + num(s.stock), 0)
+            : num((p as any).stock);
         // If a specific sede is requested, we MUST use the sede's specific stock from ProductoStock (stockTotalBase).
         // Lotes don't have sedeId in this schema, so their sum is global.
         const stockTotal = (usaStockLotes && !params.sedeId) ? stockDesdeLotes : stockTotalBase;
@@ -967,7 +968,7 @@ export class ProductoService {
       const esLoteGestionado = stockTotalLotes > 0 || tieneLotesVencidos;
       // Lotes no tienen sedeId, así que su suma global no debe sobreescribir el stock real de la sede.
       // Ya que en catalogoFarmacia siempre se filtra por sede, usamos estrictamente ProductoStock.
-      const stockBase = p.stocks[0]?.stock ?? 0;
+      const stockBase = num(p.stocks[0]?.stock);
       const stockSede = p.stocks[0] as any | undefined;
       const precioUnitario = stockSede?.precioUnitarioOverride != null
         ? Number(stockSede.precioUnitarioOverride)
@@ -1434,7 +1435,7 @@ export class ProductoService {
           select: { stock: true },
         });
 
-        const stockBase = stockSede?.stock ?? producto.stock ?? 0;
+        const stockBase = num(stockSede?.stock ?? producto.stock);
         const reservasActivas = await this.prisma.reserva.aggregate({
           where: {
             empresaId: data.empresaId,
@@ -1444,7 +1445,7 @@ export class ProductoService {
           },
           _sum: { cantidad: true },
         });
-        const reservado = reservasActivas._sum.cantidad ?? 0;
+        const reservado = num(reservasActivas._sum.cantidad);
         const cupoProvision = Math.floor(
           (stockBase * porcentajesNuevos.porcentajeProvision) / 100,
         );
@@ -1482,8 +1483,8 @@ export class ProductoService {
           },
         });
 
-        if (currentStock && currentStock.stock !== data.stock) {
-          const diferencia = data.stock - currentStock.stock;
+        if (currentStock && num(currentStock.stock) !== num(data.stock)) {
+          const diferencia = num(data.stock) - num(currentStock.stock);
           const esIngreso = diferencia > 0;
           const cantidad = Math.abs(diferencia);
 

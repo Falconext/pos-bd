@@ -104,14 +104,27 @@ export class S3Service implements OnModuleInit {
   /**
    * Sube una imagen (PNG/JPEG/WEBP) a S3
    */
-  async uploadImage(buffer: Buffer, key: string, contentType = 'image/jpeg'): Promise<string> {
+  async uploadImage(
+    buffer: Buffer,
+    key: string,
+    contentType = 'image/jpeg',
+    // Lado máximo en px. 1400 es ideal para productos/catálogo/detalle.
+    // Para banners y héroes de tienda usar 1920 (pantallas grandes).
+    maxSize = 1400,
+  ): Promise<string> {
     // Convertir a WEBP si es posible
     let out = buffer;
     try {
       // Carga dinámica para evitar romper si no está instalado en ciertos entornos
       // @ts-ignore
       const sharp = (await import('sharp')).default as any;
-      out = await sharp(buffer).webp({ quality: 82 }).toBuffer();
+      out = await sharp(buffer)
+        // Respeta la orientación EXIF (evita fotos de celular giradas)
+        .rotate()
+        // Reduce a un máximo razonable manteniendo proporción; nunca agranda las pequeñas.
+        .resize({ width: maxSize, height: maxSize, fit: 'inside', withoutEnlargement: true })
+        .webp({ quality: 82 })
+        .toBuffer();
       contentType = 'image/webp';
       // Forzar extensión .webp en la key si no la tiene
       if (!key.toLowerCase().endsWith('.webp')) {

@@ -56,7 +56,7 @@ export class BannersService {
         const extension = file.originalname.split('.').pop() || 'webp';
         const key = `banners/empresa-${empresaId}/banner-${timestamp}.${extension}`;
 
-        const imageUrl = await this.s3Service.uploadImage(file.buffer, key, file.mimetype);
+        const imageUrl = await this.s3Service.uploadImage(file.buffer, key, file.mimetype, 1920);
         console.log(`[BannersService] Image uploaded to S3: ${imageUrl}`);
 
         try {
@@ -178,7 +178,7 @@ export class BannersService {
             const timestamp = Date.now();
             const extension = file.originalname.split('.').pop() || 'webp';
             const key = `banners/empresa-${empresaId}/banner-${timestamp}.${extension}`;
-            imageUrl = await this.s3Service.uploadImage(file.buffer, key, file.mimetype);
+            imageUrl = await this.s3Service.uploadImage(file.buffer, key, file.mimetype, 1920);
 
             // Optionally delete old image if it's S3
             if (banner.imagenUrl && banner.imagenUrl.includes('amazonaws.com')) {

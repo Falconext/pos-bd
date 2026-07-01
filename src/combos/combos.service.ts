@@ -283,7 +283,7 @@ export class CombosService {
 
         // El stock del combo es el mínimo entre todos los productos
         const stockDisponible = combo.items.reduce((min, item) => {
-            const stockProducto = Math.floor(item.producto.stock / item.cantidad);
+            const stockProducto = Math.floor(Number(item.producto.stock) / item.cantidad);
             return Math.min(min, stockProducto);
         }, Infinity);
 

@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsInt, IsEnum, IsString, IsOptional, IsDecimal, Min, IsDateString } from 'class-validator';
+import { IsNotEmpty, IsInt, IsNumber, IsEnum, IsString, IsOptional, IsDecimal, Min, IsDateString } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export enum TipoAjuste {
@@ -25,8 +25,8 @@ export class AjusteInventarioDto {
 
   @IsNotEmpty()
   @Type(() => Number)
-  @IsInt()
-  @Min(1)
+  @IsNumber({ maxDecimalPlaces: 3 })
+  @Min(0.001)
   cantidad: number;
 
   @IsOptional()

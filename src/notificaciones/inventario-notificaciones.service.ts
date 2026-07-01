@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificacionesService } from './notificaciones.service';
+import { num } from '../common/utils/stock';
 
 type ProductoNotificacion = {
   id: number;
@@ -98,7 +99,7 @@ export class InventarioNotificacionesService {
           id: p.id,
           codigo: p.codigo,
           descripcion: p.descripcion,
-          stock: p.stock,
+          stock: num(p.stock),
           stockMinimo: p.stockMinimo ?? 0,
           sedeId: null,
           sedeNombre: null,
@@ -123,12 +124,12 @@ export class InventarioNotificacionesService {
       });
       for (const p of productosBajoStockGlobal) {
         const minimo = p.stockMinimo ?? 0;
-        if (minimo > 0 && p.stock <= minimo) {
+        if (minimo > 0 && num(p.stock) <= minimo) {
           pushCritico(`global-${p.id}`, {
             id: p.id,
             codigo: p.codigo,
             descripcion: p.descripcion,
-            stock: p.stock,
+            stock: num(p.stock),
             stockMinimo: minimo,
             sedeId: null,
             sedeNombre: null,
@@ -165,7 +166,7 @@ export class InventarioNotificacionesService {
           id: p.productoId,
           codigo: p.producto.codigo,
           descripcion,
-          stock: p.stock,
+          stock: num(p.stock),
           stockMinimo: p.stockMinimo ?? p.producto.stockMinimo ?? 0,
           sedeId: p.sedeId,
           sedeNombre: p.sede?.nombre || null,
@@ -196,14 +197,14 @@ export class InventarioNotificacionesService {
 
       for (const p of productosBajoStockPorSede) {
         const minimo = p.stockMinimo ?? 0;
-        if (minimo === 0 || p.stock > minimo) continue;
+        if (minimo === 0 || num(p.stock) > minimo) continue;
         const key = `sede-${p.productoId}-${p.sedeId}`;
         const descripcion = `${p.producto.descripcion}${p.sede?.nombre ? ` [Sede: ${p.sede.nombre}]` : ''}`;
         pushCritico(key, {
           id: p.productoId,
           codigo: p.producto.codigo,
           descripcion,
-          stock: p.stock,
+          stock: num(p.stock),
           stockMinimo: minimo,
           sedeId: p.sedeId,
           sedeNombre: p.sede?.nombre || null,
@@ -376,7 +377,7 @@ export class InventarioNotificacionesService {
 
       if (!producto) return;
 
-      let stockActual: number = producto.stock ?? 0;
+      let stockActual: number = num(producto.stock);
       let stockMinimo: number = producto.stockMinimo ?? 0;
       let sedeSuffix = '';
       let sedeNombre: string | null = null;
@@ -388,7 +389,7 @@ export class InventarioNotificacionesService {
           select: { stock: true, stockMinimo: true, sede: { select: { nombre: true } } },
         });
         if (productoStock) {
-          stockActual = productoStock.stock;
+          stockActual = num(productoStock.stock);
           stockMinimo = productoStock.stockMinimo ?? 0;
           sedeNombre = productoStock.sede?.nombre || null;
           sedeSuffix = sedeNombre ? ` [Sede: ${sedeNombre}]` : '';

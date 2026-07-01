@@ -22,6 +22,7 @@ import {
 } from './dto/response-kardex.dto';
 import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
 import { parseFechaSoloDia } from '../common/utils/fecha';
+import { num, round3 } from '../common/utils/stock';
 
 @Injectable()
 export class KardexService {
@@ -164,27 +165,29 @@ export class KardexService {
       if (!productoStock) throw new NotFoundException('No se pudo crear el stock para esta sede y producto');
     }
 
-    const stockAnterior = productoStock.stock;
+    const stockAnterior = num(productoStock.stock);
     const costoPromedio = Number(productoStock.producto.costoPromedio) || 0;
     let stockActual = stockAnterior;
+    const cantidadNum = num(data.cantidad);
 
     // Calcular nuevo stock según el tipo de movimiento
     switch (data.tipoMovimiento) {
       case 'INGRESO':
-        stockActual += data.cantidad;
+        stockActual += cantidadNum;
         break;
       case 'SALIDA':
-        stockActual -= data.cantidad;
+        stockActual -= cantidadNum;
         break;
       case 'AJUSTE':
         // Para ajustes, la cantidad puede ser positiva o negativa (delta)
-        stockActual += data.cantidad;
+        stockActual += cantidadNum;
         break;
       case 'TRANSFERENCIA':
         // Lógica específica para transferencias
-        stockActual -= data.cantidad;
+        stockActual -= cantidadNum;
         break;
     }
+    stockActual = round3(stockActual);
 
     // Calcular costo unitario si no se proporciona
     let costoUnitario = data.costoUnitario;
@@ -192,7 +195,7 @@ export class KardexService {
       costoUnitario = costoPromedio;
     }
 
-    const valorTotal = costoUnitario ? costoUnitario * data.cantidad : null;
+    const valorTotal = costoUnitario ? costoUnitario * cantidadNum : null;
 
     // Crear el movimiento
     const movimiento = await this.prisma.movimientoKardex.create({
@@ -345,7 +348,7 @@ export class KardexService {
         id: producto.id,
         codigo: producto.codigo,
         descripcion: producto.descripcion,
-        stock: producto.stock,
+        stock: num(producto.stock),
         stockMinimo: producto.stockMinimo || 0,
         stockMaximo: producto.stockMaximo || 0,
         costoPromedio: Number(producto.costoPromedio) || 0,
@@ -360,6 +363,9 @@ export class KardexService {
       },
       movimientos: movimientos.map(mov => ({
         ...mov,
+        cantidad: num(mov.cantidad),
+        stockAnterior: num(mov.stockAnterior),
+        stockActual: num(mov.stockActual),
         costoUnitario: mov.costoUnitario ? Number(mov.costoUnitario) : undefined,
         valorTotal: mov.valorTotal ? Number(mov.valorTotal) : undefined,
       })) as MovimientoKardexResponse[],
@@ -440,7 +446,7 @@ export class KardexService {
       const costoFinal = costoUnitarioMovimiento || costoPromedioProducto;
 
       // Calcular valor total si no existe
-      const valorTotal = mov.valorTotal ? Number(mov.valorTotal) : (costoFinal * mov.cantidad);
+      const valorTotal = mov.valorTotal ? Number(mov.valorTotal) : (costoFinal * num(mov.cantidad));
 
       // Calcular ganancia unitaria
       const precioVenta = mov.producto ? Number(mov.producto.precioUnitario || 0) : 0;
@@ -498,21 +504,22 @@ export class KardexService {
 
     let cantidad: number;
     let nuevoStock: number;
+    const stockProd = num(producto.stock);
 
     switch (ajusteDto.tipoAjuste) {
       case TipoAjuste.POSITIVO:
-        cantidad = ajusteDto.cantidad;
-        nuevoStock = producto.stock + cantidad;
+        cantidad = num(ajusteDto.cantidad);
+        nuevoStock = round3(stockProd + cantidad);
         break;
       case TipoAjuste.NEGATIVO: {
-        const descuentoAplicado = Math.min(producto.stock, ajusteDto.cantidad);
+        const descuentoAplicado = Math.min(stockProd, num(ajusteDto.cantidad));
         cantidad = -descuentoAplicado;
-        nuevoStock = producto.stock - descuentoAplicado;
+        nuevoStock = round3(stockProd - descuentoAplicado);
         break;
       }
       case TipoAjuste.CORRECCION:
-        cantidad = ajusteDto.cantidad - producto.stock;
-        nuevoStock = ajusteDto.cantidad;
+        cantidad = round3(num(ajusteDto.cantidad) - stockProd);
+        nuevoStock = num(ajusteDto.cantidad);
         break;
     }
 
@@ -689,10 +696,10 @@ export class KardexService {
         where: { id: productoId },
         select: { stock: true },
       });
-      return producto?.stock || 0;
+      return num(producto?.stock);
     }
 
-    return movimientos[0].stockActual;
+    return num(movimientos[0].stockActual);
   }
 
   /**
@@ -715,14 +722,15 @@ export class KardexService {
 
     for (const producto of productos) {
       const stockCalculado = await this.calcularStockActual(producto.id, empresaId, sedeId);
-      if (stockCalculado !== producto.stock) {
+      const stockSistema = num(producto.stock);
+      if (stockCalculado !== stockSistema) {
         inconsistencias.push({
           productoId: producto.id,
           codigo: producto.codigo,
           descripcion: producto.descripcion,
-          stockSistema: producto.stock,
+          stockSistema,
           stockCalculado,
-          diferencia: producto.stock - stockCalculado,
+          diferencia: round3(stockSistema - stockCalculado),
         });
       }
     }
@@ -743,15 +751,15 @@ export class KardexService {
 
     const totalIngresos = movimientos
       .filter(m => m.tipoMovimiento === 'INGRESO')
-      .reduce((sum, m) => sum + m.cantidad, 0);
+      .reduce((sum, m) => sum + num(m.cantidad), 0);
 
     const totalSalidas = movimientos
       .filter(m => m.tipoMovimiento === 'SALIDA')
-      .reduce((sum, m) => sum + m.cantidad, 0);
+      .reduce((sum, m) => sum + num(m.cantidad), 0);
 
     const totalAjustes = movimientos
       .filter(m => m.tipoMovimiento === 'AJUSTE')
-      .reduce((sum, m) => sum + m.cantidad, 0);
+      .reduce((sum, m) => sum + num(m.cantidad), 0);
 
     const stockActual = await this.calcularStockActual(productoId, empresaId, sedeId);
 
@@ -809,7 +817,7 @@ export class KardexService {
         where: { productoId },
         _sum: { stock: true }
       });
-      const stockTotalGlobal = totalStock._sum.stock || 0; // Este es el stock NUEVO total ya actualizado en la línea anterior?
+      const stockTotalGlobal = num(totalStock._sum.stock); // Este es el stock NUEVO total ya actualizado en la línea anterior?
       // Espera, acabamos de actualizar el stock de la sede. 
       // El stockAnteriorGlobal seria stockTotalGlobal - cantidad.
 
@@ -876,21 +884,22 @@ export class KardexService {
 
       const ventasPeriodo1 = producto.movimientosKardex
         .filter(m => m.fecha >= mes1)
-        .reduce((sum, m) => sum + m.cantidad, 0);
+        .reduce((sum, m) => sum + num(m.cantidad), 0);
 
       const ventasPeriodo2 = producto.movimientosKardex
         .filter(m => m.fecha >= mes2 && m.fecha < mes1)
-        .reduce((sum, m) => sum + m.cantidad, 0);
+        .reduce((sum, m) => sum + num(m.cantidad), 0);
 
       const ventasPeriodo3 = producto.movimientosKardex
         .filter(m => m.fecha >= mes3 && m.fecha < mes2)
-        .reduce((sum, m) => sum + m.cantidad, 0);
+        .reduce((sum, m) => sum + num(m.cantidad), 0);
 
       // Calcular rotación anual
       const totalVentas = producto.movimientosKardex
-        .reduce((sum, m) => sum + m.cantidad, 0);
+        .reduce((sum, m) => sum + num(m.cantidad), 0);
 
-      const stockPromedio = producto.stock > 0 ? producto.stock : 1;
+      const stockProdNum = num(producto.stock);
+      const stockPromedio = stockProdNum > 0 ? stockProdNum : 1;
       const rotacionAnual = stockPromedio > 0 ? totalVentas / stockPromedio : 0;
       const diasInventario = rotacionAnual > 0 ? 365 / rotacionAnual : 365;
 
@@ -1076,14 +1085,15 @@ export class KardexService {
       .filter(producto => producto.movimientosKardex.length === 0)
       .map(producto => {
         const costoPromedio = Number(producto.costoPromedio) || 0;
-        const valorInmovilizado = producto.stock * costoPromedio;
+        const stockProd = num(producto.stock);
+        const valorInmovilizado = stockProd * costoPromedio;
 
         return {
           id: producto.id,
           codigo: producto.codigo,
           descripcion: producto.descripcion,
           categoria: producto.categoria?.nombre,
-          stock: producto.stock,
+          stock: stockProd,
           costoPromedio,
           valorInmovilizado,
           diasSinMovimiento,
@@ -1166,7 +1176,7 @@ export class KardexService {
           }
         }
 
-        if (!stockOrigen || stockOrigen.stock < item.cantidad) {
+        if (!stockOrigen || num(stockOrigen.stock) < num(item.cantidad)) {
           throw new BadRequestException(
             `Stock insuficiente en ${sedeOrigen.nombre} para el producto ${stockOrigen?.producto?.descripcion || item.productoId}`
           );
@@ -1180,10 +1190,10 @@ export class KardexService {
             tipoMovimiento: 'SALIDA',
             concepto: `Traslado a ${sedeDestino.nombre}`,
             cantidad: item.cantidad,
-            stockAnterior: stockOrigen.stock,
-            stockActual: stockOrigen.stock - item.cantidad,
+            stockAnterior: num(stockOrigen.stock),
+            stockActual: round3(num(stockOrigen.stock) - num(item.cantidad)),
             costoUnitario: stockOrigen.producto.costoPromedio,
-            valorTotal: Number(stockOrigen.producto.costoPromedio) * item.cantidad,
+            valorTotal: Number(stockOrigen.producto.costoPromedio) * num(item.cantidad),
             sedeId: sedeOrigenId,
             usuarioId,
             observacion,
@@ -1209,7 +1219,7 @@ export class KardexService {
           where: { productoId_sedeId: { productoId: item.productoId, sedeId: sedeDestinoId } },
         });
 
-        const stockAnteriorDestino = stockDestinoActual?.stock ?? 0;
+        const stockAnteriorDestino = num(stockDestinoActual?.stock);
 
         // 4. Registrar INGRESO en sede destino con el stock real leído
         const movIngreso = await tx.movimientoKardex.create({
@@ -1220,9 +1230,9 @@ export class KardexService {
             concepto: `Traslado desde ${sedeOrigen.nombre}`,
             cantidad: item.cantidad,
             stockAnterior: stockAnteriorDestino,
-            stockActual: stockAnteriorDestino + item.cantidad,
+            stockActual: round3(stockAnteriorDestino + num(item.cantidad)),
             costoUnitario: stockOrigen.producto.costoPromedio,
-            valorTotal: Number(stockOrigen.producto.costoPromedio) * item.cantidad,
+            valorTotal: Number(stockOrigen.producto.costoPromedio) * num(item.cantidad),
             sedeId: sedeDestinoId,
             usuarioId,
             observacion,
@@ -1465,7 +1475,7 @@ export class KardexService {
     ]);
 
     const valorLotesVencidos = vencidosRaw.reduce(
-      (acc, l) => acc + l.stockActual * Number(l.costoUnitario ?? 0), 0
+      (acc, l) => acc + num(l.stockActual) * Number(l.costoUnitario ?? 0), 0
     );
 
     const mapLote = (l: any) => ({

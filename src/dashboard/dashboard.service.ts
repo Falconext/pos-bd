@@ -485,7 +485,7 @@ export class DashboardService {
       ]);
 
     const stockBajoList = productosBajoStockRaw
-      .filter(p => p.stock <= (p.stockMinimo ?? 0))
+      .filter(p => Number(p.stock) <= (p.stockMinimo ?? 0))
       .slice(0, 4);
 
     const comprasCurr = Number(comprasRows._sum.total ?? 0);

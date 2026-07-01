@@ -405,17 +405,17 @@ export class KardexController {
 
       switch (mov.tipoMovimiento) {
         case 'INGRESO':
-          resumen.ingresos.cantidad += mov.cantidad;
+          resumen.ingresos.cantidad += Number(mov.cantidad);
           resumen.ingresos.movimientos++;
           resumen.ingresos.valorTotal += Number(valor);
           break;
         case 'SALIDA':
-          resumen.salidas.cantidad += mov.cantidad;
+          resumen.salidas.cantidad += Number(mov.cantidad);
           resumen.salidas.movimientos++;
           resumen.salidas.valorTotal += Number(valor);
           break;
         case 'AJUSTE':
-          resumen.ajustes.cantidad += mov.cantidad;
+          resumen.ajustes.cantidad += Number(mov.cantidad);
           resumen.ajustes.movimientos++;
           resumen.ajustes.valorTotal += Number(valor);
           break;
