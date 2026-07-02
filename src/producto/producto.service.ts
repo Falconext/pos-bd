@@ -1,4 +1,4 @@
-import { num } from '../common/utils/stock';
+import { num, round3 } from '../common/utils/stock';
 import {
   BadRequestException,
   ForbiddenException,
@@ -1484,9 +1484,9 @@ export class ProductoService {
         });
 
         if (currentStock && num(currentStock.stock) !== num(data.stock)) {
-          const diferencia = num(data.stock) - num(currentStock.stock);
+          const diferencia = round3(num(data.stock) - num(currentStock.stock));
           const esIngreso = diferencia > 0;
-          const cantidad = Math.abs(diferencia);
+          const cantidad = round3(Math.abs(diferencia));
 
           try {
             await this.kardexService.registrarMovimiento({
@@ -1514,7 +1514,7 @@ export class ProductoService {
             productoId_sedeId: { productoId: data.id, sedeId: targetSedeId },
           },
           update: {
-            stock: data.stock,
+            stock: round3(num(data.stock)),
             ...(data.stockMinimo !== undefined
               ? { stockMinimo: data.stockMinimo }
               : {}),
@@ -1525,7 +1525,7 @@ export class ProductoService {
           create: {
             productoId: data.id,
             sedeId: targetSedeId,
-            stock: data.stock,
+            stock: round3(num(data.stock)),
             stockMinimo: data.stockMinimo ?? 0,
             stockMaximo: data.stockMaximo ?? null,
           },

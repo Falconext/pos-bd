@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
@@ -17,6 +17,7 @@ class DetalleDto {
   @IsInt()
   productoId?: number | null;
 
+  @Transform(({ value }) => Math.round(Number(value) * 1000) / 1000)
   @Type(() => Number)
   @IsNumber()
   @Min(0.0001)

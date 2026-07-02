@@ -168,7 +168,7 @@ export class KardexService {
     const stockAnterior = num(productoStock.stock);
     const costoPromedio = Number(productoStock.producto.costoPromedio) || 0;
     let stockActual = stockAnterior;
-    const cantidadNum = num(data.cantidad);
+    const cantidadNum = round3(num(data.cantidad));
 
     // Calcular nuevo stock según el tipo de movimiento
     switch (data.tipoMovimiento) {
@@ -204,8 +204,8 @@ export class KardexService {
         empresaId: data.empresaId,
         tipoMovimiento: data.tipoMovimiento as any,
         concepto: data.concepto,
-        cantidad: data.cantidad,
-        stockAnterior,
+        cantidad: cantidadNum,
+        stockAnterior: round3(stockAnterior),
         stockActual,
         costoUnitario: costoUnitario || null,
         valorTotal: valorTotal || null,
@@ -791,7 +791,7 @@ export class KardexService {
     // Actualizar stock en la sede específica
     await this.prisma.productoStock.update({
       where: { productoId_sedeId: { productoId, sedeId } },
-      data: { stock: Math.max(0, nuevoStock) }
+      data: { stock: round3(Math.max(0, nuevoStock)) }
     });
 
     // Sincronizar el campo 'stock' global en Producto (suma de todas las sedes) para que las
@@ -802,7 +802,7 @@ export class KardexService {
     });
     await this.prisma.producto.update({
       where: { id: productoId },
-      data: { stock: total._sum.stock ?? 0 }
+      data: { stock: round3(num(total._sum.stock)) }
     });
 
     // Actualizar costo promedio solo para ingresos (afecta al producto globalmente)
