@@ -2230,7 +2230,7 @@ export class ProductoService {
       AFECT: producto.tipoAfectacionIGV,
       'PRECIO UNITARIO': Number(producto.precioUnitario),
       IGV: Number(producto.igvPorcentaje),
-      STOCK: producto.stock,
+      STOCK: Number(producto.stock),
       CATEGORIA: producto.categoria?.nombre || '',
       MARCA: (producto as any)?.marca?.nombre || '',
     }));

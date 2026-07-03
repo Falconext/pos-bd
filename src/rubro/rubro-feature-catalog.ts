@@ -53,6 +53,12 @@ export const RUBRO_FEATURE_CATALOG = [
     description: 'Activa editor rich text para fichas técnicas y descripciones largas en la tienda virtual.',
     group: 'Tienda',
   },
+  {
+    key: 'usaVariantes',
+    label: 'Variantes',
+    description: 'Habilita variantes de producto (color, talla, etc.) con stock y precio por variante.',
+    group: 'Inventario',
+  },
 ] as const;
 
 export type RubroFeatureKey = (typeof RUBRO_FEATURE_CATALOG)[number]['key'];
