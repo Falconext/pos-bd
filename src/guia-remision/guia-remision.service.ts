@@ -26,6 +26,15 @@ export class GuiaRemisionService {
     ) { }
 
     async create(createDto: CreateGuiaRemisionDto, empresaId: number, usuarioId?: number, sedeId?: number) {
+        const tipoDocumento = createDto.tipoGuia === 'TRANSPORTISTA' ? '31' : '09';
+        const serieConfigurada = await this.prisma.empresaSerie.findFirst({
+            where: { empresaId, tipoDoc: tipoDocumento, activo: true },
+            orderBy: { id: 'asc' },
+        });
+        if (serieConfigurada?.serie) {
+            createDto.serie = serieConfigurada.serie;
+        }
+
         // Resolver correlativo: siempre usar el siguiente al MAX existente en BD para
         // esta serie, ignorando el valor enviado si ya está ocupado. Esto evita errores
         // de "numeración repetida" tanto en nuestra BD como en SUNAT (error 1033).
@@ -35,17 +44,22 @@ export class GuiaRemisionService {
             select: { correlativo: true },
         });
         const maxCorrelativo = ultimaGuia?.correlativo ?? 0;
+        const correlativoMinimo = serieConfigurada?.correlativo ?? 1;
 
         // Si el correlativo enviado es mayor al máximo existente, lo respetamos.
         // En cualquier otro caso (no enviado, ya ocupado, o menor al máximo) usamos MAX+1.
-        if (!createDto.correlativo || createDto.correlativo <= maxCorrelativo) {
+        if (
+            !createDto.correlativo ||
+            createDto.correlativo <= maxCorrelativo ||
+            createDto.correlativo < correlativoMinimo
+        ) {
             if (createDto.correlativo && createDto.correlativo <= maxCorrelativo) {
                 this.logger.warn(
                     `Correlativo ${createDto.serie}-${createDto.correlativo} ya existe en BD. ` +
                     `Auto-avanzando a ${maxCorrelativo + 1}.`
                 );
             }
-            createDto.correlativo = maxCorrelativo + 1;
+            createDto.correlativo = Math.max(maxCorrelativo + 1, correlativoMinimo);
         }
 
         // Validaciones de negocio
@@ -56,9 +70,6 @@ export class GuiaRemisionService {
 
         // Asegurar que correlativo esté definido
         const correlativoFinal = createDto.correlativo!;
-
-        // Determinar tipoDocumento según tipoGuia
-        const tipoDocumento = createDto.tipoGuia === 'TRANSPORTISTA' ? '31' : '09';
 
         // Crear guía de remisión
         // Crear guía de remisión con reintento por si hay colisión de correlativo
@@ -754,16 +765,26 @@ export class GuiaRemisionService {
     }
 
     async getNextCorrelativo(serie: string, empresaId: number): Promise<number> {
+        const serieBase = String(serie || '').trim().toUpperCase();
+        const tipoDoc = serieBase.startsWith('V') ? '31' : '09';
+        const serieConfigurada = await this.prisma.empresaSerie.findFirst({
+            where: { empresaId, tipoDoc, activo: true },
+            orderBy: { id: 'asc' },
+        });
+        const serieFinal = serieConfigurada?.serie || serieBase;
         const ultimaGuia = await this.prisma.guiaRemision.findFirst({
             where: {
                 empresaId,
-                serie,
+                serie: serieFinal,
             },
             orderBy: {
                 correlativo: 'desc',
             },
         });
 
-        return ultimaGuia ? ultimaGuia.correlativo + 1 : 1;
+        return Math.max(
+            ultimaGuia ? ultimaGuia.correlativo + 1 : 1,
+            serieConfigurada?.correlativo ?? 1,
+        );
     }
 }

@@ -24,7 +24,7 @@ const disenosPorRubro = [
         espaciado: 'compact',
         bordeRadius: 'small',
         estiloBoton: 'square',
-        plantillaId: 'tecnica',
+        plantillaId: 'construccion',
         vistaProductos: 'tabla',
     },
     {

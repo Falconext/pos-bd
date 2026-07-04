@@ -140,6 +140,26 @@ function resolveAmbienteFacturacion(empresa: {
   return 'PRODUCCIÓN';
 }
 
+const EMPRESA_SERIE_TIPOS_PERMITIDOS = [
+  '01',
+  '03',
+  '07:01',
+  '07:03',
+  '08:01',
+  '08:03',
+  '09',
+  '31',
+] as const;
+
+type EmpresaSerieTipo = (typeof EMPRESA_SERIE_TIPOS_PERMITIDOS)[number];
+
+interface EmpresaSerieInput {
+  tipoDoc?: string;
+  serie?: string;
+  correlativo?: number;
+  activo?: boolean;
+}
+
 interface HotelSyncPayload {
   mypeEmpresaId: number;
   mypeUsuarioId?: number;
@@ -192,6 +212,67 @@ export class EmpresaService {
         activo: true,
       },
       select: { id: true },
+    });
+  }
+
+  private async asegurarAccesoEmpresaSistema(
+    empresaId: number,
+    adminSistemaNegocio?: string | null,
+    adminSistemaProducto?: string | null,
+  ) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { id: true, brand: true, producto: true },
+    });
+    if (!empresa) throw new NotFoundException('Empresa no encontrada');
+    if (
+      adminSistemaNegocio &&
+      normalizeBrand(empresa.brand) !== normalizeBrand(adminSistemaNegocio)
+    ) {
+      throw new ForbiddenException('No tienes acceso a esta empresa');
+    }
+    if (
+      adminSistemaProducto &&
+      normalizeProducto(empresa.producto) !==
+        normalizeProducto(adminSistemaProducto)
+    ) {
+      throw new ForbiddenException('No tienes acceso a esta empresa');
+    }
+    return empresa;
+  }
+
+  private normalizarSeriesEmpresa(series: EmpresaSerieInput[]) {
+    const vistos = new Set<string>();
+    return (series || []).map((item) => {
+      const tipoDoc = String(item.tipoDoc || '').trim() as EmpresaSerieTipo;
+      if (!EMPRESA_SERIE_TIPOS_PERMITIDOS.includes(tipoDoc)) {
+        throw new BadRequestException('Tipo de documento no permitido para serie');
+      }
+      if (vistos.has(tipoDoc)) {
+        throw new BadRequestException('Hay tipos de documento duplicados');
+      }
+      vistos.add(tipoDoc);
+
+      const serie = String(item.serie || '').trim().toUpperCase();
+      if (!/^[A-Z0-9]{4}$/.test(serie)) {
+        throw new BadRequestException(
+          `La serie ${serie || '(vacía)'} debe tener 4 caracteres alfanuméricos`,
+        );
+      }
+
+      const correlativo = Number(item.correlativo || 1);
+      if (!Number.isInteger(correlativo) || correlativo < 1) {
+        throw new BadRequestException(
+          `El correlativo de ${serie} debe ser mayor o igual a 1`,
+        );
+      }
+
+      return {
+        tipoDoc,
+        serie,
+        correlativo,
+        activo: item.activo !== false,
+      };
     });
   }
 
@@ -1107,6 +1188,78 @@ export class EmpresaService {
     }
   }
 
+  async listarSeries(
+    empresaId: number,
+    adminSistemaNegocio?: string | null,
+    adminSistemaProducto?: string | null,
+  ) {
+    await this.asegurarAccesoEmpresaSistema(
+      empresaId,
+      adminSistemaNegocio,
+      adminSistemaProducto,
+    );
+
+    return this.prisma.empresaSerie.findMany({
+      where: {
+        empresaId,
+        tipoDoc: { in: [...EMPRESA_SERIE_TIPOS_PERMITIDOS] },
+      },
+      orderBy: [{ tipoDoc: 'asc' }, { id: 'asc' }],
+    });
+  }
+
+  async guardarSeries(
+    empresaId: number,
+    series: EmpresaSerieInput[],
+    userId?: number,
+    adminSistemaNegocio?: string | null,
+    adminSistemaProducto?: string | null,
+  ) {
+    await this.asegurarAccesoEmpresaSistema(
+      empresaId,
+      adminSistemaNegocio,
+      adminSistemaProducto,
+    );
+    const normalizadas = this.normalizarSeriesEmpresa(series);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.empresaSerie.deleteMany({
+        where: {
+          empresaId,
+          tipoDoc: { in: [...EMPRESA_SERIE_TIPOS_PERMITIDOS] },
+        },
+      });
+
+      if (normalizadas.length > 0) {
+        await tx.empresaSerie.createMany({
+          data: normalizadas.map((serie) => ({
+            empresaId,
+            tipoDoc: serie.tipoDoc,
+            serie: serie.serie,
+            correlativo: serie.correlativo,
+            activo: serie.activo,
+          })),
+        });
+      }
+
+    });
+
+    if (userId) {
+      await this.registrarLog(
+        empresaId,
+        'SERIES_SUNAT_ACTUALIZADAS',
+        JSON.stringify(normalizadas),
+        userId,
+      );
+    }
+
+    return this.listarSeries(
+      empresaId,
+      adminSistemaNegocio,
+      adminSistemaProducto,
+    );
+  }
+
   async obtenerPorId(id: number) {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id },
@@ -1134,6 +1287,12 @@ export class EmpresaService {
             estado: true,
           },
           take: 1,
+        },
+        series: {
+          where: {
+            tipoDoc: { in: [...EMPRESA_SERIE_TIPOS_PERMITIDOS] },
+          },
+          orderBy: [{ tipoDoc: 'asc' }, { id: 'asc' }],
         },
       },
     });

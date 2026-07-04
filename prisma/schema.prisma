@@ -1604,6 +1604,7 @@ enum EstadoSunat {
   REGISTRADO
   NO_APLICA
   FALLIDO_ENVIO
+  PENDIENTE_CONCILIACION
 }
 
 enum EstadoPago {

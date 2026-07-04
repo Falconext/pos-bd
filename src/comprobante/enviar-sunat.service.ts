@@ -28,19 +28,42 @@ export class SunatPayloadException extends Error {
  * Cuando SUNAT devuelve uno de estos códigos el comprobante se elimina automáticamente.
  */
 const SUNAT_FATAL_CODES = new Set([
-  1033, 1034,          // RUC emisor no activo / no habilitado para CPE
+  1034,                // RUC emisor no activo / no habilitado para CPE
   1083,                // RUC receptor no existe en SUNAT
   2329,                // Dirección del establecimiento no registrada
   2800, 2825,          // Serie no corresponde / no existe para el emisor
   3117,                // Código de producto SUNAT incorrecto
 ]);
 
-function extractFatalSunatCode(detail: string | null | undefined): number | null {
+const SUNAT_ALREADY_REGISTERED_CODE = 1033;
+
+function extractSunatCode(detail: string | null | undefined): number | null {
   if (!detail) return null;
-  const match = detail.match(/\b(\d{3,4})\s*[-–]/);
+  const match =
+    detail.match(/\bSUNAT\s*:?\s*(\d{3,4})\b/i) ||
+    detail.match(/\b(\d{3,4})\s*[-–]/) ||
+    detail.match(/\bcode["']?\s*:\s*["']?(\d{3,4})\b/i);
   if (!match) return null;
-  const code = Number(match[1]);
+  return Number(match[1]);
+}
+
+function extractFatalSunatCode(detail: string | null | undefined): number | null {
+  const code = extractSunatCode(detail);
+  if (!code) return null;
   return SUNAT_FATAL_CODES.has(code) ? code : null;
+}
+
+export function isSunatAlreadyRegisteredError(value: unknown): boolean {
+  const text = typeof value === 'string' ? value : JSON.stringify(value || {});
+  const normalized = text.toLowerCase();
+  return (
+    extractSunatCode(text) === SUNAT_ALREADY_REGISTERED_CODE ||
+    normalized.includes('registrado previamente') ||
+    normalized.includes('registrada previamente') ||
+    normalized.includes('ya fue registrado') ||
+    normalized.includes('ya se encuentra registrado') ||
+    normalized.includes('documento ya existe')
+  );
 }
 
 // Catálogo 51 SUNAT — códigos de tipo de operación válidos
@@ -1238,45 +1261,10 @@ export class EnviarSunatService {
           usaDemo,
         });
 
-        if (this.isSunatNumeracionRepetida(initialResponse)) {
+        if (isSunatAlreadyRegisteredError(initialResponse)) {
           console.warn(
-            `⚠️ QPSE reportó numeración repetida (${comp.serie}-${comp.correlativo}). Buscando siguiente correlativo disponible...`,
+            `⚠️ SUNAT/QPSE reportó comprobante ya registrado (${comp.serie}-${comp.correlativo}). Se deja en conciliación sin cambiar correlativo.`,
           );
-
-          const ultimoComp = await this.prisma.comprobante.findFirst({
-            where: { empresaId: comp.empresaId, serie: comp.serie, tipoDoc: comp.tipoDoc },
-            orderBy: { correlativo: 'desc' },
-            select: { correlativo: true },
-          });
-          const nuevoCorrelativo = (ultimoComp?.correlativo ?? 0) + 1;
-
-          await this.prisma.comprobante.update({
-            where: { id: comprobanteId },
-            data: { correlativo: nuevoCorrelativo },
-          });
-
-          comp.correlativo = nuevoCorrelativo;
-          xmlArtifacts = buildXmlArtifacts(nuevoCorrelativo);
-          signResponse = await this.qpseClient.firmarXML({
-            accessToken,
-            xmlFilename: xmlArtifacts.xmlFilename,
-            xmlContentBase64: xmlArtifacts.xmlContentBase64,
-            usaDemo,
-          });
-
-          if (!signResponse.xml) {
-            throw new HttpException('QPSE no devolvió el XML firmado en el reintento', 502);
-          }
-
-          signedXmlBase64 = signResponse.xml;
-          signedXmlContent = this.decodeBase64ToUtf8(signedXmlBase64);
-          initialResponse = await this.qpseClient.enviarXML({
-            accessToken,
-            xmlFilename: xmlArtifacts.xmlFilename,
-            externalId: signResponse.external_id,
-            xmlSignedBase64: signedXmlBase64,
-            usaDemo,
-          });
         }
 
         if (this.isSunatUblVersionError(initialResponse) || this.isSunatCustomizationVersionError(initialResponse)) {
@@ -1623,6 +1611,26 @@ export class EnviarSunatService {
             ? this.extractJambleMessage(finalResponse, status)
             : this.extractQpseMessage(finalResponse, status);
 
+        if (isSunatAlreadyRegisteredError(detail) || isSunatAlreadyRegisteredError(finalResponse)) {
+          const message = this.buildAlreadyRegisteredMessage(detail);
+          await this.marcarPendienteConciliacionSunat(comprobanteId, {
+            documentId,
+            response: finalResponse,
+            detail: message,
+            signedXmlContent,
+            cdrBase64: cdrBase64OrNull || finalResponse?.cdr || null,
+          });
+
+          return {
+            status: 'PENDIENTE_CONCILIACION',
+            documentId,
+            comprobanteId,
+            serie: comp.serie,
+            correlativo: comp.correlativo,
+            message,
+          };
+        }
+
         // Códigos SUNAT permanentemente fatales: eliminar el comprobante de inmediato
         const fatalCode = extractFatalSunatCode(detail);
         if (fatalCode) {
@@ -1659,6 +1667,31 @@ export class EnviarSunatService {
       // Error de datos fatal (código SUNAT irrecuperable): re-lanzar sin guardar estado
       // El controller lo captura como SunatPayloadException y elimina el comprobante.
       if (err instanceof SunatPayloadException) throw err;
+
+      if (isSunatAlreadyRegisteredError(err?.message) || isSunatAlreadyRegisteredError(err?.response?.data)) {
+        const rawDetail =
+          err?.response?.data?.message ||
+          err?.response?.data?.error?.message ||
+          err?.message ||
+          'SUNAT informó que el comprobante ya fue registrado previamente.';
+        const message = this.buildAlreadyRegisteredMessage(rawDetail);
+        await this.marcarPendienteConciliacionSunat(comprobanteId, {
+          documentId: null,
+          response: err?.response?.data || err?.message || err,
+          detail: message,
+          signedXmlContent: null,
+          cdrBase64: null,
+        });
+
+        return {
+          status: 'PENDIENTE_CONCILIACION',
+          documentId: comprobanteId,
+          comprobanteId,
+          serie: comp?.serie,
+          correlativo: comp?.correlativo,
+          message,
+        };
+      }
 
       // Persist retry state based on error type:
       // - DATOS (SUNAT/QPSE rechazó explícitamente): máx 5 intentos → RECHAZADO
@@ -1726,6 +1759,41 @@ export class EnviarSunatService {
       const rawMsg = err.response?.data?.message || err.message || 'Error al enviar a SUNAT';
       throw new HttpException(`Error al emitir el comprobante: ${rawMsg}`, 502);
     }
+  }
+
+  private buildAlreadyRegisteredMessage(detail: string | null | undefined): string {
+    const cleanDetail = String(detail || '').trim();
+    const suffix = cleanDetail ? ` Detalle: ${cleanDetail}` : '';
+    return (
+      'SUNAT 1033: el comprobante ya fue registrado previamente. ' +
+      'No lo vuelvas a emitir ni cambies el correlativo; consulta/recupera el CDR para conciliarlo.' +
+      suffix
+    );
+  }
+
+  private async marcarPendienteConciliacionSunat(
+    comprobanteId: number,
+    input: {
+      documentId: string | null;
+      response: unknown;
+      detail: string;
+      signedXmlContent: string | null;
+      cdrBase64: string | null;
+    },
+  ) {
+    await this.prisma.comprobante.update({
+      where: { id: comprobanteId },
+      data: {
+        ...(input.documentId ? { documentoId: input.documentId } : {}),
+        estadoEnvioSunat: 'PENDIENTE_CONCILIACION' as any,
+        sunatXml: input.signedXmlContent || undefined,
+        sunatCdrZip: input.cdrBase64 || undefined,
+        sunatCdrResponse: JSON.stringify(input.response || {}),
+        sunatErrorMsg: input.detail,
+        sunatNextRetryAt: null,
+        sunatLastRetryAt: new Date(),
+      },
+    });
   }
 
   private resolveUblRootName(tipoDoc: string): 'Invoice' | 'CreditNote' | 'DebitNote' {

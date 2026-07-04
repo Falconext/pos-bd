@@ -9,6 +9,27 @@ const DEFAULT_TEMPLATE_CONFIGS: Record<string, { premium: boolean; precioSoles: 
     },
 };
 
+const normalizeRubroName = (value?: string | null) =>
+    String(value || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+
+const shouldUseConstruccionTemplate = (rubroNombre?: string | null) => {
+    const rubro = normalizeRubroName(rubroNombre);
+    return rubro.includes('materiales de construccion') || rubro.includes('construccion y obras');
+};
+
+const replaceLegacyConstruccionTemplate = (plantillaId?: string | null, rubroNombre?: string | null) => {
+    if (!plantillaId || !shouldUseConstruccionTemplate(rubroNombre)) return plantillaId;
+    const items = String(plantillaId).split(',').map(item => item.trim()).filter(Boolean);
+    if (items.length === 0) return plantillaId;
+    const normalized = items.map(item => item === 'tecnica' ? 'construccion' : item);
+    return Array.from(new Set(normalized)).join(',');
+};
+
 @Injectable()
 export class DisenoRubroService {
     constructor(private readonly prisma: PrismaService) { }
@@ -80,14 +101,22 @@ export class DisenoRubroService {
             where: { rubroId },
             include: { rubro: true },
         });
-        return diseno;
+        if (!diseno) return diseno;
+        return {
+            ...diseno,
+            plantillaId: replaceLegacyConstruccionTemplate(diseno.plantillaId, diseno.rubro?.nombre),
+        };
     }
 
     async listarTodos() {
-        return this.prisma.disenoRubro.findMany({
+        const rows = await this.prisma.disenoRubro.findMany({
             include: { rubro: true },
             orderBy: { rubroId: 'asc' },
         });
+        return rows.map(row => ({
+            ...row,
+            plantillaId: replaceLegacyConstruccionTemplate(row.plantillaId, row.rubro?.nombre),
+        }));
     }
 
     async crearOActualizar(rubroId: number, data: Record<string, any>) {
@@ -149,7 +178,15 @@ export class DisenoRubroService {
 
         // Si hay override, mezclar con el diseño base.
         // La plantilla base pertenece al rubro y no debe ser reemplazada por overrides de empresa.
-        const disenoBase = empresa.rubro?.disenos || null;
+        const disenoBase = empresa.rubro?.disenos
+            ? {
+                ...empresa.rubro.disenos,
+                plantillaId: replaceLegacyConstruccionTemplate(
+                    (empresa.rubro.disenos as any).plantillaId,
+                    empresa.rubro?.nombre,
+                ),
+            }
+            : null;
         const override = empresa.disenoOverride
             ? (typeof empresa.disenoOverride === 'string'
                 ? JSON.parse(empresa.disenoOverride)

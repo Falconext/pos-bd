@@ -1,6 +1,6 @@
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { EnviarSunatService, SunatPayloadException } from '../../comprobante/enviar-sunat.service';
+import { EnviarSunatService, SunatPayloadException, isSunatAlreadyRegisteredError } from '../../comprobante/enviar-sunat.service';
 import { ComprobanteService } from '../../comprobante/comprobante.service';
 import { GuiaRemisionService } from '../../guia-remision/guia-remision.service';
 import { QpseClient, QpseSendResponse } from '../../common/utils/qpse.client';
@@ -133,12 +133,15 @@ export class VerificarPendientesSunatService {
                 continue;
               }
               const msg = String(err?.message || '').toLowerCase();
-              // Si QPSE ya lo tiene registrado (numeración repetida), marcarlo EMITIDO directamente
-              if (msg.includes('numeraci') || msg.includes('repetid') || msg.includes('duplicad') || msg.includes('ya exist')) {
-                this.logger.warn(`[Job 1] Comprobante ${comprobante.id} ya registrado en QPSE → marcando EMITIDO`);
+              if (isSunatAlreadyRegisteredError(err?.response?.data) || isSunatAlreadyRegisteredError(msg)) {
+                this.logger.warn(`[Job 1] Comprobante ${comprobante.id} ya registrado en SUNAT → requiere conciliación`);
                 await this.prisma.comprobante.update({
                   where: { id: comprobante.id },
-                  data: { estadoEnvioSunat: 'EMITIDO' },
+                  data: {
+                    estadoEnvioSunat: 'PENDIENTE_CONCILIACION' as any,
+                    sunatNextRetryAt: null,
+                    sunatErrorMsg: err?.message || 'SUNAT 1033: comprobante registrado previamente; requiere conciliación.',
+                  },
                 });
               } else {
                 throw err;

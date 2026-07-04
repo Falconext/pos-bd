@@ -139,6 +139,43 @@ export class EmpresaController {
     return result;
   }
 
+  @Get(':id/series')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  async listarSeries(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const series = await this.empresaService.listarSeries(
+      id,
+      user.sistemaNegocio,
+      user.sistemaProducto,
+    );
+    res.locals.message = 'Series SUNAT obtenidas correctamente';
+    return series;
+  }
+
+  @Put(':id/series')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  async guardarSeries(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { series: Array<{ tipoDoc: string; serie: string; correlativo: number; activo?: boolean }> },
+    @User() user: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const series = await this.empresaService.guardarSeries(
+      id,
+      body?.series || [],
+      user.id,
+      user.sistemaNegocio,
+      user.sistemaProducto,
+    );
+    res.locals.message = 'Series SUNAT actualizadas correctamente';
+    return series;
+  }
+
   // ── Notas internas ──────────────────────────────────────────────────────────
 
   @Get(':id/notas')

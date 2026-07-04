@@ -1074,10 +1074,24 @@ export class ComprobanteService {
           throw new BadRequestException('Tipo de documento no reconocido');
       }
 
-      const configuredSerie = await this.prisma.empresaSerie.findFirst({
-        where: { empresaId, tipoDoc, activo: true },
-        orderBy: { id: 'asc' },
-      });
+      const tipoDocConfig =
+        (tipoDoc === '07' || tipoDoc === '08') && tipDocAfectado
+          ? `${tipoDoc}:${tipDocAfectado}`
+          : tipoDoc;
+      const configuredSerie =
+        tipoDocConfig !== tipoDoc
+          ? (await this.prisma.empresaSerie.findFirst({
+              where: { empresaId, tipoDoc: tipoDocConfig, activo: true },
+              orderBy: { id: 'asc' },
+            })) ||
+            (await this.prisma.empresaSerie.findFirst({
+              where: { empresaId, tipoDoc, activo: true },
+              orderBy: { id: 'asc' },
+            }))
+          : await this.prisma.empresaSerie.findFirst({
+              where: { empresaId, tipoDoc, activo: true },
+              orderBy: { id: 'asc' },
+            });
       if (configuredSerie?.serie) {
         serie = configuredSerie.serie;
       }
