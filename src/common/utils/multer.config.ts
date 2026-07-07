@@ -27,9 +27,17 @@ export const uploadExcel: any = multer(excelUploadOptions).single('excel');
 // Imágenes (PNG/JPEG/WEBP) en memoria
 const imageStorage = multer.memoryStorage();
 const imageFilter = (req: any, file: any, cb: any) => {
-  const allowed = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+  const allowed = [
+    'image/png',
+    'image/jpeg',
+    'image/jpg',
+    'image/webp',
+    'image/avif',
+  ];
   if (!allowed.includes(file.mimetype)) {
-    return cb(new BadRequestException('Solo se permiten imágenes PNG/JPEG/WEBP'));
+    return cb(
+      new BadRequestException('Solo se permiten imágenes PNG/JPEG/WEBP/AVIF'),
+    );
   }
   cb(null, true);
 };

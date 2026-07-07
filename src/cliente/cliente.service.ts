@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -11,6 +12,42 @@ import * as XLSX from 'xlsx';
 @Injectable()
 export class ClienteService {
   constructor(private readonly prisma: PrismaService) { }
+
+  private readonly tipoDocCodigo: Record<string, string> = {
+    DNI: '1',
+    RUC: '6',
+    CE: '4',
+    PASAPORTE: '7',
+    OTRO: '0',
+  };
+
+  private normalizarNumeroDocumento(tipoDoc: string, nroDoc: string) {
+    const raw = String(nroDoc || '').trim().toUpperCase();
+    if (tipoDoc === 'DNI' || tipoDoc === 'RUC') return raw.replace(/\D/g, '');
+    if (tipoDoc === 'CE' || tipoDoc === 'PASAPORTE') {
+      return raw
+        .replace(/^(NRO\.?|NO\.?|NUMERO|NÚMERO|N\.?[°º]?)\s*/i, '')
+        .replace(/[^A-Z0-9]/g, '');
+    }
+    return raw;
+  }
+
+  private validarDocumento(tipoDoc: string, nroDoc: string) {
+    if (tipoDoc === 'DNI' && nroDoc.length !== 8)
+      throw new ForbiddenException('El DNI debe tener 8 dígitos');
+    if (tipoDoc === 'RUC' && nroDoc.length !== 11)
+      throw new ForbiddenException('El RUC debe tener 11 dígitos');
+    if ((tipoDoc === 'CE' || tipoDoc === 'PASAPORTE') && !/^[A-Za-z0-9]{6,12}$/.test(nroDoc))
+      throw new ForbiddenException('El documento debe contener entre 6 y 12 caracteres alfanuméricos');
+  }
+
+  private async obtenerTipoDocumento(tipoDoc: string) {
+    const codigo = this.tipoDocCodigo[tipoDoc];
+    if (!codigo) throw new ForbiddenException('Tipo de documento no válido');
+    const tipoDocumento = await this.prisma.tipoDocumento.findUnique({ where: { codigo } });
+    if (!tipoDocumento) throw new ForbiddenException('Tipo de documento no válido');
+    return tipoDocumento;
+  }
 
   async crear(data: {
     nombre: string;
@@ -26,24 +63,14 @@ export class ClienteService {
     distrito: string;
     persona?: string;
   }) {
-    const { tipoDoc, nroDoc } = data;
+    const { tipoDoc } = data;
+    const nroDoc = this.normalizarNumeroDocumento(tipoDoc, data.nroDoc);
 
-    if (tipoDoc === 'DNI' && nroDoc.length !== 8)
-      throw new ForbiddenException('El DNI debe tener 8 dígitos');
-    if (tipoDoc === 'RUC' && nroDoc.length !== 11)
-      throw new ForbiddenException('El RUC debe tener 11 dígitos');
-
-    const TIPO_DOC_CODIGO: Record<string, string> = {
-      DNI: '1', RUC: '6', CE: '4', PASAPORTE: '7', OTRO: '0',
-    };
-    const tipoDocumento = await this.prisma.tipoDocumento.findUnique({
-      where: { codigo: TIPO_DOC_CODIGO[tipoDoc] ?? '1' },
-    });
-    if (!tipoDocumento)
-      throw new ForbiddenException('Tipo de documento no válido');
+    this.validarDocumento(tipoDoc, nroDoc);
+    const tipoDocumento = await this.obtenerTipoDocumento(tipoDoc);
 
     const existe = await this.prisma.cliente.findFirst({
-      where: { nroDoc: data.nroDoc, empresaId: data.empresaId },
+      where: { nroDoc, empresaId: data.empresaId },
     });
     const nuevaPersona = (data.persona as PersonaType) || PersonaType.CLIENTE;
     if (existe) {
@@ -60,7 +87,7 @@ export class ClienteService {
     return this.prisma.cliente.create({
       data: {
         nombre: data.nombre,
-        nroDoc: data.nroDoc,
+        nroDoc,
         direccion: data.direccion,
         email: data.email,
         telefono: data.telefono,
@@ -143,16 +170,32 @@ export class ClienteService {
     provincia?: string;
     distrito?: string;
     persona?: string;
+    tipoDoc?: 'DNI' | 'RUC' | 'CE' | 'PASAPORTE' | 'OTRO';
+    nroDoc?: string;
   }) {
     const cliente = await this.prisma.cliente.findFirst({
       where: { id: data.id, empresaId: data.empresaId },
     });
     if (!cliente) throw new NotFoundException('Cliente no encontrado');
 
+    const nroDoc = data.tipoDoc && data.nroDoc
+      ? this.normalizarNumeroDocumento(data.tipoDoc, data.nroDoc)
+      : data.nroDoc;
+    const tipoDocumento = data.tipoDoc ? await this.obtenerTipoDocumento(data.tipoDoc) : null;
+    if (data.tipoDoc && nroDoc) this.validarDocumento(data.tipoDoc, nroDoc);
+    if (nroDoc && nroDoc !== cliente.nroDoc) {
+      const existe = await this.prisma.cliente.findFirst({
+        where: { empresaId: data.empresaId, nroDoc, NOT: { id: data.id } },
+      });
+      if (existe) throw new ForbiddenException(`Ya existe un ${existe.persona.toLowerCase()} con ese documento`);
+    }
+
     return this.prisma.cliente.update({
       where: { id: data.id },
       data: {
         nombre: data.nombre,
+        nroDoc,
+        tipoDocumentoId: tipoDocumento?.id,
         direccion: data.direccion,
         email: data.email,
         telefono: data.telefono,
@@ -177,17 +220,22 @@ export class ClienteService {
     return this.prisma.cliente.update({ where: { id }, data: { estado } });
   }
 
-  async consultarDocumento(numero: string, tipo: 'DNI' | 'RUC') {
-    if (tipo === 'DNI' && numero.length !== 8)
+  async consultarDocumento(numero: string, tipo: string) {
+    const cleanTipo = String(tipo || '').toUpperCase();
+    if (cleanTipo !== 'DNI' && cleanTipo !== 'RUC') {
+      throw new BadRequestException('La consulta automática solo está disponible para DNI y RUC');
+    }
+    const cleanNumero = this.normalizarNumeroDocumento(cleanTipo, numero);
+    if (cleanTipo === 'DNI' && cleanNumero.length !== 8)
       throw new ForbiddenException('El DNI debe tener 8 dígitos');
-    if (tipo === 'RUC' && numero.length !== 11)
+    if (cleanTipo === 'RUC' && cleanNumero.length !== 11)
       throw new ForbiddenException('El RUC debe tener 11 dígitos');
 
     const url =
-      tipo === 'DNI'
+      cleanTipo === 'DNI'
         ? 'https://apiperu.dev/api/dni'
         : 'https://apiperu.dev/api/ruc';
-    const body = tipo === 'DNI' ? { dni: numero } : { ruc: numero };
+    const body = cleanTipo === 'DNI' ? { dni: cleanNumero } : { ruc: cleanNumero };
     const token = process.env.RENIEC_TOKEN;
 
     try {

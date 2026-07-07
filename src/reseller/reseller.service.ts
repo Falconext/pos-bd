@@ -657,9 +657,12 @@ export class ResellerService {
         return empresa;
     }
 
-    async consultarDocumento(numero: string, tipo: 'DNI' | 'RUC') {
+    async consultarDocumento(numero: string, tipo: string) {
         const cleanNumero = String(numero || '').replace(/\D/g, '');
-        const cleanTipo = String(tipo || '').toUpperCase() as 'DNI' | 'RUC';
+        const cleanTipo = String(tipo || '').toUpperCase();
+        if (cleanTipo !== 'DNI' && cleanTipo !== 'RUC') {
+            throw new BadRequestException('La consulta automática solo está disponible para DNI y RUC.');
+        }
         if (cleanTipo === 'DNI' && cleanNumero.length !== 8) {
             throw new BadRequestException('El DNI debe tener 8 dígitos.');
         }

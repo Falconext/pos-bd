@@ -73,7 +73,7 @@ export class ClienteController {
   @Get('consultar')
   async consultar(
     @Query('numero') numero: string,
-    @Query('tipo') tipo: 'DNI' | 'RUC',
+    @Query('tipo') tipo: string,
   ) {
     if (!numero || !tipo) {
       throw new BadRequestException(
@@ -85,7 +85,7 @@ export class ClienteController {
 
   @Get('consultar/:tipo/:numero')
   async consultarPath(
-    @Param('tipo') tipo: 'DNI' | 'RUC',
+    @Param('tipo') tipo: string,
     @Param('numero') numero: string,
   ) {
     if (!numero || !tipo) {

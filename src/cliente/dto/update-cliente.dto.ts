@@ -9,6 +9,14 @@ export class UpdateClienteDto {
   nombre?: string;
 
   @IsOptional()
+  @IsEnum(['DNI', 'RUC', 'CE', 'PASAPORTE', 'OTRO'])
+  tipoDoc?: 'DNI' | 'RUC' | 'CE' | 'PASAPORTE' | 'OTRO';
+
+  @IsOptional()
+  @IsString()
+  nroDoc?: string;
+
+  @IsOptional()
   @IsString()
   direccion?: string;
 
@@ -37,6 +45,6 @@ export class UpdateClienteDto {
   distrito?: string;
 
   @IsOptional()
-  @IsEnum(['CLIENTE', 'CLIENTE_PROVEEDOR', 'PROVEEDOR'])
-  persona?: 'CLIENTE' | 'CLIENTE_PROVEEDOR' | 'PROVEEDOR';
+  @IsEnum(['CLIENTE', 'CLIENTE_PROVEEDOR', 'PROVEEDOR', 'EMPRESA'])
+  persona?: 'CLIENTE' | 'CLIENTE_PROVEEDOR' | 'PROVEEDOR' | 'EMPRESA';
 }

@@ -218,4 +218,17 @@ export class TiendaController {
     const empresaId = req.user.empresaId;
     return this.tiendaService.subirImagenTemplate(empresaId, campo, { buffer: file?.buffer, mimetype: file?.mimetype });
   }
+
+  // Sube una imagen suelta (p. ej. posts del blog) y devuelve su URL sin
+  // escribirla en una clave fija del diseño. El frontend guarda la URL dentro
+  // de estructuras dinámicas (falconBlogPosts) y persiste vía PATCH /tienda/diseno.
+  @Post('template/media')
+  @UseInterceptors(FileInterceptor('file', imageUploadOptions))
+  async subirMediaTemplate(
+    @Req() req: any,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    const empresaId = req.user.empresaId;
+    return this.tiendaService.subirMediaTemplate(empresaId, { buffer: file?.buffer, mimetype: file?.mimetype });
+  }
 }

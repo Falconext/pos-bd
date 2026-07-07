@@ -753,6 +753,30 @@ export class TiendaService {
     return { field: campo, url, signedUrl };
   }
 
+  // Sube una imagen suelta a S3 y devuelve su URL. No escribe en disenoOverride:
+  // pensada para colecciones dinámicas (p. ej. imágenes de posts del blog) cuya
+  // URL se guarda dentro del propio arreglo vía PATCH /tienda/diseno.
+  async subirMediaTemplate(
+    empresaId: number,
+    file: { buffer: Buffer; mimetype?: string },
+  ) {
+    if (!file || !file.buffer) {
+      throw new BadRequestException('Archivo no proporcionado');
+    }
+    const ct = file.mimetype || 'image/jpeg';
+    if (!/^image\//i.test(ct)) {
+      throw new BadRequestException('El archivo debe ser una imagen');
+    }
+    const ext = ct.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg';
+    const s3Key = `tiendas/empresa-${empresaId}/media/media-${Date.now()}.${ext}`;
+    const url = await this.s3.uploadImage(file.buffer, s3Key, ct, 1600);
+
+    const idx = url.indexOf('amazonaws.com/');
+    const objKey = idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
+    const signedUrl = objKey ? await this.s3.getSignedGetUrl(objKey, 600) : url;
+    return { url, signedUrl };
+  }
+
   // ==================== TIENDA PÚBLICA ====================
 
   async obtenerTiendaPorSlug(slug: string) {

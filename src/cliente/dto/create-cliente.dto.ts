@@ -15,7 +15,8 @@ export class CreateClienteDto {
 
   @IsString()
   @IsNotEmpty()
-  tipoDoc: 'DNI' | 'RUC';
+  @IsEnum(['DNI', 'RUC', 'CE', 'PASAPORTE', 'OTRO'])
+  tipoDoc: 'DNI' | 'RUC' | 'CE' | 'PASAPORTE' | 'OTRO';
 
   @IsString()
   @IsNotEmpty()

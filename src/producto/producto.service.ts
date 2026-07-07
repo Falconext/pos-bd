@@ -15,6 +15,10 @@ import { KardexService } from '../kardex/kardex.service';
 import { DigemidService } from '../digemid/digemid.service';
 import { sincronizarVariantes, type VarianteConfig } from './variantes.util';
 import { esRubroComputo, obtenerPlantillaComputo } from './ficha-tecnica-computo';
+import {
+  getMaxImagenesProducto,
+  getMaxImagenesExtra,
+} from '../common/utils/rubro-features';
 import * as XLSX from 'xlsx';
 import axios from 'axios';
 
@@ -1090,12 +1094,20 @@ export class ProductoService {
       }),
     );
 
+    const imagenesExtra = this.parseImagenesExtra(
+      (producto as any).imagenesExtra,
+    ).map((u) => normalizePersistentImageUrl(u) as string);
+    const imagenesExtraDisplay = await Promise.all(
+      imagenesExtra.map((u) => signIfS3(u)),
+    );
+
     return {
       ...producto,
       variantes,
       imagenUrl,
       imagenUrlDisplay: await signIfS3(imagenUrl),
-      imagenesExtra: this.parseImagenesExtra((producto as any).imagenesExtra),
+      imagenesExtra,
+      imagenesExtraDisplay,
       costoUnitario: Number((producto as any).costoPromedio) || 0,
     };
   }
@@ -1892,6 +1904,106 @@ export class ProductoService {
       idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
     const signedUrl = objKey ? await this.s3.getSignedGetUrl(objKey, 600) : url;
     return { url, signedUrl };
+  }
+
+  /** Máximo de imágenes extra (galería) permitido según el rubro de la empresa. */
+  private async getMaxImagenesExtraEmpresa(empresaId: number): Promise<number> {
+    const empresa = await this.prisma.empresa.findFirst({
+      where: { id: empresaId },
+      select: { rubro: { select: { nombre: true } } },
+    });
+    return getMaxImagenesExtra(empresa?.rubro?.nombre ?? null);
+  }
+
+  /**
+   * Reemplaza la galería de imágenes extra (para borrar/reordenar desde el
+   * formulario de producto). Respeta el límite por rubro.
+   */
+  async setImagenesExtra(
+    empresaId: number,
+    productoId: number,
+    imagenes: string[],
+  ) {
+    const producto = await this.prisma.producto.findFirst({
+      where: { id: productoId, empresaId },
+      select: { id: true },
+    });
+    if (!producto) throw new NotFoundException('Producto no encontrado');
+
+    const limpias = this.parseImagenesExtra(imagenes);
+    const maxExtra = await this.getMaxImagenesExtraEmpresa(empresaId);
+    if (limpias.length > maxExtra) {
+      const maxTotal = maxExtra + 1;
+      throw new ForbiddenException(
+        `Máximo ${maxTotal} imágenes por producto (1 principal + ${maxExtra} adicionales) para tu rubro.`,
+      );
+    }
+    await this.prisma.producto.update({
+      where: { id: productoId },
+      data: { imagenesExtra: limpias.length ? JSON.stringify(limpias) : null },
+    });
+    const signImagenesExtra = await Promise.all(
+      limpias.map(async (u) => {
+        const idx = u.indexOf('amazonaws.com/');
+        const objKey =
+          idx !== -1 ? u.substring(idx + 'amazonaws.com/'.length) : '';
+        return objKey ? await this.s3.getSignedGetUrl(objKey, 600) : u;
+      }),
+    );
+    return { imagenesExtra: limpias, imagenesExtraDisplay: signImagenesExtra };
+  }
+
+  /**
+   * Agrega una imagen a la galería del producto respetando el límite por rubro.
+   * Add-only (no sobrescribe): pensado para clientes simples como el móvil.
+   */
+  async agregarImagenGaleria(
+    empresaId: number,
+    productoId: number,
+    file: { buffer: Buffer; mimetype?: string },
+  ) {
+    const producto = await this.prisma.producto.findFirst({
+      where: { id: productoId, empresaId },
+    });
+    if (!producto) throw new NotFoundException('Producto no encontrado');
+    if (!file || !file.buffer)
+      throw new ForbiddenException('Archivo no proporcionado');
+    const ct = file.mimetype || 'image/jpeg';
+    if (!/^image\//i.test(ct))
+      throw new ForbiddenException('El archivo debe ser una imagen');
+
+    const actuales = this.parseImagenesExtra((producto as any).imagenesExtra);
+    const maxExtra = await this.getMaxImagenesExtraEmpresa(empresaId);
+    if (actuales.length >= maxExtra) {
+      throw new ForbiddenException(
+        `Máximo ${maxExtra + 1} imágenes por producto (1 principal + ${maxExtra} adicionales) para tu rubro.`,
+      );
+    }
+
+    const key = this.s3.generateProductoImageKey(empresaId, productoId, ct, true);
+    const url = await this.s3.uploadImage(file.buffer, key, ct);
+    await this.prisma.producto.update({
+      where: { id: productoId },
+      data: { imagenesExtra: JSON.stringify([...actuales, url]) },
+    });
+    const idx = url.indexOf('amazonaws.com/');
+    const objKey =
+      idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
+    const signedUrl = objKey ? await this.s3.getSignedGetUrl(objKey, 600) : url;
+    return { url, signedUrl };
+  }
+
+  /** Límite de imágenes (principal + galería) para exponer al frontend. */
+  async getLimiteImagenes(empresaId: number) {
+    const maxTotal = getMaxImagenesProducto(
+      (
+        await this.prisma.empresa.findFirst({
+          where: { id: empresaId },
+          select: { rubro: { select: { nombre: true } } },
+        })
+      )?.rubro?.nombre ?? null,
+    );
+    return { maxTotal, maxExtra: Math.max(0, maxTotal - 1) };
   }
 
   async subirImagenDesdeUrl(

@@ -101,6 +101,27 @@ export function usaLotes(nombreRubro: string): boolean {
 }
 
 /**
+ * Máximo de imágenes por producto (principal + galería) según el rubro.
+ * Evita el abuso de imágenes. Apicultura: 3; resto de rubros: 5.
+ */
+export function getMaxImagenesProducto(nombreRubro?: string | null): number {
+  const nombre = (nombreRubro ?? '').toLowerCase();
+  const esApicultura =
+    nombre.includes('apicultura') ||
+    nombre.includes('apícola') ||
+    nombre.includes('apicola') ||
+    nombre.includes('miel');
+  return esApicultura ? 3 : 5;
+}
+
+/**
+ * Cantidad máxima de imágenes EXTRA (galería, sin contar la principal).
+ */
+export function getMaxImagenesExtra(nombreRubro?: string | null): number {
+  return Math.max(0, getMaxImagenesProducto(nombreRubro) - 1);
+}
+
+/**
  * Versión simplificada para saber si usa código de barras
  */
 export function usaCodigoBarras(nombreRubro: string): boolean {

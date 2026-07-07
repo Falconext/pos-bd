@@ -128,7 +128,7 @@ export class S3Service implements OnModuleInit {
       contentType = 'image/webp';
       // Forzar extensión .webp en la key si no la tiene
       if (!key.toLowerCase().endsWith('.webp')) {
-        key = key.replace(/\.(png|jpe?g|jpg|gif|bmp|tiff?)$/i, '.webp');
+        key = key.replace(/\.(png|jpe?g|jpg|gif|bmp|tiff?|avif|heic|bin)$/i, '.webp');
       }
     } catch (_e) {
       // Si no se pudo convertir, subimos el original con su contentType recibido
@@ -148,6 +148,8 @@ export class S3Service implements OnModuleInit {
       case 'image/jpeg':
       case 'image/jpg':
         return 'jpg';
+      case 'image/avif':
+        return 'avif';
       case 'application/pdf':
         return 'pdf';
       default:

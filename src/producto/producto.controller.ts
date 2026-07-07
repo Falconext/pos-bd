@@ -758,6 +758,43 @@ export class ProductoController {
     return this.service.subirImagenDesdeUrl(user.empresaId, id, body.url);
   }
 
+  // Agrega una imagen a la galería (add-only, con límite por rubro). Usado por el móvil.
+  @Post(':id/galeria')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  @UseInterceptors(FileInterceptor('file', imageUploadOptions))
+  async agregarImagenGaleria(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.service.agregarImagenGaleria(user.empresaId, id, {
+      buffer: file?.buffer,
+      mimetype: file?.mimetype,
+    });
+  }
+
+  // Reemplaza la galería de imágenes extra (borrar/reordenar). Respeta el límite por rubro.
+  @Patch(':id/imagenes-extra')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async setImagenesExtra(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+    @Body() body: { imagenesExtra?: string[] },
+  ) {
+    return this.service.setImagenesExtra(
+      user.empresaId,
+      id,
+      Array.isArray(body?.imagenesExtra) ? body.imagenesExtra : [],
+    );
+  }
+
+  // Límite de imágenes (principal + galería) según el rubro de la empresa.
+  @Get('limite-imagenes')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async getLimiteImagenes(@User() user: any) {
+    return this.service.getLimiteImagenes(user.empresaId);
+  }
+
   // Sube una imagen y la aplica a todas las tallas del color (una sola foto por color)
   @Post(':id/imagen-color')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
