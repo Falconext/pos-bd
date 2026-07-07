@@ -21,6 +21,14 @@ export class ClienteService {
     OTRO: '0',
   };
 
+  private readonly tipoDocDescripcion: Record<string, string> = {
+    DNI: 'DNI',
+    RUC: 'RUC',
+    CE: 'CARNET DE EXTRANJERÍA',
+    PASAPORTE: 'PASAPORTE',
+    OTRO: 'OTROS',
+  };
+
   private normalizarNumeroDocumento(tipoDoc: string, nroDoc: string) {
     const raw = String(nroDoc || '').trim().toUpperCase();
     if (tipoDoc === 'DNI' || tipoDoc === 'RUC') return raw.replace(/\D/g, '');
@@ -44,9 +52,14 @@ export class ClienteService {
   private async obtenerTipoDocumento(tipoDoc: string) {
     const codigo = this.tipoDocCodigo[tipoDoc];
     if (!codigo) throw new ForbiddenException('Tipo de documento no válido');
-    const tipoDocumento = await this.prisma.tipoDocumento.findUnique({ where: { codigo } });
-    if (!tipoDocumento) throw new ForbiddenException('Tipo de documento no válido');
-    return tipoDocumento;
+    return this.prisma.tipoDocumento.upsert({
+      where: { codigo },
+      update: {},
+      create: {
+        codigo,
+        descripcion: this.tipoDocDescripcion[tipoDoc] || tipoDoc,
+      },
+    });
   }
 
   async crear(data: {
