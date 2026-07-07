@@ -52,14 +52,45 @@ export class ClienteService {
   private async obtenerTipoDocumento(tipoDoc: string) {
     const codigo = this.tipoDocCodigo[tipoDoc];
     if (!codigo) throw new ForbiddenException('Tipo de documento no válido');
-    return this.prisma.tipoDocumento.upsert({
-      where: { codigo },
-      update: {},
-      create: {
-        codigo,
-        descripcion: this.tipoDocDescripcion[tipoDoc] || tipoDoc,
-      },
-    });
+    const existente = await this.prisma.tipoDocumento.findFirst({ where: { codigo } });
+    if (existente) return existente;
+
+    try {
+      return await this.prisma.tipoDocumento.create({
+        data: {
+          codigo,
+          descripcion: this.tipoDocDescripcion[tipoDoc] || tipoDoc,
+        },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const creadoPorOtraPeticion = await this.prisma.tipoDocumento.findFirst({ where: { codigo } });
+        if (creadoPorOtraPeticion) return creadoPorOtraPeticion;
+      }
+      throw error;
+    }
+  }
+
+  private async asegurarTiposDocumentoBase() {
+    await Promise.all(Object.entries(this.tipoDocCodigo).map(async ([tipoDoc, codigo]) => {
+      const existente = await this.prisma.tipoDocumento.findFirst({ where: { codigo } });
+      if (existente) return;
+      try {
+        await this.prisma.tipoDocumento.create({
+          data: {
+            codigo,
+            descripcion: this.tipoDocDescripcion[tipoDoc] || tipoDoc,
+          },
+        });
+      } catch (error) {
+        if (!(error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')) throw error;
+      }
+    }));
+  }
+
+  async seedTiposDocumentoBase() {
+    await this.asegurarTiposDocumentoBase();
+    return { ok: true };
   }
 
   async crear(data: {

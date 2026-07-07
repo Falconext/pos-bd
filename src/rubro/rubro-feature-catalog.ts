@@ -59,6 +59,18 @@ export const RUBRO_FEATURE_CATALOG = [
     description: 'Habilita variantes de producto (color, talla, etc.) con stock y precio por variante.',
     group: 'Inventario',
   },
+  {
+    key: 'trazabilidadVehicular',
+    label: 'Trazabilidad vehicular',
+    description: 'Habilita registro de vehículos por placa y actas de inspección de entrada/salida.',
+    group: 'Vehicular',
+  },
+  {
+    key: 'gestionContratosVehiculares',
+    label: 'Contratos y suscripciones vehiculares',
+    description: 'Habilita contratos anuales por vehículo con alertas de renovación.',
+    group: 'Vehicular',
+  },
 ] as const;
 
 export type RubroFeatureKey = (typeof RUBRO_FEATURE_CATALOG)[number]['key'];

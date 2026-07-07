@@ -211,6 +211,8 @@ model Empresa {
   fichasTecnicas      FichaTecnicaPlantilla[]
   cuentasBancarias    CuentaBancaria[]
   doctors             Doctor[]
+  vehiculos           Vehiculo[]
+  contratosVehiculares ContratoVehicular[]
 
   @@index([providerToken])
   @@index([slugTienda])
@@ -2241,4 +2243,74 @@ model ComisionVendedor {
   @@index([empresaId, mes, anio])
   @@index([comprobanteId])
   @@index([vendedorId, estado])
+}
+
+// =============================================
+// MÓDULO VEHICULAR (Seguridad Electrónica GPS/Alarmas)
+// =============================================
+
+model Vehiculo {
+  id            Int      @id @default(autoincrement())
+  empresaId     Int
+  sedeId        Int?
+  placa         String
+  marca         String
+  modelo        String?
+  color         String?
+  anio          Int?
+  clienteId     Int?
+  observaciones String?
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  empresa   Empresa            @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  cliente   Cliente?           @relation(fields: [clienteId], references: [id])
+  actas     ActaInspeccion[]
+  contratos ContratoVehicular[]
+
+  @@unique([empresaId, placa])
+  @@index([empresaId])
+  @@index([empresaId, placa])
+  @@index([clienteId])
+}
+
+model ActaInspeccion {
+  id                Int      @id @default(autoincrement())
+  vehiculoId        Int
+  tipo              String   // INGRESO | RETIRO
+  km                Int?
+  nivelCombustible  String?  // LLENO | 3/4 | 1/2 | 1/4 | VACIO
+  observaciones     String?
+  fotos             String[] // URLs en S3
+  usuarioId         Int?
+  creadoEn          DateTime @default(now())
+
+  vehiculo  Vehiculo @relation(fields: [vehiculoId], references: [id], onDelete: Cascade)
+  usuario   Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@index([vehiculoId])
+  @@index([vehiculoId, tipo])
+}
+
+model ContratoVehicular {
+  id            Int      @id @default(autoincrement())
+  empresaId     Int
+  vehiculoId    Int
+  productoId    Int?
+  fechaInicio   DateTime
+  fechaFin      DateTime
+  estado        String   @default("VIGENTE") // VIGENTE | POR_VENCER | VENCIDO | CANCELADO
+  montoAnual    Decimal? @db.Decimal(12, 2)
+  observaciones String?
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  empresa   Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  vehiculo  Vehiculo  @relation(fields: [vehiculoId], references: [id], onDelete: Cascade)
+  producto  Producto? @relation(fields: [productoId], references: [id])
+
+  @@index([empresaId])
+  @@index([empresaId, estado])
+  @@index([vehiculoId])
+  @@index([fechaFin])
 }
