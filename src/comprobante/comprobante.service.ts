@@ -3098,6 +3098,175 @@ export class ComprobanteService {
     });
   }
 
+  private buildCotizacionPruebaWhere(params: {
+    empresaId: number;
+    sedeId?: number | null;
+    usuarioId?: number | null;
+    fechaInicio?: string;
+    fechaFin?: string;
+    search?: string;
+  }): Prisma.ComprobanteWhereInput {
+    const filters: Prisma.ComprobanteWhereInput[] = [];
+    const search = String(params.search || '').trim();
+
+    if (params.sedeId) filters.push({ sedeId: params.sedeId });
+    if (params.usuarioId) filters.push({ usuarioId: params.usuarioId });
+
+    if (params.fechaInicio || params.fechaFin) {
+      const fechaEmision: Prisma.DateTimeFilter = {};
+      if (params.fechaInicio) {
+        fechaEmision.gte = new Date(`${params.fechaInicio}T00:00:00.000-05:00`);
+      }
+      if (params.fechaFin) {
+        fechaEmision.lte = new Date(`${params.fechaFin}T23:59:59.999-05:00`);
+      }
+      filters.push({ fechaEmision });
+    }
+
+    if (search) {
+      const searchAsNumber = Number(search);
+      filters.push({
+        OR: [
+          { serie: { contains: search, mode: 'insensitive' } },
+          ...(Number.isNaN(searchAsNumber)
+            ? []
+            : [{ correlativo: searchAsNumber }]),
+          { cliente: { nombre: { contains: search, mode: 'insensitive' } } },
+          { cliente: { nroDoc: { contains: search, mode: 'insensitive' } } },
+        ],
+      });
+    }
+
+    return {
+      empresaId: params.empresaId,
+      tipoDoc: 'COT',
+      comprobantesDerivados: { none: {} },
+      ...(filters.length ? { AND: filters } : {}),
+    };
+  }
+
+  private async borrarCotizacionesPorIds(
+    tx: Prisma.TransactionClient,
+    ids: number[],
+  ) {
+    if (!ids.length) return;
+
+    const movimientos = await tx.movimientoKardex.findMany({
+      where: { comprobanteId: { in: ids } },
+      select: { id: true },
+    });
+    const movimientoIds = movimientos.map((item) => item.id);
+
+    if (movimientoIds.length) {
+      await tx.movimientoKardexLote.deleteMany({
+        where: { movimientoId: { in: movimientoIds } },
+      });
+    }
+
+    await tx.productoSerie.updateMany({
+      where: { comprobanteId: { in: ids } },
+      data: { comprobanteId: null, detalleComprobanteId: null },
+    });
+    await tx.campanaMarketing.updateMany({
+      where: { comprobanteId: { in: ids } },
+      data: { comprobanteId: null },
+    });
+    await tx.movimientoKardex.deleteMany({
+      where: { comprobanteId: { in: ids } },
+    });
+    await tx.comisionVendedor.deleteMany({
+      where: { comprobanteId: { in: ids } },
+    });
+    await tx.whatsAppEnvio.deleteMany({
+      where: { comprobanteId: { in: ids } },
+    });
+    await tx.envioDespacho.deleteMany({ where: { comprobanteId: { in: ids } } });
+    await tx.pago.deleteMany({ where: { comprobanteId: { in: ids } } });
+    await tx.leyenda.deleteMany({ where: { comprobanteId: { in: ids } } });
+    await tx.detalleComprobante.deleteMany({
+      where: { comprobanteId: { in: ids } },
+    });
+    await tx.comprobante.deleteMany({ where: { id: { in: ids } } });
+  }
+
+  async eliminarCotizacion(id: number, empresaId: number) {
+    const cotizacion = await this.prisma.comprobante.findFirst({
+      where: { id, empresaId, tipoDoc: 'COT' },
+      select: {
+        id: true,
+        serie: true,
+        correlativo: true,
+        _count: { select: { comprobantesDerivados: true } },
+      },
+    });
+
+    if (!cotizacion) throw new NotFoundException('Cotización no encontrada');
+    if (cotizacion._count.comprobantesDerivados > 0) {
+      throw new BadRequestException(
+        'Esta cotización ya fue convertida y no puede eliminarse',
+      );
+    }
+
+    await this.prisma.$transaction((tx) =>
+      this.borrarCotizacionesPorIds(tx, [id]),
+    );
+
+    return {
+      eliminado: true,
+      id,
+      numero: `${cotizacion.serie}-${String(cotizacion.correlativo).padStart(8, '0')}`,
+    };
+  }
+
+  async limpiarCotizacionesPrueba(params: {
+    empresaId: number;
+    sedeId?: number | null;
+    usuarioId?: number | null;
+    fechaInicio?: string;
+    fechaFin?: string;
+    search?: string;
+    confirmar?: boolean;
+  }) {
+    if (!params.confirmar) {
+      throw new BadRequestException('Debes confirmar la limpieza de cotizaciones');
+    }
+
+    const tieneFiltro = Boolean(
+      params.sedeId ||
+      params.usuarioId ||
+      String(params.fechaInicio || '').trim() ||
+      String(params.fechaFin || '').trim() ||
+      String(params.search || '').trim(),
+    );
+    if (!tieneFiltro) {
+      throw new BadRequestException(
+        'Aplica al menos un filtro antes de limpiar cotizaciones',
+      );
+    }
+
+    const where = this.buildCotizacionPruebaWhere(params);
+    const candidatas = await this.prisma.comprobante.findMany({
+      where,
+      select: { id: true },
+      take: 500,
+      orderBy: { id: 'asc' },
+    });
+    const ids = candidatas.map((item) => item.id);
+
+    await this.prisma.$transaction((tx) =>
+      this.borrarCotizacionesPorIds(tx, ids),
+    );
+
+    return {
+      eliminados: ids.length,
+      limiteAplicado: ids.length === 500,
+      mensaje:
+        ids.length === 500
+          ? 'Se eliminaron 500 cotizaciones. Ejecuta la limpieza nuevamente si quedan más resultados.'
+          : 'Cotizaciones de prueba eliminadas correctamente',
+    };
+  }
+
   async crearOT(
     input: any,
     empresaId: number,

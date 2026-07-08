@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -198,6 +199,29 @@ export class ComprobanteController {
     const isAdmin = user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
     const sedeId = isAdmin ? undefined : user.sedeId;
     return this.service.obtenerPorId(user.empresaId, id, sedeId);
+  }
+
+  @Delete('cotizaciones/:id')
+  @Roles('ADMIN_EMPRESA')
+  async eliminarCotizacion(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+  ) {
+    return this.service.eliminarCotizacion(id, user.empresaId);
+  }
+
+  @Post('cotizaciones/limpiar-pruebas')
+  @Roles('ADMIN_EMPRESA')
+  async limpiarCotizacionesPrueba(@Body() input: any, @User() user: any) {
+    return this.service.limpiarCotizacionesPrueba({
+      empresaId: user.empresaId,
+      sedeId: input?.sedeId,
+      usuarioId: input?.usuarioId,
+      fechaInicio: input?.fechaInicio,
+      fechaFin: input?.fechaFin,
+      search: input?.search,
+      confirmar: input?.confirmar,
+    });
   }
 
   @Get(':id/xml')
