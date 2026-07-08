@@ -50,6 +50,8 @@ import { ComisionesModule } from './comisiones/comisiones.module';
 import { CampanasModule } from './campanas/campanas.module';
 import { VentasModule } from './ventas/ventas.module';
 import { ShalomModule } from './shalom/shalom.module';
+import { VehiculoModule } from './vehiculo/vehiculo.module';
+import { ContratoVehicularModule } from './contrato-vehicular/contrato-vehicular.module';
 
 @Module({
   imports: [
@@ -102,6 +104,8 @@ import { ShalomModule } from './shalom/shalom.module';
     CampanasModule,
     VentasModule,
     ShalomModule,
+    VehiculoModule,
+    ContratoVehicularModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -41,6 +41,8 @@ export class SedeService {
             data: {
                 ...createSedeDto,
                 empresaId,
+                activo: createSedeDto.activo ?? true,
+                esPrincipal: createSedeDto.esPrincipal ?? false,
             },
         });
 

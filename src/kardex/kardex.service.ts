@@ -626,16 +626,17 @@ export class KardexService {
     // Filtrar stock crítico si es necesario
     if (filtros?.soloStockCritico) {
       productosAFiltrar = productos.filter(producto =>
-        producto.stock === 0 ||
-        (producto.stockMinimo && producto.stock <= producto.stockMinimo)
+        num(producto.stock) === 0 ||
+        (producto.stockMinimo && num(producto.stock) <= producto.stockMinimo)
       );
     }
 
     const productosProcessados = productosAFiltrar.map((producto: any) => {
-      // Use branch specific stock if requested, otherwise global stock
+      // Use branch specific stock if requested, otherwise global stock.
+      // Normalizamos con num() porque producto.stock es Decimal y `=== 0` fallaría.
       const stockUsar = sedeId
-        ? (producto.stocks && producto.stocks.length > 0 ? producto.stocks[0].stock : 0)
-        : producto.stock;
+        ? (producto.stocks && producto.stocks.length > 0 ? num(producto.stocks[0].stock) : 0)
+        : num(producto.stock);
 
       const costoPromedio = Number(producto.costoPromedio) || 0;
       const valorTotal = stockUsar * costoPromedio;
@@ -665,13 +666,15 @@ export class KardexService {
       };
     });
 
+    // Calculamos el resumen sobre productosProcessados: su `stock` ya es numérico
+    // (num()) y respeta la sede activa, a diferencia de productosAFiltrar (Decimal).
     const resumen = {
-      totalProductos: productosAFiltrar.length,
+      totalProductos: productosProcessados.length,
       valorTotalInventario: productosProcessados.reduce((sum, p) => sum + p.valorTotal, 0),
-      productosStockCritico: productosAFiltrar.filter(p =>
+      productosStockCritico: productosProcessados.filter(p =>
         p.stock <= (p.stockMinimo || 0) && p.stock > 0
       ).length,
-      productosStockCero: productosAFiltrar.filter(p => p.stock === 0).length,
+      productosStockCero: productosProcessados.filter(p => p.stock === 0).length,
     };
 
     return {

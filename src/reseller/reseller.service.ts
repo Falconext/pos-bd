@@ -652,6 +652,7 @@ export class ResellerService {
             direccion: empresa.direccion || '-',
             codigo: '001',
             esPrincipal: true,
+            activo: true,
         }, empresa.id);
 
         return empresa;

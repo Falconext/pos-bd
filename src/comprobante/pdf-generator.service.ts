@@ -406,7 +406,8 @@ export class PdfGeneratorService {
       }, '✅ PDF de cotización generado exitosamente');
     } catch (error) {
       this.logger.error(`❌ Error generando PDF de cotización: ${error.message}`, error.stack);
-      throw error;
+      this.logger.warn('⚠️ Usando fallback PDF simple para cotización');
+      return this.generarPDFCotizacionSimple(data);
     }
   }
   async generarPDFGuiaRemision(data: any): Promise<Buffer> {
@@ -439,6 +440,144 @@ export class PdfGeneratorService {
       .replace(/\(/g, '\\(')
       .replace(/\)/g, '\\)')
       .replace(/\r?\n/g, ' ');
+  }
+
+  private normalizePdfText(value: unknown): string {
+    return String(value ?? '')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^\x20-\x7E]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private wrapPdfText(value: unknown, maxLength = 88): string[] {
+    const words = this.normalizePdfText(value).split(' ').filter(Boolean);
+    const lines: string[] = [];
+    let current = '';
+
+    for (const word of words) {
+      const next = current ? `${current} ${word}` : word;
+      if (next.length > maxLength && current) {
+        lines.push(current);
+        current = word;
+      } else {
+        current = next;
+      }
+    }
+
+    if (current) lines.push(current);
+    return lines.length ? lines : [''];
+  }
+
+  private generarPdfTextoSimple(lines: string[]): Buffer {
+    const pageLines: string[][] = [];
+    const maxLinesPerPage = 48;
+
+    for (let i = 0; i < lines.length; i += maxLinesPerPage) {
+      pageLines.push(lines.slice(i, i + maxLinesPerPage));
+    }
+
+    const pageRefs = pageLines.map((_, index) => 4 + index * 2);
+    const kids = pageRefs.map((ref) => `${ref} 0 R`).join(' ');
+    const objects = [
+      '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+      `2 0 obj\n<< /Type /Pages /Kids [${kids}] /Count ${pageLines.length} >>\nendobj\n`,
+      '3 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
+    ];
+
+    pageLines.forEach((page, index) => {
+      const pageRef = 4 + index * 2;
+      const contentRef = pageRef + 1;
+      const commands = ['BT'];
+
+      page.forEach((line, lineIndex) => {
+        const isTitle = index === 0 && lineIndex === 0;
+        const fontSize = isTitle ? 16 : 10;
+        const y = isTitle ? 790 : 762 - (lineIndex - 1) * 14;
+        commands.push(`/F1 ${fontSize} Tf`);
+        commands.push(`1 0 0 1 46 ${y} Tm`);
+        commands.push(`(${this.escapePdfText(line)}) Tj`);
+      });
+
+      commands.push('ET');
+      const content = commands.join('\n');
+
+      objects.push(
+        `${pageRef} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents ${contentRef} 0 R >>\nendobj\n`,
+      );
+      objects.push(
+        `${contentRef} 0 obj\n<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream\nendobj\n`,
+      );
+    });
+
+    let pdf = '%PDF-1.4\n';
+    const offsets = [0];
+    for (const object of objects) {
+      offsets.push(Buffer.byteLength(pdf));
+      pdf += object;
+    }
+
+    const xrefOffset = Buffer.byteLength(pdf);
+    pdf += `xref\n0 ${objects.length + 1}\n`;
+    pdf += '0000000000 65535 f \n';
+    for (let i = 1; i <= objects.length; i += 1) {
+      pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+    }
+    pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+
+    return Buffer.from(pdf, 'utf8');
+  }
+
+  private generarPDFCotizacionSimple(data: any): Buffer {
+    const numero = `${data.serie || ''}-${data.correlativo || ''}`.replace(/^-|-$/g, '') || '-';
+    const lines = [
+      `COTIZACION ${numero}`,
+      this.normalizePdfText(data.nombreComercial || data.razonSocial || 'Empresa'),
+      `RUC: ${this.normalizePdfText(data.ruc || '-')}`,
+      `Direccion: ${this.normalizePdfText(data.direccion || '-')}`,
+      `Contacto: ${this.normalizePdfText([data.celular, data.email].filter(Boolean).join(' / ') || '-')}`,
+      '',
+      `Fecha: ${this.normalizePdfText(data.fecha || '-')}  Hora: ${this.normalizePdfText(data.hora || '-')}`,
+      `Cliente: ${this.normalizePdfText(data.clienteNombre || '-')}`,
+      `Documento: ${this.normalizePdfText(data.clienteNumDoc || '-')}`,
+      `Direccion cliente: ${this.normalizePdfText(data.clienteDireccion || '-')}`,
+      '',
+      'DETALLE DE PRODUCTOS',
+    ];
+
+    (data.productos || []).forEach((producto: any, index: number) => {
+      const description = this.wrapPdfText(producto.descripcion || '-', 72);
+      lines.push(`${index + 1}. ${this.normalizePdfText(producto.cantidad || '1')} ${this.normalizePdfText(producto.unidadMedida || 'UND')} - ${description[0]}`);
+      description.slice(1).forEach((line) => lines.push(`   ${line}`));
+      lines.push(`   Precio unit.: S/ ${this.normalizePdfText(producto.precioUnitario || '0.00')}    Total: S/ ${this.normalizePdfText(producto.total || '0.00')}`);
+    });
+
+    lines.push(
+      '',
+      `Subtotal: S/ ${this.normalizePdfText(data.subTotal || data.mtoOperGravadas || '0.00')}`,
+      `IGV: S/ ${this.normalizePdfText(data.mtoIGV || '0.00')}`,
+      `Total: S/ ${this.normalizePdfText(data.mtoImpVenta || '0.00')}`,
+      `Son: ${this.normalizePdfText(data.totalEnLetras || '-')}`,
+      '',
+      `Forma de pago: ${this.normalizePdfText(data.formaPago || '-')}`,
+      `Validez: ${this.normalizePdfText(data.validez || '-')}`,
+      `Observaciones: ${this.normalizePdfText(data.observaciones || '-')}`,
+    );
+
+    if (data.bancoNombre || data.numeroCuenta || data.cci) {
+      lines.push(
+        '',
+        'DATOS BANCARIOS',
+        `Banco: ${this.normalizePdfText(data.bancoNombre || '-')}`,
+        `Cuenta: ${this.normalizePdfText(data.numeroCuenta || '-')}`,
+        `CCI: ${this.normalizePdfText(data.cci || '-')}`,
+        `Moneda: ${this.normalizePdfText(data.monedaCuenta || '-')}`,
+      );
+    }
+
+    lines.push('', `Generado por ${this.normalizePdfText(data.sistemaNombre || 'Falconext')}`);
+    return this.generarPdfTextoSimple(lines);
   }
 
   private generarPDFConstanciaGarantiaSimple(data: any): Buffer {

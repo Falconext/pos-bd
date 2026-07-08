@@ -196,10 +196,18 @@ export class EmpresaService {
   ) {
     const principal = await this.prisma.sede.findFirst({
       where: { empresaId, esPrincipal: true },
-      select: { id: true },
+      select: { id: true, activo: true },
     });
 
-    if (principal) return principal;
+    if (principal) {
+      if (!principal.activo) {
+        await this.prisma.sede.update({
+          where: { id: principal.id },
+          data: { activo: true },
+        });
+      }
+      return { id: principal.id };
+    }
 
     // Self-healing: si por algún flujo externo no existe sede principal, crearla.
     return this.prisma.sede.create({
@@ -608,6 +616,7 @@ export class EmpresaService {
         direccion: data.direccion,
         codigo: '001',
         esPrincipal: true,
+        activo: true,
       },
       empresa.id,
     );

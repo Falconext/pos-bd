@@ -20,4 +20,8 @@ export class CreateSedeDto {
     @IsBoolean()
     @IsOptional()
     esPrincipal?: boolean;
+
+    @IsBoolean()
+    @IsOptional()
+    activo?: boolean;
 }
