@@ -1,0 +1,700 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/orders": {
+      "post": {
+        "description": "Registra una orden de entrega para un cliente final.",
+        "operationId": "createOrder",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Orden creada.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Order"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Solicitud inválida.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Crear una orden",
+        "tags": [
+          "Pedidos"
+        ]
+      },
+      "get": {
+        "description": "Devuelve las órdenes de tu cuenta con paginación.",
+        "operationId": "listOrders",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Lista de órdenes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderList"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Listar órdenes",
+        "tags": [
+          "Pedidos"
+        ]
+      }
+    },
+    "/orders/bulk": {
+      "post": {
+        "description": "Crea múltiples órdenes en una sola llamada.",
+        "operationId": "createBulkOrders",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/OrderCreate"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Órdenes creadas.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Order"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Crear órdenes en lote",
+        "tags": [
+          "Pedidos"
+        ]
+      }
+    },
+    "/orders/{id}/status": {
+      "get": {
+        "description": "Devuelve el detalle y estado actual de una orden por su id o tracking_code.",
+        "operationId": "getOrder",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "description": "id de Falconext o tracking_code.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Detalle de la orden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Order"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No encontrada.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Obtener una orden",
+        "tags": [
+          "Pedidos"
+        ]
+      }
+    },
+    "/orders/{id}/cancel": {
+      "post": {
+        "description": "Cancela una orden que aún no ha sido entregada.",
+        "operationId": "cancelOrder",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "description": "id de Falconext o tracking_code.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Orden cancelada.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Order"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No se puede cancelar en este estado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Cancelar una orden",
+        "tags": [
+          "Pedidos"
+        ]
+      }
+    },
+    "/tracking/{id}": {
+      "get": {
+        "description": "Devuelve el estado y la línea de tiempo de eventos de una orden.",
+        "operationId": "trackOrder",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "description": "id de Falconext o tracking_code.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Rastreo de la orden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tracking"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No encontrada.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Rastrear una orden",
+        "tags": [
+          "Rastreo"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "Falconext Logística API",
+    "description": "API pública de Falconext Logística: crear órdenes de entrega, rastrearlas y recibir webhooks. Contrato en inglés (snake_case). Documentación en español en el portal de desarrolladores.",
+    "version": "2025-07-01",
+    "contact": {}
+  },
+  "tags": [
+    {
+      "name": "Pedidos",
+      "description": "Crear, listar, obtener y cancelar órdenes."
+    },
+    {
+      "name": "Rastreo",
+      "description": "Estado y línea de tiempo de una orden."
+    },
+    {
+      "name": "Webhooks",
+      "description": "Suscripción a eventos order.*"
+    }
+  ],
+  "servers": [
+    {
+      "url": "https://api.falconext.com/v1",
+      "description": "Producción"
+    },
+    {
+      "url": "https://sandbox.api.falconext.com/v1",
+      "description": "Sandbox"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "type": "http",
+        "description": "API key como Bearer token."
+      }
+    },
+    "schemas": {
+      "OrderSource": {
+        "type": "string",
+        "enum": [
+          "manual",
+          "excel",
+          "api",
+          "webhook",
+          "ecommerce",
+          "falconext_erp",
+          "falconext"
+        ]
+      },
+      "OrderStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "validated",
+          "assigned",
+          "ready_for_pickup",
+          "picked_up",
+          "in_transit",
+          "arriving",
+          "at_location",
+          "delivered",
+          "partially_delivered",
+          "failed",
+          "returned",
+          "rescheduled",
+          "cancelled"
+        ]
+      },
+      "Customer": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "example": "Juan Pérez"
+          },
+          "document_type": {
+            "type": "string",
+            "example": "DNI",
+            "description": "DNI, RUC, CE, PASSPORT"
+          },
+          "document_number": {
+            "type": "string",
+            "example": "12345678"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "example": "juan@ejemplo.com"
+          },
+          "phone": {
+            "type": "string",
+            "example": "+51999888777"
+          },
+          "whatsapp": {
+            "type": "string",
+            "example": "+51999888777"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "Address": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "example": "Casa"
+          },
+          "address": {
+            "type": "string",
+            "example": "Av. Javier Prado 123"
+          },
+          "district": {
+            "type": "string",
+            "example": "San Isidro"
+          },
+          "city": {
+            "type": "string",
+            "example": "Lima"
+          },
+          "department": {
+            "type": "string",
+            "example": "Lima"
+          },
+          "lat": {
+            "type": "number",
+            "example": -12.0931
+          },
+          "lng": {
+            "type": "number",
+            "example": -77.0465
+          },
+          "reference": {
+            "type": "string",
+            "example": "Frente al parque"
+          },
+          "access_notes": {
+            "type": "string",
+            "example": "Tocar timbre 2"
+          }
+        },
+        "required": [
+          "address"
+        ]
+      },
+      "OrderItem": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string",
+            "example": "SKU-001"
+          },
+          "description": {
+            "type": "string",
+            "example": "Caja de zapatos talla 42"
+          },
+          "quantity": {
+            "type": "number",
+            "example": 1,
+            "default": 1
+          },
+          "weight_kg": {
+            "type": "number",
+            "example": 0.8
+          },
+          "declared_value": {
+            "type": "number",
+            "example": 120.5
+          }
+        },
+        "required": [
+          "description"
+        ]
+      },
+      "Order": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "ord_9f8c1a2b",
+            "description": "ID único de Falconext."
+          },
+          "object": {
+            "type": "string",
+            "example": "order",
+            "default": "order"
+          },
+          "tracking_code": {
+            "type": "string",
+            "example": "FLX-7GK2P9",
+            "description": "Código público de rastreo."
+          },
+          "external_order_id": {
+            "type": "string",
+            "example": "ORD-2025-0001"
+          },
+          "source": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OrderSource"
+              }
+            ]
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OrderStatus"
+              }
+            ]
+          },
+          "customer": {
+            "$ref": "#/components/schemas/Customer"
+          },
+          "delivery_address": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderItem"
+            }
+          },
+          "weight_kg": {
+            "type": "number",
+            "example": 2.4
+          },
+          "packages": {
+            "type": "number",
+            "example": 1
+          },
+          "cash_on_delivery": {
+            "type": "number",
+            "example": 150
+          },
+          "shipping_cost": {
+            "type": "number",
+            "example": 12
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2025-07-14T18:30:00Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2025-07-14T18:30:00Z"
+          }
+        },
+        "required": [
+          "id",
+          "object",
+          "tracking_code",
+          "source",
+          "status",
+          "customer",
+          "delivery_address",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "OrderList": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "type": "string",
+            "example": "list",
+            "default": "list"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Order"
+            }
+          },
+          "has_more": {
+            "type": "boolean",
+            "example": false,
+            "description": "Hay más resultados en la siguiente página."
+          }
+        },
+        "required": [
+          "object",
+          "data",
+          "has_more"
+        ]
+      },
+      "TrackingEvent": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OrderStatus"
+              }
+            ]
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2025-07-14T19:05:00Z"
+          },
+          "lat": {
+            "type": "number",
+            "example": -12.0931
+          },
+          "lng": {
+            "type": "number",
+            "example": -77.0465
+          }
+        },
+        "required": [
+          "status",
+          "occurred_at"
+        ]
+      },
+      "Tracking": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OrderStatus"
+              }
+            ]
+          },
+          "courier": {
+            "type": "string",
+            "example": "Falconext Logística"
+          },
+          "eta_minutes": {
+            "type": "number",
+            "example": 25,
+            "description": "Minutos estimados para la entrega."
+          },
+          "timeline": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackingEvent"
+            }
+          }
+        },
+        "required": [
+          "status",
+          "timeline"
+        ]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "example": {
+              "code": "invalid_request",
+              "message": "delivery_address es requerido"
+            },
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "TimeWindow": {
+        "type": "object",
+        "properties": {
+          "start": {
+            "type": "string",
+            "example": "09:00",
+            "description": "Hora inicio HH:mm"
+          },
+          "end": {
+            "type": "string",
+            "example": "13:00",
+            "description": "Hora fin HH:mm"
+          }
+        }
+      },
+      "OrderCreate": {
+        "type": "object",
+        "properties": {
+          "external_order_id": {
+            "type": "string",
+            "description": "Tu identificador de la orden en tu propio sistema (idempotencia).",
+            "example": "ORD-2025-0001"
+          },
+          "source": {
+            "example": "api",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OrderSource"
+              }
+            ]
+          },
+          "customer": {
+            "$ref": "#/components/schemas/Customer"
+          },
+          "delivery_address": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderItem"
+            }
+          },
+          "requested_date": {
+            "type": "string",
+            "format": "date",
+            "example": "2025-07-15"
+          },
+          "time_window": {
+            "$ref": "#/components/schemas/TimeWindow"
+          },
+          "priority": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 10,
+            "example": 5
+          },
+          "is_urgent": {
+            "type": "boolean",
+            "default": false
+          },
+          "requires_signature": {
+            "type": "boolean",
+            "default": false
+          },
+          "requires_photo": {
+            "type": "boolean",
+            "default": false
+          },
+          "cash_on_delivery": {
+            "type": "number",
+            "description": "Monto a cobrar contra entrega (COD), en soles.",
+            "example": 150
+          },
+          "customer_notes": {
+            "type": "string",
+            "example": "Llamar antes de llegar"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Datos libres que se devuelven tal cual."
+          }
+        },
+        "required": [
+          "customer",
+          "delivery_address"
+        ]
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ]
+}

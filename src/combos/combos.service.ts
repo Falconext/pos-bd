@@ -79,6 +79,7 @@ export class CombosService {
                 imagenUrl: true,
                 precioUnitario: true,
                 stock: true,
+                atributosTecnicos: true,
               },
             },
           },
@@ -115,6 +116,7 @@ export class CombosService {
                 imagenUrl: true,
                 precioUnitario: true,
                 stock: true,
+                atributosTecnicos: true,
                 categoria: {
                   select: {
                     id: true,
@@ -143,6 +145,7 @@ export class CombosService {
                 imagenUrl: true,
                 precioUnitario: true,
                 stock: true,
+                atributosTecnicos: true,
                 categoria: {
                   select: {
                     id: true,
@@ -256,6 +259,7 @@ export class CombosService {
                 imagenUrl: true,
                 precioUnitario: true,
                 stock: true,
+                atributosTecnicos: true,
               },
             },
           },

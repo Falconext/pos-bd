@@ -2,6 +2,8 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 // Force rebuild to regenerate Prisma Client with new schema columns
 import { Logger, ValidationPipe } from '@nestjs/common'; // rebuilt
+import { SwaggerModule } from '@nestjs/swagger';
+import { buildLogisticaDocument } from './logistica/openapi/logistica-openapi';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import * as express from 'express';
@@ -109,6 +111,23 @@ async function bootstrap() {
   app.useGlobalInterceptors(new ResponseInterceptor());
   app.useGlobalFilters(new HttpExceptionFilter());
   app.setGlobalPrefix('api');
+
+  // ── OpenAPI (Swagger) — SOLO API pública de Logística ────────────────────────
+  // Documento acotado a IntegracionesModule (fachada inglés); no expone el resto
+  // del ERP. UI en /api/docs/logistica y JSON en /api/docs/logistica-json.
+  // Se puede desactivar con SWAGGER_DISABLED=true.
+  if (process.env.SWAGGER_DISABLED !== 'true') {
+    try {
+      const document = buildLogisticaDocument(app);
+      SwaggerModule.setup('api/docs/logistica', app, document, {
+        jsonDocumentUrl: 'api/docs/logistica-json',
+        customSiteTitle: 'Falconext Logística API',
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      logger.warn(`Swagger (logística) no se montó: ${message}`);
+    }
+  }
 
   const PORT = process.env.PORT ? Number(process.env.PORT) : 4001;
 

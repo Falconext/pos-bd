@@ -486,36 +486,73 @@ export class ShalomService {
   // El nuevo proveedor indexa por ose_id y entrega PDFs (no PNG).
   // "ticket" → voucher (comprobante de envío); "label" → etiqueta.
 
+  /** True si el error indica que el gateway no tiene una sesión válida y hay que
+   * autenticar con credenciales directas (Opción B). Incluye el 400
+   * "cliente no autenticado — llamá Login() primero" del endpoint de comprobante. */
+  private requiereLoginDirecto(err: any): boolean {
+    const s = err?.shalomStatus;
+    if (s === 502 || s === 401) return true;
+    const msg = String(err?.message ?? '').toLowerCase();
+    return msg.includes('no autenticado') || msg.includes('login()');
+  }
+
+  /** GET con credenciales Pro directas (Opción B) y reintentos ante 502/503/504. */
+  private async fetchDirecto(
+    path: string,
+    creds: { email?: string; password?: string },
+  ): Promise<Buffer> {
+    let lastErr: any;
+    for (let intento = 0; intento < 3; intento++) {
+      try {
+        const res = await this.request('GET', path, { proCreds: creds });
+        return Buffer.from(await res.arrayBuffer());
+      } catch (err: any) {
+        lastErr = err;
+        if (![502, 503, 504].includes(err?.shalomStatus)) throw err;
+        await new Promise((r) => setTimeout(r, 500 * (intento + 1)));
+      }
+    }
+    throw lastErr;
+  }
+
   /**
    * Descarga un documento PDF (voucher/etiqueta) por ose_id.
-   * Primero intenta con el token de sesión (Opción A). Si el gateway rechaza
-   * ese token hacia el upstream (502) o la sesión expira (401), reintenta con
-   * las credenciales Pro directas `X-Shalom-Email`/`X-Shalom-Password`
-   * (Opción B de la doc), que el upstream sí propaga. Esto resuelve el
-   * "upstream rechazó las credenciales del gateway" del comprobante.
+   * - `preferDirecto` (comprobante): usa credenciales Pro directas de una (el
+   *   endpoint de voucher rechaza el token de sesión con 400 "cliente no
+   *   autenticado — llamá Login() primero").
+   * - Por defecto (etiqueta): token de sesión (Opción A) y, si el gateway no
+   *   tiene sesión válida (502/401/"no autenticado"), reintenta con Opción B.
    */
   private async fetchDocumento(
     path: string,
     empresaId?: number,
+    opts: { preferDirecto?: boolean } = {},
   ): Promise<Buffer> {
+    const creds = await this.resolverCreds(empresaId);
+    const tieneDirecto = Boolean(creds.email && creds.password);
+
+    if (opts.preferDirecto && tieneDirecto) {
+      return this.fetchDirecto(path, creds);
+    }
+
     try {
       const res = await this.requestConSesion('GET', path, empresaId);
       return Buffer.from(await res.arrayBuffer());
     } catch (err: any) {
-      if (err?.shalomStatus === 502 || err?.shalomStatus === 401) {
-        const creds = await this.resolverCreds(empresaId);
-        if (creds.email && creds.password) {
-          this.logger.warn(
-            `Shalom ${err?.shalomStatus} en ${path}: reintentando con credenciales Pro directas (Opción B)…`,
-          );
-          const res = await this.request('GET', path, { proCreds: creds });
-          return Buffer.from(await res.arrayBuffer());
-        }
+      if (this.requiereLoginDirecto(err) && tieneDirecto) {
+        this.logger.warn(
+          `Shalom ${err?.shalomStatus} en ${path}: reintentando con credenciales Pro directas (Opción B)…`,
+        );
+        // Invalidar el token de sesión: el gateway lo considera no autenticado.
+        this.invalidarSession(empresaId);
+        return this.fetchDirecto(path, creds);
       }
       throw err;
     }
   }
 
+  // Comprobante de la orden (resumen con remitente, destinatario e ítems).
+  // Doc: GET /v1/orders/{ose_id}/voucher (sección Orders, no Tracking).
   async ticketImage(
     orderNumber: string,
     orderCode: string,
@@ -528,16 +565,16 @@ export class ShalomService {
           ? Number(oseId)
           : await this.resolverOseId(orderNumber, orderCode, empresaId);
       return await this.fetchDocumento(
-        `/v1/tracking/${resolvedOseId}/voucher`,
+        `/v1/orders/${resolvedOseId}/voucher`,
         empresaId,
+        { preferDirecto: true },
       );
     } catch (err: any) {
       if (err instanceof HttpException) throw err;
-      // El voucher (comprobante fiscal) puede no estar emitido todavía (404).
-      // No caemos a la etiqueta: eso lo cubre el botón "Etiqueta PDF" aparte.
+      // 404 = la orden (ose_id) no existe en la cuenta de Shalom.
       if (err?.shalomStatus === 404) {
         throw new BadRequestException(
-          'La orden aún no tiene comprobante emitido en Shalom. Usa "Etiqueta PDF" para la guía de envío.',
+          'No se encontró el comprobante de esta orden en Shalom. Verifica que la orden te pertenezca.',
         );
       }
       throw new BadRequestException(this.mensajeShalom(err, 'el comprobante'));
