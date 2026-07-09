@@ -72,6 +72,12 @@ export class ShalomService {
   // que solo se cree UNA sesión (Shalom Pro admite una sola sesión por cuenta;
   // logins simultáneos se invalidan entre sí → 401/502 en el arranque en frío).
   private sessionInFlight = new Map<string, Promise<string>>();
+  // Consultas de /v1/tracking?numero=&codigo= en curso, por empresa+ruta.
+  // track() y resolverOseId() piden exactamente lo mismo; deduplicar evita que
+  // una segunda llamada concurrente (p. ej. el usuario abre el modal y de
+  // inmediato pulsa "Ver ticket") dispare otra cadena de reintento contra un
+  // upstream ya degradado (mismo patrón que sessionInFlight, para lecturas).
+  private trackInFlight = new Map<string, Promise<any>>();
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -212,8 +218,11 @@ export class ShalomService {
       // Extraer el mensaje legible del proveedor ({ error: { message } }) para
       // mostrarlo directo al usuario, sin el prefijo técnico.
       let mensaje = '';
+      let codigo = '';
       try {
-        mensaje = JSON.parse(text)?.error?.message || '';
+        const parsed = JSON.parse(text);
+        mensaje = parsed?.error?.message || '';
+        codigo = parsed?.error?.code || '';
       } catch {
         /* body no-JSON */
       }
@@ -222,6 +231,7 @@ export class ShalomService {
       );
       const err: any = new Error(mensaje || `Shalom respondió ${res.status}`);
       err.shalomStatus = res.status;
+      err.shalomCode = codigo || undefined;
       throw err;
     }
     return res;
@@ -345,21 +355,43 @@ export class ShalomService {
   // GET /v1/tracking/{ose_id}/events → eventos por etapa.
   // Se devuelve una forma compatible ({ search, statuses }) para el front actual,
   // más los objetos crudos (order, events, ose_id) del nuevo proveedor.
+
+  private async obtenerTrackingRaw(
+    orderNumber: string,
+    orderCode: string,
+    empresaId?: number,
+  ): Promise<any> {
+    const params = new URLSearchParams();
+    if (orderNumber) params.set('numero', String(orderNumber));
+    if (orderCode) params.set('codigo', String(orderCode));
+    const path = `/v1/tracking?${params.toString()}`;
+    const dedupeKey = `${empresaId ?? 'env'}:${path}`;
+
+    const enCurso = this.trackInFlight.get(dedupeKey);
+    if (enCurso) return enCurso;
+
+    const promesa = this.requestConSesion('GET', path, empresaId).then((res) =>
+      res.json(),
+    );
+    this.trackInFlight.set(dedupeKey, promesa);
+    try {
+      return await promesa;
+    } finally {
+      this.trackInFlight.delete(dedupeKey);
+    }
+  }
+
   async track(
     orderNumber: string,
     orderCode: string,
     empresaId?: number,
   ): Promise<any> {
     try {
-      const params = new URLSearchParams();
-      if (orderNumber) params.set('numero', String(orderNumber));
-      if (orderCode) params.set('codigo', String(orderCode));
-      const res = await this.requestConSesion(
-        'GET',
-        `/v1/tracking?${params.toString()}`,
+      const raw = await this.obtenerTrackingRaw(
+        orderNumber,
+        orderCode,
         empresaId,
       );
-      const raw = await res.json();
       const order = raw?.order ?? {};
       const status = raw?.status ?? {};
       const oseId = order?.ose_id ?? raw?.ose_id ?? null;
@@ -400,9 +432,7 @@ export class ShalomService {
       this.logger.error('Error Shalom /v1/tracking', error?.message);
       // Exponer el motivo real al frontend (no un 500 genérico).
       if (error?.status && error?.response) throw error; // ya es HttpException
-      throw new BadRequestException(
-        error?.message || 'No se pudo obtener el tracking en Shalom',
-      );
+      throw new BadRequestException(this.mensajeShalom(error, 'el tracking'));
     }
   }
 
@@ -412,18 +442,26 @@ export class ShalomService {
     orderCode: string,
     empresaId?: number,
   ): Promise<number> {
-    const params = new URLSearchParams();
-    if (orderNumber) params.set('numero', String(orderNumber));
-    if (orderCode) params.set('codigo', String(orderCode));
-    const res = await this.requestConSesion(
-      'GET',
-      `/v1/tracking?${params.toString()}`,
+    const raw = await this.obtenerTrackingRaw(
+      orderNumber,
+      orderCode,
       empresaId,
     );
-    const raw = await res.json();
     const oseId = raw?.order?.ose_id ?? raw?.ose_id;
     if (!oseId) throw new Error('No se pudo resolver el ose_id de la orden');
     return Number(oseId);
+  }
+
+  /** Detecta si un 401 es en realidad la falla del recaptcha-worker de Shalom
+   * (upstream degradado) y no una sesión local vencida, para no decirle al
+   * usuario "tu sesión expiró" cuando el problema es del lado de Shalom. */
+  private esFalloAutenticacionUpstream(err: any): boolean {
+    if (err?.shalomCode === 'shalom_auth_failed') return true;
+    const msg = String(err?.message ?? '');
+    return (
+      msg.includes('el worker no respondió a tiempo') ||
+      msg.includes('generar recaptcha token')
+    );
   }
 
   /**
@@ -432,6 +470,9 @@ export class ShalomService {
    */
   private mensajeShalom(err: any, doc: string): string {
     const s = err?.shalomStatus;
+    if (s === 401 && this.esFalloAutenticacionUpstream(err)) {
+      return 'Shalom está teniendo problemas para autenticar con el sistema de rastreo en este momento (posible saturación de su proveedor). Intenta de nuevo en unos minutos.';
+    }
     if (s === 502 || s === 503 || s === 504) {
       return `Shalom no está disponible en este momento (su pasarela rechazó la solicitud). Intenta de nuevo en unos minutos.`;
     }
@@ -479,11 +520,15 @@ export class ShalomService {
     orderNumber: string,
     orderCode: string,
     empresaId?: number,
+    oseId?: number | string,
   ): Promise<Buffer> {
     try {
-      const oseId = await this.resolverOseId(orderNumber, orderCode, empresaId);
+      const resolvedOseId =
+        oseId && Number(oseId) > 0
+          ? Number(oseId)
+          : await this.resolverOseId(orderNumber, orderCode, empresaId);
       return await this.fetchDocumento(
-        `/v1/tracking/${oseId}/voucher`,
+        `/v1/tracking/${resolvedOseId}/voucher`,
         empresaId,
       );
     } catch (err: any) {
@@ -503,10 +548,14 @@ export class ShalomService {
     orderNumber: string,
     orderCode: string,
     empresaId?: number,
+    oseId?: number | string,
   ): Promise<Buffer> {
     try {
-      const oseId = await this.resolverOseId(orderNumber, orderCode, empresaId);
-      return await this.fetchDocumento(`/v1/orders/${oseId}/label`, empresaId);
+      const resolvedOseId =
+        oseId && Number(oseId) > 0
+          ? Number(oseId)
+          : await this.resolverOseId(orderNumber, orderCode, empresaId);
+      return await this.fetchDocumento(`/v1/orders/${resolvedOseId}/label`, empresaId);
     } catch (err: any) {
       if (err instanceof HttpException) throw err;
       throw new BadRequestException(this.mensajeShalom(err, 'la etiqueta'));

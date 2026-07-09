@@ -2373,6 +2373,7 @@ enum OrigenPedidoLogistica {
   WEBHOOK
   ECOMMERCE
   FALCONEXT_ERP
+  FALCONEXT
 }
 
 enum EstadoPedidoLogistica {
@@ -2668,6 +2669,14 @@ model PedidoLogistica {
   notasCliente        String?
   notasInternas       String?
   
+  // Integraciones Externas
+  externalOrderId     String?
+  externalSystem      String?
+  externalPayload     Json?
+  integrationStatus   String?
+  webhookStatus       String?
+  lastSyncAt          DateTime?
+
   creadoEn            DateTime                 @default(now())
   actualizadoEn       DateTime                 @updatedAt
 

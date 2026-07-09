@@ -134,6 +134,8 @@ model Empresa {
   whatsappPhoneNumberId   String?
   whatsappBusinessId      String?
   whatsappActivo          Boolean                       @default(true)
+  shalomEmail             String?
+  shalomPassword          String?
   yapeNumero              String?
   yapeQrUrl               String?
   aceptaEnvio             Boolean                       @default(true)
@@ -179,6 +181,17 @@ model Empresa {
   vinculosXmlProductos    VinculoProductoProveedorXml[]
   imagenesProductoIa      ImagenProductoAprobadaIa[]
   reservas                Reserva[]
+  conductoresLogistica    ConductorLogistica[]
+  tiposVehiculoLogistica  TipoVehiculoLogistica[]
+  vehiculosLogistica      VehiculoLogistica[]
+  asignacionesVehiculoLogistica AsignacionVehiculoLogistica[]
+  almacenesLogistica      AlmacenLogistica[]
+  zonasEntregaLogistica   ZonaEntregaLogistica[]
+  clientesLogistica       ClienteLogistica[]
+  direccionesEntregaLogistica DireccionEntregaLogistica[]
+  pedidosLogistica        PedidoLogistica[]
+  despachosLogistica      DespachoLogistica[]
+
   repartidores            Repartidor[]
   despachoMensajeTemplate DespachoMensajeTemplate?
 
@@ -281,6 +294,9 @@ model Usuario {
   comisionGlobalFija     Decimal?                @db.Decimal(12, 2)
   comisionGlobalVenta    Decimal?                @db.Decimal(12, 2)
   actasInspeccion        ActaInspeccion[]
+  historialEstadosPedidoLogistica HistorialEstadoPedidoLogistica[]
+  historialEstadosDespachoLogistica HistorialEstadoDespachoLogistica[]
+
 }
 
 model Categoria {
@@ -1756,6 +1772,7 @@ model Repartidor {
   actualizadoEn  DateTime        @updatedAt
   enviosDespacho EnvioDespacho[]
   pedidosTienda  PedidoTienda[]
+  conductoresLogistica ConductorLogistica[]
 
   @@unique([empresaId, nombre])
   @@index([empresaId, activo])
@@ -2317,4 +2334,543 @@ model ContratoVehicular {
   @@index([empresaId, estado])
   @@index([vehiculoId])
   @@index([fechaFin])
+}
+
+// ============================================================================
+// MÓDULO: FALCONEXT LOGÍSTICA (MONOLITO MODULAR)
+// ============================================================================
+
+enum EstadoConductorLogistica {
+  DISPONIBLE
+  EN_RUTA
+  EN_DESCANSO
+  FUERA_TURNO
+  NO_DISPONIBLE
+  SUSPENDIDO
+}
+
+enum EstadoVehiculoLogistica {
+  DISPONIBLE
+  EN_USO
+  MANTENIMIENTO
+  AVERIADO
+  FUERA_SERVICIO
+}
+
+enum TipoCombustibleLogistica {
+  GASOLINA
+  DIESEL
+  GLP
+  GNV
+  ELECTRICO
+  HIBRIDO
+}
+
+enum OrigenPedidoLogistica {
+  MANUAL
+  EXCEL
+  API
+  WEBHOOK
+  ECOMMERCE
+  FALCONEXT_ERP
+  FALCONEXT
+}
+
+enum EstadoPedidoLogistica {
+  PENDIENTE
+  VALIDADO
+  ASIGNADO
+  LISTO_RECOGER
+  RECOGIDO
+  EN_TRANSITO
+  LLEGANDO
+  EN_UBICACION
+  ENTREGADO
+  ENTREGA_PARCIAL
+  FALLIDO
+  DEVUELTO
+  REPROGRAMADO
+  CANCELADO
+}
+
+enum EstadoDespachoLogistica {
+  BORRADOR
+  PLANIFICADO
+  APROBADO
+  CARGANDO
+  LISTO
+  EN_CURSO
+  COMPLETADO
+  CANCELADO
+}
+
+enum TipoIncidenciaLogistica {
+  DIRECCION_NO_ENCONTRADA
+  CLIENTE_AUSENTE
+  CLIENTE_RECHAZO
+  PAQUETE_DANADO
+  PRODUCTO_EQUIVOCADO
+  PEDIDO_INCOMPLETO
+  ACCESO_DENEGADO
+  AVERIA_VEHICULO
+  ACCIDENTE
+  CLIMA
+  VIA_BLOQUEADA
+  SEGURIDAD
+  PROBLEMA_PAGO
+  DOCUMENTACION_FALTANTE
+  OTRO
+}
+
+enum TipoParadaLogistica {
+  ORIGEN
+  ENTREGA
+  RECOGIDA
+  DESCANSO
+  COMBUSTIBLE
+  RETORNO
+}
+
+model ConductorLogistica {
+  id                  Int                      @id @default(autoincrement())
+  empresaId           Int
+  repartidorId        Int?                     @unique // Relación opcional con el Repartidor base
+  nombre              String
+  apellido            String
+  dni                 String?
+  celular             String?
+  email               String?
+  nroLicencia         String?
+  tipoLicencia        String?
+  vencimientoLicencia DateTime?
+  tipoEmpleo          String?                  @default("EVENTUAL")
+  estado              EstadoConductorLogistica @default(DISPONIBLE)
+  
+  // Scoring y Gamificación
+  scorePromedio       Decimal                  @db.Decimal(5, 2) @default(100)
+  nivelActual         Int                      @default(1)
+  xpAcumulada         Int                      @default(0)
+  entregasExitosas    Int                      @default(0)
+  entregasFallidas    Int                      @default(0)
+
+  // Ubicación Live
+  lat                 Decimal?                 @db.Decimal(10, 8)
+  lng                 Decimal?                 @db.Decimal(11, 8)
+  ultimaUbicacion     DateTime?
+  
+  creadoEn            DateTime                 @default(now())
+  actualizadoEn       DateTime                 @updatedAt
+
+  empresa             Empresa                  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  repartidor          Repartidor?              @relation(fields: [repartidorId], references: [id], onDelete: SetNull)
+  despachos           DespachoLogistica[]
+  asignacionesVehiculo AsignacionVehiculoLogistica[]
+  paradas             ParadaRutaLogistica[]
+
+  @@index([empresaId])
+  @@index([empresaId, estado])
+}
+
+model TipoVehiculoLogistica {
+  id                  Int                 @id @default(autoincrement())
+  empresaId           Int
+  nombre              String              // Moto, Van, Camioneta, Camión
+  capacidadPesoKg     Decimal             @db.Decimal(10, 2)
+  capacidadVolumenM3  Decimal             @db.Decimal(10, 2)
+  costoPromedioKm     Decimal?            @db.Decimal(10, 2)
+  creadoEn            DateTime            @default(now())
+
+  empresa             Empresa             @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  vehiculos           VehiculoLogistica[]
+
+  @@index([empresaId])
+}
+
+model VehiculoLogistica {
+  id                  Int                      @id @default(autoincrement())
+  empresaId           Int
+  tipoVehiculoId      Int
+  placa               String
+  marca               String
+  modelo              String?
+  anio                Int?
+  estado              EstadoVehiculoLogistica  @default(DISPONIBLE)
+  
+  // Especificaciones
+  capacidadPesoKg     Decimal                  @db.Decimal(10, 2) // Sobrescribe el default del tipo si aplica
+  capacidadVolumenM3  Decimal                  @db.Decimal(10, 2) // Sobrescribe el default del tipo si aplica
+  tipoCombustible     TipoCombustibleLogistica
+  tieneRefrigeracion  Boolean                  @default(false)
+  tieneGPSIntegrado   Boolean                  @default(false)
+  
+  // Telemetría / Estado
+  odometroActual      Int                      @default(0)
+  proximoMantenimiento Int?
+  
+  creadoEn            DateTime                 @default(now())
+  actualizadoEn       DateTime                 @updatedAt
+
+  empresa             Empresa                  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  tipoVehiculo        TipoVehiculoLogistica    @relation(fields: [tipoVehiculoId], references: [id], onDelete: Restrict)
+  despachos           DespachoLogistica[]
+  asignaciones        AsignacionVehiculoLogistica[]
+
+  @@unique([empresaId, placa])
+  @@index([empresaId])
+  @@index([empresaId, estado])
+}
+
+model AsignacionVehiculoLogistica {
+  id                  Int                 @id @default(autoincrement())
+  empresaId           Int
+  conductorId         Int
+  vehiculoId          Int
+  fechaInicio         DateTime            @default(now())
+  fechaFin            DateTime?
+  kmInicio            Int?
+  kmFin               Int?
+  notas               String?
+
+  empresa             Empresa             @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  conductor           ConductorLogistica  @relation(fields: [conductorId], references: [id], onDelete: Cascade)
+  vehiculo            VehiculoLogistica   @relation(fields: [vehiculoId], references: [id], onDelete: Cascade)
+
+  @@index([empresaId])
+  @@index([conductorId])
+  @@index([vehiculoId])
+}
+
+model AlmacenLogistica {
+  id                  Int                 @id @default(autoincrement())
+  empresaId           Int
+  nombre              String
+  codigo              String?
+  tipo                String              @default("PRINCIPAL") // PRINCIPAL, HUB, CROSSDOCK
+  direccion           String
+  distrito            String?
+  ciudad              String?
+  departamento        String?
+  lat                 Decimal?            @db.Decimal(10, 8)
+  lng                 Decimal?            @db.Decimal(11, 8)
+  contactoNombre      String?
+  contactoTelefono    String?
+  nroMuelles          Int                 @default(1)
+  horaApertura        String?
+  horaCierre          String?
+  activo              Boolean             @default(true)
+  creadoEn            DateTime            @default(now())
+  actualizadoEn       DateTime            @updatedAt
+
+  empresa             Empresa             @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  despachosOrigen     DespachoLogistica[] @relation("AlmacenOrigen")
+  despachosDestino    DespachoLogistica[] @relation("AlmacenDestino")
+
+  @@unique([empresaId, codigo])
+  @@index([empresaId])
+}
+
+model ZonaEntregaLogistica {
+  id                  Int                 @id @default(autoincrement())
+  empresaId           Int
+  nombre              String
+  codigo              String?
+  color               String?             @default("#3B82F6")
+  poligonoGeoJSON     Json?               // Coordenadas del polígono
+  costoBase           Decimal             @db.Decimal(10, 2) @default(0)
+  costoPorKm          Decimal             @db.Decimal(10, 2) @default(0)
+  dificultad          Int                 @default(1) // Multiplicador de tiempo
+  activa              Boolean             @default(true)
+  creadoEn            DateTime            @default(now())
+
+  empresa             Empresa             @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  direcciones         DireccionEntregaLogistica[]
+
+  @@index([empresaId])
+}
+
+model ClienteLogistica {
+  id                  Int                 @id @default(autoincrement())
+  empresaId           Int
+  nombre              String
+  tipoDocumento       String?
+  nroDocumento        String?
+  email               String?
+  celular             String?
+  whatsapp            String?
+  scoreConfianza      Decimal             @db.Decimal(5, 2) @default(100)
+  creadoEn            DateTime            @default(now())
+  actualizadoEn       DateTime            @updatedAt
+
+  empresa             Empresa             @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  direcciones         DireccionEntregaLogistica[]
+  pedidos             PedidoLogistica[]
+
+  @@index([empresaId])
+  @@index([empresaId, nroDocumento])
+}
+
+model DireccionEntregaLogistica {
+  id                  Int                 @id @default(autoincrement())
+  empresaId           Int
+  clienteId           Int
+  zonaId              Int?
+  etiqueta            String?             // Casa, Trabajo, Almacén
+  direccion           String
+  distrito            String?
+  ciudad              String?
+  departamento        String?
+  lat                 Decimal?            @db.Decimal(10, 8)
+  lng                 Decimal?            @db.Decimal(11, 8)
+  referencia          String?
+  notasAcceso         String?             // "Dejar en conserjería", "Código puerta 1234"
+  esPrincipal         Boolean             @default(false)
+  creadoEn            DateTime            @default(now())
+
+  empresa             Empresa             @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  cliente             ClienteLogistica    @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  zona                ZonaEntregaLogistica? @relation(fields: [zonaId], references: [id], onDelete: SetNull)
+  pedidos             PedidoLogistica[]
+  paradas             ParadaRutaLogistica[]
+
+  @@index([empresaId])
+  @@index([clienteId])
+}
+
+model PedidoLogistica {
+  id                  Int                      @id @default(autoincrement())
+  empresaId           Int
+  codigoTracking      String                   @unique
+  origen              OrigenPedidoLogistica    @default(MANUAL)
+  nroOrdenExterna     String?
+  
+  clienteId           Int
+  direccionEntregaId  Int
+  
+  estado              EstadoPedidoLogistica    @default(PENDIENTE)
+  fechaSolicitada     DateTime?
+  ventanaInicio       String?                  // HH:mm
+  ventanaFin          String?                  // HH:mm
+  prioridad           Int                      @default(1) // 1: Baja, 2: Normal, 3: Alta
+  esUrgente           Boolean                  @default(false)
+  
+  // Características de Carga (Sumarizadas de los items)
+  pesoTotalKg         Decimal                  @db.Decimal(10, 2) @default(0)
+  volumenTotalM3      Decimal                  @db.Decimal(10, 2) @default(0)
+  nroBultos           Int                      @default(1)
+  
+  // Requisitos de Entrega
+  requiereFirma       Boolean                  @default(true)
+  requiereFoto        Boolean                  @default(false)
+  cobroContraEntrega  Decimal                  @db.Decimal(10, 2) @default(0) // Monto COD
+  
+  // Costos Calculados
+  costoEnvio          Decimal                  @db.Decimal(10, 2) @default(0)
+  
+  notasCliente        String?
+  notasInternas       String?
+  
+  // Integraciones Externas
+  externalOrderId     String?
+  externalSystem      String?
+  externalPayload     Json?
+  integrationStatus   String?
+  webhookStatus       String?
+  lastSyncAt          DateTime?
+
+  creadoEn            DateTime                 @default(now())
+  actualizadoEn       DateTime                 @updatedAt
+
+  empresa             Empresa                  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  cliente             ClienteLogistica         @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  direccionEntrega    DireccionEntregaLogistica @relation(fields: [direccionEntregaId], references: [id], onDelete: Restrict)
+  
+  items               ItemPedidoLogistica[]
+  despachosAsignados  DespachoPedidoLogistica[]
+  pruebasEntrega      PruebaEntregaLogistica[]
+  incidencias         IncidenciaPedidoLogistica[]
+  historialEstados    HistorialEstadoPedidoLogistica[]
+
+  @@index([empresaId])
+  @@index([empresaId, estado])
+  @@index([codigoTracking])
+}
+
+model ItemPedidoLogistica {
+  id                  Int                 @id @default(autoincrement())
+  pedidoId            Int
+  sku                 String?
+  descripcion         String
+  cantidad            Int                 @default(1)
+  pesoUnitarioKg      Decimal?            @db.Decimal(10, 2)
+  volumenUnitarioM3   Decimal?            @db.Decimal(10, 2)
+  valorDeclarado      Decimal?            @db.Decimal(10, 2)
+  
+  pedido              PedidoLogistica     @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+
+  @@index([pedidoId])
+}
+
+model DespachoLogistica {
+  id                  Int                      @id @default(autoincrement())
+  empresaId           Int
+  codigo              String                   @unique // EJ: DESP-2026-0001
+  nombre              String?
+  estado              EstadoDespachoLogistica  @default(BORRADOR)
+  
+  almacenOrigenId     Int
+  almacenDestinoId    Int?
+  conductorId         Int?
+  vehiculoId          Int?
+  
+  fechaProgramada     DateTime
+  horaInicioProgramada String?                 // HH:mm
+  
+  // Métricas Calculadas
+  distanciaTotalKm    Decimal?                 @db.Decimal(10, 2)
+  tiempoEstimadoMin   Int?
+  costoEstimado       Decimal?                 @db.Decimal(10, 2)
+  
+  // Realidad
+  horaInicioReal      DateTime?
+  horaFinReal         DateTime?
+  distanciaRealKm     Decimal?                 @db.Decimal(10, 2)
+  
+  notas               String?
+  creadoEn            DateTime                 @default(now())
+  actualizadoEn       DateTime                 @updatedAt
+
+  empresa             Empresa                  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  almacenOrigen       AlmacenLogistica         @relation("AlmacenOrigen", fields: [almacenOrigenId], references: [id], onDelete: Restrict)
+  almacenDestino      AlmacenLogistica?        @relation("AlmacenDestino", fields: [almacenDestinoId], references: [id], onDelete: SetNull)
+  conductor           ConductorLogistica?      @relation(fields: [conductorId], references: [id], onDelete: SetNull)
+  vehiculo            VehiculoLogistica?       @relation(fields: [vehiculoId], references: [id], onDelete: SetNull)
+  
+  pedidos             DespachoPedidoLogistica[]
+  rutaOptimizada      RutaOptimizadaLogistica?
+  historialEstados    HistorialEstadoDespachoLogistica[]
+
+  @@index([empresaId])
+  @@index([empresaId, estado])
+  @@index([fechaProgramada])
+}
+
+model DespachoPedidoLogistica {
+  id                  Int                 @id @default(autoincrement())
+  despachoId          Int
+  pedidoId            Int
+  ordenSecuencia      Int?
+  eta                 DateTime?           // Hora estimada de llegada
+  estado              String              @default("PENDIENTE") // PENDIENTE, ENTREGADO, FALLIDO
+  
+  despacho            DespachoLogistica   @relation(fields: [despachoId], references: [id], onDelete: Cascade)
+  pedido              PedidoLogistica     @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+
+  @@unique([despachoId, pedidoId])
+  @@index([despachoId])
+  @@index([pedidoId])
+}
+
+model RutaOptimizadaLogistica {
+  id                  Int                 @id @default(autoincrement())
+  despachoId          Int                 @unique
+  polyline            String              // Google Maps polyline u OSRM
+  distanciaKm         Decimal             @db.Decimal(10, 2)
+  duracionMin         Int
+  creadoEn            DateTime            @default(now())
+
+  despacho            DespachoLogistica   @relation(fields: [despachoId], references: [id], onDelete: Cascade)
+  paradas             ParadaRutaLogistica[]
+}
+
+model ParadaRutaLogistica {
+  id                  Int                 @id @default(autoincrement())
+  rutaId              Int
+  secuencia           Int
+  tipo                TipoParadaLogistica @default(ENTREGA)
+  lat                 Decimal             @db.Decimal(10, 8)
+  lng                 Decimal             @db.Decimal(11, 8)
+  direccionId         Int?
+  conductorId         Int?                // Quién hizo esta parada (por si cambia el conductor)
+  
+  // Realidad
+  horaLlegada         DateTime?
+  horaSalida          DateTime?
+  
+  ruta                RutaOptimizadaLogistica @relation(fields: [rutaId], references: [id], onDelete: Cascade)
+  direccion           DireccionEntregaLogistica? @relation(fields: [direccionId], references: [id], onDelete: SetNull)
+  conductor           ConductorLogistica? @relation(fields: [conductorId], references: [id], onDelete: SetNull)
+
+  @@index([rutaId])
+}
+
+model PruebaEntregaLogistica {
+  id                  Int                 @id @default(autoincrement())
+  pedidoId            Int
+  nombreReceptor      String?
+  dniReceptor         String?
+  parentesco          String?
+  firmaUrl            String?             // URL en S3
+  fotosUrls           String[]            // URLs en S3
+  montoCobrado        Decimal?            @db.Decimal(10, 2)
+  metodoPago          String?
+  lat                 Decimal?            @db.Decimal(10, 8)
+  lng                 Decimal?            @db.Decimal(11, 8)
+  notas               String?
+  creadoEn            DateTime            @default(now())
+
+  pedido              PedidoLogistica     @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+
+  @@index([pedidoId])
+}
+
+model IncidenciaPedidoLogistica {
+  id                  Int                      @id @default(autoincrement())
+  pedidoId            Int
+  tipo                TipoIncidenciaLogistica
+  severidad           String                   @default("MEDIA") // BAJA, MEDIA, ALTA, CRITICA
+  descripcion         String
+  fotosUrls           String[]                 // URLs en S3
+  lat                 Decimal?                 @db.Decimal(10, 8)
+  lng                 Decimal?                 @db.Decimal(11, 8)
+  resuelta            Boolean                  @default(false)
+  notasResolucion     String?
+  creadoEn            DateTime                 @default(now())
+  actualizadoEn       DateTime                 @updatedAt
+
+  pedido              PedidoLogistica          @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+
+  @@index([pedidoId])
+}
+
+model HistorialEstadoPedidoLogistica {
+  id                  Int                      @id @default(autoincrement())
+  pedidoId            Int
+  estadoAnterior      EstadoPedidoLogistica?
+  estadoNuevo         EstadoPedidoLogistica
+  motivo              String?
+  notas               String?
+  lat                 Decimal?                 @db.Decimal(10, 8)
+  lng                 Decimal?                 @db.Decimal(11, 8)
+  usuarioId           Int?
+  creadoEn            DateTime                 @default(now())
+
+  pedido              PedidoLogistica          @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  usuario             Usuario?                 @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
+
+  @@index([pedidoId])
+}
+
+model HistorialEstadoDespachoLogistica {
+  id                  Int                      @id @default(autoincrement())
+  despachoId          Int
+  estadoAnterior      EstadoDespachoLogistica?
+  estadoNuevo         EstadoDespachoLogistica
+  motivo              String?
+  usuarioId           Int?
+  creadoEn            DateTime                 @default(now())
+
+  despacho            DespachoLogistica        @relation(fields: [despachoId], references: [id], onDelete: Cascade)
+  usuario             Usuario?                 @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
+
+  @@index([despachoId])
 }

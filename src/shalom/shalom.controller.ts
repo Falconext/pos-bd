@@ -4,6 +4,7 @@ import {
   Post,
   Body,
   Param,
+  Query,
   Res,
   UseGuards,
   HttpCode,
@@ -52,6 +53,7 @@ export class ShalomController {
   async ticketImage(
     @Param('orderNumber') orderNumber: string,
     @Param('orderCode') orderCode: string,
+    @Query('oseId') oseId: string | undefined,
     @User() user: any,
     @Res() res: Response,
   ) {
@@ -60,6 +62,7 @@ export class ShalomController {
       orderNumber,
       orderCode,
       user?.empresaId,
+      oseId,
     );
     res.set({
       'Content-Type': 'application/pdf',
@@ -72,6 +75,7 @@ export class ShalomController {
   async label(
     @Param('orderNumber') orderNumber: string,
     @Param('orderCode') orderCode: string,
+    @Query('oseId') oseId: string | undefined,
     @User() user: any,
     @Res() res: Response,
   ) {
@@ -79,6 +83,7 @@ export class ShalomController {
       orderNumber,
       orderCode,
       user?.empresaId,
+      oseId,
     );
     res.set({
       'Content-Type': 'application/pdf',

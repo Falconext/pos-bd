@@ -7,6 +7,8 @@ import { ClienteLogisticaModule } from './cliente/cliente.module';
 import { PedidoLogisticaModule } from './pedido/pedido.module';
 import { DespachoLogisticaModule } from './despacho/despacho.module';
 import { TrackingLogisticaModule } from './tracking/tracking.module';
+import { IntegracionesModule } from './integraciones/integraciones.module';
+
 
 @Module({
   imports: [
@@ -18,6 +20,7 @@ import { TrackingLogisticaModule } from './tracking/tracking.module';
     PedidoLogisticaModule,
     DespachoLogisticaModule,
     TrackingLogisticaModule,
+    IntegracionesModule,
   ],
   controllers: [],
   providers: [],
