@@ -2220,14 +2220,26 @@ export class ComprobanteService {
 
     if (!comp) throw new NotFoundException('Comprobante no encontrado');
 
-    if (['EMITIDO', 'ANULADO'].includes(comp.estadoEnvioSunat as string)) {
+    // Los comprobantes informales (NV, TICKET, RH, CP, NP, OT) pueden eliminarse
+    // siempre — incluso ANULADO — porque no son documentos SUNAT y su borrado
+    // libera el correlativo. Los formales EMITIDO/ANULADO NO pueden borrarse.
+    const isInformal = ['TICKET', 'NV', 'RH', 'CP', 'NP', 'OT'].includes(
+      comp.tipoDoc,
+    );
+    const yaAnulado = comp.estadoEnvioSunat === 'ANULADO';
+    if (
+      !isInformal &&
+      ['EMITIDO', 'ANULADO'].includes(comp.estadoEnvioSunat as string)
+    ) {
       throw new BadRequestException(
         `No se puede eliminar un comprobante con estado ${comp.estadoEnvioSunat}`,
       );
     }
 
-    // 1) Revertir stock primero (antes de borrar los detalles)
-    if (comp.detalles?.length) {
+    // 1) Revertir stock primero (antes de borrar los detalles).
+    //    Si el comprobante ya estaba ANULADO, el stock ya se revirtió al anular
+    //    — no revertir de nuevo para no duplicar el inventario.
+    if (comp.detalles?.length && !yaAnulado) {
       try {
         await this.revertirStock(comp.detalles, {
           empresaId: comp.empresaId,
@@ -3630,13 +3642,14 @@ export class ComprobanteService {
       ' ' +
       ahora.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
 
+    const razonSocialEmpresa = String(full.empresa?.razonSocial || (full.empresa as any)?.nombreComercial || '').toUpperCase();
     const pdfData: any = {
-      nombreComercial: (full.empresa as any).nombreComercial
-        ? (full.empresa as any).nombreComercial.toUpperCase()
-        : full.empresa.razonSocial.toUpperCase(),
-      razonSocial: full.empresa.razonSocial.toUpperCase(),
-      ruc: full.empresa.ruc,
-      direccion: (full.empresa.direccion || '').toUpperCase(),
+      nombreComercial: (full.empresa as any)?.nombreComercial
+        ? String((full.empresa as any).nombreComercial).toUpperCase()
+        : razonSocialEmpresa,
+      razonSocial: razonSocialEmpresa,
+      ruc: full.empresa?.ruc || '',
+      direccion: (full.empresa?.direccion || '').toUpperCase(),
       rubro: full.empresa.rubro?.nombre?.toUpperCase() || '',
       celular: (
         (full.empresa as any).celular ||
@@ -3781,7 +3794,20 @@ export class ComprobanteService {
     if (!comprobante) throw new NotFoundException('Comprobante no encontrado');
     if (comprobante.s3PdfUrl) return comprobante.s3PdfUrl;
 
-    const { buffer, key } = await this.buildPdfBufferInformal(id);
+    let buffer: Buffer;
+    let key: string;
+    try {
+      ({ buffer, key } = await this.buildPdfBufferInformal(id));
+    } catch (error: any) {
+      // Log detallado para diagnosticar el 500 (antes se perdía en un error genérico).
+      this.logger.error(
+        `Error generando PDF del comprobante ${id}: ${error?.message}`,
+        error?.stack,
+      );
+      throw new BadRequestException(
+        `No se pudo generar el PDF del comprobante: ${error?.message || 'error desconocido'}`,
+      );
+    }
 
     if (this.s3Service.isEnabled()) {
       try {

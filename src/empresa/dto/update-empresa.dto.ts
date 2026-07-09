@@ -184,6 +184,15 @@ export class UpdateEmpresaDto {
   @IsBoolean()
   whatsappActivo?: boolean;
 
+  // Credenciales de Shalom Pro (courier) — por empresa.
+  @IsOptional()
+  @IsString()
+  shalomEmail?: string;
+
+  @IsOptional()
+  @IsString()
+  shalomPassword?: string;
+
   @IsOptional()
   @IsBoolean()
   usaDemo?: boolean;

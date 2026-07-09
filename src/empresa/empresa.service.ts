@@ -969,6 +969,11 @@ export class EmpresaService {
         updateData.whatsappProvider = dto.whatsappProvider;
       if (dto.whatsappApiToken !== undefined)
         updateData.whatsappApiToken = dto.whatsappApiToken;
+      if (dto.shalomEmail !== undefined)
+        updateData.shalomEmail = dto.shalomEmail || null;
+      // La contraseña solo se actualiza si llega no vacía (vacío = conservar la actual).
+      if (dto.shalomPassword !== undefined && dto.shalomPassword.trim() !== '')
+        updateData.shalomPassword = dto.shalomPassword;
       if (dto.whatsappPhoneNumberId !== undefined)
         updateData.whatsappPhoneNumberId = dto.whatsappPhoneNumberId;
       if (dto.whatsappBusinessId !== undefined)

@@ -576,6 +576,8 @@ export class AuthService {
             directorTecnico: true,
             whatsappProvider: true,
             whatsappApiToken: true,
+            shalomEmail: true,
+            shalomPassword: true,
             whatsappPhoneNumberId: true,
             whatsappBusinessId: true,
             whatsappActivo: true,
@@ -686,6 +688,9 @@ export class AuthService {
         usuario.empresa.whatsappApiToken,
       );
       delete usuario.empresa.whatsappApiToken;
+      // Shalom Pro: exponer solo un booleano; nunca la contraseña.
+      usuario.empresa.shalomConfigured = Boolean(usuario.empresa.shalomPassword);
+      delete usuario.empresa.shalomPassword;
     }
 
     return usuario;

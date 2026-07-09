@@ -134,6 +134,8 @@ model Empresa {
   whatsappPhoneNumberId   String?
   whatsappBusinessId      String?
   whatsappActivo          Boolean                       @default(true)
+  shalomEmail             String?
+  shalomPassword          String?
   yapeNumero              String?
   yapeQrUrl               String?
   aceptaEnvio             Boolean                       @default(true)
