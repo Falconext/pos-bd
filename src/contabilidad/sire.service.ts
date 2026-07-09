@@ -33,7 +33,10 @@ export class SireService {
     return `${anio}${String(mes).padStart(2, '0')}00`;
   }
 
-  private inferTipoDocIdentidad(nroDoc: string, tipoDocCodigo?: string): string {
+  private inferTipoDocIdentidad(
+    nroDoc: string,
+    tipoDocCodigo?: string,
+  ): string {
     if (tipoDocCodigo) return tipoDocCodigo;
     if (!nroDoc) return '0';
     const clean = nroDoc.replace(/\D/g, '');
@@ -47,7 +50,9 @@ export class SireService {
   }
 
   private getDateRange(mes: number, anio: number) {
-    const inicio = new Date(`${anio}-${String(mes).padStart(2, '0')}-01T00:00:00.000-05:00`);
+    const inicio = new Date(
+      `${anio}-${String(mes).padStart(2, '0')}-01T00:00:00.000-05:00`,
+    );
     const lastDay = new Date(anio, mes, 0).getDate();
     const fin = new Date(
       `${anio}-${String(mes).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}T23:59:59.999-05:00`,
@@ -55,14 +60,25 @@ export class SireService {
     return { gte: inicio, lte: fin };
   }
 
-  private getNombreArchivo(tipo: 'ventas' | 'compras', mes: number, anio: number, ext: string): string {
+  private getNombreArchivo(
+    tipo: 'ventas' | 'compras',
+    mes: number,
+    anio: number,
+    ext: string,
+  ): string {
     const periodo = `${anio}${String(mes).padStart(2, '0')}`;
     return `SIRE_${tipo === 'ventas' ? 'RVIE' : 'RCE'}_${periodo}.${ext}`;
   }
 
   // ──────────────── VENTAS (RVIE) ────────────────
 
-  private async fetchVentas(empresaId: number, mes: number, anio: number, empresarial: boolean, sedeId?: number) {
+  private async fetchVentas(
+    empresaId: number,
+    mes: number,
+    anio: number,
+    empresarial: boolean,
+    sedeId?: number,
+  ) {
     const fechaEmision = this.getDateRange(mes, anio);
     return this.prisma.comprobante.findMany({
       where: {
@@ -107,7 +123,13 @@ export class SireService {
     empresarial: boolean,
     sedeId?: number,
   ): Promise<Buffer> {
-    const comprobantes = await this.fetchVentas(empresaId, mes, anio, empresarial, sedeId);
+    const comprobantes = await this.fetchVentas(
+      empresaId,
+      mes,
+      anio,
+      empresarial,
+      sedeId,
+    );
     const periodo = this.getPeriodo(mes, anio);
     const lines: string[] = [];
 
@@ -132,51 +154,65 @@ export class SireService {
       if (simple) {
         lines.push(
           [
-            periodo, cuo, '', fecEmision, '',
-            c.tipoDoc, c.serie, String(c.correlativo),
-            tipoDocCliente, nroDocCliente, razonSocial,
-            '0.00', baseGravadas, '0.00', igv, '0.00',
-            '0.00', inafectas,
-            total, estado,
+            periodo,
+            cuo,
+            '',
+            fecEmision,
+            '',
+            c.tipoDoc,
+            c.serie,
+            String(c.correlativo),
+            tipoDocCliente,
+            nroDocCliente,
+            razonSocial,
+            '0.00',
+            baseGravadas,
+            '0.00',
+            igv,
+            '0.00',
+            '0.00',
+            inafectas,
+            total,
+            estado,
           ].join('|'),
         );
       } else {
         // Formato RVIE 14.1 — 33 campos
         lines.push(
           [
-            periodo,              // 1  Período
-            cuo,                  // 2  CUO
-            '',                   // 3  Correlativo asiento
-            fecEmision,           // 4  Fecha emisión
-            '',                   // 5  Fecha vencimiento
-            c.tipoDoc,            // 6  Tipo CDP
-            c.serie,              // 7  Serie
-            String(c.correlativo),// 8  Número
-            tipoDocCliente,       // 9  Tipo doc identidad cliente
-            nroDocCliente,        // 10 Nro doc cliente
-            razonSocial,          // 11 Razón social
-            '0.00',               // 12 Exportación
-            baseGravadas,         // 13 Base imp. gravadas
-            '0.00',               // 14 Dcto. base imp.
-            igv,                  // 15 IGV / IPM
-            '0.00',               // 16 Dcto. IGV
-            '0.00',               // 17 Exoneradas
-            inafectas,            // 18 Inafectas
-            '0.00',               // 19 ISC
-            '0.00',               // 20 Base IVAP
-            '0.00',               // 21 IVAP
-            '0.00',               // 22 ICBPER
-            '0.00',               // 23 Otros tributos
-            total,                // 24 Importe total
-            tipoCambio,           // 25 Tipo de cambio
-            '',                   // 26 Fecha CDP referencia
-            tipRef,               // 27 Tipo CDP referencia
-            nroRef,               // 28 Nro CDP referencia
-            '',                   // 29 ID contrato
-            '0',                  // 30 Indicador pago beneficio
-            estado,               // 31 Estado
-            '',                   // 32 Código error
-            '1',                  // 33 Indicador medio pago
+            periodo, // 1  Período
+            cuo, // 2  CUO
+            '', // 3  Correlativo asiento
+            fecEmision, // 4  Fecha emisión
+            '', // 5  Fecha vencimiento
+            c.tipoDoc, // 6  Tipo CDP
+            c.serie, // 7  Serie
+            String(c.correlativo), // 8  Número
+            tipoDocCliente, // 9  Tipo doc identidad cliente
+            nroDocCliente, // 10 Nro doc cliente
+            razonSocial, // 11 Razón social
+            '0.00', // 12 Exportación
+            baseGravadas, // 13 Base imp. gravadas
+            '0.00', // 14 Dcto. base imp.
+            igv, // 15 IGV / IPM
+            '0.00', // 16 Dcto. IGV
+            '0.00', // 17 Exoneradas
+            inafectas, // 18 Inafectas
+            '0.00', // 19 ISC
+            '0.00', // 20 Base IVAP
+            '0.00', // 21 IVAP
+            '0.00', // 22 ICBPER
+            '0.00', // 23 Otros tributos
+            total, // 24 Importe total
+            tipoCambio, // 25 Tipo de cambio
+            '', // 26 Fecha CDP referencia
+            tipRef, // 27 Tipo CDP referencia
+            nroRef, // 28 Nro CDP referencia
+            '', // 29 ID contrato
+            '0', // 30 Indicador pago beneficio
+            estado, // 31 Estado
+            '', // 32 Código error
+            '1', // 33 Indicador medio pago
           ].join('|'),
         );
       }
@@ -193,7 +229,13 @@ export class SireService {
     empresarial: boolean,
     sedeId?: number,
   ): Promise<Buffer> {
-    const comprobantes = await this.fetchVentas(empresaId, mes, anio, empresarial, sedeId);
+    const comprobantes = await this.fetchVentas(
+      empresaId,
+      mes,
+      anio,
+      empresarial,
+      sedeId,
+    );
     const periodo = this.getPeriodo(mes, anio);
 
     const rows = comprobantes.map((c) => {
@@ -234,7 +276,7 @@ export class SireService {
         'TIPO DOC CLIENTE': tipoDocCliente,
         'NRO DOC CLIENTE': c.cliente?.nroDoc ?? '',
         'RAZÓN SOCIAL': c.cliente?.nombre ?? '',
-        'EXPORTACIÓN': 0,
+        EXPORTACIÓN: 0,
         'BASE GRAVADA': +(c.mtoOperGravadas ?? 0).toFixed(2),
         'DCTO. BASE IMP.': 0,
         IGV: +(c.mtoIGV ?? 0).toFixed(2),
@@ -256,7 +298,9 @@ export class SireService {
     });
 
     const ws = XLSX.utils.json_to_sheet(rows);
-    ws['!cols'] = Object.keys(rows[0] ?? {}).map((k) => ({ wch: Math.max(k.length, 12) }));
+    ws['!cols'] = Object.keys(rows[0] ?? {}).map((k) => ({
+      wch: Math.max(k.length, 12),
+    }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Libro Ventas');
     return XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' });
@@ -264,7 +308,12 @@ export class SireService {
 
   // ──────────────── COMPRAS (RCE) ────────────────
 
-  private async fetchCompras(empresaId: number, mes: number, anio: number, sedeId?: number) {
+  private async fetchCompras(
+    empresaId: number,
+    mes: number,
+    anio: number,
+    sedeId?: number,
+  ) {
     const fechaEmision = this.getDateRange(mes, anio);
     return this.prisma.compra.findMany({
       where: {
@@ -307,57 +356,77 @@ export class SireService {
       const baseGravada = this.fmt(subtotalN);
       const igvStr = this.fmt(igvN);
       const totalStr = this.fmt(totalN);
-      const tipoCambio = (c.moneda ?? 'PEN') === 'USD' ? this.fmt(Number(c.tipoCambio ?? 1)) : '1.000';
+      const tipoCambio =
+        (c.moneda ?? 'PEN') === 'USD'
+          ? this.fmt(Number(c.tipoCambio ?? 1))
+          : '1.000';
 
       if (simple) {
         lines.push(
           [
-            periodo, cuo, '', fecEmision, fecVcto,
-            tipoDocSunat, c.serie, '', c.numero,
-            tipoDocProveedor, nroDocProveedor, razonSocial,
-            baseGravada, igvStr,
-            '0.00', '0.00', '0.00', '0.00',
-            '0.00', '0.00', '0.00', '0.00',
-            totalStr, '1',
+            periodo,
+            cuo,
+            '',
+            fecEmision,
+            fecVcto,
+            tipoDocSunat,
+            c.serie,
+            '',
+            c.numero,
+            tipoDocProveedor,
+            nroDocProveedor,
+            razonSocial,
+            baseGravada,
+            igvStr,
+            '0.00',
+            '0.00',
+            '0.00',
+            '0.00',
+            '0.00',
+            '0.00',
+            '0.00',
+            '0.00',
+            totalStr,
+            '1',
           ].join('|'),
         );
       } else {
         // Formato RCE 8.1 — 33 campos
         lines.push(
           [
-            periodo,          // 1  Período
-            cuo,              // 2  CUO
-            '',               // 3  Correlativo asiento
-            fecEmision,       // 4  Fecha emisión
-            fecVcto,          // 5  Fecha vencimiento
-            tipoDocSunat,     // 6  Tipo CDP
-            c.serie,          // 7  Serie
-            '',               // 8  Año DUA/DSI
-            c.numero,         // 9  Número
+            periodo, // 1  Período
+            cuo, // 2  CUO
+            '', // 3  Correlativo asiento
+            fecEmision, // 4  Fecha emisión
+            fecVcto, // 5  Fecha vencimiento
+            tipoDocSunat, // 6  Tipo CDP
+            c.serie, // 7  Serie
+            '', // 8  Año DUA/DSI
+            c.numero, // 9  Número
             tipoDocProveedor, // 10 Tipo doc proveedor
-            nroDocProveedor,  // 11 Nro doc proveedor
-            razonSocial,      // 12 Razón social
-            baseGravada,      // 13 Base adq. gravadas (op. gravadas)
-            igvStr,           // 14 IGV adq. gravadas (op. gravadas)
-            '0.00',           // 15 Base adq. gravadas (op. gravadas y no gravadas)
-            '0.00',           // 16 IGV adq. gravadas (op. gravadas y no gravadas)
-            '0.00',           // 17 Base adq. gravadas (op. no gravadas)
-            '0.00',           // 18 IGV adq. gravadas (op. no gravadas)
-            '0.00',           // 19 Valor adq. no gravadas
-            '0.00',           // 20 ISC
-            '0.00',           // 21 ICBPER
-            '0.00',           // 22 Otros tributos
-            totalStr,         // 23 Total
-            tipoCambio,       // 24 Tipo de cambio
-            '',               // 25 Fecha CDP referencia
-            '',               // 26 Tipo CDP referencia
-            '',               // 27 Nro CDP referencia
-            '',               // 28 Nro constancia detracción
-            '',               // 29 Fecha constancia detracción
-            '',               // 30 Indicador anticipo
-            '',               // 31 Período crédito fiscal
-            '1',              // 32 Estado
-            '',               // 33 Código error
+            nroDocProveedor, // 11 Nro doc proveedor
+            razonSocial, // 12 Razón social
+            baseGravada, // 13 Base adq. gravadas (op. gravadas)
+            igvStr, // 14 IGV adq. gravadas (op. gravadas)
+            '0.00', // 15 Base adq. gravadas (op. gravadas y no gravadas)
+            '0.00', // 16 IGV adq. gravadas (op. gravadas y no gravadas)
+            '0.00', // 17 Base adq. gravadas (op. no gravadas)
+            '0.00', // 18 IGV adq. gravadas (op. no gravadas)
+            '0.00', // 19 Valor adq. no gravadas
+            '0.00', // 20 ISC
+            '0.00', // 21 ICBPER
+            '0.00', // 22 Otros tributos
+            totalStr, // 23 Total
+            tipoCambio, // 24 Tipo de cambio
+            '', // 25 Fecha CDP referencia
+            '', // 26 Tipo CDP referencia
+            '', // 27 Nro CDP referencia
+            '', // 28 Nro constancia detracción
+            '', // 29 Fecha constancia detracción
+            '', // 30 Indicador anticipo
+            '', // 31 Período crédito fiscal
+            '1', // 32 Estado
+            '', // 33 Código error
           ].join('|'),
         );
       }
@@ -441,7 +510,9 @@ export class SireService {
     });
 
     const ws = XLSX.utils.json_to_sheet(rows);
-    ws['!cols'] = Object.keys(rows[0] ?? {}).map((k) => ({ wch: Math.max(k.length, 12) }));
+    ws['!cols'] = Object.keys(rows[0] ?? {}).map((k) => ({
+      wch: Math.max(k.length, 12),
+    }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Registro Compras');
     return XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' });
@@ -471,22 +542,60 @@ export class SireService {
       );
     }
 
-    const { tipo, mes, anio, simple, empresarial, empresaId, destinatario, sedeId } = params;
+    const {
+      tipo,
+      mes,
+      anio,
+      simple,
+      empresarial,
+      empresaId,
+      destinatario,
+      sedeId,
+    } = params;
 
     let txtBuffer: Buffer;
     let xlsxBuffer: Buffer;
 
     if (tipo === 'ventas') {
-      txtBuffer = await this.generarTxtVentas(empresaId, mes, anio, simple, empresarial ?? false, sedeId);
-      xlsxBuffer = await this.generarExcelVentas(empresaId, mes, anio, simple, empresarial ?? false, sedeId);
+      txtBuffer = await this.generarTxtVentas(
+        empresaId,
+        mes,
+        anio,
+        simple,
+        empresarial ?? false,
+        sedeId,
+      );
+      xlsxBuffer = await this.generarExcelVentas(
+        empresaId,
+        mes,
+        anio,
+        simple,
+        empresarial ?? false,
+        sedeId,
+      );
     } else {
-      txtBuffer = await this.generarTxtCompras(empresaId, mes, anio, simple, sedeId);
-      xlsxBuffer = await this.generarExcelCompras(empresaId, mes, anio, simple, sedeId);
+      txtBuffer = await this.generarTxtCompras(
+        empresaId,
+        mes,
+        anio,
+        simple,
+        sedeId,
+      );
+      xlsxBuffer = await this.generarExcelCompras(
+        empresaId,
+        mes,
+        anio,
+        simple,
+        sedeId,
+      );
     }
 
     const nombreTxt = this.getNombreArchivo(tipo, mes, anio, 'txt');
     const nombreXlsx = this.getNombreArchivo(tipo, mes, anio, 'xlsx');
-    const label = tipo === 'ventas' ? 'Libro Electrónico de Ventas (RVIE)' : 'Registro de Compras (RCE)';
+    const label =
+      tipo === 'ventas'
+        ? 'Libro Electrónico de Ventas (RVIE)'
+        : 'Registro de Compras (RCE)';
     const periodo = `${String(mes).padStart(2, '0')}/${anio}`;
 
     const transporter = nodemailer.createTransport({
@@ -515,7 +624,8 @@ export class SireService {
         {
           filename: nombreXlsx,
           content: xlsxBuffer,
-          contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          contentType:
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         },
       ],
     });

@@ -56,7 +56,9 @@ export class ArqueoService {
         tipoDoc: { in: ['01', '03'] }, // Facturas y Boletas
         fechaEmision,
         estadoEnvioSunat: { in: ['EMITIDO', 'REGISTRADO'] as any },
-        NOT: { formaPagoTipo: { equals: 'CREDITO', mode: 'insensitive' } as any },
+        NOT: {
+          formaPagoTipo: { equals: 'CREDITO', mode: 'insensitive' } as any,
+        },
       },
       select: {
         id: true,

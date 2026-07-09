@@ -11,7 +11,7 @@ import * as XLSX from 'xlsx';
 
 @Injectable()
 export class ClienteService {
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(private readonly prisma: PrismaService) {}
 
   private readonly tipoDocCodigo: Record<string, string> = {
     DNI: '1',
@@ -30,7 +30,9 @@ export class ClienteService {
   };
 
   private normalizarNumeroDocumento(tipoDoc: string, nroDoc: string) {
-    const raw = String(nroDoc || '').trim().toUpperCase();
+    const raw = String(nroDoc || '')
+      .trim()
+      .toUpperCase();
     if (tipoDoc === 'DNI' || tipoDoc === 'RUC') return raw.replace(/\D/g, '');
     if (tipoDoc === 'CE' || tipoDoc === 'PASAPORTE') {
       return raw
@@ -45,14 +47,21 @@ export class ClienteService {
       throw new ForbiddenException('El DNI debe tener 8 dígitos');
     if (tipoDoc === 'RUC' && nroDoc.length !== 11)
       throw new ForbiddenException('El RUC debe tener 11 dígitos');
-    if ((tipoDoc === 'CE' || tipoDoc === 'PASAPORTE') && !/^[A-Za-z0-9]{6,12}$/.test(nroDoc))
-      throw new ForbiddenException('El documento debe contener entre 6 y 12 caracteres alfanuméricos');
+    if (
+      (tipoDoc === 'CE' || tipoDoc === 'PASAPORTE') &&
+      !/^[A-Za-z0-9]{6,12}$/.test(nroDoc)
+    )
+      throw new ForbiddenException(
+        'El documento debe contener entre 6 y 12 caracteres alfanuméricos',
+      );
   }
 
   private async obtenerTipoDocumento(tipoDoc: string) {
     const codigo = this.tipoDocCodigo[tipoDoc];
     if (!codigo) throw new ForbiddenException('Tipo de documento no válido');
-    const existente = await this.prisma.tipoDocumento.findFirst({ where: { codigo } });
+    const existente = await this.prisma.tipoDocumento.findFirst({
+      where: { codigo },
+    });
     if (existente) return existente;
 
     try {
@@ -63,8 +72,13 @@ export class ClienteService {
         },
       });
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        const creadoPorOtraPeticion = await this.prisma.tipoDocumento.findFirst({ where: { codigo } });
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const creadoPorOtraPeticion = await this.prisma.tipoDocumento.findFirst(
+          { where: { codigo } },
+        );
         if (creadoPorOtraPeticion) return creadoPorOtraPeticion;
       }
       throw error;
@@ -72,20 +86,30 @@ export class ClienteService {
   }
 
   private async asegurarTiposDocumentoBase() {
-    await Promise.all(Object.entries(this.tipoDocCodigo).map(async ([tipoDoc, codigo]) => {
-      const existente = await this.prisma.tipoDocumento.findFirst({ where: { codigo } });
-      if (existente) return;
-      try {
-        await this.prisma.tipoDocumento.create({
-          data: {
-            codigo,
-            descripcion: this.tipoDocDescripcion[tipoDoc] || tipoDoc,
-          },
+    await Promise.all(
+      Object.entries(this.tipoDocCodigo).map(async ([tipoDoc, codigo]) => {
+        const existente = await this.prisma.tipoDocumento.findFirst({
+          where: { codigo },
         });
-      } catch (error) {
-        if (!(error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')) throw error;
-      }
-    }));
+        if (existente) return;
+        try {
+          await this.prisma.tipoDocumento.create({
+            data: {
+              codigo,
+              descripcion: this.tipoDocDescripcion[tipoDoc] || tipoDoc,
+            },
+          });
+        } catch (error) {
+          if (
+            !(
+              error instanceof Prisma.PrismaClientKnownRequestError &&
+              error.code === 'P2002'
+            )
+          )
+            throw error;
+        }
+      }),
+    );
   }
 
   async seedTiposDocumentoBase() {
@@ -118,14 +142,19 @@ export class ClienteService {
     });
     const nuevaPersona = (data.persona as PersonaType) || PersonaType.CLIENTE;
     if (existe) {
-      if (existe.persona !== nuevaPersona && existe.persona !== 'CLIENTE_PROVEEDOR') {
-         // Upgrading from CLIENTE to PROVEEDOR or vice-versa
-         return this.prisma.cliente.update({
-            where: { id: existe.id },
-            data: { persona: 'CLIENTE_PROVEEDOR' }
-         });
+      if (
+        existe.persona !== nuevaPersona &&
+        existe.persona !== 'CLIENTE_PROVEEDOR'
+      ) {
+        // Upgrading from CLIENTE to PROVEEDOR or vice-versa
+        return this.prisma.cliente.update({
+          where: { id: existe.id },
+          data: { persona: 'CLIENTE_PROVEEDOR' },
+        });
       }
-      throw new ForbiddenException(`Ya existe un ${existe.persona.toLowerCase()} con ese documento`);
+      throw new ForbiddenException(
+        `Ya existe un ${existe.persona.toLowerCase()} con ese documento`,
+      );
     }
 
     return this.prisma.cliente.create({
@@ -171,11 +200,11 @@ export class ClienteService {
       ...(persona ? { persona } : {}),
       ...(search
         ? {
-          OR: [
-            { nombre: { contains: search, mode: 'insensitive' } },
-            { nroDoc: { contains: search, mode: 'insensitive' } },
-          ],
-        }
+            OR: [
+              { nombre: { contains: search, mode: 'insensitive' } },
+              { nroDoc: { contains: search, mode: 'insensitive' } },
+            ],
+          }
         : {}),
     };
 
@@ -222,16 +251,22 @@ export class ClienteService {
     });
     if (!cliente) throw new NotFoundException('Cliente no encontrado');
 
-    const nroDoc = data.tipoDoc && data.nroDoc
-      ? this.normalizarNumeroDocumento(data.tipoDoc, data.nroDoc)
-      : data.nroDoc;
-    const tipoDocumento = data.tipoDoc ? await this.obtenerTipoDocumento(data.tipoDoc) : null;
+    const nroDoc =
+      data.tipoDoc && data.nroDoc
+        ? this.normalizarNumeroDocumento(data.tipoDoc, data.nroDoc)
+        : data.nroDoc;
+    const tipoDocumento = data.tipoDoc
+      ? await this.obtenerTipoDocumento(data.tipoDoc)
+      : null;
     if (data.tipoDoc && nroDoc) this.validarDocumento(data.tipoDoc, nroDoc);
     if (nroDoc && nroDoc !== cliente.nroDoc) {
       const existe = await this.prisma.cliente.findFirst({
         where: { empresaId: data.empresaId, nroDoc, NOT: { id: data.id } },
       });
-      if (existe) throw new ForbiddenException(`Ya existe un ${existe.persona.toLowerCase()} con ese documento`);
+      if (existe)
+        throw new ForbiddenException(
+          `Ya existe un ${existe.persona.toLowerCase()} con ese documento`,
+        );
     }
 
     return this.prisma.cliente.update({
@@ -267,7 +302,9 @@ export class ClienteService {
   async consultarDocumento(numero: string, tipo: string) {
     const cleanTipo = String(tipo || '').toUpperCase();
     if (cleanTipo !== 'DNI' && cleanTipo !== 'RUC') {
-      throw new BadRequestException('La consulta automática solo está disponible para DNI y RUC');
+      throw new BadRequestException(
+        'La consulta automática solo está disponible para DNI y RUC',
+      );
     }
     const cleanNumero = this.normalizarNumeroDocumento(cleanTipo, numero);
     if (cleanTipo === 'DNI' && cleanNumero.length !== 8)
@@ -279,7 +316,8 @@ export class ClienteService {
       cleanTipo === 'DNI'
         ? 'https://apiperu.dev/api/dni'
         : 'https://apiperu.dev/api/ruc';
-    const body = cleanTipo === 'DNI' ? { dni: cleanNumero } : { ruc: cleanNumero };
+    const body =
+      cleanTipo === 'DNI' ? { dni: cleanNumero } : { ruc: cleanNumero };
     const token = process.env.RENIEC_TOKEN;
 
     try {
@@ -293,7 +331,9 @@ export class ClienteService {
     } catch (error: any) {
       if (axios.isAxiosError(error)) {
         throw new ForbiddenException(
-          error.response?.data?.message || error.message || 'Error al consultar la API externa'
+          error.response?.data?.message ||
+            error.message ||
+            'Error al consultar la API externa',
         );
       }
       throw error;
@@ -306,9 +346,9 @@ export class ClienteService {
       estado: { in: ['ACTIVO', 'INACTIVO'] },
       OR: search
         ? [
-          { nombre: { contains: search, mode: 'insensitive' } },
-          { nroDoc: { contains: search, mode: 'insensitive' } },
-        ]
+            { nombre: { contains: search, mode: 'insensitive' } },
+            { nroDoc: { contains: search, mode: 'insensitive' } },
+          ]
         : undefined,
     };
 
@@ -364,12 +404,26 @@ export class ClienteService {
     for (const [index, row] of rows.entries()) {
       try {
         const nombre =
-          row['NOMBRE O RAZON SOCIAL'] || row['Nombre o Razon social'] || row['NOMBRE'] || row['Nombre'] || null;
-        const nroDoc = row['NUM. DOC'] || row['Num. doc'] || row['Documento'] || row['NroDoc'] || row['nroDoc'] || null;
-        const direccion = row['DIRECCION'] || row['Direccion'] || row['direccion'] || '';
+          row['NOMBRE O RAZON SOCIAL'] ||
+          row['Nombre o Razon social'] ||
+          row['NOMBRE'] ||
+          row['Nombre'] ||
+          null;
+        const nroDoc =
+          row['NUM. DOC'] ||
+          row['Num. doc'] ||
+          row['Documento'] ||
+          row['NroDoc'] ||
+          row['nroDoc'] ||
+          null;
+        const direccion =
+          row['DIRECCION'] || row['Direccion'] || row['direccion'] || '';
         const email = row['CORREO'] || row['Correo'] || row['correo'] || '';
-        const persona = normalizarPersona(row['PERSONA'] || row['Persona'] || row['persona']);
-        const telefono = row['CELULAR'] || row['Celular'] || row['celular'] || '';
+        const persona = normalizarPersona(
+          row['PERSONA'] || row['Persona'] || row['persona'],
+        );
+        const telefono =
+          row['CELULAR'] || row['Celular'] || row['celular'] || '';
 
         if (!nombre)
           throw new ForbiddenException(
@@ -381,24 +435,31 @@ export class ClienteService {
           );
 
         const docStr = nroDoc.toString();
-        const tipoDoc: 'DNI' | 'RUC' = docStr.length === 8 ? 'DNI' : docStr.length === 11 ? 'RUC' : (() => { throw new ForbiddenException(`Número de documento inválido en la fila ${index + 1}`); })();
+        const tipoDoc: 'DNI' | 'RUC' =
+          docStr.length === 8
+            ? 'DNI'
+            : docStr.length === 11
+              ? 'RUC'
+              : (() => {
+                  throw new ForbiddenException(
+                    `Número de documento inválido en la fila ${index + 1}`,
+                  );
+                })();
 
-        const cliente = await this.crear(
-          {
-            nombre: nombre.toString(),
-            tipoDoc,
-            nroDoc: docStr,
-            direccion: direccion?.toString() || undefined,
-            email: email?.toString() || undefined,
-            telefono: telefono?.toString() || undefined,
-            empresaId,
-            ubigeo: '',
-            departamento: '',
-            provincia: '',
-            distrito: '',
-            persona,
-          },
-        );
+        const cliente = await this.crear({
+          nombre: nombre.toString(),
+          tipoDoc,
+          nroDoc: docStr,
+          direccion: direccion?.toString() || undefined,
+          email: email?.toString() || undefined,
+          telefono: telefono?.toString() || undefined,
+          empresaId,
+          ubigeo: '',
+          departamento: '',
+          provincia: '',
+          distrito: '',
+          persona,
+        });
         resultados.push({ cliente });
       } catch (e: any) {
         resultados.push({ error: e?.message || 'Error desconocido' });

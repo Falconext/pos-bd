@@ -1,4 +1,17 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Res, UseGuards, UseInterceptors, UploadedFile } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  ParseIntPipe,
+  Post,
+  Put,
+  Res,
+  UseGuards,
+  UseInterceptors,
+  UploadedFile,
+} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { imageUploadOptions } from '../common/utils/multer.config';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -12,7 +25,7 @@ import { CreateMarcaDto } from './dto/create-marca.dto';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('marca')
 export class MarcaController {
-  constructor(private readonly service: MarcaService) { }
+  constructor(private readonly service: MarcaService) {}
 
   @Post('crear')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
@@ -54,7 +67,10 @@ export class MarcaController {
     @User() user: any,
     @UploadedFile() file: Express.Multer.File,
   ) {
-    return this.service.subirImagenPrincipal(user.empresaId, id, { buffer: file?.buffer, mimetype: file?.mimetype });
+    return this.service.subirImagenPrincipal(user.empresaId, id, {
+      buffer: file?.buffer,
+      mimetype: file?.mimetype,
+    });
   }
 
   @Put(':id')

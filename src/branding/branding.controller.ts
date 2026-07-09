@@ -15,10 +15,11 @@ export class BrandingController {
   ) {
     const parsedResellerId = resellerId ? parseInt(resellerId, 10) : NaN;
     const branding = !isNaN(parsedResellerId)
-      ? await this.brandingService.getPublicBrandingByResellerId(parsedResellerId)
+      ? await this.brandingService.getPublicBrandingByResellerId(
+          parsedResellerId,
+        )
       : await this.brandingService.getPublicBranding(host || headerHost);
     res.locals.message = 'Branding cargado';
     return branding;
   }
 }
-

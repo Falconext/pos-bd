@@ -138,26 +138,28 @@ export class InventarioNotificacionesService {
       }
 
       // 3. Productos por sede con stock en 0
-      const productosAgotadosPorSede = await this.prisma.productoStock.findMany({
-        where: {
-          stock: 0,
-          producto: { empresaId, estado: 'ACTIVO' },
-        },
-        select: {
-          productoId: true,
-          sedeId: true,
-          stock: true,
-          stockMinimo: true,
-          sede: { select: { nombre: true } },
-          producto: {
-            select: {
-              codigo: true,
-              descripcion: true,
-              stockMinimo: true,
+      const productosAgotadosPorSede = await this.prisma.productoStock.findMany(
+        {
+          where: {
+            stock: 0,
+            producto: { empresaId, estado: 'ACTIVO' },
+          },
+          select: {
+            productoId: true,
+            sedeId: true,
+            stock: true,
+            stockMinimo: true,
+            sede: { select: { nombre: true } },
+            producto: {
+              select: {
+                codigo: true,
+                descripcion: true,
+                stockMinimo: true,
+              },
             },
           },
         },
-      });
+      );
 
       for (const p of productosAgotadosPorSede) {
         const key = `sede-${p.productoId}-${p.sedeId}`;
@@ -174,26 +176,27 @@ export class InventarioNotificacionesService {
       }
 
       // 4. Productos por sede con stock bajo (<= mínimo de la sede)
-      const productosBajoStockPorSede = await this.prisma.productoStock.findMany({
-        where: {
-          stock: { gt: 0 },
-          stockMinimo: { gt: 0 },
-          producto: { empresaId, estado: 'ACTIVO' },
-        },
-        select: {
-          productoId: true,
-          sedeId: true,
-          stock: true,
-          stockMinimo: true,
-          sede: { select: { nombre: true } },
-          producto: {
-            select: {
-              codigo: true,
-              descripcion: true,
+      const productosBajoStockPorSede =
+        await this.prisma.productoStock.findMany({
+          where: {
+            stock: { gt: 0 },
+            stockMinimo: { gt: 0 },
+            producto: { empresaId, estado: 'ACTIVO' },
+          },
+          select: {
+            productoId: true,
+            sedeId: true,
+            stock: true,
+            stockMinimo: true,
+            sede: { select: { nombre: true } },
+            producto: {
+              select: {
+                codigo: true,
+                descripcion: true,
+              },
             },
           },
-        },
-      });
+        });
 
       for (const p of productosBajoStockPorSede) {
         const minimo = p.stockMinimo ?? 0;
@@ -215,11 +218,19 @@ export class InventarioNotificacionesService {
 
       // 5. Generar notificaciones si hay productos críticos
       if (productosAgotados.length > 0) {
-        await this.notificarProductosAgotados(empresaId, productosAgotados, admins);
+        await this.notificarProductosAgotados(
+          empresaId,
+          productosAgotados,
+          admins,
+        );
       }
 
       if (productosCriticos.length > 0) {
-        await this.notificarProductosBajoStock(empresaId, productosCriticos, admins);
+        await this.notificarProductosBajoStock(
+          empresaId,
+          productosCriticos,
+          admins,
+        );
       }
 
       this.logger.log(
@@ -249,7 +260,8 @@ export class InventarioNotificacionesService {
   ) {
     if (productos.length === 0) return;
 
-    const admins = adminsCache ?? (await this.obtenerUsuariosDestino(empresaId));
+    const admins =
+      adminsCache ?? (await this.obtenerUsuariosDestino(empresaId));
     if (admins.length === 0) return;
 
     const grupos = this.agruparProductosPorSede(productos);
@@ -258,7 +270,9 @@ export class InventarioNotificacionesService {
       const destinatarios = this.filtrarUsuariosPorSede(admins, grupo.sedeId);
       if (destinatarios.length === 0) continue;
 
-      const sedeLabel = grupo.sedeNombre ? ` en la sede ${grupo.sedeNombre}` : '';
+      const sedeLabel = grupo.sedeNombre
+        ? ` en la sede ${grupo.sedeNombre}`
+        : '';
       const titulo = grupo.sedeNombre
         ? `⚠️ ${grupo.sedeNombre} · Productos Agotados`
         : '⚠️ Productos Agotados';
@@ -267,7 +281,9 @@ export class InventarioNotificacionesService {
       if (grupo.productos.length === 1) {
         mensaje = `El producto "${grupo.productos[0].descripcion}" (${grupo.productos[0].codigo}) está AGOTADO${sedeLabel}.`;
       } else if (grupo.productos.length <= 5) {
-        const lista = grupo.productos.map((p) => `• ${p.descripcion} (${p.codigo})`).join('\n');
+        const lista = grupo.productos
+          .map((p) => `• ${p.descripcion} (${p.codigo})`)
+          .join('\n');
         mensaje = `${grupo.productos.length} productos están AGOTADOS${sedeLabel}:\n${lista}`;
       } else {
         const lista = grupo.productos
@@ -308,7 +324,8 @@ export class InventarioNotificacionesService {
   ) {
     if (productos.length === 0) return;
 
-    const admins = adminsCache ?? (await this.obtenerUsuariosDestino(empresaId));
+    const admins =
+      adminsCache ?? (await this.obtenerUsuariosDestino(empresaId));
     if (admins.length === 0) return;
 
     const grupos = this.agruparProductosPorSede(productos);
@@ -317,7 +334,9 @@ export class InventarioNotificacionesService {
       const destinatarios = this.filtrarUsuariosPorSede(admins, grupo.sedeId);
       if (destinatarios.length === 0) continue;
 
-      const sedeLabel = grupo.sedeNombre ? ` en la sede ${grupo.sedeNombre}` : '';
+      const sedeLabel = grupo.sedeNombre
+        ? ` en la sede ${grupo.sedeNombre}`
+        : '';
       const titulo = grupo.sedeNombre
         ? `📦 ${grupo.sedeNombre} · Stock Bajo`
         : '📦 Stock Bajo';
@@ -328,13 +347,19 @@ export class InventarioNotificacionesService {
         mensaje = `El producto "${p.descripcion}" tiene stock bajo${sedeLabel} (${p.stock} unidades, mínimo: ${p.stockMinimo}).`;
       } else if (grupo.productos.length <= 5) {
         const lista = grupo.productos
-          .map((p) => `• ${p.descripcion} (${p.codigo}): ${p.stock} unidades (mín: ${p.stockMinimo})`)
+          .map(
+            (p) =>
+              `• ${p.descripcion} (${p.codigo}): ${p.stock} unidades (mín: ${p.stockMinimo})`,
+          )
           .join('\n');
         mensaje = `${grupo.productos.length} productos tienen stock bajo${sedeLabel}:\n${lista}`;
       } else {
         const lista = grupo.productos
           .slice(0, 5)
-          .map((p) => `• ${p.descripcion} (${p.codigo}): ${p.stock} unidades (mín: ${p.stockMinimo})`)
+          .map(
+            (p) =>
+              `• ${p.descripcion} (${p.codigo}): ${p.stock} unidades (mín: ${p.stockMinimo})`,
+          )
           .join('\n');
         mensaje = `${grupo.productos.length} productos tienen stock bajo${sedeLabel}:\n${lista}\n... y ${grupo.productos.length - 5} más. Considera reabastecer.`;
       }
@@ -372,7 +397,13 @@ export class InventarioNotificacionesService {
     try {
       const producto = await this.prisma.producto.findUnique({
         where: { id: productoId },
-        select: { id: true, codigo: true, descripcion: true, stock: true, stockMinimo: true },
+        select: {
+          id: true,
+          codigo: true,
+          descripcion: true,
+          stock: true,
+          stockMinimo: true,
+        },
       });
 
       if (!producto) return;
@@ -386,7 +417,11 @@ export class InventarioNotificacionesService {
       if (sedeId) {
         const productoStock = await this.prisma.productoStock.findUnique({
           where: { productoId_sedeId: { productoId, sedeId } },
-          select: { stock: true, stockMinimo: true, sede: { select: { nombre: true } } },
+          select: {
+            stock: true,
+            stockMinimo: true,
+            sede: { select: { nombre: true } },
+          },
         });
         if (productoStock) {
           stockActual = num(productoStock.stock);
@@ -418,7 +453,9 @@ export class InventarioNotificacionesService {
     }
   }
 
-  private async obtenerUsuariosDestino(empresaId: number): Promise<UsuarioDestino[]> {
+  private async obtenerUsuariosDestino(
+    empresaId: number,
+  ): Promise<UsuarioDestino[]> {
     const usuarios = await this.prisma.usuario.findMany({
       where: {
         empresaId,
@@ -441,7 +478,9 @@ export class InventarioNotificacionesService {
     }));
   }
 
-  private agruparProductosPorSede(productos: ProductoNotificacion[]): GrupoProductosPorSede[] {
+  private agruparProductosPorSede(
+    productos: ProductoNotificacion[],
+  ): GrupoProductosPorSede[] {
     const grupos = new Map<string, GrupoProductosPorSede>();
 
     for (const producto of productos) {
@@ -459,7 +498,10 @@ export class InventarioNotificacionesService {
     return Array.from(grupos.values());
   }
 
-  private filtrarUsuariosPorSede(admins: UsuarioDestino[], sedeId: number | null): UsuarioDestino[] {
+  private filtrarUsuariosPorSede(
+    admins: UsuarioDestino[],
+    sedeId: number | null,
+  ): UsuarioDestino[] {
     if (!sedeId) {
       return admins;
     }
@@ -484,13 +526,21 @@ export class InventarioNotificacionesService {
     const hoy = new Date();
     const en7dias = new Date(hoy.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-    const rubrosRegulados = ['farmacia', 'botica', 'medicament', 'drogueria', 'droguería'];
+    const rubrosRegulados = [
+      'farmacia',
+      'botica',
+      'medicament',
+      'drogueria',
+      'droguería',
+    ];
 
     // Obtener empresas con rubros farmacéuticos
     const empresas = await this.prisma.empresa.findMany({
       where: {
         rubro: {
-          OR: rubrosRegulados.map((r) => ({ nombre: { contains: r, mode: 'insensitive' as any } })),
+          OR: rubrosRegulados.map((r) => ({
+            nombre: { contains: r, mode: 'insensitive' as any },
+          })),
         },
       },
       select: { id: true },

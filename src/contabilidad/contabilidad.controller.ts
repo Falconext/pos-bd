@@ -91,7 +91,10 @@ export class ContabilidadController {
     );
 
     const estadoPagoLabel: Record<string, string> = {
-      COMPLETADO: 'Pagado', PENDIENTE_PAGO: 'Pendiente', PAGO_PARCIAL: 'Pago Parcial', ANULADO: 'Anulado',
+      COMPLETADO: 'Pagado',
+      PENDIENTE_PAGO: 'Pendiente',
+      PAGO_PARCIAL: 'Pago Parcial',
+      ANULADO: 'Anulado',
     };
 
     const datosExcel = comprobantes.map((comp: any) => ({
@@ -103,11 +106,16 @@ export class ContabilidadController {
       CLIENTE: comp.cliente?.nombre ?? '',
       'FECHA EMISIÓN': toFechaLima(new Date(comp.fechaEmision)),
       MONEDA: comp.tipoMoneda ?? 'PEN',
-      'FORMA PAGO': (comp.formaPagoTipo ?? '').toUpperCase() === 'CREDITO' ? 'Crédito' : 'Contado',
+      'FORMA PAGO':
+        (comp.formaPagoTipo ?? '').toUpperCase() === 'CREDITO'
+          ? 'Crédito'
+          : 'Contado',
       'MEDIO PAGO': comp.medioPago ?? '',
       'ESTADO SUNAT': comp.estadoEnvioSunat,
       'ESTADO PAGO': estadoPagoLabel[comp.estadoPago] ?? comp.estadoPago ?? '',
-      'TIPO OPERACION': comp.tipoOperacion ? `${comp.tipoOperacion.codigo} - ${comp.tipoOperacion.descripcion}` : '',
+      'TIPO OPERACION': comp.tipoOperacion
+        ? `${comp.tipoOperacion.codigo} - ${comp.tipoOperacion.descripcion}`
+        : '',
       'OP. GRAVADAS': Number(comp.mtoOperGravadas ?? 0),
       'OP. INAFECTAS': Number(comp.mtoOperInafectas ?? 0),
       IGV: Number(comp.mtoIGV ?? 0),
@@ -123,11 +131,30 @@ export class ContabilidadController {
 
     const worksheet = XLSX.utils.json_to_sheet(datosExcel);
     worksheet['!cols'] = [
-      { wch: 20 }, { wch: 14 }, { wch: 8 }, { wch: 12 }, { wch: 14 },
-      { wch: 32 }, { wch: 14 }, { wch: 8 }, { wch: 10 }, { wch: 14 },
-      { wch: 12 }, { wch: 14 }, { wch: 40 }, { wch: 14 }, { wch: 14 },
-      { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 },
-      { wch: 12 }, { wch: 14 }, { wch: 16 }, { wch: 30 },
+      { wch: 20 },
+      { wch: 14 },
+      { wch: 8 },
+      { wch: 12 },
+      { wch: 14 },
+      { wch: 32 },
+      { wch: 14 },
+      { wch: 8 },
+      { wch: 10 },
+      { wch: 14 },
+      { wch: 12 },
+      { wch: 14 },
+      { wch: 40 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 12 },
+      { wch: 12 },
+      { wch: 12 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 12 },
+      { wch: 14 },
+      { wch: 16 },
+      { wch: 30 },
     ];
 
     XLSX.utils.sheet_add_aoa(worksheet, [[''], ['']], { origin: -1 });
@@ -146,7 +173,9 @@ export class ContabilidadController {
 
     XLSX.utils.sheet_add_aoa(
       worksheet,
-      resumenData.map(([label, value]) => Array(22).fill('').concat([label, value])),
+      resumenData.map(([label, value]) =>
+        Array(22).fill('').concat([label, value]),
+      ),
       { origin: -1 },
     );
 
@@ -373,7 +402,8 @@ export class ContabilidadController {
   private parseSireParams(mes: string, anio: string) {
     const m = parseInt(mes, 10);
     const a = parseInt(anio, 10);
-    if (!m || m < 1 || m > 12) throw new BadRequestException('mes inválido (1-12)');
+    if (!m || m < 1 || m > 12)
+      throw new BadRequestException('mes inválido (1-12)');
     if (!a || a < 2020) throw new BadRequestException('anio inválido');
     return { mes: m, anio: a };
   }
@@ -391,14 +421,18 @@ export class ContabilidadController {
     const { mes: m, anio: a } = this.parseSireParams(mes, anio);
     const buffer = await this.sireService.generarTxtVentas(
       user.empresaId,
-      m, a,
+      m,
+      a,
       simple === 'true',
       empresarial === 'true',
       user.sedeId,
     );
     const periodo = `${a}${String(m).padStart(2, '0')}`;
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="SIRE_RVIE_${periodo}.txt"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="SIRE_RVIE_${periodo}.txt"`,
+    );
     res.setHeader('Content-Length', buffer.length.toString());
     return res.end(buffer);
   }
@@ -416,14 +450,21 @@ export class ContabilidadController {
     const { mes: m, anio: a } = this.parseSireParams(mes, anio);
     const buffer = await this.sireService.generarExcelVentas(
       user.empresaId,
-      m, a,
+      m,
+      a,
       simple === 'true',
       empresarial === 'true',
       user.sedeId,
     );
     const periodo = `${a}${String(m).padStart(2, '0')}`;
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="SIRE_RVIE_${periodo}.xlsx"`);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="SIRE_RVIE_${periodo}.xlsx"`,
+    );
     res.setHeader('Content-Length', buffer.length.toString());
     return res.end(buffer, 'binary');
   }
@@ -432,10 +473,18 @@ export class ContabilidadController {
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async sireVentasCorreo(
     @User() user: any,
-    @Body() body: { mes: number; anio: number; simple?: boolean; empresarial?: boolean; destinatario: string },
+    @Body()
+    body: {
+      mes: number;
+      anio: number;
+      simple?: boolean;
+      empresarial?: boolean;
+      destinatario: string;
+    },
   ) {
     const { mes, anio, simple, empresarial, destinatario } = body;
-    if (!destinatario) throw new BadRequestException('destinatario es requerido');
+    if (!destinatario)
+      throw new BadRequestException('destinatario es requerido');
     await this.sireService.enviarPorCorreo({
       tipo: 'ventas',
       mes,
@@ -461,13 +510,17 @@ export class ContabilidadController {
     const { mes: m, anio: a } = this.parseSireParams(mes, anio);
     const buffer = await this.sireService.generarTxtCompras(
       user.empresaId,
-      m, a,
+      m,
+      a,
       simple === 'true',
       user.sedeId,
     );
     const periodo = `${a}${String(m).padStart(2, '0')}`;
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="SIRE_RCE_${periodo}.txt"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="SIRE_RCE_${periodo}.txt"`,
+    );
     res.setHeader('Content-Length', buffer.length.toString());
     return res.end(buffer);
   }
@@ -484,13 +537,20 @@ export class ContabilidadController {
     const { mes: m, anio: a } = this.parseSireParams(mes, anio);
     const buffer = await this.sireService.generarExcelCompras(
       user.empresaId,
-      m, a,
+      m,
+      a,
       simple === 'true',
       user.sedeId,
     );
     const periodo = `${a}${String(m).padStart(2, '0')}`;
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="SIRE_RCE_${periodo}.xlsx"`);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="SIRE_RCE_${periodo}.xlsx"`,
+    );
     res.setHeader('Content-Length', buffer.length.toString());
     return res.end(buffer, 'binary');
   }
@@ -499,10 +559,12 @@ export class ContabilidadController {
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async sireComprasCorreo(
     @User() user: any,
-    @Body() body: { mes: number; anio: number; simple?: boolean; destinatario: string },
+    @Body()
+    body: { mes: number; anio: number; simple?: boolean; destinatario: string },
   ) {
     const { mes, anio, simple, destinatario } = body;
-    if (!destinatario) throw new BadRequestException('destinatario es requerido');
+    if (!destinatario)
+      throw new BadRequestException('destinatario es requerido');
     await this.sireService.enviarPorCorreo({
       tipo: 'compras',
       mes,

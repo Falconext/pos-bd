@@ -1,6 +1,11 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 @Injectable()
@@ -11,13 +16,23 @@ export class S3Service implements OnModuleInit {
   private region: string;
 
   constructor(private readonly configService: ConfigService) {
-    const accessKeyId = this.configService.get<string>('AWS_ACCESS_KEY_ID')?.trim();
-    const secretAccessKey = this.configService.get<string>('AWS_SECRET_ACCESS_KEY')?.trim();
-    this.region = (this.configService.get<string>('AWS_REGION') || 'us-east-1').trim();
-    this.bucketName = (this.configService.get<string>('AWS_S3_BUCKET_NAME') || '').trim();
+    const accessKeyId = this.configService
+      .get<string>('AWS_ACCESS_KEY_ID')
+      ?.trim();
+    const secretAccessKey = this.configService
+      .get<string>('AWS_SECRET_ACCESS_KEY')
+      ?.trim();
+    this.region = (
+      this.configService.get<string>('AWS_REGION') || 'us-east-1'
+    ).trim();
+    this.bucketName = (
+      this.configService.get<string>('AWS_S3_BUCKET_NAME') || ''
+    ).trim();
 
     if (!accessKeyId || !secretAccessKey || !this.bucketName) {
-      this.logger.warn('⚠️  Credenciales de AWS S3 no configuradas. S3 deshabilitado.');
+      this.logger.warn(
+        '⚠️  Credenciales de AWS S3 no configuradas. S3 deshabilitado.',
+      );
     } else {
       this.s3Client = new S3Client({
         region: this.region,
@@ -26,7 +41,9 @@ export class S3Service implements OnModuleInit {
           secretAccessKey,
         },
       });
-      this.logger.log(`✅ AWS S3 inicializado correctamente (bucket: ${this.bucketName})`);
+      this.logger.log(
+        `✅ AWS S3 inicializado correctamente (bucket: ${this.bucketName})`,
+      );
     }
   }
 
@@ -82,7 +99,10 @@ export class S3Service implements OnModuleInit {
       this.logger.log(`✅ Archivo subido a S3: ${url}`);
       return url;
     } catch (error) {
-      this.logger.error(`❌ Error subiendo archivo a S3: ${error.message}`, error.stack);
+      this.logger.error(
+        `❌ Error subiendo archivo a S3: ${error.message}`,
+        error.stack,
+      );
       throw error;
     }
   }
@@ -122,13 +142,21 @@ export class S3Service implements OnModuleInit {
         // Respeta la orientación EXIF (evita fotos de celular giradas)
         .rotate()
         // Reduce a un máximo razonable manteniendo proporción; nunca agranda las pequeñas.
-        .resize({ width: maxSize, height: maxSize, fit: 'inside', withoutEnlargement: true })
+        .resize({
+          width: maxSize,
+          height: maxSize,
+          fit: 'inside',
+          withoutEnlargement: true,
+        })
         .webp({ quality: 82 })
         .toBuffer();
       contentType = 'image/webp';
       // Forzar extensión .webp en la key si no la tiene
       if (!key.toLowerCase().endsWith('.webp')) {
-        key = key.replace(/\.(png|jpe?g|jpg|gif|bmp|tiff?|avif|heic|bin)$/i, '.webp');
+        key = key.replace(
+          /\.(png|jpe?g|jpg|gif|bmp|tiff?|avif|heic|bin)$/i,
+          '.webp',
+        );
       }
     } catch (_e) {
       // Si no se pudo convertir, subimos el original con su contentType recibido
@@ -157,13 +185,22 @@ export class S3Service implements OnModuleInit {
     }
   }
 
-  generateTiendaQrKey(empresaId: number, tipo: 'yape' | 'plin', _contentType?: string): string {
+  generateTiendaQrKey(
+    empresaId: number,
+    tipo: 'yape' | 'plin',
+    _contentType?: string,
+  ): string {
     const ts = Date.now();
     // Guardamos siempre como WEBP
     return `tiendas/empresa-${empresaId}/qr/${tipo}-${ts}.webp`;
   }
 
-  generateProductoImageKey(empresaId: number, productoId: number, _contentType?: string, extra = false): string {
+  generateProductoImageKey(
+    empresaId: number,
+    productoId: number,
+    _contentType?: string,
+    extra = false,
+  ): string {
     const ts = Date.now();
     const carpeta = extra ? 'extra' : 'principal';
     // Guardamos siempre como WEBP
@@ -189,7 +226,10 @@ export class S3Service implements OnModuleInit {
       const url = await getSignedUrl(this.s3Client, command, { expiresIn });
       return url;
     } catch (error) {
-      this.logger.error(`❌ Error generando URL firmada: ${error.message}`, error.stack);
+      this.logger.error(
+        `❌ Error generando URL firmada: ${error.message}`,
+        error.stack,
+      );
       throw error;
     }
   }
@@ -197,7 +237,10 @@ export class S3Service implements OnModuleInit {
   /**
    * URL firmada para descargar/visualizar (GET) un objeto
    */
-  async getSignedGetUrl(key: string, expiresIn: number = 1800): Promise<string> {
+  async getSignedGetUrl(
+    key: string,
+    expiresIn: number = 1800,
+  ): Promise<string> {
     if (!this.isEnabled()) {
       throw new Error('S3 no está configurado');
     }
@@ -207,7 +250,8 @@ export class S3Service implements OnModuleInit {
       let responseContentType = undefined as string | undefined;
       if (lower.endsWith('.webp')) responseContentType = 'image/webp';
       else if (lower.endsWith('.png')) responseContentType = 'image/png';
-      else if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) responseContentType = 'image/jpeg';
+      else if (lower.endsWith('.jpg') || lower.endsWith('.jpeg'))
+        responseContentType = 'image/jpeg';
 
       const command = new GetObjectCommand({
         Bucket: this.bucketName,
@@ -216,10 +260,15 @@ export class S3Service implements OnModuleInit {
         ResponseContentDisposition: 'inline',
       } as any);
 
-      const url = await getSignedUrl(this.s3Client, command as any, { expiresIn });
+      const url = await getSignedUrl(this.s3Client, command as any, {
+        expiresIn,
+      });
       return url;
     } catch (error) {
-      this.logger.error(`❌ Error generando URL firmada (GET): ${error.message}`, error.stack);
+      this.logger.error(
+        `❌ Error generando URL firmada (GET): ${error.message}`,
+        error.stack,
+      );
       throw error;
     }
   }
@@ -241,7 +290,10 @@ export class S3Service implements OnModuleInit {
       await this.s3Client.send(command);
       this.logger.log(`🗑️  Archivo eliminado de S3: ${key}`);
     } catch (error) {
-      this.logger.error(`❌ Error eliminando archivo de S3: ${error.message}`, error.stack);
+      this.logger.error(
+        `❌ Error eliminando archivo de S3: ${error.message}`,
+        error.stack,
+      );
       throw error;
     }
   }
@@ -256,7 +308,14 @@ export class S3Service implements OnModuleInit {
     correlativo: number,
     extension: 'pdf' | 'xml' | 'zip',
   ): string {
-    const tipo = tipoDoc === '01' ? 'factura' : tipoDoc === '03' ? 'boleta' : tipoDoc === 'COT' ? 'cotizacion' : 'nota';
+    const tipo =
+      tipoDoc === '01'
+        ? 'factura'
+        : tipoDoc === '03'
+          ? 'boleta'
+          : tipoDoc === 'COT'
+            ? 'cotizacion'
+            : 'nota';
     const numero = String(correlativo).padStart(8, '0');
     return `comprobantes/empresa-${empresaId}/${tipo}/${serie}-${numero}.${extension}`;
   }

@@ -22,7 +22,12 @@ export interface PlanFeatureCatalogItem {
   icon: string;
   dependsOn?: PlanFeatureKey;
   limits?: Array<{
-    key: 'maxBanners' | 'maxImagenesProducto' | 'maxComprobantes' | 'maxSedes' | 'limiteUsuarios';
+    key:
+      | 'maxBanners'
+      | 'maxImagenesProducto'
+      | 'maxComprobantes'
+      | 'maxSedes'
+      | 'limiteUsuarios';
     label: string;
     hint?: string;
   }>;
@@ -32,18 +37,24 @@ export const PLAN_FEATURE_CATALOG: PlanFeatureCatalogItem[] = [
   {
     key: 'esPrueba',
     label: 'Plan de Prueba (Gratuito)',
-    description: 'Permite identificar planes trial y controlar promociones o onboarding.',
+    description:
+      'Permite identificar planes trial y controlar promociones o onboarding.',
     group: 'general',
     icon: 'solar:gift-bold-duotone',
   },
   {
     key: 'tieneTienda',
     label: 'Tienda Virtual',
-    description: 'Activa catálogo público, pedidos online y configuración de tienda.',
+    description:
+      'Activa catálogo público, pedidos online y configuración de tienda.',
     group: 'tienda',
     icon: 'solar:shop-bold-duotone',
     limits: [
-      { key: 'maxBanners', label: 'Máx. banners', hint: '0 desactiva banners; vacío mantiene el valor actual.' },
+      {
+        key: 'maxBanners',
+        label: 'Máx. banners',
+        hint: '0 desactiva banners; vacío mantiene el valor actual.',
+      },
       { key: 'maxImagenesProducto', label: 'Máx. imágenes/producto' },
     ],
   },
@@ -88,21 +99,24 @@ export const PLAN_FEATURE_CATALOG: PlanFeatureCatalogItem[] = [
   {
     key: 'tieneGestionLotes',
     label: 'Gestión de Lotes',
-    description: 'Activa lotes, vencimientos, FEFO y control farmacéutico/inventario avanzado.',
+    description:
+      'Activa lotes, vencimientos, FEFO y control farmacéutico/inventario avanzado.',
     group: 'inventario',
     icon: 'solar:box-minimalistic-bold-duotone',
   },
   {
     key: 'tieneGestionProvisiones',
     label: 'Gestión de Provisiones',
-    description: 'Habilita costos provisionados y análisis avanzado de rentabilidad.',
+    description:
+      'Habilita costos provisionados y análisis avanzado de rentabilidad.',
     group: 'inventario',
     icon: 'solar:chart-square-bold-duotone',
   },
   {
     key: 'tieneDescripcionRica',
     label: 'Descripción Rica de Producto',
-    description: 'Habilita editor rich text (fichas técnicas, specs, tablas) en la página de producto de la tienda virtual.',
+    description:
+      'Habilita editor rich text (fichas técnicas, specs, tablas) en la página de producto de la tienda virtual.',
     group: 'tienda',
     icon: 'solar:document-text-bold-duotone',
     dependsOn: 'tieneTienda',
@@ -110,28 +124,32 @@ export const PLAN_FEATURE_CATALOG: PlanFeatureCatalogItem[] = [
   {
     key: 'tieneAnalisisFinancieroAvanzado',
     label: 'Análisis Financiero Avanzado',
-    description: 'Habilita simulador de ventas, punto de equilibrio y pronóstico financiero en productos.',
+    description:
+      'Habilita simulador de ventas, punto de equilibrio y pronóstico financiero en productos.',
     group: 'ventas',
     icon: 'solar:chart-bold-duotone',
   },
   {
     key: 'tieneMultiplesSedes',
     label: 'Disponibilidad Multi-Sede',
-    description: 'Permite gestionar visibilidad y disponibilidad de productos por sede.',
+    description:
+      'Permite gestionar visibilidad y disponibilidad de productos por sede.',
     group: 'operaciones',
     icon: 'solar:buildings-bold-duotone',
   },
   {
     key: 'tieneAutoGenerarImagen',
     label: 'Auto-Generar Imágenes (IA)',
-    description: 'Habilita la generación automática de imágenes con Inteligencia Artificial.',
+    description:
+      'Habilita la generación automática de imágenes con Inteligencia Artificial.',
     group: 'operaciones',
     icon: 'solar:magic-stick-3-bold-duotone',
   },
   {
     key: 'tieneLocalizacion',
     label: 'Ubicación / Localización',
-    description: 'Permite registrar pasillos, estantes u otras referencias físicas por producto.',
+    description:
+      'Permite registrar pasillos, estantes u otras referencias físicas por producto.',
     group: 'inventario',
     icon: 'solar:map-point-bold-duotone',
   },

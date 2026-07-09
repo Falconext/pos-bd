@@ -20,9 +20,7 @@ import { ActualizarGastoDto } from './dto/actualizar-gasto.dto';
 @Controller('analisis-financiero')
 @UseGuards(JwtAuthGuard)
 export class AnalisisFinancieroController {
-  constructor(
-    private readonly service: AnalisisFinancieroService,
-  ) {}
+  constructor(private readonly service: AnalisisFinancieroService) {}
 
   /** GET /analisis-financiero/pnl?mes=&anio= */
   @Get('pnl')
@@ -35,11 +33,10 @@ export class AnalisisFinancieroController {
    * meses defaults to 6 if not provided.
    */
   @Get('evolucion')
-  getEvolucion(
-    @User() user: any,
-    @Query('meses') mesesQuery?: string,
-  ) {
-    const meses = mesesQuery ? Math.min(Math.max(parseInt(mesesQuery, 10) || 6, 1), 24) : 6;
+  getEvolucion(@User() user: any, @Query('meses') mesesQuery?: string) {
+    const meses = mesesQuery
+      ? Math.min(Math.max(parseInt(mesesQuery, 10) || 6, 1), 24)
+      : 6;
     return this.service.getEvolucion(user.empresaId, meses);
   }
 
@@ -77,8 +74,15 @@ export class AnalisisFinancieroController {
 
   /** GET /analisis-financiero/categorias?mes=&anio= */
   @Get('categorias')
-  getRentabilidadCategorias(@User() user: any, @Query() query: QueryPeriodoDto) {
-    return this.service.getRentabilidadCategorias(user.empresaId, query.mes, query.anio);
+  getRentabilidadCategorias(
+    @User() user: any,
+    @Query() query: QueryPeriodoDto,
+  ) {
+    return this.service.getRentabilidadCategorias(
+      user.empresaId,
+      query.mes,
+      query.anio,
+    );
   }
 
   /** GET /analisis-financiero/metodos-pago?mes=&anio=&fechaInicio=&fechaFin= */
@@ -101,10 +105,7 @@ export class AnalisisFinancieroController {
 
   /** DELETE /analisis-financiero/gastos/:id */
   @Delete('gastos/:id')
-  eliminarGasto(
-    @User() user: any,
-    @Param('id', ParseIntPipe) id: number,
-  ) {
+  eliminarGasto(@User() user: any, @Param('id', ParseIntPipe) id: number) {
     return this.service.eliminarGasto(user.empresaId, id);
   }
 }

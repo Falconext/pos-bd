@@ -1,6 +1,21 @@
-import { IsBoolean, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsOptional,
+  IsString,
+  MinLength,
+} from 'class-validator';
 
-const BANCOS_VALIDOS = ['BCP', 'INTERBANK', 'BBVA', 'SCOTIABANK', 'PICHINCHA', 'BANBIF', 'NACION', 'OTROS'];
+const BANCOS_VALIDOS = [
+  'BCP',
+  'INTERBANK',
+  'BBVA',
+  'SCOTIABANK',
+  'PICHINCHA',
+  'BANBIF',
+  'NACION',
+  'OTROS',
+];
 const TIPOS_CUENTA = ['AHORROS', 'CORRIENTE'];
 const MONEDAS = ['PEN', 'USD'];
 

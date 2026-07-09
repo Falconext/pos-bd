@@ -8,23 +8,30 @@ import { User } from '../common/decorators/user.decorator';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('ventas')
 export class VentasController {
-    constructor(private readonly service: VentasService) {}
+  constructor(private readonly service: VentasService) {}
 
-    @Get('panel')
-    @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
-    async panel(
-        @User() user: any,
-        @Query('fecha') fecha: string,
-        @Query('sedeId') sedeId?: string,
-        @Query('usuarioId') usuarioId?: string,
-    ) {
-        const fechaFinal = fecha || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
-        const isAdmin = user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
-        return this.service.panelVentas({
-            empresaId: user.empresaId,
-            fecha: fechaFinal,
-            sedeId: sedeId ? Number(sedeId) : undefined,
-            usuarioId: isAdmin ? (usuarioId ? Number(usuarioId) : undefined) : user.id,
-        });
-    }
+  @Get('panel')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async panel(
+    @User() user: any,
+    @Query('fecha') fecha: string,
+    @Query('sedeId') sedeId?: string,
+    @Query('usuarioId') usuarioId?: string,
+  ) {
+    const fechaFinal =
+      fecha ||
+      new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+    const isAdmin =
+      user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
+    return this.service.panelVentas({
+      empresaId: user.empresaId,
+      fecha: fechaFinal,
+      sedeId: sedeId ? Number(sedeId) : undefined,
+      usuarioId: isAdmin
+        ? usuarioId
+          ? Number(usuarioId)
+          : undefined
+        : user.id,
+    });
+  }
 }

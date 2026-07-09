@@ -17,7 +17,10 @@ import { EmpresaService } from './empresa.service';
 import { CreateEmpresaDto } from './dto/create-empresa.dto';
 import { ListEmpresaDto } from './dto/list-empresa.dto';
 import { UpdateEmpresaDto } from './dto/update-empresa.dto';
-import { CreateCuentaBancariaDto, UpdateCuentaBancariaDto } from './dto/cuenta-bancaria.dto';
+import {
+  CreateCuentaBancariaDto,
+  UpdateCuentaBancariaDto,
+} from './dto/cuenta-bancaria.dto';
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -26,7 +29,7 @@ import { User } from '../common/decorators/user.decorator';
 
 @Controller('empresa')
 export class EmpresaController {
-  constructor(private readonly empresaService: EmpresaService) { }
+  constructor(private readonly empresaService: EmpresaService) {}
 
   @Post('crear')
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -36,7 +39,12 @@ export class EmpresaController {
     @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const nueva = await this.empresaService.crear(dto, user.sistemaNegocio, user.id, user.sistemaProducto);
+    const nueva = await this.empresaService.crear(
+      dto,
+      user.sistemaNegocio,
+      user.id,
+      user.sistemaProducto,
+    );
     res.locals.message = 'Empresa creada exitosamente';
     return nueva;
   }
@@ -72,7 +80,10 @@ export class EmpresaController {
     @Res({ passthrough: true }) res: Response,
   ) {
     // Force ID to match user's company
-    const dto: UpdateEmpresaDto = { ...body, id: user.empresaId } as UpdateEmpresaDto;
+    const dto: UpdateEmpresaDto = {
+      ...body,
+      id: user.empresaId,
+    } as UpdateEmpresaDto;
     const result = await this.empresaService.actualizar(dto);
     res.locals.message = 'Información de empresa actualizada correctamente';
     return result;
@@ -86,7 +97,11 @@ export class EmpresaController {
     @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const empresas = await this.empresaService.listar(query, user.sistemaNegocio, user.sistemaProducto);
+    const empresas = await this.empresaService.listar(
+      query,
+      user.sistemaNegocio,
+      user.sistemaProducto,
+    );
     res.locals.message = 'Empresas listadas correctamente';
     return empresas;
   }
@@ -101,7 +116,11 @@ export class EmpresaController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const dto: UpdateEmpresaDto = { id, ...body } as UpdateEmpresaDto;
-    const result = await this.empresaService.actualizar(dto, user.sistemaNegocio, user.sistemaProducto);
+    const result = await this.empresaService.actualizar(
+      dto,
+      user.sistemaNegocio,
+      user.sistemaProducto,
+    );
     res.locals.message = 'Empresa actualizada correctamente';
     return result;
   }
@@ -115,7 +134,11 @@ export class EmpresaController {
     @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.empresaService.cambiarEstado(id, body.estado, user.id);
+    const result = await this.empresaService.cambiarEstado(
+      id,
+      body.estado,
+      user.id,
+    );
     res.locals.message = `Empresa ${body.estado === 'ACTIVO' ? 'activada' : 'desactivada'} correctamente`;
     return result;
   }
@@ -161,7 +184,15 @@ export class EmpresaController {
   @Roles('ADMIN_SISTEMA')
   async guardarSeries(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { series: Array<{ tipoDoc: string; serie: string; correlativo: number; activo?: boolean }> },
+    @Body()
+    body: {
+      series: Array<{
+        tipoDoc: string;
+        serie: string;
+        correlativo: number;
+        activo?: boolean;
+      }>;
+    },
     @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
@@ -193,7 +224,12 @@ export class EmpresaController {
     @Body() body: { contenido: string; notificar?: boolean },
     @User() user: any,
   ) {
-    return this.empresaService.crearNota(id, body.contenido, user.id, body.notificar ?? false);
+    return this.empresaService.crearNota(
+      id,
+      body.contenido,
+      user.id,
+      body.notificar ?? false,
+    );
   }
 
   @Delete(':id/notas/:notaId')
@@ -210,7 +246,8 @@ export class EmpresaController {
   @Roles('ADMIN_SISTEMA')
   async enviarEmailTemplate(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: {
+    @Body()
+    body: {
       tipo: 'BIENVENIDA' | 'AGRADECIMIENTO' | 'RECORDATORIO' | 'PROMOCION';
       mensajeCustom?: string;
       tituloPromo?: string;
@@ -222,15 +259,19 @@ export class EmpresaController {
     },
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.empresaService.enviarEmailTemplate(id, body.tipo, {
-      mensajeCustom: body.mensajeCustom,
-      tituloPromo: body.tituloPromo,
-      etiqueta: body.etiqueta,
-      pagoConcepto: body.pagoConcepto,
-      pagoMonto: body.pagoMonto,
-      pagoReferencia: body.pagoReferencia,
-      costoInstalacion: body.costoInstalacion,
-    });
+    const result = await this.empresaService.enviarEmailTemplate(
+      id,
+      body.tipo,
+      {
+        mensajeCustom: body.mensajeCustom,
+        tituloPromo: body.tituloPromo,
+        etiqueta: body.etiqueta,
+        pagoConcepto: body.pagoConcepto,
+        pagoMonto: body.pagoMonto,
+        pagoReferencia: body.pagoReferencia,
+        costoInstalacion: body.costoInstalacion,
+      },
+    );
     res.locals.message = `Email enviado a ${result.enviados} administrador(es)`;
     return result;
   }
@@ -277,7 +318,9 @@ export class EmpresaController {
     @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const cuentas = await this.empresaService.listarCuentasBancarias(user.empresaId);
+    const cuentas = await this.empresaService.listarCuentasBancarias(
+      user.empresaId,
+    );
     res.locals.message = 'Cuentas bancarias obtenidas';
     return cuentas;
   }
@@ -289,7 +332,10 @@ export class EmpresaController {
     @Body() dto: CreateCuentaBancariaDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const cuenta = await this.empresaService.crearCuentaBancaria(user.empresaId, dto);
+    const cuenta = await this.empresaService.crearCuentaBancaria(
+      user.empresaId,
+      dto,
+    );
     res.locals.message = 'Cuenta bancaria creada';
     return cuenta;
   }
@@ -302,7 +348,11 @@ export class EmpresaController {
     @Body() dto: UpdateCuentaBancariaDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const cuenta = await this.empresaService.actualizarCuentaBancaria(user.empresaId, id, dto);
+    const cuenta = await this.empresaService.actualizarCuentaBancaria(
+      user.empresaId,
+      id,
+      dto,
+    );
     res.locals.message = 'Cuenta bancaria actualizada';
     return cuenta;
   }

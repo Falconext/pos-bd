@@ -11,9 +11,16 @@ import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 import { RolesGuard } from '../common/guards/roles.guard';
 
 @Module({
-  imports: [PrismaModule, S3Module, DisenoRubroModule, ModificadoresModule, WhatsAppModule, NotificacionesModule],
+  imports: [
+    PrismaModule,
+    S3Module,
+    DisenoRubroModule,
+    ModificadoresModule,
+    WhatsAppModule,
+    NotificacionesModule,
+  ],
   controllers: [TiendaController, TiendaPublicController],
   providers: [TiendaService, RolesGuard],
   exports: [TiendaService],
 })
-export class TiendaModule { }
+export class TiendaModule {}

@@ -14,7 +14,10 @@ import { S3Service } from '../s3/s3.service';
 import { KardexService } from '../kardex/kardex.service';
 import { DigemidService } from '../digemid/digemid.service';
 import { sincronizarVariantes, type VarianteConfig } from './variantes.util';
-import { esRubroComputo, obtenerPlantillaComputo } from './ficha-tecnica-computo';
+import {
+  esRubroComputo,
+  obtenerPlantillaComputo,
+} from './ficha-tecnica-computo';
 import {
   getMaxImagenesProducto,
   getMaxImagenesExtra,
@@ -33,16 +36,25 @@ export class ProductoService {
   ) {}
 
   private esProductoServicio(atributosTecnicos?: Record<string, any> | null) {
-    return String(atributosTecnicos?.tipoProducto || '').toUpperCase() === 'SERVICIO';
+    return (
+      String(atributosTecnicos?.tipoProducto || '').toUpperCase() === 'SERVICIO'
+    );
   }
 
   private parseImagenesExtra(value: unknown): string[] {
-    if (Array.isArray(value)) return value.filter((url): url is string => typeof url === 'string' && url.trim().length > 0);
+    if (Array.isArray(value))
+      return value.filter(
+        (url): url is string =>
+          typeof url === 'string' && url.trim().length > 0,
+      );
     if (typeof value !== 'string' || !value.trim()) return [];
     try {
       const parsed = JSON.parse(value);
       return Array.isArray(parsed)
-        ? parsed.filter((url): url is string => typeof url === 'string' && url.trim().length > 0)
+        ? parsed.filter(
+            (url): url is string =>
+              typeof url === 'string' && url.trim().length > 0,
+          )
         : [];
     } catch {
       return value.trim() ? [value.trim()] : [];
@@ -260,7 +272,10 @@ export class ProductoService {
       const niuUnidad = await this.prisma.unidadMedida.findFirst({
         where: { codigo: 'NIU' },
       });
-      if (!niuUnidad) throw new ForbiddenException('No se encontró unidad de medida por defecto');
+      if (!niuUnidad)
+        throw new ForbiddenException(
+          'No se encontró unidad de medida por defecto',
+        );
       unidadMedidaId = niuUnidad.id;
     }
 
@@ -322,21 +337,35 @@ export class ProductoService {
             : undefined,
           codigoBarras,
           codigoDigemid,
-          costoPromedio:
-            costoBase != null ? new Decimal(costoBase) : undefined,
-          costoFijo:
-            costoFijo != null ? new Decimal(costoFijo) : undefined,
+          costoPromedio: costoBase != null ? new Decimal(costoBase) : undefined,
+          costoFijo: costoFijo != null ? new Decimal(costoFijo) : undefined,
           comisionPorVenta:
-            comisionPorVenta != null ? new Decimal(comisionPorVenta) : undefined,
+            comisionPorVenta != null
+              ? new Decimal(comisionPorVenta)
+              : undefined,
           comisionPorcentaje:
-            comisionPorcentaje != null ? new Decimal(comisionPorcentaje) : undefined,
+            comisionPorcentaje != null
+              ? new Decimal(comisionPorcentaje)
+              : undefined,
           // Campos Ofertas — `null` explícito limpia la oferta; `undefined`/ausente la deja igual
           precioOferta:
-            precioOferta === null ? null : precioOferta ? new Decimal(precioOferta) : undefined,
+            precioOferta === null
+              ? null
+              : precioOferta
+                ? new Decimal(precioOferta)
+                : undefined,
           fechaInicioOferta:
-            fechaInicioOferta === null ? null : fechaInicioOferta ? new Date(fechaInicioOferta) : undefined,
+            fechaInicioOferta === null
+              ? null
+              : fechaInicioOferta
+                ? new Date(fechaInicioOferta)
+                : undefined,
           fechaFinOferta:
-            fechaFinOferta === null ? null : fechaFinOferta ? new Date(fechaFinOferta) : undefined,
+            fechaFinOferta === null
+              ? null
+              : fechaFinOferta
+                ? new Date(fechaFinOferta)
+                : undefined,
           preciosMayorista: preciosMayorista ?? undefined,
           atributosTecnicos: atributosTecnicos ?? undefined,
           opcionesAtributos: data.opcionesAtributos ?? undefined,
@@ -383,21 +412,35 @@ export class ProductoService {
           factorConversion: factorConversion ? Number(factorConversion) : 1,
           codigoBarras,
           codigoDigemid,
-          costoPromedio:
-            costoBase != null ? new Decimal(costoBase) : undefined,
-          costoFijo:
-            costoFijo != null ? new Decimal(costoFijo) : undefined,
+          costoPromedio: costoBase != null ? new Decimal(costoBase) : undefined,
+          costoFijo: costoFijo != null ? new Decimal(costoFijo) : undefined,
           comisionPorVenta:
-            comisionPorVenta != null ? new Decimal(comisionPorVenta) : undefined,
+            comisionPorVenta != null
+              ? new Decimal(comisionPorVenta)
+              : undefined,
           comisionPorcentaje:
-            comisionPorcentaje != null ? new Decimal(comisionPorcentaje) : undefined,
+            comisionPorcentaje != null
+              ? new Decimal(comisionPorcentaje)
+              : undefined,
           // Campos Ofertas — `null` explícito limpia la oferta; `undefined`/ausente la deja igual
           precioOferta:
-            precioOferta === null ? null : precioOferta ? new Decimal(precioOferta) : undefined,
+            precioOferta === null
+              ? null
+              : precioOferta
+                ? new Decimal(precioOferta)
+                : undefined,
           fechaInicioOferta:
-            fechaInicioOferta === null ? null : fechaInicioOferta ? new Date(fechaInicioOferta) : undefined,
+            fechaInicioOferta === null
+              ? null
+              : fechaInicioOferta
+                ? new Date(fechaInicioOferta)
+                : undefined,
           fechaFinOferta:
-            fechaFinOferta === null ? null : fechaFinOferta ? new Date(fechaFinOferta) : undefined,
+            fechaFinOferta === null
+              ? null
+              : fechaFinOferta
+                ? new Date(fechaFinOferta)
+                : undefined,
           preciosMayorista: preciosMayorista ?? undefined,
           atributosTecnicos: atributosTecnicos ?? undefined,
           opcionesAtributos: data.opcionesAtributos ?? undefined,
@@ -424,8 +467,10 @@ export class ProductoService {
             stock: !esServicio && s.id === sedeConStock ? (stock ?? 0) : 0,
             stockMinimo: stockMinimo ?? 0,
             stockMaximo: stockMaximo ?? null,
-            visibleEnSede: s.id === sedeConStock ? (visibleEnSede ?? true) : true,
-            vendibleEnSede: s.id === sedeConStock ? (vendibleEnSede ?? true) : true,
+            visibleEnSede:
+              s.id === sedeConStock ? (visibleEnSede ?? true) : true,
+            vendibleEnSede:
+              s.id === sedeConStock ? (vendibleEnSede ?? true) : true,
             precioUnitarioOverride:
               s.id === sedeConStock && precioUnitarioSede != null
                 ? new Decimal(precioUnitarioSede)
@@ -434,15 +479,23 @@ export class ProductoService {
               s.id === sedeConStock && precioOfertaSede != null
                 ? new Decimal(precioOfertaSede)
                 : null,
-            ubicacion: s.id === sedeConStock ? (ubicacionSede || null) : null,
+            ubicacion: s.id === sedeConStock ? ubicacionSede || null : null,
           })),
         });
       }
     }
 
     if (nuevo.opcionesAtributos) {
-      const sedesSync = await this.prisma.sede.findMany({ where: { empresaId: empresaId, activo: true } });
-      await sincronizarVariantes(this.prisma as any, nuevo, sedesSync, data.variantesConfig || [], sedeId);
+      const sedesSync = await this.prisma.sede.findMany({
+        where: { empresaId: empresaId, activo: true },
+      });
+      await sincronizarVariantes(
+        this.prisma as any,
+        nuevo,
+        sedesSync,
+        data.variantesConfig || [],
+        sedeId,
+      );
     }
 
     return this.obtenerPorId(nuevo.id, empresaId);
@@ -679,13 +732,13 @@ export class ProductoService {
     const signIfS3 = async (url?: string | null) => {
       try {
         const persistentUrl = normalizePersistentImageUrl(url);
-        if (!persistentUrl) return persistentUrl as any;
+        if (!persistentUrl) return persistentUrl;
         const idx = persistentUrl.indexOf('amazonaws.com/');
-        if (idx === -1) return persistentUrl as any;
+        if (idx === -1) return persistentUrl;
         const key = persistentUrl.substring(idx + 'amazonaws.com/'.length);
-        if (!key) return persistentUrl as any;
+        if (!key) return persistentUrl;
         const signed = await this.s3.getSignedGetUrl(key, 600);
-        return signed || (persistentUrl as any);
+        return signed || persistentUrl;
       } catch {
         return url as any;
       }
@@ -709,13 +762,16 @@ export class ProductoService {
             : num((p as any).stock);
         // If a specific sede is requested, we MUST use the sede's specific stock from ProductoStock (stockTotalBase).
         // Lotes don't have sedeId in this schema, so their sum is global.
-        const stockTotal = (usaStockLotes && !params.sedeId) ? stockDesdeLotes : stockTotalBase;
+        const stockTotal =
+          usaStockLotes && !params.sedeId ? stockDesdeLotes : stockTotalBase;
         const stockMinimo = params.sedeId
           ? (p.stocks[0]?.stockMinimo ?? 0)
           : p.stocks.length > 0
             ? p.stocks.reduce((sum, s) => sum + (s.stockMinimo || 0), 0)
             : ((p as any).stockMinimo ?? 0);
-        const stockSede = params.sedeId ? (p.stocks[0] as any | undefined) : undefined;
+        const stockSede = params.sedeId
+          ? (p.stocks[0] as any | undefined)
+          : undefined;
         const precioUnitarioEfectivo =
           params.usarPrecioSede && stockSede?.precioUnitarioOverride != null
             ? Number(stockSede.precioUnitarioOverride)
@@ -723,32 +779,51 @@ export class ProductoService {
         const precioOfertaEfectivo =
           params.usarPrecioSede && stockSede?.precioOfertaOverride != null
             ? Number(stockSede.precioOfertaOverride)
-            : (p.precioOferta != null ? Number(p.precioOferta) : null);
+            : p.precioOferta != null
+              ? Number(p.precioOferta)
+              : null;
         const reservado = reservadoPorProducto.get(p.id) ?? 0;
         const cupoProvision = Math.floor(
           (stockTotal * (p.porcentajeProvision ?? 0)) / 100,
         );
         const cupoVenta = Math.max(0, stockTotal - cupoProvision);
-        const stockDisponibleVenta = Math.max(0, Math.min(stockTotal - reservado, cupoVenta));
+        const stockDisponibleVenta = Math.max(
+          0,
+          Math.min(stockTotal - reservado, cupoVenta),
+        );
 
-        const imagenUrl = normalizePersistentImageUrl((p as any).imagenUrl as string | null);
+        const imagenUrl = normalizePersistentImageUrl(
+          (p as any).imagenUrl as string | null,
+        );
         const variantes = await Promise.all(
           ((p as any).variantes || []).map(async (variante: any) => {
-            const varianteImagenUrl = normalizePersistentImageUrl(variante.imagenUrl as string | null);
+            const varianteImagenUrl = normalizePersistentImageUrl(
+              variante.imagenUrl as string | null,
+            );
             const varianteStock = params.sedeId
               ? (variante.stocks?.[0]?.stock ?? 0)
               : Array.isArray(variante.stocks) && variante.stocks.length > 0
-                ? variante.stocks.reduce((sum: number, stockRow: any) => sum + Number(stockRow.stock || 0), 0)
+                ? variante.stocks.reduce(
+                    (sum: number, stockRow: any) =>
+                      sum + Number(stockRow.stock || 0),
+                    0,
+                  )
                 : Number(variante.stock || 0);
-            const varianteStockSede = params.sedeId ? variante.stocks?.[0] : undefined;
+            const varianteStockSede = params.sedeId
+              ? variante.stocks?.[0]
+              : undefined;
             const variantePrecioUnitario =
-              params.usarPrecioSede && varianteStockSede?.precioUnitarioOverride != null
+              params.usarPrecioSede &&
+              varianteStockSede?.precioUnitarioOverride != null
                 ? Number(varianteStockSede.precioUnitarioOverride)
                 : Number(variante.precioUnitario);
             const variantePrecioOferta =
-              params.usarPrecioSede && varianteStockSede?.precioOfertaOverride != null
+              params.usarPrecioSede &&
+              varianteStockSede?.precioOfertaOverride != null
                 ? Number(varianteStockSede.precioOfertaOverride)
-                : (variante.precioOferta != null ? Number(variante.precioOferta) : null);
+                : variante.precioOferta != null
+                  ? Number(variante.precioOferta)
+                  : null;
 
             return {
               ...variante,
@@ -760,12 +835,14 @@ export class ProductoService {
                     sedeId: varianteStockSede.sedeId,
                     visibleEnSede: varianteStockSede.visibleEnSede,
                     vendibleEnSede: varianteStockSede.vendibleEnSede,
-                    precioUnitarioSede: varianteStockSede.precioUnitarioOverride != null
-                      ? Number(varianteStockSede.precioUnitarioOverride)
-                      : null,
-                    precioOfertaSede: varianteStockSede.precioOfertaOverride != null
-                      ? Number(varianteStockSede.precioOfertaOverride)
-                      : null,
+                    precioUnitarioSede:
+                      varianteStockSede.precioUnitarioOverride != null
+                        ? Number(varianteStockSede.precioUnitarioOverride)
+                        : null,
+                    precioOfertaSede:
+                      varianteStockSede.precioOfertaOverride != null
+                        ? Number(varianteStockSede.precioOfertaOverride)
+                        : null,
                   }
                 : null,
               imagenUrl: varianteImagenUrl,
@@ -794,12 +871,14 @@ export class ProductoService {
                 ubicacionSede: stockSede.ubicacion ?? null,
                 visibleEnSede: stockSede.visibleEnSede,
                 vendibleEnSede: stockSede.vendibleEnSede,
-                precioUnitarioSede: stockSede.precioUnitarioOverride != null
-                  ? Number(stockSede.precioUnitarioOverride)
-                  : null,
-                precioOfertaSede: stockSede.precioOfertaOverride != null
-                  ? Number(stockSede.precioOfertaOverride)
-                  : null,
+                precioUnitarioSede:
+                  stockSede.precioUnitarioOverride != null
+                    ? Number(stockSede.precioUnitarioOverride)
+                    : null,
+                precioOfertaSede:
+                  stockSede.precioOfertaOverride != null
+                    ? Number(stockSede.precioOfertaOverride)
+                    : null,
               }
             : null,
           costoUnitario: Number(p.costoPromedio) || 0,
@@ -854,7 +933,9 @@ export class ProductoService {
             OR: [
               { descripcion: { contains: searchTerm, mode: 'insensitive' } },
               { codigo: { contains: searchTerm, mode: 'insensitive' } },
-              { principioActivo: { contains: searchTerm, mode: 'insensitive' } },
+              {
+                principioActivo: { contains: searchTerm, mode: 'insensitive' },
+              },
               { codigoBarras: { contains: searchTerm, mode: 'insensitive' } },
             ],
           }
@@ -930,7 +1011,9 @@ export class ProductoService {
               empresaId,
               sedeId,
               productoId: { in: productoIds },
-              estado: { in: [EstadoReserva.PENDIENTE, EstadoReserva.CONFIRMADA] },
+              estado: {
+                in: [EstadoReserva.PENDIENTE, EstadoReserva.CONFIRMADA],
+              },
             },
             _sum: { cantidad: true },
           })
@@ -958,12 +1041,18 @@ export class ProductoService {
           })
         : [];
     const stockVencidoPorProducto = new Map<number, number>(
-      lotesVencidosAgrupados.map((l) => [l.productoId, Number(l._sum.stockActual ?? 0)]),
+      lotesVencidosAgrupados.map((l) => [
+        l.productoId,
+        Number(l._sum.stockActual ?? 0),
+      ]),
     );
 
     const productos = productosRaw.map((p) => {
       const loteFefo = p.lotes[0] ?? null; // primer lote FEFO (más próximo a vencer)
-      const stockTotalLotes = p.lotes.reduce((sum, l) => sum + Number(l.stockActual ?? 0), 0);
+      const stockTotalLotes = p.lotes.reduce(
+        (sum, l) => sum + Number(l.stockActual ?? 0),
+        0,
+      );
       const stockVencido = stockVencidoPorProducto.get(p.id) ?? 0;
       const tieneLotesVencidos = stockVencido > 0;
       // Un producto "gestiona lotes" si tiene lotes vigentes o vencidos. En ese
@@ -974,15 +1063,19 @@ export class ProductoService {
       // Ya que en catalogoFarmacia siempre se filtra por sede, usamos estrictamente ProductoStock.
       const stockBase = num(p.stocks[0]?.stock);
       const stockSede = p.stocks[0] as any | undefined;
-      const precioUnitario = stockSede?.precioUnitarioOverride != null
-        ? Number(stockSede.precioUnitarioOverride)
-        : Number(p.precioUnitario);
+      const precioUnitario =
+        stockSede?.precioUnitarioOverride != null
+          ? Number(stockSede.precioUnitarioOverride)
+          : Number(p.precioUnitario);
       const reservado = reservadoPorProducto.get(p.id) ?? 0;
       const cupoProvision = Math.floor(
         (stockBase * (p.porcentajeProvision ?? 0)) / 100,
       );
       const cupoVenta = Math.max(0, stockBase - cupoProvision);
-      const stockDisponibleVenta = Math.max(0, Math.min(stockBase - reservado, cupoVenta));
+      const stockDisponibleVenta = Math.max(
+        0,
+        Math.min(stockBase - reservado, cupoVenta),
+      );
 
       let diasAlVencimiento: number | null = null;
       if (loteFefo?.fechaVencimiento) {
@@ -1014,7 +1107,9 @@ export class ProductoService {
         stockReservado: reservado,
         tieneLotesVencidos,
         stockVencido,
-        loteFefoCostoUnitario: loteFefo?.costoUnitario ? Number(loteFefo.costoUnitario) : null,
+        loteFefoCostoUnitario: loteFefo?.costoUnitario
+          ? Number(loteFefo.costoUnitario)
+          : null,
         lotesDisponibles: p.lotes.map((l) => ({
           loteId: l.id,
           loteNumero: l.lote,
@@ -1028,7 +1123,9 @@ export class ProductoService {
               loteNumero: loteFefo.lote,
               fechaVencimiento: loteFefo.fechaVencimiento,
               stockActual: loteFefo.stockActual,
-              costoUnitario: loteFefo.costoUnitario ? Number(loteFefo.costoUnitario) : null,
+              costoUnitario: loteFefo.costoUnitario
+                ? Number(loteFefo.costoUnitario)
+                : null,
               stockDisponibleVenta,
               diasAlVencimiento,
             }
@@ -1042,9 +1139,9 @@ export class ProductoService {
   async obtenerPorId(id: number, empresaId: number) {
     const producto = await this.prisma.producto.findFirst({
       where: { id, empresaId },
-      include: { 
-        unidadMedida: true, 
-        categoria: true, 
+      include: {
+        unidadMedida: true,
+        categoria: true,
         marca: true,
         variantes: {
           select: {
@@ -1056,8 +1153,8 @@ export class ProductoService {
             estado: true,
             valoresAtributos: true,
             imagenUrl: true,
-          }
-        }
+          },
+        },
       },
     });
     if (!producto) throw new NotFoundException('Producto no encontrado');
@@ -1069,29 +1166,35 @@ export class ProductoService {
 
     const signIfS3 = async (url?: string | null) => {
       const persistentUrl = normalizePersistentImageUrl(url);
-      if (!persistentUrl) return persistentUrl as any;
+      if (!persistentUrl) return persistentUrl;
       try {
         const idx = persistentUrl.indexOf('amazonaws.com/');
-        if (idx === -1) return persistentUrl as any;
+        if (idx === -1) return persistentUrl;
         const key = persistentUrl.substring(idx + 'amazonaws.com/'.length);
-        if (!key) return persistentUrl as any;
+        if (!key) return persistentUrl;
         const signed = await this.s3.getSignedGetUrl(key, 600);
-        return signed || (persistentUrl as any);
+        return signed || persistentUrl;
       } catch {
         return url as any;
       }
     };
 
-    const imagenUrl = normalizePersistentImageUrl((producto as any).imagenUrl as string | null);
+    const imagenUrl = normalizePersistentImageUrl(
+      (producto as any).imagenUrl as string | null,
+    );
     const variantes = await Promise.all(
-      (((producto as any).variantes as any[]) || []).map(async (variante: any) => {
-        const varianteImagenUrl = normalizePersistentImageUrl(variante.imagenUrl as string | null);
-        return {
-          ...variante,
-          imagenUrl: varianteImagenUrl,
-          imagenUrlDisplay: await signIfS3(varianteImagenUrl),
-        };
-      }),
+      (((producto as any).variantes as any[]) || []).map(
+        async (variante: any) => {
+          const varianteImagenUrl = normalizePersistentImageUrl(
+            variante.imagenUrl as string | null,
+          );
+          return {
+            ...variante,
+            imagenUrl: varianteImagenUrl,
+            imagenUrlDisplay: await signIfS3(varianteImagenUrl),
+          };
+        },
+      ),
     );
 
     const imagenesExtra = this.parseImagenesExtra(
@@ -1178,12 +1281,12 @@ export class ProductoService {
       );
       const usaStockLotes = stockDesdeLotes > 0;
       const loteFefoActual = usaStockLotes ? producto.lotes[0] : null;
-      const stockBase = sedeId 
+      const stockBase = sedeId
         ? (producto.stocks[0]?.stock ?? 0)
         : producto.stocks?.length
           ? producto.stocks.reduce((sum, s) => sum + Number(s.stock || 0), 0)
           : Number((producto as any).stock || 0);
-      const stockTotal = (usaStockLotes && !sedeId) ? stockDesdeLotes : stockBase;
+      const stockTotal = usaStockLotes && !sedeId ? stockDesdeLotes : stockBase;
 
       return {
         ...producto,
@@ -1203,7 +1306,8 @@ export class ProductoService {
     if (esFarmaceutico) {
       // Farmacias/boticas/droguerías:
       // 2. DIGEMID local (registro sanitario peruano — más confiable para Perú)
-      const digemidProduct = await this.digemidService.buscarPorBarcode(codigoBarras);
+      const digemidProduct =
+        await this.digemidService.buscarPorBarcode(codigoBarras);
       if (digemidProduct) {
         return {
           id: 0,
@@ -1253,7 +1357,8 @@ export class ProductoService {
         return {
           id: 0,
           codigo: `OFF-${barcode}`,
-          descripcion: p.product_name || p.generic_name || 'Producto Desconocido',
+          descripcion:
+            p.product_name || p.generic_name || 'Producto Desconocido',
           codigoBarras: barcode,
           imagenUrl: p.image_url || p.image_front_url || null,
           precioUnitario: 0,
@@ -1266,7 +1371,10 @@ export class ProductoService {
       }
     } catch (error: any) {
       if (error?.response?.status !== 404) {
-        console.error(`[OpenFoodFacts] Error buscando barcode ${barcode}:`, error.message);
+        console.error(
+          `[OpenFoodFacts] Error buscando barcode ${barcode}:`,
+          error.message,
+        );
       }
     }
     return null;
@@ -1276,7 +1384,10 @@ export class ProductoService {
     try {
       // NDC (National Drug Code) — formato estándar en etiquetas de medicamentos
       // Intentar con el barcode tal cual y también sin el primer dígito (check digit)
-      const queries = [barcode, barcode.length === 12 ? barcode.slice(1) : null].filter(Boolean);
+      const queries = [
+        barcode,
+        barcode.length === 12 ? barcode.slice(1) : null,
+      ].filter(Boolean);
 
       for (const query of queries) {
         const url = `https://api.fda.gov/drug/ndc.json?search=product_ndc:"${query}"&limit=1`;
@@ -1304,7 +1415,8 @@ export class ProductoService {
             laboratorio: drug.labeler_name || null,
             presentacion: drug.dosage_form || null,
             concentracion: activeIngredient?.strength || null,
-            unidadVenta: drug.packaging?.[0]?.description?.split(' ')[0] || null,
+            unidadVenta:
+              drug.packaging?.[0]?.description?.split(' ')[0] || null,
             marcaStr: drug.brand_name || drug.labeler_name || null,
             categoriaStr: 'Medicamentos',
             // Fuente para mostrar badge en UI
@@ -1314,7 +1426,10 @@ export class ProductoService {
       }
     } catch (error: any) {
       if (error?.response?.status !== 404) {
-        console.error(`[OpenFDA] Error buscando barcode ${barcode}:`, error.message);
+        console.error(
+          `[OpenFDA] Error buscando barcode ${barcode}:`,
+          error.message,
+        );
       }
     }
     return null;
@@ -1380,7 +1495,9 @@ export class ProductoService {
       where: { id: data.id, empresaId: data.empresaId },
     });
     if (!producto) throw new NotFoundException('Producto no encontrado');
-    const esServicio = this.esProductoServicio(data.atributosTecnicos ?? (producto.atributosTecnicos as any));
+    const esServicio = this.esProductoServicio(
+      data.atributosTecnicos ?? (producto.atributosTecnicos as any),
+    );
     if (esServicio) {
       data.stock = 0;
       data.stockMinimo = 0;
@@ -1418,9 +1535,9 @@ export class ProductoService {
 
     // Si se actualizan porcentajes, validar que no rompan reservas ya existentes.
     if (
-      !esServicio && (data.porcentajeVenta !== undefined ||
-      data.porcentajeProvision !== undefined
-      )
+      !esServicio &&
+      (data.porcentajeVenta !== undefined ||
+        data.porcentajeProvision !== undefined)
     ) {
       const porcentajesNuevos = this.normalizarPorcentajes(
         data.porcentajeVenta,
@@ -1547,15 +1664,13 @@ export class ProductoService {
 
     const debeActualizarPoliticaSede =
       data.sedeId &&
-      (
-        data.visibleEnSede !== undefined ||
+      (data.visibleEnSede !== undefined ||
         data.vendibleEnSede !== undefined ||
         data.precioUnitarioSede !== undefined ||
         data.precioOfertaSede !== undefined ||
         data.ubicacionSede !== undefined ||
         data.stockMinimo !== undefined ||
-        data.stockMaximo !== undefined
-      );
+        data.stockMaximo !== undefined);
 
     if (debeActualizarPoliticaSede) {
       const sedePoliticaId = Number(data.sedeId);
@@ -1564,7 +1679,9 @@ export class ProductoService {
         select: { id: true },
       });
       if (!sede) {
-        throw new BadRequestException('La sede indicada no pertenece a la empresa o no está activa');
+        throw new BadRequestException(
+          'La sede indicada no pertenece a la empresa o no está activa',
+        );
       }
 
       const updateSedeStock: any = {
@@ -1615,9 +1732,13 @@ export class ProductoService {
           visibleEnSede: data.visibleEnSede ?? true,
           vendibleEnSede: data.vendibleEnSede ?? true,
           precioUnitarioOverride:
-            data.precioUnitarioSede != null ? new Decimal(data.precioUnitarioSede) : null,
+            data.precioUnitarioSede != null
+              ? new Decimal(data.precioUnitarioSede)
+              : null,
           precioOfertaOverride:
-            data.precioOfertaSede != null ? new Decimal(data.precioOfertaSede) : null,
+            data.precioOfertaSede != null
+              ? new Decimal(data.precioOfertaSede)
+              : null,
           ubicacion: data.ubicacionSede || null,
         },
       });
@@ -1671,7 +1792,10 @@ export class ProductoService {
             ? new Decimal(data.precioUnitario)
             : undefined,
         imagenUrl: imagenUrlUpdate,
-        publicarEnTienda: data.publicarEnTienda !== undefined ? data.publicarEnTienda : undefined,
+        publicarEnTienda:
+          data.publicarEnTienda !== undefined
+            ? data.publicarEnTienda
+            : undefined,
         localizacion:
           data.localizacion !== undefined ? data.localizacion : undefined,
         ...(data.porcentajeVenta !== undefined ||
@@ -1715,9 +1839,18 @@ export class ProductoService {
         codigoBarras: data.codigoBarras,
         codigoDigemid: data.codigoDigemid,
         // Campos farmacia booleanos
-        requiereReceta: (data as any).requiereReceta !== undefined ? Boolean((data as any).requiereReceta) : undefined,
-        controlado: (data as any).controlado !== undefined ? Boolean((data as any).controlado) : undefined,
-        refrigerado: (data as any).refrigerado !== undefined ? Boolean((data as any).refrigerado) : undefined,
+        requiereReceta:
+          (data as any).requiereReceta !== undefined
+            ? Boolean((data as any).requiereReceta)
+            : undefined,
+        controlado:
+          (data as any).controlado !== undefined
+            ? Boolean((data as any).controlado)
+            : undefined,
+        refrigerado:
+          (data as any).refrigerado !== undefined
+            ? Boolean((data as any).refrigerado)
+            : undefined,
         // Campos Ofertas
         precioOferta:
           data.precioOferta !== undefined
@@ -1725,10 +1858,8 @@ export class ProductoService {
               ? null
               : new Decimal(data.precioOferta)
             : undefined,
-        fechaInicioOferta:
-          normalizeOptionalDate(data.fechaInicioOferta),
-        fechaFinOferta:
-          normalizeOptionalDate(data.fechaFinOferta),
+        fechaInicioOferta: normalizeOptionalDate(data.fechaInicioOferta),
+        fechaFinOferta: normalizeOptionalDate(data.fechaFinOferta),
         preciosMayorista:
           data.preciosMayorista !== undefined
             ? data.preciosMayorista
@@ -1752,17 +1883,25 @@ export class ProductoService {
               : data.valoresAtributos
             : undefined,
         productoPadreId:
-          data.productoPadreId !== undefined
-            ? data.productoPadreId
-            : undefined,
+          data.productoPadreId !== undefined ? data.productoPadreId : undefined,
         descripcionLarga:
-          data.descripcionLarga !== undefined ? (data.descripcionLarga || null) : undefined,
+          data.descripcionLarga !== undefined
+            ? data.descripcionLarga || null
+            : undefined,
       },
     });
 
     if (actualizado.opcionesAtributos) {
-      const sedesSync = await this.prisma.sede.findMany({ where: { empresaId: data.empresaId, activo: true } });
-      await sincronizarVariantes(this.prisma as any, actualizado, sedesSync, data.variantesConfig || [], data.sedeId);
+      const sedesSync = await this.prisma.sede.findMany({
+        where: { empresaId: data.empresaId, activo: true },
+      });
+      await sincronizarVariantes(
+        this.prisma as any,
+        actualizado,
+        sedesSync,
+        data.variantesConfig || [],
+        data.sedeId,
+      );
     }
 
     return this.obtenerPorId(actualizado.id, data.empresaId);
@@ -1852,7 +1991,11 @@ export class ProductoService {
     const idsDelColor = variantes
       .filter((v) => {
         const vals = (v.valoresAtributos as any) || {};
-        return String(vals[colorKey] || '').trim().toLowerCase() === target;
+        return (
+          String(vals[colorKey] || '')
+            .trim()
+            .toLowerCase() === target
+        );
       })
       .map((v) => v.id);
 
@@ -1980,7 +2123,12 @@ export class ProductoService {
       );
     }
 
-    const key = this.s3.generateProductoImageKey(empresaId, productoId, ct, true);
+    const key = this.s3.generateProductoImageKey(
+      empresaId,
+      productoId,
+      ct,
+      true,
+    );
     const url = await this.s3.uploadImage(file.buffer, key, ct);
     await this.prisma.producto.update({
       where: { id: productoId },
@@ -2445,7 +2593,7 @@ export class ProductoService {
 
     const hdrIdx = (filas: any[][], marcas: string[]): number => {
       for (let i = 0; i < Math.min(filas.length, 5); i++) {
-        if (marcas.some((m) => (filas[i] as any[]).includes(m))) return i;
+        if (marcas.some((m) => filas[i].includes(m))) return i;
       }
       return -1;
     };
@@ -2595,7 +2743,11 @@ export class ProductoService {
     if (rows.length === 0)
       throw new ForbiddenException('El archivo Excel está vacío');
 
-    const resultados: { producto?: any; error?: string; actualizado?: boolean }[] = [];
+    const resultados: {
+      producto?: any;
+      error?: string;
+      actualizado?: boolean;
+    }[] = [];
     const tiposValidos = ['10', '20', '30', '40'];
 
     for (const [index, row] of rows.entries()) {
@@ -2697,7 +2849,11 @@ export class ProductoService {
         const existe = await this.prisma.producto.findFirst({
           where: esBarcode
             ? { empresaId, codigoBarras, estado: { not: 'PLACEHOLDER' as any } }
-            : { empresaId, codigo: codigoFinal, estado: { not: 'PLACEHOLDER' as any } },
+            : {
+                empresaId,
+                codigo: codigoFinal,
+                estado: { not: 'PLACEHOLDER' as any },
+              },
           select: { id: true },
         });
 
@@ -2752,13 +2908,20 @@ export class ProductoService {
       total: rows.length,
       exitosos: resultados.filter((r) => r.producto).length,
       creados: resultados.filter((r) => r.producto && !r.actualizado).length,
-      actualizados: resultados.filter((r) => r.producto && r.actualizado).length,
+      actualizados: resultados.filter((r) => r.producto && r.actualizado)
+        .length,
       fallidos: resultados.filter((r) => r.error).length,
       detalles: resultados,
     };
   }
 
-  private getFichaTecnicaComputoDefault(params: { categoriaNombre?: string | null; descripcion?: string | null; tipoProducto?: string | null } = {}) {
+  private getFichaTecnicaComputoDefault(
+    params: {
+      categoriaNombre?: string | null;
+      descripcion?: string | null;
+      tipoProducto?: string | null;
+    } = {},
+  ) {
     return obtenerPlantillaComputo(params);
   }
 
@@ -2768,7 +2931,11 @@ export class ProductoService {
 
   async obtenerPlantillaFichaTecnica(
     empresaId: number,
-    params: { categoriaId?: number; descripcion?: string; tipoProducto?: string } = {},
+    params: {
+      categoriaId?: number;
+      descripcion?: string;
+      tipoProducto?: string;
+    } = {},
   ) {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
@@ -2794,13 +2961,24 @@ export class ProductoService {
           { empresaId: null, rubroId: null, categoriaId: null },
         ],
       },
-      orderBy: [{ empresaId: 'desc' }, { categoriaId: 'desc' }, { rubroId: 'desc' }, { id: 'asc' }],
+      orderBy: [
+        { empresaId: 'desc' },
+        { categoriaId: 'desc' },
+        { rubroId: 'desc' },
+        { id: 'asc' },
+      ],
       take: 10,
     });
 
-    const exactCategory = candidates.find((item) => categoriaId && item.categoriaId === categoriaId);
-    const companyDefault = candidates.find((item) => item.empresaId === empresaId && !item.categoriaId);
-    const rubroDefault = candidates.find((item) => item.rubroId === empresa.rubroId);
+    const exactCategory = candidates.find(
+      (item) => categoriaId && item.categoriaId === categoriaId,
+    );
+    const companyDefault = candidates.find(
+      (item) => item.empresaId === empresaId && !item.categoriaId,
+    );
+    const rubroDefault = candidates.find(
+      (item) => item.rubroId === empresa.rubroId,
+    );
     const computedDefault = this.esRubroComputo(empresa.rubro?.nombre)
       ? this.getFichaTecnicaComputoDefault({
           categoriaNombre: categoria?.nombre,
@@ -2808,8 +2986,13 @@ export class ProductoService {
           tipoProducto: params.tipoProducto,
         })
       : null;
-    const shouldPreferComputed = computedDefault && (computedDefault as any).familia !== 'general';
-    const selected = exactCategory || companyDefault || (shouldPreferComputed ? computedDefault : rubroDefault) || candidates[0];
+    const shouldPreferComputed =
+      computedDefault && (computedDefault as any).familia !== 'general';
+    const selected =
+      exactCategory ||
+      companyDefault ||
+      (shouldPreferComputed ? computedDefault : rubroDefault) ||
+      candidates[0];
 
     if (selected) return selected;
     if (computedDefault) return computedDefault;

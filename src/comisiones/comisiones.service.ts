@@ -22,11 +22,16 @@ export class ComisionesService {
       mtoPrecioUnitario: number;
     }>;
   }): Promise<void> {
-    const { comprobanteId, empresaId, vendedorId, fechaEmision, detalles } = params;
+    const { comprobanteId, empresaId, vendedorId, fechaEmision, detalles } =
+      params;
 
     const vendedor = await this.prisma.usuario.findUnique({
       where: { id: vendedorId },
-      select: { comisionGlobal: true, comisionGlobalFija: true, comisionGlobalVenta: true }
+      select: {
+        comisionGlobal: true,
+        comisionGlobalFija: true,
+        comisionGlobalVenta: true,
+      },
     });
     const comisionGlobalPct = Number(vendedor?.comisionGlobal ?? 0);
     const comisionGlobalFija = Number(vendedor?.comisionGlobalFija ?? 0);
@@ -87,7 +92,9 @@ export class ComisionesService {
         montoComision = comisionGlobalFija * detalle.cantidad;
       } else if (comisionGlobalPct > 0) {
         montoComision =
-          (comisionGlobalPct / 100) * detalle.mtoPrecioUnitario * detalle.cantidad;
+          (comisionGlobalPct / 100) *
+          detalle.mtoPrecioUnitario *
+          detalle.cantidad;
       }
 
       if (montoComision <= 0) continue;
@@ -114,9 +121,9 @@ export class ComisionesService {
         empresaId,
         mes,
         anio,
-        cantidad: "1",
+        cantidad: '1',
         montoComision: comisionGlobalVenta.toFixed(2),
-        descripcion: "Comisión Fija por Venta",
+        descripcion: 'Comisión Fija por Venta',
       });
     }
 
@@ -130,17 +137,19 @@ export class ComisionesService {
   // ─────────────────────────────────────────────────────────────────────────────
   // REPORTE DUEÑO: Lista comisiones de todos los vendedores en un período
   // ─────────────────────────────────────────────────────────────────────────────
-  async listarResumenMensual(
-    empresaId: number,
-    mes: number,
-    anio: number,
-  ) {
+  async listarResumenMensual(empresaId: number, mes: number, anio: number) {
     const comisiones = await this.prisma.comisionVendedor.findMany({
       where: { empresaId, mes, anio },
       include: {
         vendedor: { select: { id: true, nombre: true, rol: true, dni: true } },
         comprobante: {
-          select: { id: true, tipoDoc: true, serie: true, correlativo: true, fechaEmision: true },
+          select: {
+            id: true,
+            tipoDoc: true,
+            serie: true,
+            correlativo: true,
+            fechaEmision: true,
+          },
         },
       },
       orderBy: [{ vendedorId: 'asc' }, { creadoEn: 'desc' }],

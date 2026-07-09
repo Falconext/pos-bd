@@ -11,7 +11,8 @@ export class DashboardController {
   constructor(private readonly service: DashboardService) {}
 
   private resolveSedeId(user: any, sedeIdQuery?: string): number | undefined {
-    const isAdmin = user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
+    const isAdmin =
+      user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
     if (isAdmin) {
       return sedeIdQuery ? Number(sedeIdQuery) : undefined;
     }

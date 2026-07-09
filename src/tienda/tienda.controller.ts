@@ -25,7 +25,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 @Controller('tienda')
 @UseGuards(JwtAuthGuard)
 export class TiendaController {
-  constructor(private readonly tiendaService: TiendaService) { }
+  constructor(private readonly tiendaService: TiendaService) {}
 
   // ==================== CONFIGURACIÓN ====================
 
@@ -69,7 +69,9 @@ export class TiendaController {
   @Get('admin/templates-premium/:plantillaId/empresas')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN_SISTEMA')
-  async listarEmpresasConPlantillaPremium(@Param('plantillaId') plantillaId: string) {
+  async listarEmpresasConPlantillaPremium(
+    @Param('plantillaId') plantillaId: string,
+  ) {
     return this.tiendaService.listarEmpresasConPlantillaPremium(plantillaId);
   }
 
@@ -193,19 +195,22 @@ export class TiendaController {
     if (tipo !== 'yape' && tipo !== 'plin') {
       throw new BadRequestException('Tipo inválido, use yape o plin');
     }
-    return this.tiendaService.subirQr(empresaId, tipo, { buffer: file?.buffer, mimetype: file?.mimetype });
+    return this.tiendaService.subirQr(empresaId, tipo, {
+      buffer: file?.buffer,
+      mimetype: file?.mimetype,
+    });
   }
 
   // ==================== UPLOAD LOGO ====================
 
   @Post('logo')
   @UseInterceptors(FileInterceptor('file', imageUploadOptions))
-  async subirLogo(
-    @Req() req: any,
-    @UploadedFile() file: Express.Multer.File,
-  ) {
+  async subirLogo(@Req() req: any, @UploadedFile() file: Express.Multer.File) {
     const empresaId = req.user.empresaId;
-    return this.tiendaService.subirLogo(empresaId, { buffer: file?.buffer, mimetype: file?.mimetype });
+    return this.tiendaService.subirLogo(empresaId, {
+      buffer: file?.buffer,
+      mimetype: file?.mimetype,
+    });
   }
 
   @Post('template/imagen/:campo')
@@ -216,7 +221,10 @@ export class TiendaController {
     @UploadedFile() file: Express.Multer.File,
   ) {
     const empresaId = req.user.empresaId;
-    return this.tiendaService.subirImagenTemplate(empresaId, campo, { buffer: file?.buffer, mimetype: file?.mimetype });
+    return this.tiendaService.subirImagenTemplate(empresaId, campo, {
+      buffer: file?.buffer,
+      mimetype: file?.mimetype,
+    });
   }
 
   // Sube una imagen suelta (p. ej. posts del blog) y devuelve su URL sin
@@ -229,6 +237,9 @@ export class TiendaController {
     @UploadedFile() file: Express.Multer.File,
   ) {
     const empresaId = req.user.empresaId;
-    return this.tiendaService.subirMediaTemplate(empresaId, { buffer: file?.buffer, mimetype: file?.mimetype });
+    return this.tiendaService.subirMediaTemplate(empresaId, {
+      buffer: file?.buffer,
+      mimetype: file?.mimetype,
+    });
   }
 }

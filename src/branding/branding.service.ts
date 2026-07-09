@@ -95,7 +95,9 @@ export class BrandingService {
     return this.mergeResellerBranding(reseller, defaults, `https://${host}`);
   }
 
-  async getPublicBrandingByResellerId(resellerId: number): Promise<PublicBranding> {
+  async getPublicBrandingByResellerId(
+    resellerId: number,
+  ): Promise<PublicBranding> {
     const defaults = this.getDefaults('falconext');
 
     const reseller = await this.prisma.reseller.findUnique({
@@ -151,7 +153,8 @@ export class BrandingService {
       key: reseller.codigo?.toLowerCase?.() || `reseller-${reseller.id}`,
       isWhiteLabel: true,
       name: reseller.whiteLabelNombre || reseller.nombre || defaults.name,
-      legalName: reseller.whiteLabelNombre || reseller.nombre || defaults.legalName,
+      legalName:
+        reseller.whiteLabelNombre || reseller.nombre || defaults.legalName,
       website: reseller.whiteLabelWebsite || defaults.website,
       email: reseller.whiteLabelEmail || defaults.email,
       phone: reseller.whiteLabelTelefono || defaults.phone,
@@ -163,7 +166,8 @@ export class BrandingService {
         defaults.logoWhite,
       favicon: reseller.whiteLabelFaviconUrl || defaults.favicon,
       primaryColor: reseller.whiteLabelColorPrimario || defaults.primaryColor,
-      secondaryColor: reseller.whiteLabelColorSecundario || defaults.secondaryColor,
+      secondaryColor:
+        reseller.whiteLabelColorSecundario || defaults.secondaryColor,
       dashboardUrl,
     };
   }

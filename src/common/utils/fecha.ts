@@ -9,7 +9,14 @@
 export function parseFechaSoloDia(value: string | Date): Date {
   if (value instanceof Date) {
     return new Date(
-      Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate(), 12, 0, 0),
+      Date.UTC(
+        value.getUTCFullYear(),
+        value.getUTCMonth(),
+        value.getUTCDate(),
+        12,
+        0,
+        0,
+      ),
     );
   }
   const soloFecha = String(value).slice(0, 10); // YYYY-MM-DD

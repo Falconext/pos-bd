@@ -1,372 +1,395 @@
-import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateComboDto, UpdateComboDto } from './dto';
 import { S3Service } from '../s3/s3.service';
 
 @Injectable()
 export class CombosService {
-    constructor(
-        private prisma: PrismaService,
-        private readonly s3: S3Service,
-    ) { }
+  constructor(
+    private prisma: PrismaService,
+    private readonly s3: S3Service,
+  ) {}
 
-    async create(empresaId: number, dto: CreateComboDto) {
-        // 1. Validar que todos los productos existan y pertenezcan a la empresa
-        const productos = await this.prisma.producto.findMany({
-            where: {
-                id: { in: dto.items.map(i => i.productoId) },
-                empresaId,
-                estado: 'ACTIVO'
-            }
-        });
+  async create(empresaId: number, dto: CreateComboDto) {
+    // 1. Validar que todos los productos existan y pertenezcan a la empresa
+    const productos = await this.prisma.producto.findMany({
+      where: {
+        id: { in: dto.items.map((i) => i.productoId) },
+        empresaId,
+        estado: 'ACTIVO',
+      },
+    });
 
-        if (productos.length !== dto.items.length) {
-            throw new BadRequestException('Algunos productos no existen o no están activos');
-        }
+    if (productos.length !== dto.items.length) {
+      throw new BadRequestException(
+        'Algunos productos no existen o no están activos',
+      );
+    }
 
-        // 2. Calcular precio regular (suma de precios individuales)
-        const precioRegular = dto.items.reduce((sum, item) => {
-            const producto = productos.find(p => p.id === item.productoId);
-            if (!producto) return sum;
-            return sum + (Number(producto.precioUnitario) * item.cantidad);
-        }, 0);
+    // 2. Calcular precio regular (suma de precios individuales)
+    const precioRegular = dto.items.reduce((sum, item) => {
+      const producto = productos.find((p) => p.id === item.productoId);
+      if (!producto) return sum;
+      return sum + Number(producto.precioUnitario) * item.cantidad;
+    }, 0);
 
-        // 3. Validar que el precio del combo sea menor al precio regular
-        if (dto.precioCombo >= precioRegular) {
-            throw new BadRequestException('El precio del combo debe ser menor al precio regular');
-        }
+    // 3. Validar que el precio del combo sea menor al precio regular
+    if (dto.precioCombo >= precioRegular) {
+      throw new BadRequestException(
+        'El precio del combo debe ser menor al precio regular',
+      );
+    }
 
-        // 4. Calcular descuento porcentaje
-        const descuentoPorcentaje = ((precioRegular - dto.precioCombo) / precioRegular) * 100;
+    // 4. Calcular descuento porcentaje
+    const descuentoPorcentaje =
+      ((precioRegular - dto.precioCombo) / precioRegular) * 100;
 
-        // 5. Crear combo con items
-        return this.prisma.combo.create({
-            data: {
-                empresaId,
-                nombre: dto.nombre,
-                descripcion: dto.descripcion,
-                imagenUrl: dto.imagenUrl,
-                precioRegular,
-                precioCombo: dto.precioCombo,
-                descuentoPorcentaje,
-                activo: dto.activo ?? true,
-                fechaInicio: dto.fechaInicio ? new Date(dto.fechaInicio) : null,
-                fechaFin: dto.fechaFin ? new Date(dto.fechaFin) : null,
-                items: {
-                    create: dto.items.map(item => ({
-                        productoId: item.productoId,
-                        cantidad: item.cantidad
-                    }))
-                }
+    // 5. Crear combo con items
+    return this.prisma.combo.create({
+      data: {
+        empresaId,
+        nombre: dto.nombre,
+        descripcion: dto.descripcion,
+        imagenUrl: dto.imagenUrl,
+        precioRegular,
+        precioCombo: dto.precioCombo,
+        descuentoPorcentaje,
+        activo: dto.activo ?? true,
+        fechaInicio: dto.fechaInicio ? new Date(dto.fechaInicio) : null,
+        fechaFin: dto.fechaFin ? new Date(dto.fechaFin) : null,
+        items: {
+          create: dto.items.map((item) => ({
+            productoId: item.productoId,
+            cantidad: item.cantidad,
+          })),
+        },
+      },
+      include: {
+        items: {
+          include: {
+            producto: {
+              select: {
+                id: true,
+                descripcion: true,
+                imagenUrl: true,
+                precioUnitario: true,
+                stock: true,
+              },
             },
-            include: {
-                items: {
-                    include: {
-                        producto: {
-                            select: {
-                                id: true,
-                                descripcion: true,
-                                imagenUrl: true,
-                                precioUnitario: true,
-                                stock: true
-                            }
-                        }
-                    }
-                }
-            }
-        });
+          },
+        },
+      },
+    });
+  }
+
+  async findAll(empresaId: number, includeInactive = false) {
+    const where: any = { empresaId };
+
+    if (!includeInactive) {
+      where.activo = true;
+
+      // Filtrar por vigencia
+      const now = new Date();
+      where.OR = [{ fechaInicio: null }, { fechaInicio: { lte: now } }];
+      where.AND = [
+        {
+          OR: [{ fechaFin: null }, { fechaFin: { gte: now } }],
+        },
+      ];
     }
 
-    async findAll(empresaId: number, includeInactive = false) {
-        const where: any = { empresaId };
-
-        if (!includeInactive) {
-            where.activo = true;
-
-            // Filtrar por vigencia
-            const now = new Date();
-            where.OR = [
-                { fechaInicio: null },
-                { fechaInicio: { lte: now } }
-            ];
-            where.AND = [
-                {
-                    OR: [
-                        { fechaFin: null },
-                        { fechaFin: { gte: now } }
-                    ]
-                }
-            ];
-        }
-
-        return this.prisma.combo.findMany({
-            where,
-            include: {
-                items: {
-                    include: {
-                        producto: {
-                            select: {
-                                id: true,
-                                descripcion: true,
-                                imagenUrl: true,
-                                precioUnitario: true,
-                                stock: true,
-                                categoria: {
-                                    select: {
-                                        id: true,
-                                        nombre: true
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+    return this.prisma.combo.findMany({
+      where,
+      include: {
+        items: {
+          include: {
+            producto: {
+              select: {
+                id: true,
+                descripcion: true,
+                imagenUrl: true,
+                precioUnitario: true,
+                stock: true,
+                categoria: {
+                  select: {
+                    id: true,
+                    nombre: true,
+                  },
+                },
+              },
             },
-            orderBy: { creadoEn: 'desc' }
-        });
+          },
+        },
+      },
+      orderBy: { creadoEn: 'desc' },
+    });
+  }
+
+  async findOne(id: number, empresaId: number) {
+    const combo = await this.prisma.combo.findFirst({
+      where: { id, empresaId },
+      include: {
+        items: {
+          include: {
+            producto: {
+              select: {
+                id: true,
+                descripcion: true,
+                imagenUrl: true,
+                precioUnitario: true,
+                stock: true,
+                categoria: {
+                  select: {
+                    id: true,
+                    nombre: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!combo) {
+      throw new NotFoundException('Combo no encontrado');
     }
 
-    async findOne(id: number, empresaId: number) {
-        const combo = await this.prisma.combo.findFirst({
-            where: { id, empresaId },
-            include: {
-                items: {
-                    include: {
-                        producto: {
-                            select: {
-                                id: true,
-                                descripcion: true,
-                                imagenUrl: true,
-                                precioUnitario: true,
-                                stock: true,
-                                categoria: {
-                                    select: {
-                                        id: true,
-                                        nombre: true
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        });
+    return combo;
+  }
 
-        if (!combo) {
-            throw new NotFoundException('Combo no encontrado');
-        }
+  async update(id: number, empresaId: number, dto: UpdateComboDto) {
+    // Verificar que el combo existe
+    await this.findOne(id, empresaId);
 
-        return combo;
+    // Si se actualizan los items, recalcular precios
+    let updateData: any = {
+      nombre: dto.nombre,
+      descripcion: dto.descripcion,
+      imagenUrl: dto.imagenUrl,
+      activo: dto.activo,
+      fechaInicio: dto.fechaInicio ? new Date(dto.fechaInicio) : undefined,
+      fechaFin: dto.fechaFin ? new Date(dto.fechaFin) : undefined,
+    };
+
+    if (dto.items && dto.items.length > 0) {
+      // Validar productos
+      const productos = await this.prisma.producto.findMany({
+        where: {
+          id: { in: dto.items.map((i) => i.productoId) },
+          empresaId,
+          estado: 'ACTIVO',
+        },
+      });
+
+      if (productos.length !== dto.items.length) {
+        throw new BadRequestException(
+          'Algunos productos no existen o no están activos',
+        );
+      }
+
+      // Calcular nuevo precio regular
+      const precioRegular = dto.items.reduce((sum, item) => {
+        const producto = productos.find((p) => p.id === item.productoId);
+        if (!producto) return sum;
+        return sum + Number(producto.precioUnitario) * item.cantidad;
+      }, 0);
+
+      const precioCombo = dto.precioCombo ?? 0;
+      const descuentoPorcentaje =
+        precioCombo > 0
+          ? ((precioRegular - precioCombo) / precioRegular) * 100
+          : 0;
+
+      updateData = {
+        ...updateData,
+        precioRegular,
+        precioCombo,
+        descuentoPorcentaje,
+      };
+
+      // Eliminar items existentes y crear nuevos
+      await this.prisma.comboItem.deleteMany({
+        where: { comboId: id },
+      });
+
+      updateData.items = {
+        create: dto.items.map((item) => ({
+          productoId: item.productoId,
+          cantidad: item.cantidad,
+        })),
+      };
+    } else if (dto.precioCombo) {
+      // Solo actualizar precio del combo
+      const combo = await this.prisma.combo.findUnique({
+        where: { id },
+      });
+
+      if (!combo) {
+        throw new NotFoundException('Combo no encontrado');
+      }
+
+      const precioRegular = Number(combo.precioRegular) || 0;
+      const descuentoPorcentaje =
+        precioRegular > 0
+          ? ((precioRegular - dto.precioCombo) / precioRegular) * 100
+          : 0;
+      updateData.precioCombo = dto.precioCombo;
+      updateData.descuentoPorcentaje = descuentoPorcentaje;
     }
 
-    async update(id: number, empresaId: number, dto: UpdateComboDto) {
-        // Verificar que el combo existe
-        await this.findOne(id, empresaId);
+    return this.prisma.combo.update({
+      where: { id },
+      data: updateData,
+      include: {
+        items: {
+          include: {
+            producto: {
+              select: {
+                id: true,
+                descripcion: true,
+                imagenUrl: true,
+                precioUnitario: true,
+                stock: true,
+              },
+            },
+          },
+        },
+      },
+    });
+  }
 
-        // Si se actualizan los items, recalcular precios
-        let updateData: any = {
-            nombre: dto.nombre,
-            descripcion: dto.descripcion,
-            imagenUrl: dto.imagenUrl,
-            activo: dto.activo,
-            fechaInicio: dto.fechaInicio ? new Date(dto.fechaInicio) : undefined,
-            fechaFin: dto.fechaFin ? new Date(dto.fechaFin) : undefined
-        };
+  async delete(id: number, empresaId: number) {
+    // Verificar que el combo existe
+    await this.findOne(id, empresaId);
 
-        if (dto.items && dto.items.length > 0) {
-            // Validar productos
-            const productos = await this.prisma.producto.findMany({
-                where: {
-                    id: { in: dto.items.map(i => i.productoId) },
-                    empresaId,
-                    estado: 'ACTIVO'
-                }
-            });
+    return this.prisma.combo.delete({
+      where: { id },
+    });
+  }
 
-            if (productos.length !== dto.items.length) {
-                throw new BadRequestException('Algunos productos no existen o no están activos');
-            }
+  /**
+   * Verifica el stock disponible del combo
+   * El stock del combo es el mínimo entre todos los productos considerando las cantidades
+   */
+  async checkStock(comboId: number): Promise<number> {
+    const combo = await this.prisma.combo.findUnique({
+      where: { id: comboId },
+      include: {
+        items: {
+          include: { producto: true },
+        },
+      },
+    });
 
-            // Calcular nuevo precio regular
-            const precioRegular = dto.items.reduce((sum, item) => {
-                const producto = productos.find(p => p.id === item.productoId);
-                if (!producto) return sum;
-                return sum + (Number(producto.precioUnitario) * item.cantidad);
-            }, 0);
+    if (!combo) return 0;
 
-            const precioCombo = dto.precioCombo ?? 0;
-            const descuentoPorcentaje = precioCombo > 0
-                ? ((precioRegular - precioCombo) / precioRegular) * 100
-                : 0;
+    // El stock del combo es el mínimo entre todos los productos
+    const stockDisponible = combo.items.reduce((min, item) => {
+      const stockProducto = Math.floor(
+        Number(item.producto.stock) / item.cantidad,
+      );
+      return Math.min(min, stockProducto);
+    }, Infinity);
 
-            updateData = {
-                ...updateData,
-                precioRegular,
-                precioCombo,
-                descuentoPorcentaje
-            };
+    return stockDisponible === Infinity ? 0 : stockDisponible;
+  }
 
-            // Eliminar items existentes y crear nuevos
-            await this.prisma.comboItem.deleteMany({
-                where: { comboId: id }
-            });
+  /**
+   * Valida si hay stock suficiente para un combo
+   */
+  async validateStock(comboId: number, cantidad: number): Promise<boolean> {
+    const stockDisponible = await this.checkStock(comboId);
+    return stockDisponible >= cantidad;
+  }
 
-            updateData.items = {
-                create: dto.items.map(item => ({
-                    productoId: item.productoId,
-                    cantidad: item.cantidad
-                }))
-            };
-        } else if (dto.precioCombo) {
-            // Solo actualizar precio del combo
-            const combo = await this.prisma.combo.findUnique({
-                where: { id }
-            });
+  async subirImagenPrincipal(
+    empresaId: number,
+    comboId: number,
+    file: { buffer: Buffer; mimetype?: string },
+  ) {
+    const combo = await this.prisma.combo.findFirst({
+      where: { id: comboId, empresaId },
+    });
+    if (!combo) throw new NotFoundException('Kit/Pack no encontrado');
+    if (!file || !file.buffer)
+      throw new ForbiddenException('Archivo no proporcionado');
 
-            if (!combo) {
-                throw new NotFoundException('Combo no encontrado');
-            }
+    const ct = file.mimetype || 'image/jpeg';
+    if (!/^image\//i.test(ct))
+      throw new ForbiddenException('El archivo debe ser una imagen');
 
-            const precioRegular = Number(combo.precioRegular) || 0;
-            const descuentoPorcentaje = precioRegular > 0
-                ? ((precioRegular - dto.precioCombo) / precioRegular) * 100
-                : 0;
-            updateData.precioCombo = dto.precioCombo;
-            updateData.descuentoPorcentaje = descuentoPorcentaje;
-        }
+    const ts = Date.now();
+    const s3Key = `combos/empresa-${empresaId}/combo-${comboId}/${ts}.webp`;
+    const url = await this.s3.uploadImage(file.buffer, s3Key, ct);
 
-        return this.prisma.combo.update({
-            where: { id },
-            data: updateData,
-            include: {
-                items: {
-                    include: {
-                        producto: {
-                            select: {
-                                id: true,
-                                descripcion: true,
-                                imagenUrl: true,
-                                precioUnitario: true,
-                                stock: true
-                            }
-                        }
-                    }
-                }
-            }
-        });
+    await this.prisma.combo.update({
+      where: { id: comboId },
+      data: { imagenUrl: url },
+    });
+
+    const idx = url.indexOf('amazonaws.com/');
+    const objKey =
+      idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
+    const signedUrl = objKey ? await this.s3.getSignedGetUrl(objKey, 600) : url;
+    return { url, signedUrl };
+  }
+
+  async actualizarImagenDesdeUrl(
+    empresaId: number,
+    comboId: number,
+    imagenUrl: string,
+  ) {
+    const combo = await this.prisma.combo.findFirst({
+      where: { id: comboId, empresaId },
+    });
+    if (!combo) throw new NotFoundException('Kit/Pack no encontrado');
+    if (!imagenUrl || typeof imagenUrl !== 'string') {
+      throw new BadRequestException('imagenUrl es requerido');
     }
 
-    async delete(id: number, empresaId: number) {
-        // Verificar que el combo existe
-        await this.findOne(id, empresaId);
+    await this.prisma.combo.update({
+      where: { id: comboId },
+      data: { imagenUrl },
+    });
 
-        return this.prisma.combo.delete({
-            where: { id }
-        });
+    return { url: imagenUrl, signedUrl: imagenUrl };
+  }
+
+  async subirImagenDesdeBase64(
+    empresaId: number,
+    comboId: number,
+    imagenBase64: string,
+  ) {
+    const combo = await this.prisma.combo.findFirst({
+      where: { id: comboId, empresaId },
+    });
+    if (!combo) throw new NotFoundException('Kit/Pack no encontrado');
+    if (!imagenBase64 || typeof imagenBase64 !== 'string') {
+      throw new BadRequestException('imagenBase64 es requerido');
     }
 
-    /**
-     * Verifica el stock disponible del combo
-     * El stock del combo es el mínimo entre todos los productos considerando las cantidades
-     */
-    async checkStock(comboId: number): Promise<number> {
-        const combo = await this.prisma.combo.findUnique({
-            where: { id: comboId },
-            include: {
-                items: {
-                    include: { producto: true }
-                }
-            }
-        });
-
-        if (!combo) return 0;
-
-        // El stock del combo es el mínimo entre todos los productos
-        const stockDisponible = combo.items.reduce((min, item) => {
-            const stockProducto = Math.floor(Number(item.producto.stock) / item.cantidad);
-            return Math.min(min, stockProducto);
-        }, Infinity);
-
-        return stockDisponible === Infinity ? 0 : stockDisponible;
+    const match = imagenBase64.match(
+      /^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/,
+    );
+    if (!match) {
+      throw new BadRequestException(
+        'Formato base64 inválido. Use data:image/...;base64,...',
+      );
     }
 
-    /**
-     * Valida si hay stock suficiente para un combo
-     */
-    async validateStock(comboId: number, cantidad: number): Promise<boolean> {
-        const stockDisponible = await this.checkStock(comboId);
-        return stockDisponible >= cantidad;
+    const mimetype = match[1];
+    const base64Data = match[2];
+    const buffer = Buffer.from(base64Data, 'base64');
+    if (!buffer.length) {
+      throw new BadRequestException('Imagen base64 vacía');
     }
 
-    async subirImagenPrincipal(
-        empresaId: number,
-        comboId: number,
-        file: { buffer: Buffer; mimetype?: string },
-    ) {
-        const combo = await this.prisma.combo.findFirst({ where: { id: comboId, empresaId } });
-        if (!combo) throw new NotFoundException('Kit/Pack no encontrado');
-        if (!file || !file.buffer) throw new ForbiddenException('Archivo no proporcionado');
-
-        const ct = file.mimetype || 'image/jpeg';
-        if (!/^image\//i.test(ct)) throw new ForbiddenException('El archivo debe ser una imagen');
-
-        const ts = Date.now();
-        const s3Key = `combos/empresa-${empresaId}/combo-${comboId}/${ts}.webp`;
-        const url = await this.s3.uploadImage(file.buffer, s3Key, ct);
-
-        await this.prisma.combo.update({
-            where: { id: comboId },
-            data: { imagenUrl: url },
-        });
-
-        const idx = url.indexOf('amazonaws.com/');
-        const objKey = idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
-        const signedUrl = objKey ? await this.s3.getSignedGetUrl(objKey, 600) : url;
-        return { url, signedUrl };
-    }
-
-    async actualizarImagenDesdeUrl(
-        empresaId: number,
-        comboId: number,
-        imagenUrl: string,
-    ) {
-        const combo = await this.prisma.combo.findFirst({ where: { id: comboId, empresaId } });
-        if (!combo) throw new NotFoundException('Kit/Pack no encontrado');
-        if (!imagenUrl || typeof imagenUrl !== 'string') {
-            throw new BadRequestException('imagenUrl es requerido');
-        }
-
-        await this.prisma.combo.update({
-            where: { id: comboId },
-            data: { imagenUrl },
-        });
-
-        return { url: imagenUrl, signedUrl: imagenUrl };
-    }
-
-    async subirImagenDesdeBase64(
-        empresaId: number,
-        comboId: number,
-        imagenBase64: string,
-    ) {
-        const combo = await this.prisma.combo.findFirst({ where: { id: comboId, empresaId } });
-        if (!combo) throw new NotFoundException('Kit/Pack no encontrado');
-        if (!imagenBase64 || typeof imagenBase64 !== 'string') {
-            throw new BadRequestException('imagenBase64 es requerido');
-        }
-
-        const match = imagenBase64.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
-        if (!match) {
-            throw new BadRequestException('Formato base64 inválido. Use data:image/...;base64,...');
-        }
-
-        const mimetype = match[1];
-        const base64Data = match[2];
-        const buffer = Buffer.from(base64Data, 'base64');
-        if (!buffer.length) {
-            throw new BadRequestException('Imagen base64 vacía');
-        }
-
-        return this.subirImagenPrincipal(empresaId, comboId, { buffer, mimetype });
-    }
+    return this.subirImagenPrincipal(empresaId, comboId, { buffer, mimetype });
+  }
 }

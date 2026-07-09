@@ -91,8 +91,6 @@ async function bootstrap() {
   );
   app.use(authRateLimit());
 
-
-
   app.useGlobalPipes(
     new ValidationPipe({
       // whitelist descarta los campos no declarados en el DTO (protege contra

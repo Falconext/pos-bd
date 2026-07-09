@@ -1,11 +1,18 @@
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { EnviarSunatService, SunatPayloadException, isSunatAlreadyRegisteredError } from '../../comprobante/enviar-sunat.service';
+import {
+  EnviarSunatService,
+  SunatPayloadException,
+  isSunatAlreadyRegisteredError,
+} from '../../comprobante/enviar-sunat.service';
 import { ComprobanteService } from '../../comprobante/comprobante.service';
 import { GuiaRemisionService } from '../../guia-remision/guia-remision.service';
 import { QpseClient, QpseSendResponse } from '../../common/utils/qpse.client';
 import { S3Service } from '../../s3/s3.service';
-import { isQpseProvider, resolveBillingProvider } from '../../common/utils/billing-provider';
+import {
+  isQpseProvider,
+  resolveBillingProvider,
+} from '../../common/utils/billing-provider';
 import { NotificacionesService } from '../../notificaciones/notificaciones.service';
 
 const MAX_RETRIES_ANTES_NOTIFICAR = 5;
@@ -26,7 +33,7 @@ export class VerificarPendientesSunatService {
     private readonly qpseClient: QpseClient,
     private readonly s3Service: S3Service,
     private readonly notificacionesService: NotificacionesService,
-  ) { }
+  ) {}
 
   /**
    * Job 3: Retry failed Guías Remisión (estadoSunat = FALLIDO_ENVIO and sunatNextRetryAt <= now)
@@ -43,15 +50,21 @@ export class VerificarPendientesSunatService {
       });
 
       if (fallidas.length > 0) {
-        this.logger.log(`[Job 3] Reintentando ${fallidas.length} guías FALLIDO_ENVIO`);
+        this.logger.log(
+          `[Job 3] Reintentando ${fallidas.length} guías FALLIDO_ENVIO`,
+        );
       }
 
       for (const guia of fallidas) {
         try {
-          this.logger.log(`🔄 Reintentando guía ${guia.id} (${guia.serie}-${guia.correlativo})`);
+          this.logger.log(
+            `🔄 Reintentando guía ${guia.id} (${guia.serie}-${guia.correlativo})`,
+          );
           await this.guiaRemisionService.enviarSunat(guia.id, guia.empresaId);
         } catch (err: any) {
-          this.logger.warn(`⚠️ Reintento de guía ${guia.id} falló: ${err.message}`);
+          this.logger.warn(
+            `⚠️ Reintento de guía ${guia.id} falló: ${err.message}`,
+          );
         }
       }
     } catch (err: any) {
@@ -65,7 +78,7 @@ export class VerificarPendientesSunatService {
    */
   async execute(): Promise<void> {
     try {
-      const pendientes = await (this.prisma.comprobante as any).findMany({
+      const pendientes = (await (this.prisma.comprobante as any).findMany({
         where: {
           estadoEnvioSunat: 'PENDIENTE',
           documentoId: { not: null },
@@ -84,13 +97,13 @@ export class VerificarPendientesSunatService {
             },
           },
         },
-      }) as (any & {
+      })) as (any & {
         empresa: {
           usuarioPse: string | null;
           contrasenaPse: string | null;
           billingProvider: string | null;
           usaDemo: boolean;
-        } | null
+        } | null;
       })[];
 
       this.logger.log(
@@ -116,7 +129,9 @@ export class VerificarPendientesSunatService {
           const qpseUsername = comprobante.empresa?.usuarioPse;
           const qpsePassword = comprobante.empresa?.contrasenaPse;
           if (!qpseUsername || !qpsePassword) {
-            this.logger.warn(`Comprobante ${comprobante.id} sin credenciales QPSE configuradas`);
+            this.logger.warn(
+              `Comprobante ${comprobante.id} sin credenciales QPSE configuradas`,
+            );
             continue;
           }
 
@@ -128,19 +143,28 @@ export class VerificarPendientesSunatService {
               await this.enviarSunat.execute(comprobante.id);
             } catch (err: any) {
               if (err instanceof SunatPayloadException) {
-                this.logger.warn(`[Job 1] Comprobante ${comprobante.id} → error fatal SUNAT, auto-eliminando: ${err.message}`);
+                this.logger.warn(
+                  `[Job 1] Comprobante ${comprobante.id} → error fatal SUNAT, auto-eliminando: ${err.message}`,
+                );
                 await this.autoEliminarComprobante(comprobante.id, err.message);
                 continue;
               }
               const msg = String(err?.message || '').toLowerCase();
-              if (isSunatAlreadyRegisteredError(err?.response?.data) || isSunatAlreadyRegisteredError(msg)) {
-                this.logger.warn(`[Job 1] Comprobante ${comprobante.id} ya registrado en SUNAT → requiere conciliación`);
+              if (
+                isSunatAlreadyRegisteredError(err?.response?.data) ||
+                isSunatAlreadyRegisteredError(msg)
+              ) {
+                this.logger.warn(
+                  `[Job 1] Comprobante ${comprobante.id} ya registrado en SUNAT → requiere conciliación`,
+                );
                 await this.prisma.comprobante.update({
                   where: { id: comprobante.id },
                   data: {
                     estadoEnvioSunat: 'PENDIENTE_CONCILIACION' as any,
                     sunatNextRetryAt: null,
-                    sunatErrorMsg: err?.message || 'SUNAT 1033: comprobante registrado previamente; requiere conciliación.',
+                    sunatErrorMsg:
+                      err?.message ||
+                      'SUNAT 1033: comprobante registrado previamente; requiere conciliación.',
                   },
                 });
               } else {
@@ -158,21 +182,32 @@ export class VerificarPendientesSunatService {
           let finalResponse: QpseSendResponse;
           try {
             finalResponse = await this.qpseClient.consultarTicket(
-              comprobante.documentoId!,
+              comprobante.documentoId,
               qpseAccess.token_acceso!,
             );
           } catch (ticketErr: any) {
             const errMsg = String(ticketErr?.message || '').toLowerCase();
             // QPSE synchronous documents: CDR was in the original send response — re-evaluate it
-            if (errMsg.includes('no aplica') || errMsg.includes('use la respuesta')) {
+            if (
+              errMsg.includes('no aplica') ||
+              errMsg.includes('use la respuesta')
+            ) {
               this.logger.warn(
                 `[Job 1] consultarTicket no aplica para ${comprobante.id} → re-evaluando sunatCdrResponse almacenado`,
               );
               const stored = comprobante.sunatCdrResponse
-                ? (() => { try { return JSON.parse(comprobante.sunatCdrResponse as string); } catch { return null; } })()
+                ? (() => {
+                    try {
+                      return JSON.parse(comprobante.sunatCdrResponse as string);
+                    } catch {
+                      return null;
+                    }
+                  })()
                 : null;
               if (!stored) {
-                this.logger.warn(`[Job 1] Sin sunatCdrResponse para ${comprobante.id}, no se puede resolver`);
+                this.logger.warn(
+                  `[Job 1] Sin sunatCdrResponse para ${comprobante.id}, no se puede resolver`,
+                );
                 continue;
               }
               finalResponse = stored as QpseSendResponse;
@@ -181,7 +216,10 @@ export class VerificarPendientesSunatService {
             }
           }
           const status = this.normalizeQpseStatus(finalResponse);
-          const storageUpdate = await this.persistQpseAssets(comprobante, finalResponse);
+          const storageUpdate = await this.persistQpseAssets(
+            comprobante,
+            finalResponse,
+          );
 
           await this.prisma.comprobante.update({
             where: { id: comprobante.id },
@@ -208,9 +246,13 @@ export class VerificarPendientesSunatService {
           if (status === 'ACEPTADO') {
             try {
               await this.enviarSunat.generarYSubirPDF(comprobante.id);
-              this.logger.log(`📄 PDF generado para comprobante ${comprobante.id}`);
+              this.logger.log(
+                `📄 PDF generado para comprobante ${comprobante.id}`,
+              );
             } catch (pdfErr: any) {
-              this.logger.warn(`⚠️ Error generando PDF para ${comprobante.id}: ${pdfErr.message}`);
+              this.logger.warn(
+                `⚠️ Error generando PDF para ${comprobante.id}: ${pdfErr.message}`,
+              );
             }
           }
 
@@ -224,19 +266,23 @@ export class VerificarPendientesSunatService {
           if (status === 'RECHAZADO') {
             const errorMsg = this.extractQpseMessage(finalResponse);
             const ref = `${comprobante.serie ?? ''}-${String(comprobante.correlativo ?? '').padStart(8, '0')}`;
-            await this.notificacionesService.notificarFallaSunat({
-              empresaId: comprobante.empresaId,
-              tipo: 'CRITICAL',
-              titulo: 'Comprobante rechazado por SUNAT',
-              mensaje: `${ref} fue rechazado: ${errorMsg}. Revísalo y corrígelo.`,
-              meta: {
-                comprobanteId: comprobante.id,
-                serie: comprobante.serie,
-                correlativo: comprobante.correlativo,
-                tipoDoc: comprobante.tipoDoc,
-                errorMsg,
-              },
-            }).catch(() => { /* no bloquear el flujo */ });
+            await this.notificacionesService
+              .notificarFallaSunat({
+                empresaId: comprobante.empresaId,
+                tipo: 'CRITICAL',
+                titulo: 'Comprobante rechazado por SUNAT',
+                mensaje: `${ref} fue rechazado: ${errorMsg}. Revísalo y corrígelo.`,
+                meta: {
+                  comprobanteId: comprobante.id,
+                  serie: comprobante.serie,
+                  correlativo: comprobante.correlativo,
+                  tipoDoc: comprobante.tipoDoc,
+                  errorMsg,
+                },
+              })
+              .catch(() => {
+                /* no bloquear el flujo */
+              });
           }
         } catch (err: any) {
           this.logger.error(
@@ -257,7 +303,9 @@ export class VerificarPendientesSunatService {
               },
             });
           } catch (dbErr: any) {
-            this.logger.warn(`No se pudo guardar backoff para ${comprobante.id}: ${dbErr.message}`);
+            this.logger.warn(
+              `No se pudo guardar backoff para ${comprobante.id}: ${dbErr.message}`,
+            );
           }
         }
       }
@@ -293,10 +341,14 @@ export class VerificarPendientesSunatService {
 
           await this.enviarSunat.execute(comprobante.id);
 
-          this.logger.log(`✅ Comprobante ${comprobante.id} enviado exitosamente en reintento`);
+          this.logger.log(
+            `✅ Comprobante ${comprobante.id} enviado exitosamente en reintento`,
+          );
         } catch (err: any) {
           if (err instanceof SunatPayloadException) {
-            this.logger.warn(`[Job 2] Comprobante ${comprobante.id} → error fatal SUNAT, auto-eliminando: ${err.message}`);
+            this.logger.warn(
+              `[Job 2] Comprobante ${comprobante.id} → error fatal SUNAT, auto-eliminando: ${err.message}`,
+            );
             await this.autoEliminarComprobante(comprobante.id, err.message);
             continue;
           }
@@ -309,19 +361,23 @@ export class VerificarPendientesSunatService {
           const retriesCount = (comprobante.sunatRetriesCount || 0) + 1;
           if (retriesCount >= MAX_RETRIES_ANTES_NOTIFICAR) {
             const ref = `${comprobante.serie ?? ''}-${String(comprobante.correlativo ?? '').padStart(8, '0')}`;
-            await this.notificacionesService.notificarFallaSunat({
-              empresaId: comprobante.empresaId,
-              tipo: 'WARNING',
-              titulo: 'Comprobante pendiente de envío a SUNAT',
-              mensaje: `${ref} no pudo enviarse a SUNAT tras ${retriesCount} intentos. Verifica tu conexión y credenciales PSE.`,
-              meta: {
-                comprobanteId: comprobante.id,
-                serie: comprobante.serie,
-                correlativo: comprobante.correlativo,
-                tipoDoc: comprobante.tipoDoc,
-                errorMsg: err.message,
-              },
-            }).catch(() => { /* no bloquear el flujo */ });
+            await this.notificacionesService
+              .notificarFallaSunat({
+                empresaId: comprobante.empresaId,
+                tipo: 'WARNING',
+                titulo: 'Comprobante pendiente de envío a SUNAT',
+                mensaje: `${ref} no pudo enviarse a SUNAT tras ${retriesCount} intentos. Verifica tu conexión y credenciales PSE.`,
+                meta: {
+                  comprobanteId: comprobante.id,
+                  serie: comprobante.serie,
+                  correlativo: comprobante.correlativo,
+                  tipoDoc: comprobante.tipoDoc,
+                  errorMsg: err.message,
+                },
+              })
+              .catch(() => {
+                /* no bloquear el flujo */
+              });
           }
         }
       }
@@ -335,7 +391,9 @@ export class VerificarPendientesSunatService {
    */
   async notificarPendientesEstancados(): Promise<void> {
     try {
-      const limite = new Date(Date.now() - PENDIENTE_STUCK_HORAS * 60 * 60 * 1000);
+      const limite = new Date(
+        Date.now() - PENDIENTE_STUCK_HORAS * 60 * 60 * 1000,
+      );
       const estancados = await this.prisma.comprobante.findMany({
         where: {
           estadoEnvioSunat: 'PENDIENTE',
@@ -343,42 +401,64 @@ export class VerificarPendientesSunatService {
           creadoEn: { lte: limite },
         },
         select: {
-          id: true, empresaId: true, serie: true, correlativo: true, tipoDoc: true, creadoEn: true,
+          id: true,
+          empresaId: true,
+          serie: true,
+          correlativo: true,
+          tipoDoc: true,
+          creadoEn: true,
         },
         take: 20,
         orderBy: { creadoEn: 'asc' },
       });
 
       if (estancados.length > 0) {
-        this.logger.log(`[Job 4] ${estancados.length} comprobantes PENDIENTE estancados > ${PENDIENTE_STUCK_HORAS}h`);
+        this.logger.log(
+          `[Job 4] ${estancados.length} comprobantes PENDIENTE estancados > ${PENDIENTE_STUCK_HORAS}h`,
+        );
       }
 
       for (const comp of estancados) {
         const ref = `${comp.serie ?? ''}-${String(comp.correlativo ?? '').padStart(8, '0')}`;
-        const horasEstancado = Math.floor((Date.now() - comp.creadoEn.getTime()) / (60 * 60 * 1000));
-        await this.notificacionesService.notificarFallaSunat({
-          empresaId: comp.empresaId,
-          tipo: 'INFO',
-          titulo: 'Comprobante pendiente en SUNAT',
-          mensaje: `${ref} lleva más de ${horasEstancado} horas en estado pendiente. SUNAT podría estar procesando la respuesta.`,
-          meta: {
-            comprobanteId: comp.id,
-            serie: comp.serie,
-            correlativo: comp.correlativo,
-            tipoDoc: comp.tipoDoc,
-          },
-        }).catch(() => { /* no bloquear el flujo */ });
+        const horasEstancado = Math.floor(
+          (Date.now() - comp.creadoEn.getTime()) / (60 * 60 * 1000),
+        );
+        await this.notificacionesService
+          .notificarFallaSunat({
+            empresaId: comp.empresaId,
+            tipo: 'INFO',
+            titulo: 'Comprobante pendiente en SUNAT',
+            mensaje: `${ref} lleva más de ${horasEstancado} horas en estado pendiente. SUNAT podría estar procesando la respuesta.`,
+            meta: {
+              comprobanteId: comp.id,
+              serie: comp.serie,
+              correlativo: comp.correlativo,
+              tipoDoc: comp.tipoDoc,
+            },
+          })
+          .catch(() => {
+            /* no bloquear el flujo */
+          });
       }
     } catch (err: any) {
-      this.logger.error(`Error en notificaciones de pendientes estancados: ${err.message}`);
+      this.logger.error(
+        `Error en notificaciones de pendientes estancados: ${err.message}`,
+      );
     }
   }
 
-  private normalizeQpseStatus(response: QpseSendResponse | null | undefined): 'ACEPTADO' | 'PENDIENTE' | 'RECHAZADO' {
+  private normalizeQpseStatus(
+    response: QpseSendResponse | null | undefined,
+  ): 'ACEPTADO' | 'PENDIENTE' | 'RECHAZADO' {
     const stateLabel = String(response?.state_label || '').toLowerCase();
     const code = String(response?.code ?? '');
 
-    if (response?.sunat_success === true || stateLabel === 'aceptado' || stateLabel === 'observado' || code === '0') {
+    if (
+      response?.sunat_success === true ||
+      stateLabel === 'aceptado' ||
+      stateLabel === 'observado' ||
+      code === '0'
+    ) {
       return 'ACEPTADO';
     }
 
@@ -394,7 +474,9 @@ export class VerificarPendientesSunatService {
     return 'RECHAZADO';
   }
 
-  private extractQpseMessage(response: QpseSendResponse | null | undefined): string {
+  private extractQpseMessage(
+    response: QpseSendResponse | null | undefined,
+  ): string {
     return (
       response?.message ||
       response?.mensaje ||
@@ -406,7 +488,10 @@ export class VerificarPendientesSunatService {
     );
   }
 
-  private async persistQpseAssets(comprobante: any, response: QpseSendResponse) {
+  private async persistQpseAssets(
+    comprobante: any,
+    response: QpseSendResponse,
+  ) {
     if (!this.s3Service.isEnabled()) {
       return {};
     }
@@ -446,19 +531,31 @@ export class VerificarPendientesSunatService {
           : await this.s3Service.uploadZIP(cdrBuffer, cdrKey);
       }
     } catch (error: any) {
-      this.logger.warn(`No se pudieron persistir assets SUNAT para ${comprobante.id}: ${error.message}`);
+      this.logger.warn(
+        `No se pudieron persistir assets SUNAT para ${comprobante.id}: ${error.message}`,
+      );
     }
 
     return updates;
   }
 
   /** Elimina un comprobante con error fatal SUNAT, guarda log y respeta orden de FKs. */
-  private async autoEliminarComprobante(id: number, errorMsg?: string): Promise<void> {
+  private async autoEliminarComprobante(
+    id: number,
+    errorMsg?: string,
+  ): Promise<void> {
     try {
       // Obtener datos del comprobante para el log antes de borrarlo
       const comp = await this.prisma.comprobante.findUnique({
         where: { id },
-        select: { id: true, empresaId: true, serie: true, correlativo: true, tipoDoc: true, sunatErrorMsg: true },
+        select: {
+          id: true,
+          empresaId: true,
+          serie: true,
+          correlativo: true,
+          tipoDoc: true,
+          sunatErrorMsg: true,
+        },
       });
 
       if (comp) {
@@ -467,7 +564,8 @@ export class VerificarPendientesSunatService {
           serie: comp.serie,
           correlativo: comp.correlativo,
           tipoDoc: comp.tipoDoc,
-          errorMsg: errorMsg ?? comp.sunatErrorMsg ?? 'Error fatal SUNAT (scheduler)',
+          errorMsg:
+            errorMsg ?? comp.sunatErrorMsg ?? 'Error fatal SUNAT (scheduler)',
         });
       }
 
@@ -478,16 +576,26 @@ export class VerificarPendientesSunatService {
         });
         if (movimientos.length) {
           const movIds = movimientos.map((m) => m.id);
-          await tx.movimientoKardexLote.deleteMany({ where: { movimientoId: { in: movIds } } });
-          await tx.movimientoKardex.deleteMany({ where: { id: { in: movIds } } });
+          await tx.movimientoKardexLote.deleteMany({
+            where: { movimientoId: { in: movIds } },
+          });
+          await tx.movimientoKardex.deleteMany({
+            where: { id: { in: movIds } },
+          });
         }
-        await tx.detalleComprobante.deleteMany({ where: { comprobanteId: id } });
+        await tx.detalleComprobante.deleteMany({
+          where: { comprobanteId: id },
+        });
         await tx.leyenda.deleteMany({ where: { comprobanteId: id } });
         await tx.comprobante.delete({ where: { id } });
       });
-      this.logger.log(`🗑️ Comprobante ${id} eliminado automáticamente (error SUNAT fatal)`);
+      this.logger.log(
+        `🗑️ Comprobante ${id} eliminado automáticamente (error SUNAT fatal)`,
+      );
     } catch (err: any) {
-      this.logger.error(`Error al auto-eliminar comprobante ${id}: ${err.message}`);
+      this.logger.error(
+        `Error al auto-eliminar comprobante ${id}: ${err.message}`,
+      );
     }
   }
 }

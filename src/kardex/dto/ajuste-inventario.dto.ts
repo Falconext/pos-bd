@@ -1,4 +1,14 @@
-import { IsNotEmpty, IsInt, IsNumber, IsEnum, IsString, IsOptional, IsDecimal, Min, IsDateString } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsInt,
+  IsNumber,
+  IsEnum,
+  IsString,
+  IsOptional,
+  IsDecimal,
+  Min,
+  IsDateString,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export enum TipoAjuste {

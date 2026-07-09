@@ -19,7 +19,7 @@ import { User } from '../common/decorators/user.decorator';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('pago')
 export class PagoController {
-  constructor(private readonly service: PagoService) { }
+  constructor(private readonly service: PagoService) {}
 
   @Get('listar')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
@@ -95,7 +95,10 @@ export class PagoController {
     @Param('comprobanteId', ParseIntPipe) comprobanteId: number,
     @User() user: any,
   ) {
-    return this.service.recalcularSaldoComprobante(comprobanteId, user.empresaId);
+    return this.service.recalcularSaldoComprobante(
+      comprobanteId,
+      user.empresaId,
+    );
   }
 
   @Post('recalcular-todos')

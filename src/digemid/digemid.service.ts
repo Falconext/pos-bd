@@ -18,9 +18,7 @@ export class DigemidService {
           { principioActivo: { contains: term, mode: 'insensitive' } },
         ],
       },
-      orderBy: [
-        { nombreComercial: 'asc' },
-      ],
+      orderBy: [{ nombreComercial: 'asc' }],
       take: limit,
       select: {
         id: true,

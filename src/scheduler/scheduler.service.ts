@@ -16,7 +16,7 @@ export class SchedulerService {
     private readonly inventarioNotificacionesService: InventarioNotificacionesService,
     private readonly resellerService: ResellerService,
     private readonly prisma: PrismaService,
-  ) { }
+  ) {}
 
   // Job 1: Check status of PENDIENTE invoices with documentoId (every 5 min)
   @Cron(CronExpression.EVERY_5_MINUTES)
@@ -36,7 +36,7 @@ export class SchedulerService {
     try {
       // Reintentar Comprobantes
       await this.verificarSunat.reintentarEnviosFallidos();
-      
+
       // Reintentar Guías de Remisión
       await this.verificarSunat.reintentarGuiasFallidas();
     } catch (error: any) {
@@ -55,7 +55,9 @@ export class SchedulerService {
     try {
       await this.verificarSunat.notificarPendientesEstancados();
     } catch (error: any) {
-      this.logger.error(`[Job 4] Error al notificar pendientes estancados: ${error?.message}`);
+      this.logger.error(
+        `[Job 4] Error al notificar pendientes estancados: ${error?.message}`,
+      );
     }
   }
 
@@ -67,8 +69,11 @@ export class SchedulerService {
   async verificarSuscripciones(): Promise<void> {
     this.logger.log('🔔 Iniciando verificación de suscripciones...');
     try {
-      const resultado = await this.notificacionesService.verificarSuscripcionesProximasVencer();
-      this.logger.log(`✅ Verificación completada. ${resultado.total} notificaciones creadas.`);
+      const resultado =
+        await this.notificacionesService.verificarSuscripcionesProximasVencer();
+      this.logger.log(
+        `✅ Verificación completada. ${resultado.total} notificaciones creadas.`,
+      );
     } catch (error) {
       this.logger.error('❌ Error al verificar suscripciones:', error);
     }
@@ -97,8 +102,11 @@ export class SchedulerService {
   async alertarLotesVencimiento(): Promise<void> {
     this.logger.log('💊 Iniciando alertas de vencimiento de lotes...');
     try {
-      const resultado = await this.inventarioNotificacionesService.alertarLotesVencimientoProximo();
-      this.logger.log(`✅ Alertas de vencimiento completadas. ${resultado.total} notificaciones enviadas.`);
+      const resultado =
+        await this.inventarioNotificacionesService.alertarLotesVencimientoProximo();
+      this.logger.log(
+        `✅ Alertas de vencimiento completadas. ${resultado.total} notificaciones enviadas.`,
+      );
     } catch (error) {
       this.logger.error('❌ Error al alertar vencimientos de lotes:', error);
     }
@@ -112,7 +120,9 @@ export class SchedulerService {
     this.logger.log('💼 Iniciando renovación mensual de clientes reseller...');
     try {
       const resultado = await this.resellerService.processMonthlyRenewals();
-      this.logger.log(`✅ Renovación reseller completada. Evaluadas: ${resultado.totalEvaluadas}, renovadas: ${resultado.renovadas}, suspendidas: ${resultado.suspendidas}`);
+      this.logger.log(
+        `✅ Renovación reseller completada. Evaluadas: ${resultado.totalEvaluadas}, renovadas: ${resultado.renovadas}, suspendidas: ${resultado.suspendidas}`,
+      );
     } catch (error) {
       this.logger.error('❌ Error en renovación mensual reseller:', error);
     }
@@ -131,19 +141,36 @@ export class SchedulerService {
       en30dias.setDate(en30dias.getDate() + 30);
 
       // 1) Contratos que pasan a VENCIDO: capturarlos ANTES de actualizar para poder notificar.
-      const porVencerAhoraVencidos = await this.prisma.contratoVehicular.findMany({
-        where: { fechaFin: { lt: hoy }, estado: { in: ['VIGENTE', 'POR_VENCER'] } },
-        select: { id: true, empresaId: true, fechaFin: true, vehiculo: { select: { placa: true } } },
-      });
+      const porVencerAhoraVencidos =
+        await this.prisma.contratoVehicular.findMany({
+          where: {
+            fechaFin: { lt: hoy },
+            estado: { in: ['VIGENTE', 'POR_VENCER'] },
+          },
+          select: {
+            id: true,
+            empresaId: true,
+            fechaFin: true,
+            vehiculo: { select: { placa: true } },
+          },
+        });
       const vencidos = await this.prisma.contratoVehicular.updateMany({
-        where: { fechaFin: { lt: hoy }, estado: { in: ['VIGENTE', 'POR_VENCER'] } },
+        where: {
+          fechaFin: { lt: hoy },
+          estado: { in: ['VIGENTE', 'POR_VENCER'] },
+        },
         data: { estado: 'VENCIDO' },
       });
 
       // 2) Contratos que pasan a POR_VENCER (vencen dentro de 30 días).
       const nuevosPorVencer = await this.prisma.contratoVehicular.findMany({
         where: { fechaFin: { gte: hoy, lte: en30dias }, estado: 'VIGENTE' },
-        select: { id: true, empresaId: true, fechaFin: true, vehiculo: { select: { placa: true } } },
+        select: {
+          id: true,
+          empresaId: true,
+          fechaFin: true,
+          vehiculo: { select: { placa: true } },
+        },
       });
       const porVencer = await this.prisma.contratoVehicular.updateMany({
         where: { fechaFin: { gte: hoy, lte: en30dias }, estado: 'VIGENTE' },
@@ -154,7 +181,9 @@ export class SchedulerService {
       await this.notificarContratos(porVencerAhoraVencidos, 'VENCIDO');
       await this.notificarContratos(nuevosPorVencer, 'POR_VENCER');
 
-      this.logger.log(`✅ Contratos: ${vencidos.count} marcados VENCIDO, ${porVencer.count} marcados POR_VENCER`);
+      this.logger.log(
+        `✅ Contratos: ${vencidos.count} marcados VENCIDO, ${porVencer.count} marcados POR_VENCER`,
+      );
     } catch (error) {
       this.logger.error('❌ Error al actualizar contratos vehiculares:', error);
     }
@@ -162,7 +191,12 @@ export class SchedulerService {
 
   // Agrupa los contratos por empresa y envía una notificación in-app a los admins.
   private async notificarContratos(
-    contratos: { id: number; empresaId: number; fechaFin: Date; vehiculo?: { placa: string } | null }[],
+    contratos: {
+      id: number;
+      empresaId: number;
+      fechaFin: Date;
+      vehiculo?: { placa: string } | null;
+    }[],
     tipo: 'VENCIDO' | 'POR_VENCER',
   ): Promise<void> {
     if (!contratos.length) return;
@@ -177,7 +211,8 @@ export class SchedulerService {
 
     for (const [empresaId, { placas, ids }] of porEmpresa.entries()) {
       const cantidad = ids.length;
-      const listaPlacas = placas.slice(0, 5).join(', ') + (placas.length > 5 ? '…' : '');
+      const listaPlacas =
+        placas.slice(0, 5).join(', ') + (placas.length > 5 ? '…' : '');
       const esVencido = tipo === 'VENCIDO';
       try {
         await this.notificacionesService.notificarAdminsEmpresa({
@@ -189,10 +224,17 @@ export class SchedulerService {
           mensaje: esVencido
             ? `Los siguientes vehículos tienen su suscripción de monitoreo VENCIDA: ${listaPlacas}. Renuévalos para no interrumpir el servicio.`
             : `Los siguientes vehículos vencen su suscripción en los próximos 30 días: ${listaPlacas}. Considera renovarlos.`,
-          metaData: { modulo: 'contratos-vehiculares', estado: tipo, contratoIds: ids, placas },
+          metaData: {
+            modulo: 'contratos-vehiculares',
+            estado: tipo,
+            contratoIds: ids,
+            placas,
+          },
         });
       } catch (e: any) {
-        this.logger.error(`No se pudo notificar contratos (${tipo}) empresa ${empresaId}: ${e?.message || e}`);
+        this.logger.error(
+          `No se pudo notificar contratos (${tipo}) empresa ${empresaId}: ${e?.message || e}`,
+        );
       }
     }
   }

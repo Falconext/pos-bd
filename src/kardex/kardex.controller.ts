@@ -20,13 +20,10 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { ModuleAccessGuard } from '../common/guards/module-access.guard';
 import { RequiresModule } from '../common/decorators/module.decorator';
 import { KardexService } from './kardex.service';
-import {
-  FiltrosKardexDto,
-  FiltrosReporteDto
-} from './dto/filtros-kardex.dto';
+import { FiltrosKardexDto, FiltrosReporteDto } from './dto/filtros-kardex.dto';
 import {
   AjusteInventarioDto,
-  AjusteMasivoDto
+  AjusteMasivoDto,
 } from './dto/ajuste-inventario.dto';
 import { TrasladoKardexDto } from './dto/traslado-kardex.dto';
 
@@ -34,7 +31,7 @@ import { TrasladoKardexDto } from './dto/traslado-kardex.dto';
 @UseGuards(JwtAuthGuard, ModuleAccessGuard)
 @RequiresModule('kardex')
 export class KardexController {
-  constructor(private readonly kardexService: KardexService) { }
+  constructor(private readonly kardexService: KardexService) {}
 
   /**
    * Obtiene el kardex general de la empresa con filtros
@@ -71,7 +68,12 @@ export class KardexController {
       throw new BadRequestException('Usuario sin empresa asignada');
     }
 
-    return this.kardexService.obtenerKardexProducto(productoId, empresaId, filtros, req.user.sedeId);
+    return this.kardexService.obtenerKardexProducto(
+      productoId,
+      empresaId,
+      filtros,
+      req.user.sedeId,
+    );
   }
 
   /**
@@ -89,7 +91,12 @@ export class KardexController {
       throw new BadRequestException('Usuario sin empresa asignada');
     }
 
-    return this.kardexService.realizarAjusteInventario(ajusteDto, empresaId, usuarioId, req.user.sedeId);
+    return this.kardexService.realizarAjusteInventario(
+      ajusteDto,
+      empresaId,
+      usuarioId,
+      req.user.sedeId,
+    );
   }
 
   /**
@@ -107,7 +114,12 @@ export class KardexController {
       throw new BadRequestException('Usuario sin empresa asignada');
     }
 
-    return this.kardexService.realizarAjusteMasivo(ajusteMasivoDto, empresaId, usuarioId, req.user.sedeId);
+    return this.kardexService.realizarAjusteMasivo(
+      ajusteMasivoDto,
+      empresaId,
+      usuarioId,
+      req.user.sedeId,
+    );
   }
 
   /**
@@ -125,7 +137,11 @@ export class KardexController {
       throw new BadRequestException('Usuario sin empresa asignada');
     }
 
-    return this.kardexService.realizarTraslado(trasladoDto, empresaId, usuarioId);
+    return this.kardexService.realizarTraslado(
+      trasladoDto,
+      empresaId,
+      usuarioId,
+    );
   }
 
   /**
@@ -141,7 +157,11 @@ export class KardexController {
       throw new BadRequestException('Usuario sin empresa asignada');
     }
 
-    return this.kardexService.obtenerInventarioValorizado(empresaId, filtros, req.user.sedeId);
+    return this.kardexService.obtenerInventarioValorizado(
+      empresaId,
+      filtros,
+      req.user.sedeId,
+    );
   }
 
   /**
@@ -157,7 +177,11 @@ export class KardexController {
       throw new BadRequestException('Usuario sin empresa asignada');
     }
 
-    const stockActual = await this.kardexService.calcularStockActual(productoId, empresaId, req.user.sedeId);
+    const stockActual = await this.kardexService.calcularStockActual(
+      productoId,
+      empresaId,
+      req.user.sedeId,
+    );
     return { productoId, stockActual };
   }
 
@@ -171,7 +195,10 @@ export class KardexController {
       throw new BadRequestException('Usuario sin empresa asignada');
     }
 
-    return this.kardexService.validarConsistenciaStock(empresaId, req.user.sedeId);
+    return this.kardexService.validarConsistenciaStock(
+      empresaId,
+      req.user.sedeId,
+    );
   }
 
   /**
@@ -185,13 +212,21 @@ export class KardexController {
     }
 
     // Obtener inventario valorizado para las estadísticas
-    const inventario = await this.kardexService.obtenerInventarioValorizado(empresaId, undefined, req.user.sedeId);
+    const inventario = await this.kardexService.obtenerInventarioValorizado(
+      empresaId,
+      undefined,
+      req.user.sedeId,
+    );
 
     // Obtener movimientos recientes
-    const movimientosRecientes = await this.kardexService.obtenerKardexGeneral(empresaId, {
-      page: 1,
-      limit: 10,
-    }, req.user.sedeId);
+    const movimientosRecientes = await this.kardexService.obtenerKardexGeneral(
+      empresaId,
+      {
+        page: 1,
+        limit: 10,
+      },
+      req.user.sedeId,
+    );
 
     return {
       resumenInventario: inventario.resumen,
@@ -215,15 +250,21 @@ export class KardexController {
     }
 
     if (!['excel', 'csv'].includes(tipo)) {
-      throw new BadRequestException('Tipo de exportación no válido. Use "excel" o "csv"');
+      throw new BadRequestException(
+        'Tipo de exportación no válido. Use "excel" o "csv"',
+      );
     }
 
     // Obtener todos los movimientos (sin paginación para exportación)
-    const kardexCompleto = await this.kardexService.obtenerKardexGeneral(empresaId, {
-      ...filtros,
-      page: 1,
-      limit: 10000, // Límite alto para exportación
-    }, req.user.sedeId);
+    const kardexCompleto = await this.kardexService.obtenerKardexGeneral(
+      empresaId,
+      {
+        ...filtros,
+        page: 1,
+        limit: 10000, // Límite alto para exportación
+      },
+      req.user.sedeId,
+    );
 
     return {
       tipo,
@@ -244,9 +285,13 @@ export class KardexController {
       throw new BadRequestException('Usuario sin empresa asignada');
     }
 
-    return this.kardexService.obtenerInventarioValorizado(empresaId, {
-      soloStockCritico: true,
-    }, req.user.sedeId);
+    return this.kardexService.obtenerInventarioValorizado(
+      empresaId,
+      {
+        soloStockCritico: true,
+      },
+      req.user.sedeId,
+    );
   }
 
   @Get('series-garantias')
@@ -277,21 +322,28 @@ export class KardexController {
   @Post('series-garantias')
   async crearSerie(@Request() req, @Body() body: any) {
     const empresaId = req.user.empresaId;
-    if (!empresaId) throw new BadRequestException('Usuario sin empresa asignada');
+    if (!empresaId)
+      throw new BadRequestException('Usuario sin empresa asignada');
     return this.kardexService.crearSerie(empresaId, req.user.sedeId, body);
   }
 
   @Patch('series-garantias/:id')
-  async actualizarSerie(@Request() req, @Param('id', ParseIntPipe) id: number, @Body() body: any) {
+  async actualizarSerie(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: any,
+  ) {
     const empresaId = req.user.empresaId;
-    if (!empresaId) throw new BadRequestException('Usuario sin empresa asignada');
+    if (!empresaId)
+      throw new BadRequestException('Usuario sin empresa asignada');
     return this.kardexService.actualizarSerie(empresaId, id, body);
   }
 
   @Delete('series-garantias/:id')
   async eliminarSerie(@Request() req, @Param('id', ParseIntPipe) id: number) {
     const empresaId = req.user.empresaId;
-    if (!empresaId) throw new BadRequestException('Usuario sin empresa asignada');
+    if (!empresaId)
+      throw new BadRequestException('Usuario sin empresa asignada');
     return this.kardexService.eliminarSerie(empresaId, id);
   }
 
@@ -302,8 +354,13 @@ export class KardexController {
     @Query('estado') estado?: string,
   ) {
     const empresaId = req.user.empresaId;
-    if (!empresaId) throw new BadRequestException('Usuario sin empresa asignada');
-    return this.kardexService.obtenerSeriesPorProducto(empresaId, productoId, estado);
+    if (!empresaId)
+      throw new BadRequestException('Usuario sin empresa asignada');
+    return this.kardexService.obtenerSeriesPorProducto(
+      empresaId,
+      productoId,
+      estado,
+    );
   }
 
   @Get('series-garantias/:id/constancia')
@@ -313,9 +370,11 @@ export class KardexController {
     @Res() res: Response,
   ) {
     const empresaId = req.user.empresaId;
-    if (!empresaId) throw new BadRequestException('Usuario sin empresa asignada');
+    if (!empresaId)
+      throw new BadRequestException('Usuario sin empresa asignada');
 
-    const { buffer, filename } = await this.kardexService.generarConstanciaGarantia(empresaId, id);
+    const { buffer, filename } =
+      await this.kardexService.generarConstanciaGarantia(empresaId, id);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
     res.setHeader('Content-Length', buffer.length);
@@ -323,30 +382,48 @@ export class KardexController {
   }
 
   @Post('series-garantias/:id/reclamos')
-  async crearReclamo(@Request() req, @Param('id', ParseIntPipe) serieId: number, @Body() body: any) {
+  async crearReclamo(
+    @Request() req,
+    @Param('id', ParseIntPipe) serieId: number,
+    @Body() body: any,
+  ) {
     const empresaId = req.user.empresaId;
-    if (!empresaId) throw new BadRequestException('Usuario sin empresa asignada');
+    if (!empresaId)
+      throw new BadRequestException('Usuario sin empresa asignada');
     return this.kardexService.crearReclamo(empresaId, serieId, body);
   }
 
   @Get('series-garantias/:id/reclamos')
-  async obtenerReclamos(@Request() req, @Param('id', ParseIntPipe) serieId: number) {
+  async obtenerReclamos(
+    @Request() req,
+    @Param('id', ParseIntPipe) serieId: number,
+  ) {
     const empresaId = req.user.empresaId;
-    if (!empresaId) throw new BadRequestException('Usuario sin empresa asignada');
+    if (!empresaId)
+      throw new BadRequestException('Usuario sin empresa asignada');
     return this.kardexService.obtenerReclamos(empresaId, serieId);
   }
 
   @Patch('reclamos-garantia/:reclamoId')
-  async actualizarReclamo(@Request() req, @Param('reclamoId', ParseIntPipe) reclamoId: number, @Body() body: any) {
+  async actualizarReclamo(
+    @Request() req,
+    @Param('reclamoId', ParseIntPipe) reclamoId: number,
+    @Body() body: any,
+  ) {
     const empresaId = req.user.empresaId;
-    if (!empresaId) throw new BadRequestException('Usuario sin empresa asignada');
+    if (!empresaId)
+      throw new BadRequestException('Usuario sin empresa asignada');
     return this.kardexService.actualizarReclamo(empresaId, reclamoId, body);
   }
 
   @Delete('reclamos-garantia/:reclamoId')
-  async eliminarReclamo(@Request() req, @Param('reclamoId', ParseIntPipe) reclamoId: number) {
+  async eliminarReclamo(
+    @Request() req,
+    @Param('reclamoId', ParseIntPipe) reclamoId: number,
+  ) {
     const empresaId = req.user.empresaId;
-    if (!empresaId) throw new BadRequestException('Usuario sin empresa asignada');
+    if (!empresaId)
+      throw new BadRequestException('Usuario sin empresa asignada');
     return this.kardexService.eliminarReclamo(empresaId, reclamoId);
   }
 
@@ -366,15 +443,24 @@ export class KardexController {
 
     // Si no se proporcionan fechas, usar el último mes
     const fechaFin_date = fechaFin ? new Date(fechaFin) : new Date();
-    const fechaInicio_date = fechaInicio ? new Date(fechaInicio) :
-      new Date(fechaFin_date.getFullYear(), fechaFin_date.getMonth() - 1, fechaFin_date.getDate());
+    const fechaInicio_date = fechaInicio
+      ? new Date(fechaInicio)
+      : new Date(
+          fechaFin_date.getFullYear(),
+          fechaFin_date.getMonth() - 1,
+          fechaFin_date.getDate(),
+        );
 
-    const movimientos = await this.kardexService.obtenerKardexGeneral(empresaId, {
-      fechaInicio: fechaInicio_date.toISOString(),
-      fechaFin: fechaFin_date.toISOString(),
-      page: 1,
-      limit: 10000,
-    }, req.user.sedeId);
+    const movimientos = await this.kardexService.obtenerKardexGeneral(
+      empresaId,
+      {
+        fechaInicio: fechaInicio_date.toISOString(),
+        fechaFin: fechaFin_date.toISOString(),
+        page: 1,
+        limit: 10000,
+      },
+      req.user.sedeId,
+    );
 
     // Calcular resumen por tipo de movimiento
     const resumen = {
@@ -400,8 +486,8 @@ export class KardexController {
       },
     };
 
-    movimientos.movimientos.forEach(mov => {
-      const valor = (mov.valorTotal || 0);
+    movimientos.movimientos.forEach((mov) => {
+      const valor = mov.valorTotal || 0;
 
       switch (mov.tipoMovimiento) {
         case 'INGRESO':
@@ -442,7 +528,12 @@ export class KardexController {
     const fechaInicio_date = fechaInicio ? new Date(fechaInicio) : undefined;
     const fechaFin_date = fechaFin ? new Date(fechaFin) : undefined;
 
-    return this.kardexService.obtenerReporteRotacion(empresaId, fechaInicio_date, fechaFin_date, req.user.sedeId);
+    return this.kardexService.obtenerReporteRotacion(
+      empresaId,
+      fechaInicio_date,
+      fechaFin_date,
+      req.user.sedeId,
+    );
   }
 
   /**
@@ -462,7 +553,12 @@ export class KardexController {
     const fechaInicio_date = fechaInicio ? new Date(fechaInicio) : undefined;
     const fechaFin_date = fechaFin ? new Date(fechaFin) : undefined;
 
-    return this.kardexService.obtenerAnalisisABC(empresaId, fechaInicio_date, fechaFin_date, req.user.sedeId);
+    return this.kardexService.obtenerAnalisisABC(
+      empresaId,
+      fechaInicio_date,
+      fechaFin_date,
+      req.user.sedeId,
+    );
   }
 
   /**
@@ -479,7 +575,11 @@ export class KardexController {
     }
 
     const dias = diasSinMovimiento ? parseInt(diasSinMovimiento, 10) : 90;
-    return this.kardexService.obtenerProductosObsoletos(empresaId, dias, req.user.sedeId);
+    return this.kardexService.obtenerProductosObsoletos(
+      empresaId,
+      dias,
+      req.user.sedeId,
+    );
   }
 
   /**
@@ -493,8 +593,11 @@ export class KardexController {
     @Query('productoId') productoId?: string,
   ) {
     const empresaId = req.user.empresaId;
-    if (!empresaId) throw new BadRequestException('Usuario sin empresa asignada');
-    const inicio = fechaInicio ? new Date(`${fechaInicio}T00:00:00-05:00`) : new Date(new Date().getFullYear(), 0, 1);
+    if (!empresaId)
+      throw new BadRequestException('Usuario sin empresa asignada');
+    const inicio = fechaInicio
+      ? new Date(`${fechaInicio}T00:00:00-05:00`)
+      : new Date(new Date().getFullYear(), 0, 1);
     const fin = fechaFin ? new Date(`${fechaFin}T23:59:59-05:00`) : new Date();
     return this.kardexService.obtenerLibroControlPsicotropicos({
       empresaId,
@@ -511,11 +614,33 @@ export class KardexController {
       throw new BadRequestException('Usuario sin empresa asignada');
     }
 
-    const [inventarioValorizado, movimientosRecientes, stockCritico, productosObsoletos, farmacia] = await Promise.all([
-      this.kardexService.obtenerInventarioValorizado(empresaId, undefined, req.user.sedeId),
-      this.kardexService.obtenerKardexGeneral(empresaId, { page: 1, limit: 10 }, req.user.sedeId),
-      this.kardexService.obtenerInventarioValorizado(empresaId, { soloStockCritico: true }, req.user.sedeId),
-      this.kardexService.obtenerProductosObsoletos(empresaId, 60, req.user.sedeId),
+    const [
+      inventarioValorizado,
+      movimientosRecientes,
+      stockCritico,
+      productosObsoletos,
+      farmacia,
+    ] = await Promise.all([
+      this.kardexService.obtenerInventarioValorizado(
+        empresaId,
+        undefined,
+        req.user.sedeId,
+      ),
+      this.kardexService.obtenerKardexGeneral(
+        empresaId,
+        { page: 1, limit: 10 },
+        req.user.sedeId,
+      ),
+      this.kardexService.obtenerInventarioValorizado(
+        empresaId,
+        { soloStockCritico: true },
+        req.user.sedeId,
+      ),
+      this.kardexService.obtenerProductosObsoletos(
+        empresaId,
+        60,
+        req.user.sedeId,
+      ),
       this.kardexService.obtenerDashboardFarmacia(empresaId),
     ]);
 

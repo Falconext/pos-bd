@@ -1,4 +1,12 @@
-import { IsString, IsEnum, IsOptional, IsNumber, IsDateString, Min, IsBoolean } from 'class-validator';
+import {
+  IsString,
+  IsEnum,
+  IsOptional,
+  IsNumber,
+  IsDateString,
+  Min,
+  IsBoolean,
+} from 'class-validator';
 import { PlataformaAds, FrecuenciaPresupuesto } from '@prisma/client';
 
 export class CreateCampanaDto {

@@ -1,4 +1,11 @@
-import { Controller, Get, Patch, Param, UseGuards, ParseIntPipe } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Patch,
+  Param,
+  UseGuards,
+  ParseIntPipe,
+} from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -17,7 +24,9 @@ export class NotificacionesController {
   @Get()
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async obtenerNotificaciones(@User() user: any) {
-    return await this.notificacionesService.obtenerNotificacionesUsuario(user.id);
+    return await this.notificacionesService.obtenerNotificacionesUsuario(
+      user.id,
+    );
   }
 
   @Patch('leer-todas')

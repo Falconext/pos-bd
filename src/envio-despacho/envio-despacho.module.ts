@@ -6,9 +6,9 @@ import { RepartidorModule } from '../repartidor/repartidor.module';
 import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 
 @Module({
-    imports: [PrismaModule, RepartidorModule, WhatsAppModule],
-    controllers: [EnvioDespachoController],
-    providers: [EnvioDespachoService],
-    exports: [EnvioDespachoService],
+  imports: [PrismaModule, RepartidorModule, WhatsAppModule],
+  controllers: [EnvioDespachoController],
+  providers: [EnvioDespachoService],
+  exports: [EnvioDespachoService],
 })
 export class EnvioDespachoModule {}

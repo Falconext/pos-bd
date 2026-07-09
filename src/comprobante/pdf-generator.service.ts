@@ -16,7 +16,13 @@ export class PdfGeneratorService {
     // Cargar template: intentar en dist y src para soportar start y start:dev
     const candidates = [
       path.join(__dirname, 'templates', 'comprobante.hbs'), // dist/src/comprobante/templates
-      path.join(process.cwd(), 'src', 'comprobante', 'templates', 'comprobante.hbs'), // src directo
+      path.join(
+        process.cwd(),
+        'src',
+        'comprobante',
+        'templates',
+        'comprobante.hbs',
+      ), // src directo
     ];
 
     let foundPath: string | null = null;
@@ -47,7 +53,13 @@ export class PdfGeneratorService {
     // Cargar template de cotización
     const cotizacionCandidates = [
       path.join(__dirname, 'templates', 'cotizacion.hbs'),
-      path.join(process.cwd(), 'src', 'comprobante', 'templates', 'cotizacion.hbs'),
+      path.join(
+        process.cwd(),
+        'src',
+        'comprobante',
+        'templates',
+        'cotizacion.hbs',
+      ),
     ];
 
     let cotizacionPath: string | null = null;
@@ -63,13 +75,21 @@ export class PdfGeneratorService {
       this.cotizacionTemplate = Handlebars.compile(cotizacionSource);
       this.logger.log(`✅ Template de cotización cargado: ${cotizacionPath}`);
     } else {
-      this.logger.warn('⚠️ Template de cotización no encontrado, usando template genérico');
+      this.logger.warn(
+        '⚠️ Template de cotización no encontrado, usando template genérico',
+      );
     }
 
     // Cargar template de guía de remisión
     const guiaCandidates = [
       path.join(__dirname, 'templates', 'guia-remision.hbs'),
-      path.join(process.cwd(), 'src', 'comprobante', 'templates', 'guia-remision.hbs'),
+      path.join(
+        process.cwd(),
+        'src',
+        'comprobante',
+        'templates',
+        'guia-remision.hbs',
+      ),
     ];
 
     let guiaPath: string | null = null;
@@ -92,14 +112,18 @@ export class PdfGeneratorService {
   async onModuleDestroy() {
     if (this.browser) {
       await this.browser.close().catch((error) => {
-        this.logger.warn(`No se pudo cerrar Puppeteer al destruir módulo: ${error.message}`);
+        this.logger.warn(
+          `No se pudo cerrar Puppeteer al destruir módulo: ${error.message}`,
+        );
       });
     }
   }
 
   private async getBrowser(): Promise<puppeteer.Browser> {
     if (this.browser && !this.browser.isConnected()) {
-      this.logger.warn('⚠️ Puppeteer estaba desconectado; se reiniciará el browser');
+      this.logger.warn(
+        '⚠️ Puppeteer estaba desconectado; se reiniciará el browser',
+      );
       this.browser = null;
     }
 
@@ -124,7 +148,9 @@ export class PdfGeneratorService {
           `--crash-dumps-dir=${path.join('/tmp', 'falconext-puppeteer-crash')}`,
         ],
       });
-      this.logger.log(`✅ Puppeteer browser inicializado (chrome: ${executablePath || 'auto'})`);
+      this.logger.log(
+        `✅ Puppeteer browser inicializado (chrome: ${executablePath || 'auto'})`,
+      );
     }
     return this.browser;
   }
@@ -173,9 +199,13 @@ export class PdfGeneratorService {
           timeout: 15_000,
         });
 
-        await page.waitForNetworkIdle({ idleTime: 500, timeout: 5_000 }).catch(() => {
-          this.logger.warn('⚠️ PDF generado sin esperar recursos externos lentos');
-        });
+        await page
+          .waitForNetworkIdle({ idleTime: 500, timeout: 5_000 })
+          .catch(() => {
+            this.logger.warn(
+              '⚠️ PDF generado sin esperar recursos externos lentos',
+            );
+          });
 
         const pdfBuffer = await page.pdf(options);
         this.logger.log(successMessage);
@@ -183,14 +213,20 @@ export class PdfGeneratorService {
       } catch (error: any) {
         lastError = error;
         if (this.isRecoverableBrowserError(error) && attempt < 2) {
-          await this.resetBrowser(error.message || 'browser cerrado durante generación PDF');
-          this.logger.warn('🔁 Reintentando generación PDF con un browser nuevo');
+          await this.resetBrowser(
+            error.message || 'browser cerrado durante generación PDF',
+          );
+          this.logger.warn(
+            '🔁 Reintentando generación PDF con un browser nuevo',
+          );
           continue;
         }
         throw error;
       } finally {
         await page?.close().catch((error) => {
-          this.logger.warn(`No se pudo cerrar la página de Puppeteer: ${error.message}`);
+          this.logger.warn(
+            `No se pudo cerrar la página de Puppeteer: ${error.message}`,
+          );
         });
       }
     }
@@ -275,18 +311,25 @@ export class PdfGeneratorService {
       // Generar HTML desde template
       const html = this.template(data);
 
-      return this.renderPdfBuffer(html, {
-        format: 'A4',
-        printBackground: true,
-        margin: {
-          top: '10mm',
-          right: '10mm',
-          bottom: '10mm',
-          left: '10mm',
+      return this.renderPdfBuffer(
+        html,
+        {
+          format: 'A4',
+          printBackground: true,
+          margin: {
+            top: '10mm',
+            right: '10mm',
+            bottom: '10mm',
+            left: '10mm',
+          },
         },
-      }, '✅ PDF generado exitosamente');
+        '✅ PDF generado exitosamente',
+      );
     } catch (error) {
-      this.logger.error(`❌ Error generando PDF: ${error.message}`, error.stack);
+      this.logger.error(
+        `❌ Error generando PDF: ${error.message}`,
+        error.stack,
+      );
       throw error;
     }
   }
@@ -302,18 +345,25 @@ export class PdfGeneratorService {
 
       const html = this.template(data);
 
-      return this.renderPdfBuffer(html, {
-        width: '80mm',
-        printBackground: true,
-        margin: {
-          top: '5mm',
-          right: '5mm',
-          bottom: '5mm',
-          left: '5mm',
+      return this.renderPdfBuffer(
+        html,
+        {
+          width: '80mm',
+          printBackground: true,
+          margin: {
+            top: '5mm',
+            right: '5mm',
+            bottom: '5mm',
+            left: '5mm',
+          },
         },
-      }, '✅ PDF ticket generado exitosamente');
+        '✅ PDF ticket generado exitosamente',
+      );
     } catch (error) {
-      this.logger.error(`❌ Error generando PDF ticket: ${error.message}`, error.stack);
+      this.logger.error(
+        `❌ Error generando PDF ticket: ${error.message}`,
+        error.stack,
+      );
       throw error;
     }
   }
@@ -394,18 +444,25 @@ export class PdfGeneratorService {
       // Generar HTML desde template
       const html = template(data);
 
-      return this.renderPdfBuffer(html, {
-        format: 'A4',
-        printBackground: true,
-        margin: {
-          top: '10mm',
-          right: '10mm',
-          bottom: '10mm',
-          left: '10mm',
+      return this.renderPdfBuffer(
+        html,
+        {
+          format: 'A4',
+          printBackground: true,
+          margin: {
+            top: '10mm',
+            right: '10mm',
+            bottom: '10mm',
+            left: '10mm',
+          },
         },
-      }, '✅ PDF de cotización generado exitosamente');
+        '✅ PDF de cotización generado exitosamente',
+      );
     } catch (error) {
-      this.logger.error(`❌ Error generando PDF de cotización: ${error.message}`, error.stack);
+      this.logger.error(
+        `❌ Error generando PDF de cotización: ${error.message}`,
+        error.stack,
+      );
       this.logger.warn('⚠️ Usando fallback PDF simple para cotización');
       return this.generarPDFCotizacionSimple(data);
     }
@@ -418,18 +475,25 @@ export class PdfGeneratorService {
 
       const html = this.guiaTemplate(data);
 
-      return this.renderPdfBuffer(html, {
-        format: 'A4',
-        printBackground: true,
-        margin: {
-          top: '10mm',
-          right: '10mm',
-          bottom: '10mm',
-          left: '10mm',
+      return this.renderPdfBuffer(
+        html,
+        {
+          format: 'A4',
+          printBackground: true,
+          margin: {
+            top: '10mm',
+            right: '10mm',
+            bottom: '10mm',
+            left: '10mm',
+          },
         },
-      }, '✅ PDF de guía de remisión generado exitosamente');
+        '✅ PDF de guía de remisión generado exitosamente',
+      );
     } catch (error) {
-      this.logger.error(`❌ Error generando PDF de guía: ${error.message}`, error.stack);
+      this.logger.error(
+        `❌ Error generando PDF de guía: ${error.message}`,
+        error.stack,
+      );
       throw error;
     }
   }
@@ -530,10 +594,14 @@ export class PdfGeneratorService {
   }
 
   private generarPDFCotizacionSimple(data: any): Buffer {
-    const numero = `${data.serie || ''}-${data.correlativo || ''}`.replace(/^-|-$/g, '') || '-';
+    const numero =
+      `${data.serie || ''}-${data.correlativo || ''}`.replace(/^-|-$/g, '') ||
+      '-';
     const lines = [
       `COTIZACION ${numero}`,
-      this.normalizePdfText(data.nombreComercial || data.razonSocial || 'Empresa'),
+      this.normalizePdfText(
+        data.nombreComercial || data.razonSocial || 'Empresa',
+      ),
       `RUC: ${this.normalizePdfText(data.ruc || '-')}`,
       `Direccion: ${this.normalizePdfText(data.direccion || '-')}`,
       `Contacto: ${this.normalizePdfText([data.celular, data.email].filter(Boolean).join(' / ') || '-')}`,
@@ -548,9 +616,13 @@ export class PdfGeneratorService {
 
     (data.productos || []).forEach((producto: any, index: number) => {
       const description = this.wrapPdfText(producto.descripcion || '-', 72);
-      lines.push(`${index + 1}. ${this.normalizePdfText(producto.cantidad || '1')} ${this.normalizePdfText(producto.unidadMedida || 'UND')} - ${description[0]}`);
+      lines.push(
+        `${index + 1}. ${this.normalizePdfText(producto.cantidad || '1')} ${this.normalizePdfText(producto.unidadMedida || 'UND')} - ${description[0]}`,
+      );
       description.slice(1).forEach((line) => lines.push(`   ${line}`));
-      lines.push(`   Precio unit.: S/ ${this.normalizePdfText(producto.precioUnitario || '0.00')}    Total: S/ ${this.normalizePdfText(producto.total || '0.00')}`);
+      lines.push(
+        `   Precio unit.: S/ ${this.normalizePdfText(producto.precioUnitario || '0.00')}    Total: S/ ${this.normalizePdfText(producto.total || '0.00')}`,
+      );
     });
 
     lines.push(
@@ -576,7 +648,10 @@ export class PdfGeneratorService {
       );
     }
 
-    lines.push('', `Generado por ${this.normalizePdfText(data.sistemaNombre || 'Falconext')}`);
+    lines.push(
+      '',
+      `Generado por ${this.normalizePdfText(data.sistemaNombre || 'Falconext')}`,
+    );
     return this.generarPdfTextoSimple(lines);
   }
 
@@ -628,7 +703,9 @@ export class PdfGeneratorService {
       '50 790 Td',
       `(${this.escapePdfText(lines[0])}) Tj`,
       '/F1 11 Tf',
-      ...lines.slice(1).flatMap((line) => ['0 -22 Td', `(${this.escapePdfText(line)}) Tj`]),
+      ...lines
+        .slice(1)
+        .flatMap((line) => ['0 -22 Td', `(${this.escapePdfText(line)}) Tj`]),
       'ET',
     ].join('\n');
 
@@ -657,27 +734,43 @@ export class PdfGeneratorService {
   }
 
   async generarPDFConstanciaGarantia(data: any): Promise<Buffer> {
-    this.logger.log('🎫 Iniciando generación de constancia de garantía con Puppeteer...');
+    this.logger.log(
+      '🎫 Iniciando generación de constancia de garantía con Puppeteer...',
+    );
     try {
       const formatDate = (value?: Date | string | null) => {
         if (!value) return 'Sin fecha';
         return new Intl.DateTimeFormat('es-PE', {
-          day: '2-digit', month: '2-digit', year: 'numeric',
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
         }).format(new Date(value));
       };
 
       const fechaLarga = new Intl.DateTimeFormat('es-PE', {
-        day: 'numeric', month: 'long', year: 'numeric',
-      }).format(new Date()).replace(' de ', ' de ').replace(/(\d{4})$/, 'del $1');
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      })
+        .format(new Date())
+        .replace(' de ', ' de ')
+        .replace(/(\d{4})$/, 'del $1');
 
       const fechaEmision = new Intl.DateTimeFormat('es-PE', {
-        day: '2-digit', month: '2-digit', year: 'numeric',
-        hour: '2-digit', minute: '2-digit',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
       }).format(new Date());
 
       const certNumber = `${String(data.serie?.id ?? 1).padStart(4, '0')}-${new Date().getFullYear()}`;
       const iniciales = (data.empresa?.razonSocial || 'FX')
-        .split(' ').slice(0, 2).map((w: string) => w[0]).join('').toUpperCase();
+        .split(' ')
+        .slice(0, 2)
+        .map((w: string) => w[0])
+        .join('')
+        .toUpperCase();
       const meses = Number(data.serie?.garantiaMeses ?? 0);
       const garantiaMesesLabel = meses === 1 ? 'MES' : 'MESES';
 
@@ -836,7 +929,8 @@ export class PdfGeneratorService {
         empresa: {
           ...data.empresa,
           iniciales,
-          nombreComercial: data.empresa.nombreComercial || data.empresa.razonSocial,
+          nombreComercial:
+            data.empresa.nombreComercial || data.empresa.razonSocial,
           direccion: data.empresa.direccion || '',
           contacto: [data.empresa.telefono].filter(Boolean).join(' · '),
         },
@@ -866,14 +960,23 @@ export class PdfGeneratorService {
         },
       });
 
-      return this.renderPdfBuffer(html, {
-        format: 'A4',
-        printBackground: true,
-        margin: { top: '0mm', right: '0mm', bottom: '0mm', left: '0mm' },
-      }, '✅ PDF constancia de garantía generado');
+      return this.renderPdfBuffer(
+        html,
+        {
+          format: 'A4',
+          printBackground: true,
+          margin: { top: '0mm', right: '0mm', bottom: '0mm', left: '0mm' },
+        },
+        '✅ PDF constancia de garantía generado',
+      );
     } catch (error) {
-      this.logger.error(`❌ Error generando constancia de garantía: ${error.message}`, error.stack);
-      this.logger.warn('⚠️ Usando fallback PDF simple para constancia de garantía');
+      this.logger.error(
+        `❌ Error generando constancia de garantía: ${error.message}`,
+        error.stack,
+      );
+      this.logger.warn(
+        '⚠️ Usando fallback PDF simple para constancia de garantía',
+      );
       return this.generarPDFConstanciaGarantiaSimple(data);
     }
   }

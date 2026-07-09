@@ -1,6 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateStoreProductDto, FilterStoreProductDto, UpdateStoreProductDto } from './dto/store-product.dto';
+import {
+  CreateStoreProductDto,
+  FilterStoreProductDto,
+  UpdateStoreProductDto,
+} from './dto/store-product.dto';
 import { Prisma } from '@prisma/client';
 
 @Injectable()
@@ -41,7 +45,9 @@ export class StoreCatalogService {
     }
 
     // Sort order
-    let orderBy: Prisma.StoreProductOrderByWithRelationInput[] = [{ order: 'asc' }];
+    let orderBy: Prisma.StoreProductOrderByWithRelationInput[] = [
+      { order: 'asc' },
+    ];
     if (sortBy === 'name_asc') orderBy = [{ name: 'asc' }];
     else if (sortBy === 'name_desc') orderBy = [{ name: 'desc' }];
     else if (sortBy === 'price_asc') orderBy = [{ price: 'asc' }];
@@ -87,7 +93,10 @@ export class StoreCatalogService {
     });
 
     return {
-      categories: categories.map(c => ({ name: c.category, count: c._count.id })),
+      categories: categories.map((c) => ({
+        name: c.category,
+        count: c._count.id,
+      })),
       availability: { inStock: inStockCount, outOfStock: outOfStockCount },
       priceRange: {
         min: Number(priceRange._min.price ?? 0),
@@ -113,12 +122,15 @@ export class StoreCatalogService {
       },
     });
 
-    if (!product) throw new NotFoundException(`Producto #${id} no encontrado o inactivo`);
+    if (!product)
+      throw new NotFoundException(`Producto #${id} no encontrado o inactivo`);
     return product;
   }
 
   async findAll() {
-    return this.prisma.storeProduct.findMany({ orderBy: [{ order: 'asc' }, { id: 'asc' }] });
+    return this.prisma.storeProduct.findMany({
+      orderBy: [{ order: 'asc' }, { id: 'asc' }],
+    });
   }
 
   async create(dto: CreateStoreProductDto) {
@@ -136,7 +148,9 @@ export class StoreCatalogService {
   }
 
   private async findOneOrFail(id: number) {
-    const product = await this.prisma.storeProduct.findUnique({ where: { id } });
+    const product = await this.prisma.storeProduct.findUnique({
+      where: { id },
+    });
     if (!product) throw new NotFoundException(`Producto #${id} no encontrado`);
     return product;
   }

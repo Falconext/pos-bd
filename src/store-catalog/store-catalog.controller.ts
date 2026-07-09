@@ -1,6 +1,21 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { StoreCatalogService } from './store-catalog.service';
-import { CreateStoreProductDto, FilterStoreProductDto, UpdateStoreProductDto } from './dto/store-product.dto';
+import {
+  CreateStoreProductDto,
+  FilterStoreProductDto,
+  UpdateStoreProductDto,
+} from './dto/store-product.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -45,7 +60,10 @@ export class StoreCatalogController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN_SISTEMA')
   @Patch(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateStoreProductDto) {
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateStoreProductDto,
+  ) {
     return this.storeCatalogService.update(id, dto);
   }
 

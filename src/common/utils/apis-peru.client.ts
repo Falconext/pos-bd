@@ -125,7 +125,9 @@ export class ApisPeruClient {
           personaToken: String(input.personaToken).trim(),
           fileName: String(input.fileName).trim(),
           documentBody: input.documentBody,
-          ...(input.customerEmail ? { customerEmail: input.customerEmail } : {}),
+          ...(input.customerEmail
+            ? { customerEmail: input.customerEmail }
+            : {}),
         });
         return fallback.data;
       }
@@ -168,7 +170,9 @@ export class ApisPeruClient {
           faults?: any[];
           notes?: any[];
           error?: any;
-        }>(`/documents/${encodeURIComponent(String(documentId).trim())}/getById`);
+        }>(
+          `/documents/${encodeURIComponent(String(documentId).trim())}/getById`,
+        );
         return fallback.data;
       }
       this.logger.error(

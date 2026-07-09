@@ -53,7 +53,8 @@ export class NotificacionesService {
 
     for (const empresa of empresas7Dias) {
       const diasRestantes = Math.ceil(
-        (empresa.fechaExpiracion.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24),
+        (empresa.fechaExpiracion.getTime() - hoy.getTime()) /
+          (1000 * 60 * 60 * 24),
       );
 
       let tipo: 'INFO' | 'WARNING' | 'CRITICAL' = 'INFO';

@@ -11,9 +11,19 @@ import { GeminiModule } from '../gemini/gemini.module';
 import { DigemidModule } from '../digemid/digemid.module';
 
 @Module({
-  imports: [forwardRef(() => KardexModule), S3Module, GeminiModule, DigemidModule],
+  imports: [
+    forwardRef(() => KardexModule),
+    S3Module,
+    GeminiModule,
+    DigemidModule,
+  ],
   controllers: [ProductoController, ProductoPlantillaController],
-  providers: [ProductoService, ProductoPlantillaService, ProductoLoteService, RolesGuard],
+  providers: [
+    ProductoService,
+    ProductoPlantillaService,
+    ProductoLoteService,
+    RolesGuard,
+  ],
   exports: [ProductoService, ProductoLoteService],
 })
-export class ProductoModule { }
+export class ProductoModule {}

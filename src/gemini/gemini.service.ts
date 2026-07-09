@@ -4,44 +4,61 @@ import { GoogleGenerativeAI, GenerativeModel } from '@google/generative-ai';
 
 @Injectable()
 export class GeminiService {
-    private readonly logger = new Logger(GeminiService.name);
-    private genAI: GoogleGenerativeAI | null = null;
-    private model: GenerativeModel | null = null;
+  private readonly logger = new Logger(GeminiService.name);
+  private genAI: GoogleGenerativeAI | null = null;
+  private model: GenerativeModel | null = null;
 
-    constructor(private readonly configService: ConfigService) {
-        const apiKey = this.configService.get<string>('GEMINI_API_KEY');
-        if (apiKey) {
-            this.genAI = new GoogleGenerativeAI(apiKey);
-            // 'gemini-flash-lite-latest' to attempt a fresh quota bucket after 'flash-latest' exhaustion.
-            this.model = this.genAI.getGenerativeModel({ model: 'gemini-flash-lite-latest' });
+  constructor(private readonly configService: ConfigService) {
+    const apiKey = this.configService.get<string>('GEMINI_API_KEY');
+    if (apiKey) {
+      this.genAI = new GoogleGenerativeAI(apiKey);
+      // 'gemini-flash-lite-latest' to attempt a fresh quota bucket after 'flash-latest' exhaustion.
+      this.model = this.genAI.getGenerativeModel({
+        model: 'gemini-flash-lite-latest',
+      });
+    } else {
+      this.logger.warn(
+        '⚠️  GEMINI_API_KEY no configurada. Funciones de IA deshabilitadas.',
+      );
+    }
+  }
 
-        } else {
-            this.logger.warn('⚠️  GEMINI_API_KEY no configurada. Funciones de IA deshabilitadas.');
-        }
+  isEnabled(): boolean {
+    return !!this.model;
+  }
+
+  /**
+   * Categoriza una lista de productos, detecta marca y genera descripción
+   * @param productos Lista de nombres de productos
+   * @returns Mapa de id -> { categoria, marca, descripcion }
+   */
+  async categorizarProductos(
+    productos: { id: number; nombre: string }[],
+  ): Promise<
+    {
+      id: number;
+      categoria: string;
+      marca: string | null;
+      descripcion: string | null;
+    }[]
+  > {
+    if (!this.model) {
+      throw new Error('Gemini AI no está configurado');
     }
 
-    isEnabled(): boolean {
-        return !!this.model;
-    }
+    // Procesar en lotes de 50 para evitar tokens muy largos
+    const batchSize = 50;
+    const results: {
+      id: number;
+      categoria: string;
+      marca: string | null;
+      descripcion: string | null;
+    }[] = [];
 
-    /**
-     * Categoriza una lista de productos, detecta marca y genera descripción
-     * @param productos Lista de nombres de productos
-     * @returns Mapa de id -> { categoria, marca, descripcion }
-     */
-    async categorizarProductos(productos: { id: number; nombre: string }[]): Promise<{ id: number; categoria: string; marca: string | null; descripcion: string | null }[]> {
-        if (!this.model) {
-            throw new Error('Gemini AI no está configurado');
-        }
+    for (let i = 0; i < productos.length; i += batchSize) {
+      const batch = productos.slice(i, i + batchSize);
 
-        // Procesar en lotes de 50 para evitar tokens muy largos
-        const batchSize = 50;
-        const results: { id: number; categoria: string; marca: string | null; descripcion: string | null }[] = [];
-
-        for (let i = 0; i < productos.length; i += batchSize) {
-            const batch = productos.slice(i, i + batchSize);
-
-            const prompt = `Eres un experto en materiales de construcción y ferretería en Perú. 
+      const prompt = `Eres un experto en materiales de construcción y ferretería en Perú. 
 Analiza los siguientes nombres de productos y realizas las siguientes 3 tareas:
 1. Asigna una CATEGORÍA apropiada a cada uno (Usa las categorías sugeridas o crea una nueva si es necesario).
 2. Detecta la MARCA si está presente en el nombre (si no hay marca clara, usa null).
@@ -77,78 +94,101 @@ Para cada producto, responde SOLO con el formato JSON exacto (sin markdown, sin 
 [{"id": 1, "categoria": "CATEGORIA", "marca": "MARCA", "descripcion": "DESCRIPCION GENERADA"}, {"id": 2, "categoria": "CATEGORIA", "marca": null, "descripcion": "DESCRIPCION"}]
 
 Productos a analizar:
-${batch.map(p => `- ID: ${p.id}, Nombre: "${p.nombre}"`).join('\n')}
+${batch.map((p) => `- ID: ${p.id}, Nombre: "${p.nombre}"`).join('\n')}
 
 Responde SOLO con el array JSON, nada más.`;
 
-            let batchSuccess = false;
-            let retries = 0;
+      let batchSuccess = false;
+      let retries = 0;
 
-            while (!batchSuccess && retries < 3) {
-                try {
-                    const result = await this.model.generateContent(prompt);
-                    const response = result.response;
-                    const text = response.text().trim();
+      while (!batchSuccess && retries < 3) {
+        try {
+          const result = await this.model.generateContent(prompt);
+          const response = result.response;
+          const text = response.text().trim();
 
-                    // Limpiar posible markdown
-                    const jsonText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+          // Limpiar posible markdown
+          const jsonText = text
+            .replace(/```json\n?/g, '')
+            .replace(/```\n?/g, '')
+            .trim();
 
-                    try {
-                        const parsed = JSON.parse(jsonText);
-                        results.push(...parsed);
-                    } catch (parseError) {
-                        this.logger.error(`Error parseando respuesta de Gemini: ${jsonText}`);
-                        // Intentar extraer categorías manualmente o usar fallback
-                        batch.forEach(p => {
-                            results.push({ id: p.id, categoria: 'OTROS', marca: null, descripcion: p.nombre });
-                        });
-                    }
-                    batchSuccess = true;
-
-                } catch (error: any) {
-                    if (error.message.includes('429')) {
-                        this.logger.warn(`⚠️ Rate limit excedido (429). Esperando 60 segundos... (Intento ${retries + 1}/3)`);
-                        await new Promise(resolve => setTimeout(resolve, 60000));
-                        retries++;
-                    } else {
-                        this.logger.error(`Error llamando a Gemini: ${error.message}`);
-                        batch.forEach(p => {
-                            results.push({ id: p.id, categoria: 'OTROS', marca: null, descripcion: p.nombre });
-                        });
-                        break; // Salir del retry si no es 429
-                    }
-                }
-            }
-
-            // Si fallaron todos los reintentos
-            if (!batchSuccess && retries >= 3) {
-                this.logger.error(`❌ Fallaron todos los reintentos para el lote. Asignando OTROS.`);
-                batch.forEach(p => {
-                    results.push({ id: p.id, categoria: 'OTROS', marca: null, descripcion: p.nombre });
-                });
-            }
-
-            // Pausa obligatoria de 4 segundos para respetar ~15 RPM
-            if (i + batchSize < productos.length) {
-                await new Promise(resolve => setTimeout(resolve, 4000));
-            }
+          try {
+            const parsed = JSON.parse(jsonText);
+            results.push(...parsed);
+          } catch (parseError) {
+            this.logger.error(
+              `Error parseando respuesta de Gemini: ${jsonText}`,
+            );
+            // Intentar extraer categorías manualmente o usar fallback
+            batch.forEach((p) => {
+              results.push({
+                id: p.id,
+                categoria: 'OTROS',
+                marca: null,
+                descripcion: p.nombre,
+              });
+            });
+          }
+          batchSuccess = true;
+        } catch (error: any) {
+          if (error.message.includes('429')) {
+            this.logger.warn(
+              `⚠️ Rate limit excedido (429). Esperando 60 segundos... (Intento ${retries + 1}/3)`,
+            );
+            await new Promise((resolve) => setTimeout(resolve, 60000));
+            retries++;
+          } else {
+            this.logger.error(`Error llamando a Gemini: ${error.message}`);
+            batch.forEach((p) => {
+              results.push({
+                id: p.id,
+                categoria: 'OTROS',
+                marca: null,
+                descripcion: p.nombre,
+              });
+            });
+            break; // Salir del retry si no es 429
+          }
         }
+      }
 
-        return results;
+      // Si fallaron todos los reintentos
+      if (!batchSuccess && retries >= 3) {
+        this.logger.error(
+          `❌ Fallaron todos los reintentos para el lote. Asignando OTROS.`,
+        );
+        batch.forEach((p) => {
+          results.push({
+            id: p.id,
+            categoria: 'OTROS',
+            marca: null,
+            descripcion: p.nombre,
+          });
+        });
+      }
+
+      // Pausa obligatoria de 4 segundos para respetar ~15 RPM
+      if (i + batchSize < productos.length) {
+        await new Promise((resolve) => setTimeout(resolve, 4000));
+      }
     }
 
-    /**
-     * Chat con el Copiloto de Negocios
-     * @param message Pregunta del usuario
-     * @param context Contexto del negocio (ventas, productos, etc.)
-     * @returns Respuesta generada por la IA
-     */
-    async chat(message: string, context: any): Promise<string> {
-        if (!this.model) {
-            return "El asistente IA no está configurado correctamente. Contacta al administrador.";
-        }
+    return results;
+  }
 
-        const prompt = `
+  /**
+   * Chat con el Copiloto de Negocios
+   * @param message Pregunta del usuario
+   * @param context Contexto del negocio (ventas, productos, etc.)
+   * @returns Respuesta generada por la IA
+   */
+  async chat(message: string, context: any): Promise<string> {
+    if (!this.model) {
+      return 'El asistente IA no está configurado correctamente. Contacta al administrador.';
+    }
+
+    const prompt = `
 Eres un experto analista de negocios y asistente para dueños de microempresas.
 Tu objetivo es ayudar al dueño a entender su negocio basándote en los DATOS que te proporciono.
 
@@ -176,23 +216,23 @@ PREGUNTA DEL USUARIO:
 
 RESPUESTA (Texto plano, sin markdown de código a menos que sea necesario):`;
 
-        try {
-            const result = await this.model.generateContent(prompt);
-            return result.response.text();
-        } catch (error) {
-            this.logger.error(`Error en chat Gemini: ${error.message}`);
-            return `Error técnico (${error.message}). Por favor verifica la API Key y el modelo.`;
-        }
+    try {
+      const result = await this.model.generateContent(prompt);
+      return result.response.text();
+    } catch (error) {
+      this.logger.error(`Error en chat Gemini: ${error.message}`);
+      return `Error técnico (${error.message}). Por favor verifica la API Key y el modelo.`;
     }
-    /**
-     * Genera una lista de productos realistas basada en un query y rubro
-     */
-    async generarProductos(rubro: string, query: string): Promise<any[]> {
-        if (!this.model) {
-            throw new Error('Gemini AI no está configurado');
-        }
+  }
+  /**
+   * Genera una lista de productos realistas basada en un query y rubro
+   */
+  async generarProductos(rubro: string, query: string): Promise<any[]> {
+    if (!this.model) {
+      throw new Error('Gemini AI no está configurado');
+    }
 
-        const prompt = `
+    const prompt = `
         Eres un experto en gestión de inventarios para negocios en Perú.
         
         CONTEXTO:
@@ -229,43 +269,46 @@ RESPUESTA (Texto plano, sin markdown de código a menos que sea necesario):`;
         IMPORTANTE: Responde SOLO con el array JSON. Sin markdown, sin explicaciones.
         `;
 
-        try {
-            const result = await this.model.generateContent(prompt);
-            const text = result.response.text().trim();
-            // Limpiar markdown
-            const jsonText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-            return JSON.parse(jsonText);
-        } catch (error: any) {
-            this.logger.error('Error generando productos con Gemini', error);
-            throw new Error('Error generando productos: ' + error.message);
-        }
+    try {
+      const result = await this.model.generateContent(prompt);
+      const text = result.response.text().trim();
+      // Limpiar markdown
+      const jsonText = text
+        .replace(/```json\n?/g, '')
+        .replace(/```\n?/g, '')
+        .trim();
+      return JSON.parse(jsonText);
+    } catch (error: any) {
+      this.logger.error('Error generando productos con Gemini', error);
+      throw new Error('Error generando productos: ' + error.message);
     }
+  }
 
-    /**
-     * Selecciona la mejor imagen para un producto entre candidatas externas.
-     * Devuelve URL elegida o null si Gemini no pudo decidir con confianza.
-     */
-    async seleccionarMejorImagenProducto(params: {
-        nombre: string;
-        marca?: string;
-        categoria?: string;
-        candidatas: Array<{
-            url: string;
-            title?: string;
-            alt?: string;
-            width?: number;
-            height?: number;
-        }>;
-    }): Promise<{ url: string; confidence: number; reason?: string } | null> {
-        if (!this.model) return null;
+  /**
+   * Selecciona la mejor imagen para un producto entre candidatas externas.
+   * Devuelve URL elegida o null si Gemini no pudo decidir con confianza.
+   */
+  async seleccionarMejorImagenProducto(params: {
+    nombre: string;
+    marca?: string;
+    categoria?: string;
+    candidatas: Array<{
+      url: string;
+      title?: string;
+      alt?: string;
+      width?: number;
+      height?: number;
+    }>;
+  }): Promise<{ url: string; confidence: number; reason?: string } | null> {
+    if (!this.model) return null;
 
-        const candidatas = (params.candidatas || [])
-            .filter((c) => typeof c.url === 'string' && /^https?:\/\//i.test(c.url))
-            .slice(0, 12);
+    const candidatas = (params.candidatas || [])
+      .filter((c) => typeof c.url === 'string' && /^https?:\/\//i.test(c.url))
+      .slice(0, 12);
 
-        if (candidatas.length === 0) return null;
+    if (candidatas.length === 0) return null;
 
-        const prompt = `
+    const prompt = `
 Eres un asistente experto en selección de imágenes de producto para ecommerce.
 Producto objetivo:
 - Nombre: "${params.nombre}"
@@ -289,43 +332,43 @@ Responde SOLO JSON válido (sin markdown):
 {"index": 0, "confidence": 0-100, "reason": "breve explicación"}
 `;
 
-        try {
-            const result = await this.model.generateContent(prompt);
-            const text = result.response.text().trim();
-            const cleaned = text
-                .replace(/```json\n?/g, '')
-                .replace(/```\n?/g, '')
-                .trim();
+    try {
+      const result = await this.model.generateContent(prompt);
+      const text = result.response.text().trim();
+      const cleaned = text
+        .replace(/```json\n?/g, '')
+        .replace(/```\n?/g, '')
+        .trim();
 
-            const parsed = JSON.parse(cleaned) as {
-                index?: number;
-                confidence?: number;
-                reason?: string;
-            };
+      const parsed = JSON.parse(cleaned) as {
+        index?: number;
+        confidence?: number;
+        reason?: string;
+      };
 
-            if (
-                typeof parsed.index !== 'number' ||
-                parsed.index < 0 ||
-                parsed.index >= candidatas.length
-            ) {
-                return null;
-            }
+      if (
+        typeof parsed.index !== 'number' ||
+        parsed.index < 0 ||
+        parsed.index >= candidatas.length
+      ) {
+        return null;
+      }
 
-            const confidenceRaw = Number(parsed.confidence ?? 0);
-            const confidence = Number.isFinite(confidenceRaw)
-                ? Math.max(0, Math.min(100, confidenceRaw))
-                : 0;
+      const confidenceRaw = Number(parsed.confidence ?? 0);
+      const confidence = Number.isFinite(confidenceRaw)
+        ? Math.max(0, Math.min(100, confidenceRaw))
+        : 0;
 
-            return {
-                url: candidatas[parsed.index].url,
-                confidence,
-                reason: parsed.reason || undefined,
-            };
-        } catch (error: any) {
-            this.logger.warn(
-                `Gemini no pudo seleccionar imagen candidata: ${error?.message || 'error desconocido'}`,
-            );
-            return null;
-        }
+      return {
+        url: candidatas[parsed.index].url,
+        confidence,
+        reason: parsed.reason || undefined,
+      };
+    } catch (error: any) {
+      this.logger.warn(
+        `Gemini no pudo seleccionar imagen candidata: ${error?.message || 'error desconocido'}`,
+      );
+      return null;
     }
+  }
 }

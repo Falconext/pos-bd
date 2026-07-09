@@ -1,4 +1,12 @@
-import { Controller, Get, Param, ParseIntPipe, Query, Res, UnauthorizedException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Query,
+  Res,
+  UnauthorizedException,
+} from '@nestjs/common';
 import type { Response } from 'express';
 import { ComprobanteService } from './comprobante.service';
 
@@ -23,7 +31,10 @@ export class ComprobantePublicoController {
     const { buffer } = await this.service.generarBufferPdf(id);
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="comprobante-${id}.pdf"`);
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="comprobante-${id}.pdf"`,
+    );
     res.setHeader('Content-Length', buffer.length);
     res.end(buffer);
   }

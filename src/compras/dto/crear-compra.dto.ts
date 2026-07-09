@@ -1,104 +1,113 @@
-import { IsNotEmpty, IsString, IsNumber, IsOptional, IsArray, ValidateNested, IsDateString, IsEnum } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsString,
+  IsNumber,
+  IsOptional,
+  IsArray,
+  ValidateNested,
+  IsDateString,
+  IsEnum,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 class DetalleCompraDto {
-    @IsOptional()
-    @IsNumber()
-    productoId?: number;
+  @IsOptional()
+  @IsNumber()
+  productoId?: number;
 
-    @IsString()
-    descripcion: string;
+  @IsString()
+  descripcion: string;
 
-    @IsNumber()
-    cantidad: number;
+  @IsNumber()
+  cantidad: number;
 
-    @IsNumber()
-    precioUnitario: number;
+  @IsNumber()
+  precioUnitario: number;
 
-    @IsOptional()
-    @IsString()
-    lote?: string;
+  @IsOptional()
+  @IsString()
+  lote?: string;
 
-    @IsOptional()
-    @IsDateString()
-    fechaVencimiento?: string;
+  @IsOptional()
+  @IsDateString()
+  fechaVencimiento?: string;
 
-    @IsOptional()
-    @IsString()
-    codigoXml?: string;
+  @IsOptional()
+  @IsString()
+  codigoXml?: string;
 
-    // true = el precioUnitario ya incluye IGV → el costo neto = precio / 1.18
-    @IsOptional()
-    incluyeIgv?: boolean;
+  // true = el precioUnitario ya incluye IGV → el costo neto = precio / 1.18
+  @IsOptional()
+  incluyeIgv?: boolean;
 }
 
 export class CrearCompraDto {
-    @IsNumber()
-    proveedorId: number;
+  @IsNumber()
+  proveedorId: number;
 
-    @IsString()
-    tipoDoc: string;
+  @IsString()
+  tipoDoc: string;
 
-    @IsString()
-    serie: string;
+  @IsString()
+  serie: string;
 
-    @IsString()
-    numero: string;
+  @IsString()
+  numero: string;
 
-    @IsDateString()
-    fechaEmision: string;
+  @IsDateString()
+  fechaEmision: string;
 
-    @IsOptional()
-    @IsDateString()
-    fechaVencimiento?: string;
+  @IsOptional()
+  @IsDateString()
+  fechaVencimiento?: string;
 
-    @IsString()
-    moneda: string;
+  @IsString()
+  moneda: string;
 
-    @IsOptional()
-    @IsNumber()
-    tipoCambio?: number;
+  @IsOptional()
+  @IsNumber()
+  tipoCambio?: number;
 
-    @IsOptional()
-    @IsString()
-    observaciones?: string;
+  @IsOptional()
+  @IsString()
+  observaciones?: string;
 
-    @IsOptional()
-    @IsNumber()
-    igv?: number;
+  @IsOptional()
+  @IsNumber()
+  igv?: number;
 
-    @IsOptional()
-    @IsNumber()
-    total?: number;
+  @IsOptional()
+  @IsNumber()
+  total?: number;
 
-    @IsArray()
-    @ValidateNested({ each: true })
-    @Type(() => DetalleCompraDto)
-    detalles: DetalleCompraDto[];
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => DetalleCompraDto)
+  detalles: DetalleCompraDto[];
 
-    @IsOptional()
-    @IsNumber()
-    montoPagadoInicial?: number;
+  @IsOptional()
+  @IsNumber()
+  montoPagadoInicial?: number;
 
-    @IsOptional()
-    @IsString()
-    metodoPagoInicial?: string;
+  @IsOptional()
+  @IsString()
+  metodoPagoInicial?: string;
 
-    @IsOptional()
-    @IsString()
-    formaPago?: string; // CONTADO o CREDITO
+  @IsOptional()
+  @IsString()
+  formaPago?: string; // CONTADO o CREDITO
 
-    @IsOptional()
-    @IsArray()
-    @ValidateNested({ each: true })
-    @Type(() => CuotaCompraDto)
-    cuotas?: CuotaCompraDto[];
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CuotaCompraDto)
+  cuotas?: CuotaCompraDto[];
 }
 
 export class CuotaCompraDto {
-    @IsNumber()
-    monto: number;
+  @IsNumber()
+  monto: number;
 
-    @IsDateString()
-    fechaVencimiento: string;
+  @IsDateString()
+  fechaVencimiento: string;
 }

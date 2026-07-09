@@ -6,7 +6,6 @@ const DEFAULT_QPSE_PANEL_BASE_URL = 'https://cpanel.qpse.pe';
 const DEFAULT_QPSE_DEMO_BASE_URL = 'https://demo-cpe.qpse.pe';
 const DEFAULT_QPSE_AUTH_BASE_URL = 'https://cpe.qpse.pe';
 
-
 export interface QpseSignResponse {
   success?: boolean;
   external_id?: string;
@@ -60,14 +59,18 @@ export interface QpseAccessTokenResponse {
 @Injectable()
 export class QpseClient {
   private readonly logger = new Logger(QpseClient.name);
-  private readonly baseUrl =
-    (process.env.QPSE_BASE_URL || DEFAULT_QPSE_BASE_URL).replace(/\/+$/, '');
-  private readonly panelBaseUrl =
-    (process.env.QPSE_PANEL_BASE_URL || DEFAULT_QPSE_PANEL_BASE_URL).replace(/\/+$/, '');
-  private readonly demoBaseUrl =
-    (process.env.QPSE_DEMO_BASE_URL || DEFAULT_QPSE_DEMO_BASE_URL).replace(/\/+$/, '');
-  private readonly authBaseUrl =
-    (process.env.QPSE_AUTH_BASE_URL || DEFAULT_QPSE_AUTH_BASE_URL).replace(/\/+$/, '');
+  private readonly baseUrl = (
+    process.env.QPSE_BASE_URL || DEFAULT_QPSE_BASE_URL
+  ).replace(/\/+$/, '');
+  private readonly panelBaseUrl = (
+    process.env.QPSE_PANEL_BASE_URL || DEFAULT_QPSE_PANEL_BASE_URL
+  ).replace(/\/+$/, '');
+  private readonly demoBaseUrl = (
+    process.env.QPSE_DEMO_BASE_URL || DEFAULT_QPSE_DEMO_BASE_URL
+  ).replace(/\/+$/, '');
+  private readonly authBaseUrl = (
+    process.env.QPSE_AUTH_BASE_URL || DEFAULT_QPSE_AUTH_BASE_URL
+  ).replace(/\/+$/, '');
   private readonly integrationToken = process.env.QPSE_ACCESS_TOKEN;
   private readonly client: AxiosInstance;
   private readonly panelClient: AxiosInstance;
@@ -162,7 +165,9 @@ export class QpseClient {
     usaDemo?: boolean;
   }): Promise<QpseSignResponse> {
     try {
-      const { data } = await this.getClient(input.usaDemo).post<QpseSignResponse>(
+      const { data } = await this.getClient(
+        input.usaDemo,
+      ).post<QpseSignResponse>(
         '/api/cpe/generar',
         {
           xml_filename: input.xmlFilename,
@@ -186,12 +191,16 @@ export class QpseClient {
     usaDemo?: boolean;
   }): Promise<QpseSendResponse> {
     try {
-      const { data } = await this.getClient(input.usaDemo).post<QpseSendResponse>(
+      const { data } = await this.getClient(
+        input.usaDemo,
+      ).post<QpseSendResponse>(
         '/api/cpe/enviar',
         {
           xml_filename: input.xmlFilename,
           ...(input.externalId ? { external_id: input.externalId } : {}),
-          ...(input.xmlSignedBase64 ? { xml_signed_base64: input.xmlSignedBase64 } : {}),
+          ...(input.xmlSignedBase64
+            ? { xml_signed_base64: input.xmlSignedBase64 }
+            : {}),
         },
         {
           headers: this.buildAccessHeaders(input.accessToken),
@@ -210,7 +219,9 @@ export class QpseClient {
     usaDemo?: boolean;
   }): Promise<QpseCancelResponse> {
     try {
-      const { data } = await this.getClient(input.usaDemo).post<QpseCancelResponse>(
+      const { data } = await this.getClient(
+        input.usaDemo,
+      ).post<QpseCancelResponse>(
         '/api/cpe/anular',
         {
           external_id: input.externalId,
@@ -227,7 +238,11 @@ export class QpseClient {
     }
   }
 
-  async consultarTicket(identifier: string, accessToken: string, usaDemo?: boolean): Promise<QpseSendResponse> {
+  async consultarTicket(
+    identifier: string,
+    accessToken: string,
+    usaDemo?: boolean,
+  ): Promise<QpseSendResponse> {
     try {
       const safeIdentifier = encodeURIComponent(identifier);
       const { data } = await this.getClient(usaDemo).get<QpseSendResponse>(
@@ -266,7 +281,13 @@ export class QpseClient {
       `Error al ${action} en QPSE`;
 
     console.log(`[QPSE] Error request URL: ${fullUrl}`);
-    this.logger.error(`Error al ${action}`, axiosError.response?.data || axiosError.message);
-    return new HttpException(`QPSE: ${providerMessage}`, axiosError.response?.status || 502);
+    this.logger.error(
+      `Error al ${action}`,
+      axiosError.response?.data || axiosError.message,
+    );
+    return new HttpException(
+      `QPSE: ${providerMessage}`,
+      axiosError.response?.status || 502,
+    );
   }
 }

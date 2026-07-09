@@ -1,4 +1,8 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   SyncBackupDto,
@@ -32,22 +36,32 @@ export class SyncService {
       // 1. Procesar productos (reutilizando si ya existen)
       for (const productoSync of backup.productos) {
         try {
-          const producto = await this.createOrUpdateProductoFromSync(productoSync, empresaId);
+          const producto = await this.createOrUpdateProductoFromSync(
+            productoSync,
+            empresaId,
+          );
           mappings.productos[productoSync.localId] = producto.id;
           productosCreados++;
         } catch (error) {
-          errors.push(`Producto ${productoSync.nombre}: ${(error as Error).message}`);
+          errors.push(
+            `Producto ${productoSync.nombre}: ${(error as Error).message}`,
+          );
         }
       }
 
       // 2. Procesar clientes (reutilizando si ya existen)
       for (const clienteSync of backup.clientes) {
         try {
-          const cliente = await this.createOrUpdateClienteFromSync(clienteSync, empresaId);
+          const cliente = await this.createOrUpdateClienteFromSync(
+            clienteSync,
+            empresaId,
+          );
           mappings.clientes[clienteSync.localId] = cliente.id;
           clientesCreados++;
         } catch (error) {
-          errors.push(`Cliente ${clienteSync.nombre}: ${(error as Error).message}`);
+          errors.push(
+            `Cliente ${clienteSync.nombre}: ${(error as Error).message}`,
+          );
         }
       }
 
@@ -56,11 +70,15 @@ export class SyncService {
         try {
           // Mapear cliente local a remoto
           let clienteId: number;
-          if (ventaSync.clienteLocalId && mappings.clientes[ventaSync.clienteLocalId]) {
+          if (
+            ventaSync.clienteLocalId &&
+            mappings.clientes[ventaSync.clienteLocalId]
+          ) {
             clienteId = mappings.clientes[ventaSync.clienteLocalId];
           } else {
             // Cliente genérico si no se encuentra
-            const clienteGenerico = await this.getOrCreateClienteGenerico(empresaId);
+            const clienteGenerico =
+              await this.getOrCreateClienteGenerico(empresaId);
             clienteId = clienteGenerico.id;
           }
 
@@ -73,7 +91,9 @@ export class SyncService {
           mappings.ventas[ventaSync.localId] = comprobante.id;
           ventasCreadas++;
         } catch (error) {
-          errors.push(`Venta ${ventaSync.serie}-${ventaSync.correlativo}: ${error.message}`);
+          errors.push(
+            `Venta ${ventaSync.serie}-${ventaSync.correlativo}: ${error.message}`,
+          );
         }
       }
 
@@ -89,7 +109,9 @@ export class SyncService {
         errors: errors.length > 0 ? errors : undefined,
       };
     } catch (error) {
-      throw new BadRequestException(`Error procesando backup: ${error.message}`);
+      throw new BadRequestException(
+        `Error procesando backup: ${error.message}`,
+      );
     }
   }
 
@@ -105,10 +127,15 @@ export class SyncService {
   /**
    * Crea o actualiza un producto en Prisma desde datos del móvil, evitando duplicados
    */
-  private async createOrUpdateProductoFromSync(productoSync: ProductoSyncDto, empresaId: number) {
+  private async createOrUpdateProductoFromSync(
+    productoSync: ProductoSyncDto,
+    empresaId: number,
+  ) {
     // 1) Si viene remoteId desde el móvil, intentar actualizar ese producto
     if (productoSync.remoteId) {
-      const existing = await this.prisma.producto.findUnique({ where: { id: productoSync.remoteId } });
+      const existing = await this.prisma.producto.findUnique({
+        where: { id: productoSync.remoteId },
+      });
       if (existing) {
         const precioUnitario = new Decimal(productoSync.precio);
         const valorUnitario = precioUnitario.div(new Decimal(1.18));
@@ -179,7 +206,10 @@ export class SyncService {
   /**
    * Crea o actualiza un cliente en Prisma desde datos del móvil, evitando duplicados
    */
-  private async createOrUpdateClienteFromSync(clienteSync: ClienteSyncDto, empresaId: number) {
+  private async createOrUpdateClienteFromSync(
+    clienteSync: ClienteSyncDto,
+    empresaId: number,
+  ) {
     // Obtener tipo de documento DNI por defecto
     let tipoDocumento = await this.prisma.tipoDocumento.findUnique({
       where: { codigo: '1' }, // DNI
@@ -196,7 +226,9 @@ export class SyncService {
 
     // 1) Si viene remoteId, intentar actualizar ese cliente
     if (clienteSync.remoteId) {
-      const existing = await this.prisma.cliente.findUnique({ where: { id: clienteSync.remoteId } });
+      const existing = await this.prisma.cliente.findUnique({
+        where: { id: clienteSync.remoteId },
+      });
       if (existing) {
         return await this.prisma.cliente.update({
           where: { id: existing.id },
@@ -252,7 +284,11 @@ export class SyncService {
     const mtoIGV = total - valorVenta;
 
     // Mapear estado de pago del móvil al enum de Prisma
-    let estadoPago: 'PENDIENTE_PAGO' | 'COMPLETADO' | 'PAGO_PARCIAL' | 'ANULADO' = 'PENDIENTE_PAGO';
+    let estadoPago:
+      | 'PENDIENTE_PAGO'
+      | 'COMPLETADO'
+      | 'PAGO_PARCIAL'
+      | 'ANULADO' = 'PENDIENTE_PAGO';
     if (ventaSync.estadoPago === 'PAGADO') {
       estadoPago = 'COMPLETADO';
     } else if (ventaSync.estadoPago === 'PARCIAL') {
@@ -294,7 +330,9 @@ export class SyncService {
     for (const detalleSync of ventaSync.detalles) {
       const productoId = productosMapping[detalleSync.productoLocalId];
       if (!productoId) {
-        console.warn(`Producto local ${detalleSync.productoLocalId} no encontrado en mapping`);
+        console.warn(
+          `Producto local ${detalleSync.productoLocalId} no encontrado en mapping`,
+        );
         continue;
       }
 

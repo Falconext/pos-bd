@@ -19,15 +19,28 @@ export class ReservaService {
     cantidadSolicitada: number;
     excluirReservaId?: number;
   }) {
-    const { empresaId, sedeId, productoId, cantidadSolicitada, excluirReservaId } = params;
+    const {
+      empresaId,
+      sedeId,
+      productoId,
+      cantidadSolicitada,
+      excluirReservaId,
+    } = params;
 
     const producto = await this.prisma.producto.findFirst({
       where: { id: productoId, empresaId },
-      select: { id: true, stock: true, porcentajeProvision: true, porcentajeVenta: true },
+      select: {
+        id: true,
+        stock: true,
+        porcentajeProvision: true,
+        porcentajeVenta: true,
+      },
     });
 
     if (!producto) {
-      throw new BadRequestException('El producto no existe o no pertenece a la empresa');
+      throw new BadRequestException(
+        'El producto no existe o no pertenece a la empresa',
+      );
     }
 
     const stockSede = await this.prisma.productoStock.findUnique({
@@ -138,7 +151,9 @@ export class ReservaService {
         cantidad: dto.cantidad,
         motivo: dto.motivo,
         estado: (dto.estado as EstadoReserva) || EstadoReserva.PENDIENTE,
-        fechaVencimiento: dto.fechaVencimiento ? new Date(dto.fechaVencimiento) : undefined,
+        fechaVencimiento: dto.fechaVencimiento
+          ? new Date(dto.fechaVencimiento)
+          : undefined,
       },
       include: {
         producto: {
@@ -183,9 +198,15 @@ export class ReservaService {
       data: {
         ...(dto.cantidad !== undefined ? { cantidad: dto.cantidad } : {}),
         ...(dto.motivo !== undefined ? { motivo: dto.motivo } : {}),
-        ...(dto.estado !== undefined ? { estado: dto.estado as EstadoReserva } : {}),
+        ...(dto.estado !== undefined
+          ? { estado: dto.estado as EstadoReserva }
+          : {}),
         ...(dto.fechaVencimiento !== undefined
-          ? { fechaVencimiento: dto.fechaVencimiento ? new Date(dto.fechaVencimiento) : null }
+          ? {
+              fechaVencimiento: dto.fechaVencimiento
+                ? new Date(dto.fechaVencimiento)
+                : null,
+            }
           : {}),
       },
       include: {

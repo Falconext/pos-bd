@@ -22,7 +22,7 @@ export class WhatsAppController {
   constructor(
     private readonly whatsappService: WhatsAppService,
     private readonly prisma: PrismaService,
-  ) { }
+  ) {}
 
   /**
    * Enviar comprobante por WhatsApp
@@ -87,10 +87,14 @@ export class WhatsAppController {
     }
 
     // Preferir URLs de S3 (públicas) sobre URLs locales o de SUNAT
-    const baseUrl = (process.env.BACKEND_URL || 'http://localhost:4001').replace(/\/+$/, '');
-    const pdfUrl = comprobante.s3PdfUrl || `${baseUrl}/comprobante/pdf/${comprobanteId}`;
+    const baseUrl = (
+      process.env.BACKEND_URL || 'http://localhost:4001'
+    ).replace(/\/+$/, '');
+    const pdfUrl =
+      comprobante.s3PdfUrl || `${baseUrl}/comprobante/pdf/${comprobanteId}`;
     const xmlUrl = incluyeXML
-      ? (comprobante.s3XmlUrl || `${baseUrl}/api/comprobante/${comprobanteId}/xml`)
+      ? comprobante.s3XmlUrl ||
+        `${baseUrl}/api/comprobante/${comprobanteId}/xml`
       : undefined;
 
     // Enviar por WhatsApp
@@ -103,8 +107,7 @@ export class WhatsAppController {
       xmlUrl,
       incluyeXML,
       empresaNombre:
-        comprobante.empresa.nombreComercial ||
-        comprobante.empresa.razonSocial,
+        comprobante.empresa.nombreComercial || comprobante.empresa.razonSocial,
       tipoDoc: comprobante.tipoDoc,
       serie: comprobante.serie,
       correlativo: comprobante.correlativo,
@@ -172,8 +175,7 @@ export class WhatsAppController {
       usuarioId: user.id,
       numeroDestino,
       pdfUrl,
-      empresaNombre:
-        guia.empresa.nombreComercial || guia.empresa.razonSocial,
+      empresaNombre: guia.empresa.nombreComercial || guia.empresa.razonSocial,
       serie: guia.serie,
       correlativo: guia.correlativo,
       destinatario: guia.destinatarioRazonSocial,
@@ -257,8 +259,10 @@ export class WhatsAppController {
     const inicio = fechaInicio ? new Date(fechaInicio) : undefined;
     const fin = fechaFin ? new Date(fechaFin) : undefined;
 
-    const resultado =
-      await this.whatsappService.obtenerEstadisticasGlobales(inicio, fin);
+    const resultado = await this.whatsappService.obtenerEstadisticasGlobales(
+      inicio,
+      fin,
+    );
 
     return {
       code: 200,

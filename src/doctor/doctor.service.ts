@@ -33,7 +33,9 @@ export class DoctorService {
   }
 
   async obtener(empresaId: number, id: number) {
-    const doctor = await this.prisma.doctor.findFirst({ where: { id, empresaId } });
+    const doctor = await this.prisma.doctor.findFirst({
+      where: { id, empresaId },
+    });
     if (!doctor) throw new NotFoundException('Doctor no encontrado');
     return doctor;
   }
@@ -45,7 +47,10 @@ export class DoctorService {
 
   async eliminar(empresaId: number, id: number) {
     await this.obtener(empresaId, id);
-    return this.prisma.doctor.update({ where: { id }, data: { estado: 'INACTIVO' } });
+    return this.prisma.doctor.update({
+      where: { id },
+      data: { estado: 'INACTIVO' },
+    });
   }
 
   async pacientes(empresaId: number, medicoId: number) {

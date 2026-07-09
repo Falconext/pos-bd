@@ -9,4 +9,4 @@ import { RolesGuard } from '../common/guards/roles.guard';
   providers: [ClienteService, RolesGuard],
   exports: [ClienteService],
 })
-export class ClienteModule { }
+export class ClienteModule {}

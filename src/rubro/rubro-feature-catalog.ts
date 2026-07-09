@@ -50,25 +50,29 @@ export const RUBRO_FEATURE_CATALOG = [
   {
     key: 'descripcionRica',
     label: 'Descripción Rica de Producto',
-    description: 'Activa editor rich text para fichas técnicas y descripciones largas en la tienda virtual.',
+    description:
+      'Activa editor rich text para fichas técnicas y descripciones largas en la tienda virtual.',
     group: 'Tienda',
   },
   {
     key: 'usaVariantes',
     label: 'Variantes',
-    description: 'Habilita variantes de producto (color, talla, etc.) con stock y precio por variante.',
+    description:
+      'Habilita variantes de producto (color, talla, etc.) con stock y precio por variante.',
     group: 'Inventario',
   },
   {
     key: 'trazabilidadVehicular',
     label: 'Trazabilidad vehicular',
-    description: 'Habilita registro de vehículos por placa y actas de inspección de entrada/salida.',
+    description:
+      'Habilita registro de vehículos por placa y actas de inspección de entrada/salida.',
     group: 'Vehicular',
   },
   {
     key: 'gestionContratosVehiculares',
     label: 'Contratos y suscripciones vehiculares',
-    description: 'Habilita contratos anuales por vehículo con alertas de renovación.',
+    description:
+      'Habilita contratos anuales por vehículo con alertas de renovación.',
     group: 'Vehicular',
   },
 ] as const;

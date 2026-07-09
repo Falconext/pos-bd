@@ -2,41 +2,41 @@ import { IsInt, IsOptional, IsString, IsDateString } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class QueryGuiaRemisionDto {
-    @IsOptional()
-    @IsString()
-    serie?: string;
+  @IsOptional()
+  @IsString()
+  serie?: string;
 
-    @IsOptional()
-    @IsDateString()
-    fechaInicio?: string;
+  @IsOptional()
+  @IsDateString()
+  fechaInicio?: string;
 
-    @IsOptional()
-    @IsDateString()
-    fechaFin?: string;
+  @IsOptional()
+  @IsDateString()
+  fechaFin?: string;
 
-    @IsOptional()
-    @IsString()
-    estadoSunat?: string;
+  @IsOptional()
+  @IsString()
+  estadoSunat?: string;
 
-    @IsOptional()
-    @IsString()
-    destinatario?: string;
+  @IsOptional()
+  @IsString()
+  destinatario?: string;
 
-    @IsOptional()
-    @Type(() => Number)
-    page?: number = 1;
+  @IsOptional()
+  @Type(() => Number)
+  page?: number = 1;
 
-    @IsOptional()
-    @Type(() => Number)
-    limit?: number = 10;
+  @IsOptional()
+  @Type(() => Number)
+  limit?: number = 10;
 
-    @IsOptional()
-    @IsString()
-    search?: string;
+  @IsOptional()
+  @IsString()
+  search?: string;
 
-    // Solo para ADMIN_EMPRESA: filtrar por sede específica
-    @IsOptional()
-    @Type(() => Number)
-    @IsInt()
-    sedeId?: number;
+  // Solo para ADMIN_EMPRESA: filtrar por sede específica
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  sedeId?: number;
 }

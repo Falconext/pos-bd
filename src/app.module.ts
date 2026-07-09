@@ -1,3 +1,5 @@
+import { LogisticaModule } from './logistica/logistica.module';
+
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
@@ -55,6 +57,8 @@ import { ContratoVehicularModule } from './contrato-vehicular/contrato-vehicular
 
 @Module({
   imports: [
+    LogisticaModule,
+
     ConfigModule.forRoot({ isGlobal: true }),
     PrismaModule,
     AuthModule,

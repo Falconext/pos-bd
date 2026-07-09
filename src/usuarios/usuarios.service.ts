@@ -13,7 +13,10 @@ import { UpdateUserDto } from './dto/update-user.dto';
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private buildSistemaScope(actor?: { sistemaNegocio?: string | null; sistemaProducto?: string | null }) {
+  private buildSistemaScope(actor?: {
+    sistemaNegocio?: string | null;
+    sistemaProducto?: string | null;
+  }) {
     const where: any = {};
     if (actor?.sistemaNegocio) where.sistemaNegocio = actor.sistemaNegocio;
     if (actor?.sistemaProducto) where.sistemaProducto = actor.sistemaProducto;
@@ -21,9 +24,20 @@ export class UsersService {
   }
 
   async create(dto: CreateUserDto, empresaIdFromToken: number) {
-    const { nombre, email, dni, celular, password, permisos, sedeIds, subModuloIds } = dto;
+    const {
+      nombre,
+      email,
+      dni,
+      celular,
+      password,
+      permisos,
+      sedeIds,
+      subModuloIds,
+    } = dto;
 
-    const existeEmail = await this.prisma.usuario.findUnique({ where: { email } });
+    const existeEmail = await this.prisma.usuario.findUnique({
+      where: { email },
+    });
     if (existeEmail) throw new BadRequestException('El email ya está en uso');
 
     if (dni) {
@@ -63,9 +77,14 @@ export class UsersService {
         rol: 'USUARIO_EMPRESA',
         empresaId: empresaIdFromToken,
         permisos: permisos ? JSON.stringify(permisos) : null,
-        comisionGlobal: dto.comisionGlobal !== undefined ? dto.comisionGlobal : null,
-        comisionGlobalFija: dto.comisionGlobalFija !== undefined ? dto.comisionGlobalFija : null,
-        comisionGlobalVenta: dto.comisionGlobalVenta !== undefined ? dto.comisionGlobalVenta : null,
+        comisionGlobal:
+          dto.comisionGlobal !== undefined ? dto.comisionGlobal : null,
+        comisionGlobalFija:
+          dto.comisionGlobalFija !== undefined ? dto.comisionGlobalFija : null,
+        comisionGlobalVenta:
+          dto.comisionGlobalVenta !== undefined
+            ? dto.comisionGlobalVenta
+            : null,
       },
       select: {
         id: true,
@@ -94,7 +113,10 @@ export class UsersService {
     // Asignar submódulos si vienen
     if (subModuloIds && subModuloIds.length > 0) {
       await this.prisma.usuarioSubModulo.createMany({
-        data: subModuloIds.map((subModuloId) => ({ usuarioId: nuevo.id, subModuloId })),
+        data: subModuloIds.map((subModuloId) => ({
+          usuarioId: nuevo.id,
+          subModuloId,
+        })),
         skipDuplicates: true,
       });
     }
@@ -151,16 +173,26 @@ export class UsersService {
           sedesAsignadas: {
             select: {
               sede: {
-                select: { id: true, nombre: true, codigo: true, esPrincipal: true }
-              }
-            }
+                select: {
+                  id: true,
+                  nombre: true,
+                  codigo: true,
+                  esPrincipal: true,
+                },
+              },
+            },
           },
           subModulosAsignados: {
             select: {
               subModulo: {
-                select: { id: true, codigo: true, nombre: true, moduloId: true }
-              }
-            }
+                select: {
+                  id: true,
+                  codigo: true,
+                  nombre: true,
+                  moduloId: true,
+                },
+              },
+            },
           },
         },
       }),
@@ -185,7 +217,19 @@ export class UsersService {
   }
 
   async update(dto: UpdateUserDto, empresaId: number) {
-    const { id, nombre, email, dni, celular, permisos, sedeIds, subModuloIds, comisionGlobal, comisionGlobalFija, comisionGlobalVenta } = dto;
+    const {
+      id,
+      nombre,
+      email,
+      dni,
+      celular,
+      permisos,
+      sedeIds,
+      subModuloIds,
+      comisionGlobal,
+      comisionGlobalFija,
+      comisionGlobalVenta,
+    } = dto;
 
     const usuario = await this.prisma.usuario.findUnique({ where: { id } });
     if (!usuario) throw new NotFoundException('Usuario no encontrado');
@@ -200,9 +244,12 @@ export class UsersService {
         dni,
         celular,
         permisos: permisos ? JSON.stringify(permisos) : undefined,
-        comisionGlobal: comisionGlobal !== undefined ? comisionGlobal : undefined,
-        comisionGlobalFija: comisionGlobalFija !== undefined ? comisionGlobalFija : undefined,
-        comisionGlobalVenta: comisionGlobalVenta !== undefined ? comisionGlobalVenta : undefined,
+        comisionGlobal:
+          comisionGlobal !== undefined ? comisionGlobal : undefined,
+        comisionGlobalFija:
+          comisionGlobalFija !== undefined ? comisionGlobalFija : undefined,
+        comisionGlobalVenta:
+          comisionGlobalVenta !== undefined ? comisionGlobalVenta : undefined,
       },
       select: {
         id: true,
@@ -233,10 +280,15 @@ export class UsersService {
 
     // Sincronizar submódulos si vienen
     if (subModuloIds !== undefined) {
-      await this.prisma.usuarioSubModulo.deleteMany({ where: { usuarioId: id } });
+      await this.prisma.usuarioSubModulo.deleteMany({
+        where: { usuarioId: id },
+      });
       if (subModuloIds.length > 0) {
         await this.prisma.usuarioSubModulo.createMany({
-          data: subModuloIds.map((subModuloId) => ({ usuarioId: id, subModuloId })),
+          data: subModuloIds.map((subModuloId) => ({
+            usuarioId: id,
+            subModuloId,
+          })),
           skipDuplicates: true,
         });
       }
@@ -258,10 +310,23 @@ export class UsersService {
         comisionGlobalFija: true,
         comisionGlobalVenta: true,
         sedesAsignadas: {
-          select: { sede: { select: { id: true, nombre: true, codigo: true, esPrincipal: true } } },
+          select: {
+            sede: {
+              select: {
+                id: true,
+                nombre: true,
+                codigo: true,
+                esPrincipal: true,
+              },
+            },
+          },
         },
         subModulosAsignados: {
-          select: { subModulo: { select: { id: true, codigo: true, nombre: true, moduloId: true } } },
+          select: {
+            subModulo: {
+              select: { id: true, codigo: true, nombre: true, moduloId: true },
+            },
+          },
         },
       },
     });
@@ -270,7 +335,9 @@ export class UsersService {
       ...updatedConRelaciones,
       sedes: (updatedConRelaciones?.sedesAsignadas || []).map((us) => us.sede),
       sedesAsignadas: undefined,
-      subModulos: (updatedConRelaciones?.subModulosAsignados || []).map((us) => us.subModulo),
+      subModulos: (updatedConRelaciones?.subModulosAsignados || []).map(
+        (us) => us.subModulo,
+      ),
       subModulosAsignados: undefined,
     };
   }
@@ -315,7 +382,9 @@ export class UsersService {
   }
 
   async changePassword(userId: number, actual: string, nueva: string) {
-    const usuario = await this.prisma.usuario.findUnique({ where: { id: userId } });
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { id: userId },
+    });
     if (!usuario) throw new NotFoundException('Usuario no encontrado');
 
     const ok = await bcrypt.compare(actual, usuario.password);
@@ -333,10 +402,16 @@ export class UsersService {
 
   async listSistema(
     params: { search?: string; page?: number; limit?: number },
-    actorScope?: { sistemaNegocio?: string | null; sistemaProducto?: string | null },
+    actorScope?: {
+      sistemaNegocio?: string | null;
+      sistemaProducto?: string | null;
+    },
   ) {
     const { search, page = 1, limit = 50 } = params;
-    const where: any = { rol: 'ADMIN_SISTEMA', ...this.buildSistemaScope(actorScope) };
+    const where: any = {
+      rol: 'ADMIN_SISTEMA',
+      ...this.buildSistemaScope(actorScope),
+    };
     if (search) {
       where.OR = [
         { nombre: { contains: search, mode: 'insensitive' } },
@@ -369,11 +444,24 @@ export class UsersService {
 
   async createSistema(
     dto: CreateUserDto & { sistemaNegocio?: string; sistemaProducto?: string },
-    actorScope?: { sistemaNegocio?: string | null; sistemaProducto?: string | null },
+    actorScope?: {
+      sistemaNegocio?: string | null;
+      sistemaProducto?: string | null;
+    },
   ) {
-    const { nombre, email, dni, celular, password, sistemaNegocio, sistemaProducto } = dto;
+    const {
+      nombre,
+      email,
+      dni,
+      celular,
+      password,
+      sistemaNegocio,
+      sistemaProducto,
+    } = dto;
 
-    const existeEmail = await this.prisma.usuario.findUnique({ where: { email } });
+    const existeEmail = await this.prisma.usuario.findUnique({
+      where: { email },
+    });
     if (existeEmail) throw new BadRequestException('El email ya está en uso');
 
     if (dni) {
@@ -383,8 +471,10 @@ export class UsersService {
 
     const hash = await bcrypt.hash(password, 10);
 
-    const sistemaNegocioFinal = actorScope?.sistemaNegocio ?? sistemaNegocio ?? null;
-    const sistemaProductoFinal = actorScope?.sistemaProducto ?? sistemaProducto ?? null;
+    const sistemaNegocioFinal =
+      actorScope?.sistemaNegocio ?? sistemaNegocio ?? null;
+    const sistemaProductoFinal =
+      actorScope?.sistemaProducto ?? sistemaProducto ?? null;
 
     return this.prisma.usuario.create({
       data: {
@@ -413,18 +503,36 @@ export class UsersService {
 
   async updateSistema(
     id: number,
-    data: Partial<{ nombre: string; email: string; dni: string; celular: string; sistemaNegocio: string | null; sistemaProducto: string | null }>,
-    actorScope?: { sistemaNegocio?: string | null; sistemaProducto?: string | null },
+    data: Partial<{
+      nombre: string;
+      email: string;
+      dni: string;
+      celular: string;
+      sistemaNegocio: string | null;
+      sistemaProducto: string | null;
+    }>,
+    actorScope?: {
+      sistemaNegocio?: string | null;
+      sistemaProducto?: string | null;
+    },
   ) {
     const usuario = await this.prisma.usuario.findFirst({
-      where: { id, rol: 'ADMIN_SISTEMA', ...this.buildSistemaScope(actorScope) },
+      where: {
+        id,
+        rol: 'ADMIN_SISTEMA',
+        ...this.buildSistemaScope(actorScope),
+      },
     });
     if (!usuario) throw new NotFoundException('Administrador no encontrado');
 
     const sistemaNegocioFinal =
-      actorScope?.sistemaNegocio !== undefined ? actorScope.sistemaNegocio : data.sistemaNegocio;
+      actorScope?.sistemaNegocio !== undefined
+        ? actorScope.sistemaNegocio
+        : data.sistemaNegocio;
     const sistemaProductoFinal =
-      actorScope?.sistemaProducto !== undefined ? actorScope.sistemaProducto : data.sistemaProducto;
+      actorScope?.sistemaProducto !== undefined
+        ? actorScope.sistemaProducto
+        : data.sistemaProducto;
 
     return this.prisma.usuario.update({
       where: { id },
@@ -433,8 +541,12 @@ export class UsersService {
         email: data.email,
         dni: data.dni,
         celular: data.celular,
-        ...(sistemaNegocioFinal !== undefined ? { sistemaNegocio: sistemaNegocioFinal } : {}),
-        ...(sistemaProductoFinal !== undefined ? { sistemaProducto: sistemaProductoFinal } : {}),
+        ...(sistemaNegocioFinal !== undefined
+          ? { sistemaNegocio: sistemaNegocioFinal }
+          : {}),
+        ...(sistemaProductoFinal !== undefined
+          ? { sistemaProducto: sistemaProductoFinal }
+          : {}),
       },
       select: {
         id: true,
@@ -453,19 +565,36 @@ export class UsersService {
   async changeStateSistema(
     id: number,
     estado: 'ACTIVO' | 'INACTIVO',
-    actorScope?: { sistemaNegocio?: string | null; sistemaProducto?: string | null },
+    actorScope?: {
+      sistemaNegocio?: string | null;
+      sistemaProducto?: string | null;
+    },
   ) {
     const usuario = await this.prisma.usuario.findFirst({
-      where: { id, rol: 'ADMIN_SISTEMA', ...this.buildSistemaScope(actorScope) },
+      where: {
+        id,
+        rol: 'ADMIN_SISTEMA',
+        ...this.buildSistemaScope(actorScope),
+      },
       select: { id: true },
     });
     if (!usuario) throw new NotFoundException('Administrador no encontrado');
     return this.prisma.usuario.update({ where: { id }, data: { estado } });
   }
 
-  async deleteSistema(id: number, actorScope?: { sistemaNegocio?: string | null; sistemaProducto?: string | null }) {
+  async deleteSistema(
+    id: number,
+    actorScope?: {
+      sistemaNegocio?: string | null;
+      sistemaProducto?: string | null;
+    },
+  ) {
     const usuario = await this.prisma.usuario.findFirst({
-      where: { id, rol: 'ADMIN_SISTEMA', ...this.buildSistemaScope(actorScope) },
+      where: {
+        id,
+        rol: 'ADMIN_SISTEMA',
+        ...this.buildSistemaScope(actorScope),
+      },
     });
     if (!usuario) throw new NotFoundException('Administrador no encontrado');
     return this.prisma.usuario.update({
@@ -507,7 +636,10 @@ export class UsersService {
       }),
       this.prisma.comprobante.groupBy({
         by: ['usuarioId'],
-        where: { ...baseWhere, fechaEmision: { gte: prevInicio, lte: prevFin } },
+        where: {
+          ...baseWhere,
+          fechaEmision: { gte: prevInicio, lte: prevFin },
+        },
         _sum: { mtoImpVenta: true },
       }),
     ]);
@@ -518,22 +650,30 @@ export class UsersService {
       select: { id: true, nombre: true, email: true, rol: true },
     });
 
-    const prevMap = new Map(prevGrouped.map((g) => [g.usuarioId, Number(g._sum.mtoImpVenta || 0)]));
+    const prevMap = new Map(
+      prevGrouped.map((g) => [g.usuarioId, Number(g._sum.mtoImpVenta || 0)]),
+    );
     const usuarioMap = new Map(usuarios.map((u) => [u.id, u]));
 
     return grouped.map((g, idx) => {
       const totalActual = Number(g._sum.mtoImpVenta || 0);
-      const totalAnterior = prevMap.get(g.usuarioId!) || 0;
+      const totalAnterior = prevMap.get(g.usuarioId) || 0;
       const count = g._count.id;
-      const crecimientoPct = totalAnterior > 0
-        ? Number((((totalActual - totalAnterior) / totalAnterior) * 100).toFixed(1))
-        : null;
+      const crecimientoPct =
+        totalAnterior > 0
+          ? Number(
+              (((totalActual - totalAnterior) / totalAnterior) * 100).toFixed(
+                1,
+              ),
+            )
+          : null;
       return {
         posicion: idx + 1,
         usuario: usuarioMap.get(g.usuarioId!) ?? null,
         totalVentas: Number(totalActual.toFixed(2)),
         numComprobantes: count,
-        ticketPromedio: count > 0 ? Number((totalActual / count).toFixed(2)) : 0,
+        ticketPromedio:
+          count > 0 ? Number((totalActual / count).toFixed(2)) : 0,
         totalVentasPeriodoAnterior: Number(totalAnterior.toFixed(2)),
         crecimientoPct,
       };
@@ -598,7 +738,12 @@ export class UsersService {
     // Agregar productos vendidos por este vendedor en el período (para decidir campañas)
     const productosMap = new Map<
       string,
-      { productoId: number | null; descripcion: string; cantidad: number; monto: number }
+      {
+        productoId: number | null;
+        descripcion: string;
+        cantidad: number;
+        monto: number;
+      }
     >();
     for (const c of comprobantes) {
       for (const d of (c as any).detalles ?? []) {

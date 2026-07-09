@@ -36,7 +36,11 @@ export interface PnlResponse {
   margenNeto: number;
   resumenDiario: RentabilidadDia[];
   comparacion: {
-    mesAnterior: { gananciaNeta: number; margenNeto: number; otrosIngresos: number } | null;
+    mesAnterior: {
+      gananciaNeta: number;
+      margenNeto: number;
+      otrosIngresos: number;
+    } | null;
     variacionMonto: number | null;
     variacionPorcentaje: number | null;
   };
@@ -112,7 +116,15 @@ interface GastoAplicadoPnl {
 export class AnalisisFinancieroService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private readonly TIPOS_INFORMALES = ['NP', 'OT', 'COT', 'TICKET', 'NV', 'RH', 'CP'];
+  private readonly TIPOS_INFORMALES = [
+    'NP',
+    'OT',
+    'COT',
+    'TICKET',
+    'NV',
+    'RH',
+    'CP',
+  ];
 
   private get filtroExcluirConvertidos() {
     return {
@@ -125,8 +137,8 @@ export class AnalisisFinancieroService {
         },
         {
           tipoDoc: { notIn: ['NP', 'COT', 'OT'] },
-        }
-      ]
+        },
+      ],
     };
   }
 
@@ -141,7 +153,10 @@ export class AnalisisFinancieroService {
 
   private fechasToRange(fechaInicio?: string, fechaFin?: string) {
     if (!fechaInicio || !fechaFin) return null;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(fechaInicio) || !/^\d{4}-\d{2}-\d{2}$/.test(fechaFin)) {
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(fechaInicio) ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(fechaFin)
+    ) {
       return null;
     }
     return {
@@ -504,7 +519,8 @@ export class AnalisisFinancieroService {
     const margenBruto =
       ventasNetas > 0 ? (gananciaBruta / ventasNetas) * 100 : 0;
     const ingresosTotales = ventasNetas + otrosIngresos;
-    const margenNeto = ingresosTotales > 0 ? (gananciaNeta / ingresosTotales) * 100 : 0;
+    const margenNeto =
+      ingresosTotales > 0 ? (gananciaNeta / ingresosTotales) * 100 : 0;
 
     return {
       ventasNetas: this.r2(ventasNetas),
@@ -532,58 +548,65 @@ export class AnalisisFinancieroService {
   private async fetchPeriodData(empresaId: number, mes: number, anio: number) {
     const range = this.periodoToRange(mes, anio);
     const gastoWhere = this.buildGastoPeriodoWhere(empresaId, mes, anio);
-    const [comprobantes, gastos, campanas, ingresosManuales] = await Promise.all([
-      this.prisma.comprobante.findMany({
-        where: {
-          empresaId,
-          fechaEmision: { gte: range.gte, lte: range.lte },
-          ...this.filtroExcluirConvertidos,
-        },
-        select: {
-          tipoDoc: true,
-          estadoEnvioSunat: true,
-          mtoImpVenta: true,
-          fechaEmision: true,
-          detalles: {
-            select: {
-              productoId: true,
-              cantidad: true,
-              producto: {
-                select: {
-                  costoPromedio: true,
-                  costoFijo: true,
+    const [comprobantes, gastos, campanas, ingresosManuales] =
+      await Promise.all([
+        this.prisma.comprobante.findMany({
+          where: {
+            empresaId,
+            fechaEmision: { gte: range.gte, lte: range.lte },
+            ...this.filtroExcluirConvertidos,
+          },
+          select: {
+            tipoDoc: true,
+            estadoEnvioSunat: true,
+            mtoImpVenta: true,
+            fechaEmision: true,
+            detalles: {
+              select: {
+                productoId: true,
+                cantidad: true,
+                producto: {
+                  select: {
+                    costoPromedio: true,
+                    costoFijo: true,
+                  },
                 },
               },
             },
           },
-        },
-      }),
-      this.prisma.gastoOperativo.findMany({
-        where: gastoWhere,
-        select: {
-          categoria: true,
-          etiqueta: true,
-          monto: true,
-          fecha: true,
-          recurrenteDiario: true,
-          fechaInicio: true,
-          fechaFin: true,
-        },
-      }),
-      this.prisma.campanaMarketing.findMany({
-        where: { empresaId },
-        select: { nombre: true, plataforma: true, presupuestoDiario: true, fechaInicio: true, estado: true },
-      }),
-      this.prisma.ingresoManual.findMany({
-        where: {
-          empresaId,
-          fecha: { gte: range.gte, lte: range.lte },
-          tipo: { notIn: this.TIPOS_FINANCIAMIENTO },
-        },
-        select: { concepto: true, tipo: true, monto: true },
-        orderBy: { creadoEn: 'desc' },
-      }),
-    ]);
+        }),
+        this.prisma.gastoOperativo.findMany({
+          where: gastoWhere,
+          select: {
+            categoria: true,
+            etiqueta: true,
+            monto: true,
+            fecha: true,
+            recurrenteDiario: true,
+            fechaInicio: true,
+            fechaFin: true,
+          },
+        }),
+        this.prisma.campanaMarketing.findMany({
+          where: { empresaId },
+          select: {
+            nombre: true,
+            plataforma: true,
+            presupuestoDiario: true,
+            fechaInicio: true,
+            estado: true,
+          },
+        }),
+        this.prisma.ingresoManual.findMany({
+          where: {
+            empresaId,
+            fecha: { gte: range.gte, lte: range.lte },
+            tipo: { notIn: this.TIPOS_FINANCIAMIENTO },
+          },
+          select: { concepto: true, tipo: true, monto: true },
+          orderBy: { creadoEn: 'desc' },
+        }),
+      ]);
 
     const otrosIngresos = ingresosManuales.reduce(
       (sum, i) => sum + this.toNumber(i.monto as any),
@@ -619,7 +642,13 @@ export class AnalisisFinancieroService {
     }
 
     return {
-      ...this.calcularPnl(comprobantes, gastosConCampanas, mes, anio, otrosIngresos),
+      ...this.calcularPnl(
+        comprobantes,
+        gastosConCampanas,
+        mes,
+        anio,
+        otrosIngresos,
+      ),
       otrosIngresosDetalle,
     };
   }
@@ -638,7 +667,9 @@ export class AnalisisFinancieroService {
     ]);
 
     const tieneAnterior =
-      pnlAnterior.ventasNetas > 0 || pnlAnterior.gastosTotales > 0 || pnlAnterior.otrosIngresos > 0;
+      pnlAnterior.ventasNetas > 0 ||
+      pnlAnterior.gastosTotales > 0 ||
+      pnlAnterior.otrosIngresos > 0;
     const variacionMonto = tieneAnterior
       ? this.r2(pnl.gananciaNeta - pnlAnterior.gananciaNeta)
       : null;
@@ -768,7 +799,13 @@ export class AnalisisFinancieroService {
         })
         .reduce((sum, i) => sum + this.toNumber(i.monto as any), 0);
 
-      const pnl = this.calcularPnl(comprobantesDelMes, gastosDelMes, mes, anio, otrosIngresosDelMes);
+      const pnl = this.calcularPnl(
+        comprobantesDelMes,
+        gastosDelMes,
+        mes,
+        anio,
+        otrosIngresosDelMes,
+      );
 
       resultado.push({
         mes,
@@ -882,7 +919,11 @@ export class AnalisisFinancieroService {
 
   // ─── Rentabilidad por Categorías ─────────────────────────────────────────────
 
-  async getRentabilidadCategorias(empresaId: number, mes: number, anio: number) {
+  async getRentabilidadCategorias(
+    empresaId: number,
+    mes: number,
+    anio: number,
+  ) {
     const range = this.periodoToRange(mes, anio);
 
     const comprobantes = await this.prisma.comprobante.findMany({
@@ -914,30 +955,45 @@ export class AnalisisFinancieroService {
     });
 
     // catKey → { prodKey → accumulator }
-    const catMap = new Map<string, Map<string, {
-      nombre: string;
-      ingreso: number;
-      costo: number;
-      unidades: number;
-    }>>();
+    const catMap = new Map<
+      string,
+      Map<
+        string,
+        {
+          nombre: string;
+          ingreso: number;
+          costo: number;
+          unidades: number;
+        }
+      >
+    >();
 
     for (const comp of comprobantes) {
-      if (comp.estadoEnvioSunat === 'ANULADO' || comp.tipoDoc === 'COT') continue;
+      if (comp.estadoEnvioSunat === 'ANULADO' || comp.tipoDoc === 'COT')
+        continue;
       const signo: 1 | -1 = comp.tipoDoc === '07' ? -1 : 1;
 
       for (const det of comp.detalles) {
         const catNombre = det.producto?.categoria?.nombre ?? 'Sin categoría';
-        const prodNombre = det.producto?.descripcion ?? det.descripcion ?? 'Producto';
+        const prodNombre =
+          det.producto?.descripcion ?? det.descripcion ?? 'Producto';
         const prodKey = String(det.productoId ?? prodNombre);
         const qty = (det.cantidad ?? 0) * signo;
         const precioUnit = det.mtoPrecioUnitario ?? 0;
-        const costoUnit = this.toNumber(det.producto?.costoPromedio) + this.toNumber(det.producto?.costoFijo);
+        const costoUnit =
+          this.toNumber(det.producto?.costoPromedio) +
+          this.toNumber(det.producto?.costoFijo);
 
         if (!catMap.has(catNombre)) catMap.set(catNombre, new Map());
         const prodMap = catMap.get(catNombre)!;
 
         if (!prodMap.has(prodKey)) {
-          prodMap.set(prodKey, { nombre: prodNombre, ingreso: 0, costo: 0, unidades: 0 });
+          prodMap.set(prodKey, {
+            nombre: prodNombre,
+            ingreso: 0,
+            costo: 0,
+            unidades: 0,
+          });
         }
         const acc = prodMap.get(prodKey)!;
         acc.ingreso += precioUnit * qty;
@@ -946,42 +1002,63 @@ export class AnalisisFinancieroService {
       }
     }
 
-    const categorias = [...catMap.entries()].map(([catNombre, prodMap]) => {
-      const productos = [...prodMap.values()]
-        .map((p) => {
-          const gananciaTotal = this.r2(p.ingreso - p.costo);
-          const margen = p.ingreso > 0 ? this.r2(((p.ingreso - p.costo) / p.ingreso) * 100) : 0;
-          return {
-            nombre: p.nombre,
-            precioUnitario: this.r2(p.unidades !== 0 ? p.ingreso / p.unidades : 0),
-            costoUnitario: this.r2(p.unidades !== 0 ? p.costo / p.unidades : 0),
-            margen,
-            unidadesVendidas: this.r2(p.unidades),
-            ingresoTotal: this.r2(p.ingreso),
-            gananciaTotal,
-          };
-        })
-        .sort((a, b) => b.gananciaTotal - a.gananciaTotal);
+    const categorias = [...catMap.entries()]
+      .map(([catNombre, prodMap]) => {
+        const productos = [...prodMap.values()]
+          .map((p) => {
+            const gananciaTotal = this.r2(p.ingreso - p.costo);
+            const margen =
+              p.ingreso > 0
+                ? this.r2(((p.ingreso - p.costo) / p.ingreso) * 100)
+                : 0;
+            return {
+              nombre: p.nombre,
+              precioUnitario: this.r2(
+                p.unidades !== 0 ? p.ingreso / p.unidades : 0,
+              ),
+              costoUnitario: this.r2(
+                p.unidades !== 0 ? p.costo / p.unidades : 0,
+              ),
+              margen,
+              unidadesVendidas: this.r2(p.unidades),
+              ingresoTotal: this.r2(p.ingreso),
+              gananciaTotal,
+            };
+          })
+          .sort((a, b) => b.gananciaTotal - a.gananciaTotal);
 
-      const ingresoTotal = this.r2(productos.reduce((s, p) => s + p.ingresoTotal, 0));
-      const gananciaTotal = this.r2(productos.reduce((s, p) => s + p.gananciaTotal, 0));
-      const unidadesVendidas = this.r2(productos.reduce((s, p) => s + p.unidadesVendidas, 0));
-      const margenPromedio = ingresoTotal > 0 ? this.r2((gananciaTotal / ingresoTotal) * 100) : 0;
+        const ingresoTotal = this.r2(
+          productos.reduce((s, p) => s + p.ingresoTotal, 0),
+        );
+        const gananciaTotal = this.r2(
+          productos.reduce((s, p) => s + p.gananciaTotal, 0),
+        );
+        const unidadesVendidas = this.r2(
+          productos.reduce((s, p) => s + p.unidadesVendidas, 0),
+        );
+        const margenPromedio =
+          ingresoTotal > 0 ? this.r2((gananciaTotal / ingresoTotal) * 100) : 0;
 
-      return {
-        nombre: catNombre,
-        ingresoTotal,
-        gananciaTotal,
-        margenPromedio,
-        unidadesVendidas,
-        cantidadProductos: productos.length,
-        productos,
-      };
-    }).sort((a, b) => b.gananciaTotal - a.gananciaTotal);
+        return {
+          nombre: catNombre,
+          ingresoTotal,
+          gananciaTotal,
+          margenPromedio,
+          unidadesVendidas,
+          cantidadProductos: productos.length,
+          productos,
+        };
+      })
+      .sort((a, b) => b.gananciaTotal - a.gananciaTotal);
 
-    const ingresoTotal = this.r2(categorias.reduce((s, c) => s + c.ingresoTotal, 0));
-    const gananciaTotal = this.r2(categorias.reduce((s, c) => s + c.gananciaTotal, 0));
-    const margenPromedio = ingresoTotal > 0 ? this.r2((gananciaTotal / ingresoTotal) * 100) : 0;
+    const ingresoTotal = this.r2(
+      categorias.reduce((s, c) => s + c.ingresoTotal, 0),
+    );
+    const gananciaTotal = this.r2(
+      categorias.reduce((s, c) => s + c.gananciaTotal, 0),
+    );
+    const margenPromedio =
+      ingresoTotal > 0 ? this.r2((gananciaTotal / ingresoTotal) * 100) : 0;
 
     return {
       periodo: { mes, anio, label: `${this.mesLabel(mes)} ${anio}` },
@@ -1003,11 +1080,15 @@ export class AnalisisFinancieroService {
   ) {
     const now = new Date();
     const mesFinal = mes && mes >= 1 && mes <= 12 ? mes : now.getMonth() + 1;
-    const anioFinal = anio && anio >= 2020 && anio <= 2100 ? anio : now.getFullYear();
-    const range = this.fechasToRange(fechaInicio, fechaFin) ?? this.periodoToRange(mesFinal, anioFinal);
-    const periodoLabel = fechaInicio && fechaFin
-      ? `${fechaInicio} al ${fechaFin}`
-      : `${this.mesLabel(mesFinal)} ${anioFinal}`;
+    const anioFinal =
+      anio && anio >= 2020 && anio <= 2100 ? anio : now.getFullYear();
+    const range =
+      this.fechasToRange(fechaInicio, fechaFin) ??
+      this.periodoToRange(mesFinal, anioFinal);
+    const periodoLabel =
+      fechaInicio && fechaFin
+        ? `${fechaInicio} al ${fechaFin}`
+        : `${this.mesLabel(mesFinal)} ${anioFinal}`;
 
     const pagos = await this.prisma.pago.findMany({
       where: {
@@ -1068,16 +1149,25 @@ export class AnalisisFinancieroService {
       },
     });
 
-    const metodoMap = new Map<string, {
-      metodo: string;
-      total: number;
-      cantidad: number;
-      referencias: number;
-      cuentas: Set<string>;
-      items: any[];
-    }>();
+    const metodoMap = new Map<
+      string,
+      {
+        metodo: string;
+        total: number;
+        cantidad: number;
+        referencias: number;
+        cuentas: Set<string>;
+        items: any[];
+      }
+    >();
 
-    const cuentaLabel = (cuenta?: { banco?: string | null; alias?: string | null; numeroCuenta?: string | null } | null) => {
+    const cuentaLabel = (
+      cuenta?: {
+        banco?: string | null;
+        alias?: string | null;
+        numeroCuenta?: string | null;
+      } | null,
+    ) => {
       if (!cuenta) return null;
       return `${cuenta.alias || cuenta.banco || 'Cuenta'} ${String(cuenta.numeroCuenta || '').slice(-4)}`.trim();
     };
@@ -1120,20 +1210,25 @@ export class AnalisisFinancieroService {
 
     for (const comp of comprobantesRespaldo) {
       const details: any = comp.paymentDetails || {};
-      const split = Array.isArray(details?.splitPayments) ? details.splitPayments : null;
-      const legacyLines = split && split.length > 0
-        ? split.map((line: any) => ({
-            metodo: line.method || comp.medioPago || 'EFECTIVO',
-            monto: Number(line.amount || 0),
-            referencia: line.referencia || null,
-            cuenta: line.cuentaBancariaLabel || null,
-          }))
-        : [{
-            metodo: comp.medioPago || details?.method || 'EFECTIVO',
-            monto: Number(comp.mtoImpVenta || 0),
-            referencia: details?.referencia || null,
-            cuenta: details?.cuentaBancariaLabel || null,
-          }];
+      const split = Array.isArray(details?.splitPayments)
+        ? details.splitPayments
+        : null;
+      const legacyLines =
+        split && split.length > 0
+          ? split.map((line: any) => ({
+              metodo: line.method || comp.medioPago || 'EFECTIVO',
+              monto: Number(line.amount || 0),
+              referencia: line.referencia || null,
+              cuenta: line.cuentaBancariaLabel || null,
+            }))
+          : [
+              {
+                metodo: comp.medioPago || details?.method || 'EFECTIVO',
+                monto: Number(comp.mtoImpVenta || 0),
+                referencia: details?.referencia || null,
+                cuenta: details?.cuentaBancariaLabel || null,
+              },
+            ];
 
       for (const line of legacyLines) {
         addItem({
@@ -1161,13 +1256,23 @@ export class AnalisisFinancieroService {
         cantidad: metodo.cantidad,
         referencias: metodo.referencias,
         cuentas: [...metodo.cuentas],
-        items: metodo.items.sort((a, b) => String(b.fecha).localeCompare(String(a.fecha))),
+        items: metodo.items.sort((a, b) =>
+          String(b.fecha).localeCompare(String(a.fecha)),
+        ),
       }))
       .sort((a, b) => b.total - a.total);
 
-    const totalCobrado = this.r2(metodos.reduce((sum, metodo) => sum + metodo.total, 0));
-    const totalReferenciado = metodos.reduce((sum, metodo) => sum + metodo.referencias, 0);
-    const totalItems = metodos.reduce((sum, metodo) => sum + metodo.cantidad, 0);
+    const totalCobrado = this.r2(
+      metodos.reduce((sum, metodo) => sum + metodo.total, 0),
+    );
+    const totalReferenciado = metodos.reduce(
+      (sum, metodo) => sum + metodo.referencias,
+      0,
+    );
+    const totalItems = metodos.reduce(
+      (sum, metodo) => sum + metodo.cantidad,
+      0,
+    );
 
     return {
       periodo: {

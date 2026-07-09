@@ -405,7 +405,7 @@ export class ProductoController {
               },
             );
             const serperImages: ImageResult[] = (
-              (serperResp.data as any)?.images || []
+              serperResp.data?.images || []
             ).map((img: any) => ({
               url: img?.imageUrl || '',
               title: img?.title || '',
@@ -456,8 +456,8 @@ export class ProductoController {
                 timeout: 10000,
               },
             );
-            const cseItems: any[] = Array.isArray((cseResp.data as any)?.items)
-              ? (cseResp.data as any).items
+            const cseItems: any[] = Array.isArray(cseResp.data?.items)
+              ? cseResp.data.items
               : [];
             const cseImages: ImageResult[] = cseItems.map((item: any) => ({
               url: item?.link || '',
@@ -506,10 +506,8 @@ export class ProductoController {
                 timeout: 10000,
               },
             );
-            const braveItems: any[] = Array.isArray(
-              (braveResp.data as any)?.results,
-            )
-              ? (braveResp.data as any).results
+            const braveItems: any[] = Array.isArray(braveResp.data?.results)
+              ? braveResp.data.results
               : [];
             const braveImages: ImageResult[] = braveItems.map((item: any) => ({
               url:
@@ -556,10 +554,8 @@ export class ProductoController {
               },
               timeout: 8000,
             });
-            const pixabayHits: any[] = Array.isArray(
-              (pixabayResp.data as any)?.hits,
-            )
-              ? (pixabayResp.data as any).hits
+            const pixabayHits: any[] = Array.isArray(pixabayResp.data?.hits)
+              ? pixabayResp.data.hits
               : [];
             const pixabayImages: ImageResult[] = pixabayHits.map(
               (hit: any) => ({
@@ -961,7 +957,11 @@ export class ProductoController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const resolvedSedeId = sedeId ? Number(sedeId) : user.sedeId;
-    const producto = await this.service.getByBarcode(user.empresaId, codigo, resolvedSedeId);
+    const producto = await this.service.getByBarcode(
+      user.empresaId,
+      codigo,
+      resolvedSedeId,
+    );
     res.locals.message = 'Producto obtenido por código de barras';
     return producto;
   }

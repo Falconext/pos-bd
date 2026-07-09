@@ -39,13 +39,6 @@ const modulosIniciales = [
     orden: 5 
   },
   { 
-    codigo: 'configuracion', 
-    nombre: 'Configuración', 
-    descripcion: 'Configuración general del sistema y la empresa', 
-    icono: 'mdi:cog', 
-    orden: 6 
-  },
-  { 
     codigo: 'usuarios', 
     nombre: 'Usuarios', 
     descripcion: 'Gestión de usuarios y permisos del sistema', 
@@ -79,6 +72,13 @@ const modulosIniciales = [
     descripcion: 'Configuración y gestión de la tienda en línea',
     icono: 'mdi:store',
     orden: 11,
+  },
+  {
+    codigo: 'logistica',
+    nombre: 'Logística',
+    descripcion: 'Gestión de despachos, pedidos, vehículos y rutas',
+    icono: 'solar:routing-2-bold-duotone',
+    orden: 12,
   },
 ];
 
@@ -155,6 +155,16 @@ async function seedModulos() {
     { moduloCodigo: 'tienda', codigo: 'tienda:configuracion', nombre: 'Configuración',  descripcion: 'Configuración del diseño y datos de la tienda', orden: 1 },
     { moduloCodigo: 'tienda', codigo: 'tienda:pedidos',       nombre: 'Pedidos',        descripcion: 'Gestión de pedidos recibidos por la tienda',    orden: 2 },
     { moduloCodigo: 'tienda', codigo: 'tienda:modificadores', nombre: 'Modificadores',  descripcion: 'Modificadores y opciones de productos',         orden: 3 },
+    // Logística
+    { moduloCodigo: 'logistica', codigo: 'logistica:dashboard',   nombre: 'Dashboard',   descripcion: 'Métricas de operaciones logísticas', orden: 1 },
+    { moduloCodigo: 'logistica', codigo: 'logistica:pedidos',     nombre: 'Pedidos',     descripcion: 'Gestión de pedidos logísticos', orden: 2 },
+    { moduloCodigo: 'logistica', codigo: 'logistica:despachos',   nombre: 'Despachos',   descripcion: 'Planificación y hojas de ruta', orden: 3 },
+    { moduloCodigo: 'logistica', codigo: 'logistica:tracking',    nombre: 'Tracking',    descripcion: 'Rastreo en tiempo real', orden: 4 },
+    { moduloCodigo: 'logistica', codigo: 'logistica:conductores', nombre: 'Conductores', descripcion: 'Gestión del personal de reparto', orden: 5 },
+    { moduloCodigo: 'logistica', codigo: 'logistica:vehiculos',   nombre: 'Vehículos',   descripcion: 'Flota y tipos de vehículos', orden: 6 },
+    { moduloCodigo: 'logistica', codigo: 'logistica:almacenes',   nombre: 'Almacenes',   descripcion: 'Centros de distribución y origen', orden: 7 },
+    { moduloCodigo: 'logistica', codigo: 'logistica:zonas',       nombre: 'Zonas',       descripcion: 'Zonas de entrega y polígonos', orden: 8 },
+    { moduloCodigo: 'logistica', codigo: 'logistica:clientes',    nombre: 'Clientes',    descripcion: 'Libreta de clientes destinatarios', orden: 9 },
   ];
 
   for (const sub of subModulosData) {

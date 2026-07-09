@@ -9,4 +9,4 @@ import { PrismaModule } from '../prisma/prisma.module';
   providers: [DisenoRubroService],
   exports: [DisenoRubroService],
 })
-export class DisenoRubroModule { }
+export class DisenoRubroModule {}

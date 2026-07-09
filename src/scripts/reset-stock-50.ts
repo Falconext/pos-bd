@@ -4,7 +4,9 @@ const prisma = new PrismaClient();
 const STOCK_OBJETIVO = 50;
 
 async function main() {
-  console.log(`🚀 Iniciando actualización de stock a ${STOCK_OBJETIVO} unidades...`);
+  console.log(
+    `🚀 Iniciando actualización de stock a ${STOCK_OBJETIVO} unidades...`,
+  );
 
   // 1. Actualizar campo legacy Producto.stock
   const resultProducto = await prisma.producto.updateMany({
@@ -15,7 +17,9 @@ async function main() {
       stock: STOCK_OBJETIVO,
     },
   });
-  console.log(`✅ Producto.stock actualizado en ${resultProducto.count} productos.`);
+  console.log(
+    `✅ Producto.stock actualizado en ${resultProducto.count} productos.`,
+  );
 
   // 2. Actualizar registros existentes en ProductoStock
   const resultProductoStock = await prisma.productoStock.updateMany({
@@ -23,7 +27,9 @@ async function main() {
       stock: STOCK_OBJETIVO,
     },
   });
-  console.log(`✅ ProductoStock actualizado en ${resultProductoStock.count} registros de sede.`);
+  console.log(
+    `✅ ProductoStock actualizado en ${resultProductoStock.count} registros de sede.`,
+  );
 
   // 3. Crear registros faltantes en ProductoStock (productos sin entrada en la tabla)
   console.log('🔍 Verificando productos sin registro en ProductoStock...');
@@ -37,7 +43,9 @@ async function main() {
   for (const empresa of empresas) {
     const sedePrincipal = empresa.sedes[0];
     if (!sedePrincipal) {
-      console.log(`⚠️  Empresa ${empresa.razonSocial} (${empresa.id}) no tiene sede principal. Saltando...`);
+      console.log(
+        `⚠️  Empresa ${empresa.razonSocial} (${empresa.id}) no tiene sede principal. Saltando...`,
+      );
       continue;
     }
 
@@ -71,10 +79,16 @@ async function main() {
   }
 
   console.log(`\n📊 Resumen:`);
-  console.log(`   - Producto.stock actualizado: ${resultProducto.count} productos`);
-  console.log(`   - ProductoStock actualizado:  ${resultProductoStock.count} registros`);
+  console.log(
+    `   - Producto.stock actualizado: ${resultProducto.count} productos`,
+  );
+  console.log(
+    `   - ProductoStock actualizado:  ${resultProductoStock.count} registros`,
+  );
   console.log(`   - ProductoStock creados:      ${creados} registros nuevos`);
-  console.log(`\n🎉 Todos los productos ahora tienen ${STOCK_OBJETIVO} unidades de stock.`);
+  console.log(
+    `\n🎉 Todos los productos ahora tienen ${STOCK_OBJETIVO} unidades de stock.`,
+  );
 }
 
 main()

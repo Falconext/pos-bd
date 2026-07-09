@@ -17,7 +17,13 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { User } from '../common/decorators/user.decorator';
 import { CajaService } from './caja.service';
-import { AperturaCajaDto, CierreCajaDto, EstadoCajaDto, RegistrarEgresoDto, EditarEgresoDto } from './dto/caja.dto';
+import {
+  AperturaCajaDto,
+  CierreCajaDto,
+  EstadoCajaDto,
+  RegistrarEgresoDto,
+  EditarEgresoDto,
+} from './dto/caja.dto';
 import type { Response } from 'express';
 import * as XLSX from 'xlsx';
 
@@ -51,7 +57,11 @@ export class CajaController {
   @Get('estado')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async obtenerEstadoCaja(@User() user: any) {
-    return await this.cajaService.obtenerEstadoCaja(user.id, user.empresaId, user.sedeId);
+    return await this.cajaService.obtenerEstadoCaja(
+      user.id,
+      user.empresaId,
+      user.sedeId,
+    );
   }
 
   @Get('historial')
@@ -67,7 +77,11 @@ export class CajaController {
     const pageNum = page ? parseInt(page, 10) : 1;
     const limitNum = limit ? parseInt(limit, 10) : 50;
     const isAdmin = ['ADMIN_EMPRESA', 'ADMIN_SISTEMA'].includes(user.rol);
-    const sedeId = isAdmin ? (sedeIdQuery ? Number(sedeIdQuery) : null) : user.sedeId;
+    const sedeId = isAdmin
+      ? sedeIdQuery
+        ? Number(sedeIdQuery)
+        : null
+      : user.sedeId;
 
     return await this.cajaService.obtenerHistorialCaja(
       user.empresaId,
@@ -89,7 +103,11 @@ export class CajaController {
     @Query('sedeId') sedeIdQuery?: string,
   ) {
     const isAdmin = ['ADMIN_EMPRESA', 'ADMIN_SISTEMA'].includes(user.rol);
-    const sedeId = isAdmin ? (sedeIdQuery ? Number(sedeIdQuery) : null) : user.sedeId;
+    const sedeId = isAdmin
+      ? sedeIdQuery
+        ? Number(sedeIdQuery)
+        : null
+      : user.sedeId;
     const arqueo = await this.cajaService.obtenerArqueoConCaja(
       user.empresaId,
       fechaInicio,
@@ -157,7 +175,9 @@ export class CajaController {
     ];
 
     // Agregar resumen de arqueo
-    XLSX.utils.sheet_add_aoa(worksheetMovimientos, [[''], ['']], { origin: -1 });
+    XLSX.utils.sheet_add_aoa(worksheetMovimientos, [[''], ['']], {
+      origin: -1,
+    });
 
     const resumenData = [
       ['RESUMEN ARQUEO DE CAJA', ''],
@@ -192,10 +212,11 @@ export class CajaController {
     const buffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
 
     // Generar archivo Excel
-    const fechaInicioParsed = fechaInicio || new Date().toISOString().split('T')[0];
+    const fechaInicioParsed =
+      fechaInicio || new Date().toISOString().split('T')[0];
     const fechaFinParsed = fechaFin || new Date().toISOString().split('T')[0];
     const fileName = `arqueo-caja-${fechaInicioParsed}_a_${fechaFinParsed}.xlsx`;
-    
+
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -241,7 +262,12 @@ export class CajaController {
   @Post('egreso')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async registrarEgreso(@User() user: any, @Body() dto: RegistrarEgresoDto) {
-    return await this.cajaService.registrarEgreso(user.id, user.empresaId, dto, user.sedeId);
+    return await this.cajaService.registrarEgreso(
+      user.id,
+      user.empresaId,
+      dto,
+      user.sedeId,
+    );
   }
 
   @Patch('egreso/:id')
@@ -256,7 +282,10 @@ export class CajaController {
 
   @Delete('egreso/:id')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
-  async eliminarEgreso(@User() user: any, @Param('id', ParseIntPipe) id: number) {
+  async eliminarEgreso(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
     return await this.cajaService.eliminarEgreso(user.empresaId, id);
   }
 }

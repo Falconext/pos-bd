@@ -137,14 +137,21 @@ export class UsersController {
   ) {
     return this.usersService.listSistema(
       { search, page: Number(page) || 1, limit: Number(limit) || 50 },
-      { sistemaNegocio: user?.sistemaNegocio ?? null, sistemaProducto: user?.sistemaProducto ?? null },
+      {
+        sistemaNegocio: user?.sistemaNegocio ?? null,
+        sistemaProducto: user?.sistemaProducto ?? null,
+      },
     );
   }
 
   @UseGuards(RolesGuard)
   @Roles('ADMIN_SISTEMA')
   @Post('sistema')
-  async crearSistema(@Body() dto: CreateUserDto, @User() user: any, @Res({ passthrough: true }) res: Response) {
+  async crearSistema(
+    @Body() dto: CreateUserDto,
+    @User() user: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const nuevo = await this.usersService.createSistema(dto, {
       sistemaNegocio: user?.sistemaNegocio ?? null,
       sistemaProducto: user?.sistemaProducto ?? null,

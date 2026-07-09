@@ -10,7 +10,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import bcrypt from 'bcrypt';
 import { CreateEmpresaDto } from './dto/create-empresa.dto';
 import { UpdateEmpresaDto } from './dto/update-empresa.dto';
-import { CreateCuentaBancariaDto, UpdateCuentaBancariaDto } from './dto/cuenta-bancaria.dto';
+import {
+  CreateCuentaBancariaDto,
+  UpdateCuentaBancariaDto,
+} from './dto/cuenta-bancaria.dto';
 import { SedeService } from '../sede/sede.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import axios from 'axios';
@@ -46,7 +49,11 @@ function formatDateEsPeDateOnly(value?: Date | null): string {
 
 function getDaysRemainingDateOnly(value?: Date | null): number {
   if (!value) return 0;
-  const [yyyy, mm, dd] = value.toISOString().slice(0, 10).split('-').map(Number);
+  const [yyyy, mm, dd] = value
+    .toISOString()
+    .slice(0, 10)
+    .split('-')
+    .map(Number);
   const today = new Date();
   const todayUtc = Date.UTC(
     today.getFullYear(),
@@ -101,10 +108,14 @@ function mapHotelPlanName(planNombre?: string | null): string {
   return raw.replace(/\s+/g, '_');
 }
 
-function resolveAppAccessUrl(empresa?: { brand?: string | null; producto?: string | null }): string {
+function resolveAppAccessUrl(empresa?: {
+  brand?: string | null;
+  producto?: string | null;
+}): string {
   if (process.env.APP_WEB_URL) return process.env.APP_WEB_URL;
   if (process.env.FRONTEND_URL) return process.env.FRONTEND_URL;
-  if (normalizeBrand(empresa?.brand) === 'krezka') return 'https://app.krezka.com';
+  if (normalizeBrand(empresa?.brand) === 'krezka')
+    return 'https://app.krezka.com';
   return 'https://app.falconext.pe';
 }
 
@@ -118,7 +129,9 @@ function esPlanPermitidoParaPrecioFefo(planNombre?: string | null): boolean {
 }
 
 function isDemoBillingUrl(value?: string | null): boolean {
-  const normalized = String(value ?? '').trim().toLowerCase();
+  const normalized = String(value ?? '')
+    .trim()
+    .toLowerCase();
   if (!normalized) return false;
   return /(demo|sandbox|homolog|homologacion|beta|test|testing|staging|qa)/i.test(
     normalized,
@@ -254,14 +267,18 @@ export class EmpresaService {
     return (series || []).map((item) => {
       const tipoDoc = String(item.tipoDoc || '').trim() as EmpresaSerieTipo;
       if (!EMPRESA_SERIE_TIPOS_PERMITIDOS.includes(tipoDoc)) {
-        throw new BadRequestException('Tipo de documento no permitido para serie');
+        throw new BadRequestException(
+          'Tipo de documento no permitido para serie',
+        );
       }
       if (vistos.has(tipoDoc)) {
         throw new BadRequestException('Hay tipos de documento duplicados');
       }
       vistos.add(tipoDoc);
 
-      const serie = String(item.serie || '').trim().toUpperCase();
+      const serie = String(item.serie || '')
+        .trim()
+        .toUpperCase();
       if (!/^[A-Z0-9]{4}$/.test(serie)) {
         throw new BadRequestException(
           `La serie ${serie || '(vacía)'} debe tener 4 caracteres alfanuméricos`,
@@ -1033,8 +1050,7 @@ export class EmpresaService {
         const userData: any = {};
         if (dto.usuario.nombre !== undefined)
           userData.nombre = dto.usuario.nombre;
-        if (dto.usuario.email !== undefined)
-          userData.email = dto.usuario.email;
+        if (dto.usuario.email !== undefined) userData.email = dto.usuario.email;
         if (dto.usuario.dni !== undefined) userData.dni = dto.usuario.dni;
         if (dto.usuario.celular !== undefined)
           userData.celular = dto.usuario.celular;
@@ -1056,7 +1072,8 @@ export class EmpresaService {
               email: dto.usuario.email,
               dni: dto.usuario.dni || '00000000',
               celular: dto.usuario.celular || '999999999',
-              password: userData.password || (await bcrypt.hash('admin123', 10)),
+              password:
+                userData.password || (await bcrypt.hash('admin123', 10)),
               rol: 'ADMIN_EMPRESA',
               estado: 'ACTIVO',
               empresaId: dto.id,
@@ -1255,7 +1272,6 @@ export class EmpresaService {
           })),
         });
       }
-
     });
 
     if (userId) {
@@ -1313,7 +1329,10 @@ export class EmpresaService {
     if (!empresa) throw new NotFoundException('Empresa no encontrada');
     if ((empresa as any).rubro?.features) {
       (empresa as any).rubro.features = Object.fromEntries(
-        (empresa as any).rubro.features.map((feature: any) => [feature.featureKey, feature.enabledByDefault]),
+        (empresa as any).rubro.features.map((feature: any) => [
+          feature.featureKey,
+          feature.enabledByDefault,
+        ]),
       );
     }
     return empresa;
@@ -1556,10 +1575,17 @@ export class EmpresaService {
     const fechaActivacion = formatDateEsPeDateOnly(empresa.fechaActivacion);
     const diasRestantes = getDaysRemainingDateOnly(fechaExp);
     const accessUrl = resolveAppAccessUrl(empresa);
-    const planCosto = (empresa.plan as any)?.costo != null ? `S/ ${Number((empresa.plan as any).costo).toFixed(2)}` : '';
+    const planCosto =
+      (empresa.plan as any)?.costo != null
+        ? `S/ ${Number((empresa.plan as any).costo).toFixed(2)}`
+        : '';
     const planFeatures = [
-      (empresa.plan as any)?.maxSedes ? `Hasta ${(empresa.plan as any).maxSedes} sede${Number((empresa.plan as any).maxSedes) === 1 ? '' : 's'}` : '',
-      (empresa.plan as any)?.limiteUsuarios ? `Hasta ${(empresa.plan as any).limiteUsuarios} usuario${Number((empresa.plan as any).limiteUsuarios) === 1 ? '' : 's'}` : '',
+      (empresa.plan as any)?.maxSedes
+        ? `Hasta ${(empresa.plan as any).maxSedes} sede${Number((empresa.plan as any).maxSedes) === 1 ? '' : 's'}`
+        : '',
+      (empresa.plan as any)?.limiteUsuarios
+        ? `Hasta ${(empresa.plan as any).limiteUsuarios} usuario${Number((empresa.plan as any).limiteUsuarios) === 1 ? '' : 's'}`
+        : '',
       (empresa.plan as any)?.tieneTienda ? 'Tienda virtual incluida' : '',
       (empresa.plan as any)?.tieneTicketera ? 'Compatible con ticketera' : '',
       (empresa.plan as any)?.tieneGestionLotes ? 'Gestión de lotes' : '',
@@ -1570,9 +1596,10 @@ export class EmpresaService {
       if (!valor) return undefined;
       let limpio = String(valor).replace(/[^0-9.,]/g, '');
       // Si trae coma y punto, la coma es separador de miles; si solo coma, es decimal
-      limpio = limpio.includes(',') && limpio.includes('.')
-        ? limpio.replace(/,/g, '')
-        : limpio.replace(',', '.');
+      limpio =
+        limpio.includes(',') && limpio.includes('.')
+          ? limpio.replace(/,/g, '')
+          : limpio.replace(',', '.');
       const num = parseFloat(limpio);
       return Number.isNaN(num) ? valor : `S/ ${num.toFixed(2)}`;
     };
@@ -1627,8 +1654,8 @@ export class EmpresaService {
       select: { nombre: true, celular: true },
     });
 
-    const adminsConCelular = admins.filter((admin) =>
-      String(admin.celular ?? '').replace(/\D/g, '').length >= 9,
+    const adminsConCelular = admins.filter(
+      (admin) => String(admin.celular ?? '').replace(/\D/g, '').length >= 9,
     );
     if (!adminsConCelular.length) {
       throw new NotFoundException(
@@ -1656,7 +1683,7 @@ export class EmpresaService {
         .join('\n');
 
       const result = await this.whatsappService.enviarTexto(
-        admin.celular!,
+        admin.celular,
         mensaje,
       );
       if (result.success) {
@@ -1903,16 +1930,25 @@ export class EmpresaService {
     });
   }
 
-  async actualizarCuentaBancaria(empresaId: number, id: number, dto: UpdateCuentaBancariaDto) {
-    const cuenta = await this.prisma.cuentaBancaria.findUnique({ where: { id } });
+  async actualizarCuentaBancaria(
+    empresaId: number,
+    id: number,
+    dto: UpdateCuentaBancariaDto,
+  ) {
+    const cuenta = await this.prisma.cuentaBancaria.findUnique({
+      where: { id },
+    });
     if (!cuenta) throw new NotFoundException('Cuenta bancaria no encontrada');
-    if (cuenta.empresaId !== empresaId) throw new BadRequestException('La cuenta no pertenece a tu empresa');
+    if (cuenta.empresaId !== empresaId)
+      throw new BadRequestException('La cuenta no pertenece a tu empresa');
 
     return this.prisma.cuentaBancaria.update({
       where: { id },
       data: {
         ...(dto.banco !== undefined && { banco: dto.banco }),
-        ...(dto.numeroCuenta !== undefined && { numeroCuenta: dto.numeroCuenta }),
+        ...(dto.numeroCuenta !== undefined && {
+          numeroCuenta: dto.numeroCuenta,
+        }),
         ...(dto.cci !== undefined && { cci: dto.cci }),
         ...(dto.titular !== undefined && { titular: dto.titular }),
         ...(dto.tipoCuenta !== undefined && { tipoCuenta: dto.tipoCuenta }),
@@ -1924,9 +1960,12 @@ export class EmpresaService {
   }
 
   async eliminarCuentaBancaria(empresaId: number, id: number) {
-    const cuenta = await this.prisma.cuentaBancaria.findUnique({ where: { id } });
+    const cuenta = await this.prisma.cuentaBancaria.findUnique({
+      where: { id },
+    });
     if (!cuenta) throw new NotFoundException('Cuenta bancaria no encontrada');
-    if (cuenta.empresaId !== empresaId) throw new BadRequestException('La cuenta no pertenece a tu empresa');
+    if (cuenta.empresaId !== empresaId)
+      throw new BadRequestException('La cuenta no pertenece a tu empresa');
 
     return this.prisma.cuentaBancaria.update({
       where: { id },

@@ -34,12 +34,20 @@ export class JambleClient {
 
   private readonly sendPaths = this.parsePaths(
     process.env.JAMBLE_API_SEND_PATHS,
-    ['/api/documents/send', '/documents/send', '/api/documents/send/{id}', '/documents/send/{id}'],
+    [
+      '/api/documents/send',
+      '/documents/send',
+      '/api/documents/send/{id}',
+      '/documents/send/{id}',
+    ],
   );
 
   private readonly listPaths = this.parsePaths(
     process.env.JAMBLE_API_LIST_PATHS,
-    ['/api/documents/lists/{date_ini}/{date_end}', '/documents/lists/{date_ini}/{date_end}'],
+    [
+      '/api/documents/lists/{date_ini}/{date_end}',
+      '/documents/lists/{date_ini}/{date_end}',
+    ],
   );
 
   private readonly voidPathTemplate =
@@ -51,7 +59,9 @@ export class JambleClient {
   );
 
   async emitirDocumento(auth: JambleAuthConfig, payload: any): Promise<any> {
-    const normalizedAuth = await this.resolvePreferredAuth(this.normalizeAuth(auth));
+    const normalizedAuth = await this.resolvePreferredAuth(
+      this.normalizeAuth(auth),
+    );
     const url = this.normalizeBaseUrl(auth.baseUrl);
     let lastError: unknown = null;
 
@@ -71,10 +81,19 @@ export class JambleClient {
     }
 
     // If provider says unauthenticated and we have user/pass, try obtaining token and retry once
-    if (this.isUnauthorized(lastError) && normalizedAuth.username && normalizedAuth.password) {
-      const fetchedToken = await this.obtenerTokenDesdeLogin(normalizedAuth).catch(() => null);
+    if (
+      this.isUnauthorized(lastError) &&
+      normalizedAuth.username &&
+      normalizedAuth.password
+    ) {
+      const fetchedToken = await this.obtenerTokenDesdeLogin(
+        normalizedAuth,
+      ).catch(() => null);
       if (fetchedToken) {
-        const authWithToken: JambleAuthConfig = { ...normalizedAuth, token: fetchedToken };
+        const authWithToken: JambleAuthConfig = {
+          ...normalizedAuth,
+          token: fetchedToken,
+        };
         for (const path of this.issuePaths) {
           try {
             const { data } = await axios.post(
@@ -94,28 +113,54 @@ export class JambleClient {
     throw this.wrapError('emitir documento', lastError);
   }
 
-  async consultarDocumento(auth: JambleAuthConfig, documentId: string): Promise<any> {
-    const normalizedAuth = await this.resolvePreferredAuth(this.normalizeAuth(auth));
+  async consultarDocumento(
+    auth: JambleAuthConfig,
+    documentId: string,
+  ): Promise<any> {
+    const normalizedAuth = await this.resolvePreferredAuth(
+      this.normalizeAuth(auth),
+    );
     const url = this.normalizeBaseUrl(auth.baseUrl);
     let lastError: unknown = null;
     for (const template of this.statusPaths) {
-      const path = template.replace('{id}', encodeURIComponent(String(documentId)));
+      const path = template.replace(
+        '{id}',
+        encodeURIComponent(String(documentId)),
+      );
       try {
-        const { data } = await axios.get(`${url}${path}`, this.buildRequestConfig(normalizedAuth));
+        const { data } = await axios.get(
+          `${url}${path}`,
+          this.buildRequestConfig(normalizedAuth),
+        );
         return data;
       } catch (error) {
         lastError = error;
       }
     }
 
-    if (this.isUnauthorized(lastError) && normalizedAuth.username && normalizedAuth.password) {
-      const fetchedToken = await this.obtenerTokenDesdeLogin(normalizedAuth).catch(() => null);
+    if (
+      this.isUnauthorized(lastError) &&
+      normalizedAuth.username &&
+      normalizedAuth.password
+    ) {
+      const fetchedToken = await this.obtenerTokenDesdeLogin(
+        normalizedAuth,
+      ).catch(() => null);
       if (fetchedToken) {
-        const authWithToken: JambleAuthConfig = { ...normalizedAuth, token: fetchedToken };
+        const authWithToken: JambleAuthConfig = {
+          ...normalizedAuth,
+          token: fetchedToken,
+        };
         for (const template of this.statusPaths) {
-          const path = template.replace('{id}', encodeURIComponent(String(documentId)));
+          const path = template.replace(
+            '{id}',
+            encodeURIComponent(String(documentId)),
+          );
           try {
-            const { data } = await axios.get(`${url}${path}`, this.buildRequestConfig(authWithToken));
+            const { data } = await axios.get(
+              `${url}${path}`,
+              this.buildRequestConfig(authWithToken),
+            );
             return data;
           } catch (error) {
             lastError = error;
@@ -127,11 +172,20 @@ export class JambleClient {
     throw this.wrapError('consultar documento', lastError);
   }
 
-  async enviarDocumentoSunat(auth: JambleAuthConfig, externalId: string, internalId?: string | number | null): Promise<any> {
-    const normalizedAuth = await this.resolvePreferredAuth(this.normalizeAuth(auth));
+  async enviarDocumentoSunat(
+    auth: JambleAuthConfig,
+    externalId: string,
+    internalId?: string | number | null,
+  ): Promise<any> {
+    const normalizedAuth = await this.resolvePreferredAuth(
+      this.normalizeAuth(auth),
+    );
     const url = this.normalizeBaseUrl(auth.baseUrl);
     let lastError: unknown = null;
-    const identifiers = [String(externalId || '').trim(), String(internalId || '').trim()]
+    const identifiers = [
+      String(externalId || '').trim(),
+      String(internalId || '').trim(),
+    ]
       .filter(Boolean)
       .filter((value, index, arr) => arr.indexOf(value) === index);
 
@@ -142,9 +196,7 @@ export class JambleClient {
           ? template.replace('{id}', encodeURIComponent(identifier))
           : template;
 
-        const payload = hasParam
-          ? undefined
-          : { external_id: identifier };
+        const payload = hasParam ? undefined : { external_id: identifier };
 
         try {
           const { data } = await axios.post(
@@ -173,9 +225,16 @@ export class JambleClient {
     throw this.wrapError('enviar documento a SUNAT', lastError);
   }
 
-  async anularDocumento(auth: JambleAuthConfig, documentId: string, reason: string): Promise<any> {
+  async anularDocumento(
+    auth: JambleAuthConfig,
+    documentId: string,
+    reason: string,
+  ): Promise<any> {
     const url = this.normalizeBaseUrl(auth.baseUrl);
-    const path = this.voidPathTemplate.replace('{id}', encodeURIComponent(String(documentId)));
+    const path = this.voidPathTemplate.replace(
+      '{id}',
+      encodeURIComponent(String(documentId)),
+    );
     try {
       const { data } = await axios.post(
         `${url}${path}`,
@@ -193,13 +252,19 @@ export class JambleClient {
     serie: string,
     tipoDoc: string,
   ): Promise<number | null> {
-    const normalizedAuth = await this.resolvePreferredAuth(this.normalizeAuth(auth));
+    const normalizedAuth = await this.resolvePreferredAuth(
+      this.normalizeAuth(auth),
+    );
     const url = this.normalizeBaseUrl(auth.baseUrl);
     const now = new Date();
     const dateEnd = now.toISOString().slice(0, 10);
-    const dateStart = new Date(now.getTime() - 1000 * 60 * 60 * 24 * 365).toISOString().slice(0, 10);
+    const dateStart = new Date(now.getTime() - 1000 * 60 * 60 * 24 * 365)
+      .toISOString()
+      .slice(0, 10);
 
-    const serieUpper = String(serie || '').trim().toUpperCase();
+    const serieUpper = String(serie || '')
+      .trim()
+      .toUpperCase();
     const tipoDocText = String(tipoDoc || '').trim();
     if (!serieUpper || !tipoDocText) return null;
 
@@ -209,32 +274,40 @@ export class JambleClient {
         .replace('{date_ini}', encodeURIComponent(dateStart))
         .replace('{date_end}', encodeURIComponent(dateEnd));
       try {
-        const { data } = await axios.get(`${url}${path}`, this.buildRequestConfig(normalizedAuth));
+        const { data } = await axios.get(
+          `${url}${path}`,
+          this.buildRequestConfig(normalizedAuth),
+        );
         const records = this.extractDocumentRecords(data);
         if (!records.length) continue;
 
         let max = 0;
         for (const row of records) {
-          const rowTipo = String(row?.document_type_id ?? row?.tipo_documento ?? row?.tipoDoc ?? '').trim();
-          const rowSerieRaw = String(row?.series ?? row?.serie ?? '').trim().toUpperCase();
+          const rowTipo = String(
+            row?.document_type_id ?? row?.tipo_documento ?? row?.tipoDoc ?? '',
+          ).trim();
+          const rowSerieRaw = String(row?.series ?? row?.serie ?? '')
+            .trim()
+            .toUpperCase();
           const rowNumberRaw = String(
             row?.number ??
-            row?.numero ??
-            row?.correlativo ??
-            row?.number_full ??
-            row?.full_number ??
-            row?.numero_completo ??
-            '',
+              row?.numero ??
+              row?.correlativo ??
+              row?.number_full ??
+              row?.full_number ??
+              row?.numero_completo ??
+              '',
           ).trim();
 
           const rowSerie =
-            rowSerieRaw ||
-            this.extractSerieFromNumber(rowNumberRaw) ||
-            '';
+            rowSerieRaw || this.extractSerieFromNumber(rowNumberRaw) || '';
           if (rowSerie !== serieUpper) continue;
           if (rowTipo && rowTipo !== tipoDocText) continue;
 
-          const rowNumber = this.extractCorrelativoNumber(rowNumberRaw, rowSerie);
+          const rowNumber = this.extractCorrelativoNumber(
+            rowNumberRaw,
+            rowSerie,
+          );
           if (!Number.isNaN(rowNumber) && rowNumber > max) max = rowNumber;
         }
         if (max > 0) return max + 1;
@@ -243,10 +316,20 @@ export class JambleClient {
       }
     }
 
-    if (this.isUnauthorized(lastError) && normalizedAuth.username && normalizedAuth.password) {
-      const fetchedToken = await this.obtenerTokenDesdeLogin(normalizedAuth).catch(() => null);
+    if (
+      this.isUnauthorized(lastError) &&
+      normalizedAuth.username &&
+      normalizedAuth.password
+    ) {
+      const fetchedToken = await this.obtenerTokenDesdeLogin(
+        normalizedAuth,
+      ).catch(() => null);
       if (fetchedToken) {
-        return this.obtenerSiguienteCorrelativo({ ...normalizedAuth, token: fetchedToken }, serie, tipoDoc);
+        return this.obtenerSiguienteCorrelativo(
+          { ...normalizedAuth, token: fetchedToken },
+          serie,
+          tipoDoc,
+        );
       }
     }
 
@@ -257,14 +340,18 @@ export class JambleClient {
     auth: JambleAuthConfig,
     externalId: string,
   ): Promise<string | null> {
-    const normalizedAuth = await this.resolvePreferredAuth(this.normalizeAuth(auth));
+    const normalizedAuth = await this.resolvePreferredAuth(
+      this.normalizeAuth(auth),
+    );
     const url = this.normalizeBaseUrl(auth.baseUrl);
     const externalIdText = String(externalId || '').trim();
     if (!externalIdText) return null;
 
     const now = new Date();
     const dateEnd = now.toISOString().slice(0, 10);
-    const dateStart = new Date(now.getTime() - 1000 * 60 * 60 * 24 * 365).toISOString().slice(0, 10);
+    const dateStart = new Date(now.getTime() - 1000 * 60 * 60 * 24 * 365)
+      .toISOString()
+      .slice(0, 10);
 
     let lastError: unknown = null;
     for (const template of this.listPaths) {
@@ -272,25 +359,32 @@ export class JambleClient {
         .replace('{date_ini}', encodeURIComponent(dateStart))
         .replace('{date_end}', encodeURIComponent(dateEnd));
       try {
-        const { data } = await axios.get(`${url}${path}`, this.buildRequestConfig(normalizedAuth));
+        const { data } = await axios.get(
+          `${url}${path}`,
+          this.buildRequestConfig(normalizedAuth),
+        );
         const records = this.extractDocumentRecords(data);
         if (!records.length) continue;
 
         for (const row of records) {
-          const rowExternalId = String(row?.external_id || row?.externalId || row?.uuid || '').trim();
+          const rowExternalId = String(
+            row?.external_id || row?.externalId || row?.uuid || '',
+          ).trim();
           const rowId = String(row?.id ?? '').trim();
-          if (rowExternalId !== externalIdText && rowId !== externalIdText) continue;
+          if (rowExternalId !== externalIdText && rowId !== externalIdText)
+            continue;
 
           const numberFull = String(
-            row?.number_full ??
-            row?.full_number ??
-            row?.numero_completo ??
-            '',
+            row?.number_full ?? row?.full_number ?? row?.numero_completo ?? '',
           ).trim();
           if (numberFull) return numberFull;
 
-          const serie = String(row?.series ?? row?.serie ?? '').trim().toUpperCase();
-          const number = String(row?.number ?? row?.numero ?? row?.correlativo ?? '').trim();
+          const serie = String(row?.series ?? row?.serie ?? '')
+            .trim()
+            .toUpperCase();
+          const number = String(
+            row?.number ?? row?.numero ?? row?.correlativo ?? '',
+          ).trim();
           if (serie && number) return `${serie}-${number}`;
         }
       } catch (error) {
@@ -298,8 +392,14 @@ export class JambleClient {
       }
     }
 
-    if (this.isUnauthorized(lastError) && normalizedAuth.username && normalizedAuth.password) {
-      const fetchedToken = await this.obtenerTokenDesdeLogin(normalizedAuth).catch(() => null);
+    if (
+      this.isUnauthorized(lastError) &&
+      normalizedAuth.username &&
+      normalizedAuth.password
+    ) {
+      const fetchedToken = await this.obtenerTokenDesdeLogin(
+        normalizedAuth,
+      ).catch(() => null);
       if (fetchedToken) {
         return this.buscarNumeroCompletoPorExternalId(
           { ...normalizedAuth, token: fetchedToken },
@@ -311,7 +411,9 @@ export class JambleClient {
     return null;
   }
 
-  async obtenerContextoDesdeLogin(auth: JambleAuthConfig): Promise<JambleLoginContext | null> {
+  async obtenerContextoDesdeLogin(
+    auth: JambleAuthConfig,
+  ): Promise<JambleLoginContext | null> {
     const normalizedAuth = this.normalizeAuth(auth);
     const username = String(normalizedAuth.username || '').trim();
     const password = String(normalizedAuth.password || '').trim();
@@ -331,24 +433,28 @@ export class JambleClient {
     for (const path of this.loginPaths) {
       for (const body of payloads) {
         try {
-          const { data } = await axios.post(
-            `${url}${path}`,
-            body,
-            {
-              headers: {
-                Accept: 'application/json',
-                'Content-Type': 'application/json',
-              },
-              timeout: 30000,
+          const { data } = await axios.post(`${url}${path}`, body, {
+            headers: {
+              Accept: 'application/json',
+              'Content-Type': 'application/json',
             },
-          );
+            timeout: 30000,
+          });
 
-          const userIdRaw = data?.user_id ?? data?.user?.id ?? data?.data?.user_id ?? null;
+          const userIdRaw =
+            data?.user_id ?? data?.user?.id ?? data?.data?.user_id ?? null;
           const establishmentIdRaw =
-            data?.establishment_id ?? data?.establishment?.id ?? data?.data?.establishment_id ?? null;
+            data?.establishment_id ??
+            data?.establishment?.id ??
+            data?.data?.establishment_id ??
+            null;
           const ctx: JambleLoginContext = {
-            userId: Number.isFinite(Number(userIdRaw)) ? Number(userIdRaw) : null,
-            establishmentId: Number.isFinite(Number(establishmentIdRaw)) ? Number(establishmentIdRaw) : null,
+            userId: Number.isFinite(Number(userIdRaw))
+              ? Number(userIdRaw)
+              : null,
+            establishmentId: Number.isFinite(Number(establishmentIdRaw))
+              ? Number(establishmentIdRaw)
+              : null,
           };
           if (cacheKey) this.loginContextCache.set(cacheKey, ctx);
           return ctx;
@@ -361,7 +467,9 @@ export class JambleClient {
   }
 
   private normalizeBaseUrl(baseUrl: string): string {
-    const raw = String(baseUrl || '').trim().replace(/\/+$/, '');
+    const raw = String(baseUrl || '')
+      .trim()
+      .replace(/\/+$/, '');
     if (!raw) return raw;
 
     // Permite guardar:
@@ -399,7 +507,9 @@ export class JambleClient {
     };
   }
 
-  private async resolvePreferredAuth(auth: JambleAuthConfig): Promise<JambleAuthConfig> {
+  private async resolvePreferredAuth(
+    auth: JambleAuthConfig,
+  ): Promise<JambleAuthConfig> {
     if (!this.preferLoginToken) return auth;
     if (!auth.username || !auth.password) return auth;
 
@@ -423,7 +533,9 @@ export class JambleClient {
     if (!Number.isNaN(direct)) return direct;
 
     const serieUpper = String(serie || '').toUpperCase();
-    const seriePattern = serieUpper ? new RegExp(`${serieUpper}-(\\d{1,12})`, 'i') : /([A-Z]\d{3})-(\d{1,12})/i;
+    const seriePattern = serieUpper
+      ? new RegExp(`${serieUpper}-(\\d{1,12})`, 'i')
+      : /([A-Z]\d{3})-(\d{1,12})/i;
     const match = plain.match(seriePattern);
     if (!match) return Number.NaN;
 
@@ -432,7 +544,9 @@ export class JambleClient {
   }
 
   private extractSerieFromNumber(raw: string): string {
-    const text = String(raw || '').trim().toUpperCase();
+    const text = String(raw || '')
+      .trim()
+      .toUpperCase();
     const match = text.match(/([A-Z]\d{3})-\d{1,12}/);
     return match?.[1] || '';
   }
@@ -467,7 +581,9 @@ export class JambleClient {
     return config;
   }
 
-  private async obtenerTokenDesdeLogin(auth: JambleAuthConfig): Promise<string | null> {
+  private async obtenerTokenDesdeLogin(
+    auth: JambleAuthConfig,
+  ): Promise<string | null> {
     const url = this.normalizeBaseUrl(auth.baseUrl);
     const username = String(auth.username || '').trim();
     const password = String(auth.password || '').trim();
@@ -482,17 +598,13 @@ export class JambleClient {
     for (const path of this.loginPaths) {
       for (const body of payloads) {
         try {
-          const { data } = await axios.post(
-            `${url}${path}`,
-            body,
-            {
-              headers: {
-                Accept: 'application/json',
-                'Content-Type': 'application/json',
-              },
-              timeout: 30000,
+          const { data } = await axios.post(`${url}${path}`, body, {
+            headers: {
+              Accept: 'application/json',
+              'Content-Type': 'application/json',
             },
-          );
+            timeout: 30000,
+          });
 
           const token =
             data?.token ||
@@ -503,13 +615,20 @@ export class JambleClient {
 
           if (token && typeof token === 'string' && token.trim()) {
             this.logger.log(`Token JAMBLE obtenido desde ${path}`);
-            const normalized = token.trim().replace(/^bearer\s+/i, '').trim();
+            const normalized = token
+              .trim()
+              .replace(/^bearer\s+/i, '')
+              .trim();
             const cacheKey = this.getTokenCacheKey(auth.baseUrl, username);
             if (cacheKey) this.tokenCache.set(cacheKey, normalized);
             if (cacheKey) {
               const ctx: JambleLoginContext = {
-                userId: Number.isFinite(Number(data?.user_id)) ? Number(data.user_id) : null,
-                establishmentId: Number.isFinite(Number(data?.establishment_id)) ? Number(data.establishment_id) : null,
+                userId: Number.isFinite(Number(data?.user_id))
+                  ? Number(data.user_id)
+                  : null,
+                establishmentId: Number.isFinite(Number(data?.establishment_id))
+                  ? Number(data.establishment_id)
+                  : null,
               };
               this.loginContextCache.set(cacheKey, ctx);
             }
@@ -534,21 +653,38 @@ export class JambleClient {
     const status = Number(err?.response?.status || 0);
     if (status === 401 || status === 403) return true;
 
-    const text = JSON.stringify(err?.response?.data || err?.message || '').toLowerCase();
-    return text.includes('no se encuentra autenticado') || text.includes('unauthenticated');
+    const text = JSON.stringify(
+      err?.response?.data || err?.message || '',
+    ).toLowerCase();
+    return (
+      text.includes('no se encuentra autenticado') ||
+      text.includes('unauthenticated')
+    );
   }
 
   private isMethodNotAllowed(error: unknown): boolean {
     const err = error as AxiosError<any>;
     const status = Number(err?.response?.status || 0);
     if (status === 405) return true;
-    const text = JSON.stringify(err?.response?.data || err?.message || '').toLowerCase();
-    return text.includes('método especificado') || text.includes('method not allowed');
+    const text = JSON.stringify(
+      err?.response?.data || err?.message || '',
+    ).toLowerCase();
+    return (
+      text.includes('método especificado') ||
+      text.includes('method not allowed')
+    );
   }
 
-  private getTokenCacheKey(baseUrl?: string | null, username?: string | null): string | null {
-    const base = String(baseUrl || '').trim().toLowerCase();
-    const user = String(username || '').trim().toLowerCase();
+  private getTokenCacheKey(
+    baseUrl?: string | null,
+    username?: string | null,
+  ): string | null {
+    const base = String(baseUrl || '')
+      .trim()
+      .toLowerCase();
+    const user = String(username || '')
+      .trim()
+      .toLowerCase();
     if (!base || !user) return null;
     return `${base}::${user}`;
   }
@@ -575,7 +711,10 @@ export class JambleClient {
       `Error al ${action}`,
       this.sanitizeLogPayload(err?.response?.data || err?.message),
     );
-    return new HttpException(`JAMBLE: ${providerMessage}`, err?.response?.status || 502);
+    return new HttpException(
+      `JAMBLE: ${providerMessage}`,
+      err?.response?.status || 502,
+    );
   }
 
   private sanitizeLogPayload(payload: any): any {

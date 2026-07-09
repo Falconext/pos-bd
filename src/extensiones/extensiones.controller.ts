@@ -14,14 +14,22 @@ import { PrismaService } from '../prisma/prisma.service';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('extensiones')
 export class ExtensionesController {
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(private readonly prisma: PrismaService) {}
 
   private normalizeProducto(value?: string | null): 'facturacion' | 'hotel' {
-    return String(value ?? '').trim().toLowerCase() === 'hotel' ? 'hotel' : 'facturacion';
+    return String(value ?? '')
+      .trim()
+      .toLowerCase() === 'hotel'
+      ? 'hotel'
+      : 'facturacion';
   }
 
   private normalizePlataforma(value?: string | null): 'falconext' | 'krezka' {
-    return String(value ?? '').trim().toLowerCase() === 'krezka' ? 'krezka' : 'falconext';
+    return String(value ?? '')
+      .trim()
+      .toLowerCase() === 'krezka'
+      ? 'krezka'
+      : 'falconext';
   }
 
   @Get('unidad-medida')
@@ -82,9 +90,9 @@ export class ExtensionesController {
       uniques.length > 0
         ? uniques.map((code) => ({ code, name: code }))
         : [
-          { code: 'PEN', name: 'PEN' },
-          { code: 'USD', name: 'USD' },
-        ];
+            { code: 'PEN', name: 'PEN' },
+            { code: 'USD', name: 'USD' },
+          ];
     return currencies;
   }
 
@@ -107,10 +115,14 @@ export class ExtensionesController {
   ) {
     const productoFiltro = user?.sistemaProducto
       ? this.normalizeProducto(user.sistemaProducto)
-      : (producto ? this.normalizeProducto(producto) : undefined);
+      : producto
+        ? this.normalizeProducto(producto)
+        : undefined;
     const plataformaFiltro = user?.sistemaNegocio
       ? this.normalizePlataforma(user.sistemaNegocio)
-      : (plataforma ? this.normalizePlataforma(plataforma) : undefined);
+      : plataforma
+        ? this.normalizePlataforma(plataforma)
+        : undefined;
     const planes = await this.prisma.plan.findMany({
       where: {
         ...(productoFiltro ? { producto: productoFiltro } : {}),

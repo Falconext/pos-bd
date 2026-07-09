@@ -1,4 +1,11 @@
-import { IsBoolean, IsIn, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 import { Transform } from 'class-transformer';
 
 const VALID_CATEGORIES = ['Accesorios', 'Combo', 'Equipos', 'Sistema'];
@@ -19,7 +26,9 @@ export class CreateStoreProductDto {
   @IsOptional()
   @IsNumber()
   @Min(0)
-  @Transform(({ value }) => (value !== undefined && value !== '' ? parseFloat(value) : undefined))
+  @Transform(({ value }) =>
+    value !== undefined && value !== '' ? parseFloat(value) : undefined,
+  )
   oldPrice?: number;
 
   @IsOptional()
@@ -37,7 +46,9 @@ export class CreateStoreProductDto {
   @IsOptional()
   @IsNumber()
   @Min(0)
-  @Transform(({ value }) => (value !== undefined && value !== '' ? parseInt(value) : undefined))
+  @Transform(({ value }) =>
+    value !== undefined && value !== '' ? parseInt(value) : undefined,
+  )
   stock?: number;
 
   @IsOptional()
@@ -62,13 +73,17 @@ export class UpdateStoreProductDto {
   @IsOptional()
   @IsNumber()
   @Min(0)
-  @Transform(({ value }) => (value !== undefined ? parseFloat(value) : undefined))
+  @Transform(({ value }) =>
+    value !== undefined ? parseFloat(value) : undefined,
+  )
   price?: number;
 
   @IsOptional()
   @IsNumber()
   @Min(0)
-  @Transform(({ value }) => (value !== undefined && value !== '' ? parseFloat(value) : undefined))
+  @Transform(({ value }) =>
+    value !== undefined && value !== '' ? parseFloat(value) : undefined,
+  )
   oldPrice?: number;
 
   @IsOptional()
@@ -86,7 +101,9 @@ export class UpdateStoreProductDto {
   @IsOptional()
   @IsNumber()
   @Min(0)
-  @Transform(({ value }) => (value !== undefined && value !== '' ? parseInt(value) : undefined))
+  @Transform(({ value }) =>
+    value !== undefined && value !== '' ? parseInt(value) : undefined,
+  )
   stock?: number;
 
   @IsOptional()

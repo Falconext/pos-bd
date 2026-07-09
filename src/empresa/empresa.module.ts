@@ -11,4 +11,4 @@ import { WhatsAppModule } from '../whatsapp/whatsapp.module';
   providers: [EmpresaService, RolesGuard],
   exports: [EmpresaService],
 })
-export class EmpresaModule { }
+export class EmpresaModule {}

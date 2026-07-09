@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCampanaDto } from './dto/create-campana.dto';
 import { UpdateCampanaDto } from './dto/update-campana.dto';
@@ -71,27 +75,38 @@ export class CampanasService {
       if ((c as any).fechaFin && !(c as any).esRecurrente) {
         limiteFin = (c as any).fechaFin < finMes ? (c as any).fechaFin : finMes;
       }
-      
+
       const finReal = hoy < limiteFin ? hoy : limiteFin;
       const diasTranscurridos = Math.max(
         0,
-        Math.ceil((finReal.getTime() - inicio.getTime()) / (1000 * 60 * 60 * 24)),
+        Math.ceil(
+          (finReal.getTime() - inicio.getTime()) / (1000 * 60 * 60 * 24),
+        ),
       );
 
       // Días proyectados del mes completo (para mostrar duración en la card)
       const diasProyectados = Math.max(
         0,
-        Math.ceil((finMes.getTime() - inicio.getTime()) / (1000 * 60 * 60 * 24)),
+        Math.ceil(
+          (finMes.getTime() - inicio.getTime()) / (1000 * 60 * 60 * 24),
+        ),
       );
 
-      const gastoReal = Math.round(Number(c.presupuestoDiario) * diasTranscurridos * 100) / 100;
+      const gastoReal =
+        Math.round(Number(c.presupuestoDiario) * diasTranscurridos * 100) / 100;
       const ventasAtribuidas = c.productoId
         ? (productSalesMap.get(c.productoId) ?? 0)
         : 0;
 
       gastoTotal += gastoReal;
 
-      return this.buildCampana(c, diasTranscurridos, diasProyectados, gastoReal, ventasAtribuidas);
+      return this.buildCampana(
+        c,
+        diasTranscurridos,
+        diasProyectados,
+        gastoReal,
+        ventasAtribuidas,
+      );
     });
 
     // Ventas únicas (sin doble conteo si dos campañas usan el mismo producto)
@@ -139,15 +154,30 @@ export class CampanasService {
     };
   }
 
-  private buildCampana(c: any, diasTranscurridos: number, diasProyectados: number, gastoReal: number, ventasAtribuidas: number) {
-    const cpa = ventasAtribuidas > 0 ? Math.round((gastoReal / ventasAtribuidas) * 100) / 100 : 0;
+  private buildCampana(
+    c: any,
+    diasTranscurridos: number,
+    diasProyectados: number,
+    gastoReal: number,
+    ventasAtribuidas: number,
+  ) {
+    const cpa =
+      ventasAtribuidas > 0
+        ? Math.round((gastoReal / ventasAtribuidas) * 100) / 100
+        : 0;
     const precioConIgv = c.producto ? Number(c.producto.precioUnitario) : 0;
     const tipoAfectacion = c.producto?.tipoAfectacionIGV ?? '10';
     const esGravado = !['20', '30'].includes(tipoAfectacion);
-    const precio = esGravado ? Math.round((precioConIgv / 1.18) * 100) / 100 : precioConIgv;
-    const costoProducto = c.producto ? Number(c.producto.costoPromedio ?? 0) : 0;
+    const precio = esGravado
+      ? Math.round((precioConIgv / 1.18) * 100) / 100
+      : precioConIgv;
+    const costoProducto = c.producto
+      ? Number(c.producto.costoPromedio ?? 0)
+      : 0;
     const costoFijo = c.producto ? Number(c.producto.costoFijo ?? 0) : 0;
-    const comisionVenta = c.producto ? Number(c.producto.comisionPorVenta ?? 0) : 0;
+    const comisionVenta = c.producto
+      ? Number(c.producto.comisionPorVenta ?? 0)
+      : 0;
 
     return {
       id: c.id,
@@ -157,10 +187,12 @@ export class CampanasService {
       presupuestoDiario: Number(c.presupuestoDiario),
       moneda: c.moneda,
       fechaInicio: c.fechaInicio.toISOString().slice(0, 10),
-      fechaFin: (c as any).fechaFin ? (c as any).fechaFin.toISOString().slice(0, 10) : undefined,
-      tipoPresupuesto: (c as any).tipoPresupuesto || 'DIARIO',
-      presupuestoOriginal: (c as any).presupuestoOriginal ? Number((c as any).presupuestoOriginal) : Number(c.presupuestoDiario),
-      esRecurrente: (c as any).esRecurrente || false,
+      fechaFin: c.fechaFin ? c.fechaFin.toISOString().slice(0, 10) : undefined,
+      tipoPresupuesto: c.tipoPresupuesto || 'DIARIO',
+      presupuestoOriginal: c.presupuestoOriginal
+        ? Number(c.presupuestoOriginal)
+        : Number(c.presupuestoDiario),
+      esRecurrente: c.esRecurrente || false,
       estado: c.estado,
       diasActivos: diasTranscurridos,
       diasProyectados,
@@ -174,7 +206,11 @@ export class CampanasService {
             costoFijo,
             comisionVenta,
             cpa,
-            gananciaReal: Math.round((precio - costoProducto - costoFijo - comisionVenta - cpa) * 100) / 100,
+            gananciaReal:
+              Math.round(
+                (precio - costoProducto - costoFijo - comisionVenta - cpa) *
+                  100,
+              ) / 100,
           }
         : null,
     };
@@ -186,8 +222,15 @@ export class CampanasService {
     if (dto.tipoPresupuesto === 'SEMANAL') pDiario = pOrig / 7;
     else if (dto.tipoPresupuesto === 'MENSUAL') pDiario = pOrig / 30;
     else if (dto.tipoPresupuesto === 'TOTAL' && dto.fechaFin) {
-       const d = Math.max(1, Math.ceil((new Date(`${dto.fechaFin}T05:00:00.000Z`).getTime() - new Date(`${dto.fechaInicio}T05:00:00.000Z`).getTime()) / 86400000));
-       pDiario = pOrig / d;
+      const d = Math.max(
+        1,
+        Math.ceil(
+          (new Date(`${dto.fechaFin}T05:00:00.000Z`).getTime() -
+            new Date(`${dto.fechaInicio}T05:00:00.000Z`).getTime()) /
+            86400000,
+        ),
+      );
+      pDiario = pOrig / d;
     }
 
     return this.prisma.campanaMarketing.create({
@@ -200,7 +243,9 @@ export class CampanasService {
         presupuestoOriginal: pOrig,
         tipoPresupuesto: dto.tipoPresupuesto ?? 'DIARIO',
         fechaInicio: new Date(`${dto.fechaInicio}T05:00:00.000Z`),
-        fechaFin: dto.fechaFin ? new Date(`${dto.fechaFin}T23:59:59.999Z`) : null,
+        fechaFin: dto.fechaFin
+          ? new Date(`${dto.fechaFin}T23:59:59.999Z`)
+          : null,
         esRecurrente: dto.esRecurrente ?? false,
         moneda: dto.moneda ?? 'PEN',
       },
@@ -217,8 +262,18 @@ export class CampanasService {
       if (dto.tipoPresupuesto === 'SEMANAL') pDiario = pOrig / 7;
       else if (dto.tipoPresupuesto === 'MENSUAL') pDiario = pOrig / 30;
       else if (dto.tipoPresupuesto === 'TOTAL' && dto.fechaFin) {
-         const d = Math.max(1, Math.ceil((new Date(`${dto.fechaFin}T05:00:00.000Z`).getTime() - (dto.fechaInicio ? new Date(`${dto.fechaInicio}T05:00:00.000Z`) : new Date()).getTime()) / 86400000));
-         pDiario = pOrig / d;
+        const d = Math.max(
+          1,
+          Math.ceil(
+            (new Date(`${dto.fechaFin}T05:00:00.000Z`).getTime() -
+              (dto.fechaInicio
+                ? new Date(`${dto.fechaInicio}T05:00:00.000Z`)
+                : new Date()
+              ).getTime()) /
+              86400000,
+          ),
+        );
+        pDiario = pOrig / d;
       }
     }
 
@@ -229,12 +284,22 @@ export class CampanasService {
         ...(dto.plataforma && { plataforma: dto.plataforma }),
         ...('productoId' in dto && { productoId: dto.productoId }),
         ...(pDiario && { presupuestoDiario: pDiario }),
-        ...(dto.presupuestoOriginal && { presupuestoOriginal: dto.presupuestoOriginal }),
+        ...(dto.presupuestoOriginal && {
+          presupuestoOriginal: dto.presupuestoOriginal,
+        }),
         ...(dto.tipoPresupuesto && { tipoPresupuesto: dto.tipoPresupuesto }),
         ...(dto.moneda && { moneda: dto.moneda }),
-        ...(dto.fechaInicio && { fechaInicio: new Date(`${dto.fechaInicio}T05:00:00.000Z`) }),
-        ...(dto.fechaFin !== undefined && { fechaFin: dto.fechaFin ? new Date(`${dto.fechaFin}T23:59:59.999Z`) : null }),
-        ...(dto.esRecurrente !== undefined && { esRecurrente: dto.esRecurrente }),
+        ...(dto.fechaInicio && {
+          fechaInicio: new Date(`${dto.fechaInicio}T05:00:00.000Z`),
+        }),
+        ...(dto.fechaFin !== undefined && {
+          fechaFin: dto.fechaFin
+            ? new Date(`${dto.fechaFin}T23:59:59.999Z`)
+            : null,
+        }),
+        ...(dto.esRecurrente !== undefined && {
+          esRecurrente: dto.esRecurrente,
+        }),
         ...(dto.estado && { estado: dto.estado }),
       },
     });

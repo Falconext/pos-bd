@@ -25,7 +25,7 @@ import { CreateCategoriaDto } from './dto/create-categoria.dto';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('categoria')
 export class CategoriaController {
-  constructor(private readonly service: CategoriaService) { }
+  constructor(private readonly service: CategoriaService) {}
 
   @Post('crear')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
@@ -47,7 +47,10 @@ export class CategoriaController {
     @User() user: any,
     @UploadedFile() file: Express.Multer.File,
   ) {
-    return this.service.subirImagenPrincipal(user.empresaId, id, { buffer: file?.buffer, mimetype: file?.mimetype });
+    return this.service.subirImagenPrincipal(user.empresaId, id, {
+      buffer: file?.buffer,
+      mimetype: file?.mimetype,
+    });
   }
 
   @Get('listar')
@@ -78,11 +81,7 @@ export class CategoriaController {
     @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const actualizada = await this.service.actualizar(
-      id,
-      dto,
-      user.empresaId,
-    );
+    const actualizada = await this.service.actualizar(id, dto, user.empresaId);
     res.locals.message = 'Categoría actualizada correctamente';
     return actualizada;
   }

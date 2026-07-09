@@ -4,9 +4,9 @@ import { SedeController } from './sede.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 
 @Module({
-    imports: [PrismaModule],
-    controllers: [SedeController],
-    providers: [SedeService],
-    exports: [SedeService],
+  imports: [PrismaModule],
+  controllers: [SedeController],
+  providers: [SedeService],
+  exports: [SedeService],
 })
-export class SedeModule { }
+export class SedeModule {}

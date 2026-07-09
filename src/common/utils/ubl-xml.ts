@@ -114,12 +114,14 @@ function serializeNode(tagName: string, value: unknown): string {
 
   const node = value as Record<string, any>;
   const attributes = buildAttributes(node._attributes);
-  const text = node._text !== undefined && node._text !== null
-    ? escapeXml(String(node._text))
-    : '';
-  const cdata = node._cdata !== undefined && node._cdata !== null
-    ? `<![CDATA[${String(node._cdata)}]]>`
-    : '';
+  const text =
+    node._text !== undefined && node._text !== null
+      ? escapeXml(String(node._text))
+      : '';
+  const cdata =
+    node._cdata !== undefined && node._cdata !== null
+      ? `<![CDATA[${String(node._cdata)}]]>`
+      : '';
   const children = Object.keys(node)
     .filter((key) => !['_attributes', '_text', '_cdata'].includes(key))
     .map((key) => serializeNode(key, node[key]))
@@ -132,7 +134,10 @@ function serializeNode(tagName: string, value: unknown): string {
   return `<${tagName}${attributes}>${text}${cdata}${children}</${tagName}>`;
 }
 
-export function buildUblXml(rootName: UblRootName, documentBody: Record<string, any>): string {
+export function buildUblXml(
+  rootName: UblRootName,
+  documentBody: Record<string, any>,
+): string {
   const root = {
     _attributes: ROOT_NAMESPACES[rootName],
     'ext:UBLExtensions': {

@@ -5,4 +5,3 @@ export class UpdateMetodoSalidaDto {
   @IsIn(['FEFO', 'FIFO', 'LIFO'])
   metodoSalidaLotes: 'FEFO' | 'FIFO' | 'LIFO';
 }
-

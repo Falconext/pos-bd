@@ -24,7 +24,10 @@ const prisma = new PrismaClient();
 const BRAND_DEFAULT = 'falconext';
 const PRODUCTO_DEFAULT = 'facturacion';
 
-const norm = (v?: string | null) => String(v ?? '').trim().toLowerCase();
+const norm = (v?: string | null) =>
+  String(v ?? '')
+    .trim()
+    .toLowerCase();
 
 async function main() {
   console.log('🔎 Diagnóstico de scope brand/producto en empresas\n');
@@ -48,14 +51,27 @@ async function main() {
   // ── 2. Admins de sistema y su scope ──
   const admins = await prisma.usuario.findMany({
     where: { rol: 'ADMIN_SISTEMA' as any },
-    select: { id: true, email: true, sistemaNegocio: true, sistemaProducto: true },
+    select: {
+      id: true,
+      email: true,
+      sistemaNegocio: true,
+      sistemaProducto: true,
+    },
   });
 
   console.log(`\n👤 Admins de sistema: ${admins.length}`);
   for (const a of admins) {
     // Brand/producto efectivo del filtro (mismo criterio que empresa.service.ts)
-    const brandFiltro = a.sistemaNegocio ? (norm(a.sistemaNegocio) === 'krezka' ? 'krezka' : 'falconext') : null;
-    const prodFiltro = a.sistemaProducto ? (norm(a.sistemaProducto) === 'hotel' ? 'hotel' : 'facturacion') : null;
+    const brandFiltro = a.sistemaNegocio
+      ? norm(a.sistemaNegocio) === 'krezka'
+        ? 'krezka'
+        : 'falconext'
+      : null;
+    const prodFiltro = a.sistemaProducto
+      ? norm(a.sistemaProducto) === 'hotel'
+        ? 'hotel'
+        : 'facturacion'
+      : null;
 
     const visibles = empresas.filter((e) => {
       const eb = norm(e.brand) || BRAND_DEFAULT;
@@ -69,14 +85,18 @@ async function main() {
     const flag = ocultas > 0 ? `  ⚠️  OCULTA ${ocultas} empresa(s)` : '';
     console.log(
       `   #${a.id} ${a.email}\n` +
-      `      scope → negocio=${a.sistemaNegocio ?? '∅'} | producto=${a.sistemaProducto ?? '∅'}` +
-      `  (filtro: brand=${brandFiltro ?? 'todos'}, producto=${prodFiltro ?? 'todos'})\n` +
-      `      ve ${visibles}/${empresas.length} empresas${flag}`,
+        `      scope → negocio=${a.sistemaNegocio ?? '∅'} | producto=${a.sistemaProducto ?? '∅'}` +
+        `  (filtro: brand=${brandFiltro ?? 'todos'}, producto=${prodFiltro ?? 'todos'})\n` +
+        `      ve ${visibles}/${empresas.length} empresas${flag}`,
     );
   }
 
-  console.log('\n🎯 Si un admin "OCULTA empresas", ahí está el problema: su sistemaNegocio/sistemaProducto');
-  console.log('   no coincide con el brand/producto de las empresas que quiere ver.');
+  console.log(
+    '\n🎯 Si un admin "OCULTA empresas", ahí está el problema: su sistemaNegocio/sistemaProducto',
+  );
+  console.log(
+    '   no coincide con el brand/producto de las empresas que quiere ver.',
+  );
 }
 
 main()

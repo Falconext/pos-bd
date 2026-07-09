@@ -20,50 +20,107 @@ const prisma = new PrismaClient();
 // Cada campo acepta múltiples nombres de columna para compatibilidad entre versiones
 const COLUMN_ALIASES: Record<string, string[]> = {
   nombreComercial: [
-    'Nom_Prod', 'NOM_PROD', 'NOMBRE_PRODUCTO', 'NOMBRE PRODUCTO',
-    'NOMBRE COMERCIAL', 'NOMBRE_COMERCIAL', 'Nombre del Producto', 'NOMBRE',
+    'Nom_Prod',
+    'NOM_PROD',
+    'NOMBRE_PRODUCTO',
+    'NOMBRE PRODUCTO',
+    'NOMBRE COMERCIAL',
+    'NOMBRE_COMERCIAL',
+    'Nombre del Producto',
+    'NOMBRE',
   ],
   principioActivo: [
-    'Nom_IFA', 'NOM_IFA', 'NOMBRE_DCI', 'DCI', 'PRINCIPIO_ACTIVO',
-    'PRINCIPIO ACTIVO', 'Denominación Común Internacional', 'INGREDIENTE ACTIVO',
-    'NOMBRE DCI', 'IFA',
+    'Nom_IFA',
+    'NOM_IFA',
+    'NOMBRE_DCI',
+    'DCI',
+    'PRINCIPIO_ACTIVO',
+    'PRINCIPIO ACTIVO',
+    'Denominación Común Internacional',
+    'INGREDIENTE ACTIVO',
+    'NOMBRE DCI',
+    'IFA',
   ],
   formaFarmaceutica: [
-    'Nom_Form_Farm', 'NOM_FORM_FARM', 'FORMA_FARMACEUTICA', 'FORMA FARMACEUTICA',
-    'FORMA FARMACÉUTICA', 'Forma Farmacéutica', 'FORMA_FARM',
+    'Nom_Form_Farm',
+    'NOM_FORM_FARM',
+    'FORMA_FARMACEUTICA',
+    'FORMA FARMACEUTICA',
+    'FORMA FARMACÉUTICA',
+    'Forma Farmacéutica',
+    'FORMA_FARM',
   ],
   concentracion: [
-    'Concent', 'CONCENT', 'CONCENTRACION', 'CONCENTRACIÓN', 'Concentración',
+    'Concent',
+    'CONCENT',
+    'CONCENTRACION',
+    'CONCENTRACIÓN',
+    'Concentración',
     'STRENGTH',
   ],
   presentacion: [
-    'Presentac', 'PRESENTAC', 'PRESENTACION', 'PRESENTACIÓN', 'Presentación',
+    'Presentac',
+    'PRESENTAC',
+    'PRESENTACION',
+    'PRESENTACIÓN',
+    'Presentación',
     'ENVASE',
   ],
   laboratorio: [
-    'Nom_Titular', 'NOM_TITULAR', 'Nom_Fabricante', 'NOM_FABRICANTE',
-    'TITULAR_REGISTRO', 'TITULAR REGISTRO', 'LABORATORIO', 'FABRICANTE',
-    'Titular del Registro', 'EMPRESA', 'TITULAR',
+    'Nom_Titular',
+    'NOM_TITULAR',
+    'Nom_Fabricante',
+    'NOM_FABRICANTE',
+    'TITULAR_REGISTRO',
+    'TITULAR REGISTRO',
+    'LABORATORIO',
+    'FABRICANTE',
+    'Titular del Registro',
+    'EMPRESA',
+    'TITULAR',
   ],
   registroSanitario: [
-    'Num_RegSan', 'NUM_REGSAN', 'NUMERO_RS', 'NUMERO RS', 'REGISTRO_SANITARIO',
-    'REGISTRO SANITARIO', 'RS', 'N_RS', 'NRO_RS',
+    'Num_RegSan',
+    'NUM_REGSAN',
+    'NUMERO_RS',
+    'NUMERO RS',
+    'REGISTRO_SANITARIO',
+    'REGISTRO SANITARIO',
+    'RS',
+    'N_RS',
+    'NRO_RS',
   ],
   condicionVenta: [
-    'CONDICION_VENTA', 'CONDICIÓN DE VENTA', 'CONDICION DE VENTA',
-    'Condición de Venta', 'VENTA', 'RECETA',
+    'CONDICION_VENTA',
+    'CONDICIÓN DE VENTA',
+    'CONDICION DE VENTA',
+    'Condición de Venta',
+    'VENTA',
+    'RECETA',
   ],
   estado: [
-    'Situación', 'SITUACION', 'SITUACIÓN', 'ESTADO', 'ESTADO_REGISTRO',
-    'Estado del Registro', 'STATUS', 'VIGENCIA',
+    'Situación',
+    'SITUACION',
+    'SITUACIÓN',
+    'ESTADO',
+    'ESTADO_REGISTRO',
+    'Estado del Registro',
+    'STATUS',
+    'VIGENCIA',
   ],
   codigoBarras: [
-    'CODIGO_BARRAS', 'CÓDIGO DE BARRAS', 'EAN', 'BARCODE', 'GTIN', 'EAN13',
+    'CODIGO_BARRAS',
+    'CÓDIGO DE BARRAS',
+    'EAN',
+    'BARCODE',
+    'GTIN',
+    'EAN13',
   ],
 };
 
 function resolveColumn(headers: string[], aliases: string[]): string | null {
-  const norm = (s: string) => s?.toString().trim().toUpperCase().replace(/\s+/g, ' ');
+  const norm = (s: string) =>
+    s?.toString().trim().toUpperCase().replace(/\s+/g, ' ');
   const normHeaders = headers.map(norm);
   for (const alias of aliases) {
     const idx = normHeaders.indexOf(norm(alias));
@@ -91,8 +148,14 @@ function normalizeEstado(val: string | null): string {
   if (!val) return 'VIGENTE';
   const upper = val.toUpperCase();
   // DIGEMID usa: ACT = activo/vigente, INA/CANCEL = inactivo/cancelado
-  if (upper === 'ACT' || upper.includes('ACTIV') || upper.includes('VIGENT')) return 'VIGENTE';
-  if (upper.includes('CANCEL') || upper.includes('BAJA') || upper.includes('INA')) return 'CANCELADO';
+  if (upper === 'ACT' || upper.includes('ACTIV') || upper.includes('VIGENT'))
+    return 'VIGENTE';
+  if (
+    upper.includes('CANCEL') ||
+    upper.includes('BAJA') ||
+    upper.includes('INA')
+  )
+    return 'CANCELADO';
   return 'VIGENTE';
 }
 
@@ -106,8 +169,13 @@ function detectHeaderRow(workbook: XLSX.WorkBook, sheetName: string): number {
   const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1:Z100');
 
   const headerKeywords = [
-    'NOM_PROD', 'NOMBRE_PRODUCTO', 'NOMBRE PRODUCTO', 'NOMBRE COMERCIAL',
-    'NOM_IFA', 'NOMBRE_DCI', 'COD_PROD',
+    'NOM_PROD',
+    'NOMBRE_PRODUCTO',
+    'NOMBRE PRODUCTO',
+    'NOMBRE COMERCIAL',
+    'NOM_IFA',
+    'NOMBRE_DCI',
+    'COD_PROD',
   ];
 
   for (let r = range.s.r; r <= Math.min(range.e.r, 20); r++) {
@@ -115,8 +183,11 @@ function detectHeaderRow(workbook: XLSX.WorkBook, sheetName: string): number {
       const cellAddr = XLSX.utils.encode_cell({ r, c });
       const cell = sheet[cellAddr];
       if (!cell) continue;
-      const val = String(cell.v || '').trim().toUpperCase().replace(/\s+/g, ' ');
-      if (headerKeywords.some(kw => val.includes(kw))) {
+      const val = String(cell.v || '')
+        .trim()
+        .toUpperCase()
+        .replace(/\s+/g, ' ');
+      if (headerKeywords.some((kw) => val.includes(kw))) {
         console.log(`   → Headers detectados en fila ${r + 1}`);
         return r;
       }
@@ -148,7 +219,9 @@ async function main() {
 
   // También buscar cualquier .xlsx en la carpeta data/
   if (!filePath) {
-    const files = fs.readdirSync(dataDir).filter(f => f.endsWith('.xlsx') || f.endsWith('.xls'));
+    const files = fs
+      .readdirSync(dataDir)
+      .filter((f) => f.endsWith('.xlsx') || f.endsWith('.xls'));
     if (files.length > 0) {
       filePath = path.join(dataDir, files[0]);
       console.log(`   Usando primer archivo encontrado: ${files[0]}`);
@@ -177,13 +250,17 @@ async function main() {
   });
 
   if (rows.length === 0) {
-    console.error('❌ El archivo está vacío o no tiene datos después de los headers.');
+    console.error(
+      '❌ El archivo está vacío o no tiene datos después de los headers.',
+    );
     process.exit(1);
   }
 
   const headers = Object.keys(rows[0]);
   console.log(`\n📋 ${headers.length} columnas detectadas:`);
-  console.log(`   ${headers.slice(0, 10).join(' | ')}${headers.length > 10 ? ' | ...' : ''}`);
+  console.log(
+    `   ${headers.slice(0, 10).join(' | ')}${headers.length > 10 ? ' | ...' : ''}`,
+  );
 
   const colMap = buildColumnMap(headers);
   console.log('\n🗺️  Mapeo de columnas DIGEMID → Sistema:');
@@ -210,7 +287,7 @@ async function main() {
   for (let i = 0; i < rows.length; i += BATCH) {
     const batch = rows.slice(i, i + BATCH);
     const data = batch
-      .map(row => {
+      .map((row) => {
         const nombre = getValue(row, colMap.nombreComercial);
         if (!nombre || nombre.length < 2) return null;
         return {
@@ -235,21 +312,30 @@ async function main() {
       imported += data.length;
     }
 
-    process.stdout.write(`\r   ${imported.toLocaleString()} importados, ${skipped} omitidos...`);
+    process.stdout.write(
+      `\r   ${imported.toLocaleString()} importados, ${skipped} omitidos...`,
+    );
   }
 
   const total = await prisma.digemidProducto.count();
-  const vigentes = await prisma.digemidProducto.count({ where: { estado: 'VIGENTE' } });
+  const vigentes = await prisma.digemidProducto.count({
+    where: { estado: 'VIGENTE' },
+  });
 
   console.log('\n');
   console.log('✅ Importación completada:');
   console.log(`   Total en DB  : ${total.toLocaleString()}`);
   console.log(`   Vigentes     : ${vigentes.toLocaleString()}`);
   console.log(`   Cancelados   : ${(total - vigentes).toLocaleString()}`);
-  console.log(`   Omitidos     : ${skipped.toLocaleString()} (sin nombre válido)`);
+  console.log(
+    `   Omitidos     : ${skipped.toLocaleString()} (sin nombre válido)`,
+  );
   console.log('\n🔍 Prueba: pnpm run seed:digemid completado exitosamente\n');
 }
 
 main()
-  .catch(e => { console.error('\n❌ Error:', e.message); process.exit(1); })
+  .catch((e) => {
+    console.error('\n❌ Error:', e.message);
+    process.exit(1);
+  })
   .finally(() => prisma.$disconnect());

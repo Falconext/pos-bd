@@ -1587,7 +1587,7 @@ export class ComprobanteService {
 
       const factorConvVenta = Number((producto as any).factorConversion ?? 1);
       const cantidadLote =
-        factorConvVenta > 1 && !(item as any).unidadVenta
+        factorConvVenta > 1 && !item.unidadVenta
           ? cantidad * factorConvVenta
           : cantidad;
       if (data && this.kardexService) {
@@ -3065,7 +3065,7 @@ export class ComprobanteService {
         data: {
           fechaEmision: fecha,
           observaciones: observaciones ?? null,
-          clienteId: finalClienteId as number,
+          clienteId: finalClienteId,
           leyendas: {
             create: [
               {
@@ -3192,7 +3192,9 @@ export class ComprobanteService {
     await tx.whatsAppEnvio.deleteMany({
       where: { comprobanteId: { in: ids } },
     });
-    await tx.envioDespacho.deleteMany({ where: { comprobanteId: { in: ids } } });
+    await tx.envioDespacho.deleteMany({
+      where: { comprobanteId: { in: ids } },
+    });
     await tx.pago.deleteMany({ where: { comprobanteId: { in: ids } } });
     await tx.leyenda.deleteMany({ where: { comprobanteId: { in: ids } } });
     await tx.detalleComprobante.deleteMany({
@@ -3240,15 +3242,17 @@ export class ComprobanteService {
     confirmar?: boolean;
   }) {
     if (!params.confirmar) {
-      throw new BadRequestException('Debes confirmar la limpieza de cotizaciones');
+      throw new BadRequestException(
+        'Debes confirmar la limpieza de cotizaciones',
+      );
     }
 
     const tieneFiltro = Boolean(
       params.sedeId ||
-      params.usuarioId ||
-      String(params.fechaInicio || '').trim() ||
-      String(params.fechaFin || '').trim() ||
-      String(params.search || '').trim(),
+        params.usuarioId ||
+        String(params.fechaInicio || '').trim() ||
+        String(params.fechaFin || '').trim() ||
+        String(params.search || '').trim(),
     );
     if (!tieneFiltro) {
       throw new BadRequestException(
@@ -3642,7 +3646,9 @@ export class ComprobanteService {
       ' ' +
       ahora.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
 
-    const razonSocialEmpresa = String(full.empresa?.razonSocial || (full.empresa as any)?.nombreComercial || '').toUpperCase();
+    const razonSocialEmpresa = String(
+      full.empresa?.razonSocial || (full.empresa as any)?.nombreComercial || '',
+    ).toUpperCase();
     const pdfData: any = {
       nombreComercial: (full.empresa as any)?.nombreComercial
         ? String((full.empresa as any).nombreComercial).toUpperCase()
@@ -3884,7 +3890,6 @@ export class ComprobanteService {
   // ─── URL pública con token HMAC (sin S3) ─────────────────────────────────
 
   private tokenPdf(id: number): string {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const crypto = require('crypto');
     const secret = process.env.PDF_TOKEN_SECRET || process.env.JWT_SECRET;
     if (

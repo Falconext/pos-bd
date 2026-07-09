@@ -1,4 +1,9 @@
-import { BadRequestException, HttpException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import { PdfGeneratorService } from './pdf-generator.service';
@@ -8,7 +13,11 @@ import { QpseClient, QpseSendResponse } from '../common/utils/qpse.client';
 import { buildUblXml } from '../common/utils/ubl-xml';
 import { ApisPeruClient } from '../common/utils/apis-peru.client';
 import { JambleClient } from '../common/utils/jamble.client';
-import { isApisunatProvider, isJambleProvider, resolveBillingProvider } from '../common/utils/billing-provider';
+import {
+  isApisunatProvider,
+  isJambleProvider,
+  resolveBillingProvider,
+} from '../common/utils/billing-provider';
 
 /**
  * Error de datos: el payload no pudo armarse por datos incorrectos del comprobante.
@@ -28,11 +37,12 @@ export class SunatPayloadException extends Error {
  * Cuando SUNAT devuelve uno de estos códigos el comprobante se elimina automáticamente.
  */
 const SUNAT_FATAL_CODES = new Set([
-  1034,                // RUC emisor no activo / no habilitado para CPE
-  1083,                // RUC receptor no existe en SUNAT
-  2329,                // Dirección del establecimiento no registrada
-  2800, 2825,          // Serie no corresponde / no existe para el emisor
-  3117,                // Código de producto SUNAT incorrecto
+  1034, // RUC emisor no activo / no habilitado para CPE
+  1083, // RUC receptor no existe en SUNAT
+  2329, // Dirección del establecimiento no registrada
+  2800,
+  2825, // Serie no corresponde / no existe para el emisor
+  3117, // Código de producto SUNAT incorrecto
 ]);
 
 const SUNAT_ALREADY_REGISTERED_CODE = 1033;
@@ -47,7 +57,9 @@ function extractSunatCode(detail: string | null | undefined): number | null {
   return Number(match[1]);
 }
 
-function extractFatalSunatCode(detail: string | null | undefined): number | null {
+function extractFatalSunatCode(
+  detail: string | null | undefined,
+): number | null {
   const code = extractSunatCode(detail);
   if (!code) return null;
   return SUNAT_FATAL_CODES.has(code) ? code : null;
@@ -83,13 +95,23 @@ const VALID_TIPO_OPERACION_CODES = new Set([
 
 // Catálogo 06 SUNAT — tipos de documento de identidad (schemeID UBL)
 // Nota: este mapping se usa para UBL (schemeID). El valor es el mismo código.
-function getTipoDocumentoSchemeId(tipoDocCodigo: string | null | undefined): string {
+function getTipoDocumentoSchemeId(
+  tipoDocCodigo: string | null | undefined,
+): string {
   const codigo = String(tipoDocCodigo ?? '').trim();
-  const map: Record<string, string> = { '0': '0', '1': '1', '4': '4', '6': '6', '7': '7' };
+  const map: Record<string, string> = {
+    '0': '0',
+    '1': '1',
+    '4': '4',
+    '6': '6',
+    '7': '7',
+  };
   return map[codigo] ?? '1';
 }
 
-function getTipoDocumentoLabel(tipoDocCodigo: string | null | undefined): string {
+function getTipoDocumentoLabel(
+  tipoDocCodigo: string | null | undefined,
+): string {
   const codigo = String(tipoDocCodigo ?? '').trim();
   const map: Record<string, string> = {
     '0': 'NO DOM. (SIN RUC)',
@@ -104,30 +126,36 @@ function getTipoDocumentoLabel(tipoDocCodigo: string | null | undefined): string
 @Injectable()
 export class EnviarSunatService {
   private readonly logger = new Logger(EnviarSunatService.name);
-  private readonly maxRetries = 12;       // 12 intentos × 5s = 60s máximo esperando SUNAT
+  private readonly maxRetries = 12; // 12 intentos × 5s = 60s máximo esperando SUNAT
   private readonly retryInterval = 5000;
-
 
   private readonly MAX_DATA_ERROR_RETRIES = 5;
 
-
   private readonly MAX_INFRA_ERROR_RETRIES = 30;
-
 
   private readonly maxRetryAttempts = 10;
   private readonly maxRetryHours = 5;
 
   public simulateSunatFailure = false;
 
-  private getJambleCorrelativoFloor(empresaId: number, serie: string): number | null {
+  private getJambleCorrelativoFloor(
+    empresaId: number,
+    serie: string,
+  ): number | null {
     const raw = String(process.env.JAMBLE_CORRELATIVO_FLOOR || '').trim();
     if (!raw) return null;
-    const entries = raw.split(',').map((v) => v.trim()).filter(Boolean);
+    const entries = raw
+      .split(',')
+      .map((v) => v.trim())
+      .filter(Boolean);
     for (const entry of entries) {
-      const [empresa, serieCfg, floor] = entry.split(':').map((v) => String(v || '').trim());
+      const [empresa, serieCfg, floor] = entry
+        .split(':')
+        .map((v) => String(v || '').trim());
       if (!empresa || !serieCfg || !floor) continue;
       if (Number(empresa) !== empresaId) continue;
-      if (serieCfg.toUpperCase() !== String(serie || '').toUpperCase()) continue;
+      if (serieCfg.toUpperCase() !== String(serie || '').toUpperCase())
+        continue;
       const value = Number(floor);
       if (!Number.isNaN(value) && value > 0) return value;
     }
@@ -141,7 +169,7 @@ export class EnviarSunatService {
     private readonly qpseClient: QpseClient,
     private readonly apisPeruClient: ApisPeruClient,
     private readonly jambleClient: JambleClient,
-  ) { }
+  ) {}
 
   async execute(comprobanteId: number) {
     const comp = await this.prisma.comprobante.findUnique({
@@ -159,7 +187,7 @@ export class EnviarSunatService {
     });
     if (!comp) throw new HttpException('Comprobante no encontrado', 404);
 
-    const empresa = await (this.prisma.empresa as any).findUnique({
+    const empresa = (await (this.prisma.empresa as any).findUnique({
       where: { id: comp.empresaId },
       select: {
         ruc: true,
@@ -175,7 +203,7 @@ export class EnviarSunatService {
         billingApiUser: true,
         billingApiPassword: true,
       },
-    }) as {
+    })) as {
       ruc: string | null;
       usuarioPse: string | null;
       contrasenaPse: string | null;
@@ -197,8 +225,8 @@ export class EnviarSunatService {
     const usaDemo = empresa?.usaDemo ?? false;
     const jambleBaseUrl = String(
       usaDemo
-        ? (empresa?.billingApiDemoBaseUrl || empresa?.billingApiBaseUrl || '')
-        : (empresa?.billingApiBaseUrl || ''),
+        ? empresa?.billingApiDemoBaseUrl || empresa?.billingApiBaseUrl || ''
+        : empresa?.billingApiBaseUrl || '',
     ).trim();
     const jambleToken = String(empresa?.billingApiToken || '').trim();
     const jambleUser = String(empresa?.billingApiUser || '').trim();
@@ -273,9 +301,10 @@ export class EnviarSunatService {
 
       // Normalize Catálogo 51 listID — unknown/null codes always fall back to '0101'
       const rawCodigo = comp.tipoOperacion?.codigo;
-      const tipoOperacionListID = (rawCodigo && VALID_TIPO_OPERACION_CODES.has(rawCodigo))
-        ? rawCodigo
-        : '0101';
+      const tipoOperacionListID =
+        rawCodigo && VALID_TIPO_OPERACION_CODES.has(rawCodigo)
+          ? rawCodigo
+          : '0101';
 
       // Validate early: Boleta (03) only allows 0101 (Venta Interna)
       if (comp.tipoDoc === '03' && tipoOperacionListID !== '0101') {
@@ -307,14 +336,24 @@ export class EnviarSunatService {
               _text: l.value,
               _attributes: { languageLocaleID: '1000' },
             })),
-            ...(comp.tipoDetraccionId ? [{
-              _text: 'OPERACIÓN SUJETA A DETRACCIÓN',
-              _attributes: { languageLocaleID: '2006' },
-            }] : []),
-            ...(!comp.tipoDetraccionId && comp.montoDetraccion && comp.porcentajeDetraccion ? [{
-              _text: 'OPERACIÓN SUJETA A RETENCIÓN DEL 3%',
-              _attributes: { languageLocaleID: '2006' },
-            }] : [])
+            ...(comp.tipoDetraccionId
+              ? [
+                  {
+                    _text: 'OPERACIÓN SUJETA A DETRACCIÓN',
+                    _attributes: { languageLocaleID: '2006' },
+                  },
+                ]
+              : []),
+            ...(!comp.tipoDetraccionId &&
+            comp.montoDetraccion &&
+            comp.porcentajeDetraccion
+              ? [
+                  {
+                    _text: 'OPERACIÓN SUJETA A RETENCIÓN DEL 3%',
+                    _attributes: { languageLocaleID: '2006' },
+                  },
+                ]
+              : []),
           ],
           'cbc:DocumentCurrencyCode': {
             _attributes: {
@@ -360,7 +399,9 @@ export class EnviarSunatService {
               'cac:PartyIdentification': {
                 'cbc:ID': {
                   _attributes: {
-                    schemeID: getTipoDocumentoSchemeId(comp.cliente.tipoDocumento?.codigo),
+                    schemeID: getTipoDocumentoSchemeId(
+                      comp.cliente.tipoDocumento?.codigo,
+                    ),
                   },
                   _text: comp.cliente.nroDoc,
                 },
@@ -403,32 +444,66 @@ export class EnviarSunatService {
               const cur = comp.tipoMoneda;
               const subtotals: any[] = [];
               // IGV (Gravado) — siempre incluir si hay mtoOperGravadas o si no hay otras ops
-              if (Number(comp.mtoOperGravadas) > 0 || (Number(comp.mtoOperExoneradas ?? 0) === 0 && Number(comp.mtoOperInafectas ?? 0) === 0)) {
+              if (
+                Number(comp.mtoOperGravadas) > 0 ||
+                (Number(comp.mtoOperExoneradas ?? 0) === 0 &&
+                  Number(comp.mtoOperInafectas ?? 0) === 0)
+              ) {
                 subtotals.push({
-                  'cbc:TaxableAmount': { _attributes: { currencyID: cur }, _text: comp.mtoOperGravadas },
-                  'cbc:TaxAmount': { _attributes: { currencyID: cur }, _text: comp.mtoIGV },
+                  'cbc:TaxableAmount': {
+                    _attributes: { currencyID: cur },
+                    _text: comp.mtoOperGravadas,
+                  },
+                  'cbc:TaxAmount': {
+                    _attributes: { currencyID: cur },
+                    _text: comp.mtoIGV,
+                  },
                   'cac:TaxCategory': {
-                    'cac:TaxScheme': { 'cbc:ID': { _text: '1000' }, 'cbc:Name': { _text: 'IGV' }, 'cbc:TaxTypeCode': { _text: 'VAT' } },
+                    'cac:TaxScheme': {
+                      'cbc:ID': { _text: '1000' },
+                      'cbc:Name': { _text: 'IGV' },
+                      'cbc:TaxTypeCode': { _text: 'VAT' },
+                    },
                   },
                 });
               }
               // Exonerado (9997)
               if (Number(comp.mtoOperExoneradas ?? 0) > 0) {
                 subtotals.push({
-                  'cbc:TaxableAmount': { _attributes: { currencyID: cur }, _text: comp.mtoOperExoneradas },
-                  'cbc:TaxAmount': { _attributes: { currencyID: cur }, _text: 0 },
+                  'cbc:TaxableAmount': {
+                    _attributes: { currencyID: cur },
+                    _text: comp.mtoOperExoneradas,
+                  },
+                  'cbc:TaxAmount': {
+                    _attributes: { currencyID: cur },
+                    _text: 0,
+                  },
                   'cac:TaxCategory': {
-                    'cac:TaxScheme': { 'cbc:ID': { _text: '9997' }, 'cbc:Name': { _text: 'EXO' }, 'cbc:TaxTypeCode': { _text: 'VAT' } },
+                    'cac:TaxScheme': {
+                      'cbc:ID': { _text: '9997' },
+                      'cbc:Name': { _text: 'EXO' },
+                      'cbc:TaxTypeCode': { _text: 'VAT' },
+                    },
                   },
                 });
               }
               // Inafecto (9998)
               if (Number(comp.mtoOperInafectas ?? 0) > 0) {
                 subtotals.push({
-                  'cbc:TaxableAmount': { _attributes: { currencyID: cur }, _text: comp.mtoOperInafectas },
-                  'cbc:TaxAmount': { _attributes: { currencyID: cur }, _text: 0 },
+                  'cbc:TaxableAmount': {
+                    _attributes: { currencyID: cur },
+                    _text: comp.mtoOperInafectas,
+                  },
+                  'cbc:TaxAmount': {
+                    _attributes: { currencyID: cur },
+                    _text: 0,
+                  },
                   'cac:TaxCategory': {
-                    'cac:TaxScheme': { 'cbc:ID': { _text: '9998' }, 'cbc:Name': { _text: 'INA' }, 'cbc:TaxTypeCode': { _text: 'FRE' } },
+                    'cac:TaxScheme': {
+                      'cbc:ID': { _text: '9998' },
+                      'cbc:Name': { _text: 'INA' },
+                      'cbc:TaxTypeCode': { _text: 'FRE' },
+                    },
                   },
                 });
               }
@@ -452,73 +527,79 @@ export class EnviarSunatService {
           'cac:InvoiceLine': comp.detalles.map((d: any, index: number) => {
             const tipAfe = Number(d.tipAfeIgv ?? 10);
             // Catálogo 05 SUNAT: TaxScheme por tipo de afectación IGV
-            const taxScheme = tipAfe === 20
-              ? { id: '9997', name: 'EXO', typeCode: 'VAT' }
-              : tipAfe === 30
-              ? { id: '9998', name: 'INA', typeCode: 'FRE' }
-              : { id: '1000', name: 'IGV', typeCode: 'VAT' }; // 10 Gravado
+            const taxScheme =
+              tipAfe === 20
+                ? { id: '9997', name: 'EXO', typeCode: 'VAT' }
+                : tipAfe === 30
+                  ? { id: '9998', name: 'INA', typeCode: 'FRE' }
+                  : { id: '1000', name: 'IGV', typeCode: 'VAT' }; // 10 Gravado
 
-            return ({
-            'cbc:ID': { _text: (index + 1).toString() },
-            'cbc:InvoicedQuantity': {
-              _attributes: { unitCode: d.unidad || 'NIU' },
-              _text: d.cantidad,
-            },
-            'cbc:LineExtensionAmount': {
-              _attributes: { currencyID: comp.tipoMoneda },
-              _text: d.mtoValorVenta,
-            },
-            'cac:PricingReference': {
-              'cac:AlternativeConditionPrice': {
+            return {
+              'cbc:ID': { _text: (index + 1).toString() },
+              'cbc:InvoicedQuantity': {
+                _attributes: { unitCode: d.unidad || 'NIU' },
+                _text: d.cantidad,
+              },
+              'cbc:LineExtensionAmount': {
+                _attributes: { currencyID: comp.tipoMoneda },
+                _text: d.mtoValorVenta,
+              },
+              'cac:PricingReference': {
+                'cac:AlternativeConditionPrice': {
+                  'cbc:PriceAmount': {
+                    _attributes: { currencyID: comp.tipoMoneda },
+                    _text: d.mtoPrecioUnitario || d.mtoValorUnitario,
+                  },
+                  'cbc:PriceTypeCode': { _text: '01' },
+                },
+              },
+              'cac:TaxTotal': {
+                'cbc:TaxAmount': {
+                  _attributes: { currencyID: comp.tipoMoneda },
+                  _text: d.igv,
+                },
+                'cac:TaxSubtotal': [
+                  {
+                    'cbc:TaxableAmount': {
+                      _attributes: { currencyID: comp.tipoMoneda },
+                      _text: d.mtoBaseIgv,
+                    },
+                    'cbc:TaxAmount': {
+                      _attributes: { currencyID: comp.tipoMoneda },
+                      _text: d.igv,
+                    },
+                    'cac:TaxCategory': {
+                      'cbc:Percent': {
+                        _text: tipAfe === 10 ? d.porcentajeIgv || 18 : 0,
+                      },
+                      'cbc:TaxExemptionReasonCode': {
+                        _text: String(
+                          tipAfe === 10 ? d.tipAfeIgv || 10 : d.tipAfeIgv,
+                        ),
+                      },
+                      'cac:TaxScheme': {
+                        'cbc:ID': { _text: taxScheme.id },
+                        'cbc:Name': { _text: taxScheme.name },
+                        'cbc:TaxTypeCode': { _text: taxScheme.typeCode },
+                      },
+                    },
+                  },
+                ],
+              },
+              'cac:Item': {
+                'cbc:Description': { _text: limpiarTexto(d.descripcion) },
+                'cac:SellersItemIdentification': {
+                  'cbc:ID': { _text: d.producto?.codigo || '-' },
+                },
+              },
+              'cac:Price': {
                 'cbc:PriceAmount': {
                   _attributes: { currencyID: comp.tipoMoneda },
-                  _text: d.mtoPrecioUnitario || d.mtoValorUnitario,
+                  _text: d.mtoValorUnitario,
                 },
-                'cbc:PriceTypeCode': { _text: '01' },
               },
-            },
-            'cac:TaxTotal': {
-              'cbc:TaxAmount': {
-                _attributes: { currencyID: comp.tipoMoneda },
-                _text: d.igv,
-              },
-              'cac:TaxSubtotal': [
-                {
-                  'cbc:TaxableAmount': {
-                    _attributes: { currencyID: comp.tipoMoneda },
-                    _text: d.mtoBaseIgv,
-                  },
-                  'cbc:TaxAmount': {
-                    _attributes: { currencyID: comp.tipoMoneda },
-                    _text: d.igv,
-                  },
-                  'cac:TaxCategory': {
-                    'cbc:Percent': { _text: tipAfe === 10 ? (d.porcentajeIgv || 18) : 0 },
-                    'cbc:TaxExemptionReasonCode': {
-                      _text: String(tipAfe === 10 ? (d.tipAfeIgv || 10) : d.tipAfeIgv),
-                    },
-                    'cac:TaxScheme': {
-                      'cbc:ID': { _text: taxScheme.id },
-                      'cbc:Name': { _text: taxScheme.name },
-                      'cbc:TaxTypeCode': { _text: taxScheme.typeCode },
-                    },
-                  },
-                },
-              ],
-            },
-            'cac:Item': {
-              'cbc:Description': { _text: limpiarTexto(d.descripcion) },
-              'cac:SellersItemIdentification': {
-                'cbc:ID': { _text: d.producto?.codigo || '-' },
-              },
-            },
-            'cac:Price': {
-              'cbc:PriceAmount': {
-                _attributes: { currencyID: comp.tipoMoneda },
-                _text: d.mtoValorUnitario,
-              },
-            },
-          }); }),
+            };
+          }),
         },
       };
 
@@ -542,13 +623,19 @@ export class EnviarSunatService {
       if (comp.tipoDoc === '01') {
         const paymentTerms: any[] = [];
         const esCredito = comp.formaPagoTipo?.toLowerCase() === 'credito';
-        const cuotasData = comp.cuotas ? (Array.isArray(comp.cuotas) ? comp.cuotas : []) : [];
+        const cuotasData = comp.cuotas
+          ? Array.isArray(comp.cuotas)
+            ? comp.cuotas
+            : []
+          : [];
 
         // 1. Si hay detracción, agregar primero el bloque de detracción
         if (comp.tipoDetraccionId && comp.tipoDetraccion) {
           paymentTerms.push({
             'cbc:ID': { _text: 'Detraccion' },
-            'cbc:PaymentMeansID': { _text: String(comp.tipoDetraccion.codigo).padStart(3, '0') },
+            'cbc:PaymentMeansID': {
+              _text: String(comp.tipoDetraccion.codigo).padStart(3, '0'),
+            },
             'cbc:PaymentPercent': { _text: comp.porcentajeDetraccion || 0 },
             'cbc:Amount': {
               _attributes: { currencyID: comp.tipoMoneda },
@@ -560,7 +647,9 @@ export class EnviarSunatService {
         // 2. Agregar FormaPago (Contado o Credito)
         if (esCredito && cuotasData.length > 0) {
           // CRÉDITO: Calcular monto a crédito (total - detracción)
-          const montoACredito = Number((comp.mtoImpVenta - (comp.montoDetraccion || 0)).toFixed(2));
+          const montoACredito = Number(
+            (comp.mtoImpVenta - (comp.montoDetraccion || 0)).toFixed(2),
+          );
           paymentTerms.push({
             'cbc:ID': { _text: 'FormaPago' },
             'cbc:PaymentMeansID': { _text: 'Credito' },
@@ -574,20 +663,27 @@ export class EnviarSunatService {
           cuotasData.forEach((cuota: any, index: number) => {
             paymentTerms.push({
               'cbc:ID': { _text: 'FormaPago' },
-              'cbc:PaymentMeansID': { _text: `Cuota${String(index + 1).padStart(3, '0')}` },
+              'cbc:PaymentMeansID': {
+                _text: `Cuota${String(index + 1).padStart(3, '0')}`,
+              },
               'cbc:Amount': {
                 _attributes: { currencyID: comp.tipoMoneda },
                 _text: Number(Number(cuota.monto).toFixed(2)),
               },
-              'cbc:PaymentDueDate': { _text: String(cuota.fechaVencimiento).substring(0, 10) },
+              'cbc:PaymentDueDate': {
+                _text: String(cuota.fechaVencimiento).substring(0, 10),
+              },
             });
           });
         } else {
           // CONTADO: Solo el bloque simple
           // Normalizar formaPagoTipo a formato SUNAT: "CONTADO" -> "Contado", "CREDITO" -> "Credito"
-          const formaPagoNormalizado = comp.formaPagoTipo?.toLowerCase() === 'contado' ? 'Contado' :
-            comp.formaPagoTipo?.toLowerCase() === 'credito' ? 'Credito' :
-              'Contado';
+          const formaPagoNormalizado =
+            comp.formaPagoTipo?.toLowerCase() === 'contado'
+              ? 'Contado'
+              : comp.formaPagoTipo?.toLowerCase() === 'credito'
+                ? 'Credito'
+                : 'Contado';
           paymentTerms.push({
             'cbc:ID': { _text: 'FormaPago' },
             'cbc:PaymentMeansID': { _text: formaPagoNormalizado },
@@ -601,7 +697,9 @@ export class EnviarSunatService {
           payload.documentBody['cac:PaymentMeans'] = [
             {
               'cbc:ID': { _text: 'Detraccion' },
-              'cbc:PaymentMeansCode': { _text: comp.medioPagoDetraccion?.codigo || '001' },
+              'cbc:PaymentMeansCode': {
+                _text: comp.medioPagoDetraccion?.codigo || '001',
+              },
               'cac:PayeeFinancialAccount': {
                 'cbc:ID': { _text: comp.cuentaBancoNacion },
               },
@@ -615,20 +713,28 @@ export class EnviarSunatService {
       }
 
       // AllowanceCharge para Retención 3% — en posición correcta (antes de TaxTotal)
-      if (!comp.tipoDetraccionId && comp.montoDetraccion && comp.porcentajeDetraccion) {
-        payload.documentBody['cac:AllowanceCharge'] = [{
-          'cbc:ChargeIndicator': { _text: 'false' },
-          'cbc:AllowanceChargeReasonCode': { _text: '62' },
-          'cbc:MultiplierFactorNumeric': { _text: Number((comp.porcentajeDetraccion / 100).toFixed(4)) },
-          'cbc:Amount': {
-            _attributes: { currencyID: comp.tipoMoneda },
-            _text: Number(Number(comp.montoDetraccion).toFixed(2)),
+      if (
+        !comp.tipoDetraccionId &&
+        comp.montoDetraccion &&
+        comp.porcentajeDetraccion
+      ) {
+        payload.documentBody['cac:AllowanceCharge'] = [
+          {
+            'cbc:ChargeIndicator': { _text: 'false' },
+            'cbc:AllowanceChargeReasonCode': { _text: '62' },
+            'cbc:MultiplierFactorNumeric': {
+              _text: Number((comp.porcentajeDetraccion / 100).toFixed(4)),
+            },
+            'cbc:Amount': {
+              _attributes: { currencyID: comp.tipoMoneda },
+              _text: Number(Number(comp.montoDetraccion).toFixed(2)),
+            },
+            'cbc:BaseAmount': {
+              _attributes: { currencyID: comp.tipoMoneda },
+              _text: comp.mtoImpVenta,
+            },
           },
-          'cbc:BaseAmount': {
-            _attributes: { currencyID: comp.tipoMoneda },
-            _text: comp.mtoImpVenta,
-          },
-        }];
+        ];
       }
 
       if ((comp.tipoDoc === '07' || comp.tipoDoc === '08') && comp.motivo) {
@@ -655,69 +761,73 @@ export class EnviarSunatService {
         payload.documentBody['cac:CreditNoteLine'] = comp.detalles.map(
           (d: any, index: number) => {
             const tipAfe = Number(d.tipAfeIgv ?? 10);
-            const taxScheme = tipAfe === 20
-              ? { id: '9997', name: 'EXO', typeCode: 'VAT' }
-              : tipAfe === 30
-              ? { id: '9998', name: 'INA', typeCode: 'FRE' }
-              : { id: '1000', name: 'IGV', typeCode: 'VAT' };
-            return ({
-            'cbc:ID': { _text: (index + 1).toString() },
-            'cbc:CreditedQuantity': {
-              _attributes: { unitCode: d.unidad || 'NIU' },
-              _text: d.cantidad,
-            },
-            'cbc:LineExtensionAmount': {
-              _attributes: { currencyID: comp.tipoMoneda },
-              _text: d.mtoValorVenta,
-            },
-            'cac:PricingReference': {
-              'cac:AlternativeConditionPrice': {
+            const taxScheme =
+              tipAfe === 20
+                ? { id: '9997', name: 'EXO', typeCode: 'VAT' }
+                : tipAfe === 30
+                  ? { id: '9998', name: 'INA', typeCode: 'FRE' }
+                  : { id: '1000', name: 'IGV', typeCode: 'VAT' };
+            return {
+              'cbc:ID': { _text: (index + 1).toString() },
+              'cbc:CreditedQuantity': {
+                _attributes: { unitCode: d.unidad || 'NIU' },
+                _text: d.cantidad,
+              },
+              'cbc:LineExtensionAmount': {
+                _attributes: { currencyID: comp.tipoMoneda },
+                _text: d.mtoValorVenta,
+              },
+              'cac:PricingReference': {
+                'cac:AlternativeConditionPrice': {
+                  'cbc:PriceAmount': {
+                    _attributes: { currencyID: comp.tipoMoneda },
+                    _text: d.mtoPrecioUnitario,
+                  },
+                  'cbc:PriceTypeCode': { _text: '01' },
+                },
+              },
+              'cac:TaxTotal': {
+                'cbc:TaxAmount': {
+                  _attributes: { currencyID: comp.tipoMoneda },
+                  _text: d.igv,
+                },
+                'cac:TaxSubtotal': [
+                  {
+                    'cbc:TaxableAmount': {
+                      _attributes: { currencyID: comp.tipoMoneda },
+                      _text: d.mtoBaseIgv,
+                    },
+                    'cbc:TaxAmount': {
+                      _attributes: { currencyID: comp.tipoMoneda },
+                      _text: d.igv,
+                    },
+                    'cac:TaxCategory': {
+                      'cbc:Percent': {
+                        _text: tipAfe === 10 ? d.porcentajeIgv || 18 : 0,
+                      },
+                      'cbc:TaxExemptionReasonCode': {
+                        _text: String(d.tipAfeIgv || 10),
+                      },
+                      'cac:TaxScheme': {
+                        'cbc:ID': { _text: taxScheme.id },
+                        'cbc:Name': { _text: taxScheme.name },
+                        'cbc:TaxTypeCode': { _text: taxScheme.typeCode },
+                      },
+                    },
+                  },
+                ],
+              },
+              'cac:Item': {
+                'cbc:Description': { _text: limpiarTexto(d.descripcion) },
+              },
+              'cac:Price': {
                 'cbc:PriceAmount': {
                   _attributes: { currencyID: comp.tipoMoneda },
-                  _text: d.mtoPrecioUnitario,
+                  _text: d.mtoValorUnitario,
                 },
-                'cbc:PriceTypeCode': { _text: '01' },
               },
-            },
-            'cac:TaxTotal': {
-              'cbc:TaxAmount': {
-                _attributes: { currencyID: comp.tipoMoneda },
-                _text: d.igv,
-              },
-              'cac:TaxSubtotal': [
-                {
-                  'cbc:TaxableAmount': {
-                    _attributes: { currencyID: comp.tipoMoneda },
-                    _text: d.mtoBaseIgv,
-                  },
-                  'cbc:TaxAmount': {
-                    _attributes: { currencyID: comp.tipoMoneda },
-                    _text: d.igv,
-                  },
-                  'cac:TaxCategory': {
-                    'cbc:Percent': { _text: tipAfe === 10 ? (d.porcentajeIgv || 18) : 0 },
-                    'cbc:TaxExemptionReasonCode': {
-                      _text: String(d.tipAfeIgv || 10),
-                    },
-                    'cac:TaxScheme': {
-                      'cbc:ID': { _text: taxScheme.id },
-                      'cbc:Name': { _text: taxScheme.name },
-                      'cbc:TaxTypeCode': { _text: taxScheme.typeCode },
-                    },
-                  },
-                },
-              ],
-            },
-            'cac:Item': {
-              'cbc:Description': { _text: limpiarTexto(d.descripcion) },
-            },
-            'cac:Price': {
-              'cbc:PriceAmount': {
-                _attributes: { currencyID: comp.tipoMoneda },
-                _text: d.mtoValorUnitario,
-              },
-            },
-          }); },
+            };
+          },
         );
 
         // Sobrescribir Note como array para nota de crédito
@@ -737,30 +847,58 @@ export class EnviarSunatService {
           'cac:TaxSubtotal': (() => {
             const cur = comp.tipoMoneda;
             const subtotals: any[] = [];
-            if (Number(comp.mtoOperGravadas) > 0 || (Number(comp.mtoOperExoneradas ?? 0) === 0 && Number(comp.mtoOperInafectas ?? 0) === 0)) {
+            if (
+              Number(comp.mtoOperGravadas) > 0 ||
+              (Number(comp.mtoOperExoneradas ?? 0) === 0 &&
+                Number(comp.mtoOperInafectas ?? 0) === 0)
+            ) {
               subtotals.push({
-                'cbc:TaxableAmount': { _attributes: { currencyID: cur }, _text: comp.mtoOperGravadas },
-                'cbc:TaxAmount': { _attributes: { currencyID: cur }, _text: comp.mtoIGV },
+                'cbc:TaxableAmount': {
+                  _attributes: { currencyID: cur },
+                  _text: comp.mtoOperGravadas,
+                },
+                'cbc:TaxAmount': {
+                  _attributes: { currencyID: cur },
+                  _text: comp.mtoIGV,
+                },
                 'cac:TaxCategory': {
-                  'cac:TaxScheme': { 'cbc:ID': { _text: '1000' }, 'cbc:Name': { _text: 'IGV' }, 'cbc:TaxTypeCode': { _text: 'VAT' } },
+                  'cac:TaxScheme': {
+                    'cbc:ID': { _text: '1000' },
+                    'cbc:Name': { _text: 'IGV' },
+                    'cbc:TaxTypeCode': { _text: 'VAT' },
+                  },
                 },
               });
             }
             if (Number(comp.mtoOperExoneradas ?? 0) > 0) {
               subtotals.push({
-                'cbc:TaxableAmount': { _attributes: { currencyID: cur }, _text: comp.mtoOperExoneradas },
+                'cbc:TaxableAmount': {
+                  _attributes: { currencyID: cur },
+                  _text: comp.mtoOperExoneradas,
+                },
                 'cbc:TaxAmount': { _attributes: { currencyID: cur }, _text: 0 },
                 'cac:TaxCategory': {
-                  'cac:TaxScheme': { 'cbc:ID': { _text: '9997' }, 'cbc:Name': { _text: 'EXO' }, 'cbc:TaxTypeCode': { _text: 'VAT' } },
+                  'cac:TaxScheme': {
+                    'cbc:ID': { _text: '9997' },
+                    'cbc:Name': { _text: 'EXO' },
+                    'cbc:TaxTypeCode': { _text: 'VAT' },
+                  },
                 },
               });
             }
             if (Number(comp.mtoOperInafectas ?? 0) > 0) {
               subtotals.push({
-                'cbc:TaxableAmount': { _attributes: { currencyID: cur }, _text: comp.mtoOperInafectas },
+                'cbc:TaxableAmount': {
+                  _attributes: { currencyID: cur },
+                  _text: comp.mtoOperInafectas,
+                },
                 'cbc:TaxAmount': { _attributes: { currencyID: cur }, _text: 0 },
                 'cac:TaxCategory': {
-                  'cac:TaxScheme': { 'cbc:ID': { _text: '9998' }, 'cbc:Name': { _text: 'INA' }, 'cbc:TaxTypeCode': { _text: 'FRE' } },
+                  'cac:TaxScheme': {
+                    'cbc:ID': { _text: '9998' },
+                    'cbc:Name': { _text: 'INA' },
+                    'cbc:TaxTypeCode': { _text: 'FRE' },
+                  },
                 },
               });
             }
@@ -875,7 +1013,13 @@ export class EnviarSunatService {
           delete payload.documentBody['cbc:Note'];
         } else if (Array.isArray(noteNode)) {
           payload.documentBody['cbc:Note'] = noteNode
-            .filter((item: any) => item && item._text !== undefined && item._text !== null && String(item._text).trim() !== '')
+            .filter(
+              (item: any) =>
+                item &&
+                item._text !== undefined &&
+                item._text !== null &&
+                String(item._text).trim() !== '',
+            )
             .map((item: any) => {
               const attrs = { ...(item?._attributes || {}) };
               delete attrs.languageLocaleID;
@@ -897,18 +1041,26 @@ export class EnviarSunatService {
           };
 
           if (Array.isArray(paymentTermsNode)) {
-            payload.documentBody['cac:PaymentTerms'] = paymentTermsNode.map(stripDueDate);
+            payload.documentBody['cac:PaymentTerms'] =
+              paymentTermsNode.map(stripDueDate);
           } else if (paymentTermsNode && typeof paymentTermsNode === 'object') {
-            payload.documentBody['cac:PaymentTerms'] = stripDueDate(paymentTermsNode);
+            payload.documentBody['cac:PaymentTerms'] =
+              stripDueDate(paymentTermsNode);
           }
         }
 
         const xmlFilename = payload.fileName;
         const documentBody = this.sanitizeUblNode(payload.documentBody) || {};
-        const xmlContent = buildUblXml(this.resolveUblRootName(comp.tipoDoc), documentBody);
+        const xmlContent = buildUblXml(
+          this.resolveUblRootName(comp.tipoDoc),
+          documentBody,
+        );
 
         if (['01', '07', '08'].includes(comp.tipoDoc)) {
-          console.log(`[XML-DEBUG tipoDoc=${comp.tipoDoc}] primeros 2000 chars:\n`, xmlContent.substring(0, 2000));
+          console.log(
+            `[XML-DEBUG tipoDoc=${comp.tipoDoc}] primeros 2000 chars:\n`,
+            xmlContent.substring(0, 2000),
+          );
         }
 
         return {
@@ -927,7 +1079,9 @@ export class EnviarSunatService {
       let status: 'ACEPTADO' | 'PENDIENTE' | 'RECHAZADO' = 'PENDIENTE';
 
       if (isApisunatProvider(billingProvider)) {
-        console.log(`🧪 Proveedor APISUNAT para ${comp.serie}-${comp.correlativo}`);
+        console.log(
+          `🧪 Proveedor APISUNAT para ${comp.serie}-${comp.correlativo}`,
+        );
 
         const sendResponse = await this.apisPeruClient.sendBill({
           personaId: providerId,
@@ -938,12 +1092,17 @@ export class EnviarSunatService {
         });
 
         finalResponse = sendResponse;
-        documentId = sendResponse?.documentId ? String(sendResponse.documentId) : null;
+        documentId = sendResponse?.documentId
+          ? String(sendResponse.documentId)
+          : null;
         status = this.normalizeApisunatStatus(sendResponse);
 
         if (!documentId || status === 'RECHAZADO') {
           const detail = this.extractApisunatMessage(sendResponse);
-          throw new HttpException(`APISUNAT rechazó el documento: ${detail}`, 502);
+          throw new HttpException(
+            `APISUNAT rechazó el documento: ${detail}`,
+            502,
+          );
         }
 
         await this.prisma.comprobante.update({
@@ -980,7 +1139,9 @@ export class EnviarSunatService {
           }
         }
       } else if (isJambleProvider(billingProvider)) {
-        console.log(`🧪 Proveedor JAMBLE para ${comp.serie}-${comp.correlativo}`);
+        console.log(
+          `🧪 Proveedor JAMBLE para ${comp.serie}-${comp.correlativo}`,
+        );
         console.log('🧭 JAMBLE contexto emisión:', {
           comprobanteId,
           empresaId: comp.empresaId,
@@ -988,21 +1149,30 @@ export class EnviarSunatService {
           serie: comp.serie,
           correlativo: comp.correlativo,
           baseUrlHost: this.extractHost(jambleBaseUrl),
-          authMode: jambleToken ? 'TOKEN' : (jambleUser && jamblePassword ? 'LOGIN' : 'NONE'),
+          authMode: jambleToken
+            ? 'TOKEN'
+            : jambleUser && jamblePassword
+              ? 'LOGIN'
+              : 'NONE',
           loginUser: this.maskJambleUser(jambleUser || null),
           forceDispatch: ['1', 'true', 'yes'].includes(
             String(process.env.JAMBLE_FORCE_DISPATCH || '').toLowerCase(),
           ),
         });
 
-        const floor = this.getJambleCorrelativoFloor(comp.empresaId, comp.serie);
+        const floor = this.getJambleCorrelativoFloor(
+          comp.empresaId,
+          comp.serie,
+        );
         if (floor && Number(comp.correlativo || 0) < floor) {
           await this.prisma.comprobante.update({
             where: { id: comprobanteId },
             data: { correlativo: floor },
           });
           comp.correlativo = floor;
-          console.log(`⏫ JAMBLE correlativo ajustado por floor empresa ${comp.empresaId}: ${comp.serie}-${comp.correlativo}`);
+          console.log(
+            `⏫ JAMBLE correlativo ajustado por floor empresa ${comp.empresaId}: ${comp.serie}-${comp.correlativo}`,
+          );
         }
 
         const remoteNext = await this.jambleClient.obtenerSiguienteCorrelativo(
@@ -1021,15 +1191,18 @@ export class EnviarSunatService {
             data: { correlativo: remoteNext },
           });
           comp.correlativo = remoteNext;
-          console.log(`⏩ JAMBLE correlativo alineado con remoto: ${comp.serie}-${comp.correlativo}`);
+          console.log(
+            `⏩ JAMBLE correlativo alineado con remoto: ${comp.serie}-${comp.correlativo}`,
+          );
         }
 
-        const jambleLoginContext = await this.jambleClient.obtenerContextoDesdeLogin({
-          baseUrl: jambleBaseUrl,
-          token: jambleToken || null,
-          username: jambleUser || null,
-          password: jamblePassword || null,
-        });
+        const jambleLoginContext =
+          await this.jambleClient.obtenerContextoDesdeLogin({
+            baseUrl: jambleBaseUrl,
+            token: jambleToken || null,
+            username: jambleUser || null,
+            password: jamblePassword || null,
+          });
         if (jambleLoginContext) {
           console.log('🪪 JAMBLE contexto login detectado:', {
             userId: jambleLoginContext.userId,
@@ -1044,7 +1217,10 @@ export class EnviarSunatService {
           Number(process.env.JAMBLE_MAX_DUPLICATE_RETRIES || 80),
         );
         while (true) {
-          const jamblePayload = this.buildJamblePayload(comp, jambleLoginContext || undefined);
+          const jamblePayload = this.buildJamblePayload(
+            comp,
+            jambleLoginContext || undefined,
+          );
           console.log(
             `📦 JAMBLE payload (${comp.tipoDoc === '01' ? 'FACTURA' : comp.tipoDoc === '03' ? 'BOLETA' : `TIPO-${comp.tipoDoc}`}) ${comp.serie}-${comp.correlativo}:`,
             JSON.stringify(jamblePayload, null, 2),
@@ -1067,21 +1243,29 @@ export class EnviarSunatService {
             ) {
               const remote = this.extractJambleSerieCorrelativoFromError(error);
               const ultimoLocal = await this.prisma.comprobante.findFirst({
-                where: { empresaId: comp.empresaId, tipoDoc: comp.tipoDoc, serie: comp.serie },
+                where: {
+                  empresaId: comp.empresaId,
+                  tipoDoc: comp.tipoDoc,
+                  serie: comp.serie,
+                },
                 orderBy: { correlativo: 'desc' },
                 select: { correlativo: true },
               });
 
-              const localNext = (ultimoLocal?.correlativo ?? comp.correlativo ?? 0) + 1;
+              const localNext =
+                (ultimoLocal?.correlativo ?? comp.correlativo ?? 0) + 1;
               const remoteNext = remote ? remote.correlativo + 1 : localNext;
 
               // When JAMBLE has many hidden/filtered numbers already taken,
               // advancing one-by-one is too slow. Jump by blocks after a few retries.
               const jump =
-                jambleRetryByDuplicate >= 30 ? 200 :
-                jambleRetryByDuplicate >= 15 ? 100 :
-                jambleRetryByDuplicate >= 5 ? 25 :
-                1;
+                jambleRetryByDuplicate >= 30
+                  ? 200
+                  : jambleRetryByDuplicate >= 15
+                    ? 100
+                    : jambleRetryByDuplicate >= 5
+                      ? 25
+                      : 1;
 
               const nuevoCorrelativo = Math.max(localNext, remoteNext + jump);
 
@@ -1091,7 +1275,9 @@ export class EnviarSunatService {
               });
               comp.correlativo = nuevoCorrelativo;
               jambleRetryByDuplicate++;
-              console.warn(`♻️ JAMBLE numeración repetida. Reintentando ${comp.serie}-${comp.correlativo} (intento ${jambleRetryByDuplicate}/${jambleMaxRetryByDuplicate})`);
+              console.warn(
+                `♻️ JAMBLE numeración repetida. Reintentando ${comp.serie}-${comp.correlativo} (intento ${jambleRetryByDuplicate}/${jambleMaxRetryByDuplicate})`,
+              );
               continue;
             }
             throw error;
@@ -1099,10 +1285,16 @@ export class EnviarSunatService {
         }
 
         finalResponse = registerResponse;
-        documentId = this.extractJambleDocumentId(registerResponse, xmlArtifacts.xmlFilename);
+        documentId = this.extractJambleDocumentId(
+          registerResponse,
+          xmlArtifacts.xmlFilename,
+        );
         const jambleInternalId = this.extractJambleInternalId(registerResponse);
         status = this.normalizeJambleStatus(registerResponse);
-        console.log('🧾 JAMBLE register result:', this.summarizeJambleResponse(registerResponse, status, documentId));
+        console.log(
+          '🧾 JAMBLE register result:',
+          this.summarizeJambleResponse(registerResponse, status, documentId),
+        );
 
         // Intentar sincronizar numeración real del proveedor (ej: B001-35)
         // para evitar que el correlativo local se desalinee.
@@ -1116,15 +1308,16 @@ export class EnviarSunatService {
           ).trim() || null;
 
         if (!jambleNumberFull && documentId) {
-          jambleNumberFull = await this.jambleClient.buscarNumeroCompletoPorExternalId(
-            {
-              baseUrl: jambleBaseUrl,
-              token: jambleToken || null,
-              username: jambleUser || null,
-              password: jamblePassword || null,
-            },
-            documentId,
-          );
+          jambleNumberFull =
+            await this.jambleClient.buscarNumeroCompletoPorExternalId(
+              {
+                baseUrl: jambleBaseUrl,
+                token: jambleToken || null,
+                username: jambleUser || null,
+                password: jamblePassword || null,
+              },
+              documentId,
+            );
         }
 
         const parsedNumber = this.parseSerieCorrelativo(jambleNumberFull);
@@ -1153,41 +1346,62 @@ export class EnviarSunatService {
         });
 
         // QPOS/Jamble flow: first registers document, then explicitly sends to SUNAT
-        if (documentId && this.shouldTriggerJambleSunat(registerResponse, status)) {
+        if (
+          documentId &&
+          this.shouldTriggerJambleSunat(registerResponse, status)
+        ) {
           try {
-            console.log(`📤 JAMBLE dispatch request for ${comp.serie}-${comp.correlativo}`, {
-              externalId: documentId,
-              internalId: jambleInternalId || null,
-            });
-            const dispatchResponse = await this.jambleClient.enviarDocumentoSunat(
+            console.log(
+              `📤 JAMBLE dispatch request for ${comp.serie}-${comp.correlativo}`,
               {
-                baseUrl: jambleBaseUrl,
-                token: jambleToken || null,
-                username: jambleUser || null,
-                password: jamblePassword || null,
+                externalId: documentId,
+                internalId: jambleInternalId || null,
               },
-              documentId,
-              jambleInternalId,
             );
+            const dispatchResponse =
+              await this.jambleClient.enviarDocumentoSunat(
+                {
+                  baseUrl: jambleBaseUrl,
+                  token: jambleToken || null,
+                  username: jambleUser || null,
+                  password: jamblePassword || null,
+                },
+                documentId,
+                jambleInternalId,
+              );
             finalResponse = dispatchResponse;
             status = this.normalizeJambleStatus(dispatchResponse);
-            console.log('📨 JAMBLE dispatch result:', this.summarizeJambleResponse(dispatchResponse, status, documentId));
+            console.log(
+              '📨 JAMBLE dispatch result:',
+              this.summarizeJambleResponse(
+                dispatchResponse,
+                status,
+                documentId,
+              ),
+            );
           } catch (error) {
             // Keep current response and continue with polling.
             // Some tenants process dispatch asynchronously and return non-blocking errors.
             const detail =
-              (error as any)?.response?.data?.message ||
-              (error as any)?.response?.data?.error ||
-              (error as any)?.message ||
+              error?.response?.data?.message ||
+              error?.response?.data?.error ||
+              error?.message ||
               'Error sin detalle';
-            console.warn(`⚠️ JAMBLE dispatch to SUNAT failed, continuing polling (${comp.serie}-${comp.correlativo})`, {
-              detail,
-            });
+            console.warn(
+              `⚠️ JAMBLE dispatch to SUNAT failed, continuing polling (${comp.serie}-${comp.correlativo})`,
+              {
+                detail,
+              },
+            );
           }
         }
 
         let retries = 0;
-        while (status === 'PENDIENTE' && documentId && retries < this.maxRetries) {
+        while (
+          status === 'PENDIENTE' &&
+          documentId &&
+          retries < this.maxRetries
+        ) {
           await new Promise((r) => setTimeout(r, this.retryInterval));
           const doc = await this.jambleClient.consultarDocumento(
             {
@@ -1201,7 +1415,10 @@ export class EnviarSunatService {
           finalResponse = doc;
           status = this.normalizeJambleStatus(doc);
           retries++;
-          console.log(`🔎 JAMBLE polling #${retries}:`, this.summarizeJambleResponse(doc, status, documentId));
+          console.log(
+            `🔎 JAMBLE polling #${retries}:`,
+            this.summarizeJambleResponse(doc, status, documentId),
+          );
         }
 
         const xmlUrl = this.extractJambleLink(finalResponse, 'xml');
@@ -1224,11 +1441,15 @@ export class EnviarSunatService {
             where: { id: comprobanteId },
             data: {
               documentoId: documentId,
-              estadoEnvioSunat: status === 'PENDIENTE' ? 'PENDIENTE' : 'EMITIDO',
+              estadoEnvioSunat:
+                status === 'PENDIENTE' ? 'PENDIENTE' : 'EMITIDO',
             },
           });
         }
-        console.log(`✅ JAMBLE final status ${comp.serie}-${comp.correlativo}:`, this.summarizeJambleResponse(finalResponse, status, documentId));
+        console.log(
+          `✅ JAMBLE final status ${comp.serie}-${comp.correlativo}:`,
+          this.summarizeJambleResponse(finalResponse, status, documentId),
+        );
       } else {
         const qpseAccess = await this.qpseClient.obtenerTokenAcceso({
           username: qpseUsername!,
@@ -1237,7 +1458,10 @@ export class EnviarSunatService {
         });
         const accessToken = qpseAccess.token_acceso;
         if (!accessToken) {
-          throw new HttpException('No se pudo obtener el token de acceso de QPSE', 502);
+          throw new HttpException(
+            'No se pudo obtener el token de acceso de QPSE',
+            502,
+          );
         }
 
         let signResponse = await this.qpseClient.firmarXML({
@@ -1267,7 +1491,10 @@ export class EnviarSunatService {
           );
         }
 
-        if (this.isSunatUblVersionError(initialResponse) || this.isSunatCustomizationVersionError(initialResponse)) {
+        if (
+          this.isSunatUblVersionError(initialResponse) ||
+          this.isSunatCustomizationVersionError(initialResponse)
+        ) {
           console.warn(
             `⚠️ QPSE rechazó versión UBL/Customization (${comp.serie}-${comp.correlativo}). Reintentando solo sin cbc:Note (manteniendo UBL 2.1 / Customization 2.0)...`,
           );
@@ -1283,7 +1510,10 @@ export class EnviarSunatService {
           });
 
           if (!signResponse.xml) {
-            throw new HttpException('QPSE no devolvió el XML firmado en el reintento sin cbc:Note', 502);
+            throw new HttpException(
+              'QPSE no devolvió el XML firmado en el reintento sin cbc:Note',
+              502,
+            );
           }
 
           signedXmlBase64 = signResponse.xml;
@@ -1297,7 +1527,10 @@ export class EnviarSunatService {
           });
         }
 
-        if (this.isSunatPaymentDueDateInTermsError(initialResponse) && includePaymentDueDateInTerms) {
+        if (
+          this.isSunatPaymentDueDateInTermsError(initialResponse) &&
+          includePaymentDueDateInTerms
+        ) {
           console.warn(
             `⚠️ QPSE rechazó cbc:PaymentDueDate en cac:PaymentTerms (${comp.serie}-${comp.correlativo}). Reintentando sin PaymentDueDate...`,
           );
@@ -1313,7 +1546,10 @@ export class EnviarSunatService {
           });
 
           if (!signResponse.xml) {
-            throw new HttpException('QPSE no devolvió el XML firmado en el reintento sin PaymentDueDate', 502);
+            throw new HttpException(
+              'QPSE no devolvió el XML firmado en el reintento sin PaymentDueDate',
+              502,
+            );
           }
 
           signedXmlBase64 = signResponse.xml;
@@ -1336,7 +1572,8 @@ export class EnviarSunatService {
           where: { id: comprobanteId },
           data: {
             documentoId: documentId,
-            estadoEnvioSunat: status === 'PENDIENTE' ? 'PENDIENTE' : 'RECHAZADO',
+            estadoEnvioSunat:
+              status === 'PENDIENTE' ? 'PENDIENTE' : 'RECHAZADO',
           },
         });
 
@@ -1344,12 +1581,18 @@ export class EnviarSunatService {
         // Boleta (03) es síncrona: la respuesta de enviarXML ya es definitiva.
         if (qpseTicket && status === 'PENDIENTE') {
           let retries = 0;
-          console.log(`🔄 Estado inicial QPSE: ${status}, iniciando polling por ticket ${qpseTicket}...`);
+          console.log(
+            `🔄 Estado inicial QPSE: ${status}, iniciando polling por ticket ${qpseTicket}...`,
+          );
 
           while (status === 'PENDIENTE' && retries < this.maxRetries) {
             await new Promise((r) => setTimeout(r, this.retryInterval));
 
-            finalResponse = await this.qpseClient.consultarTicket(qpseTicket, accessToken, usaDemo);
+            finalResponse = await this.qpseClient.consultarTicket(
+              qpseTicket,
+              accessToken,
+              usaDemo,
+            );
             status = this.normalizeQpseStatus(finalResponse);
             retries++;
 
@@ -1374,17 +1617,30 @@ export class EnviarSunatService {
             comp.correlativo,
             'xml',
           );
-          s3XmlUrl = await this.s3Service.uploadXML(Buffer.from(signedXmlContent, 'utf8'), xmlKey);
+          s3XmlUrl = await this.s3Service.uploadXML(
+            Buffer.from(signedXmlContent, 'utf8'),
+            xmlKey,
+          );
 
           if (cdrBase64OrNull || finalResponse?.cdr) {
-            const cdrBuffer = this.decodeBase64ToBuffer(cdrBase64OrNull || finalResponse.cdr);
-            const cdrKey = this.buildCdrStorageKey(comp.empresaId, comp.tipoDoc, comp.serie, comp.correlativo, cdrBuffer);
+            const cdrBuffer = this.decodeBase64ToBuffer(
+              cdrBase64OrNull || finalResponse.cdr,
+            );
+            const cdrKey = this.buildCdrStorageKey(
+              comp.empresaId,
+              comp.tipoDoc,
+              comp.serie,
+              comp.correlativo,
+              cdrBuffer,
+            );
             s3CdrUrl = cdrBuffer.toString('utf8').trim().startsWith('<')
               ? await this.s3Service.uploadXML(cdrBuffer, cdrKey)
               : await this.s3Service.uploadZIP(cdrBuffer, cdrKey);
           }
         } catch (storageError: any) {
-          this.logger.warn(`No se pudo subir XML/CDR a S3: ${storageError.message}`);
+          this.logger.warn(
+            `No se pudo subir XML/CDR a S3: ${storageError.message}`,
+          );
         }
       }
 
@@ -1401,7 +1657,10 @@ export class EnviarSunatService {
               comp.correlativo,
               'pdf',
             );
-            s3PdfUrl = await this.s3Service.uploadPDF(providerPdfBuffer, providerPdfKey);
+            s3PdfUrl = await this.s3Service.uploadPDF(
+              providerPdfBuffer,
+              providerPdfKey,
+            );
             console.log(`📤 PDF del proveedor subido a S3: ${s3PdfUrl}`);
           }
 
@@ -1415,124 +1674,153 @@ export class EnviarSunatService {
               '08': 'NOTA DE DÉBITO',
             };
 
-          const buildLogoDataUrl = (raw?: string | null): string | undefined => {
-            if (!raw) return undefined;
-            const t = raw.trim();
-            if (t.startsWith('data:')) return t;
-            if (/^https?:\/\//i.test(t) || t.startsWith('/')) return t;
-            return `data:${t.startsWith('/9j/') ? 'image/jpeg' : 'image/png'};base64,${t}`;
-          };
+            const buildLogoDataUrl = (
+              raw?: string | null,
+            ): string | undefined => {
+              if (!raw) return undefined;
+              const t = raw.trim();
+              if (t.startsWith('data:')) return t;
+              if (/^https?:\/\//i.test(t) || t.startsWith('/')) return t;
+              return `data:${t.startsWith('/9j/') ? 'image/jpeg' : 'image/png'};base64,${t}`;
+            };
 
-          const rawLogo = comp.empresa.logo || null;
-          const logoDataUrl = buildLogoDataUrl(rawLogo);
+            const rawLogo = comp.empresa.logo || null;
+            const logoDataUrl = buildLogoDataUrl(rawLogo);
 
-          const fechaEmision = new Date(comp.fechaEmision);
+            const fechaEmision = new Date(comp.fechaEmision);
 
-          // Recuperar información de Lotes para el PDF (Lógica Robusta Backend)
-          const movimientos = await this.prisma.movimientoKardex.findMany({
-            where: {
-              comprobanteId: comprobanteId,
-              empresaId: comp.empresaId,
-              tipoMovimiento: 'SALIDA',
-            },
-            select: {
-              productoId: true,
-              lote: true,
-              fechaVencimiento: true,
-              movimientoLotes: {
-                select: {
-                  lote: { select: { lote: true, fechaVencimiento: true } },
+            // Recuperar información de Lotes para el PDF (Lógica Robusta Backend)
+            const movimientos = await this.prisma.movimientoKardex.findMany({
+              where: {
+                comprobanteId: comprobanteId,
+                empresaId: comp.empresaId,
+                tipoMovimiento: 'SALIDA',
+              },
+              select: {
+                productoId: true,
+                lote: true,
+                fechaVencimiento: true,
+                movimientoLotes: {
+                  select: {
+                    lote: { select: { lote: true, fechaVencimiento: true } },
+                  },
                 },
               },
-            },
-          });
+            });
 
-          let hayLotes = false;
-          const detallesPrevios = comp.detalles.map((det: any) => {
-            const m = movimientos.find((mov) => mov.productoId === det.productoId);
-            const lotesParsed: any[] = [];
-            if (m) {
-              if (m.movimientoLotes.length > 0) {
-                const primerLote = m.movimientoLotes[0]?.lote;
-                if (!primerLote) return { ...det, lotes: [] };
-                lotesParsed.push({
-                  lote: primerLote.lote,
-                  fechaVencimiento: primerLote.fechaVencimiento
-                    ? new Date(primerLote.fechaVencimiento).toLocaleDateString('es-PE')
-                    : '',
-                });
-              } else if (m.lote) {
-                lotesParsed.push({
-                  lote: m.lote,
-                  fechaVencimiento: m.fechaVencimiento
-                    ? new Date(m.fechaVencimiento).toLocaleDateString('es-PE')
-                    : '',
-                });
+            let hayLotes = false;
+            const detallesPrevios = comp.detalles.map((det: any) => {
+              const m = movimientos.find(
+                (mov) => mov.productoId === det.productoId,
+              );
+              const lotesParsed: any[] = [];
+              if (m) {
+                if (m.movimientoLotes.length > 0) {
+                  const primerLote = m.movimientoLotes[0]?.lote;
+                  if (!primerLote) return { ...det, lotes: [] };
+                  lotesParsed.push({
+                    lote: primerLote.lote,
+                    fechaVencimiento: primerLote.fechaVencimiento
+                      ? new Date(
+                          primerLote.fechaVencimiento,
+                        ).toLocaleDateString('es-PE')
+                      : '',
+                  });
+                } else if (m.lote) {
+                  lotesParsed.push({
+                    lote: m.lote,
+                    fechaVencimiento: m.fechaVencimiento
+                      ? new Date(m.fechaVencimiento).toLocaleDateString('es-PE')
+                      : '',
+                  });
+                }
               }
-            }
-            if (lotesParsed.length > 0) hayLotes = true;
-            return { ...det, lotes: lotesParsed };
-          });
+              if (lotesParsed.length > 0) hayLotes = true;
+              return { ...det, lotes: lotesParsed };
+            });
 
-          const pdfData = {
-            // Empresa
-            nombreComercial: (comp.empresa.nombreComercial || comp.empresa.razonSocial).toUpperCase(),
-            razonSocial: comp.empresa.razonSocial.toUpperCase(),
-            ruc: comp.empresa.ruc,
-            direccion: (comp.empresa.direccion || '').toUpperCase(),
-            rubro: comp.empresa.rubro?.nombre?.toUpperCase() || 'VENTA DE MATERIALES DE CONSTRUCCIÓN',
-            celular: '',
-            email: '',
-            logo: logoDataUrl,
+            const pdfData = {
+              // Empresa
+              nombreComercial: (
+                comp.empresa.nombreComercial || comp.empresa.razonSocial
+              ).toUpperCase(),
+              razonSocial: comp.empresa.razonSocial.toUpperCase(),
+              ruc: comp.empresa.ruc,
+              direccion: (comp.empresa.direccion || '').toUpperCase(),
+              rubro:
+                comp.empresa.rubro?.nombre?.toUpperCase() ||
+                'VENTA DE MATERIALES DE CONSTRUCCIÓN',
+              celular: '',
+              email: '',
+              logo: logoDataUrl,
 
-            // Comprobante
-            tipoDocumento: tipoDocMap[comp.tipoDoc] || 'COMPROBANTE',
-            serie: comp.serie,
-            correlativo: String(comp.correlativo).padStart(8, '0'),
-            fecha: fechaEmision.toLocaleDateString('es-PE'),
-            hora: fechaEmision.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }) + ' p.m.',
+              // Comprobante
+              tipoDocumento: tipoDocMap[comp.tipoDoc] || 'COMPROBANTE',
+              serie: comp.serie,
+              correlativo: String(comp.correlativo).padStart(8, '0'),
+              fecha: fechaEmision.toLocaleDateString('es-PE'),
+              hora:
+                fechaEmision.toLocaleTimeString('es-PE', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                }) + ' p.m.',
 
-            // Cliente
-            clienteNombre: (comp.cliente.nombre || 'CLIENTES VARIOS').toUpperCase(),
-            clienteTipoDoc: getTipoDocumentoLabel(comp.cliente.tipoDocumento?.codigo),
-            clienteNumDoc: comp.cliente.nroDoc || '',
-            clienteDireccion: (comp.cliente.direccion || '-').toUpperCase(),
+              // Cliente
+              clienteNombre: (
+                comp.cliente.nombre || 'CLIENTES VARIOS'
+              ).toUpperCase(),
+              clienteTipoDoc: getTipoDocumentoLabel(
+                comp.cliente.tipoDocumento?.codigo,
+              ),
+              clienteNumDoc: comp.cliente.nroDoc || '',
+              clienteDireccion: (comp.cliente.direccion || '-').toUpperCase(),
 
-            // Productos
-            productos: detallesPrevios.map((det: any) => ({
-              cantidad: det.cantidad,
-              unidadMedida: det.unidadMedida || 'NIU',
-              descripcion: (det.descripcion || '').toUpperCase(),
-              precioUnitario: Number(det.mtoPrecioUnitario || 0).toFixed(2),
-              total: Number((det.mtoPrecioUnitario || 0) * det.cantidad).toFixed(2),
-              lotes: det.lotes,
-            })),
-            mostrarLotes: hayLotes,
+              // Productos
+              productos: detallesPrevios.map((det: any) => ({
+                cantidad: det.cantidad,
+                unidadMedida: det.unidadMedida || 'NIU',
+                descripcion: (det.descripcion || '').toUpperCase(),
+                precioUnitario: Number(det.mtoPrecioUnitario || 0).toFixed(2),
+                total: Number(
+                  (det.mtoPrecioUnitario || 0) * det.cantidad,
+                ).toFixed(2),
+                lotes: det.lotes,
+              })),
+              mostrarLotes: hayLotes,
 
-            // Totales
-            mtoOperGravadas: Number(comp.mtoOperGravadas).toFixed(2),
-            mtoIGV: Number(comp.mtoIGV).toFixed(2),
-            mtoOperInafectas: comp.mtoOperInafectas > 0 ? Number(comp.mtoOperInafectas).toFixed(2) : undefined,
-            mtoImpVenta: Number(comp.mtoImpVenta).toFixed(2),
-            totalEnLetras: numeroALetras(comp.mtoImpVenta).toUpperCase(),
+              // Totales
+              mtoOperGravadas: Number(comp.mtoOperGravadas).toFixed(2),
+              mtoIGV: Number(comp.mtoIGV).toFixed(2),
+              mtoOperInafectas:
+                comp.mtoOperInafectas > 0
+                  ? Number(comp.mtoOperInafectas).toFixed(2)
+                  : undefined,
+              mtoImpVenta: Number(comp.mtoImpVenta).toFixed(2),
+              totalEnLetras: numeroALetras(comp.mtoImpVenta).toUpperCase(),
 
-            // Otros
-            formaPago: comp.formaPagoTipo === 'Contado' ? 'CONTADO' : 'CRÉDITO',
-            medioPago: (comp.medioPago || 'EFECTIVO').toUpperCase(),
-            observaciones: comp.observaciones ? comp.observaciones.toUpperCase() : undefined,
-            qrCode: undefined,
-            // Detracción
-            tipoDetraccion: comp.tipoDetraccion
-              ? `${comp.tipoDetraccion.codigo} - ${comp.tipoDetraccion.descripcion} (${comp.tipoDetraccion.porcentaje}%)`
-              : undefined,
-            montoDetraccion: comp.montoDetraccion ? Number(comp.montoDetraccion).toFixed(2) : undefined,
-            cuentaBancoNacion: comp.cuentaBancoNacion || undefined,
-            medioPagoDetraccion: comp.medioPagoDetraccion
-              ? `${comp.medioPagoDetraccion.codigo} - ${comp.medioPagoDetraccion.descripcion}`
-              : undefined,
-          };
+              // Otros
+              formaPago:
+                comp.formaPagoTipo === 'Contado' ? 'CONTADO' : 'CRÉDITO',
+              medioPago: (comp.medioPago || 'EFECTIVO').toUpperCase(),
+              observaciones: comp.observaciones
+                ? comp.observaciones.toUpperCase()
+                : undefined,
+              qrCode: undefined,
+              // Detracción
+              tipoDetraccion: comp.tipoDetraccion
+                ? `${comp.tipoDetraccion.codigo} - ${comp.tipoDetraccion.descripcion} (${comp.tipoDetraccion.porcentaje}%)`
+                : undefined,
+              montoDetraccion: comp.montoDetraccion
+                ? Number(comp.montoDetraccion).toFixed(2)
+                : undefined,
+              cuentaBancoNacion: comp.cuentaBancoNacion || undefined,
+              medioPagoDetraccion: comp.medioPagoDetraccion
+                ? `${comp.medioPagoDetraccion.codigo} - ${comp.medioPagoDetraccion.descripcion}`
+                : undefined,
+            };
 
-            const pdfBuffer = await this.pdfGenerator.generarPDFComprobante(pdfData);
+            const pdfBuffer =
+              await this.pdfGenerator.generarPDFComprobante(pdfData);
 
             const pdfKey = this.s3Service.generateComprobanteKey(
               comp.empresaId,
@@ -1544,7 +1832,6 @@ export class EnviarSunatService {
             s3PdfUrl = await this.s3Service.uploadPDF(pdfBuffer, pdfKey);
             console.log(`📤 PDF personalizado subido a S3: ${s3PdfUrl}`);
           }
-
         } catch (s3Error: any) {
           console.error('⚠️ Error subiendo archivos a S3:', s3Error.message);
           // No fallar el proceso si S3 falla, solo loguear
@@ -1552,14 +1839,19 @@ export class EnviarSunatService {
       }
 
       if (status !== 'ACEPTADO') {
-        console.error('❌ SUNAT Full Response:', JSON.stringify(this.sanitizeLogPayload(finalResponse), null, 2));
+        console.error(
+          '❌ SUNAT Full Response:',
+          JSON.stringify(this.sanitizeLogPayload(finalResponse), null, 2),
+        );
       }
 
       // Mapear el estado de SUNAT al estado interno del comprobante
       const estadoFinal: string =
-        status === 'ACEPTADO' ? 'EMITIDO' :
-        status === 'PENDIENTE' ? 'PENDIENTE' :  // aún procesando → scheduler reintentará
-        'RECHAZADO';                             // cualquier otro estado (ERROR, RECHAZADO, etc.)
+        status === 'ACEPTADO'
+          ? 'EMITIDO'
+          : status === 'PENDIENTE'
+            ? 'PENDIENTE' // aún procesando → scheduler reintentará
+            : 'RECHAZADO'; // cualquier otro estado (ERROR, RECHAZADO, etc.)
 
       await this.prisma.comprobante.update({
         where: { id: comprobanteId },
@@ -1570,11 +1862,11 @@ export class EnviarSunatService {
           sunatCdrResponse: JSON.stringify(finalResponse),
           sunatErrorMsg:
             estadoFinal !== 'EMITIDO'
-              ? (isApisunatProvider(billingProvider)
+              ? isApisunatProvider(billingProvider)
                 ? this.extractApisunatMessage(finalResponse, status)
                 : isJambleProvider(billingProvider)
                   ? this.extractJambleMessage(finalResponse, status)
-                  : this.extractQpseMessage(finalResponse, status))
+                  : this.extractQpseMessage(finalResponse, status)
               : null,
           s3PdfUrl,
           s3XmlUrl,
@@ -1591,10 +1883,13 @@ export class EnviarSunatService {
           serie: comp.serie,
           correlativo: comp.correlativo,
           message: isApisunatProvider(billingProvider)
-            ? this.extractApisunatMessage(finalResponse, status) || 'El documento está pendiente de procesamiento por SUNAT.'
+            ? this.extractApisunatMessage(finalResponse, status) ||
+              'El documento está pendiente de procesamiento por SUNAT.'
             : isJambleProvider(billingProvider)
-              ? this.extractJambleMessage(finalResponse, status) || 'El documento está pendiente de procesamiento por SUNAT.'
-              : this.extractQpseMessage(finalResponse, status) || 'El documento está pendiente de procesamiento por SUNAT.',
+              ? this.extractJambleMessage(finalResponse, status) ||
+                'El documento está pendiente de procesamiento por SUNAT.'
+              : this.extractQpseMessage(finalResponse, status) ||
+                'El documento está pendiente de procesamiento por SUNAT.',
         };
       }
 
@@ -1611,7 +1906,10 @@ export class EnviarSunatService {
             ? this.extractJambleMessage(finalResponse, status)
             : this.extractQpseMessage(finalResponse, status);
 
-        if (isSunatAlreadyRegisteredError(detail) || isSunatAlreadyRegisteredError(finalResponse)) {
+        if (
+          isSunatAlreadyRegisteredError(detail) ||
+          isSunatAlreadyRegisteredError(finalResponse)
+        ) {
           const message = this.buildAlreadyRegisteredMessage(detail);
           await this.marcarPendienteConciliacionSunat(comprobanteId, {
             documentId,
@@ -1634,7 +1932,9 @@ export class EnviarSunatService {
         // Códigos SUNAT permanentemente fatales: eliminar el comprobante de inmediato
         const fatalCode = extractFatalSunatCode(detail);
         if (fatalCode) {
-          console.warn(`🗑️ Comprobante ${comprobanteId} → código SUNAT fatal ${fatalCode}: auto-eliminando`);
+          console.warn(
+            `🗑️ Comprobante ${comprobanteId} → código SUNAT fatal ${fatalCode}: auto-eliminando`,
+          );
           throw new SunatPayloadException(
             `Código SUNAT ${fatalCode}: ${detail || 'Error de datos permanente'}`,
           );
@@ -1655,7 +1955,12 @@ export class EnviarSunatService {
       // Actualizar estado del comprobante afectado si es nota de crédito/débito
       await this.procesarEfectoEnComprobanteAfectado(comp, status);
 
-      return { ...finalResponse, serie: comp.serie, correlativo: comp.correlativo, comprobanteId };
+      return {
+        ...finalResponse,
+        serie: comp.serie,
+        correlativo: comp.correlativo,
+        comprobanteId,
+      };
     } catch (err: any) {
       console.error('🚫 Error crítico enviando a SUNAT:', {
         comprobanteId,
@@ -1668,7 +1973,10 @@ export class EnviarSunatService {
       // El controller lo captura como SunatPayloadException y elimina el comprobante.
       if (err instanceof SunatPayloadException) throw err;
 
-      if (isSunatAlreadyRegisteredError(err?.message) || isSunatAlreadyRegisteredError(err?.response?.data)) {
+      if (
+        isSunatAlreadyRegisteredError(err?.message) ||
+        isSunatAlreadyRegisteredError(err?.response?.data)
+      ) {
         const rawDetail =
           err?.response?.data?.message ||
           err?.response?.data?.error?.message ||
@@ -1705,14 +2013,16 @@ export class EnviarSunatService {
         if (currentComp) {
           const newRetryCount = (currentComp.sunatRetriesCount || 0) + 1;
           const errorType = this.classifyError(err);
-          const maxRetries = errorType === 'DATOS'
-            ? this.MAX_DATA_ERROR_RETRIES
-            : this.MAX_INFRA_ERROR_RETRIES;
+          const maxRetries =
+            errorType === 'DATOS'
+              ? this.MAX_DATA_ERROR_RETRIES
+              : this.MAX_INFRA_ERROR_RETRIES;
 
           if (newRetryCount < maxRetries) {
-            const nextRetry = errorType === 'DATOS'
-              ? this.calculateNextRetry(newRetryCount)
-              : this.calculateNetworkRetry(newRetryCount);
+            const nextRetry =
+              errorType === 'DATOS'
+                ? this.calculateNextRetry(newRetryCount)
+                : this.calculateNetworkRetry(newRetryCount);
 
             await this.prisma.comprobante.update({
               where: { id: comprobanteId },
@@ -1724,7 +2034,9 @@ export class EnviarSunatService {
                 sunatErrorMsg: `[${errorType}] (intento ${newRetryCount}/${maxRetries}): ${err.message}`,
               },
             });
-            console.log(`📅 Comprobante ${comprobanteId} → reintento #${newRetryCount} [${errorType}] en ${nextRetry.toISOString()}`);
+            console.log(
+              `📅 Comprobante ${comprobanteId} → reintento #${newRetryCount} [${errorType}] en ${nextRetry.toISOString()}`,
+            );
           } else {
             await this.prisma.comprobante.update({
               where: { id: comprobanteId },
@@ -1734,7 +2046,9 @@ export class EnviarSunatService {
                 sunatErrorMsg: `[${errorType}] Fallido tras ${newRetryCount} intentos: ${err.message}`,
               },
             });
-            console.log(`❌ Comprobante ${comprobanteId} → RECHAZADO (agotó ${maxRetries} reintentos [${errorType}])`);
+            console.log(
+              `❌ Comprobante ${comprobanteId} → RECHAZADO (agotó ${maxRetries} reintentos [${errorType}])`,
+            );
           }
         }
       } catch (dbErr) {
@@ -1751,17 +2065,21 @@ export class EnviarSunatService {
           comprobanteId,
           serie: comp?.serie,
           correlativo: comp?.correlativo,
-          message: 'Comprobante registrado correctamente. SUNAT no está disponible en este momento; la confirmación llegará automáticamente cuando el servicio se restablezca.',
+          message:
+            'Comprobante registrado correctamente. SUNAT no está disponible en este momento; la confirmación llegará automáticamente cuando el servicio se restablezca.',
         };
       }
 
       // Errores de DATOS: el usuario debe corregir algo.
-      const rawMsg = err.response?.data?.message || err.message || 'Error al enviar a SUNAT';
+      const rawMsg =
+        err.response?.data?.message || err.message || 'Error al enviar a SUNAT';
       throw new HttpException(`Error al emitir el comprobante: ${rawMsg}`, 502);
     }
   }
 
-  private buildAlreadyRegisteredMessage(detail: string | null | undefined): string {
+  private buildAlreadyRegisteredMessage(
+    detail: string | null | undefined,
+  ): string {
     const cleanDetail = String(detail || '').trim();
     const suffix = cleanDetail ? ` Detalle: ${cleanDetail}` : '';
     return (
@@ -1796,7 +2114,9 @@ export class EnviarSunatService {
     });
   }
 
-  private resolveUblRootName(tipoDoc: string): 'Invoice' | 'CreditNote' | 'DebitNote' {
+  private resolveUblRootName(
+    tipoDoc: string,
+  ): 'Invoice' | 'CreditNote' | 'DebitNote' {
     if (tipoDoc === '07') return 'CreditNote';
     if (tipoDoc === '08') return 'DebitNote';
     return 'Invoice';
@@ -1823,26 +2143,39 @@ export class EnviarSunatService {
     return node;
   }
 
-  private normalizeApisunatStatus(response: any): 'ACEPTADO' | 'PENDIENTE' | 'RECHAZADO' {
+  private normalizeApisunatStatus(
+    response: any,
+  ): 'ACEPTADO' | 'PENDIENTE' | 'RECHAZADO' {
     const status = String(response?.status || '').toUpperCase();
     if (status === 'ACEPTADO') return 'ACEPTADO';
     if (status === 'PENDIENTE') return 'PENDIENTE';
     return 'RECHAZADO';
   }
 
-  private normalizeJambleStatus(response: any): 'ACEPTADO' | 'PENDIENTE' | 'RECHAZADO' {
+  private normalizeJambleStatus(
+    response: any,
+  ): 'ACEPTADO' | 'PENDIENTE' | 'RECHAZADO' {
     const stateTypeId = String(response?.data?.state_type_id || '').trim();
-    const stateLabel = String(response?.data?.state_type_description || response?.state_type_description || '').toLowerCase();
-    const message = String(response?.message || response?.data?.message || response?.data?.message_text || '').toLowerCase();
-    const numberFull = String(response?.data?.number_full || response?.number_full || '').trim();
-    const externalId = String(response?.data?.external_id || response?.external_id || '').trim();
-    const code =
-      String(
-        response?.response?.code ??
-          response?.code ??
-          response?.data?.code ??
-          '',
-      ).trim();
+    const stateLabel = String(
+      response?.data?.state_type_description ||
+        response?.state_type_description ||
+        '',
+    ).toLowerCase();
+    const message = String(
+      response?.message ||
+        response?.data?.message ||
+        response?.data?.message_text ||
+        '',
+    ).toLowerCase();
+    const numberFull = String(
+      response?.data?.number_full || response?.number_full || '',
+    ).trim();
+    const externalId = String(
+      response?.data?.external_id || response?.external_id || '',
+    ).trim();
+    const code = String(
+      response?.response?.code ?? response?.code ?? response?.data?.code ?? '',
+    ).trim();
     const success = response?.success === true;
 
     if (
@@ -1860,13 +2193,18 @@ export class EnviarSunatService {
     // Si ya devolvió "registrado con éxito" + IDs, no forzar envío adicional.
     if (
       success &&
-      (message.includes('registrado con éxito') || message.includes('registrado con exito')) &&
+      (message.includes('registrado con éxito') ||
+        message.includes('registrado con exito')) &&
       (Boolean(numberFull) || Boolean(externalId))
     ) {
       return 'ACEPTADO';
     }
 
-    if (stateLabel.includes('pendient') || stateTypeId === '03' || stateTypeId === '04') {
+    if (
+      stateLabel.includes('pendient') ||
+      stateTypeId === '03' ||
+      stateTypeId === '04'
+    ) {
       return 'PENDIENTE';
     }
 
@@ -1892,7 +2230,9 @@ export class EnviarSunatService {
     const hora = `${HH}:${MM}:${SS}`;
 
     const tipoDocIdentidad = comp.cliente?.tipoDocumento?.codigo || '0';
-    const numeroDocCliente = comp.cliente?.nroDoc || (tipoDocIdentidad === '6' ? '20100070970' : '99999999');
+    const numeroDocCliente =
+      comp.cliente?.nroDoc ||
+      (tipoDocIdentidad === '6' ? '20100070970' : '99999999');
 
     const items = (comp.detalles || []).map((item: any) => ({
       codigo_interno: item?.producto?.codigo || item.codigo || null,
@@ -1928,7 +2268,8 @@ export class EnviarSunatService {
       datos_del_cliente_o_receptor: {
         codigo_tipo_documento_identidad: String(tipoDocIdentidad),
         numero_documento: String(numeroDocCliente),
-        apellidos_y_nombres_o_razon_social: comp.cliente?.nombre || 'CLIENTES VARIOS',
+        apellidos_y_nombres_o_razon_social:
+          comp.cliente?.nombre || 'CLIENTES VARIOS',
         codigo_pais: 'PE',
         ubigeo: comp.cliente?.ubigeo || comp.empresa?.ubigeo || '150101',
         direccion: comp.cliente?.direccion || '-',
@@ -1961,7 +2302,9 @@ export class EnviarSunatService {
       const afectado = this.parseAfectadoReference(comp.numDocAfectado);
       payload.codigo_tipo_nota = String(comp.motivo?.codigo || '01');
       payload.motivo_o_sustento_de_nota = String(
-        comp.motivo?.descripcion || comp.motivo?.nombre || 'Error al emitir comprobante',
+        comp.motivo?.descripcion ||
+          comp.motivo?.nombre ||
+          'Error al emitir comprobante',
       );
       payload.documento_afectado = {
         serie_documento: afectado.serie || '',
@@ -1976,7 +2319,10 @@ export class EnviarSunatService {
     return payload;
   }
 
-  private parseAfectadoReference(numDocAfectado?: string | null): { serie: string; numero: string } {
+  private parseAfectadoReference(numDocAfectado?: string | null): {
+    serie: string;
+    numero: string;
+  } {
     const raw = String(numDocAfectado || '').trim();
     if (!raw) return { serie: '', numero: '' };
 
@@ -1991,8 +2337,12 @@ export class EnviarSunatService {
     };
   }
 
-  private parseSerieCorrelativo(numberFull?: string | null): { serie: string; correlativo: number } | null {
-    const raw = String(numberFull || '').trim().toUpperCase();
+  private parseSerieCorrelativo(
+    numberFull?: string | null,
+  ): { serie: string; correlativo: number } | null {
+    const raw = String(numberFull || '')
+      .trim()
+      .toUpperCase();
     if (!raw) return null;
     const match = raw.match(/^([A-Z0-9]{1,6})-(\d{1,12})$/);
     if (!match) return null;
@@ -2029,8 +2379,13 @@ export class EnviarSunatService {
       internalId: this.extractJambleInternalId(response),
       stateTypeId: String(response?.data?.state_type_id || '').trim() || null,
       stateTypeDescription:
-        String(response?.data?.state_type_description || response?.state_type_description || '').trim() || null,
-      responseCode: String(response?.response?.code ?? response?.code ?? '').trim() || null,
+        String(
+          response?.data?.state_type_description ||
+            response?.state_type_description ||
+            '',
+        ).trim() || null,
+      responseCode:
+        String(response?.response?.code ?? response?.code ?? '').trim() || null,
       message: this.extractJambleMessage(response, status),
       hasXml: Boolean(this.extractJambleLink(response, 'xml')),
       hasCdr: Boolean(this.extractJambleLink(response, 'cdr')),
@@ -2039,12 +2394,17 @@ export class EnviarSunatService {
     };
   }
 
-  private shouldTriggerJambleSunat(response: any, currentStatus: 'ACEPTADO' | 'PENDIENTE' | 'RECHAZADO'): boolean {
+  private shouldTriggerJambleSunat(
+    response: any,
+    currentStatus: 'ACEPTADO' | 'PENDIENTE' | 'RECHAZADO',
+  ): boolean {
     if (currentStatus === 'ACEPTADO') return false;
 
     // Nuevo comportamiento por defecto: JAMBLE suele completar correctamente en /documents.
     // Solo disparamos /documents/send cuando se habilite explícitamente.
-    const forceDispatch = ['1', 'true', 'yes'].includes(String(process.env.JAMBLE_FORCE_DISPATCH || '').toLowerCase());
+    const forceDispatch = ['1', 'true', 'yes'].includes(
+      String(process.env.JAMBLE_FORCE_DISPATCH || '').toLowerCase(),
+    );
     if (!forceDispatch) return false;
 
     const sendSunat = response?.data?.send_sunat;
@@ -2056,31 +2416,46 @@ export class EnviarSunatService {
     return currentStatus === 'PENDIENTE';
   }
 
-  private extractJambleLink(response: any, key: 'xml' | 'cdr' | 'pdf' | 'xml_unsigned'): string | null {
+  private extractJambleLink(
+    response: any,
+    key: 'xml' | 'cdr' | 'pdf' | 'xml_unsigned',
+  ): string | null {
     const value = response?.links?.[key];
     if (!value || typeof value !== 'string') return null;
     return value.trim() || null;
   }
 
-  private normalizeQpseStatus(response: QpseSendResponse | null | undefined): 'ACEPTADO' | 'PENDIENTE' | 'RECHAZADO' {
+  private normalizeQpseStatus(
+    response: QpseSendResponse | null | undefined,
+  ): 'ACEPTADO' | 'PENDIENTE' | 'RECHAZADO' {
     const stateLabel = String(response?.state_label || '').toLowerCase();
     const code = String(response?.code ?? '');
     const estado = Number(response?.estado ?? -1);
 
-    console.log(`[normalizeQpseStatus] raw response:`, JSON.stringify({
-      sunat_success: response?.sunat_success,
-      state_label: response?.state_label,
-      code: response?.code,
-      estado: response?.estado,
-      success: (response as any)?.success,
-      message: response?.message,
-      mensaje: response?.mensaje,
-    }));
+    console.log(
+      `[normalizeQpseStatus] raw response:`,
+      JSON.stringify({
+        sunat_success: response?.sunat_success,
+        state_label: response?.state_label,
+        code: response?.code,
+        estado: response?.estado,
+        success: (response as any)?.success,
+        message: response?.message,
+        mensaje: response?.mensaje,
+      }),
+    );
 
     // Si hay errores de SUNAT (código 0306, etc.), es RECHAZADO independientemente de success HTTP
-    const hasErrors = (Array.isArray(response?.errors) && response.errors.length > 0) ||
-      (Array.isArray((response as any)?.errores) && (response as any).errores.length > 0);
-    const hasErrorCode = code !== '' && code !== '0' && code !== 'null' && code !== 'undefined' && !/^2\d\d$/.test(code);
+    const hasErrors =
+      (Array.isArray(response?.errors) && response.errors.length > 0) ||
+      (Array.isArray((response as any)?.errores) &&
+        (response as any).errores.length > 0);
+    const hasErrorCode =
+      code !== '' &&
+      code !== '0' &&
+      code !== 'null' &&
+      code !== 'undefined' &&
+      !/^2\d\d$/.test(code);
 
     if (hasErrors && hasErrorCode) {
       return 'RECHAZADO';
@@ -2115,21 +2490,22 @@ export class EnviarSunatService {
     const responseText = JSON.stringify(response || {}).toLowerCase();
     const code = String(
       response?.code ??
-      response?.error?.code ??
-      response?.response?.data?.code ??
-      response?.response?.data?.error?.code ??
-      '',
+        response?.error?.code ??
+        response?.response?.data?.code ??
+        response?.response?.data?.error?.code ??
+        '',
     );
 
-    return code === '1033' || responseText.includes('1033') || responseText.includes('numeraci');
+    return (
+      code === '1033' ||
+      responseText.includes('1033') ||
+      responseText.includes('numeraci')
+    );
   }
 
   private isJambleNumeracionRepetidaError(error: any): boolean {
     const text = JSON.stringify(
-      error?.response?.data ||
-      error?.message ||
-      error ||
-      '',
+      error?.response?.data || error?.message || error || '',
     ).toLowerCase();
 
     return (
@@ -2139,12 +2515,14 @@ export class EnviarSunatService {
     );
   }
 
-  private extractJambleSerieCorrelativoFromError(error: any): { serie: string; correlativo: number } | null {
+  private extractJambleSerieCorrelativoFromError(
+    error: any,
+  ): { serie: string; correlativo: number } | null {
     const text = String(
       error?.response?.data?.message ||
-      error?.response?.data?.error ||
-      error?.message ||
-      '',
+        error?.response?.data?.error ||
+        error?.message ||
+        '',
     );
 
     const match = text.match(/([A-Z]\d{3})-(\d{1,10})/i);
@@ -2173,8 +2551,12 @@ export class EnviarSunatService {
     const code = String(response?.code ?? response?.estado ?? '');
     return (
       code === '2072' ||
-      text.includes('customizationid - la versión del documento no es la correcta') ||
-      text.includes('customizationid - la version del documento no es la correcta') ||
+      text.includes(
+        'customizationid - la versión del documento no es la correcta',
+      ) ||
+      text.includes(
+        'customizationid - la version del documento no es la correcta',
+      ) ||
       text.includes('nodo: "invoice/cbc:customizationid"')
     );
   }
@@ -2192,19 +2574,38 @@ export class EnviarSunatService {
     const messages = [
       response?.message,
       response?.mensaje,
-      Array.isArray(response?.errors) ? response.errors.join(' | ') : response?.errors,
-      Array.isArray(response?.errores) ? response.errores.join(' | ') : response?.errores,
-      Array.isArray(response?.notes) ? response.notes.join(' | ') : response?.notes,
-      Array.isArray(response?.observaciones) ? response.observaciones.join(' | ') : response?.observaciones,
+      Array.isArray(response?.errors)
+        ? response.errors.join(' | ')
+        : response?.errors,
+      Array.isArray(response?.errores)
+        ? response.errores.join(' | ')
+        : response?.errores,
+      Array.isArray(response?.notes)
+        ? response.notes.join(' | ')
+        : response?.notes,
+      Array.isArray(response?.observaciones)
+        ? response.observaciones.join(' | ')
+        : response?.observaciones,
     ].filter(Boolean);
 
-    return messages[0] || (status ? `SUNAT devolvió estado: ${status}` : 'Respuesta sin detalle de QPSE');
+    return (
+      messages[0] ||
+      (status
+        ? `SUNAT devolvió estado: ${status}`
+        : 'Respuesta sin detalle de QPSE')
+    );
   }
 
   private extractApisunatMessage(response: any, status?: string): string {
-    const faults = Array.isArray(response?.faults) ? response.faults.join(' | ') : response?.faults;
-    const notes = Array.isArray(response?.notes) ? response.notes.join(' | ') : response?.notes;
-    const errors = Array.isArray(response?.errors) ? response.errors.join(' | ') : response?.errors;
+    const faults = Array.isArray(response?.faults)
+      ? response.faults.join(' | ')
+      : response?.faults;
+    const notes = Array.isArray(response?.notes)
+      ? response.notes.join(' | ')
+      : response?.notes;
+    const errors = Array.isArray(response?.errors)
+      ? response.errors.join(' | ')
+      : response?.errors;
     const nestedError =
       response?.error?.message ||
       response?.error?.descripcion ||
@@ -2219,7 +2620,12 @@ export class EnviarSunatService {
       errors,
     ].filter(Boolean);
 
-    return messages[0] || (status ? `SUNAT devolvió estado: ${status}` : 'Respuesta sin detalle de APISUNAT');
+    return (
+      messages[0] ||
+      (status
+        ? `SUNAT devolvió estado: ${status}`
+        : 'Respuesta sin detalle de APISUNAT')
+    );
   }
 
   private extractJambleMessage(response: any, status?: string): string {
@@ -2229,11 +2635,20 @@ export class EnviarSunatService {
       response?.description,
       response?.error?.message,
       response?.error?.descripcion,
-      Array.isArray(response?.response?.notes) ? response.response.notes.join(' | ') : response?.response?.notes,
-      Array.isArray(response?.errors) ? response.errors.join(' | ') : response?.errors,
+      Array.isArray(response?.response?.notes)
+        ? response.response.notes.join(' | ')
+        : response?.response?.notes,
+      Array.isArray(response?.errors)
+        ? response.errors.join(' | ')
+        : response?.errors,
     ].filter(Boolean);
 
-    return messages[0] || (status ? `SUNAT devolvió estado: ${status}` : 'Respuesta sin detalle de JAMBLE');
+    return (
+      messages[0] ||
+      (status
+        ? `SUNAT devolvió estado: ${status}`
+        : 'Respuesta sin detalle de JAMBLE')
+    );
   }
 
   private sanitizeLogPayload(payload: any): any {
@@ -2281,12 +2696,18 @@ export class EnviarSunatService {
   }
 
   private async downloadBinaryAsBase64(url: string): Promise<string> {
-    const resp = await axios.get<ArrayBuffer>(url, { responseType: 'arraybuffer', timeout: 30000 });
+    const resp = await axios.get<ArrayBuffer>(url, {
+      responseType: 'arraybuffer',
+      timeout: 30000,
+    });
     return Buffer.from(resp.data as any).toString('base64');
   }
 
   private async downloadBinaryAsBuffer(url: string): Promise<Buffer> {
-    const resp = await axios.get<ArrayBuffer>(url, { responseType: 'arraybuffer', timeout: 30000 });
+    const resp = await axios.get<ArrayBuffer>(url, {
+      responseType: 'arraybuffer',
+      timeout: 30000,
+    });
     return Buffer.from(resp.data as any);
   }
 
@@ -2312,7 +2733,9 @@ export class EnviarSunatService {
     const tipo =
       tipoDoc === '01' ? 'factura' : tipoDoc === '03' ? 'boleta' : 'nota';
     const numero = String(correlativo).padStart(8, '0');
-    const extension = cdrBuffer.toString('utf8').trim().startsWith('<') ? 'xml' : 'zip';
+    const extension = cdrBuffer.toString('utf8').trim().startsWith('<')
+      ? 'xml'
+      : 'zip';
     return `comprobantes/empresa-${empresaId}/${tipo}/${serie}-${numero}-cdr.${extension}`;
   }
 
@@ -2321,7 +2744,10 @@ export class EnviarSunatService {
    * Útil para comprobantes que fueron marcados como ACEPTADO por el scheduler
    * pero no tienen PDF generado.
    */
-  async generarYSubirPDF(comprobanteId: number, qrCode?: string): Promise<string | null> {
+  async generarYSubirPDF(
+    comprobanteId: number,
+    qrCode?: string,
+  ): Promise<string | null> {
     if (!this.s3Service.isEnabled()) {
       console.log('S3 no está habilitado, no se puede generar PDF');
       return null;
@@ -2344,7 +2770,9 @@ export class EnviarSunatService {
     }
 
     if (comp.s3PdfUrl) {
-      console.log(`Comprobante ${comprobanteId} ya tiene PDF: ${comp.s3PdfUrl}`);
+      console.log(
+        `Comprobante ${comprobanteId} ya tiene PDF: ${comp.s3PdfUrl}`,
+      );
       return comp.s3PdfUrl;
     }
 
@@ -2370,11 +2798,15 @@ export class EnviarSunatService {
       const fechaEmision = new Date(comp.fechaEmision as any);
 
       const pdfData = {
-        nombreComercial: ((comp.empresa as any).nombreComercial || comp.empresa.razonSocial).toUpperCase(),
+        nombreComercial: (
+          (comp.empresa as any).nombreComercial || comp.empresa.razonSocial
+        ).toUpperCase(),
         razonSocial: comp.empresa.razonSocial.toUpperCase(),
         ruc: comp.empresa.ruc,
         direccion: (comp.empresa.direccion || '').toUpperCase(),
-        rubro: comp.empresa.rubro?.nombre?.toUpperCase() || 'VENTA DE MATERIALES DE CONSTRUCCIÓN',
+        rubro:
+          comp.empresa.rubro?.nombre?.toUpperCase() ||
+          'VENTA DE MATERIALES DE CONSTRUCCIÓN',
         celular: '',
         email: '',
         logo: logoDataUrl,
@@ -2382,9 +2814,17 @@ export class EnviarSunatService {
         serie: comp.serie,
         correlativo: String(comp.correlativo).padStart(8, '0'),
         fecha: fechaEmision.toLocaleDateString('es-PE'),
-        hora: fechaEmision.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }) + ' p.m.',
-        clienteNombre: (comp.cliente?.nombre || 'CLIENTES VARIOS').toUpperCase(),
-        clienteTipoDoc: getTipoDocumentoLabel(comp.cliente?.tipoDocumento?.codigo),
+        hora:
+          fechaEmision.toLocaleTimeString('es-PE', {
+            hour: '2-digit',
+            minute: '2-digit',
+          }) + ' p.m.',
+        clienteNombre: (
+          comp.cliente?.nombre || 'CLIENTES VARIOS'
+        ).toUpperCase(),
+        clienteTipoDoc: getTipoDocumentoLabel(
+          comp.cliente?.tipoDocumento?.codigo,
+        ),
         clienteNumDoc: comp.cliente?.nroDoc || '',
         clienteDireccion: (comp.cliente?.direccion || '-').toUpperCase(),
         productos: comp.detalles.map((det: any) => ({
@@ -2396,18 +2836,25 @@ export class EnviarSunatService {
         })),
         mtoOperGravadas: Number(comp.mtoOperGravadas).toFixed(2),
         mtoIGV: Number(comp.mtoIGV).toFixed(2),
-        mtoOperInafectas: Number(comp.mtoOperInafectas || 0) > 0 ? Number(comp.mtoOperInafectas).toFixed(2) : undefined,
+        mtoOperInafectas:
+          Number(comp.mtoOperInafectas || 0) > 0
+            ? Number(comp.mtoOperInafectas).toFixed(2)
+            : undefined,
         mtoImpVenta: Number(comp.mtoImpVenta).toFixed(2),
         totalEnLetras: numeroALetras(Number(comp.mtoImpVenta)).toUpperCase(),
         formaPago: comp.formaPagoTipo === 'Contado' ? 'CONTADO' : 'CRÉDITO',
         medioPago: (comp.medioPago || 'EFECTIVO').toUpperCase(),
-        observaciones: comp.observaciones ? comp.observaciones.toUpperCase() : undefined,
+        observaciones: comp.observaciones
+          ? comp.observaciones.toUpperCase()
+          : undefined,
         qrCode: qrCode ? `data:image/png;base64,${qrCode}` : undefined,
         // Detracción
         tipoDetraccion: (comp as any).tipoDetraccion
           ? `${(comp as any).tipoDetraccion.codigo} - ${(comp as any).tipoDetraccion.descripcion} (${(comp as any).tipoDetraccion.porcentaje}%)`
           : undefined,
-        montoDetraccion: comp.montoDetraccion ? Number(comp.montoDetraccion).toFixed(2) : undefined,
+        montoDetraccion: comp.montoDetraccion
+          ? Number(comp.montoDetraccion).toFixed(2)
+          : undefined,
         cuentaBancoNacion: comp.cuentaBancoNacion || undefined,
         medioPagoDetraccion: (comp as any).medioPagoDetraccion
           ? `${(comp as any).medioPagoDetraccion.codigo} - ${(comp as any).medioPagoDetraccion.descripcion}`
@@ -2425,7 +2872,9 @@ export class EnviarSunatService {
       );
 
       const s3PdfUrl = await this.s3Service.uploadPDF(pdfBuffer, pdfKey);
-      console.log(`📤 PDF generado y subido a S3 para comprobante ${comprobanteId}: ${s3PdfUrl}`);
+      console.log(
+        `📤 PDF generado y subido a S3 para comprobante ${comprobanteId}: ${s3PdfUrl}`,
+      );
 
       await this.prisma.comprobante.update({
         where: { id: comprobanteId },
@@ -2434,7 +2883,10 @@ export class EnviarSunatService {
 
       return s3PdfUrl;
     } catch (error: any) {
-      console.error(`❌ Error generando PDF para comprobante ${comprobanteId}:`, error.message);
+      console.error(
+        `❌ Error generando PDF para comprobante ${comprobanteId}:`,
+        error.message,
+      );
       return null;
     }
   }
@@ -2599,7 +3051,8 @@ export class EnviarSunatService {
    */
   calculateNextRetry(currentRetryCount: number): Date {
     const backoffMinutes = [1, 2, 5, 15, 30, 60, 120, 180, 240, 300]; // Up to 5 hours
-    const minutes = backoffMinutes[Math.min(currentRetryCount, backoffMinutes.length - 1)];
+    const minutes =
+      backoffMinutes[Math.min(currentRetryCount, backoffMinutes.length - 1)];
     const nextRetry = new Date();
     nextRetry.setMinutes(nextRetry.getMinutes() + minutes);
     return nextRetry;
@@ -2611,7 +3064,9 @@ export class EnviarSunatService {
    */
   isRetryWindowExpired(comprobante: any): boolean {
     const createdAt = new Date(comprobante.creadoEn);
-    const maxRetryTime = new Date(createdAt.getTime() + (this.maxRetryHours * 60 * 60 * 1000));
+    const maxRetryTime = new Date(
+      createdAt.getTime() + this.maxRetryHours * 60 * 60 * 1000,
+    );
     return new Date() > maxRetryTime;
   }
 
@@ -2622,7 +3077,8 @@ export class EnviarSunatService {
    */
   public calculateNetworkRetry(currentRetryCount: number): Date {
     const backoffMinutes = [5, 15, 60, 240, 720, 1440]; // último = 24h
-    const minutes = backoffMinutes[Math.min(currentRetryCount, backoffMinutes.length - 1)];
+    const minutes =
+      backoffMinutes[Math.min(currentRetryCount, backoffMinutes.length - 1)];
     const next = new Date();
     next.setMinutes(next.getMinutes() + minutes);
     return next;
@@ -2642,11 +3098,18 @@ export class EnviarSunatService {
       msg.includes('qpse rechaz') ||
       msg.includes('apisunat rechaz') ||
       msg.includes('rechazó el documento')
-    ) return 'DATOS';
+    )
+      return 'DATOS';
 
     // Errores de validación XML / UBL
-    if (msg.includes('no se puede leer') || msg.includes('parsear') ||
-        msg.includes('xml') || msg.includes('ubl') || msg.includes('cvc-')) return 'DATOS';
+    if (
+      msg.includes('no se puede leer') ||
+      msg.includes('parsear') ||
+      msg.includes('xml') ||
+      msg.includes('ubl') ||
+      msg.includes('cvc-')
+    )
+      return 'DATOS';
 
     // HTTP 4xx = rechazo explícito del servidor (no infraestructura)
     if (httpStatus && httpStatus >= 400 && httpStatus < 500) return 'DATOS';
@@ -2655,9 +3118,13 @@ export class EnviarSunatService {
     return 'RED';
   }
 
-  async anularComprobanteSunat(documentId: string, empresaId: number, motivo: string = 'ANULACION DE LA OPERACION') {
+  async anularComprobanteSunat(
+    documentId: string,
+    empresaId: number,
+    motivo: string = 'ANULACION DE LA OPERACION',
+  ) {
     try {
-      const empresaCreds = await (this.prisma.empresa as any).findUnique({
+      const empresaCreds = (await (this.prisma.empresa as any).findUnique({
         where: { id: empresaId },
         select: {
           usuarioPse: true,
@@ -2672,7 +3139,7 @@ export class EnviarSunatService {
           billingApiUser: true,
           billingApiPassword: true,
         },
-      }) as {
+      })) as {
         usuarioPse: string | null;
         contrasenaPse: string | null;
         usaDemo: boolean;
@@ -2693,16 +3160,25 @@ export class EnviarSunatService {
       const usaDemo = empresaCreds?.usaDemo ?? false;
       const jambleBaseUrl = String(
         usaDemo
-          ? (empresaCreds?.billingApiDemoBaseUrl || empresaCreds?.billingApiBaseUrl || '')
-          : (empresaCreds?.billingApiBaseUrl || ''),
+          ? empresaCreds?.billingApiDemoBaseUrl ||
+              empresaCreds?.billingApiBaseUrl ||
+              ''
+          : empresaCreds?.billingApiBaseUrl || '',
       ).trim();
       const jambleToken = String(empresaCreds?.billingApiToken || '').trim();
       const jambleUser = String(empresaCreds?.billingApiUser || '').trim();
-      const jamblePassword = String(empresaCreds?.billingApiPassword || '').trim();
+      const jamblePassword = String(
+        empresaCreds?.billingApiPassword || '',
+      ).trim();
 
       const comprobante = await this.prisma.comprobante.findFirst({
         where: { empresaId, documentoId: documentId },
-        select: { documentoId: true, serie: true, correlativo: true, tipoDoc: true },
+        select: {
+          documentoId: true,
+          serie: true,
+          correlativo: true,
+          tipoDoc: true,
+        },
       });
 
       const externalId = comprobante?.documentoId || documentId;
@@ -2714,7 +3190,9 @@ export class EnviarSunatService {
           );
         }
 
-        console.log(`🚀 Enviando anulación a APISUNAT para el documento: ${externalId}`);
+        console.log(
+          `🚀 Enviando anulación a APISUNAT para el documento: ${externalId}`,
+        );
         const response = await this.apisPeruClient.voidBill({
           personaId: providerId,
           personaToken: providerToken,
@@ -2726,7 +3204,10 @@ export class EnviarSunatService {
 
       if (isJambleProvider(billingProvider)) {
         if (!jambleBaseUrl) {
-          throw new HttpException('Proveedor JAMBLE: falta URL API para el entorno seleccionado en la empresa.', 400);
+          throw new HttpException(
+            'Proveedor JAMBLE: falta URL API para el entorno seleccionado en la empresa.',
+            400,
+          );
         }
         if (!jambleToken && !(jambleUser && jamblePassword)) {
           throw new HttpException(
@@ -2761,7 +3242,9 @@ export class EnviarSunatService {
         usaDemo,
       });
 
-      console.log(`🚀 Enviando anulación a QPSE para el documento: ${externalId}`);
+      console.log(
+        `🚀 Enviando anulación a QPSE para el documento: ${externalId}`,
+      );
 
       const response = await this.qpseClient.anularComprobante({
         accessToken: qpseAccess.token_acceso!,
@@ -2777,10 +3260,10 @@ export class EnviarSunatService {
         documentId,
         error: err.response?.data || err.message,
       });
-      const empresaCreds = await (this.prisma.empresa as any).findUnique({
+      const empresaCreds = (await (this.prisma.empresa as any).findUnique({
         where: { id: empresaId },
         select: { usaDemo: true, billingProvider: true },
-      }) as { usaDemo: boolean; billingProvider: string | null } | null;
+      })) as { usaDemo: boolean; billingProvider: string | null } | null;
       const provider = resolveBillingProvider(empresaCreds);
       throw new HttpException(
         `${provider} rechazó la anulación: ${err.response?.data?.message || err.message || 'Error desconocido'}`,

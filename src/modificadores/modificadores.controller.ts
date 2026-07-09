@@ -11,7 +11,11 @@ import {
   Req,
 } from '@nestjs/common';
 import { ModificadoresService } from './modificadores.service';
-import { CrearGrupoModificadorDto, ActualizarGrupoModificadorDto, AsignarModificadoresProductoDto } from './dto';
+import {
+  CrearGrupoModificadorDto,
+  ActualizarGrupoModificadorDto,
+  AsignarModificadoresProductoDto,
+} from './dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
 @Controller('modificadores')
@@ -28,9 +32,15 @@ export class ModificadoresController {
   }
 
   @Get('grupos')
-  async listarGrupos(@Req() req: any, @Query('incluirInactivos') incluirInactivos?: string) {
+  async listarGrupos(
+    @Req() req: any,
+    @Query('incluirInactivos') incluirInactivos?: string,
+  ) {
     const empresaId = req.user.empresaId;
-    return this.modificadoresService.listarGrupos(empresaId, incluirInactivos === 'true');
+    return this.modificadoresService.listarGrupos(
+      empresaId,
+      incluirInactivos === 'true',
+    );
   }
 
   @Get('grupos/:id')
@@ -40,7 +50,11 @@ export class ModificadoresController {
   }
 
   @Patch('grupos/:id')
-  async actualizarGrupo(@Req() req: any, @Param('id') id: string, @Body() dto: ActualizarGrupoModificadorDto) {
+  async actualizarGrupo(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() dto: ActualizarGrupoModificadorDto,
+  ) {
     const empresaId = req.user.empresaId;
     return this.modificadoresService.actualizarGrupo(empresaId, +id, dto);
   }
@@ -57,7 +71,14 @@ export class ModificadoresController {
   async agregarOpcion(
     @Req() req: any,
     @Param('grupoId') grupoId: string,
-    @Body() dto: { nombre: string; descripcion?: string; precioExtra?: number; orden?: number; esDefault?: boolean },
+    @Body()
+    dto: {
+      nombre: string;
+      descripcion?: string;
+      precioExtra?: number;
+      orden?: number;
+      esDefault?: boolean;
+    },
   ) {
     const empresaId = req.user.empresaId;
     return this.modificadoresService.agregarOpcion(empresaId, +grupoId, dto);
@@ -67,7 +88,15 @@ export class ModificadoresController {
   async actualizarOpcion(
     @Req() req: any,
     @Param('id') id: string,
-    @Body() dto: { nombre?: string; descripcion?: string; precioExtra?: number; orden?: number; activo?: boolean; esDefault?: boolean },
+    @Body()
+    dto: {
+      nombre?: string;
+      descripcion?: string;
+      precioExtra?: number;
+      orden?: number;
+      activo?: boolean;
+      esDefault?: boolean;
+    },
   ) {
     const empresaId = req.user.empresaId;
     return this.modificadoresService.actualizarOpcion(empresaId, +id, dto);
@@ -88,12 +117,22 @@ export class ModificadoresController {
     @Body() dto: AsignarModificadoresProductoDto,
   ) {
     const empresaId = req.user.empresaId;
-    return this.modificadoresService.asignarGruposAProducto(empresaId, +productoId, dto);
+    return this.modificadoresService.asignarGruposAProducto(
+      empresaId,
+      +productoId,
+      dto,
+    );
   }
 
   @Get('productos/:productoId')
-  async obtenerModificadoresProducto(@Req() req: any, @Param('productoId') productoId: string) {
+  async obtenerModificadoresProducto(
+    @Req() req: any,
+    @Param('productoId') productoId: string,
+  ) {
     const empresaId = req.user.empresaId;
-    return this.modificadoresService.obtenerModificadoresProducto(empresaId, +productoId);
+    return this.modificadoresService.obtenerModificadoresProducto(
+      empresaId,
+      +productoId,
+    );
   }
 }

@@ -1,6 +1,17 @@
 import {
-  Body, Controller, Delete, Get, Param, ParseIntPipe,
-  Post, Put, Query, Res, UseGuards, UsePipes, ValidationPipe,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  ParseIntPipe,
+  Post,
+  Put,
+  Query,
+  Res,
+  UseGuards,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import { DoctorService } from './doctor.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -19,7 +30,11 @@ export class DoctorController {
 
   @Post()
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
-  async crear(@Body() dto: CreateDoctorDto, @User() user: any, @Res({ passthrough: true }) res: Response) {
+  async crear(
+    @Body() dto: CreateDoctorDto,
+    @User() user: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const doctor = await this.service.crear(user.empresaId, dto);
     res.locals.message = 'Doctor registrado correctamente';
     return doctor;
@@ -58,7 +73,11 @@ export class DoctorController {
 
   @Delete(':id')
   @Roles('ADMIN_EMPRESA')
-  async eliminar(@Param('id', ParseIntPipe) id: number, @User() user: any, @Res({ passthrough: true }) res: Response) {
+  async eliminar(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     await this.service.eliminar(user.empresaId, id);
     res.locals.message = 'Doctor desactivado correctamente';
     return {};

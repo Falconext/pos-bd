@@ -234,7 +234,9 @@ export class AuthService {
     let sede: any;
 
     if (isAdmin) {
-      console.log(`[selectSede] isAdmin=true, userId=${userId}, user.empresaId=${user.empresaId}, sedeId=${sedeId}, typeof sedeId=${typeof sedeId}`);
+      console.log(
+        `[selectSede] isAdmin=true, userId=${userId}, user.empresaId=${user.empresaId}, sedeId=${sedeId}, typeof sedeId=${typeof sedeId}`,
+      );
       // ADMIN_EMPRESA puede seleccionar cualquier sede activa de su empresa
       sede = await this.prisma.sede.findFirst({
         where: {
@@ -244,10 +246,17 @@ export class AuthService {
         },
       });
       if (!sede) {
-         console.log(`[selectSede] sede NOT FOUND! Params -> id: ${sedeId}, empresaId: ${user.empresaId}`);
-         const debugSede = await this.prisma.sede.findUnique({ where: { id: sedeId } });
-         console.log(`[selectSede] Database actually has for id ${sedeId}:`, debugSede);
-         throw new ForbiddenException('Sede no encontrada o inactiva');
+        console.log(
+          `[selectSede] sede NOT FOUND! Params -> id: ${sedeId}, empresaId: ${user.empresaId}`,
+        );
+        const debugSede = await this.prisma.sede.findUnique({
+          where: { id: sedeId },
+        });
+        console.log(
+          `[selectSede] Database actually has for id ${sedeId}:`,
+          debugSede,
+        );
+        throw new ForbiddenException('Sede no encontrada o inactiva');
       }
     } else {
       // USUARIO_EMPRESA: validar a través de la tabla de asignación
@@ -325,7 +334,7 @@ export class AuthService {
     }
 
     // Recuperar sedeId del refresh token anterior (incluido en el payload al hacer login)
-    const decoded = this.jwt.decode(refreshToken) as any;
+    const decoded = this.jwt.decode(refreshToken);
     const sedeId: number | null = decoded?.sedeId ?? null;
 
     const payload: any = {
@@ -491,18 +500,18 @@ export class AuthService {
 
     if (!usuario) return null;
 
-    if ((usuario as any).empresa?.plan?.features) {
-      (usuario as any).empresa.plan.features = Object.fromEntries(
-        (usuario as any).empresa.plan.features.map((feature: any) => [
+    if (usuario.empresa?.plan?.features) {
+      usuario.empresa.plan.features = Object.fromEntries(
+        usuario.empresa.plan.features.map((feature: any) => [
           feature.featureKey,
           feature.enabled,
         ]),
       );
     }
 
-    if ((usuario as any).empresa?.rubro?.features) {
-      (usuario as any).empresa.rubro.features = Object.fromEntries(
-        (usuario as any).empresa.rubro.features.map((feature: any) => [
+    if (usuario.empresa?.rubro?.features) {
+      usuario.empresa.rubro.features = Object.fromEntries(
+        usuario.empresa.rubro.features.map((feature: any) => [
           feature.featureKey,
           feature.enabledByDefault,
         ]),
@@ -512,15 +521,15 @@ export class AuthService {
     // Parsear permisos
     if (usuario.permisos) {
       try {
-        (usuario as any).permisos = JSON.parse(usuario.permisos);
+        usuario.permisos = JSON.parse(usuario.permisos);
       } catch {
-        (usuario as any).permisos = [];
+        usuario.permisos = [];
       }
     }
 
     // Aplanar sedes
     if (usuario.rol === 'ADMIN_EMPRESA' && usuario.empresaId) {
-      (usuario as any).sedes = await this.prisma.sede.findMany({
+      usuario.sedes = await this.prisma.sede.findMany({
         where: { empresaId: usuario.empresaId, activo: true },
         select: {
           id: true,
@@ -533,17 +542,15 @@ export class AuthService {
         orderBy: [{ esPrincipal: 'desc' }, { id: 'asc' }],
       });
     } else {
-      (usuario as any).sedes = (usuario.sedesAsignadas || []).map(
-        (us: any) => us.sede,
-      );
+      usuario.sedes = (usuario.sedesAsignadas || []).map((us: any) => us.sede);
     }
-    delete (usuario as any).sedesAsignadas;
+    delete usuario.sedesAsignadas;
 
     // Aplanar submódulos del usuario
-    (usuario as any).subModulos = (usuario.subModulosAsignados || []).map(
+    usuario.subModulos = (usuario.subModulosAsignados || []).map(
       (us: any) => us.subModulo,
     );
-    delete (usuario as any).subModulosAsignados;
+    delete usuario.subModulosAsignados;
 
     return usuario;
   }
@@ -661,9 +668,9 @@ export class AuthService {
 
     if (usuario?.permisos) {
       try {
-        (usuario as any).permisos = JSON.parse(usuario.permisos);
+        usuario.permisos = JSON.parse(usuario.permisos);
       } catch {
-        (usuario as any).permisos = [];
+        usuario.permisos = [];
       }
     }
 
@@ -689,7 +696,9 @@ export class AuthService {
       );
       delete usuario.empresa.whatsappApiToken;
       // Shalom Pro: exponer solo un booleano; nunca la contraseña.
-      usuario.empresa.shalomConfigured = Boolean(usuario.empresa.shalomPassword);
+      usuario.empresa.shalomConfigured = Boolean(
+        usuario.empresa.shalomPassword,
+      );
       delete usuario.empresa.shalomPassword;
     }
 

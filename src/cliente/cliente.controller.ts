@@ -63,7 +63,7 @@ export class ClienteController {
       limit: query.limit,
       sort: query.sort,
       order: query.order,
-      persona: query.persona as any,
+      persona: query.persona,
     });
     res.locals.message = 'Clientes listados correctamente';
     return resultado;

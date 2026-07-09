@@ -10,4 +10,4 @@ import { MarcaController } from './marca.controller';
   controllers: [MarcaController],
   exports: [MarcaService],
 })
-export class MarcaModule { }
+export class MarcaModule {}

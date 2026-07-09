@@ -8,7 +8,7 @@ export class TiendaPublicController {
   constructor(
     private readonly tiendaService: TiendaService,
     private readonly modificadoresService: ModificadoresService,
-  ) { }
+  ) {}
 
   @Get(':slug')
   async obtenerTienda(@Param('slug') slug: string) {
@@ -27,8 +27,10 @@ export class TiendaPublicController {
     @Query('brand') brand = '',
     @Query('wholesale') wholesale = '',
   ) {
-    const min = minPrice && !isNaN(Number(minPrice)) ? Number(minPrice) : undefined;
-    const max = maxPrice && !isNaN(Number(maxPrice)) ? Number(maxPrice) : undefined;
+    const min =
+      minPrice && !isNaN(Number(minPrice)) ? Number(minPrice) : undefined;
+    const max =
+      maxPrice && !isNaN(Number(maxPrice)) ? Number(maxPrice) : undefined;
     const isWholesale = wholesale === 'true';
 
     return this.tiendaService.obtenerProductosTienda(
@@ -40,7 +42,7 @@ export class TiendaPublicController {
       min,
       max,
       brand,
-      isWholesale
+      isWholesale,
     );
   }
 
@@ -144,10 +146,7 @@ export class TiendaPublicController {
   // ==================== PEDIDOS ====================
 
   @Post(':slug/orders')
-  async crearPedido(
-    @Param('slug') slug: string,
-    @Body() dto: CrearPedidoDto,
-  ) {
+  async crearPedido(@Param('slug') slug: string, @Body() dto: CrearPedidoDto) {
     return this.tiendaService.crearPedido(slug, dto);
   }
 }

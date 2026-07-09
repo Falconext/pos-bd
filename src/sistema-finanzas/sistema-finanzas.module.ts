@@ -4,7 +4,7 @@ import { SistemaFinanzasService } from './sistema-finanzas.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 
 @Module({
-    controllers: [SistemaFinanzasController],
-    providers: [SistemaFinanzasService, PrismaService],
+  controllers: [SistemaFinanzasController],
+  providers: [SistemaFinanzasService, PrismaService],
 })
-export class SistemaFinanzasModule { }
+export class SistemaFinanzasModule {}

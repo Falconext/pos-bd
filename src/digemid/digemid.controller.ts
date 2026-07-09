@@ -8,10 +8,7 @@ export class DigemidController {
   constructor(private readonly service: DigemidService) {}
 
   @Get('buscar')
-  async buscar(
-    @Query('q') q: string,
-    @Query('limit') limit?: string,
-  ) {
+  async buscar(@Query('q') q: string, @Query('limit') limit?: string) {
     const results = await this.service.buscar(q, limit ? Number(limit) : 20);
     return results;
   }

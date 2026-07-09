@@ -437,7 +437,11 @@ export class ProduccionService {
       );
     }
 
-    await this.validarProductoEmpresa(empresaId, dto.productoFinalId, 'producto final');
+    await this.validarProductoEmpresa(
+      empresaId,
+      dto.productoFinalId,
+      'producto final',
+    );
 
     const componentes = await Promise.all(
       dto.componentes.map(async (item, index) => {
@@ -591,7 +595,9 @@ export class ProduccionService {
     this.validarEmpresaId(empresaId);
     await this.asegurarRubroFabricacion(empresaId);
     const filtroActivo =
-      activo === undefined ? undefined : String(activo).toLowerCase() === 'true';
+      activo === undefined
+        ? undefined
+        : String(activo).toLowerCase() === 'true';
 
     return this.prisma.recetaProduccion.findMany({
       where: {
@@ -620,7 +626,12 @@ export class ProduccionService {
         componentes: {
           include: {
             productoInsumo: {
-              select: { id: true, codigo: true, descripcion: true, stock: true },
+              select: {
+                id: true,
+                codigo: true,
+                descripcion: true,
+                stock: true,
+              },
             },
           },
           orderBy: { orden: 'asc' },
@@ -635,7 +646,11 @@ export class ProduccionService {
     return receta;
   }
 
-  async actualizarReceta(empresaId: number, recetaId: number, dto: UpdateRecetaDto) {
+  async actualizarReceta(
+    empresaId: number,
+    recetaId: number,
+    dto: UpdateRecetaDto,
+  ) {
     this.validarEmpresaId(empresaId);
     await this.asegurarRubroFabricacion(empresaId);
     await this.obtenerRecetaEmpresa(empresaId, recetaId);
@@ -684,7 +699,9 @@ export class ProduccionService {
       ...(dto.productoFinalId !== undefined
         ? { productoFinal: { connect: { id: dto.productoFinalId } } }
         : {}),
-      ...(dto.codigo !== undefined ? { codigo: dto.codigo.trim().toUpperCase() } : {}),
+      ...(dto.codigo !== undefined
+        ? { codigo: dto.codigo.trim().toUpperCase() }
+        : {}),
       ...(dto.nombre !== undefined ? { nombre: dto.nombre.trim() } : {}),
       ...(dto.version !== undefined ? { version: dto.version } : {}),
       ...(dto.rendimientoObjetivo !== undefined
@@ -751,7 +768,8 @@ export class ProduccionService {
       throw new BadRequestException('La cantidad objetivo debe ser mayor a 0.');
     }
 
-    let receta: Awaited<ReturnType<typeof this.obtenerRecetaEmpresa>> | null = null;
+    let receta: Awaited<ReturnType<typeof this.obtenerRecetaEmpresa>> | null =
+      null;
     if (dto.recetaId) {
       receta = await this.obtenerRecetaEmpresa(empresaId, dto.recetaId);
     }
@@ -763,7 +781,11 @@ export class ProduccionService {
       );
     }
 
-    await this.validarProductoEmpresa(empresaId, productoFinalId, 'producto final');
+    await this.validarProductoEmpresa(
+      empresaId,
+      productoFinalId,
+      'producto final',
+    );
 
     if (dto.usuarioResponsableId) {
       const usuario = await this.prisma.usuario.findFirst({
@@ -801,7 +823,9 @@ export class ProduccionService {
             item.productoInsumoId,
             'insumo',
           );
-          const costoUnitario = Number(item.costoUnitario ?? insumo.costoPromedio ?? 0);
+          const costoUnitario = Number(
+            item.costoUnitario ?? insumo.costoPromedio ?? 0,
+          );
           return {
             productoInsumoId: item.productoInsumoId,
             cantidadTeorica: item.cantidadTeorica,
@@ -815,7 +839,8 @@ export class ProduccionService {
         }),
       );
     } else if (receta) {
-      const factor = Number(dto.cantidadObjetivo) / Number(receta.rendimientoObjetivo);
+      const factor =
+        Number(dto.cantidadObjetivo) / Number(receta.rendimientoObjetivo);
       componentesOrden = await Promise.all(
         receta.componentes.map(async (item) => {
           const insumo = await this.validarProductoEmpresa(
@@ -856,7 +881,9 @@ export class ProduccionService {
           recetaId: receta?.id ?? null,
           productoFinalId,
           loteProduccion: dto.loteProduccion.trim().toUpperCase(),
-          fechaProgramada: dto.fechaProgramada ? new Date(dto.fechaProgramada) : null,
+          fechaProgramada: dto.fechaProgramada
+            ? new Date(dto.fechaProgramada)
+            : null,
           cantidadObjetivo: dto.cantidadObjetivo,
           estado: 'PLANIFICADA',
           observaciones: dto.observaciones?.trim(),
@@ -866,14 +893,21 @@ export class ProduccionService {
           },
         },
         include: {
-          receta: { select: { id: true, codigo: true, nombre: true, version: true } },
+          receta: {
+            select: { id: true, codigo: true, nombre: true, version: true },
+          },
           productoFinal: {
             select: { id: true, codigo: true, descripcion: true, stock: true },
           },
           componentes: {
             include: {
               productoInsumo: {
-                select: { id: true, codigo: true, descripcion: true, stock: true },
+                select: {
+                  id: true,
+                  codigo: true,
+                  descripcion: true,
+                  stock: true,
+                },
               },
             },
             orderBy: { id: 'asc' },
@@ -983,7 +1017,9 @@ export class ProduccionService {
     const orden = await this.prisma.ordenProduccion.findFirst({
       where: { id: ordenId, empresaId },
       include: {
-        receta: { select: { id: true, codigo: true, nombre: true, version: true } },
+        receta: {
+          select: { id: true, codigo: true, nombre: true, version: true },
+        },
         productoFinal: {
           select: { id: true, codigo: true, descripcion: true, stock: true },
         },
@@ -993,7 +1029,12 @@ export class ProduccionService {
         componentes: {
           include: {
             productoInsumo: {
-              select: { id: true, codigo: true, descripcion: true, stock: true },
+              select: {
+                id: true,
+                codigo: true,
+                descripcion: true,
+                stock: true,
+              },
             },
           },
           orderBy: { id: 'asc' },
@@ -1045,7 +1086,9 @@ export class ProduccionService {
       ...(dto.estado === 'EN_PROCESO' && !orden.fechaInicio
         ? { fechaInicio: new Date() }
         : {}),
-      ...(dto.estado === 'ANULADA' && !orden.fechaFin ? { fechaFin: new Date() } : {}),
+      ...(dto.estado === 'ANULADA' && !orden.fechaFin
+        ? { fechaFin: new Date() }
+        : {}),
     };
 
     return this.prisma.ordenProduccion.update({
@@ -1063,7 +1106,10 @@ export class ProduccionService {
   ) {
     this.validarEmpresaId(empresaId);
     await this.asegurarRubroFabricacion(empresaId);
-    const sedeIdProduccion = await this.resolverSedeIdProduccion(empresaId, sedeId);
+    const sedeIdProduccion = await this.resolverSedeIdProduccion(
+      empresaId,
+      sedeId,
+    );
 
     if (!dto.componentes?.length) {
       throw new BadRequestException(
@@ -1071,7 +1117,9 @@ export class ProduccionService {
       );
     }
     if (dto.cantidadProducida <= 0) {
-      throw new BadRequestException('La cantidad producida debe ser mayor a 0.');
+      throw new BadRequestException(
+        'La cantidad producida debe ser mayor a 0.',
+      );
     }
 
     const orden = await this.prisma.ordenProduccion.findFirst({
@@ -1231,7 +1279,9 @@ export class ProduccionService {
 
     const mermaTotal = dto.mermaTotal ?? mermaAcumulada;
     const costoUnitarioFinal =
-      dto.cantidadProducida > 0 ? costoTotalConsumido / dto.cantidadProducida : 0;
+      dto.cantidadProducida > 0
+        ? costoTotalConsumido / dto.cantidadProducida
+        : 0;
     const productoFinal = productosMap.get(orden.productoFinalId);
     if (!productoFinal) {
       throw new BadRequestException(
@@ -1355,7 +1405,9 @@ export class ProduccionService {
       await tx.ordenProduccion.update({
         where: { id: orden.id },
         data: {
-          fechaInicio: dto.fechaInicio ? new Date(dto.fechaInicio) : orden.fechaInicio ?? new Date(),
+          fechaInicio: dto.fechaInicio
+            ? new Date(dto.fechaInicio)
+            : (orden.fechaInicio ?? new Date()),
           fechaFin: dto.fechaFin ? new Date(dto.fechaFin) : new Date(),
           cantidadProducida: dto.cantidadProducida,
           mermaTotal,
@@ -1421,7 +1473,10 @@ export class ProduccionService {
       componentes: detalle,
       totales: {
         teorico: detalle.reduce((acc, item) => acc + item.cantidadTeorica, 0),
-        consumido: detalle.reduce((acc, item) => acc + item.cantidadConsumida, 0),
+        consumido: detalle.reduce(
+          (acc, item) => acc + item.cantidadConsumida,
+          0,
+        ),
         merma: detalle.reduce((acc, item) => acc + item.mermaCantidad, 0),
         mermaValorizada: detalle.reduce(
           (acc, item) => acc + item.mermaValorizada,
@@ -1437,10 +1492,23 @@ export class ProduccionService {
 
   private resolverUmbSunat(raw: string | undefined): string {
     const alias: Record<string, string> = {
-      KG: 'KGM', KGS: 'KGM', KILO: 'KGM', KILOGRAMO: 'KGM',
-      UN: 'NIU', UND: 'NIU', UNID: 'NIU', UNIDAD: 'NIU', ETIQ: 'NIU', PZA: 'NIU', PZ: 'NIU',
-      LT: 'LTR', LTS: 'LTR', LITRO: 'LTR',
-      MT: 'MTR', MTS: 'MTR', METRO: 'MTR',
+      KG: 'KGM',
+      KGS: 'KGM',
+      KILO: 'KGM',
+      KILOGRAMO: 'KGM',
+      UN: 'NIU',
+      UND: 'NIU',
+      UNID: 'NIU',
+      UNIDAD: 'NIU',
+      ETIQ: 'NIU',
+      PZA: 'NIU',
+      PZ: 'NIU',
+      LT: 'LTR',
+      LTS: 'LTR',
+      LITRO: 'LTR',
+      MT: 'MTR',
+      MTS: 'MTR',
+      METRO: 'MTR',
     };
     if (!raw) return 'NIU';
     const key = raw.trim().toUpperCase();
@@ -1527,16 +1595,22 @@ export class ProduccionService {
     const infoAoa = [
       ['FALCONEXT - Plantilla Fabricación y Producción'],
       [''],
-      ['SHEET PRODUCTOS -> Catálogo de insumos, envases, semielaborados y productos terminados.'],
+      [
+        'SHEET PRODUCTOS -> Catálogo de insumos, envases, semielaborados y productos terminados.',
+      ],
       ['SHEET RECETAS -> Una fila por componente de receta.'],
-      ['SHEET ORDENES -> Opcional, crea órdenes en BORRADOR desde recetas existentes.'],
+      [
+        'SHEET ORDENES -> Opcional, crea órdenes en BORRADOR desde recetas existentes.',
+      ],
       [''],
       ['Reglas importantes'],
       ['1) No cambies nombres de columnas.'],
       ['2) CODIGO debe ser único por empresa.'],
       ['3) UMB usa código de la hoja UNIDADES (GR, ML, KG, LT, UN, etc).'],
       ['4) AFECTACION usa 10, 20, 30 o 40.'],
-      ['5) En RECETAS, cada componente va en una fila con mismo RECETA_CODIGO/RECETA_VERSION.'],
+      [
+        '5) En RECETAS, cada componente va en una fila con mismo RECETA_CODIGO/RECETA_VERSION.',
+      ],
     ];
     const wsInfo = XLSX.utils.aoa_to_sheet(infoAoa);
     wsInfo['!cols'] = [{ wch: 120 }];
@@ -2058,7 +2132,7 @@ export class ProduccionService {
 
     const buscarFilaHeaders = (filas: any[][], marcas: string[]): number => {
       for (let i = 0; i < Math.min(filas.length, 5); i++) {
-        if (marcas.some((m) => (filas[i] as any[]).includes(m))) return i;
+        if (marcas.some((m) => filas[i].includes(m))) return i;
       }
       return -1;
     };
@@ -2077,7 +2151,9 @@ export class ProduccionService {
         const precioKgIdx = headers.indexOf('Precio x kg');
         const costoIdx = headers.indexOf('Costo sin igv');
         const invIdx = headers.indexOf('Inventario');
-        const familiaIdx = headers.findIndex((h: any) => h && String(h).toUpperCase() === 'FAMILIA');
+        const familiaIdx = headers.findIndex(
+          (h: any) => h && String(h).toUpperCase() === 'FAMILIA',
+        );
         for (let i = hIdx + 1; i < filas.length; i++) {
           const f = filas[i];
           if (!f[skuIdx] || !f[nombreIdx]) continue;
@@ -2086,7 +2162,12 @@ export class ProduccionService {
             DESCRIPCION: String(f[nombreIdx]),
             UMB: 'KGM',
             COSTO_UNITARIO: costoIdx >= 0 ? (f[costoIdx] ?? 0) : 0,
-            PRECIO_VENTA: precioKgIdx >= 0 ? (f[precioKgIdx] ?? 0) : (costoIdx >= 0 ? (f[costoIdx] ?? 0) : 0),
+            PRECIO_VENTA:
+              precioKgIdx >= 0
+                ? (f[precioKgIdx] ?? 0)
+                : costoIdx >= 0
+                  ? (f[costoIdx] ?? 0)
+                  : 0,
             STOCK_INICIAL: invIdx >= 0 ? (f[invIdx] ?? 0) : 0,
             CATEGORIA:
               familiaIdx >= 0 && f[familiaIdx]
@@ -2113,8 +2194,7 @@ export class ProduccionService {
         const precioIdx = headers.indexOf('PRECIO');
         const umbIdx = headers.indexOf('UMB');
         const invIdx = headers.findIndex(
-          (h: any) =>
-            h && String(h).toLowerCase().startsWith('inventario'),
+          (h: any) => h && String(h).toLowerCase().startsWith('inventario'),
         );
         for (let i = hIdx + 1; i < filas.length; i++) {
           const f = filas[i];
@@ -2127,8 +2207,7 @@ export class ProduccionService {
             CODIGO: String(f[codIdx]),
             DESCRIPCION: String(f[nombreIdx]),
             UMB: this.resolverUmbSunat(umbRaw),
-            COSTO_UNITARIO:
-              costoSinIgvIdx >= 0 ? (f[costoSinIgvIdx] ?? 0) : 0,
+            COSTO_UNITARIO: costoSinIgvIdx >= 0 ? (f[costoSinIgvIdx] ?? 0) : 0,
             PRECIO_VENTA: precioIdx >= 0 ? (f[precioIdx] ?? 0) : 0,
             STOCK_INICIAL: invIdx >= 0 ? (f[invIdx] ?? 0) : 0,
             CATEGORIA: 'ETIQUETAS',
@@ -2164,8 +2243,7 @@ export class ProduccionService {
             CODIGO: String(f[codIdx]),
             DESCRIPCION: String(f[nombreIdx]),
             UMB: this.resolverUmbSunat(umbRaw),
-            COSTO_UNITARIO:
-              costoUniIdx >= 0 ? (f[costoUniIdx] ?? 0) : 0,
+            COSTO_UNITARIO: costoUniIdx >= 0 ? (f[costoUniIdx] ?? 0) : 0,
             PRECIO_VENTA: costoIdx >= 0 ? (f[costoIdx] ?? 0) : 0,
             STOCK_INICIAL: invIdx >= 0 ? (f[invIdx] ?? 0) : 0,
             CATEGORIA: 'PRODUCTO_TERMINADO',
@@ -2203,7 +2281,9 @@ export class ProduccionService {
     let ordenesRows: Record<string, any>[];
 
     if (sheetProductos && sheetRecetas) {
-      productosRows = XLSX.utils.sheet_to_json(sheetProductos, { defval: null });
+      productosRows = XLSX.utils.sheet_to_json(sheetProductos, {
+        defval: null,
+      });
       recetasRows = XLSX.utils.sheet_to_json(sheetRecetas, { defval: null });
       ordenesRows = sheetOrdenes
         ? XLSX.utils.sheet_to_json(sheetOrdenes, { defval: null })
@@ -2460,10 +2540,20 @@ export class ProduccionService {
         0,
       );
 
-      if (!recetaCodigo && !productoFinalCodigo && !insumoCodigo && !cantidadBase) {
+      if (
+        !recetaCodigo &&
+        !productoFinalCodigo &&
+        !insumoCodigo &&
+        !cantidadBase
+      ) {
         continue;
       }
-      if (!recetaCodigo || !productoFinalCodigo || !insumoCodigo || cantidadBase <= 0) {
+      if (
+        !recetaCodigo ||
+        !productoFinalCodigo ||
+        !insumoCodigo ||
+        cantidadBase <= 0
+      ) {
         resumen.recetas.fallidas += 1;
         resumen.recetas.errores.push(
           `Fila RECETAS ${fila}: RECETA_CODIGO, PRODUCTO_FINAL_CODIGO, INSUMO_CODIGO y CANTIDAD_BASE son obligatorios.`,
@@ -2473,7 +2563,12 @@ export class ProduccionService {
 
       const version = Math.max(
         1,
-        Math.round(this.numeroSeguro(this.valorFila(row, ['RECETA_VERSION', 'VERSION']), 1)),
+        Math.round(
+          this.numeroSeguro(
+            this.valorFila(row, ['RECETA_VERSION', 'VERSION']),
+            1,
+          ),
+        ),
       );
       const key = `${recetaCodigo}__${version}`;
       const existente = recetasAgrupadas.get(key);
@@ -2511,7 +2606,12 @@ export class ProduccionService {
           'UN',
         orden: Math.max(
           1,
-          Math.round(this.numeroSeguro(this.valorFila(row, ['ORDEN']), receta.componentes.length + 1)),
+          Math.round(
+            this.numeroSeguro(
+              this.valorFila(row, ['ORDEN']),
+              receta.componentes.length + 1,
+            ),
+          ),
         ),
       });
     }
@@ -2522,7 +2622,9 @@ export class ProduccionService {
       const codigosProductos = new Set<string>();
       recetasAgrupadas.forEach((receta) => {
         codigosProductos.add(receta.productoFinalCodigo);
-        receta.componentes.forEach((comp) => codigosProductos.add(comp.insumoCodigo));
+        receta.componentes.forEach((comp) =>
+          codigosProductos.add(comp.insumoCodigo),
+        );
       });
 
       const productosLookup = await this.prisma.producto.findMany({
@@ -2578,7 +2680,11 @@ export class ProduccionService {
           };
 
           const recetaExistente = await this.prisma.recetaProduccion.findFirst({
-            where: { empresaId, codigo: receta.codigo, version: receta.version },
+            where: {
+              empresaId,
+              codigo: receta.codigo,
+              version: receta.version,
+            },
             select: { id: true },
           });
 
@@ -2592,7 +2698,9 @@ export class ProduccionService {
         } catch (error: any) {
           resumen.recetas.fallidas += 1;
           resumen.recetas.errores.push(
-            error?.response?.message || error?.message || `Error en receta ${receta.codigo}`,
+            error?.response?.message ||
+              error?.message ||
+              `Error en receta ${receta.codigo}`,
           );
         }
       }
@@ -2623,7 +2731,12 @@ export class ProduccionService {
           );
           const recetaVersion = Math.max(
             1,
-            Math.round(this.numeroSeguro(this.valorFila(row, ['RECETA_VERSION', 'VERSION']), 1)),
+            Math.round(
+              this.numeroSeguro(
+                this.valorFila(row, ['RECETA_VERSION', 'VERSION']),
+                1,
+              ),
+            ),
           );
           const cantidadObjetivo = this.numeroSeguro(
             this.valorFila(row, ['CANTIDAD_OBJETIVO', 'CANTIDAD']),
@@ -2664,7 +2777,9 @@ export class ProduccionService {
         } catch (error: any) {
           resumen.ordenes.fallidas += 1;
           resumen.ordenes.errores.push(
-            error?.response?.message || error?.message || `Error en orden fila ${fila}`,
+            error?.response?.message ||
+              error?.message ||
+              `Error en orden fila ${fila}`,
           );
         }
       }

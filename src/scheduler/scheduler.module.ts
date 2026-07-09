@@ -21,4 +21,4 @@ import { GuiaRemisionModule } from '../guia-remision/guia-remision.module';
   providers: [SchedulerService, VerificarPendientesSunatService, PrismaService],
   exports: [VerificarPendientesSunatService],
 })
-export class SchedulerModule { }
+export class SchedulerModule {}

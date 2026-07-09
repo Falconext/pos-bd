@@ -8,7 +8,7 @@ import { CrearPagoDto } from './dto/crear-pago.dto';
 
 @Injectable()
 export class PagoService {
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(private readonly prisma: PrismaService) {}
 
   async registrarPago(
     comprobanteId: number,
@@ -41,7 +41,11 @@ export class PagoService {
     // Auto-fix: si saldo es 0 pero el doc no está COMPLETADO, recalcularlo desde
     // los pagos registrados + el adelanto guardado (cubre NP/OT creados antes de
     // que el backend inicializara saldo correctamente)
-    if (saldoActual === 0 && Number(comprobante.mtoImpVenta) > 0 && epActual !== 'COMPLETADO') {
+    if (
+      saldoActual === 0 &&
+      Number(comprobante.mtoImpVenta) > 0 &&
+      epActual !== 'COMPLETADO'
+    ) {
       const montoDescontado = Number(comprobante.montoDetraccion || 0);
       const pagosExistentes = await this.prisma.pago.findMany({
         where: { comprobanteId },
@@ -54,7 +58,10 @@ export class PagoService {
       const adelantoGuardado = Number((comprobante as any).adelanto ?? 0);
       saldoActual = Math.max(
         0,
-        Number(comprobante.mtoImpVenta) - montoDescontado - totalPagadoRegistrado - adelantoGuardado,
+        Number(comprobante.mtoImpVenta) -
+          montoDescontado -
+          totalPagadoRegistrado -
+          adelantoGuardado,
       );
 
       if (saldoActual > 0) {
@@ -109,7 +116,12 @@ export class PagoService {
   async obtenerPagos(comprobanteId: number) {
     const comprobante = await this.prisma.comprobante.findUnique({
       where: { id: comprobanteId },
-      include: { pagos: { orderBy: { fecha: 'desc' }, include: { usuario: { select: { nombre: true } } } } },
+      include: {
+        pagos: {
+          orderBy: { fecha: 'desc' },
+          include: { usuario: { select: { nombre: true } } },
+        },
+      },
     });
 
     if (!comprobante) {
@@ -166,7 +178,11 @@ export class PagoService {
           comprobante: {
             OR: [
               { serie: { contains: searchTerm, mode: 'insensitive' } },
-              { cliente: { nombre: { contains: searchTerm, mode: 'insensitive' } } },
+              {
+                cliente: {
+                  nombre: { contains: searchTerm, mode: 'insensitive' },
+                },
+              },
             ],
           },
         },
@@ -356,7 +372,7 @@ export class PagoService {
       where: { id: comprobanteId },
       data: {
         saldo: nuevoSaldo,
-        estadoPago: nuevoEstado as any
+        estadoPago: nuevoEstado as any,
       },
     });
 
@@ -388,8 +404,14 @@ export class PagoService {
     const resultados: any[] = [];
     for (const comp of comprobantes) {
       try {
-        const resultado = await this.recalcularSaldoComprobante(comp.id, empresaId);
-        if (resultado.pagosEliminadosCount > 0 || resultado.nuevoEstado !== 'COMPLETADO') {
+        const resultado = await this.recalcularSaldoComprobante(
+          comp.id,
+          empresaId,
+        );
+        if (
+          resultado.pagosEliminadosCount > 0 ||
+          resultado.nuevoEstado !== 'COMPLETADO'
+        ) {
           resultados.push(resultado);
         }
       } catch (error) {

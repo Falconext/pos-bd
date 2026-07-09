@@ -63,12 +63,34 @@ describe('ComprobanteService - Stock Management', () => {
         ComprobanteService,
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: KardexService, useValue: mockKardexService },
-        { provide: InventarioNotificacionesService, useValue: { verificarStockBajo: jest.fn() } },
-        { provide: S3Service, useValue: { uploadFile: jest.fn(), deleteFile: jest.fn() } },
-        { provide: PdfGeneratorService, useValue: { generarComprobante: jest.fn(), generarTicket: jest.fn() } },
-        { provide: ProductoLoteService, useValue: { descontarLoteFEFO: jest.fn(), revertirLote: jest.fn(), aumentarStockLote: jest.fn() } },
-        { provide: EnviarSunatService, useValue: { enviarComprobante: jest.fn(), anularEnSunat: jest.fn() } },
-        { provide: ComisionesService, useValue: { registrarComision: jest.fn() } },
+        {
+          provide: InventarioNotificacionesService,
+          useValue: { verificarStockBajo: jest.fn() },
+        },
+        {
+          provide: S3Service,
+          useValue: { uploadFile: jest.fn(), deleteFile: jest.fn() },
+        },
+        {
+          provide: PdfGeneratorService,
+          useValue: { generarComprobante: jest.fn(), generarTicket: jest.fn() },
+        },
+        {
+          provide: ProductoLoteService,
+          useValue: {
+            descontarLoteFEFO: jest.fn(),
+            revertirLote: jest.fn(),
+            aumentarStockLote: jest.fn(),
+          },
+        },
+        {
+          provide: EnviarSunatService,
+          useValue: { enviarComprobante: jest.fn(), anularEnSunat: jest.fn() },
+        },
+        {
+          provide: ComisionesService,
+          useValue: { registrarComision: jest.fn() },
+        },
       ],
     }).compile();
 
@@ -101,7 +123,9 @@ describe('ComprobanteService - Stock Management', () => {
         ],
       };
 
-      mockPrismaService.comprobante.findUnique.mockResolvedValue(mockComprobante);
+      mockPrismaService.comprobante.findUnique.mockResolvedValue(
+        mockComprobante,
+      );
       mockPrismaService.producto.findUnique
         .mockResolvedValueOnce({ id: 100, stock: 10, costoPromedio: 20 })
         .mockResolvedValueOnce({ id: 101, stock: 20, costoPromedio: 15 });
@@ -115,10 +139,18 @@ describe('ComprobanteService - Stock Management', () => {
       // Kardex service es el que ahora maneja el stock (no prisma.produto.update directo)
       expect(mockKardexService.registrarMovimiento).toHaveBeenCalledTimes(2);
       expect(mockKardexService.registrarMovimiento).toHaveBeenCalledWith(
-        expect.objectContaining({ productoId: 100, tipoMovimiento: 'INGRESO', cantidad: 5 }),
+        expect.objectContaining({
+          productoId: 100,
+          tipoMovimiento: 'INGRESO',
+          cantidad: 5,
+        }),
       );
       expect(mockKardexService.registrarMovimiento).toHaveBeenCalledWith(
-        expect.objectContaining({ productoId: 101, tipoMovimiento: 'INGRESO', cantidad: 3 }),
+        expect.objectContaining({
+          productoId: 101,
+          tipoMovimiento: 'INGRESO',
+          cantidad: 3,
+        }),
       );
 
       // Pagos eliminados
@@ -145,8 +177,14 @@ describe('ComprobanteService - Stock Management', () => {
         ],
       };
 
-      mockPrismaService.comprobante.findUnique.mockResolvedValue(mockComprobante);
-      mockPrismaService.producto.findUnique.mockResolvedValue({ id: 102, stock: 5, costoPromedio: 10 });
+      mockPrismaService.comprobante.findUnique.mockResolvedValue(
+        mockComprobante,
+      );
+      mockPrismaService.producto.findUnique.mockResolvedValue({
+        id: 102,
+        stock: 5,
+        costoPromedio: 10,
+      });
       mockPrismaService.comprobante.update.mockResolvedValue({
         ...mockComprobante,
         estadoEnvioSunat: 'ANULADO',
@@ -158,7 +196,11 @@ describe('ComprobanteService - Stock Management', () => {
 
       // Stock revertido vía kardexService
       expect(mockKardexService.registrarMovimiento).toHaveBeenCalledWith(
-        expect.objectContaining({ productoId: 102, tipoMovimiento: 'INGRESO', cantidad: 2 }),
+        expect.objectContaining({
+          productoId: 102,
+          tipoMovimiento: 'INGRESO',
+          cantidad: 2,
+        }),
       );
 
       // Pagos eliminados
@@ -189,7 +231,9 @@ describe('ComprobanteService - Stock Management', () => {
         ],
       };
 
-      mockPrismaService.comprobante.findUnique.mockResolvedValue(mockComprobante);
+      mockPrismaService.comprobante.findUnique.mockResolvedValue(
+        mockComprobante,
+      );
       mockPrismaService.comprobante.update.mockResolvedValue({
         ...mockComprobante,
         estadoEnvioSunat: 'ANULADO',
@@ -221,11 +265,18 @@ describe('ComprobanteService - Stock Management', () => {
         estadoEnvioSunat: 'PENDIENTE',
         empresaId: 5,
         detalles: [
-          { id: 5, productoId: 999, cantidad: 1, descripcion: 'Producto inexistente' },
+          {
+            id: 5,
+            productoId: 999,
+            cantidad: 1,
+            descripcion: 'Producto inexistente',
+          },
         ],
       };
 
-      mockPrismaService.comprobante.findUnique.mockResolvedValue(mockComprobante);
+      mockPrismaService.comprobante.findUnique.mockResolvedValue(
+        mockComprobante,
+      );
       mockPrismaService.producto.findUnique.mockResolvedValue(null);
       mockPrismaService.comprobante.update.mockResolvedValue({
         ...mockComprobante,
@@ -250,8 +301,12 @@ describe('ComprobanteService - Stock Management', () => {
     it('debería lanzar NotFoundException si el comprobante no existe', async () => {
       mockPrismaService.comprobante.findUnique.mockResolvedValue(null);
 
-      await expect(service.anularComprobante(999)).rejects.toThrow(NotFoundException);
-      await expect(service.anularComprobante(999)).rejects.toThrow('Comprobante no encontrado');
+      await expect(service.anularComprobante(999)).rejects.toThrow(
+        NotFoundException,
+      );
+      await expect(service.anularComprobante(999)).rejects.toThrow(
+        'Comprobante no encontrado',
+      );
     });
 
     it('debería eliminar pagos al anular NV (nota de venta)', async () => {
@@ -266,8 +321,14 @@ describe('ComprobanteService - Stock Management', () => {
         ],
       };
 
-      mockPrismaService.comprobante.findUnique.mockResolvedValue(mockComprobante);
-      mockPrismaService.producto.findUnique.mockResolvedValue({ id: 200, stock: 10, costoPromedio: 25 });
+      mockPrismaService.comprobante.findUnique.mockResolvedValue(
+        mockComprobante,
+      );
+      mockPrismaService.producto.findUnique.mockResolvedValue({
+        id: 200,
+        stock: 10,
+        costoPromedio: 25,
+      });
       mockPrismaService.comprobante.update.mockResolvedValue({
         ...mockComprobante,
         estadoEnvioSunat: 'ANULADO',
@@ -280,7 +341,12 @@ describe('ComprobanteService - Stock Management', () => {
 
       // Stock revertido vía kardexService
       expect(mockKardexService.registrarMovimiento).toHaveBeenCalledWith(
-        expect.objectContaining({ productoId: 200, tipoMovimiento: 'INGRESO', cantidad: 3, empresaId: 7 }),
+        expect.objectContaining({
+          productoId: 200,
+          tipoMovimiento: 'INGRESO',
+          cantidad: 3,
+          empresaId: 7,
+        }),
       );
 
       // Pagos eliminados — punto clave del fix
@@ -292,7 +358,11 @@ describe('ComprobanteService - Stock Management', () => {
       expect(mockPrismaService.comprobante.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 10 },
-          data: expect.objectContaining({ estadoEnvioSunat: 'ANULADO', estadoPago: 'ANULADO', saldo: 0 }),
+          data: expect.objectContaining({
+            estadoEnvioSunat: 'ANULADO',
+            estadoPago: 'ANULADO',
+            saldo: 0,
+          }),
         }),
       );
     });
@@ -309,8 +379,14 @@ describe('ComprobanteService - Stock Management', () => {
         ],
       };
 
-      mockPrismaService.comprobante.findUnique.mockResolvedValue(mockComprobante);
-      mockPrismaService.producto.findUnique.mockResolvedValue({ id: 201, stock: 5, costoPromedio: 0 });
+      mockPrismaService.comprobante.findUnique.mockResolvedValue(
+        mockComprobante,
+      );
+      mockPrismaService.producto.findUnique.mockResolvedValue({
+        id: 201,
+        stock: 5,
+        costoPromedio: 0,
+      });
       mockPrismaService.comprobante.update.mockResolvedValue({
         ...mockComprobante,
         estadoEnvioSunat: 'ANULADO',

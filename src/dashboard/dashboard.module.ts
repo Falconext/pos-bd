@@ -10,4 +10,4 @@ import { GeminiModule } from '../gemini/gemini.module';
   controllers: [DashboardController, DashboardPublicController],
   providers: [DashboardService],
 })
-export class DashboardModule { }
+export class DashboardModule {}

@@ -1,4 +1,11 @@
-import { IsBoolean, IsDecimal, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsDecimal,
+  IsInt,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class ActualizarConfigEnvioDto {

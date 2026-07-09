@@ -13,7 +13,10 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ComprobanteService } from './comprobante.service';
-import { EnviarSunatService, SunatPayloadException } from './enviar-sunat.service';
+import {
+  EnviarSunatService,
+  SunatPayloadException,
+} from './enviar-sunat.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -30,7 +33,7 @@ export class ComprobanteController {
     private readonly service: ComprobanteService,
     private readonly enviarSunat: EnviarSunatService,
     private readonly empresaService: EmpresaService,
-  ) { }
+  ) {}
 
   @Get('tipo-operacion')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
@@ -64,7 +67,9 @@ export class ComprobanteController {
    */
   @Get('usage/:empresaId')
   @Roles('ADMIN_SISTEMA')
-  async getUsageStatsForEmpresa(@Param('empresaId', ParseIntPipe) empresaId: number) {
+  async getUsageStatsForEmpresa(
+    @Param('empresaId', ParseIntPipe) empresaId: number,
+  ) {
     return this.service.getUsageStats(empresaId);
   }
 
@@ -77,13 +82,16 @@ export class ComprobanteController {
   ) {
     if (
       !query.tipoComprobante ||
-      !['FORMAL', 'INFORMAL', 'COTIZACION', 'TODOS'].includes(query.tipoComprobante)
+      !['FORMAL', 'INFORMAL', 'COTIZACION', 'TODOS'].includes(
+        query.tipoComprobante,
+      )
     ) {
       throw new BadRequestException(
         'El parámetro tipoComprobante debe ser FORMAL, INFORMAL, COTIZACION o TODOS',
       );
     }
-    const isAdmin = user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
+    const isAdmin =
+      user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
     const sedeId = isAdmin ? (query.sedeId ?? null) : user.sedeId;
     const usuarioId = isAdmin ? query.usuarioId : user.id;
 
@@ -171,7 +179,8 @@ export class ComprobanteController {
     const correlativo = Number(correlativoRaw);
     if (!serie || Number.isNaN(correlativo))
       throw new BadRequestException('Serie y correlativo son requeridos');
-    const isAdmin = user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
+    const isAdmin =
+      user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
     const sedeId = isAdmin ? undefined : user.sedeId;
     return this.service.detalle(user.empresaId, serie, correlativo, sedeId);
   }
@@ -196,7 +205,8 @@ export class ComprobanteController {
   @Get(':id')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async obtenerPorId(@Param('id', ParseIntPipe) id: number, @User() user: any) {
-    const isAdmin = user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
+    const isAdmin =
+      user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
     const sedeId = isAdmin ? undefined : user.sedeId;
     return this.service.obtenerPorId(user.empresaId, id, sedeId);
   }
@@ -233,7 +243,10 @@ export class ComprobanteController {
   ) {
     const file = await this.service.obtenerXmlComprobante(user.empresaId, id);
     res.setHeader('Content-Type', file.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${file.filename}"`,
+    );
     res.end(file.buffer);
   }
 
@@ -246,7 +259,10 @@ export class ComprobanteController {
   ) {
     const file = await this.service.obtenerCdrComprobante(user.empresaId, id);
     res.setHeader('Content-Type', file.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${file.filename}"`,
+    );
     res.end(file.buffer);
   }
 
@@ -313,14 +329,32 @@ export class ComprobanteController {
   async crearBoleta(@User() user: any, @Body() dto: CrearComprobanteDto) {
     let comp;
     try {
-      console.log('[crearBoleta] Starting - empresaId:', user.empresaId, 'dto:', JSON.stringify(dto));
+      console.log(
+        '[crearBoleta] Starting - empresaId:',
+        user.empresaId,
+        'dto:',
+        JSON.stringify(dto),
+      );
       const effectiveSedeId = user.sedeId ?? dto?.sedeId ?? undefined;
       await this.empresaService.obtenerMiEmpresa(user.empresaId);
       console.log('[crearBoleta] Creating comprobante...');
-      comp = await this.service.crearFormal(dto, user.empresaId, '03', user.id, effectiveSedeId);
-      console.log('[crearBoleta] Comprobante created:', comp.id, '- Sending to SUNAT...');
+      comp = await this.service.crearFormal(
+        dto,
+        user.empresaId,
+        '03',
+        user.id,
+        effectiveSedeId,
+      );
+      console.log(
+        '[crearBoleta] Comprobante created:',
+        comp.id,
+        '- Sending to SUNAT...',
+      );
       const sunatResp = await this.enviarSunat.execute(comp.id);
-      console.log('[crearBoleta] SUNAT response:', this.summarizeSunatResponse(sunatResp));
+      console.log(
+        '[crearBoleta] SUNAT response:',
+        this.summarizeSunatResponse(sunatResp),
+      );
       return { ...sunatResp, comprobanteId: comp.id };
     } catch (error: any) {
       console.error('[crearBoleta] ERROR:', error.message);
@@ -338,19 +372,27 @@ export class ComprobanteController {
             });
           } catch (_) {}
           let deleted = false;
-          try { await this.service.eliminarComprobante(comp.id); deleted = true; } catch (_) {}
+          try {
+            await this.service.eliminarComprobante(comp.id);
+            deleted = true;
+          } catch (_) {}
           // Si no se pudo eliminar: marcar FALLIDO_ENVIO para que el usuario pueda descartarlo
           if (!deleted) {
-            try { await this.service.registrarErrorSunat(comp.id, error.message); } catch (_) {}
+            try {
+              await this.service.registrarErrorSunat(comp.id, error.message);
+            } catch (_) {}
           }
           throw new BadRequestException(
             `El comprobante no pudo enviarse a SUNAT porque los datos son inválidos: ${error.message}. ` +
-            `Por favor revise los datos ingresados y vuelva a intentarlo.`,
+              `Por favor revise los datos ingresados y vuelva a intentarlo.`,
           );
         }
         // Error de red/SUNAT transitorio → guardar como FALLIDO_ENVIO para reintento automático
         try {
-          await this.service.registrarErrorSunat(comp.id, error.message || 'Error desconocido al enviar a SUNAT');
+          await this.service.registrarErrorSunat(
+            comp.id,
+            error.message || 'Error desconocido al enviar a SUNAT',
+          );
         } catch (innerError) {
           console.error('Error registrando fallo en BD:', innerError);
         }
@@ -363,14 +405,32 @@ export class ComprobanteController {
   async crearFactura(@User() user: any, @Body() dto: CrearComprobanteDto) {
     let comp;
     try {
-      console.log('[crearFactura] Starting - empresaId:', user.empresaId, 'dto:', JSON.stringify(dto));
+      console.log(
+        '[crearFactura] Starting - empresaId:',
+        user.empresaId,
+        'dto:',
+        JSON.stringify(dto),
+      );
       const effectiveSedeId = user.sedeId ?? dto?.sedeId ?? undefined;
       await this.empresaService.obtenerMiEmpresa(user.empresaId);
       console.log('[crearFactura] Creating comprobante...');
-      comp = await this.service.crearFormal(dto, user.empresaId, '01', user.id, effectiveSedeId);
-      console.log('[crearFactura] Comprobante created:', comp.id, '- Sending to SUNAT...');
+      comp = await this.service.crearFormal(
+        dto,
+        user.empresaId,
+        '01',
+        user.id,
+        effectiveSedeId,
+      );
+      console.log(
+        '[crearFactura] Comprobante created:',
+        comp.id,
+        '- Sending to SUNAT...',
+      );
       const sunatResp = await this.enviarSunat.execute(comp.id);
-      console.log('[crearFactura] SUNAT response:', this.summarizeSunatResponse(sunatResp));
+      console.log(
+        '[crearFactura] SUNAT response:',
+        this.summarizeSunatResponse(sunatResp),
+      );
       return { ...sunatResp, comprobanteId: comp.id };
     } catch (error: any) {
       console.error('[crearFactura] ERROR:', error.message);
@@ -387,17 +447,25 @@ export class ComprobanteController {
             });
           } catch (_) {}
           let deleted = false;
-          try { await this.service.eliminarComprobante(comp.id); deleted = true; } catch (_) {}
+          try {
+            await this.service.eliminarComprobante(comp.id);
+            deleted = true;
+          } catch (_) {}
           if (!deleted) {
-            try { await this.service.registrarErrorSunat(comp.id, error.message); } catch (_) {}
+            try {
+              await this.service.registrarErrorSunat(comp.id, error.message);
+            } catch (_) {}
           }
           throw new BadRequestException(
             `El comprobante no pudo enviarse a SUNAT porque los datos son inválidos: ${error.message}. ` +
-            `Por favor revise los datos ingresados y vuelva a intentarlo.`,
+              `Por favor revise los datos ingresados y vuelva a intentarlo.`,
           );
         }
         try {
-          await this.service.registrarErrorSunat(comp.id, error.message || 'Error desconocido al enviar a SUNAT');
+          await this.service.registrarErrorSunat(
+            comp.id,
+            error.message || 'Error desconocido al enviar a SUNAT',
+          );
         } catch (innerError) {
           console.error('Error registrando fallo en BD:', innerError);
         }
@@ -412,7 +480,13 @@ export class ComprobanteController {
       console.log('[crearNotaCredito] Starting - empresaId:', user.empresaId);
       const effectiveSedeId = user.sedeId ?? dto?.sedeId ?? undefined;
       await this.empresaService.obtenerMiEmpresa(user.empresaId);
-      const comp = await this.service.crearFormal(dto, user.empresaId, '07', user.id, effectiveSedeId);
+      const comp = await this.service.crearFormal(
+        dto,
+        user.empresaId,
+        '07',
+        user.id,
+        effectiveSedeId,
+      );
       const sunatResp = await this.enviarSunat.execute(comp.id);
       return sunatResp;
     } catch (error: any) {
@@ -441,7 +515,13 @@ export class ComprobanteController {
       console.log('[crearNotaDebito] Starting - empresaId:', user.empresaId);
       const effectiveSedeId = user.sedeId ?? dto?.sedeId ?? undefined;
       await this.empresaService.obtenerMiEmpresa(user.empresaId);
-      const comp = await this.service.crearFormal(dto, user.empresaId, '08', user.id, effectiveSedeId);
+      const comp = await this.service.crearFormal(
+        dto,
+        user.empresaId,
+        '08',
+        user.id,
+        effectiveSedeId,
+      );
       const sunatResp = await this.enviarSunat.execute(comp.id);
       return sunatResp;
     } catch (error: any) {
@@ -456,7 +536,12 @@ export class ComprobanteController {
     @Body() dto: CrearComprobanteDto,
   ) {
     const effectiveSedeId = user.sedeId ?? dto?.sedeId ?? undefined;
-    const comp = await this.service.crearInformal(dto, user.empresaId, user.id, effectiveSedeId);
+    const comp = await this.service.crearInformal(
+      dto,
+      user.empresaId,
+      user.id,
+      effectiveSedeId,
+    );
     return comp;
   }
 
@@ -484,7 +569,8 @@ export class ComprobanteController {
     @Body() body: { email: string },
     @User() user: any,
   ) {
-    if (!body?.email) throw new BadRequestException('El campo email es requerido');
+    if (!body?.email)
+      throw new BadRequestException('El campo email es requerido');
     await this.service.enviarEmailComprobante(id, body.email, {
       empresaId: user.empresaId,
       rol: user.rol,
@@ -499,7 +585,8 @@ export class ComprobanteController {
     @Body() body: { celular: string },
     @User() user: any,
   ) {
-    if (!body?.celular) throw new BadRequestException('El campo celular es requerido');
+    if (!body?.celular)
+      throw new BadRequestException('El campo celular es requerido');
     await this.service.enviarWhatsAppComprobante(id, body.celular, {
       usuarioId: user.id,
       empresaId: user.empresaId,
@@ -529,7 +616,8 @@ export class ComprobanteController {
   async activarSimulacionFallo() {
     this.enviarSunat.simulateSunatFailure = true;
     return {
-      message: '⚠️ Modo simulación ACTIVADO: Los siguientes envíos a SUNAT fallarán intencionalmente',
+      message:
+        '⚠️ Modo simulación ACTIVADO: Los siguientes envíos a SUNAT fallarán intencionalmente',
       simulateSunatFailure: true,
     };
   }
@@ -539,7 +627,8 @@ export class ComprobanteController {
   async desactivarSimulacion() {
     this.enviarSunat.simulateSunatFailure = false;
     return {
-      message: '✅ Modo simulación DESACTIVADO: Envíos a SUNAT funcionarán normalmente',
+      message:
+        '✅ Modo simulación DESACTIVADO: Envíos a SUNAT funcionarán normalmente',
       simulateSunatFailure: false,
     };
   }
@@ -560,7 +649,9 @@ export class ComprobanteController {
   async listarFallidos() {
     // Usado para testing: ver qué comprobantes están marcados para reintento
     // (Requiere inyectar PrismaService al controller, por simplicidad lo haremos vía service)
-    return { message: 'Usa la query SQL: SELECT * FROM "Comprobante" WHERE "estadoEnvioSunat" = \'FALLIDO_ENVIO\'' };
+    return {
+      message:
+        'Usa la query SQL: SELECT * FROM "Comprobante" WHERE "estadoEnvioSunat" = \'FALLIDO_ENVIO\'',
+    };
   }
-
 }

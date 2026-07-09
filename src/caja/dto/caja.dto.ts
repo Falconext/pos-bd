@@ -1,4 +1,12 @@
-import { IsOptional, IsString, IsNumber, IsEnum, IsIn, Min, IsNotEmpty } from 'class-validator';
+import {
+  IsOptional,
+  IsString,
+  IsNumber,
+  IsEnum,
+  IsIn,
+  Min,
+  IsNotEmpty,
+} from 'class-validator';
 import { Transform } from 'class-transformer';
 
 export enum TipoCaja {

@@ -15,7 +15,9 @@ describe('KardexService', () => {
       findFirst: jest.fn(),
     },
     productoStock: {
-      findUnique: jest.fn().mockResolvedValue({ stock: 100, producto: { costoPromedio: 10.5 } }),
+      findUnique: jest
+        .fn()
+        .mockResolvedValue({ stock: 100, producto: { costoPromedio: 10.5 } }),
       update: jest.fn().mockResolvedValue({}),
       aggregate: jest.fn().mockResolvedValue({ _sum: { stock: 100 } }),
     },
@@ -53,7 +55,7 @@ describe('KardexService', () => {
     it('debería registrar un movimiento de salida correctamente', async () => {
       const mockProducto = {
         stock: 100,
-        costoPromedio: 10.50,
+        costoPromedio: 10.5,
       };
 
       const mockMovimiento = {
@@ -65,8 +67,8 @@ describe('KardexService', () => {
         cantidad: 5,
         stockAnterior: 100,
         stockActual: 95,
-        costoUnitario: 10.50,
-        valorTotal: 52.50,
+        costoUnitario: 10.5,
+        valorTotal: 52.5,
         fecha: new Date(),
         producto: {
           id: 1,
@@ -81,7 +83,9 @@ describe('KardexService', () => {
       };
 
       mockPrismaService.producto.findUnique.mockResolvedValue(mockProducto);
-      mockPrismaService.movimientoKardex.create.mockResolvedValue(mockMovimiento);
+      mockPrismaService.movimientoKardex.create.mockResolvedValue(
+        mockMovimiento,
+      );
 
       const result = await service.registrarMovimiento({
         productoId: 1,
@@ -90,7 +94,7 @@ describe('KardexService', () => {
         tipoMovimiento: 'SALIDA',
         concepto: 'Venta producto',
         cantidad: 5,
-        costoUnitario: 10.50,
+        costoUnitario: 10.5,
       });
 
       expect(mockPrismaService.producto.findUnique).toHaveBeenCalledWith({
@@ -107,8 +111,8 @@ describe('KardexService', () => {
           cantidad: 5,
           stockAnterior: 100,
           stockActual: 95,
-          costoUnitario: 10.50,
-          valorTotal: 52.50,
+          costoUnitario: 10.5,
+          valorTotal: 52.5,
         }),
         include: expect.any(Object),
       });
@@ -119,20 +123,22 @@ describe('KardexService', () => {
     it('debería lanzar NotFoundException si el producto no existe', async () => {
       mockPrismaService.producto.findUnique.mockResolvedValue(null);
 
-      await expect(service.registrarMovimiento({
-        productoId: 999,
-        empresaId: 1,
-        sedeId: 1,
-        tipoMovimiento: 'SALIDA',
-        concepto: 'Venta producto',
-        cantidad: 5,
-      })).rejects.toThrow(NotFoundException);
+      await expect(
+        service.registrarMovimiento({
+          productoId: 999,
+          empresaId: 1,
+          sedeId: 1,
+          tipoMovimiento: 'SALIDA',
+          concepto: 'Venta producto',
+          cantidad: 5,
+        }),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('debería calcular correctamente stock para movimiento de ingreso', async () => {
       const mockProducto = {
         stock: 50,
-        costoPromedio: 8.00,
+        costoPromedio: 8.0,
       };
 
       const mockMovimiento = {
@@ -144,8 +150,8 @@ describe('KardexService', () => {
         cantidad: 20,
         stockAnterior: 50,
         stockActual: 70,
-        costoUnitario: 9.00,
-        valorTotal: 180.00,
+        costoUnitario: 9.0,
+        valorTotal: 180.0,
         fecha: new Date(),
         producto: {
           id: 1,
@@ -160,7 +166,9 @@ describe('KardexService', () => {
       };
 
       mockPrismaService.producto.findUnique.mockResolvedValue(mockProducto);
-      mockPrismaService.movimientoKardex.create.mockResolvedValue(mockMovimiento);
+      mockPrismaService.movimientoKardex.create.mockResolvedValue(
+        mockMovimiento,
+      );
 
       const result = await service.registrarMovimiento({
         productoId: 1,
@@ -169,7 +177,7 @@ describe('KardexService', () => {
         tipoMovimiento: 'INGRESO',
         concepto: 'Compra producto',
         cantidad: 20,
-        costoUnitario: 9.00,
+        costoUnitario: 9.0,
       });
 
       expect(mockPrismaService.movimientoKardex.create).toHaveBeenCalledWith({
@@ -194,7 +202,9 @@ describe('KardexService', () => {
         },
       ];
 
-      mockPrismaService.movimientoKardex.findMany.mockResolvedValue(mockMovimientos);
+      mockPrismaService.movimientoKardex.findMany.mockResolvedValue(
+        mockMovimientos,
+      );
 
       const result = await service.calcularStockActual(1, 1);
 
@@ -233,9 +243,10 @@ describe('KardexService', () => {
       ];
 
       mockPrismaService.producto.findMany.mockResolvedValue(mockProductos);
-      
+
       // Mock para calcularStockActual
-      jest.spyOn(service, 'calcularStockActual')
+      jest
+        .spyOn(service, 'calcularStockActual')
         .mockResolvedValueOnce(95) // Producto 1: inconsistencia
         .mockResolvedValueOnce(50); // Producto 2: consistente
 

@@ -6,8 +6,8 @@ import { FeaturesModule } from '../features/features.module';
 import { S3Module } from '../s3/s3.module';
 
 @Module({
-    imports: [PrismaModule, FeaturesModule, S3Module],
-    controllers: [BannersController],
-    providers: [BannersService],
+  imports: [PrismaModule, FeaturesModule, S3Module],
+  controllers: [BannersController],
+  providers: [BannersService],
 })
-export class BannersModule { }
+export class BannersModule {}

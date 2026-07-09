@@ -4,10 +4,18 @@ import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class DashboardService {
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(private readonly prisma: PrismaService) {}
 
   // Tipos de comprobantes informales (no van a SUNAT)
-  private readonly TIPOS_INFORMALES = ['NP', 'OT', 'COT', 'TICKET', 'NV', 'RH', 'CP'];
+  private readonly TIPOS_INFORMALES = [
+    'NP',
+    'OT',
+    'COT',
+    'TICKET',
+    'NV',
+    'RH',
+    'CP',
+  ];
 
   /**
    * Filtro para excluir comprobantes informales que ya fueron convertidos
@@ -26,8 +34,8 @@ export class DashboardService {
         {
           // Excluir documentos de pre-venta que no son ventas cerradas
           tipoDoc: { notIn: ['NP', 'COT', 'OT'] },
-        }
-      ]
+        },
+      ],
     };
   }
 
@@ -41,7 +49,9 @@ export class DashboardService {
 
   // Lima es siempre UTC-5 (sin DST). Extrae "YYYY-MM-DD" en hora Lima.
   private toFechaLima(d: Date): string {
-    return new Date(d.getTime() - 5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    return new Date(d.getTime() - 5 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
   }
 
   async headerResumen(
@@ -66,54 +76,73 @@ export class DashboardService {
         ...(fechaEmision ? { fechaEmision } : {}),
       };
 
-      const [totalIngresosPositivo, totalIngresosNC, totalComprobantes, totalGuias, totalClientes, totalProductos, ingresosManuales] =
-        await Promise.all([
-          // Suma facturas/boletas/informales (positivos)
-          this.prisma.comprobante.aggregate({
-            _sum: { mtoImpVenta: true },
-            where: { ...whereBase, tipoDoc: { notIn: ['07'] } },
-          }),
-          // Suma notas de crédito (se restan)
-          this.prisma.comprobante.aggregate({
-            _sum: { mtoImpVenta: true },
-            where: { ...whereBase, tipoDoc: '07' },
-          }),
-          this.prisma.comprobante.count({ where: whereBase }),
-          this.prisma.guiaRemision.count({ where: guiaWhere }),
-          this.prisma.cliente.count({ where: { empresaId } }),
-          // Excluir productos fantasma (DGD, IPM, PLD) y productos inactivos del conteo
-          this.prisma.producto.count({
-            where: {
-              empresaId,
-              estado: 'ACTIVO',
-              codigo: { notIn: ['DGD', 'IPM', 'PLD'] },
-            },
-          }),
-          sedeId ? Promise.resolve([] as any[]) : this.prisma.ingresoManual.findMany({
-            where: {
-              empresaId,
-              ...(fechaEmision ? { fecha: fechaEmision } : {}),
-            }
-          }),
-        ]);
+      const [
+        totalIngresosPositivo,
+        totalIngresosNC,
+        totalComprobantes,
+        totalGuias,
+        totalClientes,
+        totalProductos,
+        ingresosManuales,
+      ] = await Promise.all([
+        // Suma facturas/boletas/informales (positivos)
+        this.prisma.comprobante.aggregate({
+          _sum: { mtoImpVenta: true },
+          where: { ...whereBase, tipoDoc: { notIn: ['07'] } },
+        }),
+        // Suma notas de crédito (se restan)
+        this.prisma.comprobante.aggregate({
+          _sum: { mtoImpVenta: true },
+          where: { ...whereBase, tipoDoc: '07' },
+        }),
+        this.prisma.comprobante.count({ where: whereBase }),
+        this.prisma.guiaRemision.count({ where: guiaWhere }),
+        this.prisma.cliente.count({ where: { empresaId } }),
+        // Excluir productos fantasma (DGD, IPM, PLD) y productos inactivos del conteo
+        this.prisma.producto.count({
+          where: {
+            empresaId,
+            estado: 'ACTIVO',
+            codigo: { notIn: ['DGD', 'IPM', 'PLD'] },
+          },
+        }),
+        sedeId
+          ? Promise.resolve([] as any[])
+          : this.prisma.ingresoManual.findMany({
+              where: {
+                empresaId,
+                ...(fechaEmision ? { fecha: fechaEmision } : {}),
+              },
+            }),
+      ]);
 
       const elapsed = Date.now() - startTime;
-      console.log(`[Dashboard] headerResumen completed in ${elapsed}ms for empresa ${empresaId}`);
+      console.log(
+        `[Dashboard] headerResumen completed in ${elapsed}ms for empresa ${empresaId}`,
+      );
 
       const TIPOS_FINANCIAMIENTO = ['PRESTAMO', 'INVERSION', 'CAPITAL'];
       const otrosIngresos = ingresosManuales.reduce(
-        (sum: number, i: any) => sum + (TIPOS_FINANCIAMIENTO.includes(i.tipo) ? 0 : Number(i.monto)), 0
+        (sum: number, i: any) =>
+          sum + (TIPOS_FINANCIAMIENTO.includes(i.tipo) ? 0 : Number(i.monto)),
+        0,
       );
 
       return {
-        totalIngresos: Number(totalIngresosPositivo._sum.mtoImpVenta ?? 0) - Number(totalIngresosNC._sum.mtoImpVenta ?? 0) + otrosIngresos,
+        totalIngresos:
+          Number(totalIngresosPositivo._sum.mtoImpVenta ?? 0) -
+          Number(totalIngresosNC._sum.mtoImpVenta ?? 0) +
+          otrosIngresos,
         totalComprobantes: totalComprobantes + totalGuias,
         totalClientes,
         totalProductos,
       };
     } catch (error: any) {
       const elapsed = Date.now() - startTime;
-      console.error(`[Dashboard] headerResumen FAILED after ${elapsed}ms for empresa ${empresaId}:`, error.message);
+      console.error(
+        `[Dashboard] headerResumen FAILED after ${elapsed}ms for empresa ${empresaId}:`,
+        error.message,
+      );
       throw error;
     }
   }
@@ -270,7 +299,9 @@ export class DashboardService {
   ) {
     const currentRange = this.parseRange(fechaInicio, fechaFin);
     if (!currentRange) {
-      throw new BadRequestException('fechaInicio y fechaFin son requeridos para overview');
+      throw new BadRequestException(
+        'fechaInicio y fechaFin son requeridos para overview',
+      );
     }
 
     const start = new Date(`${fechaInicio}T00:00:00.000-05:00`);
@@ -298,75 +329,162 @@ export class DashboardService {
 
     const TIPOS_FINANCIAMIENTO = ['PRESTAMO', 'INVERSION', 'CAPITAL'];
 
-    const [ventasCurr, ventasPrev, ventasNCCurr, ventasNCPrev, ingresosManualesCurr, ingresosManualesPrev] = await Promise.all([
+    const [
+      ventasCurr,
+      ventasPrev,
+      ventasNCCurr,
+      ventasNCPrev,
+      ingresosManualesCurr,
+      ingresosManualesPrev,
+    ] = await Promise.all([
       this.prisma.comprobante.aggregate({
         _sum: { mtoImpVenta: true },
-        where: { ...baseComprobanteWhere, fechaEmision: currentRange, tipoDoc: { notIn: ['07'] } },
+        where: {
+          ...baseComprobanteWhere,
+          fechaEmision: currentRange,
+          tipoDoc: { notIn: ['07'] },
+        },
       }),
       this.prisma.comprobante.aggregate({
         _sum: { mtoImpVenta: true },
-        where: { ...baseComprobanteWhere, fechaEmision: prevRange, tipoDoc: { notIn: ['07'] } },
+        where: {
+          ...baseComprobanteWhere,
+          fechaEmision: prevRange,
+          tipoDoc: { notIn: ['07'] },
+        },
       }),
       this.prisma.comprobante.aggregate({
         _sum: { mtoImpVenta: true },
-        where: { ...baseComprobanteWhere, fechaEmision: currentRange, tipoDoc: '07' },
+        where: {
+          ...baseComprobanteWhere,
+          fechaEmision: currentRange,
+          tipoDoc: '07',
+        },
       }),
       this.prisma.comprobante.aggregate({
         _sum: { mtoImpVenta: true },
-        where: { ...baseComprobanteWhere, fechaEmision: prevRange, tipoDoc: '07' },
+        where: {
+          ...baseComprobanteWhere,
+          fechaEmision: prevRange,
+          tipoDoc: '07',
+        },
       }),
-      sedeId ? Promise.resolve([] as any[]) : this.prisma.ingresoManual.findMany({
-        where: { empresaId, fecha: currentRange }
-      }),
-      sedeId ? Promise.resolve([] as any[]) : this.prisma.ingresoManual.findMany({
-        where: { empresaId, fecha: prevRange }
-      }),
+      sedeId
+        ? Promise.resolve([] as any[])
+        : this.prisma.ingresoManual.findMany({
+            where: { empresaId, fecha: currentRange },
+          }),
+      sedeId
+        ? Promise.resolve([] as any[])
+        : this.prisma.ingresoManual.findMany({
+            where: { empresaId, fecha: prevRange },
+          }),
     ]);
 
     const otrosIngresosCurr = ingresosManualesCurr.reduce(
-      (sum: number, i: any) => sum + (TIPOS_FINANCIAMIENTO.includes(i.tipo) ? 0 : Number(i.monto)), 0
+      (sum: number, i: any) =>
+        sum + (TIPOS_FINANCIAMIENTO.includes(i.tipo) ? 0 : Number(i.monto)),
+      0,
     );
     const otrosIngresosPrev = ingresosManualesPrev.reduce(
-      (sum: number, i: any) => sum + (TIPOS_FINANCIAMIENTO.includes(i.tipo) ? 0 : Number(i.monto)), 0
+      (sum: number, i: any) =>
+        sum + (TIPOS_FINANCIAMIENTO.includes(i.tipo) ? 0 : Number(i.monto)),
+      0,
     );
 
-    const ingresosCurr = Number(ventasCurr._sum?.mtoImpVenta ?? 0) - Number(ventasNCCurr._sum?.mtoImpVenta ?? 0) + otrosIngresosCurr;
-    const ingresosPrev = Number(ventasPrev._sum?.mtoImpVenta ?? 0) - Number(ventasNCPrev._sum?.mtoImpVenta ?? 0) + otrosIngresosPrev;
-    const ventasTrend = ingresosPrev === 0 ? 100 : ((ingresosCurr - ingresosPrev) / ingresosPrev) * 100;
+    const ingresosCurr =
+      Number(ventasCurr._sum?.mtoImpVenta ?? 0) -
+      Number(ventasNCCurr._sum?.mtoImpVenta ?? 0) +
+      otrosIngresosCurr;
+    const ingresosPrev =
+      Number(ventasPrev._sum?.mtoImpVenta ?? 0) -
+      Number(ventasNCPrev._sum?.mtoImpVenta ?? 0) +
+      otrosIngresosPrev;
+    const ventasTrend =
+      ingresosPrev === 0
+        ? 100
+        : ((ingresosCurr - ingresosPrev) / ingresosPrev) * 100;
 
     const [pedidosCurr, pedidosPrev] = await Promise.all([
-      this.prisma.comprobante.count({ where: { ...baseComprobanteWhere, fechaEmision: currentRange, tipoDoc: { notIn: ['07'] } } }),
-      this.prisma.comprobante.count({ where: { ...baseComprobanteWhere, fechaEmision: prevRange, tipoDoc: { notIn: ['07'] } } }),
+      this.prisma.comprobante.count({
+        where: {
+          ...baseComprobanteWhere,
+          fechaEmision: currentRange,
+          tipoDoc: { notIn: ['07'] },
+        },
+      }),
+      this.prisma.comprobante.count({
+        where: {
+          ...baseComprobanteWhere,
+          fechaEmision: prevRange,
+          tipoDoc: { notIn: ['07'] },
+        },
+      }),
     ]);
-    const pedidosTrend = pedidosPrev === 0 ? 100 : ((pedidosCurr - pedidosPrev) / pedidosPrev) * 100;
+    const pedidosTrend =
+      pedidosPrev === 0
+        ? 100
+        : ((pedidosCurr - pedidosPrev) / pedidosPrev) * 100;
 
-    const clientesNuevosCurrRows = await this.clientesNuevos(empresaId, fechaInicio, fechaFin, sedeId);
-    const clientesNuevosCurr = clientesNuevosCurrRows.reduce((acc: number, curr: any) => acc + curr.nuevos, 0);
+    const clientesNuevosCurrRows = await this.clientesNuevos(
+      empresaId,
+      fechaInicio,
+      fechaFin,
+      sedeId,
+    );
+    const clientesNuevosCurr = clientesNuevosCurrRows.reduce(
+      (acc: number, curr: any) => acc + curr.nuevos,
+      0,
+    );
 
     const prevStartStr = prevRange.gte.toISOString().slice(0, 10);
     const prevEndStr = prevRange.lte.toISOString().slice(0, 10);
     let clientesNuevosPrev = 0;
     try {
-      const clientesNuevosPrevRows = await this.clientesNuevos(empresaId, prevStartStr, prevEndStr, sedeId);
-      clientesNuevosPrev = clientesNuevosPrevRows.reduce((acc: number, curr: any) => acc + curr.nuevos, 0);
+      const clientesNuevosPrevRows = await this.clientesNuevos(
+        empresaId,
+        prevStartStr,
+        prevEndStr,
+        sedeId,
+      );
+      clientesNuevosPrev = clientesNuevosPrevRows.reduce(
+        (acc: number, curr: any) => acc + curr.nuevos,
+        0,
+      );
     } catch (e) {
       clientesNuevosPrev = 0;
     }
-    const clientesTrend = clientesNuevosPrev === 0 ? 100 : ((clientesNuevosCurr - clientesNuevosPrev) / clientesNuevosPrev) * 100;
+    const clientesTrend =
+      clientesNuevosPrev === 0
+        ? 100
+        : ((clientesNuevosCurr - clientesNuevosPrev) / clientesNuevosPrev) *
+          100;
 
     const conversionCurr = pedidosCurr === 0 ? 0 : ingresosCurr / pedidosCurr;
-    const conversionTrend = pedidosPrev === 0 ? 100 : (((ingresosCurr / pedidosCurr) - (ingresosPrev / pedidosPrev)) / (ingresosPrev / pedidosPrev)) * 100;
+    const conversionTrend =
+      pedidosPrev === 0
+        ? 100
+        : ((ingresosCurr / pedidosCurr - ingresosPrev / pedidosPrev) /
+            (ingresosPrev / pedidosPrev)) *
+          100;
 
     const dailyVentasRows = await this.prisma.comprobante.groupBy({
       by: ['fechaEmision'],
-      where: { ...baseComprobanteWhere, fechaEmision: currentRange, tipoDoc: { notIn: ['07'] } },
+      where: {
+        ...baseComprobanteWhere,
+        fechaEmision: currentRange,
+        tipoDoc: { notIn: ['07'] },
+      },
       _sum: { mtoImpVenta: true },
     });
 
     const mapDaily = new Map<string, number>();
     for (const r of dailyVentasRows) {
       const f = this.toFechaLima(r.fechaEmision);
-      mapDaily.set(f, (mapDaily.get(f) || 0) + Number(r._sum?.mtoImpVenta ?? 0));
+      mapDaily.set(
+        f,
+        (mapDaily.get(f) || 0) + Number(r._sum?.mtoImpVenta ?? 0),
+      );
     }
     const chartVentas = Array.from(mapDaily.entries())
       .map(([date, total]) => ({ date, total: Math.max(0, total) }))
@@ -392,14 +510,38 @@ export class DashboardService {
       else if (m === 'EFECTIVO') sumEfectivo += t;
       else sumOtros += t;
     }
-    const totalCanales = sumTarjeta + sumTransferencia + sumRedes + sumEfectivo + sumOtros;
-    const chartCanales = totalCanales === 0 ? [] : [
-      { name: 'Tarjeta', value: sumTarjeta, percentage: (sumTarjeta / totalCanales) * 100 },
-      { name: 'Transferencia', value: sumTransferencia, percentage: (sumTransferencia / totalCanales) * 100 },
-      { name: 'Yape / Plin', value: sumRedes, percentage: (sumRedes / totalCanales) * 100 },
-      { name: 'Efectivo', value: sumEfectivo, percentage: (sumEfectivo / totalCanales) * 100 },
-      { name: 'Otros', value: sumOtros, percentage: (sumOtros / totalCanales) * 100 },
-    ].filter((x) => x.value > 0);
+    const totalCanales =
+      sumTarjeta + sumTransferencia + sumRedes + sumEfectivo + sumOtros;
+    const chartCanales =
+      totalCanales === 0
+        ? []
+        : [
+            {
+              name: 'Tarjeta',
+              value: sumTarjeta,
+              percentage: (sumTarjeta / totalCanales) * 100,
+            },
+            {
+              name: 'Transferencia',
+              value: sumTransferencia,
+              percentage: (sumTransferencia / totalCanales) * 100,
+            },
+            {
+              name: 'Yape / Plin',
+              value: sumRedes,
+              percentage: (sumRedes / totalCanales) * 100,
+            },
+            {
+              name: 'Efectivo',
+              value: sumEfectivo,
+              percentage: (sumEfectivo / totalCanales) * 100,
+            },
+            {
+              name: 'Otros',
+              value: sumOtros,
+              percentage: (sumOtros / totalCanales) * 100,
+            },
+          ].filter((x) => x.value > 0);
 
     const recientes = await this.prisma.comprobante.findMany({
       where: baseComprobanteWhere,
@@ -416,7 +558,13 @@ export class DashboardService {
       cliente: r.cliente?.nombre || 'CLIENTES VARIOS',
     }));
 
-    const topProds = await this.topProductos(empresaId, fechaInicio, fechaFin, 4, sedeId);
+    const topProds = await this.topProductos(
+      empresaId,
+      fechaInicio,
+      fechaFin,
+      4,
+      sedeId,
+    );
 
     const comprasRows = await this.prisma.compra.aggregate({
       _sum: { total: true },
@@ -428,64 +576,96 @@ export class DashboardService {
     });
 
     const TIPOS_INFORMALES_ARRAY = this.TIPOS_INFORMALES;
-    const [productosBajoStockRaw, sunatPendientesRows, sunatPendientesCount, cuentasCobrarAgg, pedidosTiendaCount] =
-      await Promise.all([
-        this.prisma.producto.findMany({
-          where: {
-            empresaId,
-            estado: 'ACTIVO',
-            stockMinimo: { gt: 0 },
-            codigo: { notIn: ['DGD', 'IPM', 'PLD'] },
+    const [
+      productosBajoStockRaw,
+      sunatPendientesRows,
+      sunatPendientesCount,
+      cuentasCobrarAgg,
+      pedidosTiendaCount,
+    ] = await Promise.all([
+      this.prisma.producto.findMany({
+        where: {
+          empresaId,
+          estado: 'ACTIVO',
+          stockMinimo: { gt: 0 },
+          codigo: { notIn: ['DGD', 'IPM', 'PLD'] },
+        },
+        select: { id: true, descripcion: true, stock: true, stockMinimo: true },
+        orderBy: { stock: 'asc' },
+        take: 20,
+      }),
+      this.prisma.comprobante.findMany({
+        where: {
+          empresaId,
+          ...(sedeId ? { sedeId } : {}),
+          estadoEnvioSunat: {
+            in: [
+              EstadoSunat.PENDIENTE,
+              EstadoSunat.FALLIDO_ENVIO,
+              EstadoSunat.RECHAZADO,
+            ],
           },
-          select: { id: true, descripcion: true, stock: true, stockMinimo: true },
-          orderBy: { stock: 'asc' },
-          take: 20,
-        }),
-        this.prisma.comprobante.findMany({
-          where: {
-            empresaId,
-            ...(sedeId ? { sedeId } : {}),
-            estadoEnvioSunat: { in: [EstadoSunat.PENDIENTE, EstadoSunat.FALLIDO_ENVIO, EstadoSunat.RECHAZADO] },
-            tipoDoc: { notIn: TIPOS_INFORMALES_ARRAY },
+          tipoDoc: { notIn: TIPOS_INFORMALES_ARRAY },
+        },
+        select: {
+          id: true,
+          serie: true,
+          correlativo: true,
+          tipoDoc: true,
+          estadoEnvioSunat: true,
+          mtoImpVenta: true,
+        },
+        orderBy: { fechaEmision: 'desc' },
+        take: 4,
+      }),
+      this.prisma.comprobante.count({
+        where: {
+          empresaId,
+          ...(sedeId ? { sedeId } : {}),
+          estadoEnvioSunat: {
+            in: [
+              EstadoSunat.PENDIENTE,
+              EstadoSunat.FALLIDO_ENVIO,
+              EstadoSunat.RECHAZADO,
+            ],
           },
-          select: { id: true, serie: true, correlativo: true, tipoDoc: true, estadoEnvioSunat: true, mtoImpVenta: true },
-          orderBy: { fechaEmision: 'desc' },
-          take: 4,
-        }),
-        this.prisma.comprobante.count({
-          where: {
-            empresaId,
-            ...(sedeId ? { sedeId } : {}),
-            estadoEnvioSunat: { in: [EstadoSunat.PENDIENTE, EstadoSunat.FALLIDO_ENVIO, EstadoSunat.RECHAZADO] },
-            tipoDoc: { notIn: TIPOS_INFORMALES_ARRAY },
+          tipoDoc: { notIn: TIPOS_INFORMALES_ARRAY },
+        },
+      }),
+      this.prisma.comprobante.aggregate({
+        // Suma el saldo pendiente (no el total), igual que Cuentas por Cobrar.
+        _sum: { saldo: true },
+        _count: { id: true },
+        where: {
+          empresaId,
+          ...(sedeId ? { sedeId } : {}),
+          estadoPago: {
+            in: [EstadoPago.PENDIENTE_PAGO, EstadoPago.PAGO_PARCIAL],
           },
-        }),
-        this.prisma.comprobante.aggregate({
-          // Suma el saldo pendiente (no el total), igual que Cuentas por Cobrar.
-          _sum: { saldo: true },
-          _count: { id: true },
-          where: {
-            empresaId,
-            ...(sedeId ? { sedeId } : {}),
-            estadoPago: { in: [EstadoPago.PENDIENTE_PAGO, EstadoPago.PAGO_PARCIAL] },
-            // Incluye notas de venta y demás receivables; excluye pedidos
-            // preliminares (NP), cotizaciones (COT) y notas de crédito (07).
-            tipoDoc: { notIn: ['NP', 'COT', '07'] },
-            estadoEnvioSunat: { not: EstadoSunat.ANULADO },
-            saldo: { gt: 0 },
+          // Incluye notas de venta y demás receivables; excluye pedidos
+          // preliminares (NP), cotizaciones (COT) y notas de crédito (07).
+          tipoDoc: { notIn: ['NP', 'COT', '07'] },
+          estadoEnvioSunat: { not: EstadoSunat.ANULADO },
+          saldo: { gt: 0 },
+        },
+      }),
+      this.prisma.pedidoTienda.count({
+        where: {
+          empresaId,
+          estado: 'PENDIENTE' as any,
+          estadoEntrega: {
+            notIn: [
+              'ENTREGADO_COMPLETADO',
+              'CANCELADO_INTERNO',
+              'CANCELADO_CLIENTE',
+            ] as any,
           },
-        }),
-        this.prisma.pedidoTienda.count({
-          where: {
-            empresaId,
-            estado: 'PENDIENTE' as any,
-            estadoEntrega: { notIn: ['ENTREGADO_COMPLETADO', 'CANCELADO_INTERNO', 'CANCELADO_CLIENTE'] as any },
-          },
-        }),
-      ]);
+        },
+      }),
+    ]);
 
     const stockBajoList = productosBajoStockRaw
-      .filter(p => Number(p.stock) <= (p.stockMinimo ?? 0))
+      .filter((p) => Number(p.stock) <= (p.stockMinimo ?? 0))
       .slice(0, 4);
 
     const comprasCurr = Number(comprasRows._sum.total ?? 0);
@@ -518,66 +698,100 @@ export class DashboardService {
             },
           ],
         },
-      })
+      }),
     ]);
 
     const calculateGastoOp = (rows: any[], gte: Date, lte: Date) => {
-       let total = 0;
-       const limitStart = gte.getTime();
-       const limitEnd = lte.getTime();
-       for (const g of rows) {
-          if (!g.recurrenteDiario) {
-             total += Number(g.monto);
-          } else {
-             const start = g.fechaInicio.getTime() > limitStart ? g.fechaInicio.getTime() : limitStart;
-             const fin = (g.fechaFin && g.fechaFin.getTime() < limitEnd) ? g.fechaFin.getTime() : limitEnd;
-             if (start <= fin) {
-                const dias = Math.max(0, Math.ceil((fin - start) / 86400000));
-                total += Number(g.monto) * dias;
-             }
+      let total = 0;
+      const limitStart = gte.getTime();
+      const limitEnd = lte.getTime();
+      for (const g of rows) {
+        if (!g.recurrenteDiario) {
+          total += Number(g.monto);
+        } else {
+          const start =
+            g.fechaInicio.getTime() > limitStart
+              ? g.fechaInicio.getTime()
+              : limitStart;
+          const fin =
+            g.fechaFin && g.fechaFin.getTime() < limitEnd
+              ? g.fechaFin.getTime()
+              : limitEnd;
+          if (start <= fin) {
+            const dias = Math.max(0, Math.ceil((fin - start) / 86400000));
+            total += Number(g.monto) * dias;
           }
-       }
-       return total;
+        }
+      }
+      return total;
     };
 
-    const gastoOpCurr = calculateGastoOp(gastosOpCurrRows, currentRange.gte, currentRange.lte);
-    const gastoOpPrev = calculateGastoOp(gastosOpPrevRows, prevRange.gte, prevRange.lte);
+    const gastoOpCurr = calculateGastoOp(
+      gastosOpCurrRows,
+      currentRange.gte,
+      currentRange.lte,
+    );
+    const gastoOpPrev = calculateGastoOp(
+      gastosOpPrevRows,
+      prevRange.gte,
+      prevRange.lte,
+    );
 
     // -- Campañas Marketing --
     const campanas = await this.prisma.campanaMarketing.findMany({
-      where: { empresaId }
+      where: { empresaId },
     });
 
     const calculateMarketing = (campanas: any[], gte: Date, lte: Date) => {
-       let total = 0;
-       const limitStart = gte.getTime();
-       const limitEnd = lte.getTime();
-       for (const c of campanas) {
-          if (c.estado === 'PAUSADA') continue;
-          const inicio = c.fechaInicio.getTime() > limitStart ? c.fechaInicio.getTime() : limitStart;
-          let limiteCampana = limitEnd;
-          if (c.fechaFin && !c.esRecurrente) {
-             limiteCampana = c.fechaFin.getTime() < limitEnd ? c.fechaFin.getTime() : limitEnd;
-          }
-          if (inicio <= limiteCampana) {
-             const dias = Math.max(0, Math.ceil((limiteCampana - inicio) / 86400000));
-             total += Number(c.presupuestoDiario) * dias;
-          }
-       }
-       return total;
+      let total = 0;
+      const limitStart = gte.getTime();
+      const limitEnd = lte.getTime();
+      for (const c of campanas) {
+        if (c.estado === 'PAUSADA') continue;
+        const inicio =
+          c.fechaInicio.getTime() > limitStart
+            ? c.fechaInicio.getTime()
+            : limitStart;
+        let limiteCampana = limitEnd;
+        if (c.fechaFin && !c.esRecurrente) {
+          limiteCampana =
+            c.fechaFin.getTime() < limitEnd ? c.fechaFin.getTime() : limitEnd;
+        }
+        if (inicio <= limiteCampana) {
+          const dias = Math.max(
+            0,
+            Math.ceil((limiteCampana - inicio) / 86400000),
+          );
+          total += Number(c.presupuestoDiario) * dias;
+        }
+      }
+      return total;
     };
 
-    const marketingCurr = calculateMarketing(campanas, currentRange.gte, currentRange.lte);
-    const marketingPrev = calculateMarketing(campanas, prevRange.gte, prevRange.lte);
+    const marketingCurr = calculateMarketing(
+      campanas,
+      currentRange.gte,
+      currentRange.lte,
+    );
+    const marketingPrev = calculateMarketing(
+      campanas,
+      prevRange.gte,
+      prevRange.lte,
+    );
 
     const gastosCurr = comprasCurr + gastoOpCurr + marketingCurr;
     const gastosPrev = comprasPrev + gastoOpPrev + marketingPrev;
     const gananciasCurr = ingresosCurr - gastosCurr;
     const gananciasPrev = ingresosPrev - gastosPrev;
 
-    const gastosTrend = gastosPrev === 0 ? 100 : ((gastosCurr - gastosPrev) / gastosPrev) * 100;
-    const gananciasTrend = gananciasPrev === 0 ? 100 : ((gananciasCurr - gananciasPrev) / gananciasPrev) * 100;
-    const marginCurr = ingresosCurr > 0 ? (gananciasCurr / ingresosCurr) * 100 : 0;
+    const gastosTrend =
+      gastosPrev === 0 ? 100 : ((gastosCurr - gastosPrev) / gastosPrev) * 100;
+    const gananciasTrend =
+      gananciasPrev === 0
+        ? 100
+        : ((gananciasCurr - gananciasPrev) / gananciasPrev) * 100;
+    const marginCurr =
+      ingresosCurr > 0 ? (gananciasCurr / ingresosCurr) * 100 : 0;
 
     return {
       kpis: {
@@ -597,7 +811,7 @@ export class DashboardService {
         margen: marginCurr,
       },
       alertas: {
-        stockBajo: stockBajoList.map(p => ({
+        stockBajo: stockBajoList.map((p) => ({
           id: p.id,
           descripcion: p.descripcion,
           stock: p.stock,
@@ -605,7 +819,7 @@ export class DashboardService {
         })),
         sunatPendientes: {
           count: sunatPendientesCount,
-          items: sunatPendientesRows.map(c => ({
+          items: sunatPendientesRows.map((c) => ({
             id: c.id,
             serie: c.serie,
             correlativo: c.correlativo,
@@ -638,10 +852,10 @@ export class DashboardService {
     // Filtrar por sede si corresponde
     const rows = await this.prisma.comprobante.groupBy({
       by: ['clienteId'],
-      where: { 
-        empresaId, 
+      where: {
+        empresaId,
         ...(sedeId ? { sedeId } : {}),
-        estadoEnvioSunat: { not: 'ANULADO' }
+        estadoEnvioSunat: { not: 'ANULADO' },
       },
       _min: { fechaEmision: true },
     });

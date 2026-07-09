@@ -70,7 +70,9 @@ export class WhatsAppService {
     return { token, phoneId };
   }
 
-  private async getCredentialsForEmpresa(empresaId: number): Promise<WhatsAppCredentials> {
+  private async getCredentialsForEmpresa(
+    empresaId: number,
+  ): Promise<WhatsAppCredentials> {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
       select: {
@@ -82,7 +84,9 @@ export class WhatsAppService {
     });
 
     if (!empresa?.whatsappActivo || empresa?.whatsappProvider === 'DISABLED') {
-      throw new BadRequestException('WhatsApp está deshabilitado para esta empresa.');
+      throw new BadRequestException(
+        'WhatsApp está deshabilitado para esta empresa.',
+      );
     }
 
     if (empresa.whatsappProvider === 'EMPRESA') {
@@ -101,7 +105,9 @@ export class WhatsAppService {
 
     const platform = this.getCredentials();
     if (!platform.token || !platform.phoneId) {
-      throw new BadRequestException('WhatsApp de plataforma no está configurado.');
+      throw new BadRequestException(
+        'WhatsApp de plataforma no está configurado.',
+      );
     }
 
     return { ...platform, source: 'PLATFORM' };
@@ -120,28 +126,43 @@ export class WhatsAppService {
    */
   private formatearNumero(numero: string): string {
     let num = numero.replace(/\D/g, '');
-    
+
     // Si tiene 9 dígitos, asumir Perú (+51)
     if (num.length === 9) {
       num = '51' + num;
     }
-    
+
     return num;
   }
 
   /**
    * Envía un mensaje de texto libre (requiere ventana activa de 24h o template aprobado)
    */
-  async enviarTexto(numero: string, mensaje: string): Promise<{ success: boolean; error?: string }> {
+  async enviarTexto(
+    numero: string,
+    mensaje: string,
+  ): Promise<{ success: boolean; error?: string }> {
     const { token, phoneId } = this.getCredentials();
-    if (!token || !phoneId) return { success: false, error: 'WhatsApp no configurado' };
+    if (!token || !phoneId)
+      return { success: false, error: 'WhatsApp no configurado' };
 
     const to = this.formatearNumero(numero);
     try {
       await axios.post(
         `${this.apiUrl}/${phoneId}/messages`,
-        { messaging_product: 'whatsapp', recipient_type: 'individual', to, type: 'text', text: { body: mensaje } },
-        { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } },
+        {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to,
+          type: 'text',
+          text: { body: mensaje },
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        },
       );
       return { success: true };
     } catch (error) {
@@ -168,14 +189,20 @@ export class WhatsAppService {
       serie,
       correlativo,
       monto,
-      incluyeXML
+      incluyeXML,
     } = params;
 
     try {
-      const { token, phoneId, source } = await this.getCredentialsForEmpresa(empresaId);
+      const { token, phoneId, source } =
+        await this.getCredentialsForEmpresa(empresaId);
       const to = this.formatearNumero(numeroDestino);
-      
-      const tipoDocumento = tipoDoc === '01' ? 'Factura' : tipoDoc === '03' ? 'Boleta' : 'Comprobante';
+
+      const tipoDocumento =
+        tipoDoc === '01'
+          ? 'Factura'
+          : tipoDoc === '03'
+            ? 'Boleta'
+            : 'Comprobante';
       const correlativoStr = `${serie}-${String(correlativo).padStart(8, '0')}`;
       const mensaje = `🧾 *${empresaNombre}*\nAdjuntamos tu ${tipoDocumento} ${correlativoStr} por el monto de S/ ${monto.toFixed(2)}.\n\nGracias por tu preferencia.`;
 
@@ -187,8 +214,8 @@ export class WhatsAppService {
         document: {
           link: pdfUrl,
           caption: mensaje,
-          filename: `${correlativoStr}.pdf`
-        }
+          filename: `${correlativoStr}.pdf`,
+        },
       };
 
       const response = await axios.post(
@@ -248,13 +275,8 @@ export class WhatsAppService {
   async enviarGuia(
     params: EnviarGuiaParams,
   ): Promise<{ success: boolean; mensajeId?: string; error?: string }> {
-    const {
-      guiaRemisionId,
-      empresaId,
-      usuarioId,
-      numeroDestino,
-      pdfUrl,
-    } = params;
+    const { guiaRemisionId, empresaId, usuarioId, numeroDestino, pdfUrl } =
+      params;
 
     try {
       const { token, phoneId } = await this.getCredentialsForEmpresa(empresaId);
@@ -267,8 +289,8 @@ export class WhatsAppService {
         type: 'template',
         template: {
           name: 'hello_world',
-          language: { code: 'en_US' }
-        }
+          language: { code: 'en_US' },
+        },
       };
 
       const response = await axios.post(
@@ -300,7 +322,7 @@ export class WhatsAppService {
     } catch (error) {
       const errorMsg = error.response?.data?.error?.message || error.message;
       this.logger.error(`❌ Error WhatsApp Guía: ${errorMsg}`);
-      
+
       await this.prisma.whatsAppEnvio.create({
         data: {
           guiaRemisionId,
@@ -316,13 +338,24 @@ export class WhatsAppService {
     }
   }
 
-  async obtenerHistorialEmpresa(empresaId: number, page: number = 1, limit: number = 20) {
+  async obtenerHistorialEmpresa(
+    empresaId: number,
+    page: number = 1,
+    limit: number = 20,
+  ) {
     const skip = (page - 1) * limit;
     const [envios, total] = await Promise.all([
       this.prisma.whatsAppEnvio.findMany({
         where: { empresaId },
         include: {
-          comprobante: { select: { tipoDoc: true, serie: true, correlativo: true, cliente: true } },
+          comprobante: {
+            select: {
+              tipoDoc: true,
+              serie: true,
+              correlativo: true,
+              cliente: true,
+            },
+          },
           usuario: { select: { nombre: true } },
         },
         orderBy: { creadoEn: 'desc' },
@@ -331,7 +364,13 @@ export class WhatsAppService {
       }),
       this.prisma.whatsAppEnvio.count({ where: { empresaId } }),
     ]);
-    return { data: envios, total, page, limit, totalPages: Math.ceil(total / limit) };
+    return {
+      data: envios,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   /**

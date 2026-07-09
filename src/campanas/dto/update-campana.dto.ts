@@ -1,7 +1,18 @@
-import { IsString, IsEnum, IsOptional, IsNumber, IsDateString, Min } from 'class-validator';
+import {
+  IsString,
+  IsEnum,
+  IsOptional,
+  IsNumber,
+  IsDateString,
+  Min,
+} from 'class-validator';
 import { PartialType } from '@nestjs/mapped-types';
 import { CreateCampanaDto } from './create-campana.dto';
-import { PlataformaAds, EstadoCampana, FrecuenciaPresupuesto } from '@prisma/client';
+import {
+  PlataformaAds,
+  EstadoCampana,
+  FrecuenciaPresupuesto,
+} from '@prisma/client';
 import { IsBoolean } from 'class-validator';
 
 export class UpdateCampanaDto extends PartialType(CreateCampanaDto) {

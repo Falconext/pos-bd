@@ -1,4 +1,11 @@
-import { IsOptional, IsDateString, IsInt, IsEnum, IsString, Min } from 'class-validator';
+import {
+  IsOptional,
+  IsDateString,
+  IsInt,
+  IsEnum,
+  IsString,
+  Min,
+} from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
 export enum TipoMovimiento {

@@ -5,7 +5,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { AperturaCajaDto, CierreCajaDto, MovimientoCajaDto, RegistrarEgresoDto, EditarEgresoDto } from './dto/caja.dto';
+import {
+  AperturaCajaDto,
+  CierreCajaDto,
+  MovimientoCajaDto,
+  RegistrarEgresoDto,
+  EditarEgresoDto,
+} from './dto/caja.dto';
 
 @Injectable()
 export class CajaService {
@@ -14,7 +20,7 @@ export class CajaService {
   // Detectar turno automáticamente basado en la hora
   private detectarTurno(fecha: Date = new Date()): string {
     const hora = fecha.getHours();
-    
+
     if (hora >= 6 && hora < 14) {
       return 'MAÑANA';
     } else if (hora >= 14 && hora < 22) {
@@ -25,14 +31,20 @@ export class CajaService {
   }
 
   private parseRangeDates(fechaInicio?: string, fechaFin?: string) {
-    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+    const today = new Date().toLocaleDateString('en-CA', {
+      timeZone: 'America/Lima',
+    });
     const inicio = new Date(`${fechaInicio || today}T00:00:00.000-05:00`);
     const fin = new Date(`${fechaFin || today}T23:59:59.999-05:00`);
     return { gte: inicio, lte: fin } as const;
   }
 
   // Verificar si la caja está abierta para el usuario
-  async verificarCajaAbierta(usuarioId: number, empresaId: number, sedeId?: number) {
+  async verificarCajaAbierta(
+    usuarioId: number,
+    empresaId: number,
+    sedeId?: number,
+  ) {
     const { gte: hoyInicio, lte: hoyFin } = this.parseRangeDates();
 
     // Solo considerar APERTURA y CIERRE — los EGRESO/INGRESO no cambian el estado de la caja
@@ -55,7 +67,11 @@ export class CajaService {
   }
 
   // Verificar si la caja ya fue cerrada hoy
-  async verificarCajaCerrada(usuarioId: number, empresaId: number, sedeId?: number) {
+  async verificarCajaCerrada(
+    usuarioId: number,
+    empresaId: number,
+    sedeId?: number,
+  ) {
     const { gte: hoyInicio, lte: hoyFin } = this.parseRangeDates();
 
     const ultimoMovimiento = await this.prisma.movimientoCaja.findFirst({
@@ -84,7 +100,11 @@ export class CajaService {
     sedeId?: number,
   ) {
     // Verificar si ya hay una caja abierta hoy
-    const cajaAbierta = await this.verificarCajaAbierta(usuarioId, empresaId, sedeId);
+    const cajaAbierta = await this.verificarCajaAbierta(
+      usuarioId,
+      empresaId,
+      sedeId,
+    );
     if (cajaAbierta) {
       throw new BadRequestException(
         'Ya existe una caja abierta para el día de hoy',
@@ -128,7 +148,11 @@ export class CajaService {
     sedeId?: number,
   ) {
     // Verificar si hay una caja abierta
-    const cajaAbierta = await this.verificarCajaAbierta(usuarioId, empresaId, sedeId);
+    const cajaAbierta = await this.verificarCajaAbierta(
+      usuarioId,
+      empresaId,
+      sedeId,
+    );
     if (!cajaAbierta) {
       throw new BadRequestException(
         'No hay una caja abierta para cerrar en el día de hoy',
@@ -199,9 +223,21 @@ export class CajaService {
   }
 
   // Obtener estado actual de la caja
-  async obtenerEstadoCaja(usuarioId: number, empresaId: number, sedeId?: number) {
-    const cajaAbierta = await this.verificarCajaAbierta(usuarioId, empresaId, sedeId);
-    const cajaCerrada = await this.verificarCajaCerrada(usuarioId, empresaId, sedeId);
+  async obtenerEstadoCaja(
+    usuarioId: number,
+    empresaId: number,
+    sedeId?: number,
+  ) {
+    const cajaAbierta = await this.verificarCajaAbierta(
+      usuarioId,
+      empresaId,
+      sedeId,
+    );
+    const cajaCerrada = await this.verificarCajaCerrada(
+      usuarioId,
+      empresaId,
+      sedeId,
+    );
 
     let estado: 'CERRADA' | 'ABIERTA' | 'PENDIENTE_CIERRE' = 'CERRADA';
     let movimiento: any = null;
@@ -261,8 +297,8 @@ export class CajaService {
           },
           orderBy: { fecha: 'desc' },
           take: 10,
-          include: { usuario: { select: { nombre: true } } }
-        })
+          include: { usuario: { select: { nombre: true } } },
+        }),
       ]);
       totalEgresos = Number(resumen._sum.monto || 0);
       egresosRecientes = recientes;
@@ -358,41 +394,63 @@ export class CajaService {
     );
 
     // Calcular resumen de aperturas y cierres
-    const aperturas = movimientosCaja.filter(m => m.tipoMovimiento === 'APERTURA');
-    const cierres = movimientosCaja.filter(m => m.tipoMovimiento === 'CIERRE');
+    const aperturas = movimientosCaja.filter(
+      (m) => m.tipoMovimiento === 'APERTURA',
+    );
+    const cierres = movimientosCaja.filter(
+      (m) => m.tipoMovimiento === 'CIERRE',
+    );
 
     // Calcular resumen por turno
-    const resumenPorTurno = movimientosCaja.reduce((acc, mov) => {
-      const turno = mov.turno || 'SIN_TURNO';
-      if (!acc[turno]) {
-        acc[turno] = {
-          turno,
-          aperturas: 0,
-          cierres: 0,
-          montoInicialTotal: 0,
-          montoFinalTotal: 0,
-          diferenciasTotal: 0,
-        };
-      }
-      
-      if (mov.tipoMovimiento === 'APERTURA') {
-        acc[turno].aperturas++;
-        acc[turno].montoInicialTotal += parseFloat(mov.montoInicial?.toString() || '0');
-      } else if (mov.tipoMovimiento === 'CIERRE') {
-        acc[turno].cierres++;
-        acc[turno].montoFinalTotal += parseFloat(mov.montoFinal?.toString() || '0');
-        acc[turno].diferenciasTotal += parseFloat(mov.diferencia?.toString() || '0');
-      }
-      
-      return acc;
-    }, {} as Record<string, any>);
+    const resumenPorTurno = movimientosCaja.reduce(
+      (acc, mov) => {
+        const turno = mov.turno || 'SIN_TURNO';
+        if (!acc[turno]) {
+          acc[turno] = {
+            turno,
+            aperturas: 0,
+            cierres: 0,
+            montoInicialTotal: 0,
+            montoFinalTotal: 0,
+            diferenciasTotal: 0,
+          };
+        }
+
+        if (mov.tipoMovimiento === 'APERTURA') {
+          acc[turno].aperturas++;
+          acc[turno].montoInicialTotal += parseFloat(
+            mov.montoInicial?.toString() || '0',
+          );
+        } else if (mov.tipoMovimiento === 'CIERRE') {
+          acc[turno].cierres++;
+          acc[turno].montoFinalTotal += parseFloat(
+            mov.montoFinal?.toString() || '0',
+          );
+          acc[turno].diferenciasTotal += parseFloat(
+            mov.diferencia?.toString() || '0',
+          );
+        }
+
+        return acc;
+      },
+      {} as Record<string, any>,
+    );
 
     const resumenCaja = {
       totalAperturas: aperturas.length,
       totalCierres: cierres.length,
-      montoInicialTotal: aperturas.reduce((sum, a) => sum + parseFloat(a.montoInicial?.toString() || '0'), 0),
-      montoFinalTotal: cierres.reduce((sum, c) => sum + parseFloat(c.montoFinal?.toString() || '0'), 0),
-      diferenciasTotal: cierres.reduce((sum, c) => sum + parseFloat(c.diferencia?.toString() || '0'), 0),
+      montoInicialTotal: aperturas.reduce(
+        (sum, a) => sum + parseFloat(a.montoInicial?.toString() || '0'),
+        0,
+      ),
+      montoFinalTotal: cierres.reduce(
+        (sum, c) => sum + parseFloat(c.montoFinal?.toString() || '0'),
+        0,
+      ),
+      diferenciasTotal: cierres.reduce(
+        (sum, c) => sum + parseFloat(c.diferencia?.toString() || '0'),
+        0,
+      ),
       resumenPorTurno: Object.values(resumenPorTurno),
     };
 
@@ -421,11 +479,8 @@ export class CajaService {
         creadoEn: { gte: fechaInicio, lte: fechaFin },
         estadoPago: 'COMPLETADO',
         estadoEnvioSunat: { not: 'ANULADO' as any },
-        OR: [
-          { adelanto: null },
-          { adelanto: 0 }
-        ],
-        pagos: { none: {} }
+        OR: [{ adelanto: null }, { adelanto: 0 }],
+        pagos: { none: {} },
       },
       select: { mtoImpVenta: true, medioPago: true },
     });
@@ -437,9 +492,11 @@ export class CajaService {
         ...(sedeId ? { sedeId } : {}),
         tipoDoc: { in: ['01', '03'] },
         creadoEn: { gte: fechaInicio, lte: fechaFin },
-        estadoEnvioSunat: { in: ['EMITIDO', 'PENDIENTE', 'REGISTRADO', 'ENVIADO'] as any },
+        estadoEnvioSunat: {
+          in: ['EMITIDO', 'PENDIENTE', 'REGISTRADO', 'ENVIADO'] as any,
+        },
         formaPagoTipo: 'Contado',
-        pagos: { none: {} }
+        pagos: { none: {} },
       },
       select: { mtoImpVenta: true, medioPago: true },
     });
@@ -464,9 +521,12 @@ export class CajaService {
     };
 
     [...comprobantesInformales, ...comprobantesFormales].forEach((comp) => {
-      let medio = (comp.medioPago || 'EFECTIVO').toString().toUpperCase().trim();
+      let medio = (comp.medioPago || 'EFECTIVO')
+        .toString()
+        .toUpperCase()
+        .trim();
       const monto = Number(comp.mtoImpVenta || 0);
-      
+
       // Normalizar nombres de medios de pago
       if (medio === 'EFECTIVO' || medio === 'CASH') {
         medio = 'EFECTIVO';
@@ -479,17 +539,22 @@ export class CajaService {
       } else if (medio === 'TARJETA' || medio === 'CARD') {
         medio = 'TARJETA';
       } else {
-        console.log(`Medio de pago no reconocido: "${comp.medioPago}" -> "${medio}", asignando a EFECTIVO`);
+        console.log(
+          `Medio de pago no reconocido: "${comp.medioPago}" -> "${medio}", asignando a EFECTIVO`,
+        );
         medio = 'EFECTIVO';
       }
-      
+
       mediosPago[medio as keyof typeof mediosPago] += monto;
     });
 
     pagos.forEach((pago) => {
-      let medio = (pago.medioPago || 'EFECTIVO').toString().toUpperCase().trim();
+      let medio = (pago.medioPago || 'EFECTIVO')
+        .toString()
+        .toUpperCase()
+        .trim();
       const monto = Number(pago.monto || 0);
-      
+
       // Normalizar nombres de medios de pago para pagos
       if (medio === 'EFECTIVO' || medio === 'CASH') {
         medio = 'EFECTIVO';
@@ -502,14 +567,19 @@ export class CajaService {
       } else if (medio === 'TARJETA' || medio === 'CARD') {
         medio = 'TARJETA';
       } else {
-        console.log(`Medio de pago de pago no reconocido: "${pago.medioPago}" -> "${medio}", asignando a EFECTIVO`);
+        console.log(
+          `Medio de pago de pago no reconocido: "${pago.medioPago}" -> "${medio}", asignando a EFECTIVO`,
+        );
         medio = 'EFECTIVO';
       }
-      
+
       mediosPago[medio as keyof typeof mediosPago] += monto;
     });
 
-    const totalIngresos = Object.values(mediosPago).reduce((sum, val) => sum + val, 0);
+    const totalIngresos = Object.values(mediosPago).reduce(
+      (sum, val) => sum + val,
+      0,
+    );
 
     return {
       totalIngresos,
@@ -548,7 +618,9 @@ export class CajaService {
       orderBy: { fecha: 'asc' },
     });
 
-    const aperturas = movimientos.filter((m) => m.tipoMovimiento === 'APERTURA');
+    const aperturas = movimientos.filter(
+      (m) => m.tipoMovimiento === 'APERTURA',
+    );
     const cierres = movimientos.filter((m) => m.tipoMovimiento === 'CIERRE');
 
     // Calcular totales
@@ -633,66 +705,71 @@ export class CajaService {
     });
 
     // Agrupar por usuario y turno
-    const reportePorUsuario = movimientos.reduce((acc, mov) => {
-      const usuarioId = mov.usuarioId;
-      const turno = mov.turno || 'SIN_TURNO';
-      const usuarioNombre = mov.usuario?.nombre || 'Sin usuario';
+    const reportePorUsuario = movimientos.reduce(
+      (acc, mov) => {
+        const usuarioId = mov.usuarioId;
+        const turno = mov.turno || 'SIN_TURNO';
+        const usuarioNombre = mov.usuario?.nombre || 'Sin usuario';
 
-      if (!acc[usuarioId]) {
-        acc[usuarioId] = {
-          usuarioId,
-          usuarioNombre,
-          usuarioEmail: mov.usuario?.email || '',
-          turnos: {},
-          totales: {
+        if (!acc[usuarioId]) {
+          acc[usuarioId] = {
+            usuarioId,
+            usuarioNombre,
+            usuarioEmail: mov.usuario?.email || '',
+            turnos: {},
+            totales: {
+              aperturas: 0,
+              cierres: 0,
+              montoInicialTotal: 0,
+              montoFinalTotal: 0,
+              diferenciasTotal: 0,
+            },
+          };
+        }
+
+        if (!acc[usuarioId].turnos[turno]) {
+          acc[usuarioId].turnos[turno] = {
+            turno,
             aperturas: 0,
             cierres: 0,
             montoInicialTotal: 0,
             montoFinalTotal: 0,
             diferenciasTotal: 0,
-          },
-        };
-      }
+            movimientos: [],
+          };
+        }
 
-      if (!acc[usuarioId].turnos[turno]) {
-        acc[usuarioId].turnos[turno] = {
-          turno,
-          aperturas: 0,
-          cierres: 0,
-          montoInicialTotal: 0,
-          montoFinalTotal: 0,
-          diferenciasTotal: 0,
-          movimientos: [],
-        };
-      }
+        acc[usuarioId].turnos[turno].movimientos.push(mov);
 
-      acc[usuarioId].turnos[turno].movimientos.push(mov);
+        if (mov.tipoMovimiento === 'APERTURA') {
+          acc[usuarioId].turnos[turno].aperturas++;
+          acc[usuarioId].totales.aperturas++;
+          const monto = parseFloat(mov.montoInicial?.toString() || '0');
+          acc[usuarioId].turnos[turno].montoInicialTotal += monto;
+          acc[usuarioId].totales.montoInicialTotal += monto;
+        } else if (mov.tipoMovimiento === 'CIERRE') {
+          acc[usuarioId].turnos[turno].cierres++;
+          acc[usuarioId].totales.cierres++;
+          const montoFinal = parseFloat(mov.montoFinal?.toString() || '0');
+          const diferencia = parseFloat(mov.diferencia?.toString() || '0');
+          acc[usuarioId].turnos[turno].montoFinalTotal += montoFinal;
+          acc[usuarioId].turnos[turno].diferenciasTotal += diferencia;
+          acc[usuarioId].totales.montoFinalTotal += montoFinal;
+          acc[usuarioId].totales.diferenciasTotal += diferencia;
+        }
 
-      if (mov.tipoMovimiento === 'APERTURA') {
-        acc[usuarioId].turnos[turno].aperturas++;
-        acc[usuarioId].totales.aperturas++;
-        const monto = parseFloat(mov.montoInicial?.toString() || '0');
-        acc[usuarioId].turnos[turno].montoInicialTotal += monto;
-        acc[usuarioId].totales.montoInicialTotal += monto;
-      } else if (mov.tipoMovimiento === 'CIERRE') {
-        acc[usuarioId].turnos[turno].cierres++;
-        acc[usuarioId].totales.cierres++;
-        const montoFinal = parseFloat(mov.montoFinal?.toString() || '0');
-        const diferencia = parseFloat(mov.diferencia?.toString() || '0');
-        acc[usuarioId].turnos[turno].montoFinalTotal += montoFinal;
-        acc[usuarioId].turnos[turno].diferenciasTotal += diferencia;
-        acc[usuarioId].totales.montoFinalTotal += montoFinal;
-        acc[usuarioId].totales.diferenciasTotal += diferencia;
-      }
-
-      return acc;
-    }, {} as Record<number, any>);
+        return acc;
+      },
+      {} as Record<number, any>,
+    );
 
     // Convertir a array y ordenar
-    const reporteArray = Object.values(reportePorUsuario).map((usuario: any) => ({
-      ...usuario,
-      turnos: Object.values(usuario.turnos),
-    }));
+    const reporteArray = Object.values(reportePorUsuario).map(
+      (usuario: any) => ({
+        ...usuario,
+        turnos: Object.values(usuario.turnos),
+      }),
+    );
 
     return {
       fechaInicio: fechaEmision.gte,
@@ -707,9 +784,15 @@ export class CajaService {
     dto: RegistrarEgresoDto,
     sedeId?: number,
   ) {
-    const cajaAbierta = await this.verificarCajaAbierta(usuarioId, empresaId, sedeId);
+    const cajaAbierta = await this.verificarCajaAbierta(
+      usuarioId,
+      empresaId,
+      sedeId,
+    );
     if (!cajaAbierta) {
-      throw new BadRequestException('No hay una caja abierta. Abre un turno antes de registrar gastos.');
+      throw new BadRequestException(
+        'No hay una caja abierta. Abre un turno antes de registrar gastos.',
+      );
     }
 
     const egreso = await this.prisma.movimientoCaja.create({
@@ -746,13 +829,21 @@ export class CajaService {
       where: { id },
       data: {
         ...(dto.monto !== undefined && { monto: dto.monto }),
-        ...(dto.categoriaGasto !== undefined && { categoriaGasto: dto.categoriaGasto }),
-        ...(dto.descripcionGasto !== undefined && { descripcionGasto: dto.descripcionGasto }),
+        ...(dto.categoriaGasto !== undefined && {
+          categoriaGasto: dto.categoriaGasto,
+        }),
+        ...(dto.descripcionGasto !== undefined && {
+          descripcionGasto: dto.descripcionGasto,
+        }),
         ...(dto.metodoPago !== undefined && { metodoPago: dto.metodoPago }),
       },
     });
 
-    return { code: 1, message: 'Gasto actualizado correctamente', data: updated };
+    return {
+      code: 1,
+      message: 'Gasto actualizado correctamente',
+      data: updated,
+    };
   }
 
   async eliminarEgreso(empresaId: number, id: number) {

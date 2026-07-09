@@ -16,13 +16,23 @@ import { ActualizarEstadoPedidoDto } from './dto/actualizar-pedido.dto';
 import { DisenoRubroService } from '../diseno-rubro/diseno-rubro.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
-import { esRubroComputo, obtenerPlantillaComputo } from '../producto/ficha-tecnica-computo';
+import {
+  esRubroComputo,
+  obtenerPlantillaComputo,
+} from '../producto/ficha-tecnica-computo';
 
-const ESTADOS_ENVIO_NOTIFICABLES = new Set(['EN_CAMINO', 'EN_REPARTO', 'ENVIADO', 'ENTREGADO']);
+const ESTADOS_ENVIO_NOTIFICABLES = new Set([
+  'EN_CAMINO',
+  'EN_REPARTO',
+  'ENVIADO',
+  'ENTREGADO',
+]);
 
 const MENSAJES_DEFAULT_TIENDA: Record<string, string> = {
-  EN_CAMINO: 'Hola {{nombre}}, tu pedido {{pedido}} ya está en camino 🚚. Repartidor: {{repartidor}}.',
-  ENTREGADO: 'Hola {{nombre}}, tu pedido {{pedido}} fue entregado exitosamente ✅. ¡Gracias por preferir {{empresa}}!',
+  EN_CAMINO:
+    'Hola {{nombre}}, tu pedido {{pedido}} ya está en camino 🚚. Repartidor: {{repartidor}}.',
+  ENTREGADO:
+    'Hola {{nombre}}, tu pedido {{pedido}} fue entregado exitosamente ✅. ¡Gracias por preferir {{empresa}}!',
 };
 
 const PEDIDO_ENTREGA_TO_DESPACHO: Record<string, string> = {
@@ -157,15 +167,22 @@ export class TiendaService {
     private readonly disenoService: DisenoRubroService,
     private readonly whatsapp: WhatsAppService,
     private readonly notificaciones: NotificacionesService,
-  ) { }
+  ) {}
 
   private parseImagenesExtra(value: unknown): string[] {
-    if (Array.isArray(value)) return value.filter((url): url is string => typeof url === 'string' && url.trim().length > 0);
+    if (Array.isArray(value))
+      return value.filter(
+        (url): url is string =>
+          typeof url === 'string' && url.trim().length > 0,
+      );
     if (typeof value !== 'string' || !value.trim()) return [];
     try {
       const parsed = JSON.parse(value);
       return Array.isArray(parsed)
-        ? parsed.filter((url): url is string => typeof url === 'string' && url.trim().length > 0)
+        ? parsed.filter(
+            (url): url is string =>
+              typeof url === 'string' && url.trim().length > 0,
+          )
         : [];
     } catch {
       return value.trim() ? [value.trim()] : [];
@@ -194,19 +211,31 @@ export class TiendaService {
       if (typeof raw === 'string') return raw.split(',');
       return [];
     });
-    const detailKeys = diseno.plantillasPremiumComprasDetalle && typeof diseno.plantillasPremiumComprasDetalle === 'object' && !Array.isArray(diseno.plantillasPremiumComprasDetalle)
-      ? Object.keys(diseno.plantillasPremiumComprasDetalle)
-      : [];
+    const detailKeys =
+      diseno.plantillasPremiumComprasDetalle &&
+      typeof diseno.plantillasPremiumComprasDetalle === 'object' &&
+      !Array.isArray(diseno.plantillasPremiumComprasDetalle)
+        ? Object.keys(diseno.plantillasPremiumComprasDetalle)
+        : [];
 
     return Array.from(
-      new Set([...values, ...detailKeys].map((value) => String(value).trim()).filter(Boolean)),
+      new Set(
+        [...values, ...detailKeys]
+          .map((value) => String(value).trim())
+          .filter(Boolean),
+      ),
     );
   }
 
-  private removePurchasedPremiumTemplate(diseno: Record<string, any>, plantillaId: string) {
+  private removePurchasedPremiumTemplate(
+    diseno: Record<string, any>,
+    plantillaId: string,
+  ) {
     const plantilla = String(plantillaId || '').trim();
     const cleaned = { ...diseno };
-    const remaining = this.getPurchasedPremiumTemplates(cleaned).filter((id) => id !== plantilla);
+    const remaining = this.getPurchasedPremiumTemplates(cleaned).filter(
+      (id) => id !== plantilla,
+    );
 
     PREMIUM_TEMPLATE_PURCHASE_KEYS.forEach((key) => delete cleaned[key]);
     if (remaining.length > 0) {
@@ -214,7 +243,10 @@ export class TiendaService {
     }
 
     if (typeof cleaned.plantillaId === 'string') {
-      const selected = cleaned.plantillaId.split(',').map((id: string) => id.trim()).filter(Boolean);
+      const selected = cleaned.plantillaId
+        .split(',')
+        .map((id: string) => id.trim())
+        .filter(Boolean);
       const nextSelected = selected.filter((id: string) => id !== plantilla);
       if (nextSelected.length > 0) {
         cleaned.plantillaId = nextSelected.join(',');
@@ -242,7 +274,10 @@ export class TiendaService {
     return cleaned;
   }
 
-  private async assertTemplateCanBeActivated(plantillaId: unknown, diseno: Record<string, any>) {
+  private async assertTemplateCanBeActivated(
+    plantillaId: unknown,
+    diseno: Record<string, any>,
+  ) {
     const id = typeof plantillaId === 'string' ? plantillaId.trim() : '';
     if (!id) return;
 
@@ -270,8 +305,15 @@ export class TiendaService {
     return cleaned;
   }
 
-  private async firmarGaleriaPorColor(atributosTecnicos: any, signIfS3: (url?: string | null) => Promise<string | null>) {
-    if (!atributosTecnicos || typeof atributosTecnicos !== 'object' || Array.isArray(atributosTecnicos)) {
+  private async firmarGaleriaPorColor(
+    atributosTecnicos: any,
+    signIfS3: (url?: string | null) => Promise<string | null>,
+  ) {
+    if (
+      !atributosTecnicos ||
+      typeof atributosTecnicos !== 'object' ||
+      Array.isArray(atributosTecnicos)
+    ) {
       return atributosTecnicos;
     }
     const galeria = atributosTecnicos.galeriaPorColor;
@@ -280,8 +322,12 @@ export class TiendaService {
     }
     const galeriaFirmada: Record<string, string[]> = {};
     for (const [color, urls] of Object.entries(galeria)) {
-      const lista = Array.isArray(urls) ? urls.filter((url): url is string => typeof url === 'string') : [];
-      galeriaFirmada[color] = (await Promise.all(lista.map((url) => signIfS3(url)))).filter(Boolean) as string[];
+      const lista = Array.isArray(urls)
+        ? urls.filter((url): url is string => typeof url === 'string')
+        : [];
+      galeriaFirmada[color] = (
+        await Promise.all(lista.map((url) => signIfS3(url)))
+      ).filter(Boolean) as string[];
     }
     return { ...atributosTecnicos, galeriaPorColor: galeriaFirmada };
   }
@@ -451,7 +497,10 @@ export class TiendaService {
     const overrideActual = this.parseDisenoOverride(empresa?.disenoOverride);
     const camposSeguros = this.removePremiumPurchaseFields(campos || {});
     if (Object.prototype.hasOwnProperty.call(camposSeguros, 'plantillaId')) {
-      await this.assertTemplateCanBeActivated(camposSeguros.plantillaId, overrideActual);
+      await this.assertTemplateCanBeActivated(
+        camposSeguros.plantillaId,
+        overrideActual,
+      );
     }
     const nuevoOverride = { ...overrideActual, ...camposSeguros };
     await this.prisma.empresa.update({
@@ -479,10 +528,13 @@ export class TiendaService {
 
     const overrideActual = this.parseDisenoOverride(empresa.disenoOverride);
     const compradas = this.getPurchasedPremiumTemplates(overrideActual);
-    const plantillasPremiumCompradas = Array.from(new Set([...compradas, plantilla]));
+    const plantillasPremiumCompradas = Array.from(
+      new Set([...compradas, plantilla]),
+    );
     const precioPagado = Number(actor?.precioPagado || 0);
     const comprasDetalle = {
-      ...(overrideActual.plantillasPremiumComprasDetalle && typeof overrideActual.plantillasPremiumComprasDetalle === 'object'
+      ...(overrideActual.plantillasPremiumComprasDetalle &&
+      typeof overrideActual.plantillasPremiumComprasDetalle === 'object'
         ? overrideActual.plantillasPremiumComprasDetalle
         : {}),
       [plantilla]: {
@@ -492,9 +544,10 @@ export class TiendaService {
         autorEmail: actor?.email || 'sistema@falconext.com',
       },
     };
-    const detallePrecio = Number.isFinite(precioPagado) && precioPagado > 0
-      ? ` por S/ ${precioPagado.toFixed(2)}`
-      : '';
+    const detallePrecio =
+      Number.isFinite(precioPagado) && precioPagado > 0
+        ? ` por S/ ${precioPagado.toFixed(2)}`
+        : '';
     const nuevoOverride = {
       ...overrideActual,
       plantillasPremiumCompradas,
@@ -543,7 +596,9 @@ export class TiendaService {
       }),
       this.prisma.empresaLog.findMany({
         where: {
-          accion: { in: ['PLANTILLA_PREMIUM_ACTIVADA', 'PLANTILLA_PREMIUM_DESACTIVADA'] },
+          accion: {
+            in: ['PLANTILLA_PREMIUM_ACTIVADA', 'PLANTILLA_PREMIUM_DESACTIVADA'],
+          },
         },
         orderBy: { creadoEn: 'asc' },
       }),
@@ -569,17 +624,31 @@ export class TiendaService {
     const data = empresas
       .map((empresa) => {
         const diseno = this.parseDisenoOverride(empresa.disenoOverride);
-        const compraEnDiseno = this.getPurchasedPremiumTemplates(diseno).includes(plantilla);
-        const plantillasActivas = typeof diseno.plantillaId === 'string'
-          ? diseno.plantillaId.split(',').map((id: string) => id.trim()).filter(Boolean)
-          : [];
+        const compraEnDiseno =
+          this.getPurchasedPremiumTemplates(diseno).includes(plantilla);
+        const plantillasActivas =
+          typeof diseno.plantillaId === 'string'
+            ? diseno.plantillaId
+                .split(',')
+                .map((id: string) => id.trim())
+                .filter(Boolean)
+            : [];
         const usaPlantillaEnOverride = plantillasActivas.includes(plantilla);
         const compraEnLog = estadoPorLog.get(empresa.id);
-        if (!compraEnDiseno && !compraEnLog?.activado && !usaPlantillaEnOverride) return null;
-        const detalle = diseno.plantillasPremiumComprasDetalle?.[plantilla] || {};
+        if (
+          !compraEnDiseno &&
+          !compraEnLog?.activado &&
+          !usaPlantillaEnOverride
+        )
+          return null;
+        const detalle =
+          diseno.plantillasPremiumComprasDetalle?.[plantilla] || {};
         return {
           empresaId: empresa.id,
-          nombre: empresa.nombreComercial || empresa.razonSocial || `Empresa #${empresa.id}`,
+          nombre:
+            empresa.nombreComercial ||
+            empresa.razonSocial ||
+            `Empresa #${empresa.id}`,
           razonSocial: empresa.razonSocial,
           slugTienda: empresa.slugTienda,
           precioPagado: Number(detalle.precioPagado || 0),
@@ -611,25 +680,42 @@ export class TiendaService {
     }
 
     const overrideActual = this.parseDisenoOverride(empresa.disenoOverride);
-    const tieneCompraEnDiseno = this.getPurchasedPremiumTemplates(overrideActual).includes(plantilla);
+    const tieneCompraEnDiseno =
+      this.getPurchasedPremiumTemplates(overrideActual).includes(plantilla);
     if (!tieneCompraEnDiseno) {
       const logsPremium = await this.prisma.empresaLog.findMany({
         where: {
           empresaId,
-          accion: { in: ['PLANTILLA_PREMIUM_ACTIVADA', 'PLANTILLA_PREMIUM_DESACTIVADA'] },
+          accion: {
+            in: ['PLANTILLA_PREMIUM_ACTIVADA', 'PLANTILLA_PREMIUM_DESACTIVADA'],
+          },
         },
         orderBy: { creadoEn: 'desc' },
       });
-      const ultimoLog = logsPremium.find((log) => String(log.detalle || '').toLowerCase().includes(plantillaLower));
-      const plantillasActivas = typeof overrideActual.plantillaId === 'string'
-        ? overrideActual.plantillaId.split(',').map((id: string) => id.trim()).filter(Boolean)
-        : [];
-      if (ultimoLog?.accion !== 'PLANTILLA_PREMIUM_ACTIVADA' && !plantillasActivas.includes(plantilla)) {
-        throw new BadRequestException('La empresa no tiene esta plantilla activada');
+      const ultimoLog = logsPremium.find((log) =>
+        String(log.detalle || '')
+          .toLowerCase()
+          .includes(plantillaLower),
+      );
+      const plantillasActivas =
+        typeof overrideActual.plantillaId === 'string'
+          ? overrideActual.plantillaId
+              .split(',')
+              .map((id: string) => id.trim())
+              .filter(Boolean)
+          : [];
+      if (
+        ultimoLog?.accion !== 'PLANTILLA_PREMIUM_ACTIVADA' &&
+        !plantillasActivas.includes(plantilla)
+      ) {
+        throw new BadRequestException(
+          'La empresa no tiene esta plantilla activada',
+        );
       }
     }
 
-    const { diseno: nuevoOverride, remaining } = this.removePurchasedPremiumTemplate(overrideActual, plantilla);
+    const { diseno: nuevoOverride, remaining } =
+      this.removePurchasedPremiumTemplate(overrideActual, plantilla);
 
     await this.prisma.$transaction([
       this.prisma.empresa.update({
@@ -677,7 +763,8 @@ export class TiendaService {
     await this.prisma.empresa.update({ where: { id: empresaId }, data });
     // Devolver también URL firmada para previsualizar inmediatamente
     const idx = url.indexOf('amazonaws.com/');
-    const objKey = idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
+    const objKey =
+      idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
     const signedUrl = objKey ? await this.s3.getSignedGetUrl(objKey, 600) : url;
     return { url, signedUrl };
   }
@@ -698,10 +785,14 @@ export class TiendaService {
     const s3Key = `logos/empresa-${empresaId}/logo-${Date.now()}.${ext}`;
     const url = await this.s3.uploadImage(file.buffer, s3Key, ct);
 
-    await this.prisma.empresa.update({ where: { id: empresaId }, data: { logo: url } });
+    await this.prisma.empresa.update({
+      where: { id: empresaId },
+      data: { logo: url },
+    });
 
     const idx = url.indexOf('amazonaws.com/');
-    const objKey = idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
+    const objKey =
+      idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
     const signedUrl = objKey ? await this.s3.getSignedGetUrl(objKey, 600) : url;
     return { url, signedUrl };
   }
@@ -734,7 +825,7 @@ export class TiendaService {
     });
 
     const overrideActual = empresa?.disenoOverride
-      ? JSON.parse(empresa.disenoOverride as string)
+      ? JSON.parse(empresa.disenoOverride)
       : {};
 
     await this.prisma.empresa.update({
@@ -748,7 +839,8 @@ export class TiendaService {
     });
 
     const idx = url.indexOf('amazonaws.com/');
-    const objKey = idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
+    const objKey =
+      idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
     const signedUrl = objKey ? await this.s3.getSignedGetUrl(objKey, 600) : url;
     return { field: campo, url, signedUrl };
   }
@@ -772,7 +864,8 @@ export class TiendaService {
     const url = await this.s3.uploadImage(file.buffer, s3Key, ct, 1600);
 
     const idx = url.indexOf('amazonaws.com/');
-    const objKey = idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
+    const objKey =
+      idx !== -1 ? url.substring(idx + 'amazonaws.com/'.length) : '';
     const signedUrl = objKey ? await this.s3.getSignedGetUrl(objKey, 600) : url;
     return { url, signedUrl };
   }
@@ -827,13 +920,16 @@ export class TiendaService {
               linkUrl: true,
               orden: true,
               activo: true,
-            }
+            },
           },
         },
       });
 
       if (!empresa) {
-        console.error('obtenerTiendaPorSlug: Tienda no encontrada para slug', slug);
+        console.error(
+          'obtenerTiendaPorSlug: Tienda no encontrada para slug',
+          slug,
+        );
         throw new NotFoundException('Tienda no encontrada');
       }
 
@@ -841,7 +937,10 @@ export class TiendaService {
       if (empresa.banners && empresa.banners.length > 0) {
         await Promise.all(
           empresa.banners.map(async (banner) => {
-            if (banner.imagenUrl && banner.imagenUrl.includes('amazonaws.com')) {
+            if (
+              banner.imagenUrl &&
+              banner.imagenUrl.includes('amazonaws.com')
+            ) {
               const urlParts = banner.imagenUrl.split('amazonaws.com/');
               if (urlParts.length > 1) {
                 const key = urlParts[1];
@@ -861,10 +960,12 @@ export class TiendaService {
         throw new ForbiddenException('Esta tienda no está disponible');
       }
 
-      const diseno = await this.disenoService.obtenerDisenoPorEmpresa(empresa.id).catch(e => {
-        console.error('Error obteniendo diseño:', e);
-        return {}; // Fallback en caso de error de diseño
-      });
+      const diseno = await this.disenoService
+        .obtenerDisenoPorEmpresa(empresa.id)
+        .catch((e) => {
+          console.error('Error obteniendo diseño:', e);
+          return {}; // Fallback en caso de error de diseño
+        });
 
       return {
         ...empresa,
@@ -1032,7 +1133,17 @@ export class TiendaService {
     };
   }
 
-  async obtenerProductosTienda(slug: string, page = 1, limit = 30, search = '', category = '', minPrice?: number, maxPrice?: number, brand = '', wholesale = false) {
+  async obtenerProductosTienda(
+    slug: string,
+    page = 1,
+    limit = 30,
+    search = '',
+    category = '',
+    minPrice?: number,
+    maxPrice?: number,
+    brand = '',
+    wholesale = false,
+  ) {
     const empresa = await this.prisma.empresa.findUnique({
       where: { slugTienda: slug },
       select: { id: true },
@@ -1042,7 +1153,16 @@ export class TiendaService {
       if (!empresa) {
         throw new NotFoundException('Tienda no encontrada');
       }
-      console.log('obtenerProductosTienda', { slug, page, limit, search, category, minPrice, maxPrice, brand });
+      console.log('obtenerProductosTienda', {
+        slug,
+        page,
+        limit,
+        search,
+        category,
+        minPrice,
+        maxPrice,
+        brand,
+      });
 
       const signIfS3 = async (url?: string | null) => {
         try {
@@ -1053,7 +1173,9 @@ export class TiendaService {
           if (!key) return url as any;
           const signed = await this.s3.getSignedGetUrl(key, 600);
           return signed || (url as any);
-        } catch { return url as any; }
+        } catch {
+          return url as any;
+        }
       };
 
       const hydratePublicProducts = async (itemsRaw: any[]) => {
@@ -1074,7 +1196,9 @@ export class TiendaService {
           ratings.map((item) => [
             item.productoId,
             {
-              ratingAvg: item._avg.rating ? Number(item._avg.rating.toFixed(2)) : 0,
+              ratingAvg: item._avg.rating
+                ? Number(item._avg.rating.toFixed(2))
+                : 0,
               ratingCount: item._count.rating || 0,
             },
           ]),
@@ -1082,18 +1206,30 @@ export class TiendaService {
 
         return Promise.all(
           itemsRaw.map(async (product: any) => {
-            const imagenesExtra = this.parseImagenesExtra(product.imagenesExtra);
+            const imagenesExtra = this.parseImagenesExtra(
+              product.imagenesExtra,
+            );
             return {
               ...product,
-              ...(ratingByProduct.get(product.id) || { ratingAvg: 0, ratingCount: 0 }),
+              ...(ratingByProduct.get(product.id) || {
+                ratingAvg: 0,
+                ratingCount: 0,
+              }),
               imagenUrl: await signIfS3(product.imagenUrl),
-              imagenesExtra: await Promise.all(imagenesExtra.map((url) => signIfS3(url))),
-              atributosTecnicos: await this.firmarGaleriaPorColor(product.atributosTecnicos, signIfS3),
+              imagenesExtra: await Promise.all(
+                imagenesExtra.map((url) => signIfS3(url)),
+              ),
+              atributosTecnicos: await this.firmarGaleriaPorColor(
+                product.atributosTecnicos,
+                signIfS3,
+              ),
               variantes: Array.isArray(product.variantes)
-                ? await Promise.all(product.variantes.map(async (variant: any) => ({
-                    ...variant,
-                    imagenUrl: await signIfS3(variant.imagenUrl),
-                  })))
+                ? await Promise.all(
+                    product.variantes.map(async (variant: any) => ({
+                      ...variant,
+                      imagenUrl: await signIfS3(variant.imagenUrl),
+                    })),
+                  )
                 : product.variantes,
             };
           }),
@@ -1136,7 +1272,10 @@ export class TiendaService {
         },
       } as const;
 
-      const baseOrder = [{ destacado: 'desc' as const }, { descripcion: 'asc' as const }];
+      const baseOrder = [
+        { destacado: 'desc' as const },
+        { descripcion: 'asc' as const },
+      ];
 
       const wherePublicados: any = {
         empresaId: empresa.id,
@@ -1166,15 +1305,18 @@ export class TiendaService {
         wherePublicados.gruposModificadores = {
           some: {
             grupo: {
-              nombre: { contains: 'Precios', mode: 'insensitive' }
-            }
-          }
+              nombre: { contains: 'Precios', mode: 'insensitive' },
+            },
+          },
         };
       }
 
       // Filtro por marcas
       if (brand && brand.trim()) {
-        const brands = brand.split(',').map((b) => b.trim()).filter(Boolean);
+        const brands = brand
+          .split(',')
+          .map((b) => b.trim())
+          .filter(Boolean);
         if (brands.length > 0) {
           const brandConditions = brands.map((brandName) => ({
             marca: {
@@ -1197,7 +1339,10 @@ export class TiendaService {
 
       // Filtro por categorías - use OR conditions for case-insensitive matching
       if (category && category.trim()) {
-        const cats = category.split(',').map((c) => c.trim()).filter(Boolean);
+        const cats = category
+          .split(',')
+          .map((c) => c.trim())
+          .filter(Boolean);
         if (cats.length > 0) {
           // Build OR conditions for each category name
           const categoryConditions = cats.map((catName) => ({
@@ -1220,7 +1365,9 @@ export class TiendaService {
         }
       }
 
-      const countPublicados = await this.prisma.producto.count({ where: wherePublicados });
+      const countPublicados = await this.prisma.producto.count({
+        where: wherePublicados,
+      });
       const hasCatalogFilters =
         !!term ||
         !!category?.trim() ||
@@ -1229,7 +1376,7 @@ export class TiendaService {
         maxPrice !== undefined ||
         wholesale;
       const pageNumber = Number(page) || 1;
-      
+
       let shouldFallbackToActivos = false;
       if (countPublicados === 0) {
         if (hasCatalogFilters) {
@@ -1240,7 +1387,7 @@ export class TiendaService {
               estado: 'ACTIVO',
               productoPadreId: null,
               AND: [this.whereStockPublico()],
-            }
+            },
           });
           shouldFallbackToActivos = countTotalPublicados === 0;
         } else {
@@ -1260,7 +1407,12 @@ export class TiendaService {
           });
         }
         const items = await hydratePublicProducts(itemsRaw);
-        return { data: items, total: countPublicados, page: pageNumber, limit: take };
+        return {
+          data: items,
+          total: countPublicados,
+          page: pageNumber,
+          limit: take,
+        };
       }
 
       // Fallback: activos con stock>0
@@ -1290,15 +1442,18 @@ export class TiendaService {
         whereActivos.gruposModificadores = {
           some: {
             grupo: {
-              nombre: { contains: 'Precios', mode: 'insensitive' }
-            }
-          }
+              nombre: { contains: 'Precios', mode: 'insensitive' },
+            },
+          },
         };
       }
 
       // Fallback filtering for brand
       if (brand && brand.trim()) {
-        const brands = brand.split(',').map((b) => b.trim()).filter(Boolean);
+        const brands = brand
+          .split(',')
+          .map((b) => b.trim())
+          .filter(Boolean);
         if (brands.length > 0) {
           const brandConditions = brands.map((brandName) => ({
             marca: {
@@ -1320,7 +1475,10 @@ export class TiendaService {
 
       // Fallback filtering for category
       if (category && category.trim()) {
-        const cats = category.split(',').map((c) => c.trim()).filter(Boolean);
+        const cats = category
+          .split(',')
+          .map((c) => c.trim())
+          .filter(Boolean);
         if (cats.length > 0) {
           const categoryConditions = cats.map((catName) => ({
             categoria: {
@@ -1352,7 +1510,6 @@ export class TiendaService {
       const items = await hydratePublicProducts(itemsRaw);
 
       return { data: items, total, page: pageNumber, limit: take };
-
     } catch (e: any) {
       console.error('Error in obtenerProductosTienda:', e);
       if (e?.code === 'P2002') console.error('Prisma Unique constraint failed');
@@ -1393,8 +1550,7 @@ export class TiendaService {
           imagenUrl: true,
           categoria: { select: { nombre: true } },
           stock: true,
-
-        }
+        },
       });
     }
 
@@ -1419,13 +1575,12 @@ export class TiendaService {
           imagenUrl: true,
           categoria: { select: { nombre: true } },
           stock: true,
-
-        }
+        },
       });
 
       // Merge and deduplicate
-      const seen = new Set(related.map(p => p.id));
-      more.forEach(p => {
+      const seen = new Set(related.map((p) => p.id));
+      more.forEach((p) => {
         if (!seen.has(p.id)) {
           related.push(p);
           seen.add(p.id);
@@ -1445,16 +1600,18 @@ export class TiendaService {
         const key = url.substring(idx + 'amazonaws.com/'.length);
         if (!key) return url as any;
         return await this.s3.getSignedGetUrl(key, 600);
-      } catch { return url as any; }
+      } catch {
+        return url as any;
+      }
     };
 
-    return Promise.all(related.map(async p => ({
-      ...p,
-      imagenUrl: await signIfS3(p.imagenUrl)
-    })));
+    return Promise.all(
+      related.map(async (p) => ({
+        ...p,
+        imagenUrl: await signIfS3(p.imagenUrl),
+      })),
+    );
   }
-
-
 
   async obtenerProductoDetalle(slug: string, productoId: number) {
     const empresa = await this.prisma.empresa.findUnique({
@@ -1511,8 +1668,8 @@ export class TiendaService {
           stock: true,
           valoresAtributos: true,
           imagenUrl: true,
-        }
-      }
+        },
+      },
     } as const;
 
     // Primero intentar con publicarEnTienda=true
@@ -1536,7 +1693,7 @@ export class TiendaService {
           estado: 'ACTIVO',
           productoPadreId: null,
           AND: [this.whereStockPublico()],
-        }
+        },
       });
       if (countTotalPublicados === 0) {
         producto = await this.prisma.producto.findFirst({
@@ -1565,30 +1722,49 @@ export class TiendaService {
         if (!key) return url as any;
         const signed = await this.s3.getSignedGetUrl(key, 600);
         return signed || (url as any);
-      } catch { return url as any; }
+      } catch {
+        return url as any;
+      }
     };
 
-    const imagenesExtra = this.parseImagenesExtra((producto as any).imagenesExtra);
-    const imagenesExtraFirmadas = await Promise.all(imagenesExtra.map((u) => signIfS3(u)));
-    const atributosTecnicosFirmados = await this.firmarGaleriaPorColor((producto as any).atributosTecnicos, signIfS3);
+    const imagenesExtra = this.parseImagenesExtra(
+      (producto as any).imagenesExtra,
+    );
+    const imagenesExtraFirmadas = await Promise.all(
+      imagenesExtra.map((u) => signIfS3(u)),
+    );
+    const atributosTecnicosFirmados = await this.firmarGaleriaPorColor(
+      (producto as any).atributosTecnicos,
+      signIfS3,
+    );
     const variantesFirmadas = Array.isArray((producto as any).variantes)
-      ? await Promise.all((producto as any).variantes.map(async (variant: any) => ({
-          ...variant,
-          imagenUrl: await signIfS3(variant.imagenUrl),
-        })))
+      ? await Promise.all(
+          (producto as any).variantes.map(async (variant: any) => ({
+            ...variant,
+            imagenUrl: await signIfS3(variant.imagenUrl),
+          })),
+        )
       : (producto as any).variantes;
 
     return {
       ...producto,
-      imagenUrl: await signIfS3((producto as any).imagenUrl as any),
+      imagenUrl: await signIfS3((producto as any).imagenUrl),
       imagenesExtra: imagenesExtraFirmadas as any,
       atributosTecnicos: atributosTecnicosFirmados,
-      variantes: variantesFirmadas as any,
-      fichaTecnica: await this.construirFichaTecnicaPublica(empresa, producto as any),
+      variantes: variantesFirmadas,
+      fichaTecnica: await this.construirFichaTecnicaPublica(
+        empresa,
+        producto as any,
+      ),
     } as any;
   }
 
-  private getFichaTecnicaComputoDefault(params: { categoriaNombre?: string | null; descripcion?: string | null } = {}) {
+  private getFichaTecnicaComputoDefault(
+    params: {
+      categoriaNombre?: string | null;
+      descripcion?: string | null;
+    } = {},
+  ) {
     return obtenerPlantillaComputo(params);
   }
 
@@ -1603,10 +1779,17 @@ export class TiendaService {
   private formatearValorFichaTecnica(value: any, campo: any) {
     if (value === null || value === undefined || value === '') return '';
     if (campo?.tipo === 'booleano') {
-      return value === true || value === 'true' || value === '1' || value === 'Sí' ? 'Sí' : 'No';
+      return value === true ||
+        value === 'true' ||
+        value === '1' ||
+        value === 'Sí'
+        ? 'Sí'
+        : 'No';
     }
     const formatted = String(value).trim();
-    return campo?.unidad && formatted ? `${formatted} ${campo.unidad}` : formatted;
+    return campo?.unidad && formatted
+      ? `${formatted} ${campo.unidad}`
+      : formatted;
   }
 
   private async construirFichaTecnicaPublica(empresa: any, producto: any) {
@@ -1620,35 +1803,62 @@ export class TiendaService {
       where: {
         activo: true,
         OR: [
-          { empresaId: empresa.id, categoriaId: producto.categoria?.id || undefined },
+          {
+            empresaId: empresa.id,
+            categoriaId: producto.categoria?.id || undefined,
+          },
           { empresaId: empresa.id, categoriaId: null },
           { empresaId: null, categoriaId: producto.categoria?.id || undefined },
           { empresaId: null, rubroId: empresa.rubroId || undefined },
         ],
       },
-      orderBy: [{ empresaId: 'desc' }, { categoriaId: 'desc' }, { rubroId: 'desc' }, { id: 'asc' }],
+      orderBy: [
+        { empresaId: 'desc' },
+        { categoriaId: 'desc' },
+        { rubroId: 'desc' },
+        { id: 'asc' },
+      ],
       take: 10,
     });
-    const exactCategory = candidates.find((item) => producto.categoria?.id && item.categoriaId === producto.categoria.id);
-    const companyDefault = candidates.find((item) => item.empresaId === empresa.id && !item.categoriaId);
-    const rubroDefault = candidates.find((item) => item.rubroId === empresa.rubroId);
+    const exactCategory = candidates.find(
+      (item) =>
+        producto.categoria?.id && item.categoriaId === producto.categoria.id,
+    );
+    const companyDefault = candidates.find(
+      (item) => item.empresaId === empresa.id && !item.categoriaId,
+    );
+    const rubroDefault = candidates.find(
+      (item) => item.rubroId === empresa.rubroId,
+    );
     const computedDefault = this.esRubroComputo(empresa.rubro?.nombre)
       ? this.getFichaTecnicaComputoDefault({
           categoriaNombre: producto.categoria?.nombre,
           descripcion: producto.descripcion,
         })
       : null;
-    const shouldPreferComputed = computedDefault && (computedDefault as any).familia !== 'general';
-    const plantilla = exactCategory || companyDefault || (shouldPreferComputed ? computedDefault : rubroDefault) || candidates[0] || computedDefault;
+    const shouldPreferComputed =
+      computedDefault && (computedDefault as any).familia !== 'general';
+    const plantilla =
+      exactCategory ||
+      companyDefault ||
+      (shouldPreferComputed ? computedDefault : rubroDefault) ||
+      candidates[0] ||
+      computedDefault;
 
     if (!plantilla) return null;
 
-    const campos = Array.isArray((plantilla as any).campos) ? (plantilla as any).campos : [];
-    const destacadosKeys = Array.isArray((plantilla as any).destacados) ? (plantilla as any).destacados : [];
+    const campos = Array.isArray((plantilla as any).campos)
+      ? (plantilla as any).campos
+      : [];
+    const destacadosKeys = Array.isArray((plantilla as any).destacados)
+      ? (plantilla as any).destacados
+      : [];
     const valuesByKey = new Map<string, any>();
 
     const gruposMap = new Map<string, any[]>();
-    for (const campo of campos.sort((a: any, b: any) => Number(a.orden || 0) - Number(b.orden || 0))) {
+    for (const campo of campos.sort(
+      (a: any, b: any) => Number(a.orden || 0) - Number(b.orden || 0),
+    )) {
       const rawValue = atributos[campo.key];
       const value = this.formatearValorFichaTecnica(rawValue, campo);
       if (!value) continue;
@@ -1667,7 +1877,10 @@ export class TiendaService {
       })
       .filter(Boolean);
 
-    const grupos = Array.from(gruposMap.entries()).map(([nombre, items]) => ({ nombre, items }));
+    const grupos = Array.from(gruposMap.entries()).map(([nombre, items]) => ({
+      nombre,
+      items,
+    }));
     if (!destacados.length && !grupos.length) return null;
     return { destacados, grupos };
   }
@@ -1743,8 +1956,12 @@ export class TiendaService {
     const comentario = String(dto?.comentario || '').trim();
     const clienteNombre = String(dto?.clienteNombre || '').trim();
     const clienteEmail = String(dto?.clienteEmail || '').trim() || null;
-    const clienteTelefono = String(dto?.clienteTelefono || '').replace(/\s+/g, '').trim() || null;
-    const codigoSeguimiento = String(dto?.codigoSeguimiento || '').trim() || null;
+    const clienteTelefono =
+      String(dto?.clienteTelefono || '')
+        .replace(/\s+/g, '')
+        .trim() || null;
+    const codigoSeguimiento =
+      String(dto?.codigoSeguimiento || '').trim() || null;
 
     if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
       throw new BadRequestException('La calificación debe ser de 1 a 5');
@@ -1753,7 +1970,9 @@ export class TiendaService {
       throw new BadRequestException('Ingresa tu nombre');
     }
     if (comentario.length < 8 || comentario.length > 800) {
-      throw new BadRequestException('El comentario debe tener entre 8 y 800 caracteres');
+      throw new BadRequestException(
+        'El comentario debe tener entre 8 y 800 caracteres',
+      );
     }
 
     const empresa = await this.prisma.empresa.findUnique({
@@ -1779,7 +1998,9 @@ export class TiendaService {
           empresaId: empresa.id,
           codigoSeguimiento,
           items: { some: { productoId } },
-          ...(identidadCliente.length > 0 ? { OR: identidadCliente as any } : {}),
+          ...(identidadCliente.length > 0
+            ? { OR: identidadCliente as any }
+            : {}),
         },
         select: { id: true },
       });
@@ -1807,13 +2028,24 @@ export class TiendaService {
 
     return {
       ...review,
-      message: 'Gracias por tu reseña. Será publicada cuando la tienda la apruebe.',
+      message:
+        'Gracias por tu reseña. Será publicada cuando la tienda la apruebe.',
     };
   }
 
-  async listarReviewsAdmin(empresaId: number, estado?: string, page = 1, limit = 50) {
+  async listarReviewsAdmin(
+    empresaId: number,
+    estado?: string,
+    page = 1,
+    limit = 50,
+  ) {
     const where: any = { empresaId };
-    if (estado && Object.values(EstadoProductoReview).includes(estado as EstadoProductoReview)) {
+    if (
+      estado &&
+      Object.values(EstadoProductoReview).includes(
+        estado as EstadoProductoReview,
+      )
+    ) {
       where.estado = estado;
     }
 
@@ -1827,7 +2059,9 @@ export class TiendaService {
         skip,
         take,
         include: {
-          producto: { select: { id: true, descripcion: true, imagenUrl: true } },
+          producto: {
+            select: { id: true, descripcion: true, imagenUrl: true },
+          },
           pedido: { select: { id: true, codigoSeguimiento: true } },
         },
       }),
@@ -1856,7 +2090,8 @@ export class TiendaService {
       where: { id: reviewId },
       data: {
         estado,
-        aprobadoEn: estado === EstadoProductoReview.APROBADO ? new Date() : null,
+        aprobadoEn:
+          estado === EstadoProductoReview.APROBADO ? new Date() : null,
       },
     });
 
@@ -1974,19 +2209,22 @@ export class TiendaService {
     }
     const tipoEntrega = dto.tipoEntrega || 'RECOJO';
     if (tipoEntrega === 'RECOJO' && !empresa.aceptaRecojo) {
-      throw new BadRequestException('Esta tienda no acepta pedidos para recojo');
+      throw new BadRequestException(
+        'Esta tienda no acepta pedidos para recojo',
+      );
     }
     if (tipoEntrega === 'ENVIO' && !empresa.aceptaEnvio) {
       throw new BadRequestException('Esta tienda no acepta pedidos con envío');
     }
 
     if (tipoEntrega === 'ENVIO' && !dto.clienteDireccion) {
-      throw new BadRequestException('La dirección es obligatoria para pedidos con envío');
+      throw new BadRequestException(
+        'La dirección es obligatoria para pedidos con envío',
+      );
     }
 
-    const costoEnvio = tipoEntrega === 'ENVIO'
-      ? Number(empresa.costoEnvioFijo || 0)
-      : 0;
+    const costoEnvio =
+      tipoEntrega === 'ENVIO' ? Number(empresa.costoEnvioFijo || 0) : 0;
 
     let subtotal = 0;
     const itemsData: {
@@ -2025,7 +2263,10 @@ export class TiendaService {
         );
       }
 
-      const esServicio = String((producto.atributosTecnicos as any)?.tipoProducto || '').toUpperCase() === 'SERVICIO';
+      const esServicio =
+        String(
+          (producto.atributosTecnicos as any)?.tipoProducto || '',
+        ).toUpperCase() === 'SERVICIO';
       if (!esServicio && Number(producto.stock) < item.cantidad) {
         throw new BadRequestException(
           `Stock insuficiente para ${producto.descripcion}. Disponible: ${producto.stock}`,
@@ -2044,12 +2285,16 @@ export class TiendaService {
         observacion: item.observacion,
       });
     }
-    const igv = subtotal - (subtotal / 1.18);
+    const igv = subtotal - subtotal / 1.18;
     const total = subtotal + costoEnvio;
-    const adelanto = dto.medioPago === 'TARJETA' ? total : Math.max(Number(dto.adelanto ?? 0), 0);
+    const adelanto =
+      dto.medioPago === 'TARJETA'
+        ? total
+        : Math.max(Number(dto.adelanto ?? 0), 0);
     const montoPagado = Math.min(adelanto, total);
     const saldoPendiente = Math.max(total - montoPagado, 0);
-    const estadoEnvioInicial = tipoEntrega === 'ENVIO' ? 'POR_COORDINAR' : 'NO_APLICA';
+    const estadoEnvioInicial =
+      tipoEntrega === 'ENVIO' ? 'POR_COORDINAR' : 'NO_APLICA';
     const agenciaEnvioInicial =
       tipoEntrega === 'ENVIO'
         ? dto.agenciaEnvio?.trim() || null
@@ -2057,16 +2302,21 @@ export class TiendaService {
 
     const minimoCompra = Number(empresa.minimoCompra || 0);
     if (minimoCompra > 0 && total < minimoCompra) {
-      throw new BadRequestException(`El monto mínimo de pedido es S/ ${minimoCompra.toFixed(2)}`);
+      throw new BadRequestException(
+        `El monto mínimo de pedido es S/ ${minimoCompra.toFixed(2)}`,
+      );
     }
 
     // Generar un código de seguimiento único y corto
-    const codigoSeguimiento = `PT-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`.toUpperCase();
+    const codigoSeguimiento =
+      `PT-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`.toUpperCase();
 
     let referenciaTarjeta: string | null = null;
     if (dto.medioPago === 'TARJETA') {
       if (!empresa.id) {
-        throw new BadRequestException('No se pudo identificar la empresa para cobro con tarjeta');
+        throw new BadRequestException(
+          'No se pudo identificar la empresa para cobro con tarjeta',
+        );
       }
       const culqiToken = (dto.culqiToken || '').trim();
       if (!culqiToken) {
@@ -2083,19 +2333,26 @@ export class TiendaService {
       });
 
       if (!empresaConPlan?.plan?.tieneCulqi) {
-        throw new ForbiddenException('Tu plan actual no incluye pagos con tarjeta');
+        throw new ForbiddenException(
+          'Tu plan actual no incluye pagos con tarjeta',
+        );
       }
 
       const emailPago = (dto.culqiEmail || dto.clienteEmail || '').trim();
       if (!emailPago) {
-        throw new BadRequestException('Para pagar con tarjeta debes registrar un correo electrónico');
+        throw new BadRequestException(
+          'Para pagar con tarjeta debes registrar un correo electrónico',
+        );
       }
 
       const charge = await this.crearCargoCulqi({
         token: culqiToken,
         email: emailPago,
         amountInSoles: total,
-        empresaNombre: empresaConPlan.nombreComercial || empresaConPlan.razonSocial || 'Tienda',
+        empresaNombre:
+          empresaConPlan.nombreComercial ||
+          empresaConPlan.razonSocial ||
+          'Tienda',
         orderCode: codigoSeguimiento,
       });
 
@@ -2157,7 +2414,9 @@ export class TiendaService {
     // Notificar al empresario (in-app web/mobile + correo) y confirmar al cliente.
     // Nunca debe romper la compra.
     void this.notificarNuevoPedido(empresa.id, slug, pedido).catch((err) =>
-      this.logger.error(`No se pudo notificar el nuevo pedido ${pedido.id}: ${err?.message ?? err}`),
+      this.logger.error(
+        `No se pudo notificar el nuevo pedido ${pedido.id}: ${err?.message ?? err}`,
+      ),
     );
 
     return pedido;
@@ -2169,14 +2428,20 @@ export class TiendaService {
    * Además envía un correo de confirmación al cliente si dejó su email.
    * Tolerante a fallos: cualquier error se registra pero no interrumpe el flujo.
    */
-  private async notificarNuevoPedido(empresaId: number, slug: string, pedido: any) {
+  private async notificarNuevoPedido(
+    empresaId: number,
+    slug: string,
+    pedido: any,
+  ) {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
       select: { nombreComercial: true, razonSocial: true, brand: true },
     });
-    const empresaNombre = empresa?.nombreComercial || empresa?.razonSocial || 'Tu tienda';
+    const empresaNombre =
+      empresa?.nombreComercial || empresa?.razonSocial || 'Tu tienda';
     const money = (v: any) => `S/ ${Number(v || 0).toFixed(2)}`;
-    const tipoEntregaLabel = pedido.tipoEntrega === 'ENVIO' ? 'Envío a domicilio' : 'Recojo en tienda';
+    const tipoEntregaLabel =
+      pedido.tipoEntrega === 'ENVIO' ? 'Envío a domicilio' : 'Recojo en tienda';
 
     // 1) Notificación in-app a los ADMIN_EMPRESA (se empuja por WebSocket a web + mobile)
     try {
@@ -2193,7 +2458,9 @@ export class TiendaService {
         },
       });
     } catch (err: any) {
-      this.logger.error(`Notificación in-app de pedido ${pedido.id} falló: ${err?.message ?? err}`);
+      this.logger.error(
+        `Notificación in-app de pedido ${pedido.id} falló: ${err?.message ?? err}`,
+      );
     }
 
     // 2) Correo al administrador de la empresa
@@ -2209,8 +2476,14 @@ export class TiendaService {
       if (!admin?.email) return;
 
       const appName = empresa?.brand === 'krezka' ? 'Krezka' : 'Falconext';
-      const accessUrl = process.env.APP_URL || process.env.FRONTEND_URL || 'https://app.falconext.pe';
-      const fromEmail = process.env.RESEND_FROM_EMAIL || process.env.MAIL_FROM || 'noreply@falconext.pe';
+      const accessUrl =
+        process.env.APP_URL ||
+        process.env.FRONTEND_URL ||
+        'https://app.falconext.pe';
+      const fromEmail =
+        process.env.RESEND_FROM_EMAIL ||
+        process.env.MAIL_FROM ||
+        'noreply@falconext.pe';
 
       const { Resend } = await import('resend');
       const { render } = await import('@react-email/render');
@@ -2237,7 +2510,10 @@ export class TiendaService {
           medioPago: pedido.medioPago,
           total: money(pedido.total),
           items,
-          fecha: new Date(pedido.creadoEn || Date.now()).toLocaleString('es-PE', { timeZone: 'America/Lima' }),
+          fecha: new Date(pedido.creadoEn || Date.now()).toLocaleString(
+            'es-PE',
+            { timeZone: 'America/Lima' },
+          ),
           accessUrl,
         }),
       );
@@ -2250,7 +2526,9 @@ export class TiendaService {
       });
       if (error) throw new Error(error.message);
     } catch (err: any) {
-      this.logger.error(`Correo de nuevo pedido ${pedido.id} falló: ${err?.message ?? err}`);
+      this.logger.error(
+        `Correo de nuevo pedido ${pedido.id} falló: ${err?.message ?? err}`,
+      );
     }
 
     // 3) Correo de confirmación al cliente (solo si dejó su email)
@@ -2260,13 +2538,22 @@ export class TiendaService {
       if (!resendKey || !clienteEmail) return;
 
       const appName = empresa?.brand === 'krezka' ? 'Krezka' : 'Falconext';
-      const storeUrl = process.env.STORE_URL || process.env.APP_URL || process.env.FRONTEND_URL || 'https://app.falconext.pe';
+      const storeUrl =
+        process.env.STORE_URL ||
+        process.env.APP_URL ||
+        process.env.FRONTEND_URL ||
+        'https://app.falconext.pe';
       const trackingUrl = `${storeUrl.replace(/\/$/, '')}/tienda/${slug}/seguimiento`;
-      const fromEmail = process.env.RESEND_FROM_EMAIL || process.env.MAIL_FROM || 'noreply@falconext.pe';
+      const fromEmail =
+        process.env.RESEND_FROM_EMAIL ||
+        process.env.MAIL_FROM ||
+        'noreply@falconext.pe';
 
       const { Resend } = await import('resend');
       const { render } = await import('@react-email/render');
-      const { ConfirmacionPedidoClienteEmail } = await import('./emails/ConfirmacionPedidoClienteEmail.js');
+      const { ConfirmacionPedidoClienteEmail } = await import(
+        './emails/ConfirmacionPedidoClienteEmail.js'
+      );
       const resend = new Resend(resendKey);
 
       const items = (pedido.items || []).map((it: any) => ({
@@ -2298,7 +2585,9 @@ export class TiendaService {
       });
       if (error) throw new Error(error.message);
     } catch (err: any) {
-      this.logger.error(`Correo de confirmación al cliente del pedido ${pedido.id} falló: ${err?.message ?? err}`);
+      this.logger.error(
+        `Correo de confirmación al cliente del pedido ${pedido.id} falló: ${err?.message ?? err}`,
+      );
     }
   }
 
@@ -2353,7 +2642,9 @@ export class TiendaService {
       );
 
       if (!data?.id) {
-        throw new BadRequestException('No se pudo confirmar el cobro con tarjeta');
+        throw new BadRequestException(
+          'No se pudo confirmar el cobro con tarjeta',
+        );
       }
 
       const estadoPagoValido =
@@ -2364,8 +2655,8 @@ export class TiendaService {
       if (!estadoPagoValido) {
         throw new BadRequestException(
           data.outcome?.user_message ||
-          data.outcome?.merchant_message ||
-          'El pago con tarjeta no fue aprobado por Culqi',
+            data.outcome?.merchant_message ||
+            'El pago con tarjeta no fue aprobado por Culqi',
         );
       }
 
@@ -2375,7 +2666,11 @@ export class TiendaService {
 
       if (axios.isAxiosError(error)) {
         const errorData = error.response?.data as
-          | { user_message?: string; merchant_message?: string; message?: string }
+          | {
+              user_message?: string;
+              merchant_message?: string;
+              message?: string;
+            }
           | undefined;
         messageFromCulqi =
           errorData?.user_message ||
@@ -2390,7 +2685,12 @@ export class TiendaService {
     }
   }
 
-  async listarPedidos(empresaId: number, estado?: string, page = 1, limit = 50) {
+  async listarPedidos(
+    empresaId: number,
+    estado?: string,
+    page = 1,
+    limit = 50,
+  ) {
     const where: any = { empresaId };
 
     if (estado) {
@@ -2488,24 +2788,41 @@ export class TiendaService {
     const dataToUpdate: any = {};
 
     if (dto.estado) dataToUpdate.estado = dto.estado;
-    if (dto.estadoEntrega !== undefined) dataToUpdate.estadoEntrega = dto.estadoEntrega;
-    if (dto.agenciaEnvio !== undefined) dataToUpdate.agenciaEnvio = dto.agenciaEnvio;
-    if (dto.estadoEnvio !== undefined) dataToUpdate.estadoEnvio = dto.estadoEnvio;
-    if (dto.numeroTracking !== undefined) dataToUpdate.numeroTracking = dto.numeroTracking;
-    if (dto.repartidorId !== undefined) dataToUpdate.repartidorId = dto.repartidorId || null;
-    if (dto.clienteDireccion !== undefined) dataToUpdate.clienteDireccion = dto.clienteDireccion;
-    if (dto.clienteTelefono !== undefined) dataToUpdate.clienteTelefono = dto.clienteTelefono;
-    if (dto.notasInternas !== undefined) dataToUpdate.notasInternas = dto.notasInternas;
-    if (dto.usuarioConfirma !== undefined) dataToUpdate.vendedorId = dto.usuarioConfirma;
-    if (dto.vendedorNombre !== undefined) dataToUpdate.vendedorNombre = dto.vendedorNombre;
-    const pagoCompletoConfirmado = dto.montoPagado !== undefined &&
+    if (dto.estadoEntrega !== undefined)
+      dataToUpdate.estadoEntrega = dto.estadoEntrega;
+    if (dto.agenciaEnvio !== undefined)
+      dataToUpdate.agenciaEnvio = dto.agenciaEnvio;
+    if (dto.estadoEnvio !== undefined)
+      dataToUpdate.estadoEnvio = dto.estadoEnvio;
+    if (dto.numeroTracking !== undefined)
+      dataToUpdate.numeroTracking = dto.numeroTracking;
+    if (dto.repartidorId !== undefined)
+      dataToUpdate.repartidorId = dto.repartidorId || null;
+    if (dto.clienteDireccion !== undefined)
+      dataToUpdate.clienteDireccion = dto.clienteDireccion;
+    if (dto.clienteTelefono !== undefined)
+      dataToUpdate.clienteTelefono = dto.clienteTelefono;
+    if (dto.notasInternas !== undefined)
+      dataToUpdate.notasInternas = dto.notasInternas;
+    if (dto.usuarioConfirma !== undefined)
+      dataToUpdate.vendedorId = dto.usuarioConfirma;
+    if (dto.vendedorNombre !== undefined)
+      dataToUpdate.vendedorNombre = dto.vendedorNombre;
+    const pagoCompletoConfirmado =
+      dto.montoPagado !== undefined &&
       Number(pedido.saldoPendiente) > 0.01 &&
       Number(dto.montoPagado) >= Number(pedido.total);
 
     if (dto.montoPagado !== undefined) {
-      const montoPagado = Math.min(Math.max(Number(dto.montoPagado) || 0, 0), Number(pedido.total));
+      const montoPagado = Math.min(
+        Math.max(Number(dto.montoPagado) || 0, 0),
+        Number(pedido.total),
+      );
       dataToUpdate.montoPagado = montoPagado;
-      dataToUpdate.saldoPendiente = Math.max(Number(pedido.total) - montoPagado, 0);
+      dataToUpdate.saldoPendiente = Math.max(
+        Number(pedido.total) - montoPagado,
+        0,
+      );
     }
 
     if (dto.estado === 'CONFIRMADO' && !pedido.fechaConfirmacion) {
@@ -2513,15 +2830,24 @@ export class TiendaService {
       dataToUpdate.usuarioConfirma = dto.usuarioConfirma;
     }
 
-    const notas = [
-      dto.estado ? `Estado comercial: ${estadoAnterior} -> ${dto.estado}` : null,
-      dto.estadoEntrega ? `Entrega: ${dto.estadoEntrega}` : null,
-      dto.estadoEnvio ? `Envío: ${dto.estadoEnvio}` : null,
-      dto.agenciaEnvio ? `Agencia: ${dto.agenciaEnvio}` : null,
-      dto.repartidorId !== undefined ? `Repartidor ID: ${dto.repartidorId || 'Sin asignar'}` : null,
-      dto.numeroTracking ? `Tracking: ${dto.numeroTracking}` : null,
-      dto.montoPagado !== undefined ? `Pagado: S/ ${Number(dto.montoPagado).toFixed(2)}` : null,
-    ].filter(Boolean).join(' · ') || 'Pedido actualizado';
+    const notas =
+      [
+        dto.estado
+          ? `Estado comercial: ${estadoAnterior} -> ${dto.estado}`
+          : null,
+        dto.estadoEntrega ? `Entrega: ${dto.estadoEntrega}` : null,
+        dto.estadoEnvio ? `Envío: ${dto.estadoEnvio}` : null,
+        dto.agenciaEnvio ? `Agencia: ${dto.agenciaEnvio}` : null,
+        dto.repartidorId !== undefined
+          ? `Repartidor ID: ${dto.repartidorId || 'Sin asignar'}`
+          : null,
+        dto.numeroTracking ? `Tracking: ${dto.numeroTracking}` : null,
+        dto.montoPagado !== undefined
+          ? `Pagado: S/ ${Number(dto.montoPagado).toFixed(2)}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(' · ') || 'Pedido actualizado';
 
     // Actualizar pedido y registrar en historial en una transacción
     const [pedidoActualizado] = await this.prisma.$transaction([
@@ -2560,8 +2886,13 @@ export class TiendaService {
       }),
     ]);
 
-    const estadoEnvioCambia = dto.estadoEnvio && dto.estadoEnvio !== pedido.estadoEnvio;
-    if (estadoEnvioCambia && dto.estadoEnvio && ESTADOS_ENVIO_NOTIFICABLES.has(dto.estadoEnvio)) {
+    const estadoEnvioCambia =
+      dto.estadoEnvio && dto.estadoEnvio !== pedido.estadoEnvio;
+    if (
+      estadoEnvioCambia &&
+      dto.estadoEnvio &&
+      ESTADOS_ENVIO_NOTIFICABLES.has(dto.estadoEnvio)
+    ) {
       this.notificarCambioEstadoEnvio(
         pedido.empresaId,
         dto.estadoEnvio,
@@ -2573,7 +2904,9 @@ export class TiendaService {
     }
 
     // WA: paquete en agencia (pendiente de pago)
-    const llegoAAgencia = dto.estadoEntrega === 'EN_AGENCIA' && pedido.estadoEntrega !== 'EN_AGENCIA';
+    const llegoAAgencia =
+      dto.estadoEntrega === 'EN_AGENCIA' &&
+      pedido.estadoEntrega !== 'EN_AGENCIA';
     if (llegoAAgencia && pedido.clienteTelefono) {
       this.notificarEnAgencia(
         pedido.empresaId,
@@ -2592,7 +2925,9 @@ export class TiendaService {
         pedido.clienteTelefono,
         pedido.clienteNombre,
         pedido.codigoSeguimiento,
-      ).catch((e) => this.logger.warn(`WA pago completo fallido: ${e.message}`));
+      ).catch((e) =>
+        this.logger.warn(`WA pago completo fallido: ${e.message}`),
+      );
     }
 
     await this.syncDespachoByPedido(pedidoActualizado as any, dto);
@@ -2600,7 +2935,10 @@ export class TiendaService {
     return pedidoActualizado;
   }
 
-  private async syncDespachoByPedido(pedido: { comprobanteId?: number | null }, dto: ActualizarEstadoPedidoDto) {
+  private async syncDespachoByPedido(
+    pedido: { comprobanteId?: number | null },
+    dto: ActualizarEstadoPedidoDto,
+  ) {
     if (!pedido.comprobanteId) return;
     const estadoDespacho = dto.estadoEnvio
       ? PEDIDO_ENVIO_TO_DESPACHO[dto.estadoEnvio]
@@ -2615,7 +2953,9 @@ export class TiendaService {
     });
     if (!envio || envio.estado === estadoDespacho) return;
 
-    const historial = Array.isArray(envio.historial) ? envio.historial as any[] : [];
+    const historial = Array.isArray(envio.historial)
+      ? (envio.historial as any[])
+      : [];
     await this.prisma.envioDespacho.update({
       where: { comprobanteId: pedido.comprobanteId },
       data: {
@@ -2643,11 +2983,16 @@ export class TiendaService {
     if (!telefono) return;
 
     const [empresa, config] = await Promise.all([
-      this.prisma.empresa.findUnique({ where: { id: empresaId }, select: { razonSocial: true } }),
+      this.prisma.empresa.findUnique({
+        where: { id: empresaId },
+        select: { razonSocial: true },
+      }),
       this.prisma.despachoMensajeTemplate.findUnique({ where: { empresaId } }),
     ]);
 
-    const esEnCamino = ['EN_CAMINO', 'EN_REPARTO', 'ENVIADO'].includes(estadoEnvio);
+    const esEnCamino = ['EN_CAMINO', 'EN_REPARTO', 'ENVIADO'].includes(
+      estadoEnvio,
+    );
     const habilitado = esEnCamino
       ? (config?.notificarEnCamino ?? true)
       : (config?.notificarEntregado ?? true);
@@ -2675,8 +3020,12 @@ export class TiendaService {
     agencia: string | null,
   ): Promise<void> {
     if (!telefono) return;
-    const empresa = await this.prisma.empresa.findUnique({ where: { id: empresaId }, select: { razonSocial: true } });
-    const nombreAgencia = agencia && agencia !== 'RECOJO EN TIENDA' ? agencia : 'la agencia';
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { razonSocial: true },
+    });
+    const nombreAgencia =
+      agencia && agencia !== 'RECOJO EN TIENDA' ? agencia : 'la agencia';
     const msg = `Hola ${clienteNombre}! 📦 Tu pedido ${pedidoRef} llegó a ${nombreAgencia}. Para que puedas retirarlo necesitamos confirmar el pago restante de S/ ${saldo.toFixed(2)}. Una vez confirmado te avisamos. — ${empresa?.razonSocial ?? ''}`;
     await this.whatsapp.enviarTexto(telefono, msg);
   }
@@ -2688,7 +3037,10 @@ export class TiendaService {
     pedidoRef: string,
   ): Promise<void> {
     if (!telefono) return;
-    const empresa = await this.prisma.empresa.findUnique({ where: { id: empresaId }, select: { razonSocial: true } });
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { razonSocial: true },
+    });
     const msg = `Hola ${clienteNombre}! ✅ Tu pago fue confirmado. Ya puedes retirar tu pedido ${pedidoRef} de la agencia. ¡Gracias por tu compra! — ${empresa?.razonSocial ?? ''}`;
     await this.whatsapp.enviarTexto(telefono, msg);
   }
@@ -2740,18 +3092,12 @@ export class TiendaService {
       where: {
         empresaId: tienda.id,
         activo: true,
-        OR: [
-          { fechaInicio: null },
-          { fechaInicio: { lte: new Date() } }
-        ],
+        OR: [{ fechaInicio: null }, { fechaInicio: { lte: new Date() } }],
         AND: [
           {
-            OR: [
-              { fechaFin: null },
-              { fechaFin: { gte: new Date() } }
-            ]
-          }
-        ]
+            OR: [{ fechaFin: null }, { fechaFin: { gte: new Date() } }],
+          },
+        ],
       },
       include: {
         items: {
@@ -2766,15 +3112,15 @@ export class TiendaService {
                 categoria: {
                   select: {
                     id: true,
-                    nombre: true
-                  }
-                }
-              }
-            }
-          }
-        }
+                    nombre: true,
+                  },
+                },
+              },
+            },
+          },
+        },
       },
-      orderBy: { creadoEn: 'desc' }
+      orderBy: { creadoEn: 'desc' },
     });
 
     return { code: 1, data: combos };
@@ -2786,7 +3132,7 @@ export class TiendaService {
     const combo = await this.prisma.combo.findFirst({
       where: {
         id: comboId,
-        empresaId: tienda.id
+        empresaId: tienda.id,
       },
       include: {
         items: {
@@ -2801,14 +3147,14 @@ export class TiendaService {
                 categoria: {
                   select: {
                     id: true,
-                    nombre: true
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
+                    nombre: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     });
 
     if (!combo) {
@@ -2824,13 +3170,13 @@ export class TiendaService {
     const combo = await this.prisma.combo.findFirst({
       where: {
         id: comboId,
-        empresaId: tienda.id
+        empresaId: tienda.id,
       },
       include: {
         items: {
-          include: { producto: true }
-        }
-      }
+          include: { producto: true },
+        },
+      },
     });
 
     if (!combo) {
@@ -2839,7 +3185,9 @@ export class TiendaService {
 
     // Calcular stock disponible
     const stockDisponible = combo.items.reduce((min, item) => {
-      const stockProducto = Math.floor(Number(item.producto.stock) / item.cantidad);
+      const stockProducto = Math.floor(
+        Number(item.producto.stock) / item.cantidad,
+      );
       return Math.min(min, stockProducto);
     }, Infinity);
 
@@ -2847,8 +3195,8 @@ export class TiendaService {
       code: 1,
       data: {
         comboId,
-        stockDisponible: stockDisponible === Infinity ? 0 : stockDisponible
-      }
+        stockDisponible: stockDisponible === Infinity ? 0 : stockDisponible,
+      },
     };
   }
 
@@ -2900,13 +3248,13 @@ export class TiendaService {
           ...item,
           producto: item.producto
             ? {
-              ...item.producto,
-              imagenUrl: item.producto.imagenUrl
-                ? await this.signS3UrlIfNeeded(item.producto.imagenUrl)
-                : null,
-            }
+                ...item.producto,
+                imagenUrl: item.producto.imagenUrl
+                  ? await this.signS3UrlIfNeeded(item.producto.imagenUrl)
+                  : null,
+              }
             : null,
-        }))
+        })),
       ),
     };
 

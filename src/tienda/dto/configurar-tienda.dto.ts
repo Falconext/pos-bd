@@ -1,4 +1,13 @@
-import { IsString, IsOptional, IsBoolean, IsUrl, Matches, IsInt, Min, IsNumber } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsBoolean,
+  IsUrl,
+  Matches,
+  IsInt,
+  Min,
+  IsNumber,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class ConfigurarTiendaDto {
@@ -38,12 +47,16 @@ export class ConfigurarTiendaDto {
 
   @IsString()
   @IsOptional()
-  @Matches(/^#[0-9A-Fa-f]{6}$/, { message: 'Color primario debe ser hexadecimal' })
+  @Matches(/^#[0-9A-Fa-f]{6}$/, {
+    message: 'Color primario debe ser hexadecimal',
+  })
   colorPrimario?: string;
 
   @IsString()
   @IsOptional()
-  @Matches(/^#[0-9A-Fa-f]{6}$/, { message: 'Color secundario debe ser hexadecimal' })
+  @Matches(/^#[0-9A-Fa-f]{6}$/, {
+    message: 'Color secundario debe ser hexadecimal',
+  })
   colorSecundario?: string;
 
   @IsString()

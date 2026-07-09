@@ -10,4 +10,4 @@ import { RolesGuard } from '../common/guards/roles.guard';
   providers: [CategoriaService, RolesGuard],
   exports: [CategoriaService],
 })
-export class CategoriaModule { }
+export class CategoriaModule {}

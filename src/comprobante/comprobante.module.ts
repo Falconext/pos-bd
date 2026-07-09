@@ -16,9 +16,31 @@ import { JambleClient } from '../common/utils/jamble.client';
 import { ComisionesModule } from '../comisiones/comisiones.module';
 
 @Module({
-  imports: [EmpresaModule, forwardRef(() => KardexModule), NotificacionesModule, S3Module, forwardRef(() => ProductoModule), ComisionesModule],
+  imports: [
+    EmpresaModule,
+    forwardRef(() => KardexModule),
+    NotificacionesModule,
+    S3Module,
+    forwardRef(() => ProductoModule),
+    ComisionesModule,
+  ],
   controllers: [ComprobanteController, ComprobantePublicoController],
-  providers: [ComprobanteService, RolesGuard, EnviarSunatService, PdfGeneratorService, QpseClient, ApisPeruClient, JambleClient],
-  exports: [ComprobanteService, EnviarSunatService, PdfGeneratorService, QpseClient, ApisPeruClient, JambleClient],
+  providers: [
+    ComprobanteService,
+    RolesGuard,
+    EnviarSunatService,
+    PdfGeneratorService,
+    QpseClient,
+    ApisPeruClient,
+    JambleClient,
+  ],
+  exports: [
+    ComprobanteService,
+    EnviarSunatService,
+    PdfGeneratorService,
+    QpseClient,
+    ApisPeruClient,
+    JambleClient,
+  ],
 })
-export class ComprobanteModule { }
+export class ComprobanteModule {}

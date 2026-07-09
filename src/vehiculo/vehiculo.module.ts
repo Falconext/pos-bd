@@ -4,9 +4,9 @@ import { VehiculoService } from './vehiculo.service';
 import { PrismaModule } from '../prisma/prisma.module';
 
 @Module({
-    imports: [PrismaModule],
-    controllers: [VehiculoController],
-    providers: [VehiculoService],
-    exports: [VehiculoService],
+  imports: [PrismaModule],
+  controllers: [VehiculoController],
+  providers: [VehiculoService],
+  exports: [VehiculoService],
 })
 export class VehiculoModule {}

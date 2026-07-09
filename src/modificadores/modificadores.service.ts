@@ -1,6 +1,14 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { CrearGrupoModificadorDto, ActualizarGrupoModificadorDto, AsignarModificadoresProductoDto } from './dto';
+import {
+  CrearGrupoModificadorDto,
+  ActualizarGrupoModificadorDto,
+  AsignarModificadoresProductoDto,
+} from './dto';
 
 @Injectable()
 export class ModificadoresService {
@@ -70,7 +78,12 @@ export class ModificadoresService {
         productos: {
           include: {
             producto: {
-              select: { id: true, codigo: true, descripcion: true, imagenUrl: true },
+              select: {
+                id: true,
+                codigo: true,
+                descripcion: true,
+                imagenUrl: true,
+              },
             },
           },
         },
@@ -84,7 +97,11 @@ export class ModificadoresService {
     return { code: 1, data: grupo };
   }
 
-  async actualizarGrupo(empresaId: number, grupoId: number, dto: ActualizarGrupoModificadorDto) {
+  async actualizarGrupo(
+    empresaId: number,
+    grupoId: number,
+    dto: ActualizarGrupoModificadorDto,
+  ) {
     const existe = await this.prisma.grupoModificador.findFirst({
       where: { id: grupoId, empresaId },
     });
@@ -127,7 +144,17 @@ export class ModificadoresService {
 
   // ==================== OPCIONES DE MODIFICADORES ====================
 
-  async agregarOpcion(empresaId: number, grupoId: number, dto: { nombre: string; descripcion?: string; precioExtra?: number; orden?: number; esDefault?: boolean }) {
+  async agregarOpcion(
+    empresaId: number,
+    grupoId: number,
+    dto: {
+      nombre: string;
+      descripcion?: string;
+      precioExtra?: number;
+      orden?: number;
+      esDefault?: boolean;
+    },
+  ) {
     const grupo = await this.prisma.grupoModificador.findFirst({
       where: { id: grupoId, empresaId },
     });
@@ -150,7 +177,18 @@ export class ModificadoresService {
     return { code: 1, message: 'Opción agregada', data: opcion };
   }
 
-  async actualizarOpcion(empresaId: number, opcionId: number, dto: { nombre?: string; descripcion?: string; precioExtra?: number; orden?: number; activo?: boolean; esDefault?: boolean }) {
+  async actualizarOpcion(
+    empresaId: number,
+    opcionId: number,
+    dto: {
+      nombre?: string;
+      descripcion?: string;
+      precioExtra?: number;
+      orden?: number;
+      activo?: boolean;
+      esDefault?: boolean;
+    },
+  ) {
     const opcion = await this.prisma.opcionModificador.findFirst({
       where: { id: opcionId },
       include: { grupo: true },
@@ -187,7 +225,11 @@ export class ModificadoresService {
 
   // ==================== ASIGNACIÓN A PRODUCTOS ====================
 
-  async asignarGruposAProducto(empresaId: number, productoId: number, dto: AsignarModificadoresProductoDto) {
+  async asignarGruposAProducto(
+    empresaId: number,
+    productoId: number,
+    dto: AsignarModificadoresProductoDto,
+  ) {
     // Verificar que el producto pertenece a la empresa
     const producto = await this.prisma.producto.findFirst({
       where: { id: productoId, empresaId },
@@ -204,7 +246,9 @@ export class ModificadoresService {
     });
 
     if (gruposValidos.length !== grupoIds.length) {
-      throw new BadRequestException('Algunos grupos no pertenecen a esta empresa');
+      throw new BadRequestException(
+        'Algunos grupos no pertenecen a esta empresa',
+      );
     }
 
     // Eliminar asignaciones anteriores y crear nuevas
@@ -243,7 +287,11 @@ export class ModificadoresService {
       },
     });
 
-    return { code: 1, message: 'Modificadores asignados', data: productoActualizado };
+    return {
+      code: 1,
+      message: 'Modificadores asignados',
+      data: productoActualizado,
+    };
   }
 
   async obtenerModificadoresProducto(empresaId: number, productoId: number) {

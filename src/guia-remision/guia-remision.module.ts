@@ -6,9 +6,9 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { ComprobanteModule } from '../comprobante/comprobante.module';
 
 @Module({
-    imports: [PrismaModule, ComprobanteModule],
-    controllers: [GuiaRemisionController],
-    providers: [GuiaRemisionService, SunatGuiaService],
-    exports: [GuiaRemisionService],
+  imports: [PrismaModule, ComprobanteModule],
+  controllers: [GuiaRemisionController],
+  providers: [GuiaRemisionService, SunatGuiaService],
+  exports: [GuiaRemisionService],
 })
-export class GuiaRemisionModule { }
+export class GuiaRemisionModule {}

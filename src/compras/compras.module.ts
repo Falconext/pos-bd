@@ -6,8 +6,8 @@ import { KardexModule } from '../kardex/kardex.module';
 import { ProductoModule } from '../producto/producto.module';
 
 @Module({
-    imports: [PrismaModule, KardexModule, ProductoModule],
-    controllers: [ComprasController],
-    providers: [ComprasService],
+  imports: [PrismaModule, KardexModule, ProductoModule],
+  controllers: [ComprasController],
+  providers: [ComprasService],
 })
-export class ComprasModule { }
+export class ComprasModule {}

@@ -5,8 +5,12 @@ type EmpresaLike = {
   usaDemo?: boolean | null;
 };
 
-export function resolveBillingProvider(empresa: EmpresaLike | null | undefined): BillingProviderCode {
-  const configured = String(empresa?.billingProvider || '').trim().toUpperCase();
+export function resolveBillingProvider(
+  empresa: EmpresaLike | null | undefined,
+): BillingProviderCode {
+  const configured = String(empresa?.billingProvider || '')
+    .trim()
+    .toUpperCase();
   if (configured === 'JAMBLE') {
     return 'JAMBLE';
   }
