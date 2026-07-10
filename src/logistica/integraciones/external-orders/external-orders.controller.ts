@@ -1,4 +1,12 @@
-import { Controller, Post, Get, Body, Param, Query } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Get,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -6,27 +14,30 @@ import {
   ApiResponse,
   ApiParam,
   ApiExtraModels,
+  ApiBearerAuth,
 } from '@nestjs/swagger';
 import { ExternalOrdersService } from './external-orders.service';
 import { SandboxService } from '../sandbox/sandbox.service';
 import { RateLimitsService } from '../rate-limits/rate-limits.service';
+import { ApiKeyAuthGuard } from '../api-keys/api-key-auth.guard';
 import {
   OrderCreate,
   Order,
   OrderList,
   Tracking,
+  ProofOfDelivery,
   ErrorResponse,
 } from './dto/openapi-facade.dto';
-// import { ApiKeyAuthGuard } from '../api-keys/api-key-auth.guard'; // Assume this will exist
 
 // NOTA: las anotaciones @Api* son SOLO para documentación (OpenAPI). Las firmas
 // runtime siguen recibiendo `any` — no se agrega validación nueva para no alterar
 // el comportamiento de integraciones existentes. La fachada inglesa vive en
-// dto/openapi-facade.dto.ts.
+// dto/openapi-facade.dto.ts. Autenticación por API key vía ApiKeyAuthGuard.
 @ApiTags('Pedidos')
-@ApiExtraModels(Order, OrderList, Tracking, ErrorResponse)
+@ApiBearerAuth('bearerAuth')
+@ApiExtraModels(Order, OrderList, Tracking, ProofOfDelivery, ErrorResponse)
+@UseGuards(ApiKeyAuthGuard)
 @Controller('v1/logistics/orders')
-// @UseGuards(ApiKeyAuthGuard) // Protect all endpoints in this controller
 export class ExternalOrdersController {
   constructor(
     private readonly ordersService: ExternalOrdersService,
@@ -78,7 +89,7 @@ export class ExternalOrdersController {
     return this.ordersService.getOrders(query);
   }
 
-  @Get(':id/status')
+  @Get(':id')
   @ApiOperation({
     operationId: 'getOrder',
     summary: 'Obtener una orden',
@@ -94,6 +105,52 @@ export class ExternalOrdersController {
   })
   async getOrderStatus(@Param('id') id: string) {
     return this.ordersService.getOrderStatus(id);
+  }
+
+  @Get(':id/tracking')
+  @ApiTags('Rastreo')
+  @ApiOperation({
+    operationId: 'trackOrder',
+    summary: 'Rastrear una orden',
+    description:
+      'Devuelve el estado y la línea de tiempo de eventos de una orden.',
+  })
+  @ApiParam({ name: 'id', description: 'id de Falconext o tracking_code.' })
+  @ApiResponse({
+    status: 200,
+    description: 'Rastreo de la orden.',
+    type: Tracking,
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'No encontrada.',
+    type: ErrorResponse,
+  })
+  async getTracking(@Param('id') id: string) {
+    return this.ordersService.getTracking(id);
+  }
+
+  @Get(':id/proof')
+  @ApiTags('Rastreo')
+  @ApiOperation({
+    operationId: 'getProofOfDelivery',
+    summary: 'Obtener la prueba de entrega',
+    description:
+      'Prueba de entrega de una orden entregada: receptor, firma, fotos y monto cobrado (COD).',
+  })
+  @ApiParam({ name: 'id', description: 'id de Falconext o tracking_code.' })
+  @ApiResponse({
+    status: 200,
+    description: 'Prueba de entrega.',
+    type: ProofOfDelivery,
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'No encontrada o sin prueba de entrega aún.',
+    type: ErrorResponse,
+  })
+  async getProof(@Param('id') id: string) {
+    return this.ordersService.getProof(id);
   }
 
   @Post(':id/cancel')
@@ -115,16 +172,19 @@ export class ExternalOrdersController {
 }
 
 @ApiTags('Rastreo')
+@ApiBearerAuth('bearerAuth')
+@UseGuards(ApiKeyAuthGuard)
 @Controller('v1/logistics/tracking')
 export class TrackingController {
   constructor(private readonly ordersService: ExternalOrdersService) {}
 
   @Get(':id')
   @ApiOperation({
-    operationId: 'trackOrder',
-    summary: 'Rastrear una orden',
+    operationId: 'trackOrderLegacy',
+    summary: 'Rastrear una orden (ruta legacy)',
     description:
-      'Devuelve el estado y la línea de tiempo de eventos de una orden.',
+      'Compatibilidad. La ruta canónica documentada es GET /orders/{id}/tracking.',
+    deprecated: true,
   })
   @ApiParam({ name: 'id', description: 'id de Falconext o tracking_code.' })
   @ApiResponse({

@@ -4,15 +4,37 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { WebhooksService } from '../integraciones/webhooks/webhooks.service';
 import { CreatePedidoLogisticaDto } from './dto/create-pedido.dto';
 import {
   UpdateEstadoPedidoDto,
   EstadoPedidoLogistica,
 } from './dto/update-estado-pedido.dto';
 
+/**
+ * Mapa estado → evento de webhook (order.*). Solo los 7 eventos válidos.
+ * Los estados no listados (PENDIENTE/VALIDADO/REPROGRAMADO/CANCELADO) NO
+ * disparan webhook.
+ */
+const ESTADO_A_EVENTO: Partial<Record<EstadoPedidoLogistica, string>> = {
+  [EstadoPedidoLogistica.ASIGNADO]: 'order.assigned',
+  [EstadoPedidoLogistica.RECOGIDO]: 'order.picked_up',
+  [EstadoPedidoLogistica.LISTO_RECOGER]: 'order.picked_up',
+  [EstadoPedidoLogistica.EN_TRANSITO]: 'order.in_transit',
+  [EstadoPedidoLogistica.LLEGANDO]: 'order.in_transit',
+  [EstadoPedidoLogistica.EN_UBICACION]: 'order.in_transit',
+  [EstadoPedidoLogistica.ENTREGADO]: 'order.delivered',
+  [EstadoPedidoLogistica.FALLIDO]: 'order.failed',
+  [EstadoPedidoLogistica.ENTREGA_PARCIAL]: 'order.failed',
+  [EstadoPedidoLogistica.DEVUELTO]: 'order.returned',
+};
+
 @Injectable()
 export class PedidoLogisticaService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly webhooks: WebhooksService,
+  ) {}
 
   private generarCodigoTracking(): string {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -113,7 +135,7 @@ export class PedidoLogisticaService {
 
     const codigoTracking = this.generarCodigoTracking();
 
-    return this.prisma.pedidoLogistica.create({
+    const pedido = await this.prisma.pedidoLogistica.create({
       data: {
         empresaId,
         codigoTracking,
@@ -156,6 +178,17 @@ export class PedidoLogisticaService {
         items: true,
       },
     });
+
+    // Fire-and-forget: notifica el evento order.created a los webhooks suscritos.
+    void this.webhooks
+      .dispatchEvent(empresaId, 'order.created', {
+        id: pedido.id,
+        tracking_code: pedido.codigoTracking,
+        status: pedido.estado,
+      })
+      .catch(() => undefined);
+
+    return pedido;
   }
 
   async updateEstado(
@@ -166,8 +199,8 @@ export class PedidoLogisticaService {
   ) {
     const pedido = await this.findOne(id, empresaId);
 
-    return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.pedidoLogistica.update({
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const upd = await tx.pedidoLogistica.update({
         where: { id },
         data: { estado: dto.estado },
       });
@@ -185,7 +218,21 @@ export class PedidoLogisticaService {
         },
       });
 
-      return updated;
+      return upd;
     });
+
+    // Fire-and-forget: mapea el nuevo estado a un evento order.* y notifica.
+    const evento = ESTADO_A_EVENTO[dto.estado];
+    if (evento) {
+      void this.webhooks
+        .dispatchEvent(empresaId, evento, {
+          id: updated.id,
+          tracking_code: updated.codigoTracking,
+          status: updated.estado,
+        })
+        .catch(() => undefined);
+    }
+
+    return updated;
   }
 }

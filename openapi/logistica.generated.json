@@ -38,6 +38,11 @@
             }
           }
         },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "summary": "Crear una orden",
         "tags": [
           "Pedidos"
@@ -59,6 +64,11 @@
             }
           }
         },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "summary": "Listar órdenes",
         "tags": [
           "Pedidos"
@@ -98,13 +108,18 @@
             }
           }
         },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "summary": "Crear órdenes en lote",
         "tags": [
           "Pedidos"
         ]
       }
     },
-    "/orders/{id}/status": {
+    "/orders/{id}": {
       "get": {
         "description": "Devuelve el detalle y estado actual de una orden por su id o tracking_code.",
         "operationId": "getOrder",
@@ -141,9 +156,112 @@
             }
           }
         },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "summary": "Obtener una orden",
         "tags": [
           "Pedidos"
+        ]
+      }
+    },
+    "/orders/{id}/tracking": {
+      "get": {
+        "description": "Devuelve el estado y la línea de tiempo de eventos de una orden.",
+        "operationId": "trackOrder",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "description": "id de Falconext o tracking_code.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Rastreo de la orden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tracking"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No encontrada.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Rastrear una orden",
+        "tags": [
+          "Pedidos",
+          "Rastreo"
+        ]
+      }
+    },
+    "/orders/{id}/proof": {
+      "get": {
+        "description": "Prueba de entrega de una orden entregada: receptor, firma, fotos y monto cobrado (COD).",
+        "operationId": "getProofOfDelivery",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "description": "id de Falconext o tracking_code.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Prueba de entrega.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProofOfDelivery"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No encontrada o sin prueba de entrega aún.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Obtener la prueba de entrega",
+        "tags": [
+          "Pedidos",
+          "Rastreo"
         ]
       }
     },
@@ -184,6 +302,11 @@
             }
           }
         },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "summary": "Cancelar una orden",
         "tags": [
           "Pedidos"
@@ -192,8 +315,9 @@
     },
     "/tracking/{id}": {
       "get": {
-        "description": "Devuelve el estado y la línea de tiempo de eventos de una orden.",
-        "operationId": "trackOrder",
+        "deprecated": true,
+        "description": "Compatibilidad. La ruta canónica documentada es GET /orders/{id}/tracking.",
+        "operationId": "trackOrderLegacy",
         "parameters": [
           {
             "name": "id",
@@ -227,9 +351,62 @@
             }
           }
         },
-        "summary": "Rastrear una orden",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Rastrear una orden (ruta legacy)",
         "tags": [
           "Rastreo"
+        ]
+      }
+    },
+    "/webhook_endpoints": {
+      "post": {
+        "description": "Registra una URL para recibir eventos order.* y devuelve el secreto de firma HMAC.",
+        "operationId": "createWebhookEndpoint",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookEndpointCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Endpoint registrado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpoint"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Parámetros inválidos.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Registrar un endpoint de webhook",
+        "tags": [
+          "Webhooks"
         ]
       }
     }
@@ -585,6 +762,52 @@
           "timeline"
         ]
       },
+      "ProofOfDelivery": {
+        "type": "object",
+        "properties": {
+          "receiver_name": {
+            "type": "string",
+            "example": "María Pérez"
+          },
+          "receiver_document": {
+            "type": "string",
+            "example": "87654321"
+          },
+          "relationship": {
+            "type": "string",
+            "example": "Familiar",
+            "description": "Relación del receptor con el cliente."
+          },
+          "signature_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "photo_urls": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "collected_amount": {
+            "type": "number",
+            "example": 150,
+            "description": "Monto COD efectivamente cobrado."
+          },
+          "payment_method": {
+            "type": "string",
+            "example": "cash"
+          },
+          "delivered_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2025-07-14T20:10:00Z"
+          }
+        },
+        "required": [
+          "delivered_at"
+        ]
+      },
       "ErrorResponse": {
         "type": "object",
         "properties": {
@@ -688,6 +911,61 @@
         "required": [
           "customer",
           "delivery_address"
+        ]
+      },
+      "WebhookEndpoint": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "we_1a2b3c"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "secret": {
+            "type": "string",
+            "example": "whsec_...",
+            "description": "Secreto para verificar la firma HMAC."
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "url",
+          "secret",
+          "events"
+        ]
+      },
+      "WebhookEndpointCreate": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "example": "https://miapp.com/webhooks/falconext"
+          },
+          "events": {
+            "example": [
+              "order.delivered",
+              "order.failed"
+            ],
+            "description": "Eventos suscritos (order.*).",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "url",
+          "events"
         ]
       }
     }

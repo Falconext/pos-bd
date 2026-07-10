@@ -39,7 +39,8 @@
     "seed:computo": "npx ts-node prisma/seeds/seed-computo-products.ts",
     "seed:demo-computo-krezka": "npx ts-node prisma/seeds/seed-demo-computo-krezka.ts",
     "seed:demo-autopartes": "npx ts-node prisma/seeds/seed-demo-autopartes.ts",
-    "seed:demo-moda": "npx ts-node prisma/seeds/seed-demo-moda.ts"
+    "seed:demo-moda": "npx ts-node prisma/seeds/seed-demo-moda.ts",
+    "openapi:check:logistica": "node scripts/check-logistica-openapi.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.927.0",

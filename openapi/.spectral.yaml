@@ -1,0 +1,9 @@
+# Ruleset de validación OpenAPI para el spec generado de Logística.
+# Extiende las reglas oficiales de OpenAPI de Spectral.
+extends: ["spectral:oas"]
+rules:
+  # El contrato usa operationId en camelCase (createOrder, getOrder…): no forzamos kebab.
+  operation-operationId: true
+  operation-tag-defined: true
+  info-contact: off
+  oas3-api-servers: true
