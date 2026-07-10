@@ -5,6 +5,7 @@ import {
   Body,
   Param,
   Query,
+  Request,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -29,10 +30,9 @@ import {
   ErrorResponse,
 } from './dto/openapi-facade.dto';
 
-// NOTA: las anotaciones @Api* son SOLO para documentación (OpenAPI). Las firmas
-// runtime siguen recibiendo `any` — no se agrega validación nueva para no alterar
-// el comportamiento de integraciones existentes. La fachada inglesa vive en
-// dto/openapi-facade.dto.ts. Autenticación por API key vía ApiKeyAuthGuard.
+// NOTA: las anotaciones @Api* son SOLO para documentación (OpenAPI). Los `@Body()`
+// siguen siendo `any`; la validación mínima vive en el servicio. La empresa se
+// resuelve desde la API key (ApiKeyAuthGuard → req.logisticaEmpresaId).
 @ApiTags('Pedidos')
 @ApiBearerAuth('bearerAuth')
 @ApiExtraModels(Order, OrderList, Tracking, ProofOfDelivery, ErrorResponse)
@@ -58,8 +58,8 @@ export class ExternalOrdersController {
     description: 'Solicitud inválida.',
     type: ErrorResponse,
   })
-  async createOrder(@Body() payload: any) {
-    return this.ordersService.createOrder(payload);
+  async createOrder(@Body() payload: any, @Request() req: any) {
+    return this.ordersService.createOrder(req.logisticaEmpresaId, payload);
   }
 
   @Post('bulk')
@@ -70,8 +70,8 @@ export class ExternalOrdersController {
   })
   @ApiBody({ type: [OrderCreate] })
   @ApiResponse({ status: 201, description: 'Órdenes creadas.', type: [Order] })
-  async createBulkOrders(@Body() payload: any[]) {
-    return this.ordersService.createBulkOrders(payload);
+  async createBulkOrders(@Body() payload: any[], @Request() req: any) {
+    return this.ordersService.createBulkOrders(req.logisticaEmpresaId, payload);
   }
 
   @Get()
@@ -85,8 +85,8 @@ export class ExternalOrdersController {
     description: 'Lista de órdenes.',
     type: OrderList,
   })
-  async getOrders(@Query() query: any) {
-    return this.ordersService.getOrders(query);
+  async getOrders(@Query() query: any, @Request() req: any) {
+    return this.ordersService.getOrders(req.logisticaEmpresaId, query);
   }
 
   @Get(':id')
@@ -103,8 +103,8 @@ export class ExternalOrdersController {
     description: 'No encontrada.',
     type: ErrorResponse,
   })
-  async getOrderStatus(@Param('id') id: string) {
-    return this.ordersService.getOrderStatus(id);
+  async getOrderStatus(@Param('id') id: string, @Request() req: any) {
+    return this.ordersService.getOrderStatus(req.logisticaEmpresaId, id);
   }
 
   @Get(':id/tracking')
@@ -126,8 +126,8 @@ export class ExternalOrdersController {
     description: 'No encontrada.',
     type: ErrorResponse,
   })
-  async getTracking(@Param('id') id: string) {
-    return this.ordersService.getTracking(id);
+  async getTracking(@Param('id') id: string, @Request() req: any) {
+    return this.ordersService.getTracking(req.logisticaEmpresaId, id);
   }
 
   @Get(':id/proof')
@@ -149,8 +149,8 @@ export class ExternalOrdersController {
     description: 'No encontrada o sin prueba de entrega aún.',
     type: ErrorResponse,
   })
-  async getProof(@Param('id') id: string) {
-    return this.ordersService.getProof(id);
+  async getProof(@Param('id') id: string, @Request() req: any) {
+    return this.ordersService.getProof(req.logisticaEmpresaId, id);
   }
 
   @Post(':id/cancel')
@@ -166,8 +166,8 @@ export class ExternalOrdersController {
     description: 'No se puede cancelar en este estado.',
     type: ErrorResponse,
   })
-  async cancelOrder(@Param('id') id: string) {
-    return this.ordersService.cancelOrder(id);
+  async cancelOrder(@Param('id') id: string, @Request() req: any) {
+    return this.ordersService.cancelOrder(req.logisticaEmpresaId, id);
   }
 }
 
@@ -197,7 +197,7 @@ export class TrackingController {
     description: 'No encontrada.',
     type: ErrorResponse,
   })
-  async getTracking(@Param('id') id: string) {
-    return this.ordersService.getTracking(id);
+  async getTracking(@Param('id') id: string, @Request() req: any) {
+    return this.ordersService.getTracking(req.logisticaEmpresaId, id);
   }
 }
