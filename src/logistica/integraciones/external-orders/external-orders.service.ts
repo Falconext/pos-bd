@@ -2,7 +2,7 @@ import {
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
-  BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
 import {
   EstadoPedidoLogistica,
@@ -144,12 +144,18 @@ export class ExternalOrdersService {
     const customer = payload?.customer;
     const address = payload?.delivery_address;
     if (!customer?.name) {
-      throw new UnprocessableEntityException('customer.name es requerido.');
+      throw new UnprocessableEntityException({
+        code: 'parameter_missing',
+        message: 'El campo customer.name es obligatorio.',
+        param: 'customer.name',
+      });
     }
     if (!address?.address) {
-      throw new UnprocessableEntityException(
-        'delivery_address.address es requerido.',
-      );
+      throw new UnprocessableEntityException({
+        code: 'parameter_missing',
+        message: 'El campo delivery_address.address es obligatorio.',
+        param: 'delivery_address.address',
+      });
     }
 
     // Idempotencia: si ya existe una orden con este external_order_id para la
@@ -297,7 +303,12 @@ export class ExternalOrdersService {
       where: this.whereByPublicId(empresaId, id),
       include: PEDIDO_INCLUDE,
     });
-    if (!pedido) throw new NotFoundException('Orden no encontrada.');
+    if (!pedido) {
+      throw new NotFoundException({
+        code: 'resource_not_found',
+        message: 'La orden no existe.',
+      });
+    }
     return pedido;
   }
 
@@ -313,9 +324,10 @@ export class ExternalOrdersService {
       'DEVUELTO',
     ];
     if (noCancelables.includes(pedido.estado)) {
-      throw new BadRequestException(
-        `No se puede cancelar una orden en estado ${ESTADO_A_STATUS[pedido.estado]}.`,
-      );
+      throw new ConflictException({
+        code: 'invalid_state',
+        message: `No se puede cancelar una orden en estado ${ESTADO_A_STATUS[pedido.estado]}.`,
+      });
     }
     await this.prisma.$transaction(async (tx) => {
       await tx.pedidoLogistica.update({
@@ -340,7 +352,11 @@ export class ExternalOrdersService {
       where: this.whereByPublicId(empresaId, id),
       include: { historialEstados: { orderBy: { creadoEn: 'asc' } } },
     });
-    if (!pedido) throw new NotFoundException('Orden no encontrada.');
+    if (!pedido)
+      throw new NotFoundException({
+        code: 'resource_not_found',
+        message: 'La orden no existe.',
+      });
     return {
       status: ESTADO_A_STATUS[pedido.estado] ?? 'pending',
       courier: 'Falconext Logística',
@@ -359,12 +375,17 @@ export class ExternalOrdersService {
       where: this.whereByPublicId(empresaId, id),
       include: { pruebasEntrega: { orderBy: { creadoEn: 'desc' }, take: 1 } },
     });
-    if (!pedido) throw new NotFoundException('Orden no encontrada.');
+    if (!pedido)
+      throw new NotFoundException({
+        code: 'resource_not_found',
+        message: 'La orden no existe.',
+      });
     const prueba = pedido.pruebasEntrega[0];
     if (!prueba) {
-      throw new NotFoundException(
-        'La orden aún no tiene una prueba de entrega registrada.',
-      );
+      throw new NotFoundException({
+        code: 'proof_not_available',
+        message: 'La orden aún no tiene una prueba de entrega registrada.',
+      });
     }
     return {
       receiver_name: prueba.nombreReceptor ?? undefined,

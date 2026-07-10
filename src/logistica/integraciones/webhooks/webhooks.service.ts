@@ -118,9 +118,11 @@ export class WebhooksService {
   ) {
     const url = typeof payload?.url === 'string' ? payload.url.trim() : '';
     if (!url || !/^https?:\/\//i.test(url)) {
-      throw new UnprocessableEntityException(
-        '`url` es obligatoria y debe ser una URL http(s) válida.',
-      );
+      throw new UnprocessableEntityException({
+        code: 'parameter_invalid',
+        message: 'El campo url es obligatorio y debe ser una URL http(s) válida.',
+        param: 'url',
+      });
     }
     const eventos = Array.isArray(payload?.events) ? payload.events : [];
     const endpointId = `we_${randomBytes(8).toString('hex')}`;

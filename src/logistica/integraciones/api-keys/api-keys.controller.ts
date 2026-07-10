@@ -12,6 +12,8 @@ import {
 import { ApiExcludeController } from '@nestjs/swagger';
 import { ApiKeysService } from './api-keys.service';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
+import { ModuleAccessGuard } from '../../../common/guards/module-access.guard';
+import { RequiresModule } from '../../../common/decorators/module.decorator';
 
 /**
  * Gestión de API keys de Logística para la empresa autenticada (panel ERP).
@@ -22,7 +24,8 @@ import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
  * seguridad extra por si algún día se incluye en el scan de Swagger.
  */
 @ApiExcludeController()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, ModuleAccessGuard)
+@RequiresModule('logistica')
 @Controller('logistica/api-keys')
 export class ApiKeysController {
   constructor(private readonly apiKeys: ApiKeysService) {}
