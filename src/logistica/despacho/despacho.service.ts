@@ -3,16 +3,45 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
+import { EstadoPedidoLogistica } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { WebhooksService } from '../integraciones/webhooks/webhooks.service';
 import {
   CreateDespachoLogisticaDto,
   EstadoDespachoLogistica,
   UpdateEstadoDespachoDto,
 } from './dto/create-despacho.dto';
 
+/** Estado del despacho → estado que toman sus pedidos asignados (no-terminales). */
+const DESPACHO_A_PEDIDO: Partial<Record<string, EstadoPedidoLogistica>> = {
+  APROBADO: EstadoPedidoLogistica.ASIGNADO,
+  CARGANDO: EstadoPedidoLogistica.RECOGIDO,
+  LISTO: EstadoPedidoLogistica.RECOGIDO,
+  EN_CURSO: EstadoPedidoLogistica.EN_TRANSITO,
+};
+/** Estado de pedido → evento de webhook (order.*). */
+const PEDIDO_A_EVENTO: Partial<Record<EstadoPedidoLogistica, string>> = {
+  ASIGNADO: 'order.assigned',
+  RECOGIDO: 'order.picked_up',
+  EN_TRANSITO: 'order.in_transit',
+  ENTREGADO: 'order.delivered',
+  FALLIDO: 'order.failed',
+  DEVUELTO: 'order.returned',
+};
+const TERMINALES: EstadoPedidoLogistica[] = [
+  EstadoPedidoLogistica.ENTREGADO,
+  EstadoPedidoLogistica.ENTREGA_PARCIAL,
+  EstadoPedidoLogistica.FALLIDO,
+  EstadoPedidoLogistica.DEVUELTO,
+  EstadoPedidoLogistica.CANCELADO,
+];
+
 @Injectable()
 export class DespachoLogisticaService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly webhooks: WebhooksService,
+  ) {}
 
   private generarCodigoDespacho(): string {
     const chars = '0123456789';
@@ -109,8 +138,8 @@ export class DespachoLogisticaService {
   ) {
     const despacho = await this.findOne(id, empresaId);
 
-    return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.despachoLogistica.update({
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const upd = await tx.despachoLogistica.update({
         where: { id },
         data: { estado: dto.estado },
       });
@@ -125,10 +154,53 @@ export class DespachoLogisticaService {
         },
       });
 
-      // Si se aprueba o inicia, podríamos cambiar el estado de los pedidos asociados aquí.
-      // (Simplificado para el MVP)
-
-      return updated;
+      return upd;
     });
+
+    // Propaga el estado a los pedidos asignados (no-terminales) + dispara sus
+    // webhooks. Así, gestionar por despachos mantiene el estado de cada pedido
+    // sincronizado y notifica al integrador — igual que el flujo directo.
+    const estadoPedido = DESPACHO_A_PEDIDO[dto.estado];
+    if (estadoPedido) {
+      const asignaciones = await this.prisma.despachoPedidoLogistica.findMany({
+        where: { despachoId: id },
+        include: {
+          pedido: { select: { id: true, codigoTracking: true, estado: true } },
+        },
+      });
+      for (const a of asignaciones) {
+        const p = a.pedido;
+        if (!p || TERMINALES.includes(p.estado) || p.estado === estadoPedido) {
+          continue;
+        }
+        await this.prisma.$transaction(async (tx) => {
+          await tx.pedidoLogistica.update({
+            where: { id: p.id },
+            data: { estado: estadoPedido },
+          });
+          await tx.historialEstadoPedidoLogistica.create({
+            data: {
+              pedidoId: p.id,
+              estadoAnterior: p.estado,
+              estadoNuevo: estadoPedido,
+              motivo: `Despacho ${despacho.codigo}`,
+              usuarioId,
+            },
+          });
+        });
+        const evento = PEDIDO_A_EVENTO[estadoPedido];
+        if (evento) {
+          void this.webhooks
+            .dispatchEvent(empresaId, evento, {
+              id: p.id,
+              tracking_code: p.codigoTracking,
+              status: estadoPedido,
+            })
+            .catch(() => undefined);
+        }
+      }
+    }
+
+    return updated;
   }
 }
