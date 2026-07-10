@@ -288,6 +288,9 @@ model Usuario {
   subModulosAsignados               UsuarioSubModulo[]
   passwordResetToken                String?
   passwordResetExpires              DateTime?
+  googleId                          String?                            @unique
+  githubId                          String?                            @unique
+  avatarUrl                         String?
   ordenesProduccion                 OrdenProduccion[]
   movimientosProduccion             MovimientoProduccion[]
   comisiones                        ComisionVendedor[]

@@ -219,6 +219,120 @@ export class AuthService {
     return { accessToken, refreshToken, usuario: usuarioCompleto };
   }
 
+  /**
+   * Intercambia una identidad OAuth verificada (por NextAuth en el portal de
+   * developers) por los tokens estándar del ERP. Busca al usuario primero por
+   * el proveedor (googleId/githubId) y, si no hay match, por email. En el
+   * primer login por email guarda el providerId para reconocerlo la próxima.
+   *
+   * No crea usuarios: el developer debe existir ya como Usuario en MyPE.
+   */
+  async oauthSignin(input: {
+    provider: 'google' | 'github';
+    providerId: string;
+    email: string;
+    name?: string;
+    avatarUrl?: string;
+  }) {
+    const { provider, providerId, email, name, avatarUrl } = input;
+    if (!providerId || !email) {
+      throw new BadRequestException('providerId y email son obligatorios');
+    }
+
+    const providerField = provider === 'google' ? 'googleId' : 'githubId';
+
+    let user: any = await this.prisma.usuario.findFirst({
+      where: { [providerField]: providerId } as any,
+      include: { empresa: true },
+    });
+
+    if (!user) {
+      user = await this.prisma.usuario.findUnique({
+        where: { email: email.toLowerCase() },
+        include: { empresa: true },
+      });
+      if (!user) {
+        throw new UnauthorizedException(
+          'No encontramos una cuenta con este correo. Regístrate primero en Falconext MyPE.',
+        );
+      }
+      // Enlaza el proveedor a este usuario para futuros logins.
+      await this.prisma.usuario.update({
+        where: { id: user.id },
+        data: {
+          [providerField]: providerId,
+          ...(avatarUrl && !user.avatarUrl ? { avatarUrl } : {}),
+          ...(name && !user.nombre ? { nombre: name } : {}),
+        } as any,
+      });
+    }
+
+    if (user.estado !== 'ACTIVO') {
+      throw new ForbiddenException('Cuenta inactiva');
+    }
+    if (user.empresaId && user.empresa?.estado !== 'ACTIVO') {
+      throw new ForbiddenException('La empresa está inactiva.');
+    }
+
+    // Resolver primera sede disponible (developers no necesitan selector).
+    let sedeIdFinal: number | null = null;
+    const isSuperAdmin =
+      user.rol === 'ADMIN_SISTEMA' || user.rol === 'RESELLER';
+    if (!isSuperAdmin && user.empresaId) {
+      if (user.rol === 'ADMIN_EMPRESA') {
+        const sede = await this.prisma.sede.findFirst({
+          where: { empresaId: user.empresaId, activo: true },
+          orderBy: [{ esPrincipal: 'desc' }, { id: 'asc' }],
+          select: { id: true },
+        });
+        sedeIdFinal = sede?.id ?? null;
+      } else {
+        const usuarioSede = await this.prisma.usuarioSede.findFirst({
+          where: { usuarioId: user.id, sede: { activo: true } },
+          include: { sede: { select: { id: true, esPrincipal: true } } },
+          orderBy: { sedeId: 'asc' },
+        });
+        sedeIdFinal = usuarioSede?.sede?.id ?? null;
+      }
+    }
+
+    const payload: any = {
+      sub: user.id,
+      rol: user.rol as string,
+      empresaId: user.empresaId ?? null,
+      sistemaNegocio: user.sistemaNegocio ?? null,
+      sistemaProducto: user.sistemaProducto ?? null,
+    };
+    if (sedeIdFinal) payload.sedeId = sedeIdFinal;
+
+    const accessToken = await this.jwt.signAsync(payload, {
+      expiresIn: this.accessExpiresInSec,
+    });
+    const refreshToken = await this.jwt.signAsync(
+      { sub: user.id, sedeId: sedeIdFinal ?? null },
+      { expiresIn: this.refreshExpiresInSec },
+    );
+
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7);
+    await this.prisma.refreshToken.create({
+      data: { token: refreshToken, usuarioId: user.id, expiresAt },
+    });
+
+    return {
+      accessToken,
+      refreshToken,
+      usuario: {
+        id: user.id,
+        nombre: user.nombre,
+        email: user.email,
+        rol: user.rol,
+        empresaId: user.empresaId,
+        avatarUrl: (user as any).avatarUrl ?? avatarUrl ?? null,
+      },
+    };
+  }
+
   async selectSede(userId: number, sedeId: number) {
     const user = await this.prisma.usuario.findUnique({
       where: { id: userId },

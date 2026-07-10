@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Headers,
   HttpCode,
@@ -13,6 +14,7 @@ import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { OauthSigninDto } from './dto/oauth-signin.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import type { Response } from 'express';
 import { User } from '../common/decorators/user.decorator';
@@ -73,6 +75,27 @@ export class AuthController {
     const tokens = await this.authService.refresh(dto.refreshToken);
     res.locals.message = 'Refresh exitoso';
     return tokens;
+  }
+
+  /**
+   * Endpoint interno: intercambia una identidad OAuth ya verificada por
+   * NextAuth en el portal de developers por los tokens del ERP. Protegido
+   * por shared-secret (`OAUTH_SIGNIN_SECRET`) — solo el backend del portal
+   * debe conocerlo.
+   */
+  @Post('oauth-signin')
+  async oauthSignin(
+    @Body() dto: OauthSigninDto,
+    @Headers('x-oauth-signin-secret') sharedSecret: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const expected = process.env.OAUTH_SIGNIN_SECRET;
+    if (!expected || sharedSecret !== expected) {
+      throw new ForbiddenException('oauth-signin secret inválido');
+    }
+    const result = await this.authService.oauthSignin(dto);
+    res.locals.message = 'OAuth signin exitoso';
+    return result;
   }
 
   @HttpCode(200)
