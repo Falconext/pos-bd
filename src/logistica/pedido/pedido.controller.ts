@@ -13,9 +13,13 @@ import {
 import { PedidoLogisticaService } from './pedido.service';
 import { CreatePedidoLogisticaDto } from './dto/create-pedido.dto';
 import { UpdateEstadoPedidoDto } from './dto/update-estado-pedido.dto';
+import { RegistrarEntregaDto } from './dto/registrar-entrega.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { ModuleAccessGuard } from '../../common/guards/module-access.guard';
+import { RequiresModule } from '../../common/decorators/module.decorator';
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, ModuleAccessGuard)
+@RequiresModule('logistica')
 @Controller('logistica/pedidos')
 export class PedidoLogisticaController {
   constructor(private readonly pedidoService: PedidoLogisticaService) {}
@@ -53,6 +57,21 @@ export class PedidoLogisticaController {
       req.user.empresaId,
       req.user.sub,
       updateEstadoDto,
+    );
+  }
+
+  /** Confirma la entrega con su prueba (receptor, firma, fotos, COD). */
+  @Post(':id/entrega')
+  confirmarEntrega(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RegistrarEntregaDto,
+    @Request() req: any,
+  ) {
+    return this.pedidoService.confirmarEntrega(
+      id,
+      req.user.empresaId,
+      req.user.sub,
+      dto,
     );
   }
 }

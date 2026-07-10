@@ -10,6 +10,7 @@ import {
   UpdateEstadoPedidoDto,
   EstadoPedidoLogistica,
 } from './dto/update-estado-pedido.dto';
+import { RegistrarEntregaDto } from './dto/registrar-entrega.dto';
 
 /**
  * Mapa estado → evento de webhook (order.*). Solo los 7 eventos válidos.
@@ -234,5 +235,65 @@ export class PedidoLogisticaService {
     }
 
     return updated;
+  }
+
+  /**
+   * Confirma la entrega de un pedido: registra la prueba de entrega
+   * (receptor, firma, fotos, COD…), marca el pedido como ENTREGADO y notifica
+   * el webhook `order.delivered`. Cierra el ciclo: luego la API pública
+   * `GET /orders/{id}/proof` devuelve estos datos al integrador.
+   */
+  async confirmarEntrega(
+    id: number,
+    empresaId: number,
+    usuarioId: number,
+    dto: RegistrarEntregaDto,
+  ) {
+    const pedido = await this.findOne(id, empresaId);
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.pruebaEntregaLogistica.create({
+        data: {
+          pedidoId: id,
+          nombreReceptor: dto.nombreReceptor,
+          dniReceptor: dto.dniReceptor,
+          parentesco: dto.parentesco,
+          firmaUrl: dto.firmaUrl,
+          fotosUrls: dto.fotosUrls ?? [],
+          montoCobrado: dto.montoCobrado,
+          metodoPago: dto.metodoPago,
+          lat: dto.lat,
+          lng: dto.lng,
+          notas: dto.notas,
+        },
+      });
+
+      const upd = await tx.pedidoLogistica.update({
+        where: { id },
+        data: { estado: EstadoPedidoLogistica.ENTREGADO },
+      });
+
+      await tx.historialEstadoPedidoLogistica.create({
+        data: {
+          pedidoId: id,
+          estadoAnterior: pedido.estado as EstadoPedidoLogistica,
+          estadoNuevo: EstadoPedidoLogistica.ENTREGADO,
+          motivo: 'Entrega confirmada',
+          usuarioId,
+        },
+      });
+
+      return upd;
+    });
+
+    void this.webhooks
+      .dispatchEvent(empresaId, 'order.delivered', {
+        id: updated.id,
+        tracking_code: updated.codigoTracking,
+        status: updated.estado,
+      })
+      .catch(() => undefined);
+
+    return this.findOne(id, empresaId);
   }
 }
