@@ -50,43 +50,54 @@ export class WebhooksService {
     });
     const orderId = String(order?.id ?? order?.tracking_code ?? '');
 
+    // Reintentos con backoff: 3 intentos por endpoint (inmediato, +1s, +3s).
+    // La firma se calcula una vez y se reusa (es el MISMO evento reintentado);
+    // solo cambia el header Falconext-Attempt. El receptor deduplica por event id.
+    const BACKOFF_MS = [0, 1000, 3000];
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
     let entregados = 0;
     await Promise.all(
       suscritos.map(async (endpoint) => {
-        try {
-          const signature = createHmac('sha256', endpoint.secret)
-            .update(`${t}.${rawBody}`)
-            .digest('hex');
+        const signature = createHmac('sha256', endpoint.secret)
+          .update(`${t}.${rawBody}`)
+          .digest('hex');
 
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 5000);
+        for (let attempt = 1; attempt <= BACKOFF_MS.length; attempt++) {
+          if (BACKOFF_MS[attempt - 1] > 0) await sleep(BACKOFF_MS[attempt - 1]);
           try {
-            const res = await fetch(endpoint.url, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Falconext-Event': event,
-                'Falconext-Order-Id': orderId,
-                'Falconext-Attempt': '1',
-                'Falconext-Signature': `t=${t},v1=${signature}`,
-              },
-              body: rawBody,
-              signal: controller.signal,
-            });
-            if (res.ok) {
-              entregados += 1;
-              await this.prisma.webhookEndpointLogistica
-                .update({
-                  where: { id: endpoint.id },
-                  data: { ultimoEnvioEn: new Date() },
-                })
-                .catch(() => undefined);
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 5000);
+            try {
+              const res = await fetch(endpoint.url, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Falconext-Event': event,
+                  'Falconext-Order-Id': orderId,
+                  'Falconext-Attempt': String(attempt),
+                  'Falconext-Signature': `t=${t},v1=${signature}`,
+                },
+                body: rawBody,
+                signal: controller.signal,
+              });
+              if (res.ok) {
+                entregados += 1;
+                await this.prisma.webhookEndpointLogistica
+                  .update({
+                    where: { id: endpoint.id },
+                    data: { ultimoEnvioEn: new Date() },
+                  })
+                  .catch(() => undefined);
+                return; // entregado: no más reintentos para este endpoint
+              }
+              // status no-2xx → reintenta si quedan intentos
+            } finally {
+              clearTimeout(timeout);
             }
-          } finally {
-            clearTimeout(timeout);
+          } catch {
+            // red/timeout → reintenta si quedan intentos
           }
-        } catch {
-          // Best-effort: un endpoint caído no afecta a los demás ni al caller.
         }
       }),
     );

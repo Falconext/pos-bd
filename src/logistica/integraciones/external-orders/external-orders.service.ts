@@ -152,6 +152,16 @@ export class ExternalOrdersService {
       );
     }
 
+    // Idempotencia: si ya existe una orden con este external_order_id para la
+    // empresa, la devolvemos en vez de crear un duplicado (reintentos del cliente).
+    if (payload?.external_order_id) {
+      const existente = await this.prisma.pedidoLogistica.findFirst({
+        where: { empresaId, nroOrdenExterna: String(payload.external_order_id) },
+        include: PEDIDO_INCLUDE,
+      });
+      if (existente) return this.toOrder(existente);
+    }
+
     // Cliente: reutiliza por documento si existe; si no, lo crea.
     let cliente =
       customer.document_number
