@@ -9,10 +9,53 @@ import {
   EstadoVehiculoLogistica,
 } from './dto/create-vehiculo.dto';
 import { UpdateVehiculoLogisticaDto } from './dto/update-vehiculo.dto';
+import { CreateTipoVehiculoDto } from './dto/create-tipo-vehiculo.dto';
+
+/** Tipos de flota por defecto (se siembran la primera vez que la empresa consulta). */
+const TIPOS_DEFAULT = [
+  { nombre: 'Moto', capacidadPesoKg: 30, capacidadVolumenM3: 0.2 },
+  { nombre: 'Auto', capacidadPesoKg: 200, capacidadVolumenM3: 0.5 },
+  { nombre: 'Camioneta', capacidadPesoKg: 800, capacidadVolumenM3: 2.5 },
+  { nombre: 'Furgón', capacidadPesoKg: 1500, capacidadVolumenM3: 8 },
+  { nombre: 'Camión', capacidadPesoKg: 5000, capacidadVolumenM3: 30 },
+];
 
 @Injectable()
 export class VehiculoLogisticaService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Lista los tipos de vehículo de la empresa. Si no tiene ninguno, siembra los
+   * tipos por defecto (Moto/Auto/Camioneta/Furgón/Camión) — así el módulo de
+   * flota es usable de inmediato, sin migración ni seed manual.
+   */
+  async listarTipos(empresaId: number) {
+    const existentes = await this.prisma.tipoVehiculoLogistica.findMany({
+      where: { empresaId },
+      orderBy: { capacidadPesoKg: 'asc' },
+    });
+    if (existentes.length > 0) return existentes;
+    await this.prisma.tipoVehiculoLogistica.createMany({
+      data: TIPOS_DEFAULT.map((t) => ({ ...t, empresaId })),
+    });
+    return this.prisma.tipoVehiculoLogistica.findMany({
+      where: { empresaId },
+      orderBy: { capacidadPesoKg: 'asc' },
+    });
+  }
+
+  /** Crea un tipo de vehículo propio. */
+  async crearTipo(empresaId: number, dto: CreateTipoVehiculoDto) {
+    return this.prisma.tipoVehiculoLogistica.create({
+      data: {
+        empresaId,
+        nombre: dto.nombre,
+        capacidadPesoKg: dto.capacidadPesoKg,
+        capacidadVolumenM3: dto.capacidadVolumenM3,
+        costoPromedioKm: dto.costoPromedioKm,
+      },
+    });
+  }
 
   async findAll(
     empresaId: number,
