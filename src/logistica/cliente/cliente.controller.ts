@@ -15,8 +15,11 @@ import { ClienteLogisticaService } from './cliente.service';
 import { CreateClienteLogisticaDto } from './dto/create-cliente.dto';
 import { UpdateClienteLogisticaDto } from './dto/update-cliente.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { ModuleAccessGuard } from '../../common/guards/module-access.guard';
+import { RequiresModule } from '../../common/decorators/module.decorator';
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, ModuleAccessGuard)
+@RequiresModule('logistica')
 @Controller('logistica/clientes')
 export class ClienteLogisticaController {
   constructor(private readonly clienteService: ClienteLogisticaService) {}

@@ -779,7 +779,7 @@ export class ResellerService {
         throw error;
       });
 
-    await this.sedeService.create(
+    const sedePrincipal = await this.sedeService.create(
       {
         nombre: 'Sede Principal',
         direccion: empresa.direccion || '-',
@@ -789,6 +789,23 @@ export class ResellerService {
       },
       empresa.id,
     );
+
+    const adminEmpresa = await this.prisma.usuario.findFirst({
+      where: { empresaId: empresa.id, rol: 'ADMIN_EMPRESA' },
+      select: { id: true },
+    });
+    if (adminEmpresa && sedePrincipal?.id) {
+      await this.prisma.usuarioSede.upsert({
+        where: {
+          usuarioId_sedeId: {
+            usuarioId: adminEmpresa.id,
+            sedeId: sedePrincipal.id,
+          },
+        },
+        create: { usuarioId: adminEmpresa.id, sedeId: sedePrincipal.id },
+        update: {},
+      });
+    }
 
     return empresa;
   }

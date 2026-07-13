@@ -16,8 +16,11 @@ import {
   UpdateEstadoDespachoDto,
 } from './dto/create-despacho.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { ModuleAccessGuard } from '../../common/guards/module-access.guard';
+import { RequiresModule } from '../../common/decorators/module.decorator';
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, ModuleAccessGuard)
+@RequiresModule('logistica')
 @Controller('logistica/despachos')
 export class DespachoLogisticaController {
   constructor(private readonly despachoService: DespachoLogisticaService) {}

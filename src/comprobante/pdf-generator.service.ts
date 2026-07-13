@@ -45,6 +45,12 @@ export class PdfGeneratorService {
       return str && substr && str.toUpperCase().includes(substr.toUpperCase());
     });
     Handlebars.registerHelper('inc', (value: number) => value + 1);
+    // Compara dos valores (normalizando mayúsculas/espacios) — usado p.ej. para
+    // no duplicar la razón social cuando es igual al nombre comercial.
+    Handlebars.registerHelper('eq', (a: any, b: any) => {
+      const norm = (v: any) => (v ?? '').toString().trim().toUpperCase();
+      return norm(a) === norm(b);
+    });
 
     const templateSource = fs.readFileSync(foundPath, 'utf-8');
     this.template = Handlebars.compile(templateSource);
@@ -380,6 +386,9 @@ export class PdfGeneratorService {
     rubro?: string;
     celular?: string;
     email?: string;
+    // Toggles configurables por empresa (por defecto true = mostrar)
+    mostrarEmail?: boolean;
+    mostrarCuentas?: boolean;
     logo?: string;
 
     // Documento

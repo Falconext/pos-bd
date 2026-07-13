@@ -15,8 +15,11 @@ import { ZonaEntregaLogisticaService } from './zona.service';
 import { CreateZonaEntregaLogisticaDto } from './dto/create-zona.dto';
 import { UpdateZonaEntregaLogisticaDto } from './dto/update-zona.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { ModuleAccessGuard } from '../../common/guards/module-access.guard';
+import { RequiresModule } from '../../common/decorators/module.decorator';
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, ModuleAccessGuard)
+@RequiresModule('logistica')
 @Controller('logistica/zonas')
 export class ZonaEntregaLogisticaController {
   constructor(private readonly zonaService: ZonaEntregaLogisticaService) {}

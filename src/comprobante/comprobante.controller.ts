@@ -202,6 +202,49 @@ export class ComprobanteController {
     return this.service.detalle(empresaId, serie, correlativo);
   }
 
+  @Get('exportar-pdf')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
+  async exportarPdf(
+    @User() user: any,
+    @Query() query: ListComprobanteDto,
+    @Res() res: Response,
+  ) {
+    const tipoComprobante = query.tipoComprobante ?? 'FORMAL';
+    if (
+      !['FORMAL', 'INFORMAL', 'COTIZACION', 'TODOS'].includes(tipoComprobante)
+    ) {
+      throw new BadRequestException(
+        'El parámetro tipoComprobante debe ser FORMAL, INFORMAL, COTIZACION o TODOS',
+      );
+    }
+    const isAdmin =
+      user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
+    const sedeId = isAdmin ? (query.sedeId ?? null) : user.sedeId;
+    const usuarioId = isAdmin ? query.usuarioId : user.id;
+    const formato =
+      (query as any).formato === 'pdf' ? 'pdf' : ('zip' as 'zip' | 'pdf');
+
+    const file = await this.service.exportarComprobantesPdf({
+      empresaId: user.empresaId,
+      sedeId,
+      usuarioId,
+      tipoComprobante,
+      fechaInicio: query.fechaInicio,
+      fechaFin: query.fechaFin,
+      tipoDoc: query.tipoDoc,
+      estado: query.estado,
+      estadoPago: query.estadoPago,
+      formato,
+    });
+
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${file.filename}"`,
+    );
+    res.end(file.buffer);
+  }
+
   @Get(':id')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async obtenerPorId(@Param('id', ParseIntPipe) id: number, @User() user: any) {

@@ -40,6 +40,10 @@ export class UpdateProductoDto {
   tipoAfectacionIGV?: string;
 
   @IsOptional()
+  @IsString()
+  moneda?: string; // 'PEN' (soles) o 'USD' (dólares)
+
+  @IsOptional()
   @IsNumber()
   @Type(() => Number)
   valorUnitario?: number;
@@ -169,6 +173,10 @@ export class UpdateProductoDto {
   @IsOptional()
   @IsString()
   codigoDigemid?: string;
+
+  @IsOptional()
+  @IsString()
+  codProdSunat?: string;
 
   @IsOptional()
   @IsBoolean()

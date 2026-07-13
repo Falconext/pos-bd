@@ -57,6 +57,14 @@ export class UpdateEmpresaDto {
 
   @IsOptional()
   @IsString()
+  paginaWeb?: string;
+
+  @IsOptional()
+  @IsString()
+  cuentaDetraccionBN?: string;
+
+  @IsOptional()
+  @IsString()
   fechaActivacion?: string;
 
   @IsOptional()
@@ -70,6 +78,14 @@ export class UpdateEmpresaDto {
   @IsOptional()
   @IsBoolean()
   esAgenteRetencion?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  cotizMostrarEmail?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  cotizMostrarCuentas?: boolean;
 
   @IsOptional()
   @IsBoolean()
@@ -159,7 +175,7 @@ export class UpdateEmpresaDto {
 
   @IsOptional()
   @IsString()
-  @IsIn(['facturacion', 'hotel'])
+  @IsIn(['facturacion', 'hotel', 'logistica'])
   producto?: string;
 
   @IsOptional()

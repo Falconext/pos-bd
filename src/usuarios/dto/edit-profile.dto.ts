@@ -17,4 +17,8 @@ export class EditProfileDto {
   @IsString()
   @IsOptional()
   celular?: string;
+
+  @IsString()
+  @IsOptional()
+  telefono?: string;
 }

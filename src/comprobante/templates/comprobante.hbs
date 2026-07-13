@@ -22,8 +22,10 @@
       margin-bottom: 16px;
     }
     .header-logo {
-      width: 150px;
-      height: 150px;
+      width: 110px;
+      height: 110px;
+      max-width: 110px;
+      max-height: 110px;
       object-fit: contain;
       object-position: left top;
       flex-shrink: 0;
@@ -191,7 +193,7 @@
 
   <!-- HEADER: Logo | Empresa | Documento -->
   <div class="header">
-    {{#if logo}}<img class="header-logo" src="{{logo}}" alt="logo">{{/if}}
+    {{#if logo}}<img class="header-logo" src="{{logo}}" alt="logo" style="width: {{logoSize}}px; height: {{logoSize}}px;">{{/if}}
     <div class="header-company">
       <h1>{{nombreComercial}}</h1>
       <p>
@@ -199,7 +201,8 @@
         {{#if rubro}}{{rubro}}<br>{{/if}}
         RAZON SOCIAL: {{razonSocial}}<br>
         {{#if celular}}CELULAR: {{celular}}<br>{{/if}}
-        {{#if email}}EMAIL: {{email}}{{/if}}
+        {{#if email}}EMAIL: {{email}}<br>{{/if}}
+        {{#if paginaWeb}}WEB: {{paginaWeb}}{{/if}}
       </p>
     </div>
     <div class="header-doc">
@@ -376,8 +379,8 @@
     <div class="brand-bottom">
       <div class="brand-left">USUARIO: {{usuario}} {{fechaImpresion}}</div>
       <div class="brand-right">
-        <div class="brand-name">Falconext ™</div>
-        <div>Comprobante emitido a través de falconext.pe</div>
+        <div class="brand-name">{{sistemaNombre}} ™</div>
+        <div>Comprobante emitido a través de {{sistemaWeb}}</div>
       </div>
     </div>
   </div>

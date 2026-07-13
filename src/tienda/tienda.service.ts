@@ -398,6 +398,8 @@ export class TiendaService {
         aceptaEfectivo: true,
         // Devolver también campos de envío/recojo para que el frontend los persista
         costoEnvioFijo: true,
+        envioGratisDesdeSoles: true,
+        minimoCompra: true,
         aceptaRecojo: true,
         aceptaEnvio: true,
         direccionRecojo: true,
@@ -433,6 +435,8 @@ export class TiendaService {
         esAgenteRetencion: true,
         // Campos de envío/recojo
         costoEnvioFijo: true,
+        envioGratisDesdeSoles: true,
+        minimoCompra: true,
         aceptaRecojo: true,
         aceptaEnvio: true,
         direccionRecojo: true,

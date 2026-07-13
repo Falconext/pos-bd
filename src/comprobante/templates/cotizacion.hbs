@@ -204,15 +204,16 @@
     <!-- ── HEADER ─────────────────────────────────────────────────── -->
     <div class="header">
         <div class="logo-empresa">
-            {{#if logo}}<img src="{{logo}}" alt="Logo">{{/if}}
+            {{#if logo}}<img src="{{logo}}" alt="Logo" style="width: {{logoSize}}px; height: {{logoSize}}px;">{{/if}}
             <div class="empresa-info">
                 <h1>{{nombreComercial}}</h1>
                 <p>
                     <strong>{{direccion}}</strong><br>
                     {{rubro}}<br>
-                    RAZON SOCIAL: {{razonSocial}}<br>
+                    {{#unless (eq razonSocial nombreComercial)}}RAZON SOCIAL: {{razonSocial}}<br>{{/unless}}
                     CELULAR: {{celular}}<br>
-                    EMAIL: {{email}}
+                    {{#unless (eq mostrarEmail false)}}{{#if email}}EMAIL: {{email}}<br>{{/if}}{{/unless}}
+                    {{#if paginaWeb}}WEB: {{paginaWeb}}{{/if}}
                 </p>
             </div>
         </div>
@@ -291,16 +292,27 @@
             {{#if cotizTerminos}}
             <p class="obs-text" style="margin-top:6px;"><strong>TÉRMINOS:</strong> {{cotizTerminos}}</p>
             {{/if}}
-            {{#if bancoNombre}}
+            {{#unless (eq mostrarCuentas false)}}
+            {{#if cuentasBancarias.length}}
             <div class="bank-block">
-                <div class="bank-header">DEPOSITAR A NOMBRE DE {{razonSocial}}</div>
+                {{#each cuentasBancarias}}
+                <div style="margin-top:5px; line-height:1.35;">
+                    <div class="bank-header">DEPOSITAR A: {{titular}}</div>
+                    {{banco}}{{#if moneda}} · {{moneda}}{{/if}}<br>
+                    CTA: {{numeroCuenta}}{{#if cci}} &nbsp;·&nbsp; CCI: {{cci}}{{/if}}
+                </div>
+                {{/each}}
+            </div>
+            {{/if}}
+            {{/unless}}
+            {{#if tipoDetraccion}}
+            <div class="bank-block">
+                <div class="bank-header">DETRACCIÓN</div>
                 <p>
-                    BANCO {{bancoNombre}}<br>
-                    MONEDA {{monedaCuenta}}<br>
-                    N° CUENTA<br>
-                    {{numeroCuenta}}<br>
-                    CCI<br>
-                    {{cci}}
+                    {{tipoDetraccion}}<br>
+                    MONTO A DETRAER: S/ {{montoDetraccion}}<br>
+                    {{#if cuentaBancoNacion}}CTA. BANCO DE LA NACIÓN: {{cuentaBancoNacion}}<br>{{/if}}
+                    {{#if medioPagoDetraccion}}MEDIO DE PAGO: {{medioPagoDetraccion}}{{/if}}
                 </p>
             </div>
             {{/if}}

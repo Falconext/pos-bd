@@ -49,6 +49,10 @@ export class CreateCuentaBancariaDto {
   @IsOptional()
   @IsString()
   alias?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  mostrarEnCotizacion?: boolean;
 }
 
 export class UpdateCuentaBancariaDto {
@@ -87,4 +91,8 @@ export class UpdateCuentaBancariaDto {
   @IsOptional()
   @IsBoolean()
   activo?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  mostrarEnCotizacion?: boolean;
 }

@@ -116,6 +116,8 @@ model Empresa {
   nombreComercial               String?
   paginaWeb                     String?
   cuentaDetraccionBN            String?
+  cotizMostrarEmail             Boolean                       @default(true)
+  cotizMostrarCuentas           Boolean                       @default(true)
   rubroId                       Int?
   providerId                    String?
   tipoEmpresa                   TipoEmpresa                   @default(FORMAL)
@@ -393,6 +395,7 @@ model Producto {
   ratingCount         Int?                 @default(0)
   codigoBarras        String?
   codigoDigemid       String?
+  codProdSunat        String?
   concentracion       String?
   controlado          Boolean              @default(false)
   factorConversion    Int                  @default(1)

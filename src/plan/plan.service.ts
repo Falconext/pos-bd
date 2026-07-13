@@ -123,12 +123,15 @@ export class PlanService {
     };
   }
 
-  private normalizeProducto(value?: string | null): 'facturacion' | 'hotel' {
-    return String(value ?? '')
+  private normalizeProducto(
+    value?: string | null,
+  ): 'facturacion' | 'hotel' | 'logistica' {
+    const v = String(value ?? '')
       .trim()
-      .toLowerCase() === 'hotel'
-      ? 'hotel'
-      : 'facturacion';
+      .toLowerCase();
+    if (v === 'hotel') return 'hotel';
+    if (v === 'logistica') return 'logistica';
+    return 'facturacion';
   }
 
   private normalizePlataforma(value?: string | null): 'falconext' | 'krezka' {
@@ -140,7 +143,7 @@ export class PlanService {
   }
 
   private async validateProductAssignments(
-    producto: 'facturacion' | 'hotel',
+    producto: 'facturacion' | 'hotel' | 'logistica',
     moduloIds?: number[],
     subModuloIds?: number[],
   ) {

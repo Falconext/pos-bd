@@ -29,6 +29,10 @@ export class CreateProductoDto {
   @IsString()
   tipoAfectacionIGV: string; // '10', '20', '30', '40'
 
+  @IsOptional()
+  @IsString()
+  moneda?: string; // 'PEN' (soles) o 'USD' (dólares). Default PEN.
+
   @IsNumber()
   @Type(() => Number)
   precioUnitario: number;
@@ -135,6 +139,11 @@ export class CreateProductoDto {
   @IsOptional()
   @IsString()
   codigoBarras?: string;
+
+  // Código de producto SUNAT (Catálogo 25 / UNSPSC) — requerido para detracción
+  @IsOptional()
+  @IsString()
+  codProdSunat?: string;
 
   @IsOptional()
   @IsNumber()

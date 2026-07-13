@@ -129,6 +129,7 @@ export class ProductoService {
       descripcion: string;
       unidadMedidaId?: number;
       tipoAfectacionIGV: string;
+      moneda?: string;
       precioUnitario: number;
       igvPorcentaje?: number;
       stock: number;
@@ -153,6 +154,7 @@ export class ProductoService {
       factorConversion?: number | string;
       codigoBarras?: string;
       codigoDigemid?: string;
+      codProdSunat?: string;
       costoUnitario?: number;
       costoPromedio?: number;
       costoFijo?: number;
@@ -184,6 +186,7 @@ export class ProductoService {
       descripcion,
       unidadMedidaId,
       tipoAfectacionIGV,
+      moneda,
       precioUnitario,
       igvPorcentaje = 18,
       stock,
@@ -208,6 +211,7 @@ export class ProductoService {
       factorConversion,
       codigoBarras,
       codigoDigemid,
+      codProdSunat,
       costoUnitario,
       costoPromedio,
       costoFijo,
@@ -305,6 +309,7 @@ export class ProductoService {
           descripcion,
           unidadMedidaId,
           tipoAfectacionIGV,
+          moneda: moneda || 'PEN',
           precioUnitario: new Decimal(precioUnitario),
           valorUnitario: new Decimal(valorUnitario),
           igvPorcentaje: new Decimal(igvPorcentaje),
@@ -337,6 +342,7 @@ export class ProductoService {
             : undefined,
           codigoBarras,
           codigoDigemid,
+          codProdSunat,
           costoPromedio: costoBase != null ? new Decimal(costoBase) : undefined,
           costoFijo: costoFijo != null ? new Decimal(costoFijo) : undefined,
           comisionPorVenta:
@@ -381,6 +387,7 @@ export class ProductoService {
           descripcion,
           unidadMedidaId,
           tipoAfectacionIGV,
+          moneda: moneda || 'PEN',
           precioUnitario: new Decimal(precioUnitario),
           valorUnitario: new Decimal(valorUnitario),
           igvPorcentaje: new Decimal(igvPorcentaje),
@@ -412,6 +419,7 @@ export class ProductoService {
           factorConversion: factorConversion ? Number(factorConversion) : 1,
           codigoBarras,
           codigoDigemid,
+          codProdSunat,
           costoPromedio: costoBase != null ? new Decimal(costoBase) : undefined,
           costoFijo: costoFijo != null ? new Decimal(costoFijo) : undefined,
           comisionPorVenta:
@@ -602,6 +610,7 @@ export class ProductoService {
           comisionPorVenta: true,
           comisionPorcentaje: true,
           precioUnitario: true,
+          moneda: true,
           precioOferta: true,
           fechaInicioOferta: true,
           fechaFinOferta: true,
@@ -621,6 +630,7 @@ export class ProductoService {
           atributosTecnicos: true,
           codigoBarras: true,
           codigoDigemid: true,
+          codProdSunat: true,
           requiereReceta: true,
           controlado: true,
           refrigerado: true,
@@ -643,6 +653,7 @@ export class ProductoService {
               codigo: true,
               descripcion: true,
               precioUnitario: true,
+              moneda: true,
               precioOferta: true,
               stock: true,
               estado: true,
@@ -954,6 +965,7 @@ export class ProductoService {
           descripcion: true,
           imagenUrl: true,
           precioUnitario: true,
+          moneda: true,
           igvPorcentaje: true,
           tipoAfectacionIGV: true,
           unidadMedidaId: true,
@@ -1148,6 +1160,7 @@ export class ProductoService {
             id: true,
             codigo: true,
             precioUnitario: true,
+            moneda: true,
             precioOferta: true,
             stock: true,
             estado: true,
@@ -1444,6 +1457,7 @@ export class ProductoService {
       marcaId?: number | null;
       unidadMedidaId?: number;
       tipoAfectacionIGV?: string;
+      moneda?: string;
       valorUnitario?: number;
       igvPorcentaje?: number;
       precioUnitario?: number;
@@ -1469,6 +1483,7 @@ export class ProductoService {
       factorConversion?: number | string;
       codigoBarras?: string;
       codigoDigemid?: string;
+      codProdSunat?: string;
       // Campos Ofertas
       precioOferta?: number;
       fechaInicioOferta?: string | Date;
@@ -1779,6 +1794,7 @@ export class ProductoService {
           ? Number(data.unidadMedidaId)
           : undefined,
         tipoAfectacionIGV: data.tipoAfectacionIGV,
+        moneda: data.moneda !== undefined ? data.moneda : undefined,
         valorUnitario:
           data.valorUnitario !== undefined
             ? new Decimal(data.valorUnitario)
@@ -1838,6 +1854,7 @@ export class ProductoService {
           : undefined,
         codigoBarras: data.codigoBarras,
         codigoDigemid: data.codigoDigemid,
+        codProdSunat: data.codProdSunat,
         // Campos farmacia booleanos
         requiereReceta:
           (data as any).requiereReceta !== undefined

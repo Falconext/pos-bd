@@ -28,6 +28,8 @@ import {
   resolveBillingProvider,
 } from '../common/utils/billing-provider';
 import { ComisionesService } from '../comisiones/comisiones.service';
+import archiver = require('archiver');
+import { PDFDocument } from 'pdf-lib';
 
 @Injectable()
 export class ComprobanteService {
@@ -1251,6 +1253,8 @@ export class ComprobanteService {
       );
       const requiereSerie = this.productoRequiereSerie(prod);
       const descripcion = item.descripcion ?? (prod as any).descripcion;
+      // El precio ya llega convertido a soles desde el POS (los productos en USD se
+      // convierten al agregarlos al carrito con el TC del día). El comprobante es en PEN.
       const precioConIgv =
         item.nuevoValorUnitario != null
           ? Number(item.nuevoValorUnitario)
@@ -2727,6 +2731,11 @@ export class ComprobanteService {
       cuotas,
       paymentDetails,
       montoDescuentoGlobal,
+      tipoDetraccionId,
+      medioPagoDetraccionId,
+      cuentaBancoNacion,
+      porcentajeDetraccion,
+      montoDetraccion,
     } = input;
     // Resolver cliente
     let finalClienteId: number | null = clienteId ?? null;
@@ -2928,6 +2937,12 @@ export class ComprobanteService {
       cotizTerminos: input.cotizTerminos ?? null,
       cotizTipoPago: input.cotizTipoPago ?? 'CONTADO',
       cotizAdelanto: input.cotizAdelanto ?? 0,
+      // Detracción (aplica también a cotizaciones de servicios afectos)
+      tipoDetraccionId: tipoDetraccionId ?? undefined,
+      medioPagoDetraccionId: medioPagoDetraccionId ?? undefined,
+      cuentaBancoNacion: cuentaBancoNacion ?? null,
+      porcentajeDetraccion: porcentajeDetraccion ?? undefined,
+      montoDetraccion: montoDetraccion ?? undefined,
       detalles: { create: this.limpiarDetalleParaPersistencia(detalleFinal) },
       leyendas: { create: [{ code: '1000', value: leyenda }] },
     };
@@ -3010,6 +3025,12 @@ export class ComprobanteService {
       clienteName,
       cotizVigencia,
       cotizTerminos,
+      tipoOperacionId,
+      tipoDetraccionId,
+      medioPagoDetraccionId,
+      cuentaBancoNacion,
+      porcentajeDetraccion,
+      montoDetraccion,
     } = input;
 
     const comp = await this.prisma.comprobante.findFirst({
@@ -3084,6 +3105,14 @@ export class ComprobanteService {
           mtoImpVenta,
           cotizVigencia: cotizVigencia ? Number(cotizVigencia) : null,
           cotizTerminos: cotizTerminos ?? null,
+          // Detracción: solo se sobreescribe si el frontend la envía;
+          // `undefined` en Prisma = "no cambiar", así editar no borra la detracción existente.
+          tipoOperacionId: tipoOperacionId ?? undefined,
+          tipoDetraccionId: tipoDetraccionId ?? undefined,
+          medioPagoDetraccionId: medioPagoDetraccionId ?? undefined,
+          cuentaBancoNacion: cuentaBancoNacion ?? undefined,
+          porcentajeDetraccion: porcentajeDetraccion ?? undefined,
+          montoDetraccion: montoDetraccion ?? undefined,
           detalles: {
             createMany: {
               data: detalleFinal.map((d: any) => ({
@@ -3561,7 +3590,22 @@ export class ComprobanteService {
       where: { id },
       include: {
         cliente: { include: { tipoDocumento: true } },
-        empresa: { include: { ubicacion: true, rubro: true } },
+        empresa: {
+          include: {
+            ubicacion: true,
+            rubro: true,
+            cuentasBancarias: {
+              where: { activo: true },
+              orderBy: { id: 'asc' },
+            },
+            usuarios: {
+              where: { rol: 'ADMIN_EMPRESA' },
+              select: { celular: true, email: true },
+              orderBy: { id: 'asc' },
+              take: 1,
+            },
+          },
+        },
         detalles: { include: { producto: { select: { imagenUrl: true } } } },
         tipoDetraccion: true,
         medioPagoDetraccion: true,
@@ -3658,12 +3702,23 @@ export class ComprobanteService {
       direccion: (full.empresa?.direccion || '').toUpperCase(),
       rubro: full.empresa.rubro?.nombre?.toUpperCase() || '',
       celular: (
+        (full.empresa as any).whatsappTienda ||
         (full.empresa as any).celular ||
         (full.empresa as any).telefono ||
+        (full.empresa as any).usuarios?.[0]?.celular ||
         ''
       ).toString(),
-      email: ((full.empresa as any).email || '').toString(),
+      email: (
+        (full.empresa as any).email ||
+        (full.empresa as any).usuarios?.[0]?.email ||
+        ''
+      ).toString(),
+      paginaWeb: (full.empresa as any).paginaWeb || undefined,
+      // Toggles configurables por empresa para el formato de cotización
+      mostrarEmail: (full.empresa as any).cotizMostrarEmail !== false,
+      mostrarCuentas: (full.empresa as any).cotizMostrarCuentas !== false,
       logo: buildLogoDataUrl((full.empresa as any).logo),
+      logoSize: (full.empresa as any).ticketLogoSize ?? 96,
       tipoDocumento: tipoDocMap[full.tipoDoc] || 'COMPROBANTE',
       serie: full.serie,
       correlativo: String(full.correlativo).padStart(8, '0'),
@@ -3717,6 +3772,14 @@ export class ComprobanteService {
       plinNumero: (full.empresa as any).plinNumero || undefined,
       plinQrUrl: buildLogoDataUrl((full.empresa as any).plinQrUrl),
       usuario: 'ADMIN',
+      sistemaNombre: process.env.APP_NAME || 'Falconext',
+      sistemaWeb: (
+        process.env.APP_URL ||
+        process.env.FRONTEND_URL ||
+        'https://falconext.pe'
+      )
+        .replace(/^https?:\/\//, '')
+        .replace(/\/$/, ''),
       fechaImpresion,
     };
 
@@ -3748,10 +3811,36 @@ export class ComprobanteService {
         cotizTerminos: full.cotizTerminos || undefined,
         clienteEmail: (full.cliente as any)?.email || '-',
         clienteTelefono: (full.cliente as any)?.telefono || '-',
-        bancoNombre: (full.empresa as any).bancoNombre || undefined,
-        numeroCuenta: (full.empresa as any).numeroCuenta || undefined,
-        cci: (full.empresa as any).cci || undefined,
-        monedaCuenta: (full.empresa as any).monedaCuenta || 'SOLES',
+        cuentasBancarias: (() => {
+          const cuentas = (
+            ((full.empresa as any).cuentasBancarias || []) as any[]
+          ).filter((c) => c.mostrarEnCotizacion !== false);
+          // Fuente primaria: tabla multi-cuenta (Perfil → Cuentas Bancarias)
+          if (cuentas.length > 0) {
+            return cuentas.map((c) => ({
+              banco: (c.banco || '').toUpperCase(),
+              moneda: c.moneda === 'USD' ? 'DÓLARES' : 'SOLES',
+              numeroCuenta: c.numeroCuenta || '',
+              cci: c.cci || '',
+              // Titular de la cuenta; si no se configuró, usa la razón social
+              titular: (c.titular || razonSocialEmpresa || '').toUpperCase(),
+            }));
+          }
+          // Fallback: columnas legacy de Empresa (Editar Empresa)
+          const legacyBanco = (full.empresa as any).bancoNombre;
+          if (legacyBanco) {
+            return [
+              {
+                banco: String(legacyBanco).toUpperCase(),
+                moneda: (full.empresa as any).monedaCuenta || 'SOLES',
+                numeroCuenta: (full.empresa as any).numeroCuenta || '',
+                cci: (full.empresa as any).cci || '',
+                titular: razonSocialEmpresa || '',
+              },
+            ];
+          }
+          return [];
+        })(),
         includeProductImages: !!(full as any).cotizIncluirImagenes,
         usuario: usuarioNombre
           ? `${usuarioNombre} ${fechaImpresion}`
@@ -3780,6 +3869,267 @@ export class ComprobanteService {
   // ─── Wrapper público para el controller público ───────────────────────────
   async generarBufferPdf(id: number): Promise<{ buffer: Buffer; key: string }> {
     return this.buildPdfBufferInformal(id);
+  }
+
+  // ─── Exportación masiva de PDFs por rango de fecha (para contabilidad) ──────
+  private readonly MAX_EXPORT_COMPROBANTES = 300;
+
+  // Construye el filtro Prisma compartido por exportación y regeneración masiva
+  private async construirWhereComprobantesMasivo(params: {
+    empresaId: number;
+    sedeId?: number | null;
+    usuarioId?: number | null;
+    tipoComprobante: 'FORMAL' | 'INFORMAL' | 'COTIZACION' | 'TODOS';
+    fechaInicio?: string;
+    fechaFin?: string;
+    tipoDoc?: string;
+    estado?: string;
+    estadoPago?: string;
+  }): Promise<any> {
+    const {
+      empresaId,
+      usuarioId,
+      tipoComprobante,
+      fechaInicio,
+      fechaFin,
+      tipoDoc,
+      estado,
+      estadoPago,
+    } = params;
+
+    const tiposFormales = ['01', '03', '07', '08'];
+    const tiposInformales = ['TICKET', 'NV', 'RH', 'CP', 'NP', 'OT'];
+    const tiposCotizacion = ['COT'];
+    let tiposPermitidos: string[];
+    if (tipoComprobante === 'FORMAL') tiposPermitidos = tiposFormales;
+    else if (tipoComprobante === 'COTIZACION') tiposPermitidos = tiposCotizacion;
+    else if (tipoComprobante === 'TODOS')
+      tiposPermitidos = [...tiposFormales, ...tiposInformales];
+    else tiposPermitidos = tiposInformales;
+
+    if (tipoDoc && !tiposPermitidos.includes(tipoDoc)) {
+      throw new BadRequestException(
+        `El tipo de documento debe ser uno de: ${tiposPermitidos.join(', ')}`,
+      );
+    }
+
+    let adjustedFechaInicio: string | undefined;
+    let adjustedFechaFin: string | undefined;
+    if (fechaInicio)
+      adjustedFechaInicio = new Date(
+        `${fechaInicio}T00:00:00.000-05:00`,
+      ).toISOString();
+    if (fechaFin)
+      adjustedFechaFin = new Date(
+        `${fechaFin}T23:59:59.999-05:00`,
+      ).toISOString();
+
+    // Filtro de sede — para la sede principal incluir registros legacy (sedeId=null)
+    let sedeFilter: any = {};
+    if (params.sedeId) {
+      const esPrincipal = await this.prisma.sede.findFirst({
+        where: { empresaId, id: params.sedeId, esPrincipal: true },
+        select: { id: true },
+      });
+      sedeFilter = esPrincipal
+        ? { OR: [{ sedeId: params.sedeId }, { sedeId: null }] }
+        : { sedeId: params.sedeId };
+    }
+
+    const normalizedEstado =
+      typeof estado === 'string' && estado.trim().length > 0
+        ? estado.trim().toUpperCase()
+        : undefined;
+    const validEstadosSunat = new Set(Object.values(EstadoSunat));
+    const estadoSunatFilter =
+      normalizedEstado && validEstadosSunat.has(normalizedEstado as EstadoSunat)
+        ? (normalizedEstado as EstadoSunat)
+        : undefined;
+
+    return {
+      empresaId,
+      ...sedeFilter,
+      ...(usuarioId ? { usuarioId } : {}),
+      tipoDoc: { in: tipoDoc ? [tipoDoc] : tiposPermitidos },
+      ...(fechaInicio || fechaFin
+        ? {
+            fechaEmision: {
+              ...(adjustedFechaInicio ? { gte: adjustedFechaInicio } : {}),
+              ...(adjustedFechaFin ? { lte: adjustedFechaFin } : {}),
+            },
+          }
+        : {}),
+      ...(tipoComprobante === 'FORMAL' && estadoSunatFilter
+        ? { estadoEnvioSunat: estadoSunatFilter }
+        : {}),
+      ...(['INFORMAL', 'TODOS'].includes(tipoComprobante) && estadoPago
+        ? { estadoPago: estadoPago as any }
+        : {}),
+    };
+  }
+
+  async exportarComprobantesPdf(params: {
+    empresaId: number;
+    sedeId?: number | null;
+    usuarioId?: number | null;
+    tipoComprobante: 'FORMAL' | 'INFORMAL' | 'COTIZACION' | 'TODOS';
+    fechaInicio?: string;
+    fechaFin?: string;
+    tipoDoc?: string;
+    estado?: string;
+    estadoPago?: string;
+    formato: 'zip' | 'pdf';
+  }): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
+    const { fechaInicio, fechaFin, formato } = params;
+
+    const where = await this.construirWhereComprobantesMasivo(params);
+
+    const comprobantesRaw = await this.prisma.comprobante.findMany({
+      where,
+      orderBy: [{ fechaEmision: 'asc' }, { id: 'asc' }],
+      select: {
+        id: true,
+        serie: true,
+        correlativo: true,
+        tipoDoc: true,
+        s3PdfUrl: true,
+        estadoEnvioSunat: true,
+        numDocAfectado: true,
+        tipDocAfectado: true,
+        motivo: { select: { codigo: true } },
+      },
+    });
+
+    // Para comprobantes formales, aplicar las MISMAS reglas contables que el
+    // Reporte (excluir ANULADOS y los pares NC de anulación 01/06 con su
+    // documento afectado) para que el conteo coincida con el reporte.
+    let comprobantes = comprobantesRaw;
+    if (params.tipoComprobante === 'FORMAL') {
+      const excluidos = new Set<string>();
+      for (const c of comprobantesRaw) {
+        if (
+          c.tipoDoc === '07' &&
+          c.motivo &&
+          ['01', '06'].includes(c.motivo.codigo)
+        ) {
+          excluidos.add(`${c.tipoDoc}-${c.serie}-${c.correlativo}`);
+          if (c.numDocAfectado) {
+            excluidos.add(`${c.tipDocAfectado}-${c.numDocAfectado}`);
+          }
+        }
+      }
+      comprobantes = comprobantesRaw.filter((c) => {
+        if ((c.estadoEnvioSunat as any) === 'ANULADO') return false;
+        if (excluidos.has(`${c.tipoDoc}-${c.serie}-${c.correlativo}`)) {
+          return false;
+        }
+        return true;
+      });
+    }
+
+    if (comprobantes.length === 0) {
+      throw new NotFoundException(
+        'No se encontraron comprobantes en el rango y filtros seleccionados',
+      );
+    }
+    if (comprobantes.length > this.MAX_EXPORT_COMPROBANTES) {
+      throw new BadRequestException(
+        `El rango seleccionado contiene ${comprobantes.length} comprobantes. Reduce el rango de fechas (máximo ${this.MAX_EXPORT_COMPROBANTES} por exportación).`,
+      );
+    }
+
+    // Siempre reconstruye cada PDF con el diseño/datos vigentes y actualiza la
+    // copia en S3 (best-effort), para que "Ver PDF" también quede al día.
+    const CONCURRENCIA = 4;
+    const generados: Array<{
+      serie: string;
+      correlativo: number;
+      buffer: Buffer;
+    }> = [];
+    for (let i = 0; i < comprobantes.length; i += CONCURRENCIA) {
+      const lote = comprobantes.slice(i, i + CONCURRENCIA);
+      const resueltos = await Promise.all(
+        lote.map(async (c) => {
+          try {
+            const { buffer, key } = await this.buildPdfBufferInformal(c.id);
+            if (this.s3Service.isEnabled()) {
+              try {
+                const url = await this.s3Service.uploadPDF(buffer, key);
+                await this.prisma.comprobante.update({
+                  where: { id: c.id },
+                  data: { s3PdfUrl: url },
+                });
+              } catch (e: any) {
+                this.logger.warn(
+                  `No se pudo persistir PDF regenerado del comprobante ${c.id}: ${e?.message}`,
+                );
+              }
+            }
+            return { serie: c.serie, correlativo: c.correlativo, buffer };
+          } catch (error: any) {
+            this.logger.warn(
+              `No se pudo generar PDF del comprobante ${c.id} en exportación masiva: ${error?.message}`,
+            );
+            return null;
+          }
+        }),
+      );
+      generados.push(
+        ...resueltos.filter(
+          (r): r is { serie: string; correlativo: number; buffer: Buffer } =>
+            r !== null,
+        ),
+      );
+    }
+
+    if (generados.length === 0) {
+      throw new BadRequestException(
+        'No se pudo generar ningún PDF de los comprobantes seleccionados',
+      );
+    }
+
+    const baseNombre = `comprobantes_${fechaInicio || 'inicio'}_a_${fechaFin || 'fin'}`;
+
+    if (formato === 'pdf') {
+      const merged = await PDFDocument.create();
+      for (const g of generados) {
+        try {
+          const doc = await PDFDocument.load(g.buffer);
+          const paginas = await merged.copyPages(doc, doc.getPageIndices());
+          paginas.forEach((p) => merged.addPage(p));
+        } catch (error: any) {
+          this.logger.warn(
+            `No se pudo anexar PDF de ${g.serie}-${g.correlativo} al combinado: ${error?.message}`,
+          );
+        }
+      }
+      const bytes = await merged.save();
+      return {
+        buffer: Buffer.from(bytes),
+        filename: `${baseNombre}.pdf`,
+        contentType: 'application/pdf',
+      };
+    }
+
+    // formato ZIP
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    const chunks: Buffer[] = [];
+    archive.on('data', (d: Buffer) => chunks.push(d));
+    const terminado = new Promise<void>((resolve, reject) => {
+      archive.on('end', () => resolve());
+      archive.on('error', (err) => reject(err));
+    });
+    for (const g of generados) {
+      const nombre = `${g.serie}-${String(g.correlativo).padStart(8, '0')}.pdf`;
+      archive.append(g.buffer, { name: nombre });
+    }
+    await archive.finalize();
+    await terminado;
+    return {
+      buffer: Buffer.concat(chunks),
+      filename: `${baseNombre}.zip`,
+      contentType: 'application/zip',
+    };
   }
 
   // ─── Genera PDF, sube a S3 y devuelve URL permanente ─────────────────────
@@ -3932,11 +4282,10 @@ export class ComprobanteService {
     return { token, phoneNumberId };
   }
 
-  private async getWhatsAppCredentials(empresaId: number): Promise<{
-    token: string;
-    phoneNumberId: string;
-    source: 'PLATFORM' | 'EMPRESA';
-  }> {
+  private async getWhatsAppCredentials(empresaId: number): Promise<
+    | { source: 'PLATFORM' | 'EMPRESA'; token: string; phoneNumberId: string }
+    | { source: 'ZAVU'; apiKey: string; baseUrl: string; sender?: string }
+  > {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
       select: {
@@ -3951,6 +4300,22 @@ export class ComprobanteService {
       throw new BadRequestException(
         'WhatsApp está deshabilitado para esta empresa.',
       );
+    }
+
+    if (empresa.whatsappProvider === 'ZAVU') {
+      const apiKey = process.env.ZAVU_API_KEY || '';
+      if (!apiKey) {
+        throw new BadRequestException(
+          'Zavu no configurado. Agrega ZAVU_API_KEY en el .env.',
+        );
+      }
+
+      return {
+        source: 'ZAVU',
+        apiKey,
+        baseUrl: process.env.ZAVU_BASE_URL || 'https://api.zavu.dev/v1',
+        sender: process.env.ZAVU_SENDER || undefined,
+      };
     }
 
     if (empresa.whatsappProvider === 'EMPRESA') {
@@ -3975,6 +4340,48 @@ export class ComprobanteService {
     }
 
     return { ...platform, source: 'PLATFORM' };
+  }
+
+  // ─── Enviar documento por Zavu (API unificada de mensajería) ─────────────
+  // A diferencia de Meta, Zavu no requiere subir el binario: recibe la URL
+  // pública del PDF (S3 o HMAC) y se encarga del resto vía WhatsApp Cloud API.
+  private async enviarDocumentoZavu(
+    creds: { apiKey: string; baseUrl: string; sender?: string },
+    params: { to: string; mediaUrl: string; filename: string; caption: string },
+  ): Promise<string | undefined> {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${creds.apiKey}`,
+      'Content-Type': 'application/json',
+    };
+    if (creds.sender) headers['Zavu-Sender'] = creds.sender;
+
+    const res = await fetch(`${creds.baseUrl}/messages`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        to: params.to,
+        channel: 'whatsapp',
+        messageType: 'document',
+        text: params.caption,
+        content: {
+          mediaUrl: params.mediaUrl,
+          filename: params.filename,
+          mimeType: 'application/pdf',
+        },
+      }),
+    });
+
+    if (!res.ok) {
+      const err: any = await res.json().catch(() => ({}));
+      throw new BadRequestException(
+        `Error al enviar WhatsApp por Zavu: ${err?.message || `HTTP ${res.status}`}`,
+      );
+    }
+
+    const payload = (await res.json().catch(() => null)) as {
+      message?: { id?: string };
+    } | null;
+    return payload?.message?.id;
   }
 
   private formatMetaWhatsAppError(metaPayload: any, fallback: string): string {
@@ -4010,9 +4417,7 @@ export class ComprobanteService {
       throw new NotFoundException('Comprobante no encontrado');
     }
 
-    const { token, phoneNumberId, source } = await this.getWhatsAppCredentials(
-      comp.empresaId,
-    );
+    const creds = await this.getWhatsAppCredentials(comp.empresaId);
 
     const tipoDocMap: Record<string, string> = {
       TICKET: 'Ticket',
@@ -4037,6 +4442,40 @@ export class ComprobanteService {
     const to = numero.startsWith('51') ? numero : `51${numero}`;
     const filename = `${tipoPretty.replace(/ /g, '_')}_${serie}-${correlativo}.pdf`;
     const caption = `Hola ${clienteNombre}, aquí está tu ${tipoPretty} ${serie}-${correlativo} por ${monto}.\n\nGracias por tu preferencia — ${empresaNombre}.`;
+
+    // ── Proveedor Zavu ───────────────────────────────────────────────────────
+    // Envía usando la URL pública del PDF (mediaUrl); no sube binario a Meta.
+    if (creds.source === 'ZAVU') {
+      const toE164 = to.startsWith('+') ? to : `+${to}`;
+      const mensajeId = await this.enviarDocumentoZavu(creds, {
+        to: toE164,
+        mediaUrl: pdfUrl,
+        filename,
+        caption,
+      });
+
+      if (context?.usuarioId) {
+        await this.prisma.whatsAppEnvio.create({
+          data: {
+            comprobanteId: id,
+            empresaId: comp.empresaId,
+            usuarioId: context.usuarioId,
+            numeroDestino: to,
+            estado: 'ENVIADO',
+            mensajeId,
+            costoUSD: 0,
+            incluyeXML: false,
+          },
+        });
+      }
+
+      this.logger.log(
+        `✅ WhatsApp comprobante enviado (ZAVU) comprobanteId=${id} destino=${toE164}`,
+      );
+      return;
+    }
+
+    const { token, phoneNumberId, source } = creds;
 
     // ── Paso 1: Obtener el buffer del PDF ────────────────────────────────────
     // Comprobantes SUNAT → descargar desde S3. Informales → generar con Puppeteer.

@@ -177,7 +177,9 @@ export class EnviarSunatService {
       include: {
         cliente: { include: { tipoDocumento: true } },
         empresa: { include: { ubicacion: true, rubro: true } },
-        detalles: { include: { producto: { select: { codigo: true } } } },
+        detalles: {
+          include: { producto: { select: { codigo: true, codProdSunat: true } } },
+        },
         leyendas: true,
         tipoOperacion: true,
         motivo: true,
@@ -591,6 +593,21 @@ export class EnviarSunatService {
                 'cac:SellersItemIdentification': {
                   'cbc:ID': { _text: d.producto?.codigo || '-' },
                 },
+                // Código de producto SUNAT (obligatorio para operaciones sujetas a detracción)
+                ...(d.producto?.codProdSunat
+                  ? {
+                      'cac:CommodityClassification': {
+                        'cbc:ItemClassificationCode': {
+                          _attributes: {
+                            listID: 'UNSPSC',
+                            listAgencyName: 'GS1 US',
+                            listName: 'Item Classification',
+                          },
+                          _text: d.producto.codProdSunat,
+                        },
+                      },
+                    }
+                  : {}),
               },
               'cac:Price': {
                 'cbc:PriceAmount': {
@@ -1753,6 +1770,7 @@ export class EnviarSunatService {
               celular: '',
               email: '',
               logo: logoDataUrl,
+              logoSize: (comp.empresa as any).ticketLogoSize ?? 96,
 
               // Comprobante
               tipoDocumento: tipoDocMap[comp.tipoDoc] || 'COMPROBANTE',
@@ -2810,6 +2828,7 @@ export class EnviarSunatService {
         celular: '',
         email: '',
         logo: logoDataUrl,
+        logoSize: (comp.empresa as any).ticketLogoSize ?? 96,
         tipoDocumento: tipoDocMap[comp.tipoDoc] || 'COMPROBANTE',
         serie: comp.serie,
         correlativo: String(comp.correlativo).padStart(8, '0'),

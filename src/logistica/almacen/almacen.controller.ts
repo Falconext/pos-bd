@@ -15,8 +15,11 @@ import { AlmacenLogisticaService } from './almacen.service';
 import { CreateAlmacenLogisticaDto } from './dto/create-almacen.dto';
 import { UpdateAlmacenLogisticaDto } from './dto/update-almacen.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { ModuleAccessGuard } from '../../common/guards/module-access.guard';
+import { RequiresModule } from '../../common/decorators/module.decorator';
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, ModuleAccessGuard)
+@RequiresModule('logistica')
 @Controller('logistica/almacenes')
 export class AlmacenLogisticaController {
   constructor(private readonly almacenService: AlmacenLogisticaService) {}

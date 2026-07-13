@@ -54,6 +54,7 @@ import { VentasModule } from './ventas/ventas.module';
 import { ShalomModule } from './shalom/shalom.module';
 import { VehiculoModule } from './vehiculo/vehiculo.module';
 import { ContratoVehicularModule } from './contrato-vehicular/contrato-vehicular.module';
+import { TipoCambioModule } from './tipo-cambio/tipo-cambio.module';
 
 @Module({
   imports: [
@@ -110,6 +111,7 @@ import { ContratoVehicularModule } from './contrato-vehicular/contrato-vehicular
     ShalomModule,
     VehiculoModule,
     ContratoVehicularModule,
+    TipoCambioModule,
   ],
   controllers: [AppController],
   providers: [AppService],

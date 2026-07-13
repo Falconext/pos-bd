@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -219,6 +220,16 @@ export class UsersController {
     @Query('fechaFin') fechaFin: string,
     @Query('sedeId') sedeId?: string,
   ) {
+    if (
+      !fechaInicio ||
+      !fechaFin ||
+      Number.isNaN(Date.parse(fechaInicio)) ||
+      Number.isNaN(Date.parse(fechaFin))
+    ) {
+      throw new BadRequestException(
+        'fechaInicio y fechaFin son requeridas (formato YYYY-MM-DD)',
+      );
+    }
     return this.usersService.getRankingVendedores({
       empresaId: user.empresaId,
       fechaInicio,
@@ -236,6 +247,16 @@ export class UsersController {
     @Query('fechaInicio') fechaInicio: string,
     @Query('fechaFin') fechaFin: string,
   ) {
+    if (
+      !fechaInicio ||
+      !fechaFin ||
+      Number.isNaN(Date.parse(fechaInicio)) ||
+      Number.isNaN(Date.parse(fechaFin))
+    ) {
+      throw new BadRequestException(
+        'fechaInicio y fechaFin son requeridas (formato YYYY-MM-DD)',
+      );
+    }
     return this.usersService.getDetalleVendedor({
       empresaId: user.empresaId,
       usuarioId: id,

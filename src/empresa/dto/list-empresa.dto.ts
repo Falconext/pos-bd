@@ -36,6 +36,6 @@ export class ListEmpresaDto {
 
   @IsOptional()
   @IsString()
-  @IsIn(['facturacion', 'hotel'])
+  @IsIn(['facturacion', 'hotel', 'logistica'])
   producto?: string;
 }

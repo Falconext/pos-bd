@@ -363,7 +363,13 @@ export class UsersService {
 
   async editProfile(
     userId: number,
-    data: { nombre?: string; email?: string; dni?: string; celular?: string },
+    data: {
+      nombre?: string;
+      email?: string;
+      dni?: string;
+      celular?: string;
+      telefono?: string;
+    },
   ) {
     const usuario = await this.prisma.usuario.update({
       where: { id: userId },
@@ -374,6 +380,7 @@ export class UsersService {
         email: true,
         dni: true,
         celular: true,
+        telefono: true,
         rol: true,
         empresaId: true,
       },

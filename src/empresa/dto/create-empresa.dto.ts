@@ -141,7 +141,7 @@ export class CreateEmpresaDto {
 
   @IsOptional()
   @IsString()
-  @IsIn(['facturacion', 'hotel'])
+  @IsIn(['facturacion', 'hotel', 'logistica'])
   producto?: string;
 
   @IsOptional()
@@ -154,8 +154,8 @@ export class CreateEmpresaDto {
 
   @IsOptional()
   @IsString()
-  @IsIn(['PLATFORM', 'EMPRESA', 'DISABLED'])
-  whatsappProvider?: 'PLATFORM' | 'EMPRESA' | 'DISABLED';
+  @IsIn(['PLATFORM', 'EMPRESA', 'ZAVU', 'DISABLED'])
+  whatsappProvider?: 'PLATFORM' | 'EMPRESA' | 'ZAVU' | 'DISABLED';
 
   @IsOptional()
   @IsString()

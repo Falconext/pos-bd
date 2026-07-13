@@ -91,6 +91,18 @@ export class ConfigurarTiendaDto {
   costoEnvioFijo?: number;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  envioGratisDesdeSoles?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  minimoCompra?: number;
+
+  @IsOptional()
   @IsBoolean()
   aceptaRecojo?: boolean;
 

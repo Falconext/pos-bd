@@ -530,6 +530,8 @@ export class AuthService {
             id: true,
             razonSocial: true,
             nombreComercial: true,
+            paginaWeb: true,
+            cuentaDetraccionBN: true,
             direccion: true,
             logo: true,
             esAgenteRetencion: true,
@@ -538,6 +540,18 @@ export class AuthService {
             usarPrecioLoteFefo: true,
             tipoEmpresa: true,
             rubroId: true,
+            cuentasBancarias: {
+              where: { activo: true },
+              orderBy: { id: 'asc' },
+              select: {
+                banco: true,
+                numeroCuenta: true,
+                cci: true,
+                titular: true,
+                moneda: true,
+                mostrarEnCotizacion: true,
+              },
+            },
             rubro: {
               include: {
                 features: {
@@ -688,6 +702,8 @@ export class AuthService {
             id: true,
             razonSocial: true,
             nombreComercial: true,
+            paginaWeb: true,
+            cuentaDetraccionBN: true,
             direccion: true,
             logo: true,
             esAgenteRetencion: true,
@@ -710,6 +726,18 @@ export class AuthService {
             departamento: true,
             provincia: true,
             distrito: true,
+            cuentasBancarias: {
+              where: { activo: true },
+              orderBy: { id: 'asc' },
+              select: {
+                banco: true,
+                numeroCuenta: true,
+                cci: true,
+                titular: true,
+                moneda: true,
+                mostrarEnCotizacion: true,
+              },
+            },
             rubro: {
               select: {
                 id: true,

@@ -94,6 +94,25 @@ async function seedModulos() {
     });
     console.log(`✅ Módulo ${modulo.nombre} creado/actualizado`);
   }
+
+  // ── Producto standalone 'logistica' ───────────────────────────────────────
+  // El módulo 'logistica' se registra TAMBIÉN bajo su propio producto para
+  // vender Logística como producto independiente (además del add-on en
+  // 'facturacion'). Ver [[project_logistica_plan_gating]].
+  const logisticaBase = modulosIniciales.find((m) => m.codigo === 'logistica');
+  if (logisticaBase) {
+    const logisticaData = {
+      ...logisticaBase,
+      producto: 'logistica' as const,
+      orden: 1,
+    };
+    await prisma.modulo.upsert({
+      where: { codigo_producto: { codigo: 'logistica', producto: 'logistica' } },
+      update: logisticaData,
+      create: logisticaData,
+    });
+    console.log('✅ Módulo Logística (producto: logistica) creado/actualizado');
+  }
   
   console.log('\n🔗 Asignando todos los módulos a planes existentes...');
   

@@ -795,6 +795,7 @@ export class GuiaRemisionService {
         if (/^https?:\/\//i.test(t) || t.startsWith('/')) return t;
         return `data:${t.startsWith('/9j/') ? 'image/jpeg' : 'image/png'};base64,${t}`;
       })(),
+      logoSize: (empresa as any).ticketLogoSize ?? 96,
 
       // Documento
       ruc: empresa.ruc,

@@ -89,12 +89,15 @@ function normalizeBrand(value?: string | null): 'falconext' | 'krezka' {
     : 'falconext';
 }
 
-function normalizeProducto(value?: string | null): 'facturacion' | 'hotel' {
-  return String(value ?? '')
+function normalizeProducto(
+  value?: string | null,
+): 'facturacion' | 'hotel' | 'logistica' {
+  const v = String(value ?? '')
     .trim()
-    .toLowerCase() === 'hotel'
-    ? 'hotel'
-    : 'facturacion';
+    .toLowerCase();
+  if (v === 'hotel') return 'hotel';
+  if (v === 'logistica') return 'logistica';
+  return 'facturacion';
 }
 
 function mapHotelPlanName(planNombre?: string | null): string {
@@ -623,7 +626,12 @@ export class EmpresaService {
         },
         costoActivacionReseller: planSeleccionado.costo,
       } as any,
-      include: { plan: true, productos: true, clientes: true },
+      include: {
+        plan: true,
+        productos: true,
+        clientes: true,
+        usuarios: { where: { rol: 'ADMIN_EMPRESA' }, take: 1 },
+      },
     });
 
     // Crear/asegurar Sede Principal automáticamente
@@ -637,7 +645,25 @@ export class EmpresaService {
       },
       empresa.id,
     );
-    await this.asegurarSedePrincipalPorDefecto(empresa.id, data.direccion);
+    const sedePrincipal = await this.asegurarSedePrincipalPorDefecto(
+      empresa.id,
+      data.direccion,
+    );
+
+    // Vincular al usuario ADMIN_EMPRESA recién creado con la Sede Principal
+    const adminEmpresaId = (empresa as any).usuarios?.[0]?.id;
+    if (adminEmpresaId && sedePrincipal?.id) {
+      await this.prisma.usuarioSede.upsert({
+        where: {
+          usuarioId_sedeId: {
+            usuarioId: adminEmpresaId,
+            sedeId: sedePrincipal.id,
+          },
+        },
+        create: { usuarioId: adminEmpresaId, sedeId: sedePrincipal.id },
+        update: {},
+      });
+    }
 
     // Log creación
     if (adminUserId) {
@@ -926,6 +952,13 @@ export class EmpresaService {
       if (dto.rubroId !== undefined) updateData.rubroId = dto.rubroId;
       if (dto.nombreComercial !== undefined)
         updateData.nombreComercial = dto.nombreComercial;
+      if (dto.paginaWeb !== undefined) updateData.paginaWeb = dto.paginaWeb;
+      if (dto.cotizMostrarEmail !== undefined)
+        updateData.cotizMostrarEmail = dto.cotizMostrarEmail;
+      if (dto.cotizMostrarCuentas !== undefined)
+        updateData.cotizMostrarCuentas = dto.cotizMostrarCuentas;
+      if (dto.cuentaDetraccionBN !== undefined)
+        updateData.cuentaDetraccionBN = dto.cuentaDetraccionBN;
       if (dto.fechaActivacion !== undefined)
         updateData.fechaActivacion = parseDDMMYYYY(dto.fechaActivacion);
       if (dto.fechaExpiracion !== undefined)
@@ -1926,6 +1959,7 @@ export class EmpresaService {
         tipoCuenta: dto.tipoCuenta ?? 'AHORROS',
         moneda: dto.moneda ?? 'PEN',
         alias: dto.alias ?? null,
+        mostrarEnCotizacion: dto.mostrarEnCotizacion ?? true,
       },
     });
   }
@@ -1955,6 +1989,9 @@ export class EmpresaService {
         ...(dto.moneda !== undefined && { moneda: dto.moneda }),
         ...(dto.alias !== undefined && { alias: dto.alias }),
         ...(dto.activo !== undefined && { activo: dto.activo }),
+        ...(dto.mostrarEnCotizacion !== undefined && {
+          mostrarEnCotizacion: dto.mostrarEnCotizacion,
+        }),
       },
     });
   }

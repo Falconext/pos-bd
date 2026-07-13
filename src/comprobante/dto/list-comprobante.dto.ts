@@ -69,4 +69,10 @@ export class ListComprobanteDto {
   @IsInt()
   @Min(1)
   usuarioId?: number;
+
+  // Solo para exportación masiva: formato de salida
+  @IsOptional()
+  @IsString()
+  @IsIn(['zip', 'pdf'])
+  formato?: 'zip' | 'pdf';
 }
