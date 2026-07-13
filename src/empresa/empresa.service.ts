@@ -957,6 +957,12 @@ export class EmpresaService {
         updateData.cotizMostrarEmail = dto.cotizMostrarEmail;
       if (dto.cotizMostrarCuentas !== undefined)
         updateData.cotizMostrarCuentas = dto.cotizMostrarCuentas;
+      if (dto.cotizMostrarRazonSocial !== undefined)
+        updateData.cotizMostrarRazonSocial = dto.cotizMostrarRazonSocial;
+      if (dto.cotizMostrarDetraccion !== undefined)
+        updateData.cotizMostrarDetraccion = dto.cotizMostrarDetraccion;
+      if (dto.cotizFormatoConfig !== undefined)
+        updateData.cotizFormatoConfig = dto.cotizFormatoConfig as any;
       if (dto.cuentaDetraccionBN !== undefined)
         updateData.cuentaDetraccionBN = dto.cuentaDetraccionBN;
       if (dto.fechaActivacion !== undefined)

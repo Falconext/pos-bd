@@ -3717,6 +3717,7 @@ export class ComprobanteService {
       // Toggles configurables por empresa para el formato de cotización
       mostrarEmail: (full.empresa as any).cotizMostrarEmail !== false,
       mostrarCuentas: (full.empresa as any).cotizMostrarCuentas !== false,
+      mostrarRazonSocial: (full.empresa as any).cotizMostrarRazonSocial !== false,
       logo: buildLogoDataUrl((full.empresa as any).logo),
       logoSize: (full.empresa as any).ticketLogoSize ?? 96,
       tipoDocumento: tipoDocMap[full.tipoDoc] || 'COMPROBANTE',

@@ -3,6 +3,7 @@ import {
   IsDateString,
   IsIn,
   IsInt,
+  IsObject,
   IsOptional,
   IsString,
 } from 'class-validator';
@@ -86,6 +87,18 @@ export class UpdateEmpresaDto {
   @IsOptional()
   @IsBoolean()
   cotizMostrarCuentas?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  cotizMostrarRazonSocial?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  cotizMostrarDetraccion?: boolean;
+
+  @IsOptional()
+  @IsObject()
+  cotizFormatoConfig?: Record<string, { visible?: boolean; size?: number }>;
 
   @IsOptional()
   @IsBoolean()

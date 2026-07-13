@@ -149,6 +149,20 @@
         .obs-text  { font-size: 10px; line-height: 1.5; }
         .bank-block { margin-top: 10px; font-size: 10px; line-height: 1.7; }
         .bank-block .bank-header { font-weight: bold; margin-bottom: 2px; }
+        /* Tabla compacta de cuentas bancarias (al pie del documento) */
+        .bank-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 14px;
+            font-size: 10px;
+        }
+        .bank-table th, .bank-table td {
+            border: 1px solid #000;
+            padding: 5px 8px;
+            text-align: center;
+        }
+        .bank-table th { font-weight: bold; background: #f2f2f2; }
+        .bank-table .bank-td-name { font-weight: bold; }
 
         .totales-box {
             width: 240px;
@@ -210,7 +224,7 @@
                 <p>
                     <strong>{{direccion}}</strong><br>
                     {{rubro}}<br>
-                    {{#unless (eq razonSocial nombreComercial)}}RAZON SOCIAL: {{razonSocial}}<br>{{/unless}}
+                    {{#unless (eq mostrarRazonSocial false)}}RAZON SOCIAL: {{razonSocial}}<br>{{/unless}}
                     CELULAR: {{celular}}<br>
                     {{#unless (eq mostrarEmail false)}}{{#if email}}EMAIL: {{email}}<br>{{/if}}{{/unless}}
                     {{#if paginaWeb}}WEB: {{paginaWeb}}{{/if}}
@@ -292,19 +306,6 @@
             {{#if cotizTerminos}}
             <p class="obs-text" style="margin-top:6px;"><strong>TÉRMINOS:</strong> {{cotizTerminos}}</p>
             {{/if}}
-            {{#unless (eq mostrarCuentas false)}}
-            {{#if cuentasBancarias.length}}
-            <div class="bank-block">
-                {{#each cuentasBancarias}}
-                <div style="margin-top:5px; line-height:1.35;">
-                    <div class="bank-header">DEPOSITAR A: {{titular}}</div>
-                    {{banco}}{{#if moneda}} · {{moneda}}{{/if}}<br>
-                    CTA: {{numeroCuenta}}{{#if cci}} &nbsp;·&nbsp; CCI: {{cci}}{{/if}}
-                </div>
-                {{/each}}
-            </div>
-            {{/if}}
-            {{/unless}}
             {{#if tipoDetraccion}}
             <div class="bank-block">
                 <div class="bank-header">DETRACCIÓN</div>
@@ -334,6 +335,27 @@
             </div>
         </div>
     </div>
+
+    <!-- ── CUENTAS BANCARIAS (tabla compacta) ──────────────────────── -->
+    {{#unless (eq mostrarCuentas false)}}
+    {{#if cuentasBancarias.length}}
+    <table class="bank-table">
+        <thead>
+            <tr><th>BANCO</th><th>MONEDA</th><th>CUENTA</th><th>CCI</th></tr>
+        </thead>
+        <tbody>
+            {{#each cuentasBancarias}}
+            <tr>
+                <td class="bank-td-name">{{banco}}</td>
+                <td>{{moneda}}</td>
+                <td>{{numeroCuenta}}</td>
+                <td>{{cci}}</td>
+            </tr>
+            {{/each}}
+        </tbody>
+    </table>
+    {{/if}}
+    {{/unless}}
 
     <!-- ── GRACIAS ─────────────────────────────────────────────────── -->
     <div class="footer-thanks">

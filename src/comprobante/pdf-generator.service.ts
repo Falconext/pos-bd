@@ -389,6 +389,7 @@ export class PdfGeneratorService {
     // Toggles configurables por empresa (por defecto true = mostrar)
     mostrarEmail?: boolean;
     mostrarCuentas?: boolean;
+    mostrarRazonSocial?: boolean;
     logo?: string;
 
     // Documento

@@ -118,6 +118,9 @@ model Empresa {
   cuentaDetraccionBN            String?
   cotizMostrarEmail             Boolean                       @default(true)
   cotizMostrarCuentas           Boolean                       @default(true)
+  cotizMostrarRazonSocial       Boolean                       @default(true)
+  cotizMostrarDetraccion        Boolean                       @default(true)
+  cotizFormatoConfig            Json?
   rubroId                       Int?
   providerId                    String?
   tipoEmpresa                   TipoEmpresa                   @default(FORMAL)
