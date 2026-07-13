@@ -114,6 +114,8 @@ model Empresa {
   tokenUpdatedAt                DateTime?
   empresaUbigeo                 String?
   nombreComercial               String?
+  paginaWeb                     String?
+  cuentaDetraccionBN            String?
   rubroId                       Int?
   providerId                    String?
   tipoEmpresa                   TipoEmpresa                   @default(FORMAL)
@@ -129,7 +131,7 @@ model Empresa {
   slugTienda                    String?                       @unique
   tiktokUrl                     String?
   whatsappTienda                String?
-  whatsappProvider              WhatsAppProvider              @default(PLATFORM)
+  whatsappProvider              WhatsAppProvider              @default(ZAVU)
   whatsappApiToken              String?
   whatsappPhoneNumberId         String?
   whatsappBusinessId            String?
@@ -191,6 +193,12 @@ model Empresa {
   direccionesEntregaLogistica   DireccionEntregaLogistica[]
   pedidosLogistica              PedidoLogistica[]
   despachosLogistica            DespachoLogistica[]
+  mantenimientosLogistica       MantenimientoLogistica[]
+  combustiblesLogistica         CombustibleLogistica[]
+  peajesLogistica               PeajeLogistica[]
+  documentosLogistica           DocumentoLogistica[]
+  dispositivosGpsLogistica      DispositivoGpsLogistica[]
+  geocercasLogistica            GeocercaLogistica[]
   apiKeysLogistica              ApiKeyLogistica[]
   webhookEndpointsLogistica     WebhookEndpointLogistica[]
 
@@ -364,6 +372,7 @@ model Producto {
   precioUnitario      Decimal
   valorUnitario       Decimal
   igvPorcentaje       Decimal              @default(18.00)
+  moneda              String               @default("PEN") // "PEN" (soles) o "USD" (dólares). Al facturar, USD se convierte a PEN con el TC del día.
   stock               Decimal              @default(0) @db.Decimal(12, 3)
   estado              EstadoType           @default(ACTIVO)
   creadoEn            DateTime             @default(now())
@@ -921,6 +930,7 @@ model CuentaBancaria {
   moneda       String   @default("PEN")
   alias        String?
   activo       Boolean  @default(true)
+  mostrarEnCotizacion Boolean @default(true)
   creadoEn     DateTime @default(now())
   empresa      Empresa  @relation(fields: [empresaId], references: [id])
   pagos        Pago[]
@@ -1695,6 +1705,7 @@ enum EstadoWhatsApp {
 enum WhatsAppProvider {
   PLATFORM
   EMPRESA
+  ZAVU
   DISABLED
 }
 
@@ -2470,6 +2481,7 @@ model ConductorLogistica {
   despachos            DespachoLogistica[]
   asignacionesVehiculo AsignacionVehiculoLogistica[]
   paradas              ParadaRutaLogistica[]
+  documentos           DocumentoLogistica[]
 
   @@index([empresaId])
   @@index([empresaId, estado])
@@ -2514,10 +2526,15 @@ model VehiculoLogistica {
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt
 
-  empresa      Empresa                       @relation(fields: [empresaId], references: [id], onDelete: Cascade)
-  tipoVehiculo TipoVehiculoLogistica         @relation(fields: [tipoVehiculoId], references: [id], onDelete: Restrict)
-  despachos    DespachoLogistica[]
-  asignaciones AsignacionVehiculoLogistica[]
+  empresa        Empresa                       @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  tipoVehiculo   TipoVehiculoLogistica         @relation(fields: [tipoVehiculoId], references: [id], onDelete: Restrict)
+  despachos      DespachoLogistica[]
+  asignaciones   AsignacionVehiculoLogistica[]
+  mantenimientos MantenimientoLogistica[]
+  combustibles   CombustibleLogistica[]
+  peajes         PeajeLogistica[]
+  documentos     DocumentoLogistica[]
+  dispositivosGps DispositivoGpsLogistica[]
 
   @@unique([empresaId, placa])
   @@index([empresaId])
@@ -2542,6 +2559,267 @@ model AsignacionVehiculoLogistica {
   @@index([empresaId])
   @@index([conductorId])
   @@index([vehiculoId])
+}
+
+enum TipoMantenimientoLogistica {
+  PREVENTIVO
+  CORRECTIVO
+  EMERGENCIA
+  INSPECCION
+}
+
+enum EstadoMantenimientoLogistica {
+  PROGRAMADO
+  EN_PROCESO
+  COMPLETADO
+  CANCELADO
+}
+
+/// Historial de mantenimientos de la flota (preventivo/correctivo) con costos,
+/// taller, kilometraje y próximo servicio. Alimenta las alertas de flota.
+model MantenimientoLogistica {
+  id         Int                          @id @default(autoincrement())
+  empresaId  Int
+  vehiculoId Int
+  tipo       TipoMantenimientoLogistica   @default(PREVENTIVO)
+  estado     EstadoMantenimientoLogistica @default(PROGRAMADO)
+
+  descripcion String
+  taller      String?
+
+  // Fechas
+  fechaProgramada DateTime
+  fechaRealizado  DateTime?
+
+  // Costo y odómetro
+  costo      Decimal @default(0) @db.Decimal(10, 2)
+  odometroKm Int?
+
+  // Próximo servicio (para alertas de vencimiento)
+  proximoMantenimientoKm    Int?
+  proximoMantenimientoFecha DateTime?
+
+  evidenciaUrl String?
+  notas        String?
+
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  empresa  Empresa           @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  vehiculo VehiculoLogistica @relation(fields: [vehiculoId], references: [id], onDelete: Cascade)
+
+  @@index([empresaId])
+  @@index([empresaId, estado])
+  @@index([vehiculoId])
+  @@index([fechaProgramada])
+}
+
+/// Registro de cargas de combustible por vehículo (control de consumo y gasto).
+model CombustibleLogistica {
+  id         Int                      @id @default(autoincrement())
+  empresaId  Int
+  vehiculoId Int
+
+  fecha           DateTime
+  tipoCombustible TipoCombustibleLogistica @default(GASOLINA)
+  cantidadLitros  Decimal                  @db.Decimal(10, 2)
+  costoTotal      Decimal                  @db.Decimal(10, 2)
+  costoPorLitro   Decimal?                 @db.Decimal(10, 2)
+  odometroKm      Int?
+  estacion        String?
+  numeroComprobante String?
+  evidenciaUrl    String?
+  notas           String?
+
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  empresa  Empresa           @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  vehiculo VehiculoLogistica @relation(fields: [vehiculoId], references: [id], onDelete: Cascade)
+
+  @@index([empresaId])
+  @@index([vehiculoId])
+  @@index([fecha])
+}
+
+enum TipoPeajeLogistica {
+  PEAJE
+  MULTA
+  INFRACCION
+}
+
+enum EstadoPeajeLogistica {
+  PENDIENTE
+  PAGADO
+  ANULADO
+}
+
+/// Peajes, multas e infracciones asociadas a un vehículo (con comprobante/recibo).
+model PeajeLogistica {
+  id         Int                  @id @default(autoincrement())
+  empresaId  Int
+  vehiculoId Int?
+
+  tipo   TipoPeajeLogistica   @default(PEAJE)
+  estado EstadoPeajeLogistica @default(PENDIENTE)
+
+  fecha       DateTime
+  monto       Decimal  @db.Decimal(10, 2)
+  lugar       String?
+  descripcion String?
+  placa       String?
+  comprobanteUrl String?
+  reciboPagoUrl  String?
+  notas       String?
+
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  empresa  Empresa            @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  vehiculo VehiculoLogistica? @relation(fields: [vehiculoId], references: [id], onDelete: SetNull)
+
+  @@index([empresaId])
+  @@index([empresaId, estado])
+  @@index([vehiculoId])
+  @@index([fecha])
+}
+
+enum EntidadDocumentoLogistica {
+  VEHICULO
+  CONDUCTOR
+}
+
+/// Documentos con fecha de vencimiento (SOAT, revisión técnica, seguro, licencia,
+/// DNI, etc.) asociados a un vehículo o conductor. Alimenta las alertas de vencimiento.
+model DocumentoLogistica {
+  id        Int                       @id @default(autoincrement())
+  empresaId Int
+  entidad   EntidadDocumentoLogistica
+
+  vehiculoId  Int?
+  conductorId Int?
+
+  tipo   String // SOAT, REVISION_TECNICA, SEGURO, TARJETA_PROPIEDAD, LICENCIA, DNI, ...
+  numero String?
+
+  fechaEmision     DateTime?
+  fechaVencimiento DateTime
+
+  archivoUrl String?
+  notas      String?
+
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  empresa   Empresa             @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  vehiculo  VehiculoLogistica?  @relation(fields: [vehiculoId], references: [id], onDelete: Cascade)
+  conductor ConductorLogistica? @relation(fields: [conductorId], references: [id], onDelete: Cascade)
+
+  @@index([empresaId])
+  @@index([empresaId, fechaVencimiento])
+  @@index([vehiculoId])
+  @@index([conductorId])
+}
+
+/// Dispositivo GPS (hardware o app) que reporta posiciones. Cada uno tiene un
+/// token para ingestión de ubicaciones y puede asignarse a un vehículo.
+model DispositivoGpsLogistica {
+  id            Int       @id @default(autoincrement())
+  empresaId     Int
+  nombre        String
+  identificador String // IMEI o serial
+  token         String    @unique @default(cuid())
+  vehiculoId    Int?
+  activo        Boolean   @default(true)
+  ultimaConexion DateTime?
+  ultimaLat     Decimal?  @db.Decimal(10, 8)
+  ultimaLng     Decimal?  @db.Decimal(11, 8)
+
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  empresa    Empresa                   @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  vehiculo   VehiculoLogistica?        @relation(fields: [vehiculoId], references: [id], onDelete: SetNull)
+  posiciones PosicionGpsLogistica[]
+  eventos    EventoGeocercaLogistica[]
+
+  @@unique([empresaId, identificador])
+  @@index([empresaId])
+}
+
+/// Histórico de posiciones reportadas por un dispositivo GPS.
+model PosicionGpsLogistica {
+  id            Int      @id @default(autoincrement())
+  empresaId     Int
+  dispositivoId Int
+  lat           Decimal  @db.Decimal(10, 8)
+  lng           Decimal  @db.Decimal(11, 8)
+  velocidad     Decimal? @db.Decimal(6, 2)
+  rumbo         Int?
+  timestamp     DateTime @default(now())
+
+  dispositivo DispositivoGpsLogistica @relation(fields: [dispositivoId], references: [id], onDelete: Cascade)
+
+  @@index([empresaId])
+  @@index([dispositivoId, timestamp])
+}
+
+enum TipoGeocercaLogistica {
+  CIRCULO
+  POLIGONO
+}
+
+enum TipoEventoGeocercaLogistica {
+  ENTRADA
+  SALIDA
+}
+
+/// Geocerca (círculo o polígono) para vigilar zonas y generar alertas de
+/// entrada/salida de la flota.
+model GeocercaLogistica {
+  id          Int                   @id @default(autoincrement())
+  empresaId   Int
+  nombre      String
+  descripcion String?
+  tipo        TipoGeocercaLogistica @default(CIRCULO)
+
+  // Círculo
+  lat   Decimal? @db.Decimal(10, 8)
+  lng   Decimal? @db.Decimal(11, 8)
+  radio Decimal? @db.Decimal(10, 2) // metros
+
+  // Polígono (GeoJSON serializado)
+  coordenadas String?
+
+  color  String?
+  activo Boolean @default(true)
+
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  empresa Empresa                   @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  eventos EventoGeocercaLogistica[]
+
+  @@index([empresaId])
+}
+
+/// Evento de entrada/salida de una geocerca.
+model EventoGeocercaLogistica {
+  id            Int                         @id @default(autoincrement())
+  empresaId     Int
+  geocercaId    Int
+  dispositivoId Int?
+  vehiculoId    Int?
+  tipo          TipoEventoGeocercaLogistica
+  lat           Decimal                     @db.Decimal(10, 8)
+  lng           Decimal                     @db.Decimal(11, 8)
+  timestamp     DateTime                    @default(now())
+
+  geocerca    GeocercaLogistica        @relation(fields: [geocercaId], references: [id], onDelete: Cascade)
+  dispositivo DispositivoGpsLogistica? @relation(fields: [dispositivoId], references: [id], onDelete: SetNull)
+
+  @@index([empresaId])
+  @@index([geocercaId])
 }
 
 model AlmacenLogistica {

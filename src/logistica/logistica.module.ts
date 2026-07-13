@@ -7,6 +7,13 @@ import { ClienteLogisticaModule } from './cliente/cliente.module';
 import { PedidoLogisticaModule } from './pedido/pedido.module';
 import { DespachoLogisticaModule } from './despacho/despacho.module';
 import { TrackingLogisticaModule } from './tracking/tracking.module';
+import { MantenimientoModule } from './mantenimiento/mantenimiento.module';
+import { CombustibleModule } from './combustible/combustible.module';
+import { PeajeModule } from './peaje/peaje.module';
+import { DocumentosModule } from './documentos/documentos.module';
+import { GeocercasModule } from './geocercas/geocercas.module';
+import { DispositivosModule } from './dispositivos/dispositivos.module';
+import { ImportarModule } from './importar/importar.module';
 import { IntegracionesModule } from './integraciones/integraciones.module';
 import { ApiKeysController } from './integraciones/api-keys/api-keys.controller';
 import { WebhooksAdminController } from './integraciones/webhooks/webhooks-admin.controller';
@@ -22,6 +29,13 @@ import { WebhooksAdminController } from './integraciones/webhooks/webhooks-admin
     PedidoLogisticaModule,
     DespachoLogisticaModule,
     TrackingLogisticaModule,
+    MantenimientoModule,
+    CombustibleModule,
+    PeajeModule,
+    DocumentosModule,
+    GeocercasModule,
+    DispositivosModule,
+    ImportarModule,
     IntegracionesModule,
   ],
   // ApiKeysController y WebhooksAdminController van aquí (no en
