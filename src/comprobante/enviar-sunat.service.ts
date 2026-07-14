@@ -2167,7 +2167,10 @@ export class EnviarSunatService {
     const status = String(response?.status || '').toUpperCase();
     if (status === 'ACEPTADO') return 'ACEPTADO';
     if (status === 'PENDIENTE') return 'PENDIENTE';
-    return 'RECHAZADO';
+    if (status === 'RECHAZADO') return 'RECHAZADO';
+    // Estado desconocido/vacío (respuesta ambigua o incompleta): PENDIENTE para que
+    // el scheduler reconcilie con SUNAT, en vez de marcar un rechazo falso.
+    return 'PENDIENTE';
   }
 
   private normalizeJambleStatus(
@@ -2230,7 +2233,9 @@ export class EnviarSunatService {
       return 'RECHAZADO';
     }
 
-    return success ? 'PENDIENTE' : 'RECHAZADO';
+    // Sin señales claras (respuesta ambigua/incompleta): PENDIENTE para que el
+    // scheduler reconcilie con SUNAT, en vez de un "Rechazado" falso.
+    return 'PENDIENTE';
   }
 
   private buildJamblePayload(
@@ -2501,7 +2506,10 @@ export class EnviarSunatService {
       return 'PENDIENTE';
     }
 
-    return 'RECHAZADO';
+    // Respuesta ambigua/incompleta (p. ej. SUNAT lenta): NO es un rechazo definitivo.
+    // Se deja PENDIENTE para que el scheduler reconcilie el estado real con SUNAT y
+    // así evitar mostrar un "Rechazado" falso que luego termina Aceptado.
+    return 'PENDIENTE';
   }
 
   private isSunatNumeracionRepetida(response: any): boolean {

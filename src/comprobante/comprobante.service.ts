@@ -2937,6 +2937,7 @@ export class ComprobanteService {
       cotizTerminos: input.cotizTerminos ?? null,
       cotizTipoPago: input.cotizTipoPago ?? 'CONTADO',
       cotizAdelanto: input.cotizAdelanto ?? 0,
+      cotizMoneda: input.cotizMoneda ?? 'PEN',
       // Detracción (aplica también a cotizaciones de servicios afectos)
       tipoDetraccionId: tipoDetraccionId ?? undefined,
       medioPagoDetraccionId: medioPagoDetraccionId ?? undefined,
@@ -3787,8 +3788,19 @@ export class ComprobanteService {
     let buffer: Buffer;
     if (full.tipoDoc === 'COT') {
       const usuarioNombre = (full as any).usuario?.nombre || '';
+      // Moneda de la cotización (solo cotización, no afecta facturación SUNAT)
+      const cotizEsUSD =
+        String((full as any).cotizMoneda || 'PEN').toUpperCase() === 'USD';
       const cotizacionData = {
         ...pdfData,
+        monedaSimbolo: cotizEsUSD ? 'US$' : 'S/',
+        monedaNombre: cotizEsUSD ? 'DÓLARES' : 'SOLES',
+        totalEnLetras: cotizEsUSD
+          ? numeroALetras(mtoImpVenta)
+              .toUpperCase()
+              .replace(/SOLES/g, 'DÓLARES AMERICANOS')
+              .replace(/SOL\b/g, 'DÓLAR AMERICANO')
+          : numeroALetras(mtoImpVenta).toUpperCase(),
         celular: (full as any).usuario?.celular || '',
         email: (full as any).usuario?.email || '',
         formaPago: (() => {

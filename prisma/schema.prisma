@@ -762,6 +762,7 @@ model Comprobante {
   cotizTerminos           String?
   cotizTipoPago           String?              @default("CONTADO")
   cotizVigencia           Int?                 @default(7)
+  cotizMoneda             String?              @default("PEN")
   cuentaBancoNacion       String?
   medioPagoDetraccionId   Int?
   montoDetraccion         Float?

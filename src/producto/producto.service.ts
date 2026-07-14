@@ -1284,6 +1284,23 @@ export class ProductoService {
         unidadMedida: true,
         categoria: true,
         marca: true,
+        // Variantes: si se escanea un producto padre, el POS abre el selector de talla/color
+        variantes: {
+          where: { estado: { in: [EstadoType.ACTIVO, EstadoType.INACTIVO] } },
+          select: {
+            id: true,
+            codigo: true,
+            descripcion: true,
+            precioUnitario: true,
+            moneda: true,
+            precioOferta: true,
+            stock: true,
+            valoresAtributos: true,
+            imagenUrl: true,
+            codigoBarras: true,
+            estado: true,
+          },
+        },
       },
     });
 

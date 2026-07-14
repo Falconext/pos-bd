@@ -135,7 +135,8 @@ export class PdfGeneratorService {
 
     if (!this.browser) {
       const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
-      this.browser = await puppeteer.launch({
+      const userDataDir = path.join('/tmp', 'falconext-puppeteer');
+      const launchOptions: puppeteer.LaunchOptions = {
         headless: true,
         executablePath: executablePath || undefined,
         args: [
@@ -150,15 +151,42 @@ export class PdfGeneratorService {
           '--disable-extensions',
           '--disable-features=VizDisplayCompositor',
           '--no-zygote',
-          `--user-data-dir=${path.join('/tmp', 'falconext-puppeteer')}`,
+          `--user-data-dir=${userDataDir}`,
           `--crash-dumps-dir=${path.join('/tmp', 'falconext-puppeteer-crash')}`,
         ],
-      });
+      };
+      try {
+        this.browser = await puppeteer.launch(launchOptions);
+      } catch (err: any) {
+        // Un Chrome huérfano (p. ej. backend cerrado abruptamente) deja un
+        // SingletonLock que bloquea el nuevo browser. Lo limpiamos y reintentamos.
+        const msg = String(err?.message || err || '');
+        if (/already running|SingletonLock/i.test(msg)) {
+          this.logger.warn(
+            '⚠️ Lock de Puppeteer huérfano detectado; limpiando y reintentando',
+          );
+          this.limpiarLockPuppeteer(userDataDir);
+          this.browser = await puppeteer.launch(launchOptions);
+        } else {
+          throw err;
+        }
+      }
       this.logger.log(
         `✅ Puppeteer browser inicializado (chrome: ${executablePath || 'auto'})`,
       );
     }
     return this.browser;
+  }
+
+  /** Elimina los locks de sesión (Singleton*) que un Chrome huérfano deja atrás. */
+  private limpiarLockPuppeteer(userDataDir: string) {
+    for (const nombre of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
+      try {
+        fs.rmSync(path.join(userDataDir, nombre), { force: true });
+      } catch {
+        // ignorar: si no existe o no se puede borrar, el reintento lo reportará
+      }
+    }
   }
 
   private isRecoverableBrowserError(error: any): boolean {

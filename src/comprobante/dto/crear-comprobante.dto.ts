@@ -148,6 +148,10 @@ export class CrearComprobanteDto {
 
   @IsOptional()
   @IsString()
+  cotizMoneda?: string;
+
+  @IsOptional()
+  @IsString()
   observaciones?: string;
 
   @IsOptional()

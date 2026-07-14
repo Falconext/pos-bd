@@ -119,6 +119,7 @@
         .col-img  { width: 9%;  text-align: center; }
         .col-img img { width: 34px; height: 34px; object-fit: cover; }
         .col-desc { text-align: left; }
+        .col-moneda { width: 9%; text-align: center; }
         .col-pu   { width: 10%; text-align: right; }
         .col-tot  { width: 10%; text-align: right; }
 
@@ -259,7 +260,7 @@
                     <tr><td>FECHA EMISIÓN:</td><td>{{fecha}}</td></tr>
                     <tr><td>CONDICIÓN:</td><td>{{formaPago}}</td></tr>
                     <tr><td>VALIDEZ:</td><td>{{validez}}</td></tr>
-                    <tr><td>MONEDA:</td><td>SOLES</td></tr>
+                    <tr><td>MONEDA:</td><td>{{monedaNombre}}</td></tr>
                 </table>
             </div>
         </div>
@@ -274,6 +275,7 @@
                 <th class="col-um">UNIDAD</th>
                 {{#if includeProductImages}}<th class="col-img">IMAGEN</th>{{/if}}
                 <th class="col-desc">DESCRIPCIÓN</th>
+                <th class="col-moneda">MONEDA</th>
                 <th class="col-pu">P.UNIT.</th>
                 <th class="col-tot">TOTAL</th>
             </tr>
@@ -288,6 +290,7 @@
                 <td class="col-img">{{#if imagenUrl}}<img src="{{imagenUrl}}" alt="" />{{else}}-{{/if}}</td>
                 {{/if}}
                 <td class="col-desc">{{descripcion}}</td>
+                <td class="col-moneda">{{../monedaSimbolo}}</td>
                 <td class="col-pu">{{precioUnitario}}</td>
                 <td class="col-tot">{{total}}</td>
             </tr>
@@ -320,18 +323,18 @@
         </div>
 
         <div class="totales-box">
-            <div class="row"><span><strong>OP. GRAVADAS:</strong></span><span>S/ {{mtoOperGravadas}}</span></div>
-            <div class="row"><span><strong>OP. EXONERADAS:</strong></span><span>S/ 0.00</span></div>
-            <div class="row"><span><strong>OP. INAFECTAS:</strong></span><span>S/ 0.00</span></div>
-            <div class="row"><span><strong>OP. GRATUITAS:</strong></span><span>S/ 0.00</span></div>
-            <div class="row"><span><strong>SUB TOTAL:</strong></span><span>S/ {{subTotal}}</span></div>
+            <div class="row"><span><strong>OP. GRAVADAS:</strong></span><span>{{monedaSimbolo}} {{mtoOperGravadas}}</span></div>
+            <div class="row"><span><strong>OP. EXONERADAS:</strong></span><span>{{monedaSimbolo}} 0.00</span></div>
+            <div class="row"><span><strong>OP. INAFECTAS:</strong></span><span>{{monedaSimbolo}} 0.00</span></div>
+            <div class="row"><span><strong>OP. GRATUITAS:</strong></span><span>{{monedaSimbolo}} 0.00</span></div>
+            <div class="row"><span><strong>SUB TOTAL:</strong></span><span>{{monedaSimbolo}} {{subTotal}}</span></div>
             {{#if descuento}}
-            <div class="row"><span><strong>DESCUENTOS TOTAL:</strong></span><span>S/ {{descuento}}</span></div>
+            <div class="row"><span><strong>DESCUENTOS TOTAL:</strong></span><span>{{monedaSimbolo}} {{descuento}}</span></div>
             {{/if}}
-            <div class="row"><span><strong>IGV 18%:</strong></span><span>S/ {{mtoIGV}}</span></div>
+            <div class="row"><span><strong>IGV 18%:</strong></span><span>{{monedaSimbolo}} {{mtoIGV}}</span></div>
             <div class="row total-final">
                 <span><strong>MONTO TOTAL:</strong></span>
-                <span>S/ {{mtoImpVenta}}</span>
+                <span>{{monedaSimbolo}} {{mtoImpVenta}}</span>
             </div>
         </div>
     </div>
