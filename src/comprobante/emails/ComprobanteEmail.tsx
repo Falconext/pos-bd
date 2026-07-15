@@ -22,6 +22,7 @@ export interface ComprobanteEmailProps {
   fecha: string;
   clienteNombre: string;
   monto: string;
+  monedaSimbolo?: string;
   pdfUrl?: string;
   productos?: Array<{
     descripcion: string;
@@ -248,6 +249,7 @@ export const ComprobanteEmail: React.FC<ComprobanteEmailProps> = ({
   fecha,
   clienteNombre,
   monto,
+  monedaSimbolo = 'S/',
   pdfUrl,
   productos = [],
   formaPago,
@@ -337,8 +339,8 @@ export const ComprobanteEmail: React.FC<ComprobanteEmailProps> = ({
                             <p style={itemSub}>Cant: {Number(p.cantidad).toFixed(3)}{p.unidad ? ` ${p.unidad}` : ''}</p>
                           </td>
                           <td style={{ padding: '12px 0 2px 0', verticalAlign: 'top', width: '40%' }}>
-                            <p style={itemTotal}>S/ {p.total}</p>
-                            <p style={itemSubRight}>S/ {p.precioUnitario} c/u</p>
+                            <p style={itemTotal}>{monedaSimbolo} {p.total}</p>
+                            <p style={itemSubRight}>{monedaSimbolo} {p.precioUnitario} c/u</p>
                           </td>
                         </tr>
                       </tbody>
@@ -354,19 +356,19 @@ export const ComprobanteEmail: React.FC<ComprobanteEmailProps> = ({
                     {mtoOperGravadas && (
                       <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
                         <td style={summaryLabel}>Op. Gravadas</td>
-                        <td style={summaryValue}>S/ {mtoOperGravadas}</td>
+                        <td style={summaryValue}>{monedaSimbolo} {mtoOperGravadas}</td>
                       </tr>
                     )}
                     {descuento && parseFloat(descuento) > 0 && (
                       <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
                         <td style={discountLabel}>Descuento</td>
-                        <td style={discountValue}>-S/ {descuento}</td>
+                        <td style={discountValue}>-{monedaSimbolo} {descuento}</td>
                       </tr>
                     )}
                     {mtoIGV && (
                       <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
                         <td style={summaryLabel}>IGV 18%</td>
-                        <td style={summaryValue}>S/ {mtoIGV}</td>
+                        <td style={summaryValue}>{monedaSimbolo} {mtoIGV}</td>
                       </tr>
                     )}
                   </tbody>

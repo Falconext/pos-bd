@@ -3791,16 +3791,43 @@ export class ComprobanteService {
       // Moneda de la cotización (solo cotización, no afecta facturación SUNAT)
       const cotizEsUSD =
         String((full as any).cotizMoneda || 'PEN').toUpperCase() === 'USD';
+
+      // Formato configurable de cotización (visibilidad + tamaño por elemento).
+      // Debe reflejar EXACTAMENTE lo que respeta el componente de impresión del
+      // frontend (cotizFormatoElementos.ts / elemCfg), para que "Ver PDF" e
+      // "Imprimir" produzcan el mismo documento.
+      const cotizElemDefaults: Record<string, number> = {
+        logo: 150, nombreComercial: 20, direccion: 12, rubro: 12,
+        razonSocial: 12, celular: 12, email: 12, web: 12,
+        datosCliente: 12, datosCotizacion: 12, productos: 12, sonTexto: 18,
+        observaciones: 12, detraccion: 12, opGravadas: 12, opExoneradas: 12,
+        opInafectas: 12, opGratuitas: 12, subTotal: 12, descuentos: 12,
+        igv: 12, montoTotal: 18, cuentas: 10, gracias: 10,
+      };
+      const rawFormatoCfg = ((full.empresa as any).cotizFormatoConfig ||
+        {}) as Record<string, { visible?: boolean; size?: number }>;
+      const fc: Record<string, { visible: boolean; size: number }> = {};
+      for (const [k, def] of Object.entries(cotizElemDefaults)) {
+        const c = rawFormatoCfg[k] || {};
+        fc[k] = { visible: c.visible !== false, size: Number(c.size) || def };
+      }
+
+      // SON: en letras alineado al frontend (decimales con "CON" + moneda).
+      const sonBase = numeroALetras(mtoImpVenta)
+        .toUpperCase()
+        .replace(/ Y (\d{2}\/100)$/, ' CON $1');
+      const sonMoneda = `${sonBase} ${
+        cotizEsUSD ? 'DÓLARES AMERICANOS' : 'SOLES'
+      }`;
+
       const cotizacionData = {
         ...pdfData,
+        fc,
         monedaSimbolo: cotizEsUSD ? 'US$' : 'S/',
         monedaNombre: cotizEsUSD ? 'DÓLARES' : 'SOLES',
-        totalEnLetras: cotizEsUSD
-          ? numeroALetras(mtoImpVenta)
-              .toUpperCase()
-              .replace(/SOLES/g, 'DÓLARES AMERICANOS')
-              .replace(/SOL\b/g, 'DÓLAR AMERICANO')
-          : numeroALetras(mtoImpVenta).toUpperCase(),
+        totalEnLetras: sonMoneda,
+        descuentoValor: Number((full as any).mtoDescuentoGlobal || 0).toFixed(2),
+        descuentoPct: Number((full as any).cotizDescuento || 0),
         celular: (full as any).usuario?.celular || '',
         email: (full as any).usuario?.email || '',
         formaPago: (() => {
@@ -4157,11 +4184,15 @@ export class ComprobanteService {
           ? {}
           : { empresaId: context.empresaId }),
       },
-      select: { s3PdfUrl: true },
+      select: { s3PdfUrl: true, tipoDoc: true },
     });
 
     if (!comprobante) throw new NotFoundException('Comprobante no encontrado');
-    if (comprobante.s3PdfUrl) return comprobante.s3PdfUrl;
+    // Las cotizaciones son editables y su formato es configurable por empresa,
+    // así que NO se cachea el PDF: siempre se regenera para reflejar el formato
+    // vigente. Los comprobantes fiscales sí conservan el PDF cacheado.
+    const esCotizacion = comprobante.tipoDoc === 'COT';
+    if (comprobante.s3PdfUrl && !esCotizacion) return comprobante.s3PdfUrl;
 
     let buffer: Buffer;
     let key: string;
@@ -4657,7 +4688,13 @@ export class ComprobanteService {
     const tipoPretty = tipoDocMap[comp.tipoDoc] || comp.tipoDoc;
     const serie = comp.serie;
     const correlativo = String(comp.correlativo).padStart(8, '0');
-    const monto = `S/ ${Number(comp.mtoImpVenta || 0).toFixed(2)}`;
+    // Respetar la moneda de la cotización (PEN → S/, USD → US$).
+    // Los demás comprobantes se emiten en soles.
+    const esUSD =
+      comp.tipoDoc === 'COT' &&
+      String((comp as any).cotizMoneda || 'PEN').toUpperCase() === 'USD';
+    const monedaSimbolo = esUSD ? 'US$' : 'S/';
+    const monto = `${monedaSimbolo} ${Number(comp.mtoImpVenta || 0).toFixed(2)}`;
     const empresaNombre = comp.empresa.razonSocial;
     const empresaRuc = comp.empresa.ruc ?? '';
     const empresaDireccion = comp.empresa.direccion ?? undefined;
@@ -4726,6 +4763,7 @@ export class ComprobanteService {
         fecha,
         clienteNombre,
         monto,
+        monedaSimbolo,
         pdfUrl,
         productos,
         formaPago,

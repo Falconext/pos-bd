@@ -51,6 +51,12 @@ export class PdfGeneratorService {
       const norm = (v: any) => (v ?? '').toString().trim().toUpperCase();
       return norm(a) === norm(b);
     });
+    // OR lógico — usado en cotización para mostrar el cuadro de datos si al
+    // menos una de sus columnas (cliente / cotización) está visible.
+    Handlebars.registerHelper('or', (...args: any[]) => {
+      // El último argumento es el "options" de Handlebars; se ignora.
+      return args.slice(0, -1).some((v) => !!v);
+    });
 
     const templateSource = fs.readFileSync(foundPath, 'utf-8');
     this.template = Handlebars.compile(templateSource);
