@@ -1159,6 +1159,7 @@ export class ProductoService {
           select: {
             id: true,
             codigo: true,
+            descripcion: true,
             precioUnitario: true,
             moneda: true,
             precioOferta: true,
@@ -1166,6 +1167,7 @@ export class ProductoService {
             estado: true,
             valoresAtributos: true,
             imagenUrl: true,
+            codigoBarras: true,
           },
         },
       },

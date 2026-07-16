@@ -157,7 +157,9 @@ export async function sincronizarVariantes(
       imagenUrl: hasOwn(config, 'imagenUrl')
         ? normalizeNullableStringUpdate(config?.imagenUrl)
         : undefined,
-      codigoBarras: config?.codigoBarras || undefined,
+      codigoBarras: hasOwn(config, 'codigoBarras')
+        ? normalizeNullableStringUpdate(config?.codigoBarras)
+        : undefined,
       publicarEnTienda: productoPadre.publicarEnTienda ?? true,
     };
 
