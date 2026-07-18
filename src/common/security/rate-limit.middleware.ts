@@ -26,6 +26,19 @@ function clientIp(req: Request): string {
   return req.ip || req.socket.remoteAddress || 'unknown';
 }
 
+// En desarrollo local (peticiones desde loopback) no aplicamos el límite, para
+// no bloquear pruebas repetidas de login. En producción el request llega a
+// través de un proxy con la IP real en x-forwarded-for, así que la protección
+// sigue activa.
+function isLoopback(ip: string): boolean {
+  return (
+    ip === '127.0.0.1' ||
+    ip === '::1' ||
+    ip === '::ffff:127.0.0.1' ||
+    ip === 'localhost'
+  );
+}
+
 function cleanup(now: number) {
   if (now - lastCleanup < CLEANUP_MS) return;
   lastCleanup = now;
@@ -42,10 +55,13 @@ export function authRateLimit() {
     const isSensitive = SENSITIVE_PATHS.some((item) => path.startsWith(item));
     if (!isSensitive) return next();
 
+    const ip = clientIp(req);
+    if (isLoopback(ip)) return next();
+
     const now = Date.now();
     cleanup(now);
 
-    const key = `${clientIp(req)}:${path}`;
+    const key = `${ip}:${path}`;
     const current = buckets.get(key);
     const bucket =
       current && current.resetAt > now

@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import * as https from 'https';
 import * as http from 'http';
-import type { MovimientoKardex } from '@prisma/client';
+import type { MovimientoKardex, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   FiltrosKardexDto,
@@ -925,6 +925,11 @@ export class KardexService {
       data: { stock: round3(num(total._sum.stock)) },
     });
 
+    // Si el producto movido es una variante, recalcular también el stock del
+    // producto padre (suma de sus variantes). Sin esto, el campo 'stock' del
+    // padre queda desactualizado tras una venta/salida por variante.
+    await this.sincronizarStockPadre(productoId);
+
     // Actualizar costo promedio solo para ingresos (afecta al producto globalmente)
     if (tipoMovimiento === 'INGRESO' && costoUnitario && cantidad) {
       // Recalcular costo promedio global
@@ -959,6 +964,54 @@ export class KardexService {
           });
         }
       }
+    }
+  }
+
+  /**
+   * Recalcula el stock del producto padre a partir de la suma de sus variantes.
+   * Se llama tras cada movimiento sobre una variante para mantener el campo
+   * 'stock' del padre (mostrado en la tabla de productos) coherente con la suma
+   * real de sus variantes, tanto a nivel global como por sede.
+   */
+  private async sincronizarStockPadre(
+    varianteId: number,
+    client: Prisma.TransactionClient = this.prisma,
+  ) {
+    const variante = await client.producto.findUnique({
+      where: { id: varianteId },
+      select: { productoPadreId: true },
+    });
+    const padreId = variante?.productoPadreId;
+    if (!padreId) return;
+
+    // Stock global del padre = suma del stock de sus variantes activas
+    const totalVariantes = await client.producto.aggregate({
+      where: { productoPadreId: padreId, estado: 'ACTIVO' },
+      _sum: { stock: true },
+    });
+    await client.producto.update({
+      where: { id: padreId },
+      data: { stock: round3(num(totalVariantes._sum.stock)) },
+    });
+
+    // Stock por sede del padre = suma del stock por sede de sus variantes activas
+    const stocksPorSede = await client.productoStock.groupBy({
+      by: ['sedeId'],
+      where: { producto: { productoPadreId: padreId, estado: 'ACTIVO' } },
+      _sum: { stock: true },
+    });
+    for (const s of stocksPorSede) {
+      const stockSede = round3(num(s._sum.stock));
+      await client.productoStock.upsert({
+        where: { productoId_sedeId: { productoId: padreId, sedeId: s.sedeId } },
+        update: { stock: stockSede },
+        create: {
+          productoId: padreId,
+          sedeId: s.sedeId,
+          stock: stockSede,
+          stockMinimo: 0,
+        },
+      });
     }
   }
 
@@ -1470,6 +1523,11 @@ export class KardexService {
           where: { id: item.productoId },
           data: { stock: totalStock._sum.stock ?? 0 },
         });
+
+        // Si el producto trasladado es una variante, recalcular el stock del
+        // padre (global y por sede) para que su distribución por sede quede
+        // coherente tras mover stock entre sedes.
+        await this.sincronizarStockPadre(item.productoId, tx);
       }
 
       return resultados;

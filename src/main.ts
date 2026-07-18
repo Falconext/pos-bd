@@ -141,6 +141,10 @@ async function bootstrap() {
     logger.warn(`Seed inicial omitido: ${message}`);
   }
 
+  // Permite que Nest ejecute onModuleDestroy (incluido PrismaService.$disconnect)
+  // al recibir señales de apagado/recarga, evitando conexiones colgadas en la DB.
+  app.enableShutdownHooks();
+
   await app.listen(PORT, '0.0.0.0');
   logger.log(`Falconext MYPE API lista en http://localhost:${PORT}/api`);
 }
