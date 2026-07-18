@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -172,5 +173,17 @@ export class ClienteController {
     );
     res.locals.message = `Cliente ${body.estado === 'ACTIVO' ? 'activado' : 'desactivado'} correctamente`;
     return actualizado;
+  }
+
+  @Delete(':id')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async eliminar(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const eliminado = await this.service.eliminar(id, user.empresaId);
+    res.locals.message = 'Cliente eliminado correctamente';
+    return eliminado;
   }
 }

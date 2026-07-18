@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -297,6 +298,38 @@ export class ClienteService {
     });
     if (!cliente) throw new NotFoundException('Cliente no encontrado');
     return this.prisma.cliente.update({ where: { id }, data: { estado } });
+  }
+
+  // Eliminación con candado: solo permite borrar si el cliente/proveedor no tiene
+  // historial asociado (compras, comprobantes, detalles o vehículos). En caso
+  // contrario se conserva y se sugiere desactivar, para no romper la trazabilidad.
+  async eliminar(id: number, empresaId: number) {
+    const cliente = await this.prisma.cliente.findFirst({
+      where: { id, empresaId },
+    });
+    if (!cliente) throw new NotFoundException('Cliente no encontrado');
+
+    const [compras, comprobantes, detalles, vehiculos] = await Promise.all([
+      this.prisma.compra.count({ where: { proveedorId: id } }),
+      this.prisma.comprobante.count({ where: { clienteId: id } }),
+      this.prisma.detalleComprobante.count({ where: { pacienteId: id } }),
+      this.prisma.vehiculo.count({ where: { clienteId: id } }),
+    ]);
+
+    const motivos: string[] = [];
+    if (compras > 0) motivos.push(`${compras} compra(s)`);
+    if (comprobantes > 0) motivos.push(`${comprobantes} comprobante(s)`);
+    if (vehiculos > 0) motivos.push(`${vehiculos} vehículo(s)`);
+    if (detalles > 0) motivos.push('documentos asociados');
+
+    if (motivos.length) {
+      throw new ConflictException(
+        `No se puede eliminar: tiene ${motivos.join(', ')}. Usa "Desactivar" para conservar el historial.`,
+      );
+    }
+
+    await this.prisma.cliente.delete({ where: { id } });
+    return { id };
   }
 
   async consultarDocumento(numero: string, tipo: string) {
