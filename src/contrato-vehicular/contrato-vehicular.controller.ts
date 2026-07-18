@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Param,
   Body,
   Query,
@@ -12,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { ContratoVehicularService } from './contrato-vehicular.service';
 import { CreateContratoVehicularDto } from './dto/create-contrato.dto';
+import { UpdateContratoVehicularDto } from './dto/update-contrato.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
 @UseGuards(JwtAuthGuard)
@@ -47,9 +49,31 @@ export class ContratoVehicularController {
     return this.contratoService.create(req.user.empresaId, dto);
   }
 
+  @Patch(':id')
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateContratoVehicularDto,
+    @Request() req: any,
+  ) {
+    return this.contratoService.update(id, req.user.empresaId, dto);
+  }
+
+  @Delete(':id')
+  remove(@Param('id', ParseIntPipe) id: number, @Request() req: any) {
+    return this.contratoService.remove(id, req.user.empresaId);
+  }
+
   @Patch(':id/renovar')
-  renovar(@Param('id', ParseIntPipe) id: number, @Request() req: any) {
-    return this.contratoService.renovar(id, req.user.empresaId);
+  renovar(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req: any,
+    @Body('meses') meses?: number,
+  ) {
+    return this.contratoService.renovar(
+      id,
+      req.user.empresaId,
+      meses ? Number(meses) : 12,
+    );
   }
 
   @Patch(':id/cancelar')

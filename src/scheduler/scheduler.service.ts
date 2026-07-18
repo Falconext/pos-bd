@@ -181,6 +181,9 @@ export class SchedulerService {
       await this.notificarContratos(porVencerAhoraVencidos, 'VENCIDO');
       await this.notificarContratos(nuevosPorVencer, 'POR_VENCER');
 
+      // 4) Correos de recordatorio (empresa + cliente) a 15, 5, 1 y 0 días del vencimiento.
+      await this.enviarCorreosVencimientoContratos();
+
       this.logger.log(
         `✅ Contratos: ${vencidos.count} marcados VENCIDO, ${porVencer.count} marcados POR_VENCER`,
       );
@@ -237,5 +240,129 @@ export class SchedulerService {
         );
       }
     }
+  }
+
+  // ── Correos de recordatorio de vencimiento de contrato vehicular ────────────
+  // Envía a la empresa (admins) y al cliente cuando faltan 15, 5, 1 o 0 días.
+  private async enviarCorreosVencimientoContratos(): Promise<void> {
+    if (!process.env.RESEND_API_KEY) return; // sin proveedor de correo, no hace nada
+
+    const hoy = new Date();
+    const desde = new Date(hoy); desde.setDate(desde.getDate() - 1);
+    const hasta = new Date(hoy); hasta.setDate(hasta.getDate() + 16);
+
+    const contratos = await this.prisma.contratoVehicular.findMany({
+      where: {
+        estado: { in: ['VIGENTE', 'POR_VENCER'] },
+        fechaFin: { gte: desde, lte: hasta },
+      },
+      include: {
+        vehiculo: {
+          select: {
+            placa: true, marca: true, modelo: true,
+            cliente: { select: { nombre: true, email: true } },
+          },
+        },
+        producto: { select: { descripcion: true } },
+        empresa: { select: { id: true, brand: true, nombreComercial: true, razonSocial: true } },
+      },
+    });
+    if (!contratos.length) return;
+
+    // Comparación por fecha de calendario (UTC) para no depender de la zona horaria.
+    const UMBRALES = [15, 5, 1, 0];
+    const utcStr = (base: Date, addDays: number) =>
+      new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate() + addDays))
+        .toISOString().slice(0, 10);
+    const targets = new Map<string, number>();
+    for (const n of UMBRALES) targets.set(utcStr(hoy, n), n);
+
+    // Cache de emails de administradores por empresa.
+    const adminsCache = new Map<number, { email: string; nombre: string }[]>();
+    const getAdmins = async (empresaId: number) => {
+      if (adminsCache.has(empresaId)) return adminsCache.get(empresaId)!;
+      const admins = await this.prisma.usuario.findMany({
+        where: { empresaId, rol: 'ADMIN_EMPRESA', estado: 'ACTIVO' },
+        select: { email: true, nombre: true },
+      });
+      adminsCache.set(empresaId, admins as any);
+      return admins as any;
+    };
+
+    const appUrl = (process.env.FRONTEND_URL || 'https://app.falconext.pe').replace(/\/$/, '');
+    let enviados = 0;
+
+    for (const c of contratos) {
+      const fechaFinStr = new Date(c.fechaFin).toISOString().slice(0, 10);
+      const dias = targets.get(fechaFinStr);
+      if (dias === undefined) continue; // no cae en ningún umbral hoy
+
+      const placa = c.vehiculo?.placa || '—';
+      const vehiculoDesc = [c.vehiculo?.marca, c.vehiculo?.modelo].filter(Boolean).join(' ') || undefined;
+      const servicio = c.producto?.descripcion || undefined;
+      const appName = c.empresa?.brand === 'krezka' ? 'Krezka' : 'Falconext';
+      const negocioNombre = c.empresa?.nombreComercial || c.empresa?.razonSocial || undefined;
+      const fechaVencimiento = new Intl.DateTimeFormat('es-PE', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+      }).format(new Date(c.fechaFin));
+
+      // 1) Cliente dueño del vehículo (si tiene correo).
+      const clienteEmail = c.vehiculo?.cliente?.email;
+      if (clienteEmail) {
+        try {
+          await this.enviarCorreoVencimiento(clienteEmail, {
+            destinatarioNombre: c.vehiculo?.cliente?.nombre || 'Estimado cliente',
+            esCliente: true, placa, vehiculoDesc, servicio,
+            diasRestantes: dias, fechaVencimiento, negocioNombre, appName,
+          });
+          enviados++;
+        } catch (e: any) { this.logger.error(`Correo cliente contrato ${c.id}: ${e?.message || e}`); }
+      }
+
+      // 2) Administradores de la empresa.
+      const admins = await getAdmins(c.empresa?.id ?? c.empresaId);
+      for (const a of admins) {
+        if (!a.email) continue;
+        try {
+          await this.enviarCorreoVencimiento(a.email, {
+            destinatarioNombre: a.nombre || 'Administrador',
+            esCliente: false, placa, vehiculoDesc, servicio,
+            diasRestantes: dias, fechaVencimiento, negocioNombre, appName,
+            ctaUrl: `${appUrl}/administrador/vehiculos/contratos`,
+          });
+          enviados++;
+        } catch (e: any) { this.logger.error(`Correo empresa contrato ${c.id}: ${e?.message || e}`); }
+      }
+    }
+
+    if (enviados) this.logger.log(`📧 Recordatorios de vencimiento enviados: ${enviados}`);
+  }
+
+  // Renderiza y envía el correo de vencimiento con Resend (mismo patrón del proyecto).
+  private async enviarCorreoVencimiento(to: string, props: any): Promise<void> {
+    const resendKey = process.env.RESEND_API_KEY;
+    if (!resendKey) return;
+    const { Resend } = await import('resend');
+    const { render } = await import('@react-email/render');
+    const { VencimientoContratoEmail } = await import(
+      '../empresa/emails/VencimientoContratoEmail.js'
+    );
+    const resend = new Resend(resendKey);
+    const fromEmail =
+      process.env.RESEND_FROM_EMAIL || process.env.MAIL_FROM || 'noreply@falconext.pe';
+    const html = await render((VencimientoContratoEmail as any)(props));
+    const asunto =
+      props.diasRestantes === 0
+        ? `Vence hoy: contrato del vehículo ${props.placa}`
+        : props.diasRestantes === 1
+          ? `Vence mañana: contrato del vehículo ${props.placa}`
+          : `Vence en ${props.diasRestantes} días: contrato del vehículo ${props.placa}`;
+    const { error } = await resend.emails.send({
+      from: `${props.appName} <${fromEmail}>`,
+      to,
+      subject: asunto,
+      html,
+    });
+    if (error) throw new Error(error.message);
   }
 }

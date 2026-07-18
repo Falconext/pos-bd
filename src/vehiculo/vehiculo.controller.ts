@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { VehiculoService } from './vehiculo.service';
 import { CreateVehiculoDto } from './dto/create-vehiculo.dto';
+import { UpdateVehiculoDto } from './dto/update-vehiculo.dto';
 import { CreateActaDto } from './dto/create-acta.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
@@ -43,13 +44,17 @@ export class VehiculoController {
 
   @Post()
   create(@Body() dto: CreateVehiculoDto, @Request() req: any) {
-    return this.vehiculoService.create(req.user.empresaId, dto);
+    return this.vehiculoService.create(
+      req.user.empresaId,
+      dto,
+      req.user.sedeId ?? undefined,
+    );
   }
 
   @Patch(':id')
   update(
     @Param('id', ParseIntPipe) id: number,
-    @Body() dto: Partial<CreateVehiculoDto>,
+    @Body() dto: UpdateVehiculoDto,
     @Request() req: any,
   ) {
     return this.vehiculoService.update(id, req.user.empresaId, dto);

@@ -1,6 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateContratoVehicularDto } from './dto/create-contrato.dto';
+import { UpdateContratoVehicularDto } from './dto/update-contrato.dto';
 
 /** Suma N meses a una fecha sin dependencia externa */
 function addMonths(date: Date, months: number): Date {
@@ -101,6 +106,19 @@ export class ContratoVehicularService {
     });
     if (!vehiculo) throw new NotFoundException('Vehículo no encontrado');
 
+    // Un vehículo no puede tener más de un contrato activo a la vez.
+    const activo = await this.prisma.contratoVehicular.findFirst({
+      where: {
+        empresaId,
+        vehiculoId: dto.vehiculoId,
+        estado: { in: ['VIGENTE', 'POR_VENCER'] },
+      },
+    });
+    if (activo)
+      throw new ConflictException(
+        'Este vehículo ya tiene un contrato activo. Renuévalo o cancélalo antes de crear otro.',
+      );
+
     const fechaInicio = new Date(dto.fechaInicio);
     const duracion = dto.duracionMeses ?? 12;
     const fechaFin = addMonths(fechaInicio, duracion);
@@ -110,7 +128,12 @@ export class ContratoVehicularService {
     const diasRestantes = Math.ceil(
       (fechaFin.getTime() - hoy.getTime()) / 86400000,
     );
-    const estado = diasRestantes <= 30 ? 'POR_VENCER' : 'VIGENTE';
+    const estado =
+      diasRestantes < 0
+        ? 'VENCIDO'
+        : diasRestantes <= 30
+          ? 'POR_VENCER'
+          : 'VIGENTE';
 
     return this.prisma.contratoVehicular.create({
       data: {
@@ -127,16 +150,71 @@ export class ContratoVehicularService {
     });
   }
 
-  async renovar(id: number, empresaId: number) {
+  // Edición manual del contrato (por ejemplo, para corregir una renovación hecha por error).
+  async update(
+    id: number,
+    empresaId: number,
+    dto: UpdateContratoVehicularDto,
+  ) {
     const contrato = await this.prisma.contratoVehicular.findFirst({
       where: { id, empresaId },
     });
     if (!contrato) throw new NotFoundException('Contrato no encontrado');
 
+    const data: any = {};
+    if (dto.productoId !== undefined) data.productoId = dto.productoId;
+    if (dto.montoAnual !== undefined) data.montoAnual = dto.montoAnual;
+    if (dto.observaciones !== undefined) data.observaciones = dto.observaciones;
+
+    // Si cambian la fecha de inicio o la duración, recalculamos fecha fin y estado.
+    if (dto.fechaInicio !== undefined || dto.duracionMeses !== undefined) {
+      const fechaInicio = dto.fechaInicio
+        ? new Date(dto.fechaInicio)
+        : contrato.fechaInicio;
+      const duracion = dto.duracionMeses ?? 12;
+      const fechaFin = addMonths(fechaInicio, duracion);
+      data.fechaInicio = fechaInicio;
+      data.fechaFin = fechaFin;
+
+      // No revivimos un contrato cancelado; el resto se recalcula por fecha.
+      if (contrato.estado !== 'CANCELADO') {
+        const dias = Math.ceil(
+          (fechaFin.getTime() - new Date().getTime()) / 86400000,
+        );
+        data.estado =
+          dias < 0 ? 'VENCIDO' : dias <= 30 ? 'POR_VENCER' : 'VIGENTE';
+      }
+    }
+
+    return this.prisma.contratoVehicular.update({
+      where: { id },
+      data,
+      include: this.INCLUDE_BASE,
+    });
+  }
+
+  async remove(id: number, empresaId: number) {
+    const contrato = await this.prisma.contratoVehicular.findFirst({
+      where: { id, empresaId },
+    });
+    if (!contrato) throw new NotFoundException('Contrato no encontrado');
+    return this.prisma.contratoVehicular.delete({ where: { id } });
+  }
+
+  async renovar(id: number, empresaId: number, meses = 12) {
+    const contrato = await this.prisma.contratoVehicular.findFirst({
+      where: { id, empresaId },
+    });
+    if (!contrato) throw new NotFoundException('Contrato no encontrado');
+    if (contrato.estado === 'CANCELADO')
+      throw new ConflictException(
+        'No se puede renovar un contrato cancelado. Crea uno nuevo.',
+      );
+
     // La nueva fecha de inicio es la fecha fin del contrato actual (o hoy si ya venció)
     const base =
       contrato.fechaFin > new Date() ? contrato.fechaFin : new Date();
-    const nuevaFechaFin = addMonths(base, 12);
+    const nuevaFechaFin = addMonths(base, meses > 0 ? meses : 12);
 
     return this.prisma.contratoVehicular.update({
       where: { id },
@@ -154,6 +232,8 @@ export class ContratoVehicularService {
       where: { id, empresaId },
     });
     if (!contrato) throw new NotFoundException('Contrato no encontrado');
+    if (contrato.estado === 'CANCELADO')
+      throw new ConflictException('El contrato ya está cancelado.');
 
     return this.prisma.contratoVehicular.update({
       where: { id },

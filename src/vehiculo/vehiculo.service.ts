@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateVehiculoDto } from './dto/create-vehiculo.dto';
+import { UpdateVehiculoDto } from './dto/update-vehiculo.dto';
 import { CreateActaDto } from './dto/create-acta.dto';
 
 @Injectable()
@@ -103,7 +104,7 @@ export class VehiculoService {
     return vehiculo;
   }
 
-  async create(empresaId: number, dto: CreateVehiculoDto) {
+  async create(empresaId: number, dto: CreateVehiculoDto, sedeId?: number) {
     const placa = dto.placa.toUpperCase().trim();
 
     const exists = await this.prisma.vehiculo.findUnique({
@@ -123,7 +124,7 @@ export class VehiculoService {
         color: dto.color,
         anio: dto.anio,
         clienteId: dto.clienteId,
-        sedeId: dto.sedeId,
+        sedeId: dto.sedeId ?? sedeId,
         observaciones: dto.observaciones,
       },
       include: {
@@ -132,7 +133,7 @@ export class VehiculoService {
     });
   }
 
-  async update(id: number, empresaId: number, dto: Partial<CreateVehiculoDto>) {
+  async update(id: number, empresaId: number, dto: UpdateVehiculoDto) {
     const vehiculo = await this.prisma.vehiculo.findFirst({
       where: { id, empresaId },
     });
