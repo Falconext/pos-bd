@@ -115,6 +115,31 @@ export class ComprobanteController {
     return resultado;
   }
 
+  // Cuentas por Cobrar: todos los comprobantes con saldo pendiente (sin
+  // paginar), coincide con el indicador "Por Cobrar" del dashboard.
+  @Get('cuentas-por-cobrar')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async cuentasPorCobrar(
+    @User() user: any,
+    @Query('search') search?: string,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
+    @Query('estadoPago') estadoPago?: string,
+    @Query('sedeId') sedeId?: string,
+  ) {
+    const isAdmin =
+      user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
+    return this.service.cuentasPorCobrar({
+      empresaId: user.empresaId,
+      sedeId: isAdmin ? (sedeId ? Number(sedeId) : null) : user.sedeId,
+      usuarioId: isAdmin ? undefined : user.id,
+      search,
+      fechaInicio,
+      fechaFin,
+      estadoPago,
+    });
+  }
+
   // Alternativa con path params para evitar errores de parseo en query de fechas, etc.
   @Get('empresa/:empresaId/listar/:tipoComprobante')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')

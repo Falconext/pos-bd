@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import {
   Prisma,
+  EstadoPago,
   EstadoProductoSerie,
   EstadoReserva,
   EstadoSunat,
@@ -466,6 +467,175 @@ export class ComprobanteService {
       );
       throw error;
     }
+  }
+
+  /**
+   * Cuentas por Cobrar: devuelve TODOS los comprobantes con saldo pendiente
+   * de la empresa (sin paginar), aplicando el MISMO criterio que el
+   * indicador "Por Cobrar" del dashboard para que ambos coincidan.
+   *
+   * El módulo anterior consumía `comprobante/listar` (paginado por id desc,
+   * limit 50) y filtraba `saldo > 0` en el cliente; los receivables más
+   * antiguos que caían fuera de la primera página desaparecían del total.
+   * Aquí se filtra en la base de datos, por lo que el conteo y el total son
+   * exactos.
+   */
+  async cuentasPorCobrar(params: {
+    empresaId: number;
+    sedeId?: number | null;
+    usuarioId?: number;
+    search?: string;
+    fechaInicio?: string;
+    fechaFin?: string;
+    estadoPago?: string;
+  }) {
+    const { empresaId, usuarioId, search, fechaInicio, fechaFin, estadoPago } =
+      params;
+
+    // Filtro de sede: para la sede principal se incluyen también los
+    // comprobantes legacy con sedeId=null (mismo criterio que `listar`).
+    let sedeFilter: any = {};
+    if (params.sedeId) {
+      const esPrincipal = await this.prisma.sede.findFirst({
+        where: { empresaId, id: params.sedeId, esPrincipal: true },
+        select: { id: true },
+      });
+      sedeFilter = esPrincipal
+        ? { OR: [{ sedeId: params.sedeId }, { sedeId: null }] }
+        : { sedeId: params.sedeId };
+    }
+
+    let adjustedFechaInicio: string | undefined;
+    let adjustedFechaFin: string | undefined;
+    if (fechaInicio) {
+      adjustedFechaInicio = new Date(
+        `${fechaInicio}T00:00:00.000-05:00`,
+      ).toISOString();
+    }
+    if (fechaFin) {
+      adjustedFechaFin = new Date(
+        `${fechaFin}T23:59:59.999-05:00`,
+      ).toISOString();
+    }
+
+    // Permite acotar por estadoPago desde el filtro del módulo, pero siempre
+    // dentro de los estados que representan una cuenta por cobrar.
+    const estadosCobrables: EstadoPago[] = [
+      EstadoPago.PENDIENTE_PAGO,
+      EstadoPago.PAGO_PARCIAL,
+    ];
+    const estadoPagoFilter =
+      estadoPago && estadosCobrables.includes(estadoPago as EstadoPago)
+        ? { estadoPago: estadoPago as EstadoPago }
+        : { estadoPago: { in: estadosCobrables } };
+
+    const where: any = {
+      empresaId,
+      ...sedeFilter,
+      ...(usuarioId ? { usuarioId } : {}),
+      ...estadoPagoFilter,
+      // Excluye pedidos preliminares (NP), cotizaciones (COT) y notas de
+      // crédito (07); mismo criterio que el dashboard.
+      tipoDoc: { notIn: ['NP', 'COT', '07'] },
+      estadoEnvioSunat: { not: EstadoSunat.ANULADO },
+      saldo: { gt: 0 },
+      ...(search
+        ? {
+            OR: [
+              { serie: { contains: search, mode: 'insensitive' } },
+              ...(Number.isNaN(+search)
+                ? []
+                : [{ correlativo: parseInt(search, 10) }]),
+              { cliente: { nroDoc: { contains: search, mode: 'insensitive' } } },
+              { cliente: { nombre: { contains: search, mode: 'insensitive' } } },
+            ],
+          }
+        : {}),
+      ...(adjustedFechaInicio || adjustedFechaFin
+        ? {
+            fechaEmision: {
+              ...(adjustedFechaInicio ? { gte: adjustedFechaInicio } : {}),
+              ...(adjustedFechaFin ? { lte: adjustedFechaFin } : {}),
+            },
+          }
+        : {}),
+    };
+
+    const rawItems = await this.prisma.comprobante.findMany({
+      where,
+      orderBy: { fechaEmision: 'desc' },
+      include: {
+        cliente: {
+          select: {
+            id: true,
+            nombre: true,
+            nroDoc: true,
+            persona: true,
+            telefono: true,
+          },
+        },
+        detalles: {
+          select: {
+            producto: {
+              select: { id: true, descripcion: true, imagenUrl: true },
+            },
+            unidad: true,
+            descripcion: true,
+            cantidad: true,
+            mtoValorUnitario: true,
+            mtoValorVenta: true,
+            mtoBaseIgv: true,
+            porcentajeIgv: true,
+            igv: true,
+            totalImpuestos: true,
+            mtoPrecioUnitario: true,
+          },
+        },
+        leyendas: { select: { code: true, value: true } },
+        motivo: { select: { codigo: true, descripcion: true } },
+        tipoOperacion: { select: { codigo: true, descripcion: true } },
+        usuario: { select: { id: true, nombre: true } },
+        sede: { select: { id: true, nombre: true } },
+      },
+    });
+
+    const tipoLabels: Record<string, string> = {
+      '01': 'FACTURA',
+      '03': 'BOLETA',
+      '07': 'NOTA DE CREDITO',
+      '08': 'NOTA DE DEBITO',
+      COT: 'COTIZACIÓN',
+      TICKET: 'TICKET',
+      NV: 'NOTA DE VENTA',
+      RH: 'RECIBO POR HONORARIOS',
+      CP: 'COMPROBANTE DE PAGO',
+      NP: 'NOTA DE PEDIDO',
+      OT: 'ORDEN DE TRABAJO',
+    };
+
+    const ahora = Date.now();
+    const DIA_MS = 24 * 60 * 60 * 1000;
+    let totalPorCobrar = 0;
+    let vencidos = 0;
+
+    const comprobantes = rawItems.map((it) => {
+      const saldo = Number(it.saldo ?? 0);
+      totalPorCobrar += saldo;
+      const dias = it.fechaEmision
+        ? Math.floor((ahora - new Date(it.fechaEmision).getTime()) / DIA_MS)
+        : 0;
+      if (dias > 30) vencidos += 1;
+      return { ...it, comprobante: tipoLabels[it.tipoDoc] || it.tipoDoc } as any;
+    });
+
+    return {
+      comprobantes,
+      resumen: {
+        cantidad: comprobantes.length,
+        totalPorCobrar: Number(totalPorCobrar.toFixed(2)),
+        vencidos,
+      },
+    };
   }
 
   async siguienteCorrelativo(
