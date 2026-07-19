@@ -133,12 +133,25 @@ function resolverEstadoPagoComprobante(
 export class VentasService {
   constructor(private readonly prisma: PrismaService) {}
 
+  // El "por cobrar global" no depende de la fecha del panel, así que lo cacheamos
+  // por (empresa, sede, usuario) con TTL corto para no recalcular en cada cambio de día.
+  private readonly porCobrarCache = new Map<
+    string,
+    { expira: number; valor: { cantidad: number; total: number } }
+  >();
+  private static readonly POR_COBRAR_TTL_MS = 60_000;
+
   private async resumenPorCobrarGlobal(params: {
     empresaId: number;
     sedeId?: number;
     usuarioId?: number;
   }) {
     const { empresaId, sedeId, usuarioId } = params;
+
+    const cacheKey = `${empresaId}:${sedeId ?? 'all'}:${usuarioId ?? 'all'}`;
+    const cached = this.porCobrarCache.get(cacheKey);
+    if (cached && cached.expira > Date.now()) return cached.valor;
+
     const sedeFilter = sedeId ? { sedeId } : {};
     const comprobanteUsuarioFilter = usuarioId ? { usuarioId } : {};
     const pedidoUsuarioFilter = usuarioId ? { vendedorId: usuarioId } : {};
@@ -194,12 +207,18 @@ export class VentasService {
       .filter((saldo) => saldo > 0.01);
 
     const pendientes = [...comprobantesPendientes, ...saldosPedidos];
-    return {
+    const valor = {
       cantidad: pendientes.length,
       total: Number(
         pendientes.reduce((sum, saldo) => sum + saldo, 0).toFixed(2),
       ),
     };
+
+    this.porCobrarCache.set(cacheKey, {
+      expira: Date.now() + VentasService.POR_COBRAR_TTL_MS,
+      valor,
+    });
+    return valor;
   }
 
   async panelVentas(params: {

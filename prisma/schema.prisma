@@ -653,6 +653,9 @@ model Cliente {
   productoReviews       ProductoReview[]
   detallesComosPaciente DetalleComprobante[] @relation("PacienteDetalle")
   vehiculos             Vehiculo[]
+
+  // Lookup por documento en cada emisión de comprobante/compra (dedup de cliente/proveedor)
+  @@index([empresaId, nroDoc])
 }
 
 model Doctor {
@@ -792,6 +795,13 @@ model Comprobante {
   comisiones              ComisionVendedor[]
   campanas                CampanaMarketing[]
   productoSeries          ProductoSerie[]
+
+  // Panel de ventas / reportes: filtran por empresa + rango de fecha, opcional sede/usuario
+  @@index([empresaId, fechaEmision])
+  @@index([empresaId, sedeId, fechaEmision])
+  @@index([empresaId, usuarioId, fechaEmision])
+  // resumenPorCobrarGlobal: comprobantes con saldo pendiente por empresa (sin filtro de fecha)
+  @@index([empresaId, estadoPago])
 }
 
 model DetalleComprobante {
@@ -826,6 +836,10 @@ model DetalleComprobante {
   medico            Doctor?         @relation("MedicoDetalle", fields: [medicoId], references: [id])
   paciente          Cliente?        @relation("PacienteDetalle", fields: [pacienteId], references: [id])
   seriesVendidas    ProductoSerie[]
+
+  // FK usada en todo include/join de ventas, dashboard, finanzas y kardex
+  @@index([comprobanteId])
+  @@index([productoId])
 }
 
 enum EstadoProductoSerie {
@@ -985,6 +999,9 @@ model RefreshToken {
   expiresAt DateTime
   createdAt DateTime @default(now())
   usuario   Usuario  @relation(fields: [usuarioId], references: [id])
+
+  // deleteMany por usuario al renovar sesión
+  @@index([usuarioId])
 }
 
 model MovimientoCaja {
