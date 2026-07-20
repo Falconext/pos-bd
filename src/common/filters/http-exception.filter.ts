@@ -11,6 +11,65 @@ function esApiPublica(url: string | undefined): boolean {
   return typeof url === 'string' && url.includes('/v1/logistics');
 }
 
+/**
+ * Traduce errores conocidos de Prisma a mensajes amables + status HTTP.
+ * Evita que el usuario vea cosas como
+ * "Invalid `prisma.producto.create()` invocation: Unique constraint failed...".
+ */
+function mapearErrorPrisma(
+  exception: unknown,
+): { status: number; message: string } | null {
+  const err = exception as any;
+  if (
+    !err ||
+    typeof err !== 'object' ||
+    err.name !== 'PrismaClientKnownRequestError'
+  ) {
+    return null;
+  }
+  const target = err?.meta?.target;
+  const campos: string[] = Array.isArray(target)
+    ? target.map((t: unknown) => String(t))
+    : typeof target === 'string'
+      ? [target]
+      : [];
+  switch (err.code) {
+    case 'P2002': {
+      const set = new Set(campos.map((c) => c.toLowerCase()));
+      if (set.has('codigo')) {
+        return {
+          status: HttpStatus.CONFLICT,
+          message: 'Ya existe un producto con ese código.',
+        };
+      }
+      if (set.has('codigobarras')) {
+        return {
+          status: HttpStatus.CONFLICT,
+          message: 'Ya existe un producto con ese código de barras.',
+        };
+      }
+      const detalle = campos.length ? ` (${campos.join(', ')})` : '';
+      return {
+        status: HttpStatus.CONFLICT,
+        message: `Ya existe un registro con esos datos${detalle}.`,
+      };
+    }
+    case 'P2025':
+      return {
+        status: HttpStatus.NOT_FOUND,
+        message: 'El registro solicitado no existe o ya fue eliminado.',
+      };
+    case 'P2003':
+      return {
+        status: HttpStatus.CONFLICT,
+        message:
+          'No se puede completar la operación porque el registro está relacionado con otros datos.',
+      };
+    default:
+      return null;
+  }
+}
+
 /** status HTTP → `type` del error (contrato). */
 function tipoPorStatus(status: number): string {
   if (status === 401 || status === 403) return 'authentication_error';
@@ -22,14 +81,22 @@ function tipoPorStatus(status: number): string {
 /** `code` por defecto si el throw no trae uno. */
 function codigoPorStatus(status: number): string {
   switch (status) {
-    case 400: return 'bad_request';
-    case 401: return 'unauthorized';
-    case 403: return 'forbidden';
-    case 404: return 'not_found';
-    case 409: return 'conflict';
-    case 422: return 'unprocessable_entity';
-    case 429: return 'too_many_requests';
-    default: return status >= 500 ? 'server_error' : 'error';
+    case 400:
+      return 'bad_request';
+    case 401:
+      return 'unauthorized';
+    case 403:
+      return 'forbidden';
+    case 404:
+      return 'not_found';
+    case 409:
+      return 'conflict';
+    case 422:
+      return 'unprocessable_entity';
+    case 429:
+      return 'too_many_requests';
+    default:
+      return status >= 500 ? 'server_error' : 'error';
   }
 }
 
@@ -40,18 +107,22 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const response = ctx.getResponse();
     const request = ctx.getRequest();
 
-    const status =
-      exception instanceof HttpException
+    const errorPrisma = mapearErrorPrisma(exception);
+
+    const status = errorPrisma
+      ? errorPrisma.status
+      : exception instanceof HttpException
         ? exception.getStatus()
         : HttpStatus.INTERNAL_SERVER_ERROR;
 
     const raw =
       exception instanceof HttpException ? exception.getResponse() : null;
     const rawObj = raw && typeof raw === 'object' ? (raw as any) : {};
-    let message =
-      rawObj.message ??
-      (typeof raw === 'string' ? raw : (exception as any)?.message) ??
-      'Error';
+    let message = errorPrisma
+      ? errorPrisma.message
+      : (rawObj.message ??
+        (typeof raw === 'string' ? raw : (exception as any)?.message) ??
+        'Error');
     if (Array.isArray(message)) message = message.join(', ');
 
     // API pública: { error: { type, code, message, param } } (contrato OpenAPI).
