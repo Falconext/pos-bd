@@ -37,12 +37,6 @@ export function generarCombinacionesVariantes(opcionesAtributos: any[]): any[] {
   return results;
 }
 
-const comboKey = (combo: Record<string, string>) =>
-  Object.entries(combo)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, value]) => `${key}:${value}`)
-    .join('|');
-
 const normalizeCodeToken = (value: string) =>
   String(value || '')
     .normalize('NFD')
@@ -50,6 +44,35 @@ const normalizeCodeToken = (value: string) =>
     .replace(/[^a-zA-Z0-9]+/g, '')
     .slice(0, 4)
     .toUpperCase();
+
+// Normaliza un valor de atributo para comparar (ignora may\u00fasculas y espacios
+// redundantes) de modo que "Hueso" y "HUESO" se traten como el mismo valor y
+// no se re-creen variantes que ya existen.
+const normalizeValor = (value: unknown) => {
+  const str =
+    typeof value === 'string'
+      ? value
+      : typeof value === 'number' || typeof value === 'boolean'
+        ? String(value)
+        : '';
+  return str.trim().replace(/\s+/g, ' ').toUpperCase();
+};
+
+// Clave de combinaci\u00f3n tolerante a diferencias de may\u00fasculas/espacios.
+const normalizedComboKey = (combo: Record<string, string>) =>
+  Object.entries(combo || {})
+    .map(
+      ([key, value]) =>
+        [String(key).trim().toUpperCase(), normalizeValor(value)] as [
+          string,
+          string,
+        ],
+    )
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}:${value}`)
+    .join('|');
+
+const capCodigo = (value: string) => String(value || '').slice(0, 60);
 
 const hasOwn = (value: unknown, key: string) =>
   Boolean(
@@ -84,28 +107,51 @@ export async function sincronizarVariantes(
   });
   const configByKey = new Map(
     variantesConfig.map((config) => [
-      comboKey(config.valoresAtributos || {}),
+      normalizedComboKey(config.valoresAtributos || {}),
       config,
     ]),
   );
   const combinacionesKeys = new Set(
-    combinaciones.map((combo) => comboKey(combo)),
+    combinaciones.map((combo) => normalizedComboKey(combo)),
   );
+
+  // Mapa de códigos ya usados en la empresa (código en MAYÚSCULAS -> productoId)
+  // para garantizar unicidad antes de crear/actualizar variantes y así evitar
+  // el error de restricción única (empresaId, codigo) de forma definitiva.
+  const productosEmpresa = await prisma.producto.findMany({
+    where: { empresaId: productoPadre.empresaId },
+    select: { id: true, codigo: true },
+  });
+  const codigoOwner = new Map<string, number>();
+  for (const p of productosEmpresa) {
+    if (p.codigo) codigoOwner.set(p.codigo.toUpperCase(), p.id);
+  }
+  // Resuelve un código único: si el candidato ya lo usa OTRO producto, agrega
+  // un sufijo incremental (-2, -3, ...) respetando el límite de 60 caracteres.
+  const resolverCodigoUnico = (base: string, ownId?: number): string => {
+    const raw = capCodigo(base) || capCodigo(String(productoPadre.codigo));
+    let candidate = raw;
+    let n = 1;
+
+    while (true) {
+      const owner = codigoOwner.get(candidate.toUpperCase());
+      if (owner === undefined || owner === ownId) return candidate;
+      n += 1;
+      const suffix = `-${n}`;
+      candidate = capCodigo(raw.slice(0, 60 - suffix.length)) + suffix;
+    }
+  };
+
   const sedePrincipalId = sedes.find((s) => s.esPrincipal)?.id;
   const stockSedeId = sedeConStockId ?? sedePrincipalId ?? sedes[0]?.id;
 
   for (const combo of combinaciones) {
-    const currentKey = comboKey(combo);
+    const currentKey = normalizedComboKey(combo);
     const config = configByKey.get(currentKey);
-    // Checar si existe
+    // Checar si existe (comparación tolerante a mayúsculas/espacios)
     const existe = variantesActuales.find((v) => {
       if (!v.valoresAtributos) return false;
-      // comparar keys y values
-      const valAttr = v.valoresAtributos as any;
-      return (
-        Object.keys(combo).every((k) => valAttr[k] === combo[k]) &&
-        Object.keys(valAttr).every((k) => valAttr[k] === combo[k])
-      );
+      return normalizedComboKey(v.valoresAtributos as any) === currentKey;
     });
 
     // Si no llega config para esta combinación, NO resetear el precio al del padre:
@@ -136,7 +182,12 @@ export async function sincronizarVariantes(
       .map((value) => normalizeCodeToken(String(value)))
       .filter(Boolean)
       .join('-')}`;
-    const codigo = String(config?.codigo || codigoSugerido).slice(0, 60);
+    // Garantizar unicidad: si el código elegido ya lo usa otro producto, se le
+    // añade un sufijo incremental para no chocar con (empresaId, codigo).
+    const codigo = resolverCodigoUnico(
+      String(config?.codigo || codigoSugerido),
+      existe?.id,
+    );
     const descripcion = `${productoPadre.descripcion} - ${Object.values(combo).join(' / ')}`;
 
     const data = {
@@ -174,11 +225,18 @@ export async function sincronizarVariantes(
         },
       });
       varianteId = nuevaVar.id;
+      // Reservar el código para que ninguna otra variante del lote lo reutilice.
+      codigoOwner.set(codigo.toUpperCase(), nuevaVar.id);
     } else {
       await prisma.producto.update({
         where: { id: existe.id },
         data,
       });
+      // Actualizar el mapa: liberar el código anterior y reservar el nuevo.
+      if ((existe as any).codigo) {
+        codigoOwner.delete(String((existe as any).codigo).toUpperCase());
+      }
+      codigoOwner.set(codigo.toUpperCase(), existe.id);
     }
 
     if (varianteId && sedes.length > 0) {
@@ -206,7 +264,9 @@ export async function sincronizarVariantes(
 
   const variantesFueraDeMatriz = variantesActuales.filter((variante) => {
     if (!variante.valoresAtributos) return false;
-    return !combinacionesKeys.has(comboKey(variante.valoresAtributos as any));
+    return !combinacionesKeys.has(
+      normalizedComboKey(variante.valoresAtributos as any),
+    );
   });
   if (variantesFueraDeMatriz.length > 0) {
     await prisma.producto.updateMany({
