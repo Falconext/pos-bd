@@ -820,6 +820,10 @@ model DetalleComprobante {
   totalImpuestos    Float
   numerosSerie      Json?
   mtoPrecioUnitario Float
+  // Descuento por línea (monto bruto, incl. IGV) — solo para mostrar en el ticket el precio
+  // de lista y el ahorro; el precio ya viene con descuento en mtoPrecioUnitario/mtoValorVenta,
+  // por lo que NO afecta el XML enviado a SUNAT.
+  mtoDescuento      Float?          @default(0)
   // Farmacia: trazabilidad de lote dispensado
   loteId            Int?
   // Farmacia: datos de receta médica y medicamentos controlados

@@ -1412,6 +1412,7 @@ export class ComprobanteService {
           igv: igvMonto,
           tipAfeIgv: 10,
           totalImpuestos: igvMonto,
+          mtoDescuento: 0,
         };
       }
 
@@ -1465,6 +1466,16 @@ export class ComprobanteService {
       }
 
       const mtoValorVenta = valorUnitario * cantidad;
+      // Descuento por línea a mostrar en el ticket (monto bruto, incl. IGV). precioConIgv ya
+      // viene con el descuento aplicado; precioUnitarioOriginal es el precio de lista. No
+      // afecta base/IGV/total ni el XML de SUNAT: es únicamente informativo para la impresión.
+      const precioListaConIgv =
+        item.precioUnitarioOriginal != null
+          ? Number(item.precioUnitarioOriginal)
+          : precioConIgv;
+      const mtoDescuento = this.round2(
+        Math.max(0, (precioListaConIgv - precioConIgv) * cantidad),
+      );
       return {
         productoId: (prod as any).id,
         // Fraccionamiento: usar unidadVenta del ítem si viene (ej. TABLETA vs CAJA)
@@ -1479,6 +1490,7 @@ export class ComprobanteService {
         igv: this.round2(igvMonto),
         tipAfeIgv,
         totalImpuestos: this.round2(igvMonto),
+        mtoDescuento,
         // Farmacia: propagar campos de trazabilidad y receta
         ...(item.loteId != null && { loteId: Number(item.loteId) }),
         ...(item.numeroReceta && { numeroReceta: item.numeroReceta }),
@@ -3826,12 +3838,26 @@ export class ComprobanteService {
       return cantidad.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
     };
 
-    const productos = full.detalles.map((d: any, i: number) => ({
+    // Descuento total por ítem (suma de líneas) para mostrarlo en el ticket. El precio de
+    // lista se reconstruye sumando el descuento por unidad al precio ya rebajado.
+    const totalDescuentoItems = full.detalles.reduce(
+      (acc: number, d: any) => acc + Number(d.mtoDescuento || 0),
+      0,
+    );
+    const productos = full.detalles.map((d: any, i: number) => {
+      const cantidad = Number(d.cantidad || 0);
+      const descLinea = Number(d.mtoDescuento || 0);
+      // P.U. de lista = precio ya rebajado + descuento prorrateado por unidad.
+      const precioLista =
+        cantidad > 0
+          ? Number(d.mtoPrecioUnitario || 0) + descLinea / cantidad
+          : Number(d.mtoPrecioUnitario || 0);
+      return {
       index: i + 1,
       cantidad: formatCantidad(d.cantidad),
       unidadMedida: (d.unidad || 'NIU').toUpperCase(),
       descripcion: (d.descripcion || '').toUpperCase(),
-      precioUnitario: Number(d.mtoPrecioUnitario || 0).toFixed(2),
+      precioUnitario: precioLista.toFixed(2),
       total: Number((d.mtoPrecioUnitario || 0) * d.cantidad).toFixed(2),
       imagenUrl: buildLogoDataUrl(d.producto?.imagenUrl || d.imagenUrl),
       lotes:
@@ -3841,11 +3867,14 @@ export class ComprobanteService {
             ? new Date(l.fechaVencimiento).toLocaleDateString('es-PE')
             : '',
         })) || undefined,
-    }));
+      };
+    });
 
     const mtoImpVenta = Number(full.mtoImpVenta || 0);
     const isDocumentoFiscal = ['01', '03', '07', '08'].includes(full.tipoDoc);
-    const descuento = Number((full as any).mtoDescuentoGlobal || 0).toFixed(2);
+    const descuento = (
+      Number((full as any).mtoDescuentoGlobal || 0) + totalDescuentoItems
+    ).toFixed(2);
 
     // Retención
     const obs = (full.observaciones || '').toUpperCase();

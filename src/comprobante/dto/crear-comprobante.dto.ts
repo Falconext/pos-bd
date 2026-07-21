@@ -38,6 +38,15 @@ class DetalleDto {
   @Min(0)
   descuento?: number;
 
+  // Precio unitario de lista (incl. IGV) ANTES del descuento por ítem. Solo se usa para
+  // calcular el monto de descuento a mostrar en el ticket; nuevoValorUnitario ya viene con
+  // el descuento aplicado.
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  precioUnitarioOriginal?: number;
+
   // Farmacia: lote específico a descontar (si no se provee, usa FEFO automático)
   @IsOptional()
   @Type(() => Number)
