@@ -2321,15 +2321,18 @@ model Vehiculo {
   modelo        String?
   color         String?
   anio          Int?
+  kilometraje      Int?
+  nivelCombustible String? // LLENO | 3/4 | 1/2 | 1/4 | VACIO
   clienteId     Int?
   observaciones String?
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt
 
-  empresa   Empresa             @relation(fields: [empresaId], references: [id], onDelete: Cascade)
-  cliente   Cliente?            @relation(fields: [clienteId], references: [id])
-  actas     ActaInspeccion[]
-  contratos ContratoVehicular[]
+  empresa       Empresa                @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  cliente       Cliente?               @relation(fields: [clienteId], references: [id])
+  actas         ActaInspeccion[]
+  contratos     ContratoVehicular[]
+  contratoItems ContratoVehiculoItem[]
 
   @@unique([empresaId, placa])
   @@index([empresaId])
@@ -2372,11 +2375,31 @@ model ContratoVehicular {
   empresa  Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade)
   vehiculo Vehiculo  @relation(fields: [vehiculoId], references: [id], onDelete: Cascade)
   producto Producto? @relation(fields: [productoId], references: [id])
+  unidades ContratoVehiculoItem[]
 
   @@index([empresaId])
   @@index([empresaId, estado])
   @@index([vehiculoId])
   @@index([fechaFin])
+}
+
+// Vehículos incluidos en un contrato (permite contratos multi-vehículo con
+// monto individual por unidad). El `vehiculoId` de ContratoVehicular apunta al
+// vehículo principal (el primero) y se conserva por compatibilidad; el detalle
+// completo de unidades vive aquí.
+model ContratoVehiculoItem {
+  id         Int      @id @default(autoincrement())
+  contratoId Int
+  vehiculoId Int
+  montoAnual Decimal? @db.Decimal(12, 2)
+  creadoEn   DateTime @default(now())
+
+  contrato ContratoVehicular @relation(fields: [contratoId], references: [id], onDelete: Cascade)
+  vehiculo Vehiculo          @relation(fields: [vehiculoId], references: [id], onDelete: Cascade)
+
+  @@unique([contratoId, vehiculoId])
+  @@index([contratoId])
+  @@index([vehiculoId])
 }
 
 // ============================================================================

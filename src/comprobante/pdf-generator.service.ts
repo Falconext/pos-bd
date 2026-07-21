@@ -275,6 +275,22 @@ export class PdfGeneratorService {
   }
 
   /**
+   * Genera un PDF A4 a partir de un documento HTML autocontenido.
+   * Útil para documentos que ya traen su propio HTML/estilos (p. ej. contratos).
+   */
+  async generarPdfDesdeHtml(html: string): Promise<Buffer> {
+    return this.renderPdfBuffer(
+      html,
+      {
+        format: 'A4',
+        printBackground: true,
+        margin: { top: '0', right: '0', bottom: '0', left: '0' },
+      },
+      '✅ PDF generado desde HTML',
+    );
+  }
+
+  /**
    * Genera PDF de comprobante personalizado del sistema
    */
   async generarPDFComprobante(data: {

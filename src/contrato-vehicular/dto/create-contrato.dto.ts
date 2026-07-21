@@ -4,13 +4,38 @@ import {
   IsString,
   IsNumber,
   IsDateString,
+  IsArray,
+  ValidateNested,
+  ArrayMinSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
-export class CreateContratoVehicularDto {
+// Un vehículo dentro del contrato, con su monto anual individual.
+export class VehiculoContratoItemDto {
   @IsInt()
   @Type(() => Number)
   vehiculoId: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
+  montoAnual?: number;
+}
+
+export class CreateContratoVehicularDto {
+  // Compatibilidad: contrato de un solo vehículo (forma antigua).
+  @IsOptional()
+  @IsInt()
+  @Type(() => Number)
+  vehiculoId?: number;
+
+  // Contrato multi-vehículo: lista de vehículos con monto individual.
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => VehiculoContratoItemDto)
+  vehiculos?: VehiculoContratoItemDto[];
 
   @IsOptional()
   @IsInt()

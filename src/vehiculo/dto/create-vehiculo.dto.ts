@@ -25,6 +25,16 @@ export class CreateVehiculoDto {
 
   @IsOptional()
   @IsInt()
+  @Min(0)
+  @Type(() => Number)
+  kilometraje?: number;
+
+  @IsOptional()
+  @IsString()
+  nivelCombustible?: string;
+
+  @IsOptional()
+  @IsInt()
   @Type(() => Number)
   clienteId?: number;
 

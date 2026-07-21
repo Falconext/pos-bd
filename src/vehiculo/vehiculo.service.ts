@@ -42,13 +42,32 @@ export class VehiculoService {
         orderBy: { creadoEn: 'desc' },
         include: {
           cliente: {
-            select: { id: true, nombre: true, nroDoc: true, telefono: true },
+            select: {
+              id: true,
+              nombre: true,
+              nroDoc: true,
+              telefono: true,
+              email: true,
+            },
           },
           contratos: {
             where: { estado: { in: ['VIGENTE', 'POR_VENCER'] } },
             orderBy: { fechaFin: 'asc' },
             take: 1,
             include: { producto: { select: { id: true, descripcion: true } } },
+          },
+          // Contratos donde el vehículo participa como unidad (multi-vehículo).
+          contratoItems: {
+            where: { contrato: { estado: { in: ['VIGENTE', 'POR_VENCER'] } } },
+            orderBy: { contrato: { fechaFin: 'asc' } },
+            take: 1,
+            include: {
+              contrato: {
+                include: {
+                  producto: { select: { id: true, descripcion: true } },
+                },
+              },
+            },
           },
           actas: {
             orderBy: { creadoEn: 'desc' },
@@ -97,6 +116,19 @@ export class VehiculoService {
             },
           },
         },
+        // Contratos donde el vehículo participa como unidad (multi-vehículo).
+        contratoItems: {
+          orderBy: { contrato: { fechaFin: 'desc' } },
+          include: {
+            contrato: {
+              include: {
+                producto: {
+                  select: { id: true, descripcion: true, precioUnitario: true },
+                },
+              },
+            },
+          },
+        },
       },
     });
 
@@ -123,12 +155,22 @@ export class VehiculoService {
         modelo: dto.modelo,
         color: dto.color,
         anio: dto.anio,
+        kilometraje: dto.kilometraje,
+        nivelCombustible: dto.nivelCombustible,
         clienteId: dto.clienteId,
         sedeId: dto.sedeId ?? sedeId,
         observaciones: dto.observaciones,
       },
       include: {
-        cliente: { select: { id: true, nombre: true, nroDoc: true } },
+        cliente: {
+          select: {
+            id: true,
+            nombre: true,
+            nroDoc: true,
+            telefono: true,
+            email: true,
+          },
+        },
       },
     });
   }
@@ -160,12 +202,22 @@ export class VehiculoService {
         modelo: dto.modelo,
         color: dto.color,
         anio: dto.anio,
+        kilometraje: dto.kilometraje,
+        nivelCombustible: dto.nivelCombustible,
         clienteId: dto.clienteId,
         sedeId: dto.sedeId,
         observaciones: dto.observaciones,
       },
       include: {
-        cliente: { select: { id: true, nombre: true, nroDoc: true } },
+        cliente: {
+          select: {
+            id: true,
+            nombre: true,
+            nroDoc: true,
+            telefono: true,
+            email: true,
+          },
+        },
       },
     });
   }
