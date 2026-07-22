@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { KardexService } from '../kardex/kardex.service';
 import { ProductoLoteService } from '../producto/producto-lote.service';
+import { CajaService } from '../caja/caja.service';
 import { CrearCompraDto } from './dto/crear-compra.dto';
 import { Prisma } from '@prisma/client';
 import { XMLParser } from 'fast-xml-parser';
@@ -17,7 +18,59 @@ export class ComprasService {
     private prisma: PrismaService,
     private kardexService: KardexService,
     private productoLoteService: ProductoLoteService,
+    private cajaService: CajaService,
   ) {}
+
+  /**
+   * Registra en caja el EGRESO por el pago de una compra, SOLO cuando el pago
+   * fue en EFECTIVO y hay una caja abierta para ese usuario/sede. Los pagos por
+   * banco/transferencia/Yape NO tocan la caja física (ya se reflejan en finanzas).
+   * Es best-effort: nunca bloquea ni revierte la compra si algo falla.
+   */
+  private async registrarEgresoCajaSiEfectivo(params: {
+    metodo?: string;
+    monto: number;
+    empresaId: number;
+    usuarioId?: number;
+    sedeId?: number;
+    compraId: number;
+    serie: string;
+    numero: string;
+  }) {
+    const esEfectivo =
+      String(params.metodo || '')
+        .toUpperCase()
+        .trim() === 'EFECTIVO';
+    if (!esEfectivo || !(params.monto > 0) || !params.usuarioId) return;
+    try {
+      const cajaAbierta = await this.cajaService.verificarCajaAbierta(
+        params.usuarioId,
+        params.empresaId,
+        params.sedeId,
+      );
+      // Sin caja abierta no se registra el egreso (la compra queda igual).
+      if (!cajaAbierta) return;
+      await this.prisma.movimientoCaja.create({
+        data: {
+          usuarioId: params.usuarioId,
+          empresaId: params.empresaId,
+          sedeId: params.sedeId ?? null,
+          tipoMovimiento: 'EGRESO',
+          monto: this.roundMoney(params.monto),
+          categoriaGasto: 'COMPRA',
+          descripcionGasto: `Pago de compra ${params.serie}-${params.numero}`,
+          metodoPago: 'Efectivo',
+          estado: 'ACTIVO',
+          compraId: params.compraId,
+        },
+      });
+    } catch (error) {
+      console.error(
+        'No se pudo registrar el egreso de caja por la compra:',
+        error,
+      );
+    }
+  }
 
   private readonly saldoTolerance = 0.01;
 
@@ -124,8 +177,24 @@ export class ComprasService {
     let subtotal = 0;
     let totalLineas = 0;
 
-    // Usar la sede del token; si el usuario es admin sin sede asignada, usar la sede principal
+    // Sede/almacén destino del stock:
+    // 1) si la compra indica una sede destino explícita, se valida que pertenezca
+    //    a la empresa y esté activa (permite comprar hacia cualquier almacén);
+    // 2) si no, se usa la sede del token;
+    // 3) como respaldo (admin sin sede asignada), la sede principal.
     let sedeId = reqSedeId;
+    if (data.sedeId) {
+      const destino = await this.prisma.sede.findFirst({
+        where: { id: Number(data.sedeId), empresaId, activo: true },
+        select: { id: true },
+      });
+      if (!destino) {
+        throw new BadRequestException(
+          'La sede/almacén destino no es válida o no pertenece a la empresa.',
+        );
+      }
+      sedeId = destino.id;
+    }
     if (!sedeId) {
       const principal = await this.prisma.sede.findFirst({
         where: { empresaId, esPrincipal: true, activo: true },
@@ -232,6 +301,9 @@ export class ComprasService {
                     usuarioId,
                     monto: montoPagadoInicial,
                     metodoPago: data.metodoPagoInicial || 'EFECTIVO',
+                    // Pago por banco: N° de operación + cuenta bancaria usada.
+                    referencia: data.referenciaInicial || undefined,
+                    cuentaBancariaId: data.cuentaBancariaIdInicial || undefined,
                     fecha: new Date(),
                   },
                 }
@@ -384,6 +456,23 @@ export class ComprasService {
       );
     }
 
+    // Pago inicial en efectivo → egreso de caja (si hay caja abierta).
+    // OJO: la caja es la del USUARIO (de donde sale el efectivo = su sede de
+    // sesión reqSedeId), no la sede destino del stock. Así, comprar stock para
+    // otro almacén descuenta el efectivo de la caja donde realmente se paga.
+    if (montoPagadoInicial > 0) {
+      await this.registrarEgresoCajaSiEfectivo({
+        metodo: data.metodoPagoInicial,
+        monto: montoPagadoInicial,
+        empresaId,
+        usuarioId,
+        sedeId: reqSedeId,
+        compraId: compra.id,
+        serie: compra.serie,
+        numero: compra.numero,
+      });
+    }
+
     return this.normalizeCompraForResponse(compra);
   }
 
@@ -479,9 +568,13 @@ export class ComprasService {
     };
   }
 
-  async obtenerPorId(empresaId: number, id: number, sedeId?: number) {
+  async obtenerPorId(empresaId: number, id: number, _sedeId?: number) {
+    // Aislar por empresa (no por sede activa): una compra puede tener como
+    // sede destino un almacén distinto al de la sesión del usuario, y la lista
+    // ya muestra compras de todas las sedes. Filtrar por sedeId aquí rompía el
+    // detalle de compras hechas para otra sede ("Compra no encontrada").
     const compra = await this.prisma.compra.findFirst({
-      where: { id, empresaId, ...(sedeId ? { sedeId } : {}) },
+      where: { id, empresaId },
       include: {
         proveedor: true,
         detalles: {
@@ -491,6 +584,7 @@ export class ComprasService {
         },
         pagos: true,
         usuario: true,
+        sede: { select: { id: true, nombre: true, tipo: true } },
       },
     });
 
@@ -505,8 +599,11 @@ export class ComprasService {
     data: any,
     sedeId?: number,
   ) {
+    // Aislar por empresa (no por sede activa): la compra puede ser de otra sede
+    // destino; el pago se registra igual y su egreso de caja usa la sede del
+    // usuario (sedeId) más abajo.
     const compra = await this.prisma.compra.findFirst({
-      where: { id: compraId, empresaId, ...(sedeId ? { sedeId } : {}) },
+      where: { id: compraId, empresaId },
     });
 
     if (!compra) throw new NotFoundException('Compra no encontrada');
@@ -555,6 +652,18 @@ export class ComprasService {
         nuevoSaldo: Number(normalized.saldo),
         nuevoEstado: normalized.estadoPago,
       };
+    });
+
+    // Abono en efectivo → egreso de caja (si hay caja abierta).
+    await this.registrarEgresoCajaSiEfectivo({
+      metodo: data.medioPago,
+      monto,
+      empresaId,
+      usuarioId,
+      sedeId,
+      compraId,
+      serie: compra.serie,
+      numero: compra.numero,
     });
 
     return { success: true, ...result };

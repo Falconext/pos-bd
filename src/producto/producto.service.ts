@@ -2830,9 +2830,6 @@ export class ProductoService {
       );
     }
     const sedeDestinoId = sedeDestino.id;
-    console.log(
-      `[IMPORT-DEBUG] cargaMasiva: sedeId=${sedeId} → sedeDestinoId=${sedeDestinoId} empresaId=${empresaId}`,
-    );
 
     const unidades = await this.prisma.unidadMedida.findMany({
       select: { id: true, nombre: true, codigo: true },
@@ -2897,11 +2894,6 @@ export class ProductoService {
         const stockRaw = row['STOCK'] ?? row['Stock'] ?? row['stock'] ?? null;
         const categoriaRaw =
           row['CATEGORIA'] ?? row['Categoría'] ?? row['categoria'] ?? null;
-        if (index < 3) {
-          console.log(
-            `[IMPORT-DEBUG] fila ${index + 1}: columnas=${JSON.stringify(Object.keys(row))} | stockRaw=${JSON.stringify(stockRaw)} (typeof ${typeof stockRaw})`,
-          );
-        }
         if (!codigo)
           throw new ForbiddenException(
             `Código no proporcionado en la fila ${index + 1}`,
@@ -3047,9 +3039,6 @@ export class ProductoService {
             },
           });
 
-          console.log(
-            `[IMPORT-DEBUG] UPDATE cod=${codigoRaw} id=${existe.id} stock=${stockDestino} padre=${esProductoPadre} → sedeDestinoId=${sedeDestinoId}`,
-          );
           // Reemplazar el stock de la sede destino con el valor del Excel,
           // registrando el ajuste en el Kardex (auditable).
           // Se omite en productos padre: su stock deriva de los hijos.
@@ -3064,9 +3053,6 @@ export class ProductoService {
             );
           }
         } else {
-          console.log(
-            `[IMPORT-DEBUG] CREATE cod=${codigoFinal} stock=${stockDestino ?? 0} → sedeDestinoId=${sedeDestinoId}`,
-          );
           producto = await this.crear(
             {
               codigo: codigoFinal,

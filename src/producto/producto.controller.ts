@@ -1092,9 +1092,6 @@ export class ProductoController {
       sedeIdQuery != null && sedeIdQuery !== '' ? sedeIdQuery : body?.sedeId;
     const sedeId =
       sedeRaw != null && sedeRaw !== '' ? Number(sedeRaw) : undefined;
-    console.log(
-      `[IMPORT-DEBUG] controller: query.sedeId=${sedeIdQuery} body.sedeId=${body?.sedeId} → sedeId=${sedeId} | user.sedeId=${user.sedeId} empresaId=${user.empresaId}`,
-    );
     return this.service.cargaMasiva(
       file.buffer,
       user.empresaId,

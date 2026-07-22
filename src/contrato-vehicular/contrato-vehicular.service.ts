@@ -140,6 +140,69 @@ export class ContratoVehicularService {
     });
   }
 
+  /**
+   * KPIs del panel de contratos. Se basa en `fechaFin` (fecha real) — no solo
+   * en el campo `estado` — para no depender de que un job mantenga el estado al
+   * día. Excluye los CANCELADO. Independiente de los filtros de la lista.
+   */
+  async estadisticas(empresaId: number) {
+    const hoy = new Date();
+    const inicioMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1, 0, 0, 0);
+    const finMes = new Date(
+      hoy.getFullYear(),
+      hoy.getMonth() + 1,
+      0,
+      23,
+      59,
+      59,
+    );
+    const en30dias = new Date(hoy);
+    en30dias.setDate(en30dias.getDate() + 30);
+
+    const base = { empresaId, estado: { not: 'CANCELADO' as any } };
+
+    const [total, vigentes, vencidos, vencenEsteMes, porVencer, proximo] =
+      await Promise.all([
+        this.prisma.contratoVehicular.count({ where: base }),
+        this.prisma.contratoVehicular.count({
+          where: { ...base, fechaFin: { gte: hoy } },
+        }),
+        this.prisma.contratoVehicular.count({
+          where: { ...base, fechaFin: { lt: hoy } },
+        }),
+        this.prisma.contratoVehicular.count({
+          where: { ...base, fechaFin: { gte: inicioMes, lte: finMes } },
+        }),
+        this.prisma.contratoVehicular.count({
+          where: { ...base, fechaFin: { gte: hoy, lte: en30dias } },
+        }),
+        this.prisma.contratoVehicular.findFirst({
+          where: { ...base, fechaFin: { gte: hoy } },
+          orderBy: { fechaFin: 'asc' },
+          include: { vehiculo: { select: { placa: true } } },
+        }),
+      ]);
+
+    const diasProximo = proximo
+      ? Math.ceil((new Date(proximo.fechaFin).getTime() - hoy.getTime()) / 86400000)
+      : null;
+
+    return {
+      total,
+      vigentes,
+      vencidos,
+      vencenEsteMes,
+      porVencer,
+      proximo: proximo
+        ? {
+            placa: proximo.vehiculo?.placa ?? null,
+            fechaFin: proximo.fechaFin,
+            dias: diasProximo,
+          }
+        : null,
+    };
+  }
+
   async create(empresaId: number, dto: CreateContratoVehicularDto) {
     // Normaliza la entrada a una lista de { vehiculoId, montoAnual }.
     // Soporta la forma nueva (`vehiculos[]`) y la antigua (`vehiculoId`).
@@ -179,12 +242,16 @@ export class ContratoVehicularService {
       );
     }
 
-    // Ningún vehículo puede estar en otro contrato activo (como principal o
-    // como unidad de un contrato multi-vehículo).
+    // Una placa puede tener varios contratos activos siempre que sean de
+    // SERVICIOS distintos. Solo se bloquea el duplicado exacto: mismo vehículo
+    // (como principal o como unidad) con el mismo servicio (`productoId`) ya
+    // activo. Así se permite, p. ej., GPS + alarma sobre la misma placa, pero
+    // no dos veces el mismo servicio.
     const activos = await this.prisma.contratoVehicular.findMany({
       where: {
         empresaId,
         estado: { in: ['VIGENTE', 'POR_VENCER'] },
+        productoId: dto.productoId ?? null,
         OR: [
           { vehiculoId: { in: ids } },
           { unidades: { some: { vehiculoId: { in: ids } } } },
@@ -205,7 +272,7 @@ export class ContratoVehicularService {
         .filter((v) => ocupados.has(v.id))
         .map((v) => v.placa);
       throw new ConflictException(
-        `Ya existe un contrato activo para: ${placas.join(', ')}. Renuévalo o cancélalo antes de crear otro.`,
+        `Ya existe un contrato activo con este mismo servicio para: ${placas.join(', ')}. Elige otro servicio, o renueva/cancela el contrato actual.`,
       );
     }
 

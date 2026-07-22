@@ -44,6 +44,11 @@ export class ContratoVehicularController {
     return this.contratoService.findAlertas(req.user.empresaId);
   }
 
+  @Get('estadisticas')
+  estadisticas(@Request() req: any) {
+    return this.contratoService.estadisticas(req.user.empresaId);
+  }
+
   @Post()
   create(@Body() dto: CreateContratoVehicularDto, @Request() req: any) {
     return this.contratoService.create(req.user.empresaId, dto);

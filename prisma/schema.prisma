@@ -963,6 +963,7 @@ model CuentaBancaria {
   creadoEn     DateTime @default(now())
   empresa      Empresa  @relation(fields: [empresaId], references: [id])
   pagos        Pago[]
+  pagosCompra  PagoCompra[]
 
   @@index([empresaId])
 }
@@ -1041,6 +1042,10 @@ model MovimientoCaja {
 
   sedeId Int?
   sede   Sede? @relation(fields: [sedeId], references: [id])
+
+  // Egreso de caja originado por el pago (en efectivo) de una compra.
+  compraId Int?
+  compra   Compra? @relation(fields: [compraId], references: [id])
 
   @@index([usuarioId, fecha])
   @@index([empresaId, fecha])
@@ -1527,6 +1532,7 @@ model Compra {
   movimientos      MovimientoKardex[]
   pagos            PagoCompra[]
   seriesGarantias  ProductoSerie[]
+  movimientosCaja  MovimientoCaja[]
 
   sedeId Int?
   sede   Sede? @relation(fields: [sedeId], references: [id])
@@ -1603,10 +1609,13 @@ model PagoCompra {
   monto      Decimal
   metodoPago String
   referencia String?
+  // Pago por banco: cuenta bancaria con la que se pagó (referencia = N° de operación).
+  cuentaBancariaId Int?
   creadoEn   DateTime @default(now())
   compra     Compra   @relation(fields: [compraId], references: [id], onDelete: Cascade)
   empresa    Empresa  @relation(fields: [empresaId], references: [id])
   usuario    Usuario? @relation(fields: [usuarioId], references: [id])
+  cuentaBancaria CuentaBancaria? @relation(fields: [cuentaBancariaId], references: [id])
 
   @@index([compraId])
 }
