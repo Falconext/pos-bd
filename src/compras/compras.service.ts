@@ -25,6 +25,33 @@ export class ComprasService {
     return parseFloat((Number(value) || 0).toFixed(2));
   }
 
+  // Normaliza y deduplica las series/IMEI de una línea (trim + mayúsculas),
+  // descartando vacíos. Devuelve [] si no hay series válidas.
+  private normalizarNumerosSerie(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    const vistos = new Set<string>();
+    const result: string[] = [];
+    for (const raw of value) {
+      const normalized = String(raw ?? '')
+        .trim()
+        .toUpperCase();
+      if (!normalized || vistos.has(normalized)) continue;
+      vistos.add(normalized);
+      result.push(normalized);
+    }
+    return result;
+  }
+
+  // Calcula la fecha límite de garantía a partir de los meses indicados.
+  private calcularGarantiaHasta(garantiaMeses: unknown): Date | null {
+    if (garantiaMeses == null || garantiaMeses === '') return null;
+    const meses = Number(garantiaMeses);
+    if (!Number.isInteger(meses) || meses <= 0) return null;
+    const hasta = new Date();
+    hasta.setMonth(hasta.getMonth() + meses);
+    return hasta;
+  }
+
   private normalizeEstadoPagoBySaldo(total: number, saldo: number) {
     const safeTotal = this.roundMoney(total);
     const safeSaldo = Math.max(0, this.roundMoney(saldo));
@@ -61,6 +88,37 @@ export class ComprasService {
       throw new BadRequestException(
         `Ya existe una compra registrada con la serie ${data.serie} y número ${data.numero}.`,
       );
+    }
+
+    // Series / IMEI: normalizar y validar unicidad ANTES de crear la compra,
+    // para no dejar la compra registrada con series a medias.
+    const seriesPorLinea = data.detalles.map((item) =>
+      this.normalizarNumerosSerie(item.numerosSerie),
+    );
+    const todasLasSeries = seriesPorLinea.flat();
+    if (todasLasSeries.length) {
+      // Duplicados dentro del mismo payload
+      const vistos = new Set<string>();
+      for (const s of todasLasSeries) {
+        if (vistos.has(s)) {
+          throw new BadRequestException(
+            `La serie "${s}" está repetida en la compra.`,
+          );
+        }
+        vistos.add(s);
+      }
+      // Duplicados contra series ya registradas en la empresa
+      const existentes = await this.prisma.productoSerie.findMany({
+        where: { empresaId, numeroSerie: { in: todasLasSeries } },
+        select: { numeroSerie: true },
+      });
+      if (existentes.length) {
+        throw new BadRequestException(
+          `La(s) serie(s) ${existentes
+            .map((e) => e.numeroSerie)
+            .join(', ')} ya están registradas en el sistema.`,
+        );
+      }
     }
 
     let subtotal = 0;
@@ -139,6 +197,7 @@ export class ComprasService {
     // Create Purchase Transaction
     const compra = await this.prisma.$transaction(async (tx) => {
       return await tx.compra.create({
+        include: { detalles: { orderBy: { id: 'asc' } } },
         data: {
           empresaId,
           proveedorId: data.proveedorId,
@@ -231,6 +290,43 @@ export class ComprasService {
             error,
           );
           // Continue with other items, or flag warning?
+        }
+      }
+    }
+
+    // Registrar series / IMEI de la compra como ProductoSerie DISPONIBLE.
+    // Se enlazan a la compra y a su línea; las series son opcionales (pueden
+    // completarse luego desde Kardex → Series y Garantías).
+    if (todasLasSeries.length) {
+      const detallesCreados = (compra as any).detalles ?? [];
+      const seriesData: Prisma.ProductoSerieCreateManyInput[] = [];
+      for (let i = 0; i < data.detalles.length; i++) {
+        const series = seriesPorLinea[i];
+        if (!series.length) continue;
+        const item = data.detalles[i];
+        const detalle = detallesCreados[i];
+        if (!item.productoId || !detalle) continue;
+        const garantiaHasta = this.calcularGarantiaHasta(item.garantiaMeses);
+        for (const numeroSerie of series) {
+          seriesData.push({
+            empresaId,
+            productoId: Number(item.productoId),
+            sedeId: sedeId ?? null,
+            numeroSerie,
+            estado: 'DISPONIBLE',
+            garantiaMeses:
+              item.garantiaMeses != null ? Number(item.garantiaMeses) : null,
+            garantiaHasta,
+            compraId: compra.id,
+            compraDetalleId: detalle.id,
+          });
+        }
+      }
+      if (seriesData.length) {
+        try {
+          await this.prisma.productoSerie.createMany({ data: seriesData });
+        } catch (error) {
+          console.error('No se pudieron registrar las series de la compra:', error);
         }
       }
     }

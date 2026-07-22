@@ -124,6 +124,9 @@ model Empresa {
   rubroId                       Int?
   providerId                    String?
   tipoEmpresa                   TipoEmpresa                   @default(FORMAL)
+  // Régimen tributario SUNAT: GENERAL | RER | MYPE | RUS. Por defecto GENERAL para no
+  // alterar empresas existentes. En RUS se bloquea la emisión de Factura (solo boletas).
+  regimenTributario             String                        @default("GENERAL")
   aceptaEfectivo                Boolean                       @default(true)
   colorPrimario                 String?                       @default("#000000")
   colorSecundario               String?                       @default("#ffffff")
@@ -718,6 +721,7 @@ model Comprobante {
   formaPagoTipo           String
   formaPagoMoneda         String
   tipoMoneda              String
+  tipoCambio              Float?               @default(1) // TC del día cuando tipoMoneda = USD
   observaciones           String?
   mtoOperGravadas         Float
   mtoIGV                  Float
@@ -1399,6 +1403,9 @@ model Sede {
   codigo        String?
   tipo          TipoSede @default(PUNTO_DE_VENTA)
   esPrincipal   Boolean  @default(false)
+  // Permite emitir comprobantes aun cuando la sede es de tipo ALMACEN.
+  // Para PUNTO_DE_VENTA es irrelevante (siempre puede facturar).
+  permiteFacturacion Boolean @default(false)
   activo        Boolean  @default(true)
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt

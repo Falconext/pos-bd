@@ -1230,21 +1230,16 @@ export class ProductoService {
     };
   }
 
-  async getByBarcode(empresaId: number, codigoBarras: string, sedeId?: number) {
-    // Determinar rubro para priorizar la fuente de búsqueda global correcta
-    const empresa = await this.prisma.empresa.findFirst({
-      where: { id: empresaId },
-      select: { rubro: { select: { nombre: true } } },
-    });
-    const rubroNombre = (empresa?.rubro?.nombre ?? '').toLowerCase();
-    const esFarmaceutico =
-      rubroNombre.includes('farmacia') ||
-      rubroNombre.includes('botica') ||
-      rubroNombre.includes('medicament') ||
-      rubroNombre.includes('drogueria') ||
-      rubroNombre.includes('droguería');
-
-    // 1. Intentar buscar en el catálogo local de la empresa
+  /**
+   * Busca en el catálogo local de la empresa un producto cuyo código de barras
+   * coincida EXACTAMENTE, y lo devuelve con la forma que espera el POS/escáner
+   * (stock resuelto por sede/lotes, variantes, etc.). Devuelve null si no existe.
+   */
+  private async buscarProductoLocalPorBarcodeExacto(
+    empresaId: number,
+    codigoBarras: string,
+    sedeId?: number,
+  ) {
     const producto = await this.prisma.producto.findFirst({
       where: {
         empresaId,
@@ -1306,32 +1301,86 @@ export class ProductoService {
       },
     });
 
-    if (producto) {
-      const stockDesdeLotes = (producto.lotes || []).reduce(
-        (acc, lote) => acc + Number(lote.stockActual || 0),
-        0,
-      );
-      const usaStockLotes = stockDesdeLotes > 0;
-      const loteFefoActual = usaStockLotes ? producto.lotes[0] : null;
-      const stockBase = sedeId
-        ? (producto.stocks[0]?.stock ?? 0)
-        : producto.stocks?.length
-          ? producto.stocks.reduce((sum, s) => sum + Number(s.stock || 0), 0)
-          : Number((producto as any).stock || 0);
-      const stockTotal = usaStockLotes && !sedeId ? stockDesdeLotes : stockBase;
+    if (!producto) return null;
 
-      return {
-        ...producto,
-        stock: stockTotal,
-        stockBase: stockTotal,
-        loteFefoCodigo: loteFefoActual?.lote || null,
-        loteFefoVencimiento: loteFefoActual?.fechaVencimiento || null,
-        loteFefoCostoUnitario: loteFefoActual?.costoUnitario
-          ? Number(loteFefoActual.costoUnitario)
-          : null,
-        isGlobal: false,
-        costoUnitario: Number((producto as any).costoPromedio) || 0,
-      };
+    const stockDesdeLotes = (producto.lotes || []).reduce(
+      (acc, lote) => acc + Number(lote.stockActual || 0),
+      0,
+    );
+    const usaStockLotes = stockDesdeLotes > 0;
+    const loteFefoActual = usaStockLotes ? producto.lotes[0] : null;
+    const stockBase = sedeId
+      ? (producto.stocks[0]?.stock ?? 0)
+      : producto.stocks?.length
+        ? producto.stocks.reduce((sum, s) => sum + Number(s.stock || 0), 0)
+        : Number((producto as any).stock || 0);
+    const stockTotal = usaStockLotes && !sedeId ? stockDesdeLotes : stockBase;
+
+    return {
+      ...producto,
+      stock: stockTotal,
+      stockBase: stockTotal,
+      loteFefoCodigo: loteFefoActual?.lote || null,
+      loteFefoVencimiento: loteFefoActual?.fechaVencimiento || null,
+      loteFefoCostoUnitario: loteFefoActual?.costoUnitario
+        ? Number(loteFefoActual.costoUnitario)
+        : null,
+      isGlobal: false,
+      costoUnitario: Number((producto as any).costoPromedio) || 0,
+    };
+  }
+
+  async getByBarcode(empresaId: number, codigoBarras: string, sedeId?: number) {
+    // Determinar rubro para priorizar la fuente de búsqueda global correcta
+    const empresa = await this.prisma.empresa.findFirst({
+      where: { id: empresaId },
+      select: { rubro: { select: { nombre: true } } },
+    });
+    const rubroNombre = (empresa?.rubro?.nombre ?? '').toLowerCase();
+    const esFarmaceutico =
+      rubroNombre.includes('farmacia') ||
+      rubroNombre.includes('botica') ||
+      rubroNombre.includes('medicament') ||
+      rubroNombre.includes('drogueria') ||
+      rubroNombre.includes('droguería');
+
+    // 1. Catálogo local — coincidencia EXACTA por código de barras.
+    const exacto = await this.buscarProductoLocalPorBarcodeExacto(
+      empresaId,
+      codigoBarras,
+      sedeId,
+    );
+    if (exacto) return exacto;
+
+    // 1b. Coincidencia por PREFIJO (al menos las primeras 4 letras/números).
+    //     Solo si no hubo match exacto. Si hay varias, se avisa al frontend
+    //     con `multipleMatches` y no se agrega nada (evita facturar el equivocado).
+    if (codigoBarras.length >= 4) {
+      const coincidencias = await this.prisma.producto.findMany({
+        where: {
+          empresaId,
+          codigoBarras: { startsWith: codigoBarras, mode: 'insensitive' },
+          estado: { not: 'PLACEHOLDER' as any },
+        },
+        select: { id: true, descripcion: true, codigoBarras: true },
+        orderBy: { codigoBarras: 'asc' },
+        take: 6,
+      });
+      if (coincidencias.length === 1 && coincidencias[0].codigoBarras) {
+        const unico = await this.buscarProductoLocalPorBarcodeExacto(
+          empresaId,
+          coincidencias[0].codigoBarras,
+          sedeId,
+        );
+        if (unico) return unico;
+      }
+      if (coincidencias.length > 1) {
+        return {
+          multipleMatches: true,
+          count: coincidencias.length,
+          coincidencias,
+        };
+      }
     }
 
     // 2+3+4. Búsqueda en catálogos globales — orden según rubro
@@ -2498,7 +2547,11 @@ export class ProductoService {
     return principal;
   }
 
-  async exportar(empresaId: number, search?: string): Promise<Buffer> {
+  async exportar(
+    empresaId: number,
+    search?: string,
+    sedeId?: number,
+  ): Promise<Buffer> {
     const productosDelSistema = ['PLD', 'IPM', 'DGD'];
 
     const where: any = {
@@ -2516,7 +2569,14 @@ export class ProductoService {
     const productos = await this.prisma.producto.findMany({
       where,
       orderBy: { id: 'desc' },
-      include: { unidadMedida: true, categoria: true, marca: true },
+      include: {
+        unidadMedida: true,
+        categoria: true,
+        marca: true,
+        // Cuando se pide una sede concreta, traer solo su stock para exportar
+        // el stock de ese almacén (no el global/suma de sedes).
+        ...(sedeId ? { stocks: { where: { sedeId: Number(sedeId) } } } : {}),
+      },
     });
 
     const datosExcel = productos.map((producto) => ({
@@ -2526,7 +2586,9 @@ export class ProductoService {
       AFECT: producto.tipoAfectacionIGV,
       'PRECIO UNITARIO': Number(producto.precioUnitario),
       IGV: Number(producto.igvPorcentaje),
-      STOCK: Number(producto.stock),
+      STOCK: sedeId
+        ? Number((producto as any).stocks?.[0]?.stock ?? 0)
+        : Number(producto.stock),
       CATEGORIA: producto.categoria?.nombre || '',
       MARCA: (producto as any)?.marca?.nombre || '',
     }));
@@ -2745,7 +2807,33 @@ export class ProductoService {
     });
   }
 
-  async cargaMasiva(fileBuffer: Buffer, empresaId: number) {
+  async cargaMasiva(
+    fileBuffer: Buffer,
+    empresaId: number,
+    sedeId?: number,
+    usuarioId?: number,
+  ) {
+    // Resolver sede destino: el stock del Excel se aplica a un almacén concreto.
+    // Se exige una sede específica para no cargar stock en la sede equivocada.
+    if (!sedeId) {
+      throw new ForbiddenException(
+        'Debe seleccionar un almacén/sede específico para importar el stock.',
+      );
+    }
+    const sedeDestino = await this.prisma.sede.findFirst({
+      where: { id: Number(sedeId), empresaId, activo: true },
+      select: { id: true },
+    });
+    if (!sedeDestino) {
+      throw new ForbiddenException(
+        'La sede/almacén indicado no pertenece a la empresa o no está activo.',
+      );
+    }
+    const sedeDestinoId = sedeDestino.id;
+    console.log(
+      `[IMPORT-DEBUG] cargaMasiva: sedeId=${sedeId} → sedeDestinoId=${sedeDestinoId} empresaId=${empresaId}`,
+    );
+
     const unidades = await this.prisma.unidadMedida.findMany({
       select: { id: true, nombre: true, codigo: true },
     });
@@ -2809,6 +2897,11 @@ export class ProductoService {
         const stockRaw = row['STOCK'] ?? row['Stock'] ?? row['stock'] ?? null;
         const categoriaRaw =
           row['CATEGORIA'] ?? row['Categoría'] ?? row['categoria'] ?? null;
+        if (index < 3) {
+          console.log(
+            `[IMPORT-DEBUG] fila ${index + 1}: columnas=${JSON.stringify(Object.keys(row))} | stockRaw=${JSON.stringify(stockRaw)} (typeof ${typeof stockRaw})`,
+          );
+        }
         if (!codigo)
           throw new ForbiddenException(
             `Código no proporcionado en la fila ${index + 1}`,
@@ -2822,18 +2915,11 @@ export class ProductoService {
             `Unidad de medida no proporcionada en la fila ${index + 1}`,
           );
 
-        // Si CÓDIGO es solo dígitos de 8-14 chars → es un código de barras EAN/UPC
+        // Si CÓDIGO es solo dígitos de 8-14 chars → puede ser un código de barras EAN/UPC.
+        // La decisión de codigoFinal/codigoBarras se toma tras conocer si el producto
+        // ya existe (más abajo), para no romper el round-trip export→import.
         const codigoRaw = codigo.toString().trim();
         const esBarcode = /^\d{8,14}$/.test(codigoRaw);
-        let codigoFinal: string;
-        let codigoBarras: string | undefined;
-        if (esBarcode) {
-          codigoBarras = codigoRaw;
-          codigoFinal = await this.obtenerSiguienteCodigo(empresaId, 'PR');
-        } else {
-          codigoFinal = codigoRaw;
-          codigoBarras = undefined;
-        }
 
         const unidadKey = unidadNombre
           .toString()
@@ -2881,17 +2967,60 @@ export class ProductoService {
           categoriaId = id;
         }
 
-        // Upsert: si es barcode busca por codigoBarras, si es SKU busca por codigo
+        // Upsert: buscar por SKU (codigo) O por código de barras. Buscar por AMBOS
+        // evita duplicar en el round-trip export→import cuando el valor numérico de
+        // la columna CÓDIGO corresponde en realidad al `codigo` del producto (no a un
+        // código de barras) — p. ej. variantes con código numérico y sin barcode.
         const existe = await this.prisma.producto.findFirst({
-          where: esBarcode
-            ? { empresaId, codigoBarras, estado: { not: 'PLACEHOLDER' as any } }
-            : {
-                empresaId,
-                codigo: codigoFinal,
-                estado: { not: 'PLACEHOLDER' as any },
-              },
-          select: { id: true },
+          where: {
+            empresaId,
+            estado: { not: 'PLACEHOLDER' as any },
+            OR: [{ codigo: codigoRaw }, { codigoBarras: codigoRaw }],
+          },
+          select: {
+            id: true,
+            opcionesAtributos: true,
+            codigo: true,
+            codigoBarras: true,
+          },
         });
+
+        // Resolver código final y código de barras según si el producto ya existe.
+        let codigoFinal: string;
+        let codigoBarras: string | undefined;
+        if (existe) {
+          // No regenerar el código de un producto existente.
+          codigoFinal = existe.codigo;
+          // Solo asignar el barcode si el valor es un código de barras nuevo para
+          // este producto (no cuando el número numérico es su propio `codigo`).
+          codigoBarras =
+            esBarcode &&
+            existe.codigoBarras == null &&
+            existe.codigo !== codigoRaw
+              ? codigoRaw
+              : undefined;
+        } else if (esBarcode) {
+          // Producto nuevo identificado por código de barras.
+          codigoBarras = codigoRaw;
+          codigoFinal = await this.obtenerSiguienteCodigo(empresaId, 'PR');
+        } else {
+          codigoFinal = codigoRaw;
+          codigoBarras = undefined;
+        }
+
+        // El STOCK del Excel solo se aplica si la celda trae un número válido;
+        // si viene vacía no se toca el stock existente.
+        const stockDestino = Number.isNaN(stock) ? undefined : stock;
+        // Los productos PADRE (con variantes) tienen stock derivado de sus hijos;
+        // no se les debe pisar el stock desde el Excel para evitar doble conteo.
+        // OJO: un producto simple puede tener opcionesAtributos = [] (array vacío)
+        // guardado por el formulario. Un [] NO es padre: solo lo es cuando trae
+        // opciones reales. Antes `!= null` daba true con [] y por eso el stock del
+        // Excel no se aplicaba (se quedaba en 0).
+        const opcionesExistente: any = existe?.opcionesAtributos;
+        const esProductoPadre = Array.isArray(opcionesExistente)
+          ? opcionesExistente.length > 0
+          : opcionesExistente != null;
 
         let producto: any;
         let esActualizacion = false;
@@ -2917,7 +3046,27 @@ export class ProductoService {
               ...(codigoBarras != null ? { codigoBarras } : {}),
             },
           });
+
+          console.log(
+            `[IMPORT-DEBUG] UPDATE cod=${codigoRaw} id=${existe.id} stock=${stockDestino} padre=${esProductoPadre} → sedeDestinoId=${sedeDestinoId}`,
+          );
+          // Reemplazar el stock de la sede destino con el valor del Excel,
+          // registrando el ajuste en el Kardex (auditable).
+          // Se omite en productos padre: su stock deriva de los hijos.
+          if (stockDestino !== undefined && !esProductoPadre) {
+            await this.aplicarStockSedeImportacion(
+              existe.id,
+              empresaId,
+              sedeDestinoId,
+              stockDestino,
+              costoPromedio,
+              usuarioId,
+            );
+          }
         } else {
+          console.log(
+            `[IMPORT-DEBUG] CREATE cod=${codigoFinal} stock=${stockDestino ?? 0} → sedeDestinoId=${sedeDestinoId}`,
+          );
           producto = await this.crear(
             {
               codigo: codigoFinal,
@@ -2927,11 +3076,12 @@ export class ProductoService {
               precioUnitario,
               costoPromedio,
               igvPorcentaje,
-              stock,
+              stock: stockDestino ?? 0,
               categoriaId,
               codigoBarras,
             },
             empresaId,
+            sedeDestinoId,
           );
         }
         resultados.push({ producto, actualizado: esActualizacion });
@@ -2949,6 +3099,68 @@ export class ProductoService {
       fallidos: resultados.filter((r) => r.error).length,
       detalles: resultados,
     };
+  }
+
+  /**
+   * Reemplaza el stock de un producto en una sede concreta con el valor final
+   * indicado (importación de Excel por almacén). Registra el ajuste en el
+   * Kardex y mantiene sincronizado el stock global (suma de todas las sedes).
+   */
+  private async aplicarStockSedeImportacion(
+    productoId: number,
+    empresaId: number,
+    sedeId: number,
+    nuevoStock: number,
+    costoPromedio?: number,
+    usuarioId?: number,
+  ) {
+    const stockFinal = round3(Math.max(0, num(nuevoStock)));
+
+    const currentStock = await this.prisma.productoStock.findUnique({
+      where: { productoId_sedeId: { productoId, sedeId } },
+    });
+    const stockAnterior = currentStock ? num(currentStock.stock) : 0;
+
+    // Solo registrar movimiento si el stock realmente cambia.
+    if (stockAnterior !== stockFinal) {
+      const diferencia = round3(stockFinal - stockAnterior);
+      const esIngreso = diferencia > 0;
+      const cantidad = round3(Math.abs(diferencia));
+      try {
+        await this.kardexService.registrarMovimiento({
+          productoId,
+          empresaId,
+          sedeId,
+          tipoMovimiento: esIngreso ? 'INGRESO' : 'SALIDA',
+          concepto: `Importación Excel de inventario (${esIngreso ? '+' : '-'}${cantidad})`,
+          cantidad,
+          costoUnitario: costoPromedio != null ? Number(costoPromedio) : 0,
+          usuarioId,
+          observacion: `Stock anterior: ${stockAnterior}, Stock nuevo: ${stockFinal}`,
+        });
+      } catch (error) {
+        console.error(
+          'Error al registrar movimiento de kardex desde importación Excel:',
+          error,
+        );
+      }
+    }
+
+    // Garantizar el valor final exacto en la sede destino y re-sincronizar
+    // el stock global del producto (suma de todas las sedes).
+    await this.prisma.productoStock.upsert({
+      where: { productoId_sedeId: { productoId, sedeId } },
+      update: { stock: stockFinal },
+      create: { productoId, sedeId, stock: stockFinal },
+    });
+    const total = await this.prisma.productoStock.aggregate({
+      where: { productoId },
+      _sum: { stock: true },
+    });
+    await this.prisma.producto.update({
+      where: { id: productoId },
+      data: { stock: round3(num(total._sum.stock)) },
+    });
   }
 
   private getFichaTecnicaComputoDefault(

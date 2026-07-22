@@ -922,9 +922,18 @@ export class ProductoController {
   async exportar(
     @User() user: any,
     @Query('search') search: string | undefined,
+    @Query('sedeId') sedeId: string | undefined,
     @Res() res: Response,
   ) {
-    const buffer = await this.service.exportar(user.empresaId, search);
+    // Si se indica una sede, se exporta el stock de ese almacén; si no
+    // (p.ej. "Todas las sedes"), se exporta el stock global (suma de sedes).
+    const sedeIdNum =
+      sedeId != null && sedeId !== '' ? Number(sedeId) : undefined;
+    const buffer = await this.service.exportar(
+      user.empresaId,
+      search,
+      sedeIdNum,
+    );
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -1062,7 +1071,12 @@ export class ProductoController {
   @Post('importar')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   @UseInterceptors(FileInterceptor('file', excelUploadOptions))
-  async cargarMasivo(@UploadedFile() file: any, @User() user: any) {
+  async cargarMasivo(
+    @UploadedFile() file: any,
+    @User() user: any,
+    @Body() body: any,
+    @Query('sedeId') sedeIdQuery: string | undefined,
+  ) {
     if (!file) {
       return {
         total: 0,
@@ -1071,7 +1085,22 @@ export class ProductoController {
         detalles: [{ error: 'No se proporcionó un archivo Excel' }],
       };
     }
-    return this.service.cargaMasiva(file.buffer, user.empresaId);
+    // Sede destino explícita: el stock del Excel se aplica a este almacén/sede.
+    // Se lee del query param (confiable) o del body como respaldo. Sin fallback
+    // silencioso a la sede de sesión para no cargar stock en la sede equivocada.
+    const sedeRaw =
+      sedeIdQuery != null && sedeIdQuery !== '' ? sedeIdQuery : body?.sedeId;
+    const sedeId =
+      sedeRaw != null && sedeRaw !== '' ? Number(sedeRaw) : undefined;
+    console.log(
+      `[IMPORT-DEBUG] controller: query.sedeId=${sedeIdQuery} body.sedeId=${body?.sedeId} → sedeId=${sedeId} | user.sedeId=${user.sedeId} empresaId=${user.empresaId}`,
+    );
+    return this.service.cargaMasiva(
+      file.buffer,
+      user.empresaId,
+      sedeId,
+      user.id,
+    );
   }
 
   // ==================== GESTIÓN DE LOTES (Farmacia) ====================

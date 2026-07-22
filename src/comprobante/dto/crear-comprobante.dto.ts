@@ -117,6 +117,10 @@ export class CrearComprobanteDto {
   tipoMoneda: string; // 'PEN','USD'
 
   @IsOptional()
+  @IsNumber()
+  tipoCambio?: number; // TC del día cuando tipoMoneda = 'USD'
+
+  @IsOptional()
   @IsInt()
   clienteId?: number;
 

@@ -21,6 +21,11 @@ export class CreateSedeDto {
   @IsOptional()
   esPrincipal?: boolean;
 
+  // Habilita facturación en sedes tipo ALMACEN.
+  @IsBoolean()
+  @IsOptional()
+  permiteFacturacion?: boolean;
+
   @IsBoolean()
   @IsOptional()
   activo?: boolean;

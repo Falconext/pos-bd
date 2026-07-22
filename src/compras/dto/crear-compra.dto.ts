@@ -36,6 +36,18 @@ class DetalleCompraDto {
   @IsString()
   codigoXml?: string;
 
+  // Series / IMEI del producto (una por unidad). Opcionales: si vienen, se dan
+  // de alta como ProductoSerie DISPONIBLE enlazadas a esta compra.
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  numerosSerie?: string[];
+
+  // Meses de garantía a aplicar a las series registradas en esta línea.
+  @IsOptional()
+  @IsNumber()
+  garantiaMeses?: number;
+
   // true = el precioUnitario ya incluye IGV → el costo neto = precio / 1.18
   @IsOptional()
   incluyeIgv?: boolean;

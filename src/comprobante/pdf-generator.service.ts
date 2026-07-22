@@ -310,6 +310,8 @@ export class PdfGeneratorService {
     correlativo: string;
     fecha: string;
     hora: string;
+    tipoMoneda?: string; // 'PEN' | 'USD' — define el símbolo mostrado
+    tipoCambio?: number | string;
 
     // Cliente
     clienteNombre: string;
@@ -364,6 +366,14 @@ export class PdfGeneratorService {
         throw new Error('Template no cargado');
       }
 
+      // Moneda para la plantilla (S/ / SOLES por defecto; US$ / DÓLARES en dólares).
+      {
+        const esUSD =
+          String((data as any).tipoMoneda || 'PEN').toUpperCase() === 'USD';
+        (data as any).simboloMoneda = esUSD ? 'US$' : 'S/';
+        (data as any).monedaNombre = esUSD ? 'DÓLARES' : 'SOLES';
+      }
+
       // Generar HTML desde template
       const html = this.template(data);
 
@@ -397,6 +407,12 @@ export class PdfGeneratorService {
     try {
       if (!this.template) {
         throw new Error('Template no cargado');
+      }
+
+      {
+        const esUSD = String(data?.tipoMoneda || 'PEN').toUpperCase() === 'USD';
+        data.simboloMoneda = esUSD ? 'US$' : 'S/';
+        data.monedaNombre = esUSD ? 'DÓLARES' : 'SOLES';
       }
 
       const html = this.template(data);

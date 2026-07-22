@@ -6,258 +6,173 @@
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-      font-size: 12px;
-      padding: 20px 20px 40px 20px;
+      font-family: Arial, sans-serif;
+      font-size: 11px;
+      padding: 20px 24px 40px 24px;
       line-height: 1.4;
       color: #111;
       background: #fff;
     }
 
-    /* ── HEADER ── */
+    /* ── HEADER ─────────────────────────────────────────────── */
     .header {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
+      margin-bottom: 18px;
+    }
+    .logo-empresa { display: flex; align-items: flex-start; flex: 1; }
+    .logo-empresa img { margin-right: 14px; object-fit: contain; object-position: left top; flex-shrink: 0; }
+    .empresa-info h1 { font-weight: bold; font-size: 18px; margin-bottom: 4px; }
+    .empresa-info .linea { line-height: 1.6; font-size: 11px; }
+    .documento {
+      border: 2px solid #000;
+      padding: 12px 18px;
+      text-align: center;
+      min-width: 175px;
+      margin-left: 16px;
+      flex-shrink: 0;
+    }
+    .documento .ruc { font-size: 11px; margin-bottom: 4px; }
+    .documento .tipo { font-size: 17px; font-weight: bold; margin: 2px 0 0 0; line-height: 1.15; }
+    .documento .numero { font-size: 12px; margin-top: 6px; }
+
+    /* ── DATA BOX (una sola caja combinada) ──────────────────── */
+    .data-box {
+      display: flex;
+      gap: 24px;
+      border: 1.5px solid #000;
+      border-radius: 6px;
+      padding: 12px;
       margin-bottom: 16px;
     }
-    .header-logo {
-      width: 110px;
-      height: 110px;
-      max-width: 110px;
-      max-height: 110px;
-      object-fit: contain;
-      object-position: left top;
-      flex-shrink: 0;
-    }
-    .header-company {
-      flex: 1;
-      margin-left: 16px;
-    }
-    .header-company h1 {
-      font-size: 20px;
-      font-weight: 700;
-      margin-bottom: 4px;
-    }
-    .header-company p {
-      font-size: 11px;
-      line-height: 1.7;
-    }
-    .header-doc {
-      border: 1px solid #000;
-      padding: 16px 16px 8px 16px;
-      text-align: center;
-      margin-left: 16px;
-      flex-shrink: 0;
-      min-width: 160px;
-    }
-    .header-doc .doc-ruc { font-size: 11px; margin-bottom: 4px; }
-    .header-doc .doc-tipo { font-size: 18px; font-weight: 700; margin: 4px 0; }
-    .header-doc .doc-electronica { font-size: 18px; font-weight: 700; margin: 4px 0; }
-    .header-doc .doc-serie { font-size: 12px; margin-top: 4px; }
+    .data-col { flex: 1; }
+    .data-col.with-divider { border-left: 1px solid #ccc; padding-left: 24px; }
+    .data-col table { width: 100%; border-collapse: collapse; }
+    .data-col table td { padding: 1.5px 0; vertical-align: top; font-size: 11px; }
+    .data-col table td:first-child { font-weight: bold; white-space: nowrap; width: 95px; }
+    .data-col.comp table td:first-child { width: 105px; }
 
-    /* ── INFO SECTION ── */
-    .info-section {
-      display: flex;
-      gap: 16px;
-      margin: 16px 0;
-    }
-    .info-wrapper {
-      width: 50%;
-      display: flex;
-      flex-direction: column;
-    }
-    .info-title {
-      font-weight: 700;
-      color: #6b7280;
-      font-size: 11px;
-      border-bottom: 1px solid #d1d5db;
-      padding-bottom: 4px;
-      margin-bottom: 4px;
-    }
-    .info-box {
-      border: 1px solid #000;
-      border-radius: 8px;
-      padding: 12px;
-      flex: 1;
-    }
-    .info-grid {
-      display: grid;
-      grid-template-columns: 90px 1fr;
-      row-gap: 4px;
-    }
-    .info-grid .lbl { font-weight: 700; font-size: 11px; }
-    .info-grid .val { font-size: 11px; word-break: break-word; }
-
-    /* ── CUOTAS ── */
-    .cuotas-box {
-      margin-top: 8px;
-      border: 1px solid #d1d5db;
-      border-radius: 6px;
-      padding: 8px;
-    }
+    /* ── CUOTAS ──────────────────────────────────────────────── */
+    .cuotas-box { margin-top: -6px; margin-bottom: 16px; border: 1px solid #d1d5db; border-radius: 6px; padding: 8px; }
     .cuotas-title { font-size: 11px; font-weight: 700; margin-bottom: 4px; }
     .cuotas-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
     .cuota-item { display: flex; justify-content: space-between; font-size: 10px; padding: 0 4px; }
 
-    /* ── DETRACCIÓN ── */
-    .detraccion {
-      padding: 12px;
-      margin: 4px 0 12px 0;
-    }
-    .detraccion-title { font-size: 12px; font-weight: 700; margin-bottom: 8px; }
-    .detraccion-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 32px; }
-    .det-row { display: flex; align-items: flex-start; margin-top: 4px; }
-    .det-lbl { font-weight: 700; min-width: 130px; font-size: 11px; flex-shrink: 0; }
-    .det-val { font-size: 11px; }
-
-    /* ── TABLA PRODUCTOS ── */
-    .table-wrap { margin-bottom: 12px; }
-    .tbl-header {
-      display: flex;
-      background-color: #d1d5db;
-      font-weight: 700;
-      border: 1px solid #9ca3af;
-      font-size: 11px;
-    }
-    .tbl-row {
-      display: flex;
-      border-bottom: 1px solid #d1d5db;
-      border-left: 1px solid #d1d5db;
-      border-right: 1px solid #d1d5db;
-      font-size: 11px;
-    }
-    .c-num  { width: 8%;  text-align: center; border-right: 1px solid #9ca3af; padding: 4px 2px; }
-    .c-cant { width: 10%; text-align: center; border-right: 1px solid #9ca3af; padding: 4px 2px; }
-    .c-um   { width: 10%; text-align: center; border-right: 1px solid #9ca3af; padding: 4px 2px; }
-    .c-desc { flex: 1;   text-align: left;   border-right: 1px solid #9ca3af; padding: 4px 8px; }
-    .c-pu   { width: 10%; text-align: right;  border-right: 1px solid #9ca3af; padding: 4px 4px; }
-    .c-tot  { width: 10%; text-align: right;  padding: 4px 4px; }
-    .tbl-row .c-num  { border-right: 1px solid #d1d5db; }
-    .tbl-row .c-cant { border-right: 1px solid #d1d5db; }
-    .tbl-row .c-um   { border-right: 1px solid #d1d5db; }
-    .tbl-row .c-desc { border-right: 1px solid #d1d5db; }
-    .tbl-row .c-pu   { border-right: 1px solid #d1d5db; }
+    /* ── PRODUCTS TABLE ──────────────────────────────────────── */
+    .productos-table { width: 100%; border: 1.5px solid #999; border-collapse: collapse; margin-bottom: 16px; }
+    .productos-table thead { background-color: #d1d5db; border-bottom: 1px solid #999; }
+    .productos-table th { padding: 6px 5px; font-weight: bold; text-align: center; border-right: 1px solid #9ca3af; font-size: 11px; }
+    .productos-table th:last-child { border-right: none; }
+    .productos-table td { padding: 5px 5px; border-bottom: 1px solid #d1d5db; border-right: 1px solid #d1d5db; font-size: 11px; }
+    .productos-table td:last-child { border-right: none; }
+    .col-n    { width: 8%;  text-align: center; }
+    .col-cant { width: 10%; text-align: center; }
+    .col-um   { width: 10%; text-align: center; }
+    .col-desc { text-align: left; }
+    .col-moneda { width: 9%; text-align: center; }
+    .col-pu   { width: 11%; text-align: right; }
+    .col-tot  { width: 11%; text-align: right; }
     .lote-info { font-size: 9px; color: #555; margin-top: 2px; }
 
-    /* ── SON BOX ── */
-    .son-box {
+    /* ── SON ─────────────────────────────────────────────────── */
+    .son-section {
       border: 1px solid #000;
-      border-radius: 8px;
-      padding: 8px;
-      font-weight: 700;
-      text-align: center;
-      font-size: 16px;
-      background: #f9fafb;
+      border-radius: 6px;
+      padding: 8px 14px;
       margin-bottom: 8px;
+      font-weight: bold;
+      text-align: center;
+      background: #f9fafb;
+      font-size: 14px;
     }
 
-    /* ── FOOTER BOX ── */
-    .footer-box {
+    /* ── FOOTER SECTION (observaciones + totales) ────────────── */
+    .footer-section {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
       border: 1px solid #000;
-      border-radius: 8px;
+      border-radius: 6px;
       padding: 12px;
-      margin-bottom: 32px;
+      margin-bottom: 16px;
     }
-    .footer-content { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
-    .footer-obs { width: 60%; padding-right: 8px; }
-    .footer-obs .obs-title { font-weight: 700; margin-bottom: 4px; font-size: 11px; }
-    .footer-obs .obs-text { font-size: 11px; }
-    .footer-obs .legal-text { font-size: 10px; margin-top: 8px; color: #444; line-height: 1.6; }
-    .footer-totals { width: 40%; }
-    .tot-row { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 2px; }
-    .tot-row.bold span:first-child { font-weight: 700; }
-    .tot-final {
-      display: flex; justify-content: space-between;
-      font-weight: 700; font-size: 14px;
-      border-top: 1px solid #000;
-      padding-top: 4px; margin-top: 4px;
-    }
-    .tot-retention span:first-child { font-weight: 700; }
-    .tot-neto { display: flex; justify-content: space-between; font-weight: 700; font-size: 11px; margin-bottom: 2px; }
+    .observaciones-box { width: 60%; padding-right: 16px; }
+    .obs-title { font-weight: bold; margin-bottom: 4px; }
+    .obs-text { font-size: 11px; }
+    .legal-text { font-size: 10px; margin-top: 8px; color: #444; line-height: 1.6; }
+    .detraccion-block { margin-top: 12px; line-height: 1.5; font-size: 11px; }
+    .detraccion-block .det-title { font-weight: bold; margin-bottom: 2px; }
 
-    /* ── BRAND FOOTER ── */
-    .brand-footer { margin-top: 32px; text-align: center; font-size: 11px; }
-    .brand-thanks { font-weight: 700; margin-bottom: 4px; }
-    .brand-vuelta { font-weight: 700; margin-bottom: 32px; }
-    .brand-bottom {
-      display: flex; justify-content: space-between; align-items: flex-end;
-      border-top: 1px solid #9ca3af; padding-top: 4px; margin-top: 8px;
+    .totales-box { width: 40%; text-align: right; }
+    .totales-box .row { display: flex; justify-content: space-between; margin-bottom: 3px; font-size: 11px; }
+    .totales-box .row .lbl { font-weight: bold; }
+    .totales-box .row.total-final { font-weight: bold; font-size: 14px; border-top: 1px solid #000; padding-top: 4px; margin-top: 4px; }
+    .totales-box .row.retencion .lbl { font-weight: bold; }
+
+    /* ── GRACIAS ─────────────────────────────────────────────── */
+    .footer-thanks { text-align: center; margin-top: 24px; margin-bottom: 8px; }
+    .footer-thanks p { font-weight: bold; line-height: 1.6; }
+    .footer-thanks .vuelva { margin-bottom: 24px; }
+
+    /* ── BOTTOM STRIP ────────────────────────────────────────── */
+    .footer-bottom {
+      border-top: 1px solid #bbb;
+      padding-top: 6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
     }
-    .brand-left { text-align: left; font-size: 10px; color: #6b7280; font-family: monospace; }
-    .brand-right { text-align: right; font-size: 10px; color: #6b7280; }
-    .brand-right .brand-name { font-weight: 700; font-style: italic; }
+    .footer-bottom .usuario-label { font-size: 9px; color: #6b7280; font-family: monospace; }
+    .footer-bottom .marca-label { font-size: 9px; color: #6b7280; text-align: right; }
+    .footer-bottom .marca-label .marca-name { font-weight: bold; font-style: italic; }
   </style>
 </head>
 <body>
 
-  <!-- HEADER: Logo | Empresa | Documento -->
+  <!-- ── HEADER: Logo | Empresa | Documento ─────────────────── -->
   <div class="header">
-    {{#if logo}}<img class="header-logo" src="{{logo}}" alt="logo" style="width: {{logoSize}}px; height: {{logoSize}}px;">{{/if}}
-    <div class="header-company">
-      <h1>{{nombreComercial}}</h1>
-      <p>
-        {{direccion}}<br>
-        {{#if rubro}}{{rubro}}<br>{{/if}}
-        RAZON SOCIAL: {{razonSocial}}<br>
-        {{#if celular}}CELULAR: {{celular}}<br>{{/if}}
-        {{#if email}}EMAIL: {{email}}<br>{{/if}}
-        {{#if paginaWeb}}WEB: {{paginaWeb}}{{/if}}
-      </p>
+    <div class="logo-empresa">
+      {{#if logo}}<img src="{{logo}}" alt="logo" style="width: {{logoSize}}px; height: {{logoSize}}px;">{{/if}}
+      <div class="empresa-info">
+        <h1>{{nombreComercial}}</h1>
+        <div class="linea">{{direccion}}</div>
+        {{#if rubro}}<div class="linea">{{rubro}}</div>{{/if}}
+        <div class="linea">RAZON SOCIAL: {{razonSocial}}</div>
+        {{#if celular}}<div class="linea">CELULAR: {{celular}}</div>{{/if}}
+        {{#if email}}<div class="linea">EMAIL: {{email}}</div>{{/if}}
+        {{#if paginaWeb}}<div class="linea">WEB: {{paginaWeb}}</div>{{/if}}
+      </div>
     </div>
-    <div class="header-doc">
-      <div class="doc-ruc">RUC: {{ruc}}</div>
-      <div class="doc-tipo">{{tipoDocumento}}</div>
-      <div class="doc-electronica">ELECTRONICA</div>
-      <div class="doc-serie">{{serie}}-{{correlativo}}</div>
+    <div class="documento">
+      <div class="ruc">RUC: {{ruc}}</div>
+      <div class="tipo">{{tipoDocumento}}<br>ELECTRONICA</div>
+      <div class="numero">{{serie}}-{{correlativo}}</div>
     </div>
   </div>
 
-  <!-- DATOS DEL CLIENTE + DATOS DEL COMPROBANTE -->
-  <div class="info-section">
-    <div class="info-wrapper">
-      <div class="info-title">DATOS DEL CLIENTE</div>
-      <div class="info-box">
-        <div class="info-grid">
-          <span class="lbl">CLIENTE:</span>
-          <span class="val">{{clienteNombre}}</span>
-          <span class="lbl">{{clienteTipoDoc}}:</span>
-          <span class="val">{{clienteNumDoc}}</span>
-          {{#if clienteEmail}}
-          <span class="lbl">EMAIL:</span>
-          <span class="val">{{clienteEmail}}</span>
-          {{/if}}
-          {{#if clienteTelefono}}
-          <span class="lbl">TELF:</span>
-          <span class="val">{{clienteTelefono}}</span>
-          {{/if}}
-          <span class="lbl">DIR:</span>
-          <span class="val">{{clienteDireccion}}</span>
-        </div>
-      </div>
+  <!-- ── DATA BOX (cliente + comprobante en una sola caja) ──── -->
+  <div class="data-box">
+    <div class="data-col">
+      <table>
+        <tr><td>CLIENTE:</td><td>{{clienteNombre}}</td></tr>
+        <tr><td>{{clienteTipoDoc}}:</td><td>{{clienteNumDoc}}</td></tr>
+        {{#if clienteEmail}}<tr><td>EMAIL:</td><td>{{clienteEmail}}</td></tr>{{/if}}
+        {{#if clienteTelefono}}<tr><td>TELF:</td><td>{{clienteTelefono}}</td></tr>{{/if}}
+        <tr><td>DIR:</td><td>{{clienteDireccion}}</td></tr>
+      </table>
     </div>
-    <div class="info-wrapper">
-      <div class="info-title">DATOS DEL COMPROBANTE</div>
-      <div class="info-box">
-        <div class="info-grid">
-          <span class="lbl">FECHA:</span>
-          <span class="val">{{fecha}}</span>
-          <span class="lbl">HORA:</span>
-          <span class="val">{{hora}}</span>
-          <span class="lbl">MONEDA:</span>
-          <span class="val">SOLES</span>
-          <span class="lbl">FORMA PAGO:</span>
-          <span class="val">{{formaPago}}</span>
-          <span class="lbl">MEDIO PAGO:</span>
-          <span class="val">{{medioPago}} S/ {{mtoImpVenta}}</span>
-          <span class="lbl">VUELTO:</span>
-          <span class="val">S/ {{vuelto}}</span>
-          <span class="lbl">PAGADO:</span>
-          <span class="val">S/ {{pagado}}</span>
-          <span class="lbl">VENDEDOR:</span>
-          <span class="val">{{vendedor}}</span>
-        </div>
-      </div>
+    <div class="data-col comp with-divider">
+      <table>
+        <tr><td>FECHA:</td><td>{{fecha}}</td></tr>
+        <tr><td>HORA:</td><td>{{hora}}</td></tr>
+        <tr><td>MONEDA:</td><td>{{monedaNombre}}</td></tr>
+        <tr><td>FORMA PAGO:</td><td>{{formaPago}}</td></tr>
+        <tr><td>MEDIO PAGO:</td><td>{{medioPago}} {{simboloMoneda}} {{mtoImpVenta}}</td></tr>
+        <tr><td>VUELTO:</td><td>{{simboloMoneda}} {{vuelto}}</td></tr>
+        <tr><td>PAGADO:</td><td>{{simboloMoneda}} {{pagado}}</td></tr>
+        <tr><td>VENDEDOR:</td><td>{{vendedor}}</td></tr>
+      </table>
     </div>
   </div>
 
@@ -268,120 +183,106 @@
       {{#each cuotas}}
       <div class="cuota-item">
         <span>Cuota {{inc @index}} ({{this.fechaVencimiento}}):</span>
-        <span>S/ {{this.monto}}</span>
+        <span>{{../simboloMoneda}} {{this.monto}}</span>
       </div>
       {{/each}}
     </div>
   </div>
   {{/if}}
 
-  {{#if tipoDetraccion}}
-  <!-- DETRACCIÓN -->
-  <div class="detraccion">
-    <p class="detraccion-title">OPERACIÓN SUJETA A DETRACCIÓN</p>
-    <div class="detraccion-grid">
-      <div class="det-row">
-        <span class="det-lbl">Tipo Detracción:</span>
-        <span class="det-val">{{tipoDetraccion}}</span>
+  <!-- ── PRODUCTS TABLE ─────────────────────────────────────── -->
+  <table class="productos-table">
+    <thead>
+      <tr>
+        <th class="col-n">N°</th>
+        <th class="col-cant">CANT.</th>
+        <th class="col-um">UNIDAD</th>
+        <th class="col-desc">DESCRIPCIÓN</th>
+        <th class="col-moneda">MONEDA</th>
+        <th class="col-pu">P.UNIT.</th>
+        <th class="col-tot">TOTAL</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#each productos}}
+      <tr>
+        <td class="col-n">{{this.index}}</td>
+        <td class="col-cant">{{this.cantidad}}</td>
+        <td class="col-um">{{this.unidadMedida}}</td>
+        <td class="col-desc">
+          {{this.descripcion}}
+          {{#if this.lotes}}
+          {{#each this.lotes}}
+          <div class="lote-info">Lote: {{this.lote}} Venc: {{this.fechaVencimiento}}</div>
+          {{/each}}
+          {{/if}}
+        </td>
+        <td class="col-moneda">{{../simboloMoneda}}</td>
+        <td class="col-pu">{{this.precioUnitario}}</td>
+        <td class="col-tot">{{this.total}}</td>
+      </tr>
+      {{/each}}
+    </tbody>
+  </table>
+
+  <!-- ── SON (TOTAL EN LETRAS) ──────────────────────────────── -->
+  <div class="son-section">SON: {{totalEnLetras}}</div>
+
+  <!-- ── OBSERVACIONES + TOTALES ────────────────────────────── -->
+  <div class="footer-section">
+    <div class="observaciones-box">
+      <div class="obs-title">OBSERVACIONES:</div>
+      <div class="obs-text">{{observaciones}}</div>
+      <div class="legal-text">
+        Representación impresa del Comprobante de Pago Electrónico.<br>
+        Autorizado mediante Resolución de Intendencia N° 080-005-000153/SUNAT.<br>
+        Emite a través de APISPERU - Proveedor Autorizado por SUNAT.
       </div>
-      <div class="det-row">
-        <span class="det-lbl">Cuenta BN:</span>
-        <span class="det-val">{{cuentaBancoNacion}}</span>
-      </div>
-      <div class="det-row">
-        <span class="det-lbl">Monto Detracción:</span>
-        <span class="det-val">S/ {{montoDetraccion}}</span>
-      </div>
-      {{#if medioPagoDetraccion}}
-      <div class="det-row">
-        <span class="det-lbl">Medio de Pago:</span>
-        <span class="det-val">{{medioPagoDetraccion}}</span>
+      {{#if tipoDetraccion}}
+      <div class="detraccion-block">
+        <p class="det-title">OPERACIÓN SUJETA A DETRACCIÓN</p>
+        <p>Tipo Detracción: {{tipoDetraccion}}</p>
+        <p>Monto a detraer: {{simboloMoneda}} {{montoDetraccion}}</p>
+        {{#if cuentaBancoNacion}}<p>Cuenta BN: {{cuentaBancoNacion}}</p>{{/if}}
+        {{#if medioPagoDetraccion}}<p>Medio de Pago: {{medioPagoDetraccion}}</p>{{/if}}
       </div>
       {{/if}}
     </div>
-  </div>
-  {{/if}}
 
-  <!-- TABLA DE PRODUCTOS -->
-  <div class="table-wrap">
-    <div class="tbl-header">
-      <div class="c-num">N°</div>
-      <div class="c-cant">CANT.</div>
-      <div class="c-um">UNIDAD</div>
-      <div class="c-desc">DESCRIPCIÓN</div>
-      <div class="c-pu">P.UNIT.</div>
-      <div class="c-tot">TOTAL</div>
-    </div>
-    {{#each productos}}
-    <div class="tbl-row">
-      <div class="c-num">{{this.index}}</div>
-      <div class="c-cant">{{this.cantidad}}</div>
-      <div class="c-um">{{this.unidadMedida}}</div>
-      <div class="c-desc">
-        {{this.descripcion}}
-        {{#if this.lotes}}
-        {{#each this.lotes}}
-        <div class="lote-info">Lote: {{this.lote}} Venc: {{this.fechaVencimiento}}</div>
-        {{/each}}
-        {{/if}}
-      </div>
-      <div class="c-pu">{{this.precioUnitario}}</div>
-      <div class="c-tot">{{this.total}}</div>
-    </div>
-    {{/each}}
-  </div>
-
-  <!-- SON (TOTAL EN LETRAS) -->
-  <div class="son-box">SON: {{totalEnLetras}}</div>
-
-  <!-- OBSERVACIONES + TOTALES -->
-  <div class="footer-box">
-    <div class="footer-content">
-      <div class="footer-obs">
-        <div class="obs-title">OBSERVACIONES:</div>
-        <div class="obs-text">{{observaciones}}</div>
-        <div class="legal-text">
-          Representación impresa del Comprobante de Pago Electrónico.<br>
-          Autorizado mediante Resolución de Intendencia N° 080-005-000153/SUNAT.<br>
-          Emite a través de APISPERU - Proveedor Autorizado por SUNAT.
-        </div>
-      </div>
-      <div class="footer-totals">
-        {{#if isDocumentoFiscal}}
-        <div class="tot-row bold"><span>OP. GRAVADAS:</span><span>S/ {{mtoOperGravadas}}</span></div>
-        <div class="tot-row bold"><span>OP. EXONERADAS:</span><span>S/ {{mtoOperExoneradas}}</span></div>
-        <div class="tot-row bold"><span>OP. INAFECTAS:</span><span>S/ {{mtoOperInafectas}}</span></div>
-        <div class="tot-row bold"><span>OP. GRATUITAS:</span><span>S/ 0.00</span></div>
-        <div class="tot-row bold"><span>ICBPER:</span><span>S/ 0.00</span></div>
-        <div class="tot-row bold"><span>SUB TOTAL:</span><span>S/ {{mtoOperGravadas}}</span></div>
-        <div class="tot-row"><span>DESCUENTOS TOTAL:</span><span>S/ {{descuento}}</span></div>
-        <div class="tot-row bold"><span>IGV 18%:</span><span>S/ {{mtoIGV}}</span></div>
-        {{/if}}
-        {{#unless isDocumentoFiscal}}{{#if descuento}}
-        <div class="tot-row"><span>DESCUENTO:</span><span>- S/ {{descuento}}</span></div>
-        {{/if}}{{/unless}}
-        <div class="tot-final">
-          <span>MONTO TOTAL:</span>
-          <span>S/ {{mtoImpVenta}}</span>
-        </div>
-        {{#if shouldShowRetention}}
-        <div class="tot-row tot-retention"><span>RETENCIÓN (3%):</span><span>S/ {{retencionMonto}}</span></div>
-        <div class="tot-neto"><span>IMPORTE NETO:</span><span>S/ {{importeNeto}}</span></div>
-        {{/if}}
-      </div>
+    <div class="totales-box">
+      {{#if isDocumentoFiscal}}
+      <div class="row"><span class="lbl">OP. GRAVADAS:</span><span>{{simboloMoneda}} {{mtoOperGravadas}}</span></div>
+      <div class="row"><span class="lbl">OP. EXONERADAS:</span><span>{{simboloMoneda}} {{mtoOperExoneradas}}</span></div>
+      <div class="row"><span class="lbl">OP. INAFECTAS:</span><span>{{simboloMoneda}} {{mtoOperInafectas}}</span></div>
+      <div class="row"><span class="lbl">OP. GRATUITAS:</span><span>{{simboloMoneda}} 0.00</span></div>
+      <div class="row"><span class="lbl">ICBPER:</span><span>{{simboloMoneda}} 0.00</span></div>
+      <div class="row"><span class="lbl">SUB TOTAL:</span><span>{{simboloMoneda}} {{mtoOperGravadas}}</span></div>
+      <div class="row"><span>DESCUENTOS TOTAL:</span><span>{{simboloMoneda}} {{descuento}}</span></div>
+      <div class="row"><span class="lbl">IGV 18%:</span><span>{{simboloMoneda}} {{mtoIGV}}</span></div>
+      {{/if}}
+      {{#unless isDocumentoFiscal}}{{#if descuento}}
+      <div class="row"><span>DESCUENTO:</span><span>- {{simboloMoneda}} {{descuento}}</span></div>
+      {{/if}}{{/unless}}
+      <div class="row total-final"><span>MONTO TOTAL:</span><span>{{simboloMoneda}} {{mtoImpVenta}}</span></div>
+      {{#if shouldShowRetention}}
+      <div class="row retencion"><span class="lbl">RETENCIÓN (3%):</span><span>{{simboloMoneda}} {{retencionMonto}}</span></div>
+      <div class="row total-final"><span>IMPORTE NETO:</span><span>{{simboloMoneda}} {{importeNeto}}</span></div>
+      {{/if}}
     </div>
   </div>
 
-  <!-- BRAND FOOTER -->
-  <div class="brand-footer">
-    <div class="brand-thanks">GRACIAS POR ELEGIR {{nombreComercial}} PARA CUBRIR SUS REQUERIMIENTOS DE {{rubro}}</div>
-    <div class="brand-vuelta">VUELVA PRONTO</div>
-    <div class="brand-bottom">
-      <div class="brand-left">USUARIO: {{usuario}} {{fechaImpresion}}</div>
-      <div class="brand-right">
-        <div class="brand-name">{{sistemaNombre}} ™</div>
-        <div>Comprobante emitido a través de {{sistemaWeb}}</div>
-      </div>
+  <!-- ── GRACIAS ────────────────────────────────────────────── -->
+  <div class="footer-thanks">
+    <p>GRACIAS POR ELEGIR {{nombreComercial}} PARA CUBRIR SUS REQUERIMIENTOS DE {{rubro}}</p>
+    <p class="vuelva">VUELVA PRONTO</p>
+  </div>
+
+  <!-- ── BOTTOM STRIP ───────────────────────────────────────── -->
+  <div class="footer-bottom">
+    <div class="usuario-label">USUARIO: {{usuario}} {{fechaImpresion}}</div>
+    <div class="marca-label">
+      <span class="marca-name">{{sistemaNombre}} ™</span><br>
+      Comprobante emitido a través de {{sistemaWeb}}
     </div>
   </div>
 

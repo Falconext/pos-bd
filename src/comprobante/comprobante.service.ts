@@ -750,6 +750,9 @@ export class ComprobanteService {
                 id: true,
                 descripcion: true,
                 imagenUrl: true,
+                // Código/código de barras para mostrarlo en el formato de cotización
+                codigo: true,
+                codigoBarras: true,
               },
             },
             lote: { select: { lote: true, fechaVencimiento: true } },
@@ -2035,6 +2038,20 @@ export class ComprobanteService {
       fechaVencimientoCredito,
     } = input;
 
+    // Régimen RUS: no puede emitir Facturas (solo Boletas). Guard de defensa en profundidad
+    // (el POS ya oculta la opción; esto blinda el endpoint ante llamadas directas).
+    if (formalTipo === '01') {
+      const empRegimen = await this.prisma.empresa.findUnique({
+        where: { id: empresaId },
+        select: { regimenTributario: true },
+      });
+      if (empRegimen?.regimenTributario === 'RUS') {
+        throw new BadRequestException(
+          'Las empresas del régimen RUS solo pueden emitir Boletas, no Facturas.',
+        );
+      }
+    }
+
     // Cuando se convierte desde un informal (NV, TICKET, etc.) el stock ya fue descontado
     // al crear el informal — NO volver a descontarlo.
     const esConversionDesdeInformal = comprobanteOrigenId != null;
@@ -2206,6 +2223,7 @@ export class ComprobanteService {
       formaPagoTipo,
       formaPagoMoneda,
       tipoMoneda,
+      tipoCambio: input.tipoCambio != null ? Number(input.tipoCambio) : 1,
       observaciones: observaciones ?? null,
       clienteId: finalClienteId,
       empresaId,
@@ -3894,6 +3912,8 @@ export class ComprobanteService {
       full.empresa?.razonSocial || (full.empresa as any)?.nombreComercial || '',
     ).toUpperCase();
     const pdfData: any = {
+      tipoMoneda: (full as any)?.tipoMoneda || 'PEN',
+      tipoCambio: (full as any)?.tipoCambio ?? 1,
       nombreComercial: (full.empresa as any)?.nombreComercial
         ? String((full.empresa as any).nombreComercial).toUpperCase()
         : razonSocialEmpresa,

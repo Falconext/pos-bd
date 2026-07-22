@@ -5,6 +5,7 @@ import { NotificacionesService } from '../notificaciones/notificaciones.service'
 import { InventarioNotificacionesService } from '../notificaciones/inventario-notificaciones.service';
 import { ResellerService } from '../reseller/reseller.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { WhatsAppService } from '../whatsapp/whatsapp.service';
 
 @Injectable()
 export class SchedulerService {
@@ -16,6 +17,7 @@ export class SchedulerService {
     private readonly inventarioNotificacionesService: InventarioNotificacionesService,
     private readonly resellerService: ResellerService,
     private readonly prisma: PrismaService,
+    private readonly whatsappService: WhatsAppService,
   ) {}
 
   // Job 1: Check status of PENDIENTE invoices with documentoId (every 5 min)
@@ -181,8 +183,8 @@ export class SchedulerService {
       await this.notificarContratos(porVencerAhoraVencidos, 'VENCIDO');
       await this.notificarContratos(nuevosPorVencer, 'POR_VENCER');
 
-      // 4) Correos de recordatorio (empresa + cliente) a 15, 5, 1 y 0 días del vencimiento.
-      await this.enviarCorreosVencimientoContratos();
+      // 4) Recordatorios (correo + WhatsApp) a 15, 5, 1 y 0 días del vencimiento.
+      await this.enviarRecordatoriosVencimientoContratos();
 
       this.logger.log(
         `✅ Contratos: ${vencidos.count} marcados VENCIDO, ${porVencer.count} marcados POR_VENCER`,
@@ -242,10 +244,13 @@ export class SchedulerService {
     }
   }
 
-  // ── Correos de recordatorio de vencimiento de contrato vehicular ────────────
-  // Envía a la empresa (admins) y al cliente cuando faltan 15, 5, 1 o 0 días.
-  private async enviarCorreosVencimientoContratos(): Promise<void> {
-    if (!process.env.RESEND_API_KEY) return; // sin proveedor de correo, no hace nada
+  // ── Recordatorios de vencimiento de contrato vehicular (correo + WhatsApp) ──
+  // Empresa (admins) por correo; cliente por correo y WhatsApp, a 15, 5, 1 o 0 días.
+  private async enviarRecordatoriosVencimientoContratos(): Promise<void> {
+    const emailOn = !!process.env.RESEND_API_KEY;
+    let waOn = false;
+    try { waOn = this.whatsappService.isEnabled(); } catch { /* WhatsApp no configurado */ }
+    if (!emailOn && !waOn) return; // ningún canal configurado
 
     const hoy = new Date();
     const desde = new Date(hoy); desde.setDate(desde.getDate() - 1);
@@ -260,7 +265,7 @@ export class SchedulerService {
         vehiculo: {
           select: {
             placa: true, marca: true, modelo: true,
-            cliente: { select: { nombre: true, email: true } },
+            cliente: { select: { nombre: true, email: true, telefono: true } },
           },
         },
         producto: { select: { descripcion: true } },
@@ -306,17 +311,30 @@ export class SchedulerService {
         day: '2-digit', month: '2-digit', year: 'numeric',
       }).format(new Date(c.fechaFin));
 
-      // 1) Cliente dueño del vehículo (si tiene correo).
+      // 1) Cliente dueño del vehículo — correo (si tiene) y WhatsApp (si tiene teléfono).
+      const clienteNombre = c.vehiculo?.cliente?.nombre || 'Estimado cliente';
       const clienteEmail = c.vehiculo?.cliente?.email;
-      if (clienteEmail) {
+      if (emailOn && clienteEmail) {
         try {
           await this.enviarCorreoVencimiento(clienteEmail, {
-            destinatarioNombre: c.vehiculo?.cliente?.nombre || 'Estimado cliente',
+            destinatarioNombre: clienteNombre,
             esCliente: true, placa, vehiculoDesc, servicio,
             diasRestantes: dias, fechaVencimiento, negocioNombre, appName,
           });
           enviados++;
         } catch (e: any) { this.logger.error(`Correo cliente contrato ${c.id}: ${e?.message || e}`); }
+      }
+
+      const clienteTelefono = c.vehiculo?.cliente?.telefono;
+      if (waOn && clienteTelefono) {
+        try {
+          const msg = this.mensajeWhatsappVencimiento({
+            nombre: clienteNombre, placa, servicio, dias, fechaVencimiento, negocioNombre,
+          });
+          const r = await this.whatsappService.enviarTexto(clienteTelefono, msg);
+          if (r.success) enviados++;
+          else this.logger.warn(`WhatsApp cliente contrato ${c.id}: ${r.error}`);
+        } catch (e: any) { this.logger.error(`WhatsApp cliente contrato ${c.id}: ${e?.message || e}`); }
       }
 
       // 2) Administradores de la empresa.
@@ -335,7 +353,29 @@ export class SchedulerService {
       }
     }
 
-    if (enviados) this.logger.log(`📧 Recordatorios de vencimiento enviados: ${enviados}`);
+    if (enviados) this.logger.log(`🔔 Recordatorios de vencimiento enviados (correo + WhatsApp): ${enviados}`);
+  }
+
+  // Mensaje de WhatsApp (texto) para el cliente sobre el vencimiento de su contrato.
+  private mensajeWhatsappVencimiento(p: {
+    nombre: string;
+    placa: string;
+    servicio?: string;
+    dias: number;
+    fechaVencimiento: string;
+    negocioNombre?: string;
+  }): string {
+    const cuando =
+      p.dias === 0 ? 'vence HOY' : p.dias === 1 ? 'vence MAÑANA' : `vence en ${p.dias} días`;
+    const servicioTxt = p.servicio ? ` (${p.servicio})` : '';
+    const firma = p.negocioNombre ? `\n\n— ${p.negocioNombre}` : '';
+    return (
+      `Hola ${p.nombre} 👋\n\n` +
+      `Te recordamos que el servicio de tu vehículo *${p.placa}*${servicioTxt} ${cuando}.\n` +
+      `📅 Vencimiento: ${p.fechaVencimiento}.\n\n` +
+      `Renuévalo a tiempo para no perder el servicio.` +
+      firma
+    );
   }
 
   // Renderiza y envía el correo de vencimiento con Resend (mismo patrón del proyecto).

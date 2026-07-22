@@ -944,6 +944,8 @@ export class EmpresaService {
       if (dto.planId !== undefined) updateData.planId = dto.planId;
       if (dto.tipoEmpresa !== undefined)
         updateData.tipoEmpresa = dto.tipoEmpresa;
+      if (dto.regimenTributario !== undefined)
+        updateData.regimenTributario = dto.regimenTributario;
       if (dto.departamento !== undefined)
         updateData.departamento = dto.departamento;
       if (dto.provincia !== undefined) updateData.provincia = dto.provincia;

@@ -8,6 +8,7 @@ import { ComprobanteModule } from '../comprobante/comprobante.module';
 import { ResellerModule } from '../reseller/reseller.module';
 import { S3Module } from '../s3/s3.module';
 import { GuiaRemisionModule } from '../guia-remision/guia-remision.module';
+import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { GuiaRemisionModule } from '../guia-remision/guia-remision.module';
     forwardRef(() => GuiaRemisionModule),
     ResellerModule,
     S3Module,
+    WhatsAppModule,
   ],
   providers: [SchedulerService, VerificarPendientesSunatService, PrismaService],
   exports: [VerificarPendientesSunatService],

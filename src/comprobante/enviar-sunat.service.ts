@@ -1757,6 +1757,8 @@ export class EnviarSunatService {
             });
 
             const pdfData = {
+              tipoMoneda: (comp as any)?.tipoMoneda || 'PEN',
+              tipoCambio: (comp as any)?.tipoCambio ?? 1,
               // Empresa
               nombreComercial: (
                 comp.empresa.nombreComercial || comp.empresa.razonSocial
@@ -2824,6 +2826,8 @@ export class EnviarSunatService {
       const fechaEmision = new Date(comp.fechaEmision as any);
 
       const pdfData = {
+        tipoMoneda: (comp as any)?.tipoMoneda || 'PEN',
+        tipoCambio: (comp as any)?.tipoCambio ?? 1,
         nombreComercial: (
           (comp.empresa as any).nombreComercial || comp.empresa.razonSocial
         ).toUpperCase(),

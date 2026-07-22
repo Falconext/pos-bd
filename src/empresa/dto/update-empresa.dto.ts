@@ -32,6 +32,11 @@ export class UpdateEmpresaDto {
   @IsString()
   tipoEmpresa?: 'FORMAL' | 'INFORMAL';
 
+  // Régimen tributario SUNAT. En RUS solo se permiten boletas (no factura).
+  @IsOptional()
+  @IsIn(['GENERAL', 'RER', 'MYPE', 'RUS'])
+  regimenTributario?: 'GENERAL' | 'RER' | 'MYPE' | 'RUS';
+
   @IsOptional()
   @IsString()
   departamento?: string;
