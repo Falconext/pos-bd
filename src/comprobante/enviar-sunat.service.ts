@@ -90,7 +90,11 @@ const VALID_TIPO_OPERACION_CODES = new Set([
   '0202', // Exportación de servicios - Servicios de hospedaje no domiciliados
   '0205', // Exportación de servicios - Servicios a naves y aeronaves de bandera extranjera
   '0206', // Exportación de servicios - Servicios complementarios al transporte de carga
-  '0401', // Operaciones sujetas a detracción
+  '0401', // Ventas no domiciliados que no califican como exportación
+  '1001', // Operación Sujeta a Detracción
+  '1002', // Operación Sujeta a Detracción - Recursos Hidrobiológicos
+  '1003', // Operación Sujeta a Detracción - Servicios de Transporte Pasajeros
+  '1004', // Operación Sujeta a Detracción - Servicios de Transporte Carga
 ]);
 
 // Catálogo 06 SUNAT — tipos de documento de identidad (schemeID UBL)
@@ -303,10 +307,16 @@ export class EnviarSunatService {
 
       // Normalize Catálogo 51 listID — unknown/null codes always fall back to '0101'
       const rawCodigo = comp.tipoOperacion?.codigo;
-      const tipoOperacionListID =
+      let tipoOperacionListID =
         rawCodigo && VALID_TIPO_OPERACION_CODES.has(rawCodigo)
           ? rawCodigo
           : '0101';
+      // Detracción (SPOT): SUNAT exige tipo de operación 1001 en el Catálogo 51 (el código
+      // 0112 que usa el catálogo interno significa "anticipos" para SUNAT). Si el
+      // comprobante lleva detracción y no se eligió un 100x específico, forzar 1001.
+      if (comp.tipoDetraccionId && !tipoOperacionListID.startsWith('10')) {
+        tipoOperacionListID = '1001';
+      }
 
       // Validate early: Boleta (03) only allows 0101 (Venta Interna)
       if (comp.tipoDoc === '03' && tipoOperacionListID !== '0101') {
@@ -367,6 +377,8 @@ export class EnviarSunatService {
           },
           // Placeholders en el orden exacto UBL 2.1 SUNAT.
           // Las asignaciones posteriores actualizan la key en su posición original.
+          // Referencias a comprobantes de anticipo (se rellenan si hay anticipos).
+          'cac:AdditionalDocumentReference': null,
           'cac:Signature': null,
           'cac:AccountingSupplierParty': {
             'cac:Party': {
@@ -434,22 +446,47 @@ export class EnviarSunatService {
           //           → DiscrepancyResponse deben ir ANTES de TaxTotal
           'cac:PaymentMeans': null,
           'cac:PaymentTerms': null,
+          // Anticipos: PrepaidPayment (se rellena si hay anticipos).
+          'cac:PrepaidPayment': null,
           'cac:AllowanceCharge': null,
           'cac:BillingReference': null,
           'cac:DiscrepancyResponse': null,
           'cac:TaxTotal': {
             'cbc:TaxAmount': {
               _attributes: { currencyID: comp.tipoMoneda },
+              // Impuesto del importe a pagar (oneroso). El IGV gratuito va aparte en el
+              // subtotal GRA a nivel de línea/subtotal, no en el total a pagar.
               _text: comp.totalImpuestos,
             },
             'cac:TaxSubtotal': (() => {
               const cur = comp.tipoMoneda;
               const subtotals: any[] = [];
-              // IGV (Gravado) — siempre incluir si hay mtoOperGravadas o si no hay otras ops
+              // Gratuitas (9996 GRA): derivadas de las líneas gratuitas del comprobante.
+              const gratLines = (comp.detalles || []).filter((d: any) =>
+                this.esGratuitoAfe(Number(d.tipAfeIgv)),
+              );
+              const baseGrat =
+                Math.round(
+                  gratLines.reduce(
+                    (s: number, d: any) => s + Number(d.mtoBaseIgv || 0),
+                    0,
+                  ) * 100,
+                ) / 100;
+              const igvGrat =
+                Math.round(
+                  gratLines.reduce(
+                    (s: number, d: any) => s + Number(d.igv || 0),
+                    0,
+                  ) * 100,
+                ) / 100;
+              // IGV (Gravado) — incluir si hay mtoOperGravadas o si no hay NINGUNA otra
+              // operación (exonerada/inafecta/exportación/gratuita). Evita gravada 0 falsa.
               if (
                 Number(comp.mtoOperGravadas) > 0 ||
                 (Number(comp.mtoOperExoneradas ?? 0) === 0 &&
-                  Number(comp.mtoOperInafectas ?? 0) === 0)
+                  Number(comp.mtoOperInafectas ?? 0) === 0 &&
+                  Number(comp.mtoOperExportacion ?? 0) === 0 &&
+                  baseGrat === 0)
               ) {
                 subtotals.push({
                   'cbc:TaxableAmount': {
@@ -509,6 +546,46 @@ export class EnviarSunatService {
                   },
                 });
               }
+              // Exportación (9995)
+              if (Number(comp.mtoOperExportacion ?? 0) > 0) {
+                subtotals.push({
+                  'cbc:TaxableAmount': {
+                    _attributes: { currencyID: cur },
+                    _text: comp.mtoOperExportacion,
+                  },
+                  'cbc:TaxAmount': {
+                    _attributes: { currencyID: cur },
+                    _text: 0,
+                  },
+                  'cac:TaxCategory': {
+                    'cac:TaxScheme': {
+                      'cbc:ID': { _text: '9995' },
+                      'cbc:Name': { _text: 'EXP' },
+                      'cbc:TaxTypeCode': { _text: 'FRE' },
+                    },
+                  },
+                });
+              }
+              // Gratuito (9996 GRA)
+              if (baseGrat > 0) {
+                subtotals.push({
+                  'cbc:TaxableAmount': {
+                    _attributes: { currencyID: cur },
+                    _text: baseGrat,
+                  },
+                  'cbc:TaxAmount': {
+                    _attributes: { currencyID: cur },
+                    _text: igvGrat,
+                  },
+                  'cac:TaxCategory': {
+                    'cac:TaxScheme': {
+                      'cbc:ID': { _text: '9996' },
+                      'cbc:Name': { _text: 'GRA' },
+                      'cbc:TaxTypeCode': { _text: 'FRE' },
+                    },
+                  },
+                });
+              }
               return subtotals;
             })(),
           },
@@ -528,13 +605,17 @@ export class EnviarSunatService {
           },
           'cac:InvoiceLine': comp.detalles.map((d: any, index: number) => {
             const tipAfe = Number(d.tipAfeIgv ?? 10);
+            const esGrat = this.esGratuitoAfe(tipAfe);
             // Catálogo 05 SUNAT: TaxScheme por tipo de afectación IGV
-            const taxScheme =
-              tipAfe === 20
+            const taxScheme = esGrat
+              ? { id: '9996', name: 'GRA', typeCode: 'FRE' } // Gratuito
+              : tipAfe === 20
                 ? { id: '9997', name: 'EXO', typeCode: 'VAT' }
                 : tipAfe === 30
                   ? { id: '9998', name: 'INA', typeCode: 'FRE' }
-                  : { id: '1000', name: 'IGV', typeCode: 'VAT' }; // 10 Gravado
+                  : tipAfe === 40
+                    ? { id: '9995', name: 'EXP', typeCode: 'FRE' } // Exportación
+                    : { id: '1000', name: 'IGV', typeCode: 'VAT' }; // 10 Gravado
 
             return {
               'cbc:ID': { _text: (index + 1).toString() },
@@ -552,7 +633,8 @@ export class EnviarSunatService {
                     _attributes: { currencyID: comp.tipoMoneda },
                     _text: d.mtoPrecioUnitario || d.mtoValorUnitario,
                   },
-                  'cbc:PriceTypeCode': { _text: '01' },
+                  // 02 = valor referencial en operaciones no onerosas (gratuitas).
+                  'cbc:PriceTypeCode': { _text: esGrat ? '02' : '01' },
                 },
               },
               'cac:TaxTotal': {
@@ -572,7 +654,7 @@ export class EnviarSunatService {
                     },
                     'cac:TaxCategory': {
                       'cbc:Percent': {
-                        _text: tipAfe === 10 ? d.porcentajeIgv || 18 : 0,
+                        _text: d.porcentajeIgv ?? (tipAfe === 10 ? 18 : 0),
                       },
                       'cbc:TaxExemptionReasonCode': {
                         _text: String(
@@ -726,6 +808,125 @@ export class EnviarSunatService {
       } else if (comp.tipoDoc === '03') {
         payload.documentBody['cac:PaymentTerms'] = {
           'cbc:PaymentMeansID': { _text: comp.formaPagoTipo || 'Contado' },
+        };
+      }
+
+      // ANTICIPOS (regularización): la factura final referencia los comprobantes de
+      // anticipo previos y descuenta su importe. Estructura calcada de un XML aceptado
+      // por SUNAT (factura de exportación FX02-000029 que regulariza FX02-000024):
+      //   • cac:AdditionalDocumentReference → cada anticipo (DocumentTypeCode Cat.12
+      //     '02' factura / '03' boleta; DocumentStatusCode = correlativo del anticipo;
+      //     IssuerParty con el RUC del emisor). Resuelve SUNAT 3216/3217.
+      //   • cac:PrepaidPayment → ID = mismo correlativo (3216), PaidAmount, PaidDate.
+      //   • cac:AllowanceCharge documentario (Cat.53 '04' gravado / '05' exonerado /
+      //     '06' inafecto/exportación), ChargeIndicator=false, Amount=anticipo,
+      //     BaseAmount=valor de venta. NO reduce la base ni el TaxInclusiveAmount.
+      //   • LegalMonetaryTotal → TaxInclusive/LineExtension COMPLETOS + PrepaidAmount +
+      //     PayableAmount = TaxInclusiveAmount − PrepaidAmount (SUNAT 3280).
+      // Clave: la única resta la hace PrepaidAmount; la base imponible queda intacta
+      // (por eso la contradicción 3277↔3280 no aplica — el XML aceptado no reduce base).
+      const anticiposList: any[] = Array.isArray((comp as any).anticipos)
+        ? (comp as any).anticipos
+        : [];
+      const mtoAnticipos = Number((comp as any).mtoAnticipos || 0);
+      if (anticiposList.length && mtoAnticipos > 0) {
+        const cur = comp.tipoMoneda;
+        const r2 = (n: number) => Math.round(n * 100) / 100;
+        // Razón del descuento global (Catálogo 53) según la afectación de la operación.
+        const grav = Number(comp.mtoOperGravadas || 0);
+        const exo = Number(comp.mtoOperExoneradas || 0);
+        const reasonCode = grav > 0 ? '04' : exo > 0 ? '05' : '06';
+
+        const docRefs: any[] = [];
+        const prepaids: any[] = [];
+        anticiposList.forEach((a: any, i: number) => {
+          const anticipoId = String(i + 1);
+          // Normalizar el correlativo a 8 dígitos para que el ID de la referencia coincida
+          // con el número real del comprobante de anticipo emitido (ej. F0A1-00000031).
+          const numeroAnticipo = String(a.numero).replace(/\D/g, '').padStart(8, '0');
+          const serieNumero = `${a.serie}-${numeroAnticipo}`;
+          // Catálogo 12: '02' Factura por anticipos, '03' Boleta por anticipos.
+          const docTypeCode = String(a.tipoDoc) === '03' ? '03' : '02';
+          docRefs.push({
+            'cbc:ID': { _text: serieNumero },
+            'cbc:DocumentTypeCode': {
+              _attributes: {
+                listAgencyName: 'PE:SUNAT',
+                listName: 'Documento Relacionado',
+                listURI: 'urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo12',
+              },
+              _text: docTypeCode,
+            },
+            'cbc:DocumentStatusCode': {
+              _attributes: { listAgencyName: 'PE:SUNAT', listName: 'Anticipo' },
+              _text: anticipoId,
+            },
+            'cac:IssuerParty': {
+              'cac:PartyIdentification': {
+                'cbc:ID': {
+                  _attributes: {
+                    schemeID: '6',
+                    schemeName: 'Documento de Identidad',
+                    schemeAgencyName: 'PE:SUNAT',
+                    schemeURI:
+                      'urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo06',
+                  },
+                  _text: empresa!.ruc,
+                },
+              },
+            },
+          });
+          const paidDate = String(a.fecha ?? '').substring(0, 10) || issueDate;
+          prepaids.push({
+            'cbc:ID': {
+              _attributes: { schemeAgencyName: 'PE:SUNAT', schemeName: 'Anticipo' },
+              _text: anticipoId,
+            },
+            'cbc:PaidAmount': {
+              _attributes: { currencyID: cur },
+              _text: r2(Number(a.monto)).toFixed(2),
+            },
+            ...(paidDate ? { 'cbc:PaidDate': { _text: paidDate } } : {}),
+          });
+        });
+        payload.documentBody['cac:AdditionalDocumentReference'] = docRefs;
+        payload.documentBody['cac:PrepaidPayment'] = prepaids;
+
+        payload.documentBody['cac:AllowanceCharge'] = [
+          {
+            'cbc:ChargeIndicator': { _text: 'false' },
+            'cbc:AllowanceChargeReasonCode': {
+              _attributes: {
+                listAgencyName: 'PE:SUNAT',
+                listName: 'Cargo/descuento',
+                listURI: 'urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo53',
+              },
+              _text: reasonCode,
+            },
+            'cbc:Amount': {
+              _attributes: { currencyID: cur },
+              _text: r2(mtoAnticipos).toFixed(2),
+            },
+            'cbc:BaseAmount': {
+              _attributes: { currencyID: cur },
+              _text: Number(comp.valorVenta).toFixed(2),
+            },
+          },
+        ];
+
+        const lmt: any = payload.documentBody['cac:LegalMonetaryTotal'];
+        const payable = r2(Number(comp.mtoImpVenta) - mtoAnticipos);
+        payload.documentBody['cac:LegalMonetaryTotal'] = {
+          'cbc:LineExtensionAmount': lmt['cbc:LineExtensionAmount'],
+          'cbc:TaxInclusiveAmount': lmt['cbc:TaxInclusiveAmount'],
+          'cbc:PrepaidAmount': {
+            _attributes: { currencyID: cur },
+            _text: r2(mtoAnticipos).toFixed(2),
+          },
+          'cbc:PayableAmount': {
+            _attributes: { currencyID: cur },
+            _text: payable.toFixed(2),
+          },
         };
       }
 
@@ -960,11 +1161,91 @@ export class EnviarSunatService {
         };
       }
       if (comp.tipoDoc === '08') {
-        const debitNoteTypeCode = {
-          _attributes: { listID: '0101' },
-          _text: '08',
-        };
-        const debitNoteLines = payload.documentBody['cac:InvoiceLine'];
+        // UBL 2.1: DebitNoteType NO define el elemento DebitNoteTypeCode (a diferencia de
+        // CreditNoteType, que sí tiene CreditNoteTypeCode). Emitirlo hace que SUNAT rechace
+        // el XML ("cvc-particle: se encontró cbc:DebitNoteTypeCode..."). El tipo ya queda
+        // determinado por el elemento raíz DebitNote y el motivo va en DiscrepancyResponse.
+        //
+        // La línea de la nota de débito NO puede reutilizar cac:InvoiceLine (usa
+        // cbc:InvoicedQuantity): DebitNoteLine requiere cbc:DebitedQuantity. Se construye
+        // igual que CreditNoteLine, cambiando solo el elemento de cantidad.
+        const debitNoteLines = comp.detalles.map((d: any, index: number) => {
+          const tipAfe = Number(d.tipAfeIgv ?? 10);
+          const taxScheme =
+            tipAfe === 20
+              ? { id: '9997', name: 'EXO', typeCode: 'VAT' }
+              : tipAfe === 30
+                ? { id: '9998', name: 'INA', typeCode: 'FRE' }
+                : { id: '1000', name: 'IGV', typeCode: 'VAT' };
+          return {
+            'cbc:ID': { _text: (index + 1).toString() },
+            'cbc:DebitedQuantity': {
+              _attributes: { unitCode: d.unidad || 'NIU' },
+              _text: d.cantidad,
+            },
+            'cbc:LineExtensionAmount': {
+              _attributes: { currencyID: comp.tipoMoneda },
+              _text: d.mtoValorVenta,
+            },
+            'cac:PricingReference': {
+              'cac:AlternativeConditionPrice': {
+                'cbc:PriceAmount': {
+                  _attributes: { currencyID: comp.tipoMoneda },
+                  _text: d.mtoPrecioUnitario,
+                },
+                'cbc:PriceTypeCode': { _text: '01' },
+              },
+            },
+            'cac:TaxTotal': {
+              'cbc:TaxAmount': {
+                _attributes: { currencyID: comp.tipoMoneda },
+                _text: d.igv,
+              },
+              'cac:TaxSubtotal': [
+                {
+                  'cbc:TaxableAmount': {
+                    _attributes: { currencyID: comp.tipoMoneda },
+                    _text: d.mtoBaseIgv,
+                  },
+                  'cbc:TaxAmount': {
+                    _attributes: { currencyID: comp.tipoMoneda },
+                    _text: d.igv,
+                  },
+                  'cac:TaxCategory': {
+                    'cbc:Percent': {
+                      _text: tipAfe === 10 ? d.porcentajeIgv || 18 : 0,
+                    },
+                    'cbc:TaxExemptionReasonCode': {
+                      _text: String(d.tipAfeIgv || 10),
+                    },
+                    'cac:TaxScheme': {
+                      'cbc:ID': { _text: taxScheme.id },
+                      'cbc:Name': { _text: taxScheme.name },
+                      'cbc:TaxTypeCode': { _text: taxScheme.typeCode },
+                    },
+                  },
+                },
+              ],
+            },
+            'cac:Item': {
+              'cbc:Description': { _text: limpiarTexto(d.descripcion) },
+            },
+            'cac:Price': {
+              'cbc:PriceAmount': {
+                _attributes: { currencyID: comp.tipoMoneda },
+                _text: d.mtoValorUnitario,
+              },
+            },
+          };
+        });
+
+        // Note como array con languageLocaleID (igual que la nota de crédito).
+        payload.documentBody['cbc:Note'] = [
+          {
+            _text: comp.leyendas?.[0]?.value || '',
+            _attributes: { languageLocaleID: '1000' },
+          },
+        ];
         const requestedMonetaryTotal = {
           'cbc:PayableAmount': {
             _attributes: { currencyID: comp.tipoMoneda },
@@ -981,7 +1262,6 @@ export class EnviarSunatService {
           'cbc:ID': dn['cbc:ID'],
           'cbc:IssueDate': dn['cbc:IssueDate'],
           'cbc:IssueTime': dn['cbc:IssueTime'],
-          'cbc:DebitNoteTypeCode': debitNoteTypeCode,
           'cbc:Note': dn['cbc:Note'],
           'cbc:DocumentCurrencyCode': dn['cbc:DocumentCurrencyCode'],
           'cac:DiscrepancyResponse': dn['cac:DiscrepancyResponse'],
@@ -2134,6 +2414,14 @@ export class EnviarSunatService {
     });
   }
 
+  // Afectaciones gratuitas Catálogo 07 (11-16 gravado, 21 exonerado, 31-37 inafecto):
+  // se emiten con tributo GRA (9996), precio de venta 0 y valor referencial.
+  private esGratuitoAfe(code: number): boolean {
+    return (
+      (code >= 11 && code <= 16) || code === 21 || (code >= 31 && code <= 37)
+    );
+  }
+
   private resolveUblRootName(
     tipoDoc: string,
   ): 'Invoice' | 'CreditNote' | 'DebitNote' {
@@ -2303,7 +2591,7 @@ export class EnviarSunatService {
       },
       codigo_condicion_de_pago: comp.formaPagoTipo === 'Credito' ? '02' : '01',
       totales: {
-        total_exportacion: 0,
+        total_exportacion: Number(comp.mtoOperExportacion || 0),
         total_operaciones_gravadas: Number(comp.mtoOperGravadas || 0),
         total_operaciones_inafectas: Number(comp.mtoOperInafectas || 0),
         total_operaciones_exoneradas: Number(comp.mtoOperExoneradas || 0),

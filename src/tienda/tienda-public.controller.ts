@@ -26,6 +26,7 @@ export class TiendaPublicController {
     @Query('maxPrice') maxPrice = '',
     @Query('brand') brand = '',
     @Query('wholesale') wholesale = '',
+    @Query('atributos') atributos = '',
   ) {
     const min =
       minPrice && !isNaN(Number(minPrice)) ? Number(minPrice) : undefined;
@@ -43,6 +44,7 @@ export class TiendaPublicController {
       max,
       brand,
       isWholesale,
+      atributos,
     );
   }
 

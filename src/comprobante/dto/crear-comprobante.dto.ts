@@ -88,6 +88,44 @@ class DetalleDto {
 
   @IsOptional()
   numerosSerie?: string | string[];
+
+  // Afectación IGV por ítem (Catálogo 07): '10' gravado, '20' exonerado, '30' inafecto,
+  // '40' exportación. Se usa sobre todo para ítems libres (sin productoId), p.ej. una línea
+  // de "ANTICIPO / ADELANTO DEL PEDIDO" que debe emitirse como exportación (sin IGV). Para
+  // productos, prevalece cuando se envía; si no, se usa la afectación del propio producto.
+  // Nota: si la operación (Catálogo 51) es de exportación, TODAS las líneas se fuerzan a 40.
+  @IsOptional()
+  @IsString()
+  tipoAfectacionIGV?: string;
+}
+
+// Referencia a un comprobante de anticipo previamente emitido, a descontar del total.
+class AnticipoDto {
+  @IsString()
+  tipoDoc: string; // '01' factura de anticipo, '03' boleta de anticipo
+
+  @IsString()
+  serie: string;
+
+  @IsString()
+  numero: string;
+
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.01)
+  monto: number;
+
+  // Fecha de emisión/pago del comprobante de anticipo (YYYY-MM-DD). Se emite como
+  // cbc:PaidDate del PrepaidPayment; si no se envía, se usa la fecha de la factura.
+  @IsOptional()
+  @IsString()
+  fecha?: string;
+
+  // Moneda del comprobante de anticipo ('PEN'/'USD'). Opcional; si se envía, debe
+  // coincidir con la moneda del comprobante que lo regulariza (validado en el service).
+  @IsOptional()
+  @IsString()
+  moneda?: string;
 }
 
 export class CrearComprobanteDto {
@@ -278,6 +316,13 @@ export class CrearComprobanteDto {
   @ValidateNested({ each: true })
   @Type(() => DetalleDto)
   detalles: DetalleDto[];
+
+  // Anticipos SUNAT a descontar del total de esta factura.
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AnticipoDto)
+  anticipos?: AnticipoDto[];
 
   // Conversión desde informal (NV, TICKET, etc.) al formal.
   // Cuando se provee, el stock NO se descuenta porque ya fue descontado al crear el informal.

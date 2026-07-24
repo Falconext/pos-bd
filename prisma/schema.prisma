@@ -741,7 +741,12 @@ model Comprobante {
   motivoId                Int?
   mtoOperInafectas        Float                @default(0)
   mtoOperExoneradas       Float                @default(0)
+  mtoOperExportacion      Float                @default(0)
   mtoDescuentoGlobal      Float                @default(0)
+  // Anticipos SUNAT: monto total de anticipos descontados y las referencias a los
+  // comprobantes de anticipo ([{ tipoDoc, serie, numero, monto }]).
+  mtoAnticipos            Float                @default(0)
+  anticipos               Json?
   sunatCdrResponse        String?
   sunatCdrZip             String?
   sunatErrorMsg           String?

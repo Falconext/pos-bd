@@ -336,6 +336,7 @@ export class PdfGeneratorService {
     mtoIGV: string;
     mtoOperExoneradas?: string;
     mtoOperInafectas?: string;
+    mtoOperExportacion?: string;
     mtoImpVenta: string;
     descuento?: string;
     totalEnLetras?: string;
@@ -489,6 +490,7 @@ export class PdfGeneratorService {
     subTotal: string;
     mtoOperExoneradas?: string;
     mtoOperInafectas?: string;
+    mtoOperExportacion?: string;
     mtoImpVenta: string;
     descuento?: string;
     totalEnLetras?: string;

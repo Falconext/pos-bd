@@ -398,11 +398,15 @@ export class SunatGuiaService {
                 'cbc:Line': { _text: guia.partidaDireccion },
               },
             },
+            // cac:DespatchParty es de tipo PartyType: sus hijos (PartyIdentification,
+            // PartyLegalEntity) van directos, SIN el wrapper cac:Party (que sí aplica a
+            // DeliveryCustomerParty/DespatchSupplierParty). Con el wrapper SUNAT rechaza
+            // por XSD (0306: "Element cac:Party is not expected").
             'cac:DespatchParty': this.buildPartyCac(
               '6',
               greTRemitenteRuc,
               greTRemitenteNombre,
-            ),
+            )['cac:Party'],
           },
         },
         'cac:TransportHandlingUnit':

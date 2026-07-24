@@ -553,6 +553,90 @@ export class ContratoVehicularService {
       }
     }
 
+    // Sincronizar los vehículos (unidades) si se enviaron: permite agregar, quitar o
+    // ajustar el monto de placas de un contrato existente (p.ej. reflejar que una placa
+    // renovó). Antes esto estaba bloqueado y el update ignoraba las unidades.
+    const items = (
+      dto.vehiculos?.length
+        ? dto.vehiculos
+        : dto.vehiculoId != null
+          ? [{ vehiculoId: dto.vehiculoId, montoAnual: dto.montoAnual }]
+          : []
+    ).map((v) => ({
+      vehiculoId: Number(v.vehiculoId),
+      montoAnual: v.montoAnual != null ? Number(v.montoAnual) : null,
+    }));
+
+    if (items.length) {
+      // Deduplica por si se repite un vehículo.
+      const vistos = new Set<number>();
+      const unidades = items.filter((v) => {
+        if (vistos.has(v.vehiculoId)) return false;
+        vistos.add(v.vehiculoId);
+        return true;
+      });
+      const ids = unidades.map((v) => v.vehiculoId);
+
+      // Todos deben pertenecer a la empresa.
+      const vehiculos = await this.prisma.vehiculo.findMany({
+        where: { id: { in: ids }, empresaId },
+        select: { id: true, placa: true },
+      });
+      if (vehiculos.length !== ids.length) {
+        const encontrados = new Set(vehiculos.map((v) => v.id));
+        const faltan = ids.filter((vid) => !encontrados.has(vid));
+        throw new NotFoundException(
+          `Vehículo(s) no encontrado(s): ${faltan.join(', ')}`,
+        );
+      }
+
+      // No pueden estar en OTRO contrato activo con el mismo servicio (se excluye este).
+      const productoIdEfectivo =
+        dto.productoId !== undefined ? dto.productoId : contrato.productoId;
+      const activos = await this.prisma.contratoVehicular.findMany({
+        where: {
+          empresaId,
+          id: { not: id },
+          estado: { in: ['VIGENTE', 'POR_VENCER'] },
+          productoId: productoIdEfectivo ?? null,
+          OR: [
+            { vehiculoId: { in: ids } },
+            { unidades: { some: { vehiculoId: { in: ids } } } },
+          ],
+        },
+        include: { unidades: { select: { vehiculoId: true } } },
+      });
+      if (activos.length) {
+        const ocupados = new Set<number>();
+        for (const c of activos) {
+          ocupados.add(c.vehiculoId);
+          for (const u of c.unidades) ocupados.add(u.vehiculoId);
+        }
+        const placas = vehiculos
+          .filter((v) => ocupados.has(v.id))
+          .map((v) => v.placa);
+        throw new ConflictException(
+          `Ya existe un contrato activo con este mismo servicio para: ${placas.join(', ')}. Elige otro servicio, o renueva/cancela el contrato actual.`,
+        );
+      }
+
+      // Reemplaza el set de unidades: borra las actuales y crea las nuevas.
+      data.vehiculoId = unidades[0].vehiculoId; // principal = primero
+      data.unidades = {
+        deleteMany: {},
+        create: unidades.map((v) => ({
+          vehiculoId: v.vehiculoId,
+          montoAnual: v.montoAnual,
+        })),
+      };
+
+      // Si no se envió un monto total explícito, recalcúlalo desde las unidades.
+      if (dto.montoAnual === undefined) {
+        const suma = unidades.reduce((acc, v) => acc + (v.montoAnual ?? 0), 0);
+        if (suma > 0) data.montoAnual = suma;
+      }
+    }
+
     return this.prisma.contratoVehicular.update({
       where: { id },
       data,

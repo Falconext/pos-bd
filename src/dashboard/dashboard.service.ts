@@ -562,7 +562,7 @@ export class DashboardService {
       empresaId,
       fechaInicio,
       fechaFin,
-      4,
+      5,
       sedeId,
     );
 

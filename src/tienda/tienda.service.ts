@@ -1147,6 +1147,7 @@ export class TiendaService {
     maxPrice?: number,
     brand = '',
     wholesale = false,
+    atributos = '',
   ) {
     const empresa = await this.prisma.empresa.findUnique({
       where: { slugTienda: slug },
@@ -1369,6 +1370,35 @@ export class TiendaService {
         }
       }
 
+      // Filtro por atributos técnicos (facetas dinámicas: procesador, memoriaRam, etc.)
+      // Formato: "procesador:i5|i7;memoriaRam:8GB" → AND entre claves, OR dentro de cada clave.
+      // Usa contains sobre el JSON `atributosTecnicos` (valores en texto libre).
+      if (atributos && atributos.trim()) {
+        const grupos = atributos
+          .split(';')
+          .map((g) => g.trim())
+          .filter(Boolean);
+        for (const grupo of grupos) {
+          const idx = grupo.indexOf(':');
+          if (idx === -1) continue;
+          const key = grupo.slice(0, idx).trim();
+          const tokens = grupo
+            .slice(idx + 1)
+            .split('|')
+            .map((t) => t.trim())
+            .filter(Boolean);
+          if (!key || tokens.length === 0) continue;
+          const orConds = tokens.map((tok) => ({
+            atributosTecnicos: {
+              path: [key],
+              string_contains: tok,
+            },
+          }));
+          if (!wherePublicados.AND) wherePublicados.AND = [];
+          wherePublicados.AND.push({ OR: orConds });
+        }
+      }
+
       const countPublicados = await this.prisma.producto.count({
         where: wherePublicados,
       });
@@ -1376,6 +1406,7 @@ export class TiendaService {
         !!term ||
         !!category?.trim() ||
         !!brand?.trim() ||
+        !!atributos?.trim() ||
         minPrice !== undefined ||
         maxPrice !== undefined ||
         wholesale;

@@ -185,14 +185,22 @@ export class ComprobanteService {
     usuarioId?: number;
     medioPago: string;
     paymentDetails?: any;
+    splitPayments?: any[];
     montoPagado: number;
     documento: string;
     fecha?: Date;
   }) {
     const montoPagado = this.round2(Number(params.montoPagado || 0));
     if (montoPagado <= 0) return;
+    // El desglose de pago (split) puede venir como campo top-level `splitPayments` del DTO
+    // o anidado en `paymentDetails`. Fusionar el top-level cuando no venga anidado, para no
+    // perderlo y registrar un pago único por `medioPago` en lugar del desglose real.
+    const source =
+      params.splitPayments?.length && !params.paymentDetails?.splitPayments
+        ? { ...(params.paymentDetails || {}), splitPayments: params.splitPayments }
+        : params.paymentDetails;
     const lines = await this.validarDetallePago(
-      params.paymentDetails,
+      source,
       params.medioPago,
       montoPagado,
       params.empresaId,
@@ -1313,7 +1321,35 @@ export class ComprobanteService {
     }
   }
 
-  private async cargarProductosYDetalles(detalles: any[], empresaId: number) {
+  // Afectaciones gratuitas Catálogo 07: 11-16 gravado gratuito, 21 exonerado gratuito,
+  // 31-37 inafecto gratuito. Se emiten con valor referencial, precio de venta 0, tributo
+  // GRA (9996) y NO suman al importe a pagar.
+  private esGratuito(code: number): boolean {
+    return (
+      (code >= 11 && code <= 16) || code === 21 || (code >= 31 && code <= 37)
+    );
+  }
+
+  private async cargarProductosYDetalles(
+    detalles: any[],
+    empresaId: number,
+    tipoOperacionId?: number,
+  ) {
+    // Si la operación es de EXPORTACIÓN (Catálogo 51: 0200/0201/0202…), todas las
+    // líneas se tratan como exportación (afectación 40, sin IGV) sin importar cómo
+    // esté marcado el producto. La afectación depende de la operación, no del ítem.
+    let esExportacion = false;
+    if (tipoOperacionId != null) {
+      const to = await this.prisma.tipoOperacion.findUnique({
+        where: { id: tipoOperacionId },
+        select: { codigo: true },
+      });
+      const codigo = to?.codigo ?? '';
+      // Exportación de servicios (0200/0201/0202/0205/0206) empieza con '02'; exportación
+      // de BIENES (0102) y exportación con anticipos (0113) NO, hay que detectarlas aparte.
+      esExportacion =
+        codigo.startsWith('02') || codigo === '0102' || codigo === '0113';
+    }
     // Separar ítems con producto de ítems de servicio libre (sin productoId, ej. costo de envío)
     const productDetalles = detalles.filter((d) => d.productoId != null);
     const serviceDetalles = detalles.filter((d) => d.productoId == null);
@@ -1385,6 +1421,7 @@ export class ComprobanteService {
     let mtoOperGravadas = 0;
     let mtoOpExoneradas = 0;
     let mtoOpInafectas = 0;
+    let mtoOperExportacion = 0;
     let totalIGV = 0;
     const detalleFinal = detalles.map((item: any) => {
       // Ítem de servicio libre (sin productoId): ej. costo de envío al cliente
@@ -1394,26 +1431,70 @@ export class ComprobanteService {
         const unidadLibre = String(item.unidadVenta || item.unidad || 'ZZ')
           .trim()
           .toUpperCase();
-        const igvPct = 18;
-        const valorUnitario = this.round2(precioConIgv / 1.18);
-        const igvMonto = this.round2(
-          precioConIgv * cantidad - valorUnitario * cantidad,
-        );
+        // Afectación del ítem libre: si la operación es exportación → 40; si no, respeta
+        // lo enviado (p.ej. una línea de anticipo/adelanto exonerado o de exportación) y
+        // por defecto gravado (10). Esto permite emitir "ANTICIPO DEL PEDIDO" sin IGV.
+        const tipAfeIgvLibre = esExportacion
+          ? 40
+          : parseInt(String(item.tipoAfectacionIGV ?? '10'), 10);
+        let igvPct: number;
+        let valorUnitario: number;
+        let igvMonto: number;
+        if (tipAfeIgvLibre === 20) {
+          igvPct = 0;
+          valorUnitario = this.round2(precioConIgv);
+          igvMonto = 0;
+          mtoOpExoneradas += precioConIgv * cantidad;
+        } else if (tipAfeIgvLibre === 30) {
+          igvPct = 0;
+          valorUnitario = this.round2(precioConIgv);
+          igvMonto = 0;
+          mtoOpInafectas += precioConIgv * cantidad;
+        } else if (tipAfeIgvLibre === 40) {
+          igvPct = 0;
+          valorUnitario = this.round2(precioConIgv);
+          igvMonto = 0;
+          mtoOperExportacion += precioConIgv * cantidad;
+        } else if (this.esGratuito(tipAfeIgvLibre)) {
+          // Gratuito: precioConIgv es el VALOR REFERENCIAL. Gravado gratuito (11-16) lleva
+          // IGV referencial; exonerado/inafecto gratuito (21/31-37) no. No suma a ningún
+          // balde onerable (queda fuera del importe a pagar).
+          const grav = tipAfeIgvLibre >= 11 && tipAfeIgvLibre <= 16;
+          igvPct = grav ? 18 : 0;
+          valorUnitario = grav
+            ? this.round2(precioConIgv / 1.18)
+            : this.round2(precioConIgv);
+          igvMonto = grav
+            ? this.round2(precioConIgv * cantidad - valorUnitario * cantidad)
+            : 0;
+        } else {
+          igvPct = 18;
+          valorUnitario = this.round2(precioConIgv / 1.18);
+          igvMonto = this.round2(
+            precioConIgv * cantidad - valorUnitario * cantidad,
+          );
+          mtoOperGravadas += valorUnitario * cantidad;
+          totalIGV += igvMonto;
+        }
+        const esGratLibre = this.esGratuito(tipAfeIgvLibre);
         const mtoValorVenta = this.round2(valorUnitario * cantidad);
-        mtoOperGravadas += valorUnitario * cantidad;
-        totalIGV += igvMonto;
         return {
           productoId: null,
           unidad: unidadLibre || 'ZZ',
           descripcion: String(item.descripcion).trim(),
           cantidad,
-          mtoPrecioUnitario: this.round2(precioConIgv),
-          mtoValorUnitario: valorUnitario,
+          // Valor referencial UNITARIO (sin IGV) para gratuitas → debe cuadrar con el
+          // LineExtensionAmount (base). Para líneas onerosas, precio de venta incl. IGV.
+          mtoPrecioUnitario: esGratLibre
+            ? this.round2(valorUnitario)
+            : this.round2(precioConIgv),
+          // Precio de venta: 0 en gratuitas.
+          mtoValorUnitario: esGratLibre ? 0 : valorUnitario,
           mtoValorVenta,
           mtoBaseIgv: mtoValorVenta,
           porcentajeIgv: igvPct,
           igv: igvMonto,
-          tipAfeIgv: 10,
+          tipAfeIgv: tipAfeIgvLibre,
           totalImpuestos: igvMonto,
           mtoDescuento: 0,
         };
@@ -1433,7 +1514,9 @@ export class ComprobanteService {
         item.nuevoValorUnitario != null
           ? Number(item.nuevoValorUnitario)
           : Number((prod as any).precioUnitario);
-      const tipAfeIgv = parseInt((prod as any).tipoAfectacionIGV ?? '10', 10);
+      const tipAfeIgv = esExportacion
+        ? 40
+        : parseInt((prod as any).tipoAfectacionIGV ?? '10', 10);
 
       let valorUnitario: number;
       let igvMonto: number;
@@ -1459,6 +1542,19 @@ export class ComprobanteService {
         valorUnitario = precioConIgv;
         igvMonto = 0;
         mtoOpInafectas += precioConIgv * cantidad;
+      } else if (tipAfeIgv === 40) {
+        // Exportación (Catálogo 07 código 40) — sin IGV, va al balde de exportación.
+        igvPct = 0;
+        valorUnitario = precioConIgv;
+        igvMonto = 0;
+        mtoOperExportacion += precioConIgv * cantidad;
+      } else if (this.esGratuito(tipAfeIgv)) {
+        // Gratuito: precioConIgv es el VALOR REFERENCIAL. Gravado gratuito (11-16) lleva IGV
+        // referencial; exonerado/inafecto gratuito no. No suma a ningún balde onerable.
+        const grav = tipAfeIgv >= 11 && tipAfeIgv <= 16;
+        igvPct = grav ? Number((prod as any).igvPorcentaje) || 18 : 0;
+        valorUnitario = grav ? precioConIgv / (1 + igvPct / 100) : precioConIgv;
+        igvMonto = grav ? precioConIgv * cantidad - valorUnitario * cantidad : 0;
       } else {
         // Fallback: tratar como gravado
         igvPct = Number((prod as any).igvPorcentaje) || 18;
@@ -1468,6 +1564,7 @@ export class ComprobanteService {
         totalIGV += igvMonto;
       }
 
+      const esGratProd = this.esGratuito(tipAfeIgv);
       const mtoValorVenta = valorUnitario * cantidad;
       // Descuento por línea a mostrar en el ticket (monto bruto, incl. IGV). precioConIgv ya
       // viene con el descuento aplicado; precioUnitarioOriginal es el precio de lista. No
@@ -1485,8 +1582,10 @@ export class ComprobanteService {
         unidad: item.unidadVenta || (prod as any).unidadMedida.codigo,
         descripcion,
         cantidad,
-        mtoPrecioUnitario: this.round2(precioConIgv),
-        mtoValorUnitario: this.round2(valorUnitario),
+        mtoPrecioUnitario: esGratProd
+          ? this.round2(valorUnitario)
+          : this.round2(precioConIgv),
+        mtoValorUnitario: esGratProd ? 0 : this.round2(valorUnitario),
         mtoValorVenta: this.round2(mtoValorVenta),
         mtoBaseIgv: this.round2(mtoValorVenta),
         porcentajeIgv: igvPct,
@@ -1510,6 +1609,7 @@ export class ComprobanteService {
       mtoOperGravadas: this.round2(mtoOperGravadas),
       mtoOpExoneradas: this.round2(mtoOpExoneradas),
       mtoOpInafectas: this.round2(mtoOpInafectas),
+      mtoOperExportacion: this.round2(mtoOperExportacion),
       totalIGV: this.round2(totalIGV),
     };
   }
@@ -2035,6 +2135,7 @@ export class ComprobanteService {
       retencionPorcentaje,
       comprobanteOrigenId,
       paymentDetails,
+      splitPayments,
       fechaVencimientoCredito,
     } = input;
 
@@ -2119,13 +2220,71 @@ export class ComprobanteService {
       throw new BadRequestException('clienteId es requerido');
     }
 
+    // Descuento global en factura/boleta: SUNAT no admite un descuento global "suelto" sin
+    // AllowanceCharge, así que se prorratea bajando el valor unitario de cada línea (igual
+    // que hace el POS). Base, IGV y total quedan consistentes y el XML es válido; el monto
+    // se persiste como mtoDescuentoGlobal para mostrarlo en el ticket.
+    const descuentoGlobalFormal = this.round2(
+      Math.max(0, Number(montoDescuentoGlobal ?? 0)),
+    );
+    let detallesEfectivos = detalles;
+    if (descuentoGlobalFormal > 0 && Array.isArray(detalles) && detalles.length) {
+      const totalBruto = this.round2(
+        detalles.reduce(
+          (s: number, d: any) =>
+            s + Number(d.nuevoValorUnitario || 0) * Number(d.cantidad || 0),
+          0,
+        ),
+      );
+      const desc = Math.min(descuentoGlobalFormal, totalBruto);
+      const factor = totalBruto > 0 ? (totalBruto - desc) / totalBruto : 1;
+      detallesEfectivos = detalles.map((d: any) => ({
+        ...d,
+        nuevoValorUnitario: Number(d.nuevoValorUnitario || 0) * factor,
+      }));
+    }
+
     const {
       detalleFinal,
       mtoOperGravadas,
       mtoOpExoneradas,
       mtoOpInafectas,
+      mtoOperExportacion,
       totalIGV,
-    } = await this.cargarProductosYDetalles(detalles, empresaId);
+    } = await this.cargarProductosYDetalles(
+      detallesEfectivos,
+      empresaId,
+      tipoOperacionId,
+    );
+
+    // Detracción (SPOT): SUNAT emite la operación como Tipo 1001 y exige Código de Producto
+    // SUNAT (UNSPSC) en cada línea. Sin él (ítem libre o producto sin código) SUNAT rechaza
+    // con el error críptico 3181; se valida temprano con un mensaje claro.
+    if ((input as any).tipoDetraccionId) {
+      if (detalles.some((d: any) => d.productoId == null)) {
+        throw new BadRequestException(
+          'Las operaciones con detracción no admiten ítems libres: cada línea debe ser un producto con Código de Producto SUNAT (UNSPSC).',
+        );
+      }
+      const prodsDet = await this.prisma.producto.findMany({
+        where: {
+          id: { in: detalles.map((d: any) => Number(d.productoId)) },
+          empresaId,
+        },
+        select: { descripcion: true, codProdSunat: true },
+      });
+      const sinCodigo = prodsDet.filter(
+        (p) => !String(p.codProdSunat ?? '').trim(),
+      );
+      if (sinCodigo.length) {
+        throw new BadRequestException(
+          `Para emitir con detracción, estos productos necesitan Código de Producto SUNAT (UNSPSC): ${sinCodigo
+            .map((p) => p.descripcion)
+            .join(', ')}.`,
+        );
+      }
+    }
+
     await this.validarSeriesComprobante(
       detalleFinal,
       empresaId,
@@ -2158,10 +2317,56 @@ export class ComprobanteService {
     }
 
     const valorVenta = this.round2(
-      mtoOperGravadas + mtoOpExoneradas + mtoOpInafectas,
+      mtoOperGravadas + mtoOpExoneradas + mtoOpInafectas + mtoOperExportacion,
     );
     const subTotal = this.round2(valorVenta + totalIGV);
     const mtoImpVenta = subTotal;
+
+    // Anticipos SUNAT: se descuentan del total (PayableAmount en el UBL). mtoImpVenta
+    // se mantiene como el total completo (TaxInclusiveAmount).
+    const anticiposInput = Array.isArray((input as any).anticipos)
+      ? (input as any).anticipos
+      : [];
+    const mtoAnticipos = this.round2(
+      anticiposInput.reduce((s: number, a: any) => s + Number(a?.monto || 0), 0),
+    );
+
+    // El total de anticipos no puede superar el importe del comprobante: si lo supera,
+    // el PayableAmount saldría negativo y SUNAT lo rechaza (error 2062) dejando el
+    // comprobante fallido y consumiendo correlativo. Validar temprano con mensaje claro.
+    if (mtoAnticipos > 0 && mtoAnticipos > mtoImpVenta) {
+      throw new BadRequestException(
+        `El total de anticipos (${mtoAnticipos}) no puede superar el importe del comprobante (${mtoImpVenta}).`,
+      );
+    }
+
+    // Todos los anticipos deben estar en la misma moneda que el comprobante: sus importes
+    // se emiten con la moneda de la factura (sin conversión), así que mezclar monedas
+    // corrompería los montos silenciosamente.
+    const monedaComprobante = String((input as any).tipoMoneda || 'PEN').toUpperCase();
+    if (
+      anticiposInput.some(
+        (a: any) => a?.moneda && String(a.moneda).toUpperCase() !== monedaComprobante,
+      )
+    ) {
+      throw new BadRequestException(
+        `Los anticipos deben estar en la misma moneda del comprobante (${monedaComprobante}).`,
+      );
+    }
+
+    // Regularización de anticipos: validado y aceptado por SUNAT para operaciones SIN IGV
+    // (exportación/exonerado/inafecto): la base no se reduce y el descuento lo hace
+    // PrepaidAmount. En operaciones GRAVADAS con IGV, SUNAT (error 3277) exige reducir la
+    // base imponible por el anticipo, mecánica distinta y aún no validada con un XML
+    // aceptado de referencia. Se bloquea con un mensaje claro para no emitir un documento
+    // que SUNAT rechazaría de forma críptica.
+    if (mtoAnticipos > 0 && mtoOperGravadas > 0) {
+      throw new BadRequestException(
+        'La regularización de anticipos está disponible por ahora solo para operaciones sin IGV ' +
+          '(exportación, exonerado o inafecto). Para ventas gravadas con IGV, emite el comprobante ' +
+          'sin el descuento de anticipo o contáctanos para habilitar ese caso.',
+      );
+    }
 
     const fecha = new Date(fechaEmision);
 
@@ -2232,6 +2437,7 @@ export class ComprobanteService {
       mtoOperGravadas,
       mtoOperInafectas: mtoOpInafectas,
       mtoOperExoneradas: mtoOpExoneradas,
+      mtoOperExportacion,
       medioPago,
       paymentDetails: paymentDetails ?? Prisma.JsonNull,
       mtoIGV: totalIGV,
@@ -2239,6 +2445,9 @@ export class ComprobanteService {
       totalImpuestos: totalIGV,
       subTotal,
       mtoImpVenta,
+      mtoDescuentoGlobal: descuentoGlobalFormal > 0 ? descuentoGlobalFormal : 0,
+      mtoAnticipos,
+      anticipos: anticiposInput.length ? anticiposInput : Prisma.JsonNull,
       vuelto: vuelto != null ? Number(vuelto) : 0,
       estadoEnvioSunat: 'PENDIENTE' as string,
       estadoPago: estadoPagoInicial,
@@ -2287,6 +2496,7 @@ export class ComprobanteService {
         usuarioId,
         medioPago,
         paymentDetails,
+        splitPayments,
         montoPagado: mtoImpVenta,
         documento: `${comprobante.serie}-${comprobante.correlativo}`,
         fecha,
@@ -2736,12 +2946,14 @@ export class ComprobanteService {
         const qty = item.cantidad;
         const newInclUnit = this.round2(item.nuevoValorUnitario);
         const igvPct = Number(orig.porcentajeIgv) || 18;
-        const valorUnitario = newInclUnit / (1 + igvPct / 100);
-        const mtoValorVenta = valorUnitario * item.cantidad;
-        const igvMonto = newInclUnit * qty - mtoValorVenta;
+        // Redondear a 2 decimales antes de acumular: sin esto la base sale con >2 decimales
+        // (ej. 84.74576...) y SUNAT rechaza el TaxableAmount (Tributo 1000 error 2999).
+        const valorUnitario = this.round2(newInclUnit / (1 + igvPct / 100));
+        const mtoValorVenta = this.round2(valorUnitario * qty);
+        const igvMonto = this.round2(newInclUnit * qty - mtoValorVenta);
 
-        mtoOperGravadas += mtoValorVenta;
-        totalIGV += igvMonto;
+        mtoOperGravadas = this.round2(mtoOperGravadas + mtoValorVenta);
+        totalIGV = this.round2(totalIGV + igvMonto);
 
         detalleFinal.push({
           productoId: orig.productoId,
@@ -2930,6 +3142,7 @@ export class ComprobanteService {
       fechaVencimientoCredito,
       cuotas,
       paymentDetails,
+      splitPayments,
       montoDescuentoGlobal,
       tipoDetraccionId,
       medioPagoDetraccionId,
@@ -2962,15 +3175,16 @@ export class ComprobanteService {
       mtoOperGravadas,
       mtoOpExoneradas,
       mtoOpInafectas,
+      mtoOperExportacion,
       totalIGV,
-    } = await this.cargarProductosYDetalles(detalles, empresaId);
+    } = await this.cargarProductosYDetalles(detalles, empresaId, tipoOperacionId);
     await this.validarSeriesComprobante(
       detalleFinal,
       empresaId,
       tipoDoc !== 'COT',
     );
     const valorVenta = this.round2(
-      mtoOperGravadas + mtoOpExoneradas + mtoOpInafectas,
+      mtoOperGravadas + mtoOpExoneradas + mtoOpInafectas + mtoOperExportacion,
     );
     const subTotal = this.round2(valorVenta + totalIGV);
     const descuentoGlobal = this.round2(
@@ -3105,6 +3319,7 @@ export class ComprobanteService {
       mtoOperGravadas,
       mtoOperInafectas: mtoOpInafectas,
       mtoOperExoneradas: mtoOpExoneradas,
+      mtoOperExportacion,
       medioPago: medioPagoValido,
       paymentDetails: paymentDetails ?? Prisma.JsonNull,
       mtoIGV: totalIGV,
@@ -3172,6 +3387,7 @@ export class ComprobanteService {
         usuarioId,
         medioPago: medioPagoValido,
         paymentDetails,
+        splitPayments,
         montoPagado: montoPagadoInicial,
         documento: `${tipoDoc}-${comp.serie}-${comp.correlativo}`,
         fecha,
@@ -3267,10 +3483,11 @@ export class ComprobanteService {
       mtoOperGravadas,
       mtoOpExoneradas,
       mtoOpInafectas,
+      mtoOperExportacion,
       totalIGV,
-    } = await this.cargarProductosYDetalles(detalles, empresaId);
+    } = await this.cargarProductosYDetalles(detalles, empresaId, tipoOperacionId);
     const valorVenta = this.round2(
-      mtoOperGravadas + mtoOpExoneradas + mtoOpInafectas,
+      mtoOperGravadas + mtoOpExoneradas + mtoOpInafectas + mtoOperExportacion,
     );
     const subTotal = this.round2(valorVenta + totalIGV);
     const mtoImpVenta = subTotal;
@@ -3299,6 +3516,7 @@ export class ComprobanteService {
           mtoOperGravadas,
           mtoOperInafectas: mtoOpInafectas,
           mtoOperExoneradas: mtoOpExoneradas,
+          mtoOperExportacion,
           mtoIGV: totalIGV,
           valorVenta,
           totalImpuestos: totalIGV,
@@ -3963,6 +4181,7 @@ export class ComprobanteService {
         2,
       ),
       mtoOperInafectas: Number((full as any).mtoOperInafectas || 0).toFixed(2),
+      mtoOperExportacion: Number((full as any).mtoOperExportacion || 0).toFixed(2),
       mtoImpVenta: mtoImpVenta.toFixed(2),
       descuento,
       totalEnLetras: numeroALetras(mtoImpVenta).toUpperCase(),
