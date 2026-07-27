@@ -10,8 +10,15 @@ import {
   Post,
   Query,
   Res,
+  UploadedFile,
+  UploadedFiles,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import {
+  FileInterceptor,
+  FilesInterceptor,
+} from '@nestjs/platform-express';
 import { ComprobanteService } from './comprobante.service';
 import {
   EnviarSunatService,
@@ -24,7 +31,10 @@ import { User } from '../common/decorators/user.decorator';
 import type { Response } from 'express';
 import { ListComprobanteDto } from './dto/list-comprobante.dto';
 import { CrearComprobanteDto } from './dto/crear-comprobante.dto';
+import { ImportarComprobanteDto } from './dto/importar-comprobante.dto';
 import { EmpresaService } from '../empresa/empresa.service';
+import { xmlUploadOptions } from '../common/utils/multer.config';
+import { numeroALetras } from './utils/numero-a-letras';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('comprobante')
@@ -611,6 +621,168 @@ export class ComprobanteController {
       effectiveSedeId,
     );
     return comp;
+  }
+
+  // ======================================================================
+  // IMPORTACIÓN de comprobantes YA emitidos (registro interno, sin SUNAT)
+  // ======================================================================
+
+  /**
+   * Registra una Factura/Boleta ya emitida a SUNAT sin reenviarla. Guarda la
+   * serie/correlativo del documento original y queda en estado EMITIDO.
+   * IMPORTANTE: NO se llama a enviarSunat.execute.
+   */
+  @Post('importar')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async importarComprobante(
+    @User() user: any,
+    @Body() dto: ImportarComprobanteDto,
+  ) {
+    if (dto.tipoDoc !== '01' && dto.tipoDoc !== '03') {
+      throw new BadRequestException(
+        'Solo se pueden importar Facturas (01) o Boletas (03).',
+      );
+    }
+    const effectiveSedeId = user.sedeId ?? dto?.sedeId ?? undefined;
+    const comp = await this.service.crearFormal(
+      dto,
+      user.empresaId,
+      dto.tipoDoc,
+      user.id,
+      effectiveSedeId,
+      {
+        importado: true,
+        afectarStock: dto.afectarStock,
+        afectarCaja: dto.afectarCaja,
+      },
+    );
+    return { comprobanteId: comp.id, serie: comp.serie, correlativo: comp.correlativo };
+  }
+
+  /**
+   * Sube el XML de una Factura/Boleta emitida y devuelve los datos parseados
+   * para prellenar el formulario de importación (no persiste nada).
+   */
+  @Post('importar/parse-xml')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  @UseInterceptors(FileInterceptor('file', xmlUploadOptions))
+  async importarParseXml(
+    @User() user: any,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file?.buffer) {
+      throw new BadRequestException('No se recibió ningún archivo XML');
+    }
+    return this.service.parseXmlVenta(user.empresaId, file.buffer);
+  }
+
+  /**
+   * Carga masiva: recibe varios XML y registra cada uno como comprobante
+   * importado. Cada documento se procesa de forma independiente; el resultado
+   * detalla importados, duplicados y errores.
+   */
+  @Post('importar/lote')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  @UseInterceptors(FilesInterceptor('files', 200, xmlUploadOptions))
+  async importarLote(
+    @User() user: any,
+    @UploadedFiles() files: Express.Multer.File[],
+    @Body() body: any,
+  ) {
+    if (!files?.length) {
+      throw new BadRequestException('No se recibieron archivos XML');
+    }
+    const effectiveSedeId = user.sedeId ?? undefined;
+    // Flags opcionales (llegan como string en multipart). Default: true.
+    const afectarStock = body?.afectarStock !== 'false';
+    const afectarCaja = body?.afectarCaja !== 'false';
+
+    const importados: any[] = [];
+    const errores: any[] = [];
+
+    for (const file of files) {
+      const nombreArchivo = file.originalname;
+      try {
+        const parsed = await this.service.parseXmlVenta(
+          user.empresaId,
+          file.buffer,
+        );
+        const total = parsed.totales?.mtoImpVenta ?? 0;
+        const son = numeroALetras(total)
+          .toUpperCase()
+          .replace(/ Y (\d{2}\/100)$/, ' CON $1');
+        const leyenda = `SON: ${son} ${
+          parsed.tipoMoneda === 'USD' ? 'DÓLARES AMERICANOS' : 'SOLES'
+        }`;
+
+        // Resolver cliente: si no está registrado y el documento tiene RUC/DNI,
+        // se reporta como error para que el usuario lo cree antes de reintentar.
+        let clienteId = parsed.cliente?.clienteId ?? undefined;
+        let clienteName = parsed.clienteName || 'CLIENTES VARIOS';
+        if (!clienteId) {
+          if (parsed.cliente?.numDoc) {
+            errores.push({
+              archivo: nombreArchivo,
+              documento: `${parsed.serie}-${parsed.correlativo}`,
+              motivo: `Cliente ${parsed.cliente.numDoc} (${
+                parsed.cliente.nombre || 's/n'
+              }) no está registrado. Créalo y reintenta.`,
+            });
+            continue;
+          }
+          clienteName = 'CLIENTES VARIOS';
+        }
+
+        const input: any = {
+          serie: parsed.serie,
+          correlativo: parsed.correlativo,
+          tipoDoc: parsed.tipoDoc,
+          fechaEmision: parsed.fechaEmision,
+          tipoMoneda: parsed.tipoMoneda,
+          formaPagoTipo: 'CONTADO',
+          formaPagoMoneda: parsed.tipoMoneda,
+          medioPago: 'Efectivo',
+          clienteId,
+          clienteName,
+          leyenda,
+          detalles: parsed.detalles.map((d: any) => ({
+            productoId: d.productoId ?? null,
+            descripcion: d.descripcion,
+            cantidad: d.cantidad,
+            nuevoValorUnitario: d.nuevoValorUnitario,
+            unidadVenta: d.unidadVenta,
+            tipoAfectacionIGV: d.tipoAfectacionIGV,
+          })),
+        };
+
+        const comp = await this.service.crearFormal(
+          input,
+          user.empresaId,
+          parsed.tipoDoc as '01' | '03',
+          user.id,
+          effectiveSedeId,
+          { importado: true, afectarStock, afectarCaja },
+        );
+        importados.push({
+          archivo: nombreArchivo,
+          comprobanteId: comp.id,
+          documento: `${comp.serie}-${comp.correlativo}`,
+        });
+      } catch (error: any) {
+        errores.push({
+          archivo: nombreArchivo,
+          motivo: error?.message || 'Error al importar el documento',
+        });
+      }
+    }
+
+    return {
+      total: files.length,
+      importados: importados.length,
+      conError: errores.length,
+      detalleImportados: importados,
+      detalleErrores: errores,
+    };
   }
 
   @Post('ot')

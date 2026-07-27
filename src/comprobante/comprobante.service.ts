@@ -31,6 +31,7 @@ import {
 import { ComisionesService } from '../comisiones/comisiones.service';
 import archiver = require('archiver');
 import { PDFDocument } from 'pdf-lib';
+import { XMLParser } from 'fast-xml-parser';
 
 @Injectable()
 export class ComprobanteService {
@@ -151,14 +152,8 @@ export class ComprobanteService {
   ) {
     const lines = this.normalizarDetallePago(input, medioPago, montoObjetivo);
     for (const line of lines) {
-      if (
-        ['TRANSFERENCIA', 'TARJETA'].includes(line.method) &&
-        !line.referencia
-      ) {
-        throw new BadRequestException(
-          `El pago por ${line.method} requiere número de operación o voucher`,
-        );
-      }
+      // El N° de operación/voucher es opcional: se puede emitir sin él y
+      // registrarlo después (algunos clientes emiten la factura antes de pagar).
       if (line.method === 'TRANSFERENCIA') {
         if (!line.cuentaBancariaId) {
           throw new BadRequestException(
@@ -1186,6 +1181,240 @@ export class ComprobanteService {
     );
   }
 
+  /**
+   * Crea un comprobante IMPORTADO (ya emitido a SUNAT) respetando la serie y el
+   * correlativo del documento original en vez de autogenerarlos.
+   *
+   * La tabla Comprobante NO tiene una restricción única en
+   * (empresaId, serie, correlativo), así que el duplicado se valida en código.
+   */
+  private async crearComprobanteImportado(
+    data: any,
+    serie: string,
+    correlativo: number,
+    empresaId: number,
+    tipoDoc: string,
+  ) {
+    const serieNorm = String(serie || '').trim().toUpperCase();
+    if (!serieNorm) {
+      throw new BadRequestException('La serie del comprobante es requerida.');
+    }
+    if (!Number.isInteger(correlativo) || correlativo < 1) {
+      throw new BadRequestException(
+        'El correlativo del comprobante debe ser un entero mayor o igual a 1.',
+      );
+    }
+    const existente = await this.prisma.comprobante.findFirst({
+      where: { empresaId, tipoDoc, serie: serieNorm, correlativo },
+      select: { id: true },
+    });
+    if (existente) {
+      const nombre = tipoDoc === '01' ? 'Factura' : 'Boleta';
+      throw new BadRequestException(
+        `Ya existe ${nombre} ${serieNorm}-${correlativo} registrada en el sistema.`,
+      );
+    }
+    return this.prisma.comprobante.create({
+      data: { ...data, serie: serieNorm, correlativo },
+    });
+  }
+
+  /**
+   * Parsea el XML UBL de una Factura/Boleta YA emitida y devuelve un objeto
+   * listo para prellenar el formulario de importación (no persiste nada).
+   *
+   * A diferencia del parser de compras (que lee el proveedor), aquí se lee el
+   * CLIENTE (AccountingCustomerParty) porque es un documento que la propia
+   * empresa emitió. `nuevoValorUnitario` se entrega como precio de venta CON
+   * IGV por unidad, que es lo que espera `cargarProductosYDetalles`.
+   */
+  async parseXmlVenta(empresaId: number, buffer: Buffer) {
+    const sniff = buffer
+      .toString('ascii', 0, Math.min(buffer.length, 300))
+      .toLowerCase();
+    const isLatin1 =
+      sniff.includes('encoding="iso-8859-1"') ||
+      sniff.includes("encoding='iso-8859-1'");
+    const xmlText = isLatin1
+      ? buffer.toString('latin1')
+      : buffer.toString('utf-8');
+
+    const parser = new XMLParser({
+      ignoreAttributes: false,
+      attributeNamePrefix: '@_',
+      removeNSPrefix: true,
+      // parseTagValue:false ⇒ NO coercionar texto a número. Es clave para no perder
+      // ceros a la izquierda en códigos ('01'→1) ni en documentos ('00000000'→0);
+      // los importes se convierten explícitamente con tn().
+      parseTagValue: false,
+      parseAttributeValue: false,
+      isArray: (tagName: string) =>
+        [
+          'InvoiceLine',
+          'CreditNoteLine',
+          'DebitNoteLine',
+          'TaxTotal',
+          'TaxSubtotal',
+        ].includes(tagName),
+    });
+
+    let parsed: any;
+    try {
+      parsed = parser.parse(xmlText);
+    } catch {
+      throw new BadRequestException('El archivo no es un XML válido');
+    }
+
+    const doc = parsed.Invoice ?? parsed.CreditNote ?? parsed.DebitNote;
+    if (!doc) {
+      throw new BadRequestException(
+        'El XML no corresponde a una Factura o Boleta SUNAT',
+      );
+    }
+
+    const tv = (v: any): string => {
+      if (v === null || v === undefined) return '';
+      if (typeof v === 'object' && '#text' in v) return String(v['#text']);
+      return String(v);
+    };
+    const tn = (v: any): number => parseFloat(tv(v)) || 0;
+
+    // Cabecera
+    const docId = tv(doc.ID);
+    const dashIdx = docId.lastIndexOf('-');
+    const serie = dashIdx > 0 ? docId.substring(0, dashIdx) : docId;
+    const numeroStr = dashIdx > 0 ? docId.substring(dashIdx + 1) : '';
+    const correlativo = parseInt(numeroStr, 10) || 0;
+
+    // Normaliza a 2 dígitos por si algún emisor mandó '1'/'3' en vez de '01'/'03'.
+    const typeCode = String(tv(doc.InvoiceTypeCode ?? '01')).trim().padStart(2, '0');
+    if (typeCode !== '01' && typeCode !== '03') {
+      throw new BadRequestException(
+        'Solo se pueden importar Facturas (01) o Boletas (03). ' +
+          'Las notas de crédito/débito aún no están soportadas.',
+      );
+    }
+    const tipoDoc = typeCode;
+
+    const fechaEmision = tv(doc.IssueDate); // YYYY-MM-DD
+    const tipoMoneda = tv(doc.DocumentCurrencyCode) || 'PEN';
+
+    // Cliente desde el XML (AccountingCustomerParty)
+    const customerParty = doc.AccountingCustomerParty?.Party ?? {};
+    const clienteNumDoc = tv(customerParty.PartyIdentification?.ID).trim();
+    const clienteTipoDoc = tv(
+      customerParty.PartyIdentification?.ID?.['@_schemeID'] ?? '',
+    ).trim();
+    const clienteNombre = tv(
+      customerParty.PartyLegalEntity?.RegistrationName ??
+        customerParty.PartyName?.Name ??
+        '',
+    ).trim();
+
+    // Buscar cliente en DB por número de documento
+    let clienteId: number | null = null;
+    let clienteNombreFinal = clienteNombre;
+    if (clienteNumDoc) {
+      const found = await this.prisma.cliente.findFirst({
+        where: { empresaId, nroDoc: clienteNumDoc, estado: 'ACTIVO' as any },
+        select: { id: true, nombre: true },
+      });
+      if (found) {
+        clienteId = found.id;
+        clienteNombreFinal = found.nombre;
+      }
+    }
+
+    // Totales
+    const legalTotal = doc.LegalMonetaryTotal ?? {};
+    const valorVenta = tn(legalTotal.LineExtensionAmount);
+    const mtoImpVenta = tn(
+      legalTotal.PayableAmount ?? legalTotal.TaxInclusiveAmount,
+    );
+    const taxTotals: any[] = doc.TaxTotal ?? [];
+    const mtoIGV = taxTotals.reduce(
+      (sum: number, t: any) => sum + tn(t.TaxAmount),
+      0,
+    );
+
+    // Líneas de detalle
+    const lines: any[] = doc.InvoiceLine ?? [];
+    const detalles = await Promise.all(
+      lines.map(async (line: any) => {
+        const descripcion = tv(line.Item?.Description)
+          .replace(/\s+/g, ' ')
+          .trim();
+        const codigoXml = tv(
+          line.Item?.SellersItemIdentification?.ID ?? '',
+        ).trim();
+        const cantidad = tn(line.InvoicedQuantity);
+        const unidad =
+          tv(line.InvoicedQuantity?.['@_unitCode'] ?? '').trim() || 'NIU';
+
+        const baseLinea = tn(line.LineExtensionAmount);
+        const lineaTaxTotals: any[] = line.TaxTotal ?? [];
+        const igvLinea = lineaTaxTotals.reduce(
+          (s: number, t: any) => s + tn(t.TaxAmount),
+          0,
+        );
+        // Precio de venta CON IGV por unidad (lo que espera el motor de cálculo).
+        const nuevoValorUnitario =
+          cantidad > 0
+            ? parseFloat(((baseLinea + igvLinea) / cantidad).toFixed(4))
+            : 0;
+        // Afectación IGV aproximada para ítems sin producto vinculado.
+        const tipoAfectacionIGV = igvLinea > 0 ? '10' : '20';
+
+        // Intentar vincular producto por código
+        let productoId: number | null = null;
+        let productoDescripcion: string | null = null;
+        if (codigoXml && empresaId) {
+          const prod = await this.prisma.producto.findFirst({
+            where: { empresaId, codigo: codigoXml, estado: 'ACTIVO' as any },
+            select: { id: true, descripcion: true },
+          });
+          if (prod) {
+            productoId = prod.id;
+            productoDescripcion = prod.descripcion;
+          }
+        }
+
+        return {
+          productoId,
+          productoDescripcion,
+          codigoXml,
+          descripcion,
+          cantidad,
+          unidadVenta: unidad,
+          nuevoValorUnitario,
+          tipoAfectacionIGV,
+        };
+      }),
+    );
+
+    return {
+      tipoDoc,
+      serie,
+      correlativo,
+      numero: numeroStr,
+      fechaEmision,
+      tipoMoneda,
+      cliente: {
+        tipoDoc: clienteTipoDoc,
+        numDoc: clienteNumDoc,
+        nombre: clienteNombreFinal,
+        clienteId,
+      },
+      clienteName: clienteNombreFinal,
+      detalles,
+      totales: {
+        valorVenta: parseFloat(valorVenta.toFixed(2)),
+        mtoIGV: parseFloat(mtoIGV.toFixed(2)),
+        mtoImpVenta: parseFloat(mtoImpVenta.toFixed(2)),
+      },
+    };
+  }
+
   private async obtenerSerieYCorrelativo(
     tipoDoc: string,
     tipDocAfectado: string | null,
@@ -1959,6 +2188,13 @@ export class ComprobanteService {
       },
     });
 
+    // Si el comprobante nunca descontó stock (p.ej. una Nota de Pedido creada sin
+    // "Descontar del stock ahora", o una cotización), no hay salida que revertir:
+    // devolver stock aquí inflaría el inventario. No hacemos nada.
+    if (movimientosOriginales.length === 0) {
+      return;
+    }
+
     for (const item of detalles) {
       if (item.productoId) {
         const producto = await this.prisma.producto.findUnique({
@@ -2107,7 +2343,27 @@ export class ComprobanteService {
     formalTipo: '01' | '03' | '07' | '08',
     usuarioId?: number,
     sedeId?: number,
+    opts?: {
+      // Modo IMPORTACIÓN: registra un comprobante YA emitido a SUNAT sin
+      // reenviarlo. Usa la serie/correlativo provistas en `input`, queda en
+      // estado EMITIDO y NO consume cupo del plan. El controller NO debe llamar
+      // a enviarSunat.execute para estos comprobantes.
+      importado?: boolean;
+      // Solo aplica en modo importado (default true). Ver ImportarComprobanteDto.
+      afectarStock?: boolean;
+      afectarCaja?: boolean;
+    },
   ) {
+    const importado = opts?.importado === true;
+    // La importación de comprobantes emitidos solo admite Facturas y Boletas.
+    // NC/ND requieren manejo del documento afectado (fase posterior).
+    if (importado && formalTipo !== '01' && formalTipo !== '03') {
+      throw new BadRequestException(
+        'La importación de comprobantes emitidos solo admite Facturas (01) y Boletas (03).',
+      );
+    }
+    const afectarStockImport = opts?.afectarStock !== false; // default true
+    const afectarCajaImport = opts?.afectarCaja !== false; // default true
     const {
       fechaEmision,
       formaPagoTipo,
@@ -2153,9 +2409,14 @@ export class ComprobanteService {
       }
     }
 
-    // Cuando se convierte desde un informal (NV, TICKET, etc.) el stock ya fue descontado
-    // al crear el informal — NO volver a descontarlo.
+    // Cuando se convierte desde un informal (NV, TICKET, etc.) el stock normalmente
+    // ya fue descontado al crear el informal — no volver a descontarlo. Excepción:
+    // una Nota de Pedido pudo crearse SIN descontar stock, en cuyo caso el descuento
+    // debe hacerse ahora, al emitir el comprobante formal.
     const esConversionDesdeInformal = comprobanteOrigenId != null;
+    // ¿El comprobante origen ya movió stock? Se determina por la existencia de un
+    // movimiento de kardex SALIDA asociado — robusto incluso para NPs antiguas.
+    let origenYaDescontoStock = false;
 
     // Validar que el comprobante origen pertenezca a esta empresa (seguridad)
     if (esConversionDesdeInformal) {
@@ -2174,6 +2435,13 @@ export class ComprobanteService {
           'El comprobante de origen no es de tipo informal',
         );
       }
+      const salidasOrigen = await this.prisma.movimientoKardex.count({
+        where: {
+          comprobanteId: Number(comprobanteOrigenId),
+          tipoMovimiento: 'SALIDA',
+        },
+      });
+      origenYaDescontoStock = salidasOrigen > 0;
     }
 
     // Map retencion fields to detraccion fields if present
@@ -2182,8 +2450,10 @@ export class ComprobanteService {
       retencionPorcentaje || porcentajeDetraccion;
 
     // ============= VALIDACIÓN DE LÍMITE DE COMPROBANTES =============
-    // Solo validar para Facturas (01) y Boletas (03), no para notas
-    if (formalTipo === '01' || formalTipo === '03') {
+    // Solo validar para Facturas (01) y Boletas (03), no para notas.
+    // En modo importado NO se valida: el documento ya fue emitido, no consume
+    // cupo del plan del mes en curso.
+    if (!importado && (formalTipo === '01' || formalTipo === '03')) {
       const usageStats = await this.getUsageStats(empresaId);
       if (!usageStats.puedeEmitir) {
         throw new BadRequestException(
@@ -2285,10 +2555,12 @@ export class ComprobanteService {
       }
     }
 
+    // En importación de documentos históricos no se valida la disponibilidad de
+    // números de serie (pudieron venderse por fuera del sistema).
     await this.validarSeriesComprobante(
       detalleFinal,
       empresaId,
-      !esConversionDesdeInformal,
+      !origenYaDescontoStock && !importado,
     );
 
     // Validar cliente si viene explícito
@@ -2449,7 +2721,12 @@ export class ComprobanteService {
       mtoAnticipos,
       anticipos: anticiposInput.length ? anticiposInput : Prisma.JsonNull,
       vuelto: vuelto != null ? Number(vuelto) : 0,
-      estadoEnvioSunat: 'PENDIENTE' as string,
+      // Importado: ya emitido en SUNAT ⇒ EMITIDO directo (aparece en SIRE y no lo
+      // reintenta el scheduler). Emisión normal ⇒ PENDIENTE (lo enviará el flujo).
+      estadoEnvioSunat: (importado ? 'EMITIDO' : 'PENDIENTE') as string,
+      ...(importado && input.documentoId
+        ? { documentoId: String(input.documentoId) }
+        : {}),
       estadoPago: estadoPagoInicial,
       saldo: saldoInicial,
       fechaVencimientoCredito:
@@ -2464,7 +2741,26 @@ export class ComprobanteService {
           }
         : {}),
       detalles: { create: this.limpiarDetalleParaPersistencia(detalleFinal) },
-      leyendas: { create: [{ code: '1000', value: leyenda }] },
+      leyendas: {
+        create: [
+          {
+            code: '1000',
+            // En importación se calcula la leyenda "SON: ..." si no vino en el input.
+            value:
+              leyenda && String(leyenda).trim().length
+                ? leyenda
+                : importado
+                  ? `SON: ${numeroALetras(mtoImpVenta)
+                      .toUpperCase()
+                      .replace(/ Y (\d{2}\/100)$/, ' CON $1')} ${
+                      monedaComprobante === 'USD'
+                        ? 'DÓLARES AMERICANOS'
+                        : 'SOLES'
+                    }`
+                  : leyenda,
+          },
+        ],
+      },
       // Vínculo con el documento informal de origen (NV, TICKET, NP, etc.)
       ...(esConversionDesdeInformal && comprobanteOrigenId != null
         ? { comprobanteOrigenId: Number(comprobanteOrigenId) }
@@ -2474,7 +2770,9 @@ export class ComprobanteService {
     // Validar receta médica en backend (guardia real, no solo UX)
     await this.validarRecetasSiFarmacia(detalles, empresaId);
 
-    if (!esConversionDesdeInformal) {
+    // En importación no se bloquea por stock insuficiente: son documentos
+    // históricos y el inventario pudo variar por otras vías.
+    if (!origenYaDescontoStock && !importado) {
       await this.validarStockDisponibleParaVenta(detalleFinal, {
         empresaId,
         sedeId,
@@ -2482,14 +2780,23 @@ export class ComprobanteService {
       });
     }
 
-    const comprobante = await this.crearComprobanteConReintento(
-      dataBase,
-      formalTipo,
-      tipDocAfectado ?? null,
-      empresaId,
-    );
+    const comprobante = importado
+      ? await this.crearComprobanteImportado(
+          dataBase,
+          String(input.serie),
+          Number(input.correlativo),
+          empresaId,
+          formalTipo,
+        )
+      : await this.crearComprobanteConReintento(
+          dataBase,
+          formalTipo,
+          tipDocAfectado ?? null,
+          empresaId,
+        );
 
-    if (esPagoContado) {
+    // En importación, el cobro solo se registra en caja si afectarCaja !== false.
+    if (esPagoContado && (!importado || afectarCajaImport)) {
       await this.registrarPagosDeEmision({
         comprobanteId: comprobante.id,
         empresaId,
@@ -2503,9 +2810,11 @@ export class ComprobanteService {
       });
     }
 
-    // Registrar movimientos de kardex SOLO si NO es conversión desde informal.
-    // Cuando viene de NV/TICKET el stock ya fue descontado al crear el informal.
-    if (!esConversionDesdeInformal) {
+    // Registrar movimientos de kardex SOLO si el origen aún no descontó stock.
+    // Emisión directa o conversión de una NP que no descontó ⇒ se descuenta aquí.
+    // Conversión de un informal que ya descontó (NV/TICKET/NP con descuento) ⇒ no.
+    // En importación, solo si afectarStock !== false.
+    if (!origenYaDescontoStock && (!importado || afectarStockImport)) {
       await this.ajustarStock(detalleFinal, {
         empresaId,
         comprobanteId: comprobante.id,
@@ -3150,6 +3459,15 @@ export class ComprobanteService {
       porcentajeDetraccion,
       montoDetraccion,
     } = input;
+    // ¿Este informal debe afectar (descontar) el stock del almacén?
+    // - COT (Cotización): nunca descuenta.
+    // - NP (Nota de Pedido): por defecto NO descuenta; solo si el usuario marcó
+    //   "Descontar del stock ahora" (input.descontarStock === true). El stock
+    //   real recién baja al convertir la NP a comprobante formal.
+    // - Resto de informales (NV, TICKET, RH, CP, OT): siempre descuentan.
+    const afectaStock =
+      tipoDoc !== 'COT' &&
+      (tipoDoc !== 'NP' || input.descontarStock === true);
     // Resolver cliente
     let finalClienteId: number | null = clienteId ?? null;
     if (clienteName === 'CLIENTES VARIOS') {
@@ -3181,7 +3499,7 @@ export class ComprobanteService {
     await this.validarSeriesComprobante(
       detalleFinal,
       empresaId,
-      tipoDoc !== 'COT',
+      afectaStock,
     );
     const valorVenta = this.round2(
       mtoOperGravadas + mtoOpExoneradas + mtoOpInafectas + mtoOperExportacion,
@@ -3365,7 +3683,7 @@ export class ComprobanteService {
     // Validar receta médica en backend si rubro farmacia/botica
     await this.validarRecetasSiFarmacia(detalles, empresaId);
 
-    if (tipoDoc !== 'COT') {
+    if (afectaStock) {
       await this.validarStockDisponibleParaVenta(detalleFinal, {
         empresaId,
         sedeId: finalSedeId,
@@ -3394,8 +3712,8 @@ export class ComprobanteService {
       });
     }
 
-    // Registrar movimientos de kardex
-    if (tipoDoc !== 'COT') {
+    // Registrar movimientos de kardex (descuento de stock)
+    if (afectaStock) {
       await this.ajustarStock(detalleFinal, {
         empresaId,
         comprobanteId: comp.id,
