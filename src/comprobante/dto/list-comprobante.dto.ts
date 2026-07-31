@@ -73,6 +73,6 @@ export class ListComprobanteDto {
   // Solo para exportación masiva: formato de salida
   @IsOptional()
   @IsString()
-  @IsIn(['zip', 'pdf'])
-  formato?: 'zip' | 'pdf';
+  @IsIn(['zip', 'pdf', 'excel'])
+  formato?: 'zip' | 'pdf' | 'excel';
 }

@@ -224,13 +224,15 @@ export class VentasService {
   async panelVentas(params: {
     empresaId: number;
     fecha: string;
+    // Fin del rango (inclusive). Si se omite, el panel es de un solo día.
+    fechaFin?: string;
     sedeId?: number;
     usuarioId?: number;
   }) {
     const { empresaId, fecha, sedeId, usuarioId } = params;
 
     const inicioLima = new Date(`${fecha}T00:00:00-05:00`);
-    const finLima = new Date(`${fecha}T23:59:59-05:00`);
+    const finLima = new Date(`${params.fechaFin || fecha}T23:59:59-05:00`);
 
     const sedeFilter = sedeId ? { sedeId } : {};
     const comprobanteUsuarioFilter = usuarioId ? { usuarioId } : {};

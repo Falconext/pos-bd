@@ -15,6 +15,7 @@ export class VentasController {
   async panel(
     @User() user: any,
     @Query('fecha') fecha: string,
+    @Query('fechaFin') fechaFin?: string,
     @Query('sedeId') sedeId?: string,
     @Query('usuarioId') usuarioId?: string,
   ) {
@@ -26,6 +27,8 @@ export class VentasController {
     return this.service.panelVentas({
       empresaId: user.empresaId,
       fecha: fechaFinal,
+      // Rango opcional: si no llega fechaFin, el panel sigue siendo de un solo día
+      fechaFin: fechaFin || undefined,
       sedeId: sedeId ? Number(sedeId) : undefined,
       usuarioId: isAdmin
         ? usuarioId

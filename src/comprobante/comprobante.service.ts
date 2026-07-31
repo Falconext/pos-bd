@@ -31,6 +31,7 @@ import {
 import { ComisionesService } from '../comisiones/comisiones.service';
 import archiver = require('archiver');
 import { PDFDocument } from 'pdf-lib';
+import * as XLSX from 'xlsx';
 import { XMLParser } from 'fast-xml-parser';
 
 @Injectable()
@@ -4998,6 +4999,224 @@ export class ComprobanteService {
       buffer: Buffer.concat(chunks),
       filename: `${baseNombre}.zip`,
       contentType: 'application/zip',
+    };
+  }
+
+  /**
+   * Exporta un RESUMEN (listado tipo reporte) de los comprobantes filtrados,
+   * en Excel o PDF imprimible — pensado para el cierre de mes: una fila por
+   * comprobante con cliente, vendedor, medio/estado de pago y total, más la
+   * suma final (excluyendo anulados).
+   */
+  async exportarResumenComprobantes(params: {
+    empresaId: number;
+    sedeId?: number | null;
+    usuarioId?: number | null;
+    tipoComprobante: 'FORMAL' | 'INFORMAL' | 'COTIZACION' | 'TODOS';
+    fechaInicio?: string;
+    fechaFin?: string;
+    tipoDoc?: string;
+    estado?: string;
+    estadoPago?: string;
+    formato: 'excel' | 'pdf';
+  }): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
+    const { fechaInicio, fechaFin, formato } = params;
+    const where = await this.construirWhereComprobantesMasivo(params);
+
+    const comprobantes = await this.prisma.comprobante.findMany({
+      where,
+      orderBy: [{ fechaEmision: 'asc' }, { id: 'asc' }],
+      select: {
+        fechaEmision: true,
+        tipoDoc: true,
+        serie: true,
+        correlativo: true,
+        medioPago: true,
+        estadoPago: true,
+        estadoEnvioSunat: true,
+        mtoImpVenta: true,
+        cliente: { select: { nombre: true, nroDoc: true } },
+        usuario: { select: { nombre: true } },
+      },
+    });
+
+    if (comprobantes.length === 0) {
+      throw new NotFoundException(
+        'No se encontraron comprobantes en el rango y filtros seleccionados',
+      );
+    }
+
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: params.empresaId },
+      select: { razonSocial: true, nombreComercial: true, ruc: true },
+    });
+
+    const TIPO_LABEL: Record<string, string> = {
+      '01': 'Factura',
+      '03': 'Boleta',
+      '07': 'Nota Crédito',
+      '08': 'Nota Débito',
+      TICKET: 'Ticket',
+      NV: 'Nota de Venta',
+      NP: 'Nota de Pedido',
+      RH: 'Recibo Honorarios',
+      CP: 'Comp. de Pago',
+      OT: 'Orden de Trabajo',
+      COT: 'Cotización',
+    };
+    const ESTADO_PAGO_LABEL: Record<string, string> = {
+      COMPLETADO: 'Pagado',
+      PAGADO: 'Pagado',
+      PAGO_PARCIAL: 'Parcial',
+      PENDIENTE_PAGO: 'Pendiente',
+      ANULADO: 'Anulado',
+    };
+
+    const fmtFecha = (d: Date) =>
+      new Date(d).toLocaleString('es-PE', {
+        timeZone: 'America/Lima',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+
+    const filas = comprobantes.map((c) => {
+      const anulado = String(c.estadoEnvioSunat) === 'ANULADO';
+      return {
+        fecha: fmtFecha(c.fechaEmision as any),
+        tipo: TIPO_LABEL[c.tipoDoc] ?? c.tipoDoc,
+        documento: `${c.serie}-${String(c.correlativo).padStart(8, '0')}`,
+        cliente: c.cliente?.nombre ?? 'CLIENTES VARIOS',
+        docCliente: c.cliente?.nroDoc ?? '',
+        vendedor: c.usuario?.nombre ?? '',
+        medioPago: c.medioPago ?? '',
+        estadoPago: anulado
+          ? 'Anulado'
+          : (ESTADO_PAGO_LABEL[String(c.estadoPago)] ?? String(c.estadoPago ?? '')),
+        total: Number(c.mtoImpVenta ?? 0),
+        anulado,
+      };
+    });
+    const totalGeneral = filas
+      .filter((f) => !f.anulado)
+      .reduce((s, f) => s + f.total, 0);
+
+    const tituloTipo =
+      params.tipoComprobante === 'INFORMAL'
+        ? 'Notas de venta'
+        : params.tipoComprobante === 'FORMAL'
+          ? 'Comprobantes'
+          : 'Ventas';
+    const rango = `${fechaInicio || '—'} al ${fechaFin || '—'}`;
+    const baseNombre = `${tituloTipo.toLowerCase().replace(/ /g, '_')}_${fechaInicio || 'inicio'}_a_${fechaFin || 'fin'}`;
+
+    if (formato === 'excel') {
+      const headers = [
+        'Fecha',
+        'Tipo',
+        'Documento',
+        'Cliente',
+        'Doc. Cliente',
+        'Vendedor',
+        'Medio Pago',
+        'Estado Pago',
+        'Total S/',
+      ];
+      const rows = filas.map((f) => [
+        f.fecha,
+        f.tipo,
+        f.documento,
+        f.cliente,
+        f.docCliente,
+        f.vendedor,
+        f.medioPago,
+        f.estadoPago,
+        f.total,
+      ]);
+      const aoa = [
+        [
+          `${empresa?.nombreComercial || empresa?.razonSocial || ''} — ${tituloTipo} del ${rango}`,
+        ],
+        [],
+        headers,
+        ...rows,
+        [],
+        ['', '', '', '', '', '', '', 'TOTAL (sin anulados)', totalGeneral],
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = [
+        { wch: 17 },
+        { wch: 14 },
+        { wch: 16 },
+        { wch: 34 },
+        { wch: 13 },
+        { wch: 20 },
+        { wch: 13 },
+        { wch: 13 },
+        { wch: 12 },
+      ];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, tituloTipo.slice(0, 31));
+      const buffer = XLSX.write(wb, {
+        type: 'buffer',
+        bookType: 'xlsx',
+      }) as Buffer;
+      return {
+        buffer,
+        filename: `${baseNombre}.xlsx`,
+        contentType:
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      };
+    }
+
+    // PDF resumen imprimible (tabla)
+    const esc = (s: string) =>
+      String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    const filasHtml = filas
+      .map(
+        (f) => `
+        <tr${f.anulado ? ' style="color:#b91c1c;text-decoration:line-through;"' : ''}>
+          <td>${esc(f.fecha)}</td>
+          <td>${esc(f.tipo)}</td>
+          <td>${esc(f.documento)}</td>
+          <td>${esc(f.cliente)}</td>
+          <td>${esc(f.vendedor)}</td>
+          <td>${esc(f.medioPago)}</td>
+          <td>${esc(f.estadoPago)}</td>
+          <td class="num">${f.total.toFixed(2)}</td>
+        </tr>`,
+      )
+      .join('');
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+      * { font-family: Arial, Helvetica, sans-serif; box-sizing: border-box; }
+      body { margin: 24px; color: #111827; font-size: 11px; }
+      h1 { font-size: 16px; margin: 0 0 2px; }
+      .sub { color: #6b7280; margin-bottom: 14px; }
+      table { width: 100%; border-collapse: collapse; }
+      th { background: #f3f4f6; text-align: left; padding: 6px 8px; border-bottom: 2px solid #d1d5db; font-size: 10px; text-transform: uppercase; }
+      td { padding: 5px 8px; border-bottom: 1px solid #e5e7eb; }
+      .num { text-align: right; white-space: nowrap; }
+      tfoot td { font-weight: bold; border-top: 2px solid #111827; font-size: 12px; }
+    </style></head><body>
+      <h1>${esc(empresa?.nombreComercial || empresa?.razonSocial || '')} — ${esc(tituloTipo)}</h1>
+      <div class="sub">RUC ${esc(empresa?.ruc || '')} · Periodo: ${esc(rango)} · ${filas.length} documento(s) · Generado: ${fmtFecha(new Date())}</div>
+      <table>
+        <thead><tr><th>Fecha</th><th>Tipo</th><th>Documento</th><th>Cliente</th><th>Vendedor</th><th>Medio Pago</th><th>Estado Pago</th><th class="num">Total S/</th></tr></thead>
+        <tbody>${filasHtml}</tbody>
+        <tfoot><tr><td colspan="7">TOTAL (sin anulados)</td><td class="num">S/ ${totalGeneral.toFixed(2)}</td></tr></tfoot>
+      </table>
+    </body></html>`;
+
+    const buffer = await this.pdfGenerator.generarPdfDesdeHtml(html);
+    return {
+      buffer,
+      filename: `${baseNombre}.pdf`,
+      contentType: 'application/pdf',
     };
   }
 
