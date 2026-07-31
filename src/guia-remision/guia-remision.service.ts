@@ -12,6 +12,7 @@ import { UpdateGuiaRemisionDto } from './dto/update-guia-remision.dto';
 import { QueryGuiaRemisionDto } from './dto/query-guia-remision.dto';
 import { SunatGuiaService } from './sunat-guia.service';
 import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
+import * as XLSX from 'xlsx';
 
 @Injectable()
 export class GuiaRemisionService {
@@ -761,13 +762,18 @@ export class GuiaRemisionService {
     const motivosTraslado: Record<string, string> = {
       '01': 'VENTA',
       '02': 'COMPRA',
+      '03': 'VENTA CON ENTREGA A TERCEROS',
       '04': 'TRASLADO ENTRE ESTABLECIMIENTOS DE LA MISMA EMPRESA',
+      '05': 'CONSIGNACION',
+      '06': 'DEVOLUCION',
+      '07': 'RECOJO DE BIENES TRANSFORMADOS',
       '08': 'IMPORTACION',
       '09': 'EXPORTACION',
       '13': 'OTROS',
       '14': 'VENTA SUJETA A CONFIRMACION DEL COMPRADOR',
-      '18': 'TRASLADO EMISOR ITINERANTE CP',
-      '19': 'TRASLADO A ZONA PRIMARIA',
+      '17': 'TRASLADO DE BIENES PARA TRANSFORMACION',
+      '18': 'TRASLADO POR EMISOR ITINERANTE DE COMPROBANTES DE PAGO',
+      '19': 'TRASLADO DE MERCANCIA EXTRANJERA',
     };
 
     const empresa = await this.prisma.empresa.findUnique({
@@ -846,6 +852,193 @@ export class GuiaRemisionService {
     };
 
     return this.pdfGeneratorService.generarPDFGuiaRemision(data);
+  }
+
+  /**
+   * Precarga los datos de una guía a partir de un comprobante (Factura/Boleta)
+   * ya emitido: destinatario (desde el cliente), punto de llegada y los ítems
+   * (descripción, cantidad y unidad). Devuelve un objeto parcial listo para
+   * fusionar en el formulario de creación de guía; NO crea la guía.
+   */
+  async getPrefillDesdeComprobante(
+    comprobanteId: number,
+    empresaId: number,
+    sedeId?: number,
+  ) {
+    const comprobante = await this.prisma.comprobante.findFirst({
+      where: {
+        id: comprobanteId,
+        empresaId,
+        ...(sedeId ? { sedeId } : {}),
+      },
+      include: {
+        cliente: {
+          include: { tipoDocumento: true },
+        },
+        detalles: {
+          include: { producto: true },
+        },
+      },
+    });
+
+    if (!comprobante) {
+      throw new NotFoundException(
+        `Comprobante con ID ${comprobanteId} no encontrado`,
+      );
+    }
+
+    const cliente = comprobante.cliente;
+    const numDoc = String(cliente?.nroDoc || '').trim();
+    // Tipo de documento del destinatario (Catálogo 6): 11 díg. = RUC (6),
+    // 8 díg. = DNI (1); cualquier otro largo se deja como el que tenga el cliente.
+    const destinatarioTipoDoc =
+      numDoc.length === 11 ? '6' : numDoc.length === 8 ? '1' : '6';
+
+    const tipoLabels: Record<string, string> = {
+      '01': 'FACTURA',
+      '03': 'BOLETA',
+      '07': 'NOTA DE CREDITO',
+      '08': 'NOTA DE DEBITO',
+    };
+    const refLabel = tipoLabels[comprobante.tipoDoc] || 'COMPROBANTE';
+
+    return {
+      clienteId: cliente?.id,
+      destinatarioTipoDoc,
+      destinatarioNumDoc: numDoc,
+      destinatarioRazonSocial: cliente?.nombre || '',
+      llegadaDireccion: cliente?.direccion || '',
+      llegadaUbigeo: cliente?.ubigeo || '',
+      observaciones: `Ref. ${refLabel} ${comprobante.serie}-${String(
+        comprobante.correlativo,
+      ).padStart(8, '0')}`,
+      comprobanteRef: {
+        id: comprobante.id,
+        tipoDoc: comprobante.tipoDoc,
+        serie: comprobante.serie,
+        correlativo: comprobante.correlativo,
+      },
+      detalles: comprobante.detalles.map((d) => ({
+        productoId: d.productoId ?? undefined,
+        codigoProducto: d.producto?.codigo || String(d.productoId ?? ''),
+        descripcion: d.descripcion,
+        cantidad: Number(d.cantidad),
+        unidadMedida: d.unidad || 'NIU',
+      })),
+    };
+  }
+
+  /** Genera la plantilla .xlsx (buffer) para importar ítems de la guía. */
+  plantillaItems(): Buffer {
+    const ejemplo = [
+      {
+        Codigo: 'P001',
+        Descripcion: 'Producto de ejemplo',
+        Cantidad: 2,
+        Unidad: 'NIU',
+      },
+      {
+        Codigo: 'P002',
+        Descripcion: 'Segundo bien a trasladar',
+        Cantidad: 1,
+        Unidad: 'NIU',
+      },
+    ];
+    const ws = XLSX.utils.json_to_sheet(ejemplo);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Items');
+    return XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' }) as Buffer;
+  }
+
+  /**
+   * Parsea un Excel/CSV (base64) con los ítems de la guía y devuelve la lista
+   * de detalles lista para el formulario. Sigue el patrón de ImportarService:
+   * lee la primera hoja y normaliza los encabezados.
+   */
+  importarItems(archivoBase64: string): {
+    items: {
+      codigoProducto: string;
+      descripcion: string;
+      cantidad: number;
+      unidadMedida: string;
+    }[];
+    errores: { fila: number; motivo: string }[];
+  } {
+    let filas: Record<string, any>[];
+    try {
+      const base64 = String(archivoBase64 || '').replace(
+        /^data:[^;]+;base64,/,
+        '',
+      );
+      const buffer = Buffer.from(base64, 'base64');
+      const wb = XLSX.read(buffer, { type: 'buffer' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, {
+        defval: null,
+        raw: false,
+      });
+      filas = raw.map((f) => {
+        const out: Record<string, any> = {};
+        for (const [k, v] of Object.entries(f)) {
+          const key = k
+            .toString()
+            .trim()
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[̀-ͯ]/g, '')
+            .replace(/\s+/g, '');
+          out[key] = typeof v === 'string' ? v.trim() : v;
+        }
+        return out;
+      });
+    } catch {
+      throw new BadRequestException(
+        'No se pudo leer el archivo. Verifica que sea un Excel (.xlsx) o CSV válido.',
+      );
+    }
+
+    const pick = (fila: Record<string, any>, claves: string[]): any => {
+      for (const c of claves) {
+        if (fila[c] != null && fila[c] !== '') return fila[c];
+      }
+      return null;
+    };
+
+    const items: {
+      codigoProducto: string;
+      descripcion: string;
+      cantidad: number;
+      unidadMedida: string;
+    }[] = [];
+    const errores: { fila: number; motivo: string }[] = [];
+
+    filas.forEach((fila, i) => {
+      const nFila = i + 2; // encabezado + base 1
+      const descripcion = pick(fila, ['descripcion', 'descripción', 'detalle']);
+      const cantidad = Number(
+        pick(fila, ['cantidad', 'cant', 'qty']) ?? 0,
+      );
+      if (!descripcion) {
+        errores.push({ fila: nFila, motivo: 'Falta la Descripción' });
+        return;
+      }
+      if (!Number.isFinite(cantidad) || cantidad <= 0) {
+        errores.push({ fila: nFila, motivo: 'Cantidad inválida (debe ser > 0)' });
+        return;
+      }
+      items.push({
+        codigoProducto: String(
+          pick(fila, ['codigo', 'código', 'cod', 'sku']) ?? '',
+        ),
+        descripcion: String(descripcion),
+        cantidad,
+        unidadMedida: String(
+          pick(fila, ['unidad', 'unidadmedida', 'und', 'um']) ?? 'NIU',
+        ).toUpperCase(),
+      });
+    });
+
+    return { items, errores };
   }
 
   async getNextCorrelativo(serie: string, empresaId: number): Promise<number> {

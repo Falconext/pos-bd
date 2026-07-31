@@ -31,6 +31,7 @@ async function createMinimalMasterData() {
       { codigo: 'KGM', nombre: 'KILOGRAMO' },
       { codigo: 'LTR', nombre: 'LITRO' },
       { codigo: 'MTR', nombre: 'METRO' },
+      { codigo: 'GLL', nombre: 'GALONES' },
       { codigo: 'ZZ', nombre: 'OTROS' }
     ];
 

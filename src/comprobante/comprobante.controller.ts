@@ -32,8 +32,13 @@ import type { Response } from 'express';
 import { ListComprobanteDto } from './dto/list-comprobante.dto';
 import { CrearComprobanteDto } from './dto/crear-comprobante.dto';
 import { ImportarComprobanteDto } from './dto/importar-comprobante.dto';
+import { ImportarNotaVentaDto } from './dto/importar-nota-venta.dto';
+import { ImportarNotaVentaService } from './importar-nota-venta.service';
 import { EmpresaService } from '../empresa/empresa.service';
-import { xmlUploadOptions } from '../common/utils/multer.config';
+import {
+  spreadsheetUploadOptions,
+  xmlUploadOptions,
+} from '../common/utils/multer.config';
 import { numeroALetras } from './utils/numero-a-letras';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -43,6 +48,7 @@ export class ComprobanteController {
     private readonly service: ComprobanteService,
     private readonly enviarSunat: EnviarSunatService,
     private readonly empresaService: EmpresaService,
+    private readonly importarNotaVenta: ImportarNotaVentaService,
   ) {}
 
   @Get('tipo-operacion')
@@ -783,6 +789,73 @@ export class ComprobanteController {
       detalleImportados: importados,
       detalleErrores: errores,
     };
+  }
+
+  // ======================================================================
+  // IMPORTACIÓN de NOTAS DE VENTA históricas (tipoDoc 'NV') desde Excel/CSV
+  // NO se envía nada a SUNAT. Preserva serie/correlativo original.
+  // ======================================================================
+
+  /** Descarga la plantilla .xlsx con encabezados y filas de ejemplo. */
+  @Get('importar/nota-venta/plantilla')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async plantillaNotaVenta(@Res() res: Response) {
+    const buffer = this.importarNotaVenta.plantilla();
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename=plantilla_notas_de_venta.xlsx',
+    );
+    res.end(buffer);
+  }
+
+  /** Importa UNA Nota de venta (una NV con sus líneas) en formato JSON. */
+  @Post('importar/nota-venta')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async importarNotaVentaUna(
+    @User() user: any,
+    @Body() dto: ImportarNotaVentaDto,
+  ) {
+    const effectiveSedeId = user.sedeId ?? undefined;
+    const comp = await this.importarNotaVenta.importarUno(
+      user.empresaId,
+      user.id,
+      effectiveSedeId,
+      dto,
+    );
+    return {
+      comprobanteId: comp.id,
+      serie: comp.serie,
+      correlativo: comp.correlativo,
+    };
+  }
+
+  /** Carga masiva de Notas de venta desde un Excel/CSV. */
+  @Post('importar/nota-venta/lote')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  @UseInterceptors(FileInterceptor('file', spreadsheetUploadOptions))
+  async importarNotaVentaLote(
+    @User() user: any,
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: any,
+  ) {
+    if (!file?.buffer) {
+      throw new BadRequestException('No se recibió ningún archivo Excel/CSV.');
+    }
+    // Flags llegan como string en multipart. Default: APAGADOS (histórico).
+    const afectarStock = body?.afectarStock === 'true';
+    const afectarCaja = body?.afectarCaja === 'true';
+    const effectiveSedeId = user.sedeId ?? undefined;
+    return this.importarNotaVenta.importarLote(
+      user.empresaId,
+      user.id,
+      effectiveSedeId,
+      file.buffer,
+      { afectarStock, afectarCaja },
+    );
   }
 
   @Post('ot')

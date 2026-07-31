@@ -14,6 +14,8 @@ import { QpseClient } from '../common/utils/qpse.client';
 import { ApisPeruClient } from '../common/utils/apis-peru.client';
 import { JambleClient } from '../common/utils/jamble.client';
 import { ComisionesModule } from '../comisiones/comisiones.module';
+import { ClienteModule } from '../cliente/cliente.module';
+import { ImportarNotaVentaService } from './importar-nota-venta.service';
 
 @Module({
   imports: [
@@ -23,10 +25,12 @@ import { ComisionesModule } from '../comisiones/comisiones.module';
     S3Module,
     forwardRef(() => ProductoModule),
     ComisionesModule,
+    ClienteModule,
   ],
   controllers: [ComprobanteController, ComprobantePublicoController],
   providers: [
     ComprobanteService,
+    ImportarNotaVentaService,
     RolesGuard,
     EnviarSunatService,
     PdfGeneratorService,

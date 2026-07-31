@@ -99,7 +99,7 @@ async function main() {
             { codigo: 'DOC', nombre: 'DOCENA' },
             { codigo: 'PAR', nombre: 'PAR' },
             { codigo: 'JGO', nombre: 'JUEGO' },
-            { codigo: 'GAL', nombre: 'GALÓN' },
+            { codigo: 'GLL', nombre: 'GALONES' },
         ];
         for (const unidad of unidades) {
             await prisma.unidadMedida.upsert({

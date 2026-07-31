@@ -287,4 +287,138 @@ export class ContabilidadService {
 
     return { comprobantes: comprobantesConTipo, resumen };
   }
+
+  /**
+   * Reporte de COMPRAS del período (registro de compras / facturas de compra).
+   * Fuente: modelo Compra. Excluye ANULADAS. Complementa el reporte de ventas.
+   */
+  async obtenerReporteCompras(
+    empresaId: number,
+    fechaInicio: string,
+    fechaFin: string,
+    sedeId?: number,
+  ) {
+    const fechaEmision = this.parseRangeDates(fechaInicio, fechaFin);
+
+    const comprasRaw = await this.prisma.compra.findMany({
+      where: {
+        empresaId,
+        ...(sedeId ? { sedeId } : {}),
+        estado: { not: 'ANULADO' as any },
+        fechaEmision,
+      },
+      orderBy: { fechaEmision: 'desc' },
+      include: {
+        proveedor: { select: { nombre: true, nroDoc: true } },
+        usuario: { select: { nombre: true } },
+        sede: { select: { nombre: true } },
+      },
+    });
+
+    const compras = comprasRaw.map((c) => ({
+      id: c.id,
+      tipoDoc: c.tipoDoc,
+      serie: c.serie,
+      numero: c.numero,
+      fechaEmision: c.fechaEmision,
+      fechaVencimiento: c.fechaVencimiento,
+      moneda: c.moneda,
+      subtotal: Number(c.subtotal || 0),
+      igv: Number(c.igv || 0),
+      total: Number(c.total || 0),
+      saldo: Number(c.saldo || 0),
+      estadoPago: c.estadoPago,
+      observaciones: c.observaciones ?? '',
+      proveedor: c.proveedor,
+      usuario: c.usuario,
+      sede: c.sede,
+    }));
+
+    const resumen = compras.reduce(
+      (acc, c) => ({
+        totalCompra: acc.totalCompra + c.total,
+        totalGravadas: acc.totalGravadas + c.subtotal,
+        totalIGV: acc.totalIGV + c.igv,
+        totalSaldo: acc.totalSaldo + c.saldo,
+        totalFacturas:
+          c.tipoDoc === 'FACTURA' ? acc.totalFacturas + c.total : acc.totalFacturas,
+        totalBoletas:
+          c.tipoDoc === 'BOLETA' ? acc.totalBoletas + c.total : acc.totalBoletas,
+        totalOtros:
+          c.tipoDoc !== 'FACTURA' && c.tipoDoc !== 'BOLETA'
+            ? acc.totalOtros + c.total
+            : acc.totalOtros,
+      }),
+      {
+        totalCompra: 0,
+        totalGravadas: 0,
+        totalIGV: 0,
+        totalSaldo: 0,
+        totalFacturas: 0,
+        totalBoletas: 0,
+        totalOtros: 0,
+      },
+    );
+
+    return { compras, resumen };
+  }
+
+  /**
+   * Reporte de GASTOS operativos del período (egresos).
+   * Fuente: modelo GastoOperativo. Incluye gastos con fecha en el rango y
+   * los recurrentes diarios vigentes (misma lógica que finanzas.listarEgresos).
+   * No se filtra por sede porque GastoOperativo no está asociado a una sede.
+   */
+  async obtenerReporteGastos(
+    empresaId: number,
+    fechaInicio: string,
+    fechaFin: string,
+  ) {
+    const rango = this.parseRangeDates(fechaInicio, fechaFin);
+
+    const gastosRaw = await this.prisma.gastoOperativo.findMany({
+      where: {
+        empresaId,
+        OR: [
+          { fecha: rango },
+          {
+            recurrenteDiario: true,
+            fechaInicio: { lte: rango.lte },
+            OR: [{ fechaFin: null }, { fechaFin: { gte: rango.gte } }],
+          },
+        ],
+      },
+      orderBy: [{ fecha: 'desc' }, { creadoEn: 'desc' }],
+    });
+
+    const gastos = gastosRaw.map((g) => ({
+      id: g.id,
+      fecha: g.fecha ?? g.fechaInicio ?? g.creadoEn,
+      categoria: g.categoria,
+      etiqueta: g.etiqueta ?? '',
+      descripcion: g.descripcion ?? '',
+      recurrenteDiario: g.recurrenteDiario,
+      monto: Number(g.monto || 0),
+    }));
+
+    const porCategoria: Record<string, number> = {};
+    let totalGastos = 0;
+    for (const g of gastos) {
+      totalGastos += g.monto;
+      porCategoria[g.categoria] = (porCategoria[g.categoria] ?? 0) + g.monto;
+    }
+
+    const resumen = {
+      totalGastos,
+      totalPublicidad: porCategoria['PUBLICIDAD'] ?? 0,
+      totalSueldos: porCategoria['SUELDOS'] ?? 0,
+      totalEnvios: porCategoria['ENVIOS'] ?? 0,
+      totalComisiones: porCategoria['COMISIONES'] ?? 0,
+      totalAlquiler: porCategoria['ALQUILER'] ?? 0,
+      totalOtros:
+        (porCategoria['OTROS'] ?? 0) + (porCategoria['PERSONALIZADA'] ?? 0),
+    };
+
+    return { gastos, resumen };
+  }
 }

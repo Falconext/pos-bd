@@ -154,6 +154,10 @@ model Empresa {
   ticketLogoSize                Int?                          @default(96)
   usaCodigoBarrasManual         Boolean?
   usarPrecioLoteFefo            Boolean                       @default(false)
+  // Sobreventa: cuando es true, la venta/comprobante NO se bloquea por falta de stock
+  // (se registra la salida aunque el stock quede en 0/negativo). Default false = mantiene
+  // el bloqueo por stock insuficiente.
+  permitirVentaSinStock         Boolean                       @default(false)
   costoActivacionReseller       Decimal?                      @default(0)
   costoEnvioFijo                Decimal?                      @default(0)
   envioGratisDesdeSoles         Decimal?                      @default(0)
@@ -441,6 +445,7 @@ model Producto {
   comboItems               ComboItem[]
   gruposModificadores      ProductoGrupoModificador[]
   lotes                    ProductoLote[]
+  codigosBarras            ProductoCodigoBarras[]
   detallesGuiaRemision     DetalleGuiaRemision[]
   stocks                   ProductoStock[]
   recetasComoProductoFinal RecetaProduccion[]            @relation("RecetaProductoFinal")
@@ -1388,6 +1393,24 @@ model ProductoLote {
   @@index([productoId, fechaVencimiento])
   @@index([productoId, activo])
   @@map("producto_lotes")
+}
+
+// Códigos de barra ADICIONALES por producto. Un mismo producto (p. ej. un perfume
+// sellado importado en distintos lotes) puede traer un EAN/UPC diferente por
+// importación, pero es el MISMO producto (mismo precio, mismo stock). Al escanear
+// cualquiera de estos códigos se resuelve al producto padre. El `codigoBarras`
+// principal vive en Producto; esta tabla guarda los alternos.
+model ProductoCodigoBarras {
+  id         Int      @id @default(autoincrement())
+  productoId Int
+  empresaId  Int
+  codigo     String
+  creadoEn   DateTime @default(now())
+  producto   Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
+
+  @@unique([empresaId, codigo])
+  @@index([productoId])
+  @@map("producto_codigos_barras")
 }
 
 model MovimientoKardexLote {

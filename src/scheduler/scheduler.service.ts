@@ -10,6 +10,7 @@ import { WhatsAppService } from '../whatsapp/whatsapp.service';
 @Injectable()
 export class SchedulerService {
   private readonly logger = new Logger(SchedulerService.name);
+  private sunatJobsDisabledLogged = false;
 
   constructor(
     private readonly verificarSunat: VerificarPendientesSunatService,
@@ -20,9 +21,27 @@ export class SchedulerService {
     private readonly whatsappService: WhatsAppService,
   ) {}
 
+  /**
+   * Los jobs de SUNAT (verificación y reintentos) se pueden apagar por entorno con
+   * SUNAT_JOBS_ENABLED=false. Imprescindible cuando un backend de desarrollo apunta
+   * a una base de datos compartida: sus reintentos saldrían por el entorno QPSE
+   * equivocado (demo vs producción) y pisarían los estados del backend desplegado.
+   */
+  private sunatJobsEnabled(): boolean {
+    const enabled = process.env.SUNAT_JOBS_ENABLED !== 'false';
+    if (!enabled && !this.sunatJobsDisabledLogged) {
+      this.sunatJobsDisabledLogged = true;
+      this.logger.warn(
+        '⏸️ Jobs de SUNAT deshabilitados (SUNAT_JOBS_ENABLED=false): no se verificarán ni reintentarán comprobantes/guías desde esta instancia.',
+      );
+    }
+    return enabled;
+  }
+
   // Job 1: Check status of PENDIENTE invoices with documentoId (every 5 min)
   @Cron(CronExpression.EVERY_5_MINUTES)
   async verificarComprobantesPendientes(): Promise<void> {
+    if (!this.sunatJobsEnabled()) return;
     try {
       await this.verificarSunat.execute();
     } catch (error: any) {
@@ -35,6 +54,7 @@ export class SchedulerService {
   // Job 2: Retry FALLIDO_ENVIO invoices and guías that are ready for retry (every 5 min)
   @Cron(CronExpression.EVERY_5_MINUTES)
   async reintentarEnviosFallidos(): Promise<void> {
+    if (!this.sunatJobsEnabled()) return;
     try {
       // Reintentar Comprobantes
       await this.verificarSunat.reintentarEnviosFallidos();
@@ -54,6 +74,7 @@ export class SchedulerService {
     timeZone: 'America/Lima',
   })
   async notificarPendientesEstancados(): Promise<void> {
+    if (!this.sunatJobsEnabled()) return;
     try {
       await this.verificarSunat.notificarPendientesEstancados();
     } catch (error: any) {

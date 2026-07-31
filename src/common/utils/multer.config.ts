@@ -24,6 +24,32 @@ export const excelUploadOptions = {
 
 export const uploadExcel: any = multer(excelUploadOptions).single('excel');
 
+// Hoja de cálculo: Excel (.xls/.xlsx) o CSV. Usado por la importación de
+// Notas de venta históricas. Acepta CSV además de los mimetypes de Excel.
+const spreadsheetFilter = (req: any, file: any, cb: any) => {
+  const allowedMimes = [
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'text/csv',
+    'application/csv',
+    'text/plain',
+  ];
+  const name = String(file.originalname || '').toLowerCase();
+  const okExt = ['.xls', '.xlsx', '.csv'].some((ext) => name.endsWith(ext));
+  if (!allowedMimes.includes(file.mimetype) && !okExt) {
+    return cb(
+      new BadRequestException('Solo se permiten archivos Excel (.xlsx, .xls) o CSV'),
+    );
+  }
+  cb(null, true);
+};
+
+export const spreadsheetUploadOptions = {
+  storage: multer.memoryStorage(),
+  fileFilter: spreadsheetFilter,
+  limits: { fileSize: 10 * 1024 * 1024 },
+} as const;
+
 // Imágenes (PNG/JPEG/WEBP) en memoria
 const imageStorage = multer.memoryStorage();
 const imageFilter = (req: any, file: any, cb: any) => {

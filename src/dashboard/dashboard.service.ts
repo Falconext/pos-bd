@@ -291,6 +291,135 @@ export class DashboardService {
     });
   }
 
+  /**
+   * Productos más vendidos agrupados por categoría.
+   *
+   * Segmentación de moneda (negocio): "General" = comprobantes en PEN (soles),
+   * "Exportación" = comprobantes en USD (dólares). Se filtra por
+   * `comprobante.tipoMoneda` para que los totales de cada respuesta sean
+   * homogéneos en una sola moneda (evita mezclar S/ con US$, como sí ocurre
+   * en `topProductos`). Los montos son el `mtoValorVenta` crudo del detalle,
+   * expresado en la `tipoMoneda` del comprobante.
+   *
+   * @param moneda 'PEN' (General) | 'USD' (Exportación). Default 'PEN'.
+   * @param categoriaId si se envía, sólo devuelve el grupo de esa categoría.
+   */
+  async topProductosPorCategoria(
+    empresaId: number,
+    fechaInicio?: string,
+    fechaFin?: string,
+    sedeId?: number,
+    moneda: string = 'PEN',
+    categoriaId?: number,
+    limit = 5,
+  ) {
+    const fechaEmision = this.parseRange(fechaInicio, fechaFin);
+    const monedaNorm = (moneda || 'PEN').toUpperCase() === 'USD' ? 'USD' : 'PEN';
+
+    // Categorías disponibles (para el selector del frontend)
+    const categorias = await this.prisma.categoria.findMany({
+      where: { empresaId },
+      select: { id: true, nombre: true },
+      orderBy: { nombre: 'asc' },
+    });
+
+    // Comprobantes del rango filtrados por moneda (segmento)
+    const comprobantes = await this.prisma.comprobante.findMany({
+      where: {
+        empresaId,
+        ...(sedeId ? { sedeId } : {}),
+        ...(fechaEmision ? { fechaEmision } : {}),
+        tipoMoneda: monedaNorm,
+        estadoEnvioSunat: { not: 'ANULADO' as any },
+        ...this.filtroExcluirConvertidos,
+      },
+      select: { id: true },
+    });
+    const compIds = comprobantes.map((c) => c.id);
+    if (compIds.length === 0) {
+      return { moneda: monedaNorm, categorias, grupos: [] };
+    }
+
+    const detalles = await this.prisma.detalleComprobante.groupBy({
+      by: ['productoId'],
+      where: { comprobanteId: { in: compIds }, productoId: { not: null } },
+      _sum: { cantidad: true, mtoValorVenta: true },
+    });
+    if (detalles.length === 0) {
+      return { moneda: monedaNorm, categorias, grupos: [] };
+    }
+
+    const productoIds = detalles
+      .map((d) => d.productoId)
+      .filter((id): id is number => id !== null);
+
+    const productos = await this.prisma.producto.findMany({
+      where: {
+        id: { in: productoIds },
+        ...(categoriaId ? { categoriaId } : {}),
+      },
+      select: {
+        id: true,
+        descripcion: true,
+        codigo: true,
+        stock: true,
+        categoriaId: true,
+        categoria: { select: { id: true, nombre: true } },
+      },
+    });
+    const mapProd = new Map(productos.map((p) => [p.id, p] as const));
+
+    // Agrupar por categoría
+    const SIN_CATEGORIA_ID = 0;
+    const grupos = new Map<
+      number,
+      { categoriaId: number; categoriaNombre: string; total: number; productos: any[] }
+    >();
+
+    for (const d of detalles) {
+      if (d.productoId === null) continue;
+      const prod = mapProd.get(d.productoId);
+      if (!prod) continue; // filtrado por categoriaId u otro
+      const catId = prod.categoriaId ?? SIN_CATEGORIA_ID;
+      const catNombre = prod.categoria?.nombre ?? 'Sin categoría';
+      const total = Number(d._sum.mtoValorVenta ?? 0);
+      const cantidad = Number(d._sum.cantidad ?? 0);
+      const grupo =
+        grupos.get(catId) ||
+        {
+          categoriaId: catId,
+          categoriaNombre: catNombre,
+          total: 0,
+          productos: [] as any[],
+        };
+      grupo.total += total;
+      grupo.productos.push({
+        productoId: prod.id,
+        producto: {
+          id: prod.id,
+          descripcion: prod.descripcion,
+          codigo: prod.codigo,
+          stock: (prod as any).stock,
+        },
+        stock: (prod as any).stock,
+        cantidad,
+        total,
+      });
+      grupos.set(catId, grupo);
+    }
+
+    const resultado = Array.from(grupos.values())
+      .map((g) => ({
+        ...g,
+        productos: g.productos
+          .sort((a, b) => b.total - a.total)
+          .slice(0, limit),
+      }))
+      .sort((a, b) => b.total - a.total);
+
+    return { moneda: monedaNorm, categorias, grupos: resultado };
+  }
+
   async overview(
     empresaId: number,
     fechaInicio: string,
@@ -786,6 +915,10 @@ export class DashboardService {
 
     const gastosTrend =
       gastosPrev === 0 ? 100 : ((gastosCurr - gastosPrev) / gastosPrev) * 100;
+    const comprasTrend =
+      comprasPrev === 0
+        ? 100
+        : ((comprasCurr - comprasPrev) / comprasPrev) * 100;
     const gananciasTrend =
       gananciasPrev === 0
         ? 100
@@ -806,6 +939,7 @@ export class DashboardService {
       topProductos: topProds,
       financiero: {
         ingresos: { value: ingresosCurr, trend: ventasTrend },
+        compras: { value: comprasCurr, trend: comprasTrend },
         gastos: { value: gastosCurr, trend: gastosTrend },
         ganancias: { value: gananciasCurr, trend: gananciasTrend },
         margen: marginCurr,

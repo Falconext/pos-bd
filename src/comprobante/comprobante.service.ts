@@ -1209,7 +1209,14 @@ export class ComprobanteService {
       select: { id: true },
     });
     if (existente) {
-      const nombre = tipoDoc === '01' ? 'Factura' : 'Boleta';
+      const nombre =
+        tipoDoc === '01'
+          ? 'Factura'
+          : tipoDoc === '03'
+            ? 'Boleta'
+            : tipoDoc === 'NV'
+              ? 'Nota de venta'
+              : 'Comprobante';
       throw new BadRequestException(
         `Ya existe ${nombre} ${serieNorm}-${correlativo} registrada en el sistema.`,
       );
@@ -1950,6 +1957,16 @@ export class ComprobanteService {
   ): Promise<number> {
     const sedeId = await this.resolverSedeParaStock(data);
 
+    // Sobreventa configurable: si la empresa habilitó "permitirVentaSinStock",
+    // NO se bloquea la venta por falta de stock (la salida se registra igual y el
+    // stock puede quedar en 0). El resto de validaciones (producto existe, lote
+    // activo/no vencido) se mantienen.
+    const empresaVenta = await this.prisma.empresa.findUnique({
+      where: { id: data.empresaId },
+      select: { permitirVentaSinStock: true },
+    });
+    const permitirVentaSinStock = Boolean(empresaVenta?.permitirVentaSinStock);
+
     for (const item of detalles) {
       // Ítems de servicio libre (sin productoId) no tienen stock que validar
       if (item.productoId == null) continue;
@@ -2025,7 +2042,7 @@ export class ComprobanteService {
             `El lote ${lote.lote} de "${producto.descripcion}" está vencido`,
           );
         }
-        if (num(lote.stockActual) < cantidadLote) {
+        if (!permitirVentaSinStock && num(lote.stockActual) < cantidadLote) {
           throw new BadRequestException(
             `Stock insuficiente en lote ${lote.lote} para "${producto.descripcion}". Disponible: ${num(lote.stockActual)}, solicitado: ${cantidadLote}.`,
           );
@@ -2058,7 +2075,7 @@ export class ComprobanteService {
         Math.min(stockBase - reservado, cupoVenta),
       );
 
-      if (disponibleVenta < cantidad) {
+      if (!permitirVentaSinStock && disponibleVenta < cantidad) {
         throw new BadRequestException(
           `Stock no disponible para venta en "${producto.descripcion}". Disponible para venta: ${disponibleVenta}, solicitado: ${cantidad}.`,
         );
@@ -2166,7 +2183,10 @@ export class ComprobanteService {
       empresaId: number;
       comprobanteId: number;
       concepto: string;
-
+      // Comprobante cuyas SALIDAs originales se buscan. En una Nota de Crédito
+      // es el comprobante AFECTADO (la salida vive ahí, no en la NC); si se
+      // omite, se asume que es el mismo comprobanteId (anulación/descarte).
+      origenComprobanteId?: number;
       usuarioId?: number;
     },
   ) {
@@ -2177,7 +2197,7 @@ export class ComprobanteService {
     // 1. Obtener movimientos originales de kardex asociados a este comprobante
     const movimientosOriginales = await this.prisma.movimientoKardex.findMany({
       where: {
-        comprobanteId: data?.comprobanteId,
+        comprobanteId: data?.origenComprobanteId ?? data?.comprobanteId,
         empresaId: data?.empresaId,
         tipoMovimiento: 'SALIDA',
       },
@@ -2952,10 +2972,26 @@ export class ComprobanteService {
     const yaAnulado = comp.estadoEnvioSunat === 'ANULADO';
     if (
       !isInformal &&
-      ['EMITIDO', 'ANULADO'].includes(comp.estadoEnvioSunat as string)
+      ['EMITIDO', 'ANULADO', 'PENDIENTE_CONCILIACION'].includes(
+        comp.estadoEnvioSunat as string,
+      )
     ) {
       throw new BadRequestException(
         `No se puede eliminar un comprobante con estado ${comp.estadoEnvioSunat}`,
+      );
+    }
+
+    // Un comprobante formal PENDIENTE que ya llegó al PSE (tiene documentoId)
+    // puede estar aceptado en SUNAT aunque la app aún no tenga el CDR; borrarlo
+    // deja un comprobante "fantasma" registrado en SUNAT y rompe el correlativo.
+    if (
+      !isInformal &&
+      comp.documentoId &&
+      comp.estadoEnvioSunat === 'PENDIENTE'
+    ) {
+      throw new BadRequestException(
+        'Este comprobante ya fue enviado a SUNAT y podría estar aceptado. ' +
+          'Reenvíalo para confirmar su estado (Emitido o Rechazado) antes de intentar eliminarlo.',
       );
     }
 
@@ -3402,6 +3438,8 @@ export class ComprobanteService {
       await this.revertirStock(detalleFinal, {
         empresaId,
         comprobanteId: nota.id,
+        // Las SALIDAs a revertir pertenecen al comprobante afectado, no a la NC
+        origenComprobanteId: afectado.id,
         concepto: `Nota de Crédito ${motivoNota.descripcion} ${nota.serie}-${nota.correlativo}`,
       });
     }
@@ -3431,7 +3469,27 @@ export class ComprobanteService {
     empresaId: number,
     usuarioId?: number,
     sedeId?: number,
+    opts?: {
+      // Modo IMPORTACIÓN de histórico: registra una Nota de venta (u otro
+      // informal) YA existente sin generar correlativo nuevo. Preserva la
+      // serie/correlativo originales vía `crearComprobanteImportado`.
+      importado?: boolean;
+      // Solo aplican en modo importado. Por defecto AMBOS FALSE (histórico):
+      // no se toca inventario ni caja salvo que se activen explícitamente.
+      afectarStock?: boolean;
+      afectarCaja?: boolean;
+      // Serie/correlativo del documento original (modo importado).
+      serie?: string;
+      correlativo?: string;
+    },
   ) {
+    const importado = opts?.importado === true;
+    // En modo importado (histórico) los flags vienen APAGADOS por defecto.
+    const afectarStockImport = opts?.afectarStock === true;
+    const afectarCajaImport = opts?.afectarCaja === true;
+    // ¿Se debe registrar el cobro en caja? Emisión normal: sí. Importado: solo
+    // si se activó afectarCaja.
+    const registrarEnCaja = !importado || afectarCajaImport;
     const {
       fechaEmision,
       formaPagoTipo,
@@ -3465,9 +3523,12 @@ export class ComprobanteService {
     //   "Descontar del stock ahora" (input.descontarStock === true). El stock
     //   real recién baja al convertir la NP a comprobante formal.
     // - Resto de informales (NV, TICKET, RH, CP, OT): siempre descuentan.
-    const afectaStock =
-      tipoDoc !== 'COT' &&
-      (tipoDoc !== 'NP' || input.descontarStock === true);
+    // En modo importado el stock solo se toca si afectarStock === true. En
+    // emisión normal se conserva la regla por tipo de documento.
+    const afectaStock = importado
+      ? afectarStockImport
+      : tipoDoc !== 'COT' &&
+        (tipoDoc !== 'NP' || input.descontarStock === true);
     // Resolver cliente
     let finalClienteId: number | null = clienteId ?? null;
     if (clienteName === 'CLIENTES VARIOS') {
@@ -3587,7 +3648,8 @@ export class ComprobanteService {
             ? mtoImpVenta
             : 0
         : 0;
-    if (montoPagadoInicial > 0) {
+    // En importado sin caja no se exige caja abierta (documento histórico).
+    if (montoPagadoInicial > 0 && registrarEnCaja) {
       await this.validarDetallePago(
         paymentDetails,
         medioPagoValido,
@@ -3683,7 +3745,9 @@ export class ComprobanteService {
     // Validar receta médica en backend si rubro farmacia/botica
     await this.validarRecetasSiFarmacia(detalles, empresaId);
 
-    if (afectaStock) {
+    // En importado (histórico) NO se bloquea por stock insuficiente: el
+    // inventario pudo variar por otras vías.
+    if (afectaStock && !importado) {
       await this.validarStockDisponibleParaVenta(detalleFinal, {
         empresaId,
         sedeId: finalSedeId,
@@ -3691,14 +3755,22 @@ export class ComprobanteService {
       });
     }
 
-    const comp = await this.crearComprobanteConReintento(
-      dataBase,
-      tipoDoc,
-      null,
-      empresaId,
-    );
+    const comp = importado
+      ? await this.crearComprobanteImportado(
+          dataBase,
+          String(opts?.serie ?? input.serie),
+          Number(opts?.correlativo ?? input.correlativo),
+          empresaId,
+          tipoDoc,
+        )
+      : await this.crearComprobanteConReintento(
+          dataBase,
+          tipoDoc,
+          null,
+          empresaId,
+        );
 
-    if (montoPagadoInicial > 0) {
+    if (montoPagadoInicial > 0 && registrarEnCaja) {
       await this.registrarPagosDeEmision({
         comprobanteId: comp.id,
         empresaId,
@@ -3724,8 +3796,9 @@ export class ComprobanteService {
       await this.registrarSeriesVendidas(comp.id, empresaId, finalSedeId);
     }
 
-    // Registrar comisiones del vendedor (no bloqueante)
-    if (usuarioId && this.comisionesService && tipoDoc !== 'COT') {
+    // Registrar comisiones del vendedor (no bloqueante). En importado histórico
+    // no se generan comisiones.
+    if (usuarioId && this.comisionesService && tipoDoc !== 'COT' && !importado) {
       try {
         await this.comisionesService.registrarComisionesDesdeComprobante({
           comprobanteId: comp.id,

@@ -1,4 +1,5 @@
 import {
+  IsArray,
   IsBoolean,
   IsInt,
   IsNumber,
@@ -169,6 +170,12 @@ export class UpdateProductoDto {
   @IsOptional()
   @IsString()
   codigoBarras?: string;
+
+  // 🆕 Códigos de barra ADICIONALES (mismo producto, distinto EAN por lote/importación)
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  codigosBarrasExtra?: string[];
 
   @IsOptional()
   @IsString()

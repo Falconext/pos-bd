@@ -153,6 +153,7 @@ export class ProductoService {
       unidadVenta?: string;
       factorConversion?: number | string;
       codigoBarras?: string;
+      codigosBarrasExtra?: string[];
       codigoDigemid?: string;
       codProdSunat?: string;
       costoUnitario?: number;
@@ -270,6 +271,14 @@ export class ProductoService {
           `El código de barras "${codigoBarras}" ya está asignado a otro producto: ${existeBarras.descripcion}`,
         );
       }
+    }
+
+    // Pre-validar códigos de barra adicionales ANTES de crear (evita productos huérfanos)
+    if (data.codigosBarrasExtra !== undefined) {
+      await this.validarColisionCodigosExtra(
+        empresaId,
+        this.normalizarCodigosExtra(data.codigosBarrasExtra, codigoBarras),
+      );
     }
 
     if (!unidadMedidaId) {
@@ -505,6 +514,13 @@ export class ProductoService {
         sedeId,
       );
     }
+
+    await this.sincronizarCodigosBarrasExtra(
+      nuevo.id,
+      empresaId,
+      data.codigosBarrasExtra,
+      nuevo.codigoBarras,
+    );
 
     return this.obtenerPorId(nuevo.id, empresaId);
   }
@@ -1170,6 +1186,10 @@ export class ProductoService {
             codigoBarras: true,
           },
         },
+        codigosBarras: {
+          select: { codigo: true },
+          orderBy: { id: 'asc' },
+        },
       },
     });
     if (!producto) throw new NotFoundException('Producto no encontrado');
@@ -1227,7 +1247,98 @@ export class ProductoService {
       imagenesExtra,
       imagenesExtraDisplay,
       costoUnitario: Number((producto as any).costoPromedio) || 0,
+      codigosBarrasExtra: (((producto as any).codigosBarras as any[]) || []).map(
+        (c) => c.codigo,
+      ),
     };
+  }
+
+  /**
+   * Reemplaza el conjunto completo de códigos de barra ADICIONALES de un producto.
+   * Pensado para el caso "mismo producto, distinto EAN por lote/importación": todos
+   * los códigos apuntan al MISMO producto (mismo precio y stock). Si `codigos` es
+   * `undefined` no se toca nada (el cliente no envió el campo). Normaliza, deduplica,
+   * ignora el código principal y valida colisiones contra otros productos.
+   */
+  /** Normaliza (trim + uppercase), quita vacíos/duplicados y descarta el código principal. */
+  private normalizarCodigosExtra(
+    codigos: string[],
+    codigoBarrasPrincipal?: string | null,
+  ): string[] {
+    const principal = (codigoBarrasPrincipal || '').trim().toUpperCase();
+    return Array.from(
+      new Set(
+        (codigos || [])
+          .map((c) => (c || '').trim().toUpperCase())
+          .filter((c) => c.length > 0)
+          .filter((c) => c !== principal),
+      ),
+    );
+  }
+
+  /**
+   * Valida que ningún código choque con el código (principal o alterno) de OTRO
+   * producto. Se llama ANTES de crear/mutar el producto para no dejar huérfanos.
+   */
+  private async validarColisionCodigosExtra(
+    empresaId: number,
+    codigos: string[],
+    excludeProductoId?: number,
+  ) {
+    for (const codigo of codigos) {
+      const chocaPrincipal = await this.prisma.producto.findFirst({
+        where: {
+          empresaId,
+          codigoBarras: codigo,
+          estado: { not: 'PLACEHOLDER' as any },
+          ...(excludeProductoId ? { id: { not: excludeProductoId } } : {}),
+        },
+        select: { descripcion: true },
+      });
+      if (chocaPrincipal) {
+        throw new ForbiddenException(
+          `El código de barras "${codigo}" ya está asignado a otro producto: ${chocaPrincipal.descripcion}`,
+        );
+      }
+      const chocaAlterno = await this.prisma.productoCodigoBarras.findFirst({
+        where: {
+          empresaId,
+          codigo,
+          ...(excludeProductoId ? { productoId: { not: excludeProductoId } } : {}),
+        },
+        select: { producto: { select: { descripcion: true } } },
+      });
+      if (chocaAlterno) {
+        throw new ForbiddenException(
+          `El código de barras "${codigo}" ya está asignado a otro producto: ${chocaAlterno.producto?.descripcion}`,
+        );
+      }
+    }
+  }
+
+  private async sincronizarCodigosBarrasExtra(
+    productoId: number,
+    empresaId: number,
+    codigos: string[] | undefined,
+    codigoBarrasPrincipal?: string | null,
+  ) {
+    if (codigos === undefined) return;
+
+    const limpios = this.normalizarCodigosExtra(codigos, codigoBarrasPrincipal);
+
+    await this.validarColisionCodigosExtra(empresaId, limpios, productoId);
+
+    // Reemplazar el set completo de alternos del producto de forma atómica.
+    await this.prisma.$transaction([
+      this.prisma.productoCodigoBarras.deleteMany({ where: { productoId } }),
+      ...(limpios.length
+        ? [
+            this.prisma.productoCodigoBarras.createMany({
+              data: limpios.map((codigo) => ({ productoId, empresaId, codigo })),
+            }),
+          ]
+        : []),
+    ]);
   }
 
   /**
@@ -1243,8 +1354,13 @@ export class ProductoService {
     const producto = await this.prisma.producto.findFirst({
       where: {
         empresaId,
-        codigoBarras,
         estado: { not: 'PLACEHOLDER' as any },
+        // Coincide por el código principal O por cualquier código alterno del
+        // producto (mismo perfume con distinto EAN según lote/importación).
+        OR: [
+          { codigoBarras },
+          { codigosBarras: { some: { codigo: codigoBarras } } },
+        ],
       },
       select: {
         id: true,
@@ -1550,6 +1666,7 @@ export class ProductoService {
       unidadVenta?: string;
       factorConversion?: number | string;
       codigoBarras?: string;
+      codigosBarrasExtra?: string[];
       codigoDigemid?: string;
       codProdSunat?: string;
       // Campos Ofertas
@@ -1604,6 +1721,18 @@ export class ProductoService {
           `El código de barras "${data.codigoBarras}" ya está asignado a otro producto: ${existeBarras.descripcion}`,
         );
       }
+    }
+
+    // Pre-validar códigos de barra adicionales ANTES de mutar el producto
+    if (data.codigosBarrasExtra !== undefined) {
+      await this.validarColisionCodigosExtra(
+        data.empresaId,
+        this.normalizarCodigosExtra(
+          data.codigosBarrasExtra,
+          data.codigoBarras ?? producto.codigoBarras,
+        ),
+        data.id,
+      );
     }
 
     // Auto-calcular valorUnitario desde precioUnitario si se proporciona
@@ -1988,6 +2117,13 @@ export class ProductoService {
         data.sedeId,
       );
     }
+
+    await this.sincronizarCodigosBarrasExtra(
+      actualizado.id,
+      data.empresaId,
+      data.codigosBarrasExtra,
+      actualizado.codigoBarras,
+    );
 
     return this.obtenerPorId(actualizado.id, data.empresaId);
   }

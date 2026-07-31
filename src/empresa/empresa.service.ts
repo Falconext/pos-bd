@@ -851,6 +851,9 @@ export class EmpresaService {
               descripcion: true,
               maxSedes: true,
               tieneTienda: true,
+              esPrueba: true,
+              tipoFacturacion: true,
+              duracionDias: true,
             },
           },
           rubro: {
@@ -903,6 +906,9 @@ export class EmpresaService {
           maxSedes: e.plan.maxSedes,
           descripcion: e.plan.descripcion,
           tieneTienda: e.plan.tieneTienda,
+          esPrueba: e.plan.esPrueba,
+          tipoFacturacion: e.plan.tipoFacturacion,
+          duracionDias: e.plan.duracionDias,
         },
       })),
       total,
@@ -996,6 +1002,8 @@ export class EmpresaService {
         updateData.ticketLogoSize = dto.ticketLogoSize;
       if (dto.usarPrecioLoteFefo !== undefined)
         updateData.usarPrecioLoteFefo = dto.usarPrecioLoteFefo;
+      if (dto.permitirVentaSinStock !== undefined)
+        updateData.permitirVentaSinStock = dto.permitirVentaSinStock;
       if (dto.directorTecnico !== undefined)
         updateData.directorTecnico = dto.directorTecnico;
       if (dto.logo !== undefined) updateData.logo = dto.logo;

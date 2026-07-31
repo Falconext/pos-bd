@@ -81,7 +81,8 @@ async function main() {
       { codigo: 'M2', nombre: 'METRO CUADRADO' },
       { codigo: 'SET', nombre: 'JUEGO' },
       { codigo: 'DOZ', nombre: 'DOCENA' },
-      { codigo: 'PQT', nombre: 'PAQUETE' }
+      { codigo: 'PQT', nombre: 'PAQUETE' },
+      { codigo: 'GLL', nombre: 'GALONES' }
     ];
 
     for (const unidad of unidades) {

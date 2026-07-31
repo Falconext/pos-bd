@@ -109,6 +109,11 @@ export class QpseClient {
     return usaDemo ? this.demoClient : this.client;
   }
 
+  /** URL base efectiva para una empresa según su flag usaDemo (para validar coherencia de entorno). */
+  getResolvedBaseUrl(usaDemo?: boolean): string {
+    return usaDemo ? this.demoBaseUrl : this.baseUrl;
+  }
+
   private getAuthBaseUrlForDemo(usaDemo?: boolean): string {
     return usaDemo ? this.demoBaseUrl : this.authBaseUrl;
   }

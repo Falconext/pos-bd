@@ -47,7 +47,7 @@ async function seedDesktop() {
         { codigo: 'MTQ', nombre: 'METRO CÚBICO' },
         { codigo: 'GRM', nombre: 'GRAMO' },
         { codigo: 'TNE', nombre: 'TONELADA' },
-        { codigo: 'GLN', nombre: 'GALÓN' },
+        { codigo: 'GLL', nombre: 'GALONES' },
         { codigo: 'BOX', nombre: 'CAJA' },
         { codigo: 'DZN', nombre: 'DOCENA' },
         { codigo: 'PAR', nombre: 'PAR' },

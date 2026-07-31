@@ -1748,6 +1748,17 @@ export class EnviarSunatService {
           this.summarizeJambleResponse(finalResponse, status, documentId),
         );
       } else {
+        // Coherencia de entorno: una empresa de producción (usaDemo=false) enviando a un
+        // endpoint demo (o viceversa) termina en "El tipo SOAP no coincide" en QPSE.
+        const qpseUrlEfectiva = this.qpseClient.getResolvedBaseUrl(usaDemo);
+        const urlEsDemo = qpseUrlEfectiva.includes('demo');
+        if (usaDemo !== urlEsDemo) {
+          this.logger.warn(
+            `⚠️ [CONFIG] Empresa ${comp.empresaId} tiene usaDemo=${usaDemo} pero el endpoint QPSE efectivo es ${qpseUrlEfectiva}. ` +
+              `Si la cuenta PSE pertenece al otro entorno, QPSE rechazará con "tipo SOAP no coincide". Revisa QPSE_BASE_URL/QPSE_AUTH_BASE_URL o el flag usaDemo de la empresa.`,
+          );
+        }
+
         const qpseAccess = await this.qpseClient.obtenerTokenAcceso({
           username: qpseUsername!,
           password: qpsePassword!,
@@ -1901,6 +1912,22 @@ export class EnviarSunatService {
         } else if (!qpseTicket) {
           console.log(`✅ QPSE respuesta síncrona (sin ticket): ${status}`);
         }
+      }
+
+      // Persistir la aceptación DE INMEDIATO, antes de S3/PDF: si algo falla después
+      // (o si otro proceso pisa la fila), el CDR y el estado EMITIDO ya están a salvo.
+      if (status === 'ACEPTADO') {
+        await this.prisma.comprobante.update({
+          where: { id: comprobanteId },
+          data: {
+            estadoEnvioSunat: 'EMITIDO',
+            sunatXml: signedXmlContent || null,
+            sunatCdrZip: cdrBase64OrNull || finalResponse?.cdr || null,
+            sunatCdrResponse: JSON.stringify(finalResponse),
+            sunatErrorMsg: null,
+            sunatNextRetryAt: null,
+          },
+        });
       }
 
       let s3XmlUrl: string | null = null;
@@ -2153,6 +2180,27 @@ export class EnviarSunatService {
             ? 'PENDIENTE' // aún procesando → scheduler reintentará
             : 'RECHAZADO'; // cualquier otro estado (ERROR, RECHAZADO, etc.)
 
+      // No degradar un comprobante que otro proceso ya dejó aceptado/anulado.
+      if (estadoFinal !== 'EMITIDO') {
+        const actual = await this.prisma.comprobante.findUnique({
+          where: { id: comprobanteId },
+          select: { estadoEnvioSunat: true },
+        });
+        if (['EMITIDO', 'ANULADO'].includes(String(actual?.estadoEnvioSunat))) {
+          console.warn(
+            `⛔ Comprobante ${comprobanteId} ya está ${actual?.estadoEnvioSunat}; se ignora el resultado ${estadoFinal} de este envío.`,
+          );
+          return {
+            status: actual?.estadoEnvioSunat === 'EMITIDO' ? 'ACEPTADO' : 'ANULADO',
+            documentId,
+            comprobanteId,
+            serie: comp.serie,
+            correlativo: comp.correlativo,
+            message: `El comprobante ya se encuentra en estado ${actual?.estadoEnvioSunat}.`,
+          };
+        }
+      }
+
       await this.prisma.comprobante.update({
         where: { id: comprobanteId },
         data: {
@@ -2307,10 +2355,34 @@ export class EnviarSunatService {
       try {
         const currentComp = await this.prisma.comprobante.findUnique({
           where: { id: comprobanteId },
-          select: { sunatRetriesCount: true },
+          select: { sunatRetriesCount: true, estadoEnvioSunat: true },
         });
 
-        if (currentComp) {
+        // Nunca degradar un comprobante que otro proceso ya dejó en estado final
+        // (p. ej. aceptado por SUNAT mientras este reintento fallaba).
+        const ESTADOS_FINALES = ['EMITIDO', 'ANULADO', 'PENDIENTE_CONCILIACION'];
+        if (
+          currentComp &&
+          ESTADOS_FINALES.includes(String(currentComp.estadoEnvioSunat))
+        ) {
+          console.warn(
+            `⛔ Comprobante ${comprobanteId} ya está en estado final (${currentComp.estadoEnvioSunat}); no se sobrescribe con el fallo: ${err.message}`,
+          );
+        } else if (currentComp && this.classifyError(err) === 'CONFIG') {
+          // Error de configuración (entorno demo/producción cruzado): sin reintentos automáticos.
+          await this.prisma.comprobante.update({
+            where: { id: comprobanteId },
+            data: {
+              estadoEnvioSunat: 'FALLIDO_ENVIO',
+              sunatLastRetryAt: new Date(),
+              sunatNextRetryAt: null,
+              sunatErrorMsg: `[CONFIG] ${err.message}. Revisa el entorno de la empresa (usaDemo) y el QPSE_BASE_URL del servidor; corrige la configuración y reenvía manualmente.`,
+            },
+          });
+          console.error(
+            `🛑 Comprobante ${comprobanteId} → error de CONFIGURACIÓN (entorno demo/producción cruzado). Sin reintentos automáticos.`,
+          );
+        } else if (currentComp) {
           const newRetryCount = (currentComp.sunatRetriesCount || 0) + 1;
           const errorType = this.classifyError(err);
           const maxRetries =
@@ -2370,9 +2442,17 @@ export class EnviarSunatService {
         };
       }
 
-      // Errores de DATOS: el usuario debe corregir algo.
+      // Errores de CONFIG: entorno demo/producción cruzado; debe corregirse la configuración.
       const rawMsg =
         err.response?.data?.message || err.message || 'Error al enviar a SUNAT';
+      if (finalErrorType === 'CONFIG') {
+        throw new HttpException(
+          `Error de configuración de facturación: ${rawMsg}. Verifica que el entorno de la empresa (demo/producción) coincida con el del servidor QPSE.`,
+          502,
+        );
+      }
+
+      // Errores de DATOS: el usuario debe corregir algo.
       throw new HttpException(`Error al emitir el comprobante: ${rawMsg}`, 502);
     }
   }
@@ -3408,9 +3488,14 @@ export class EnviarSunatService {
    * - DATOS: SUNAT/QPSE rechazó explícitamente (XML inválido, datos incorrectos) → máx 5 reintentos
    * - RED: falla de infraestructura (SUNAT caída, timeout, sin conexión) → máx 30 reintentos con backoff 24h
    */
-  private classifyError(err: any): 'DATOS' | 'RED' {
+  private classifyError(err: any): 'DATOS' | 'RED' | 'CONFIG' {
     const msg = String(err?.message || '').toLowerCase();
     const httpStatus = err?.status || err?.response?.status;
+
+    // Cuenta PSE y endpoint QPSE en entornos distintos (demo vs producción).
+    // Reintentar jamás lo va a arreglar y el comprobante puede estar ya aceptado
+    // por el otro entorno: no debe consumir reintentos ni terminar en RECHAZADO.
+    if (msg.includes('tipo soap no coincide')) return 'CONFIG';
 
     // HttpException lanzada por nosotros al detectar rechazo explícito de SUNAT/QPSE
     if (

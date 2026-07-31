@@ -293,6 +293,213 @@ export class ContabilidadController {
     return res.end(buffer, 'binary');
   }
 
+  // ──────────────── COMPRAS ────────────────
+
+  @Get('obtener-reporte-compras')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async obtenerReporteCompras(
+    @User() user: any,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
+    @Query('sedeId') sedeId?: string,
+  ) {
+    if (!fechaInicio || !fechaFin)
+      throw new BadRequestException('fechaInicio y fechaFin son requeridos');
+    return this.service.obtenerReporteCompras(
+      user.empresaId,
+      fechaInicio,
+      fechaFin,
+      sedeId ? Number(sedeId) : undefined,
+    );
+  }
+
+  @Get('reporte-compras-exportar')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async exportarReporteCompras(
+    @User() user: any,
+    @Query('fechaInicio') fechaInicio: string,
+    @Query('fechaFin') fechaFin: string,
+    @Res() res: Response,
+    @Query('sedeId') sedeId?: string,
+  ) {
+    if (!fechaInicio || !fechaFin)
+      throw new BadRequestException('fechaInicio y fechaFin son requeridos');
+    const { compras, resumen } = await this.service.obtenerReporteCompras(
+      user.empresaId,
+      fechaInicio,
+      fechaFin,
+      sedeId ? Number(sedeId) : undefined,
+    );
+
+    const estadoPagoLabel: Record<string, string> = {
+      COMPLETADO: 'Pagado',
+      PENDIENTE_PAGO: 'Pendiente',
+      PAGO_PARCIAL: 'Pago Parcial',
+      ANULADO: 'Anulado',
+    };
+
+    const datosExcel = compras.map((c: any) => ({
+      SEDE: c.sede?.nombre ?? '',
+      TIPO: c.tipoDoc,
+      SERIE: c.serie,
+      NÚMERO: c.numero,
+      'RUC/DNI': c.proveedor?.nroDoc ?? '',
+      PROVEEDOR: c.proveedor?.nombre ?? '',
+      'FECHA EMISIÓN': toFechaLima(new Date(c.fechaEmision)),
+      'FECHA VENCIM.': c.fechaVencimiento
+        ? toFechaLima(new Date(c.fechaVencimiento))
+        : '',
+      MONEDA: c.moneda ?? 'PEN',
+      'ESTADO PAGO': estadoPagoLabel[c.estadoPago] ?? c.estadoPago ?? '',
+      'BASE GRAVADA': Number(c.subtotal ?? 0),
+      IGV: Number(c.igv ?? 0),
+      TOTAL: Number(c.total ?? 0),
+      SALDO: Number(c.saldo ?? 0),
+      USUARIO: c.usuario?.nombre ?? '',
+      OBSERVACIONES: c.observaciones ?? '',
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(datosExcel);
+    worksheet['!cols'] = [
+      { wch: 20 },
+      { wch: 12 },
+      { wch: 10 },
+      { wch: 12 },
+      { wch: 14 },
+      { wch: 32 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 8 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 12 },
+      { wch: 14 },
+      { wch: 12 },
+      { wch: 20 },
+      { wch: 30 },
+    ];
+
+    XLSX.utils.sheet_add_aoa(worksheet, [[''], ['']], { origin: -1 });
+
+    const resumenData = [
+      ['TOTAL FACTURAS', resumen.totalFacturas],
+      ['TOTAL BOLETAS', resumen.totalBoletas],
+      ['TOTAL OTROS', resumen.totalOtros],
+      ['TOTAL BASE GRAVADA', resumen.totalGravadas],
+      ['TOTAL IGV', resumen.totalIGV],
+      ['TOTAL SALDO PENDIENTE', resumen.totalSaldo],
+      ['TOTAL COMPRAS:', resumen.totalCompra],
+    ];
+
+    XLSX.utils.sheet_add_aoa(
+      worksheet,
+      resumenData.map(([label, value]) =>
+        Array(11).fill('').concat([label, value]),
+      ),
+      { origin: -1 },
+    );
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Compras');
+    const buffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
+
+    const fileName = `reporte-compras-${fechaInicio}_a_${fechaFin}.xlsx`;
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Length', buffer.length.toString());
+    return res.end(buffer, 'binary');
+  }
+
+  // ──────────────── GASTOS ────────────────
+
+  @Get('obtener-reporte-gastos')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async obtenerReporteGastos(
+    @User() user: any,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
+  ) {
+    if (!fechaInicio || !fechaFin)
+      throw new BadRequestException('fechaInicio y fechaFin son requeridos');
+    return this.service.obtenerReporteGastos(
+      user.empresaId,
+      fechaInicio,
+      fechaFin,
+    );
+  }
+
+  @Get('reporte-gastos-exportar')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async exportarReporteGastos(
+    @User() user: any,
+    @Query('fechaInicio') fechaInicio: string,
+    @Query('fechaFin') fechaFin: string,
+    @Res() res: Response,
+  ) {
+    if (!fechaInicio || !fechaFin)
+      throw new BadRequestException('fechaInicio y fechaFin son requeridos');
+    const { gastos, resumen } = await this.service.obtenerReporteGastos(
+      user.empresaId,
+      fechaInicio,
+      fechaFin,
+    );
+
+    const datosExcel = gastos.map((g: any) => ({
+      FECHA: toFechaLima(new Date(g.fecha)),
+      CATEGORÍA: g.categoria,
+      ETIQUETA: g.etiqueta ?? '',
+      DESCRIPCIÓN: g.descripcion ?? '',
+      RECURRENTE: g.recurrenteDiario ? 'Sí' : 'No',
+      MONTO: Number(g.monto ?? 0),
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(datosExcel);
+    worksheet['!cols'] = [
+      { wch: 14 },
+      { wch: 16 },
+      { wch: 20 },
+      { wch: 40 },
+      { wch: 12 },
+      { wch: 14 },
+    ];
+
+    XLSX.utils.sheet_add_aoa(worksheet, [[''], ['']], { origin: -1 });
+
+    const resumenData = [
+      ['PUBLICIDAD', resumen.totalPublicidad],
+      ['SUELDOS', resumen.totalSueldos],
+      ['ENVIOS', resumen.totalEnvios],
+      ['COMISIONES', resumen.totalComisiones],
+      ['ALQUILER', resumen.totalAlquiler],
+      ['OTROS', resumen.totalOtros],
+      ['TOTAL GASTOS:', resumen.totalGastos],
+    ];
+
+    XLSX.utils.sheet_add_aoa(
+      worksheet,
+      resumenData.map(([label, value]) =>
+        Array(4).fill('').concat([label, value]),
+      ),
+      { origin: -1 },
+    );
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Gastos');
+    const buffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
+
+    const fileName = `reporte-gastos-${fechaInicio}_a_${fechaFin}.xlsx`;
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Length', buffer.length.toString());
+    return res.end(buffer, 'binary');
+  }
+
   @Get('obtener-arqueo')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async obtenerArqueo(

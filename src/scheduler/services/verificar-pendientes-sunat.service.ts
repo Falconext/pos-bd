@@ -221,26 +221,42 @@ export class VerificarPendientesSunatService {
             finalResponse,
           );
 
-          await this.prisma.comprobante.update({
-            where: { id: comprobante.id },
-            data: {
-              estadoEnvioSunat:
-                status === 'ACEPTADO'
-                  ? 'EMITIDO'
-                  : status === 'RECHAZADO'
-                    ? 'RECHAZADO'
-                    : 'PENDIENTE',
-              sunatCdrZip: finalResponse.cdr || null,
-              sunatCdrResponse: JSON.stringify(finalResponse),
-              sunatErrorMsg:
-                status !== 'ACEPTADO'
-                  ? this.extractQpseMessage(finalResponse)
-                  : null,
-              // Limpiar contadores de backoff cuando se resuelve exitosamente
-              ...(status !== 'PENDIENTE' && { sunatNextRetryAt: null }),
-              ...storageUpdate,
-            },
-          });
+          const dataUpdate = {
+            estadoEnvioSunat: (status === 'ACEPTADO'
+              ? 'EMITIDO'
+              : status === 'RECHAZADO'
+                ? 'RECHAZADO'
+                : 'PENDIENTE') as any,
+            sunatCdrZip: finalResponse.cdr || null,
+            sunatCdrResponse: JSON.stringify(finalResponse),
+            sunatErrorMsg:
+              status !== 'ACEPTADO'
+                ? this.extractQpseMessage(finalResponse)
+                : null,
+            // Limpiar contadores de backoff cuando se resuelve exitosamente
+            ...(status !== 'PENDIENTE' && { sunatNextRetryAt: null }),
+            ...storageUpdate,
+          };
+
+          if (status === 'ACEPTADO') {
+            await this.prisma.comprobante.update({
+              where: { id: comprobante.id },
+              data: dataUpdate,
+            });
+          } else {
+            // Guard atómico: solo escribir si sigue PENDIENTE, para no pisar un
+            // EMITIDO/ANULADO/PENDIENTE_CONCILIACION escrito por otro proceso.
+            const res = await this.prisma.comprobante.updateMany({
+              where: { id: comprobante.id, estadoEnvioSunat: 'PENDIENTE' },
+              data: dataUpdate,
+            });
+            if (res.count === 0) {
+              this.logger.warn(
+                `⛔ Comprobante ${comprobante.id} cambió de estado durante la consulta; no se sobrescribe con ${status}`,
+              );
+              continue;
+            }
+          }
 
           // Si fue ACEPTADO, generar y subir el PDF
           if (status === 'ACEPTADO') {
@@ -293,8 +309,9 @@ export class VerificarPendientesSunatService {
           try {
             const newCount = (comprobante.sunatRetriesCount || 0) + 1;
             const nextRetry = this.enviarSunat.calculateNetworkRetry(newCount);
-            await this.prisma.comprobante.update({
-              where: { id: comprobante.id },
+            // Guard atómico: no tocar la fila si otro proceso ya la resolvió.
+            await this.prisma.comprobante.updateMany({
+              where: { id: comprobante.id, estadoEnvioSunat: 'PENDIENTE' },
               data: {
                 sunatRetriesCount: newCount,
                 sunatLastRetryAt: new Date(),
@@ -466,6 +483,9 @@ export class VerificarPendientesSunatService {
       stateLabel === 'pendiente' ||
       stateLabel === 'en_proceso' ||
       stateLabel === 'indeterminado' ||
+      // 'registrado': QPSE recibió el documento pero aún no hay CDR definitivo.
+      // Antes caía al RECHAZADO por defecto y generaba falsos rechazos.
+      stateLabel === 'registrado' ||
       code === '98'
     ) {
       return 'PENDIENTE';

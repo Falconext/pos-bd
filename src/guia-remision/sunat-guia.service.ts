@@ -298,7 +298,21 @@ export class SunatGuiaService {
         : {}),
       'cac:Shipment': {
         'cbc:ID': { _text: 'SUNAT_Envio' },
-        'cbc:HandlingCode': { _text: guia.tipoTraslado },
+        'cbc:HandlingCode': {
+          _attributes: {
+            listAgencyName: 'PE:SUNAT',
+            listName: 'Motivo de traslado',
+            listURI:
+              'urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo20',
+          },
+          _text: guia.tipoTraslado,
+        },
+        // Descripción del motivo de traslado (Catálogo 20). Obligatorio para
+        // motivo '13' (Otros) y para '05' (Consignación); se envía siempre por
+        // consistencia con el CPE aceptado por SUNAT.
+        'cbc:HandlingInstructions': {
+          _text: this.motivoTrasladoDescripcion(guia),
+        },
         'cbc:GrossWeightMeasure': {
           _attributes: { unitCode: this.cleanUnit(guia.unidadPeso) },
           _text: Number(guia.pesoTotal),
@@ -639,6 +653,38 @@ export class SunatGuiaService {
   }
 
   // ─── Utility methods ───────────────────────────────────────────────────────
+
+  /**
+   * Descripción del motivo de traslado según Catálogo SUNAT N° 20.
+   * Se envía en cbc:HandlingInstructions. Si la guía trae observaciones y el
+   * motivo es '13' (Otros) o '05' (Consignación), se prioriza el texto libre.
+   */
+  private motivoTrasladoDescripcion(guia: any): string {
+    const descripciones: Record<string, string> = {
+      '01': 'VENTA',
+      '02': 'COMPRA',
+      '03': 'VENTA CON ENTREGA A TERCEROS',
+      '04': 'TRASLADO ENTRE ESTABLECIMIENTOS DE LA MISMA EMPRESA',
+      '05': 'CONSIGNACION',
+      '06': 'DEVOLUCION',
+      '07': 'RECOJO DE BIENES TRANSFORMADOS',
+      '08': 'IMPORTACION',
+      '09': 'EXPORTACION',
+      '13': 'OTROS',
+      '14': 'VENTA SUJETA A CONFIRMACION DEL COMPRADOR',
+      '17': 'TRASLADO DE BIENES PARA TRANSFORMACION',
+      '18': 'TRASLADO POR EMISOR ITINERANTE DE COMPROBANTES DE PAGO',
+      '19': 'TRASLADO DE MERCANCIA EXTRANJERA',
+    };
+    const code = String(guia.tipoTraslado || '').trim();
+    const base = descripciones[code] || 'OTROS';
+    // Para 'Otros' la descripción libre es obligatoria en SUNAT.
+    if (code === '13') {
+      const obs = String(guia.observaciones || '').trim();
+      return obs || base;
+    }
+    return base;
+  }
 
   private cleanUnit(u: string): string {
     if (!u) return 'NIU';

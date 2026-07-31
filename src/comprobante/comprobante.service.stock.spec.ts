@@ -134,6 +134,13 @@ describe('ComprobanteService - Stock Management', () => {
         estadoEnvioSunat: 'ANULADO',
       });
 
+      // Un comprobante que descontó stock tiene movimientos SALIDA en kardex;
+      // revertirStock solo revierte cuando existen.
+      mockPrismaService.movimientoKardex.findMany.mockResolvedValue([
+        { id: 501, productoId: 100, sedeId: 1, tipoMovimiento: 'SALIDA' },
+        { id: 502, productoId: 101, sedeId: 1, tipoMovimiento: 'SALIDA' },
+      ]);
+
       await service.anularComprobante(1);
 
       // Kardex service es el que ahora maneja el stock (no prisma.produto.update directo)
@@ -191,6 +198,10 @@ describe('ComprobanteService - Stock Management', () => {
         estadoPago: 'ANULADO',
         saldo: 0,
       });
+
+      mockPrismaService.movimientoKardex.findMany.mockResolvedValue([
+        { id: 503, productoId: 102, sedeId: 1, tipoMovimiento: 'SALIDA' },
+      ]);
 
       await service.anularComprobante(2);
 
@@ -283,9 +294,13 @@ describe('ComprobanteService - Stock Management', () => {
         estadoEnvioSunat: 'ANULADO',
       });
 
+      mockPrismaService.movimientoKardex.findMany.mockResolvedValue([
+        { id: 505, productoId: 999, sedeId: 1, tipoMovimiento: 'SALIDA' },
+      ]);
+
       await service.anularComprobante(4);
 
-      // Produto no existe, kardex no se llama
+      // Produto no existe, kardex (registrarMovimiento) no se llama
       expect(mockKardexService.registrarMovimiento).not.toHaveBeenCalled();
 
       // Pero pagos y comprobante sí se actualizan
@@ -336,6 +351,10 @@ describe('ComprobanteService - Stock Management', () => {
         saldo: 0,
       });
       mockPrismaService.pago.deleteMany.mockResolvedValue({ count: 2 });
+
+      mockPrismaService.movimientoKardex.findMany.mockResolvedValue([
+        { id: 504, productoId: 200, sedeId: 1, tipoMovimiento: 'SALIDA' },
+      ]);
 
       await service.anularComprobante(10);
 

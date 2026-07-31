@@ -112,6 +112,32 @@ export class DashboardController {
     return data;
   }
 
+  @Get('top-productos-por-categoria')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async topProductosPorCategoria(
+    @User() user: any,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
+    @Query('moneda') moneda?: string,
+    @Query('categoriaId') categoriaIdRaw?: string,
+    @Query('limit') limitRaw?: string,
+    @Query('sedeId') sedeIdQuery?: string,
+  ) {
+    const sedeId = this.resolveSedeId(user, sedeIdQuery);
+    const categoriaId = categoriaIdRaw ? Number(categoriaIdRaw) : undefined;
+    const limit = limitRaw ? Number(limitRaw) : 5;
+    const data = await this.service.topProductosPorCategoria(
+      user.empresaId,
+      fechaInicio,
+      fechaFin,
+      sedeId,
+      moneda,
+      categoriaId,
+      limit,
+    );
+    return data;
+  }
+
   @Get('nuevos-clientes-por-fecha')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async clientesNuevos(

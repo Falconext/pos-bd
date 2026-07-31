@@ -271,6 +271,12 @@ export class CrearComprobanteDto {
   @IsDateString()
   fechaRecojo?: string;
 
+  // Nota de Pedido (NP): si es true, descuenta stock del almacén al crearse.
+  // Si es false/undefined, la NP no afecta stock hasta convertirse en comprobante formal.
+  @IsOptional()
+  @IsBoolean()
+  descontarStock?: boolean;
+
   // Campos de Detracciones
   @IsOptional()
   @IsInt()

@@ -118,6 +118,10 @@ export class UpdateEmpresaDto {
   usarPrecioLoteFefo?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  permitirVentaSinStock?: boolean;
+
+  @IsOptional()
   @IsString()
   directorTecnico?: string;
 

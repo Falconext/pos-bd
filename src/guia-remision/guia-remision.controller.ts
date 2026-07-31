@@ -52,6 +52,42 @@ export class GuiaRemisionController {
     return this.guiaRemisionService.getNextCorrelativo(serie, empresaId);
   }
 
+  /** Precarga los datos de la guía desde un comprobante (Factura/Boleta). */
+  @Get('desde-comprobante/:comprobanteId')
+  prefillDesdeComprobante(
+    @Param('comprobanteId', ParseIntPipe) comprobanteId: number,
+    @Request() req,
+  ) {
+    const empresaId = req.user.empresaId;
+    const sedeId = req.user.sedeId;
+    return this.guiaRemisionService.getPrefillDesdeComprobante(
+      comprobanteId,
+      empresaId,
+      sedeId,
+    );
+  }
+
+  /** Descarga la plantilla .xlsx para importar ítems de la guía. */
+  @Get('plantilla-items')
+  plantillaItems(@Res() res: Response) {
+    const buffer = this.guiaRemisionService.plantillaItems();
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename=plantilla_items_guia.xlsx',
+    );
+    res.end(buffer);
+  }
+
+  /** Importa ítems de la guía desde un Excel/CSV (base64) y los devuelve. */
+  @Post('importar-items')
+  importarItems(@Body() body: { archivo?: string }) {
+    return this.guiaRemisionService.importarItems(body?.archivo || '');
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number, @Request() req) {
     const empresaId = req.user.empresaId;

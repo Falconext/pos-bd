@@ -1,4 +1,5 @@
 import {
+  IsArray,
   IsBoolean,
   IsInt,
   IsNotEmpty,
@@ -139,6 +140,12 @@ export class CreateProductoDto {
   @IsOptional()
   @IsString()
   codigoBarras?: string;
+
+  // 🆕 Códigos de barra ADICIONALES (mismo producto, distinto EAN por lote/importación)
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  codigosBarrasExtra?: string[];
 
   // Código de producto SUNAT (Catálogo 25 / UNSPSC) — requerido para detracción
   @IsOptional()

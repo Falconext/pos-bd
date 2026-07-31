@@ -11,6 +11,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { FinanzasService } from './finanzas.service';
+import { ConciliacionBancariaService } from './conciliacion-bancaria.service';
+import { ConciliacionImportarDto } from './dto/conciliacion.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -19,7 +21,32 @@ import { User } from '../common/decorators/user.decorator';
 @Controller('finanzas')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class FinanzasController {
-  constructor(private readonly finanzasService: FinanzasService) {}
+  constructor(
+    private readonly finanzasService: FinanzasService,
+    private readonly conciliacionService: ConciliacionBancariaService,
+  ) {}
+
+  // ── Conciliación bancaria ─────────────────────────────────────────────────
+
+  @Get('conciliacion/plantilla')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  plantillaConciliacion() {
+    return this.conciliacionService.plantilla();
+  }
+
+  @Post('conciliacion/importar')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  importarConciliacion(
+    @User() user: any,
+    @Body() dto: ConciliacionImportarDto,
+  ) {
+    return this.conciliacionService.conciliar(
+      user.empresaId,
+      dto.archivoBase64,
+      dto.fechaInicio,
+      dto.fechaFin,
+    );
+  }
 
   @Get('ecommerce')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
