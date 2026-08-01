@@ -737,8 +737,17 @@ export class EnviarSunatService {
             },
             'cbc:PaymentPercent': { _text: comp.porcentajeDetraccion || 0 },
             'cbc:Amount': {
-              _attributes: { currencyID: comp.tipoMoneda },
-              _text: Number(Number(comp.montoDetraccion || 0).toFixed(2)),
+              // La detracción (SPOT) se deposita SIEMPRE en soles: currencyID PEN.
+              // Si el comprobante es USD, el monto se convierte con el tipo de cambio.
+              _attributes: { currencyID: 'PEN' },
+              _text: Number(
+                (
+                  Number(comp.montoDetraccion || 0) *
+                  (comp.tipoMoneda === 'USD'
+                    ? Number((comp as any).tipoCambio || 1)
+                    : 1)
+                ).toFixed(2),
+              ),
             },
           });
         }
