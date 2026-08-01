@@ -12,6 +12,7 @@ export type JwtPayload = {
   sedeId?: number | null;
   sistemaNegocio?: string | null;
   sistemaProducto?: string | null;
+  pendingSedeSelection?: boolean;
 };
 
 @Injectable()
@@ -68,6 +69,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       sedeId: payload.sedeId ?? null,
       sistemaNegocio: user.sistemaNegocio ?? payload.sistemaNegocio ?? null,
       sistemaProducto: user.sistemaProducto ?? payload.sistemaProducto ?? null,
+      // Token temporal de selección de sede: el guard lo rechaza en todos los
+      // endpoints salvo /auth/select-sede (marcado con @AllowPendingSede).
+      pendingSedeSelection: payload.pendingSedeSelection === true,
     };
   }
 }

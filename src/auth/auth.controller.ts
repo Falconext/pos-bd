@@ -16,6 +16,7 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { OauthSigninDto } from './dto/oauth-signin.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { AllowPendingSede } from '../common/decorators/allow-pending-sede.decorator';
 import type { Response } from 'express';
 import { User } from '../common/decorators/user.decorator';
 
@@ -35,6 +36,7 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @AllowPendingSede()
   @Post('select-sede')
   async selectSede(
     @User() user: any,
