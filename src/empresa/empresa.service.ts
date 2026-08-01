@@ -1315,7 +1315,7 @@ export class EmpresaService {
     ];
     const where = filtros.length ? { AND: filtros } : {};
 
-    const empresas = await this.prisma.empresa.findMany({
+    const empresasRaw = await this.prisma.empresa.findMany({
       where,
       orderBy: [{ estado: 'asc' }, { fechaExpiracion: 'asc' }],
       select: {
@@ -1327,10 +1327,21 @@ export class EmpresaService {
         fechaActivacion: true,
         fechaExpiracion: true,
         brand: true,
-        plan: { select: { nombre: true } },
+        plan: { select: { nombre: true, esPrueba: true } },
         rubro: { select: { nombre: true } },
       },
     });
+
+    // El informe es de clientes REALES: fuera demos (ambiente demo, plan de
+    // prueba o razón social "DEMO") y las empresas internas/de prueba del equipo.
+    const RUCS_EXCLUIDOS_EXPORT = ['20524076307', '10479465750'];
+    const empresas = empresasRaw.filter(
+      (e) =>
+        !e.usaDemo &&
+        !e.plan?.esPrueba &&
+        !RUCS_EXCLUIDOS_EXPORT.includes(e.ruc) &&
+        !String(e.razonSocial ?? '').toUpperCase().includes('DEMO'),
+    );
 
     if (empresas.length === 0) {
       throw new NotFoundException('No se encontraron empresas con los filtros seleccionados');
@@ -1352,6 +1363,16 @@ export class EmpresaService {
       return dias >= 0 ? `${dias} días` : `Vencida hace ${Math.abs(dias)} días`;
     };
 
+    const mesInicio = (d?: Date | null) => {
+      if (!d) return '';
+      const txt = new Date(d).toLocaleDateString('es-PE', {
+        timeZone: 'America/Lima',
+        month: 'short',
+        year: 'numeric',
+      });
+      return txt.charAt(0).toUpperCase() + txt.slice(1);
+    };
+
     const filas = empresas.map((e) => ({
       ruc: e.ruc,
       razonSocial: e.razonSocial,
@@ -1359,6 +1380,7 @@ export class EmpresaService {
       ambiente: e.usaDemo ? 'Demo' : 'Producción',
       rubro: e.rubro?.nombre ?? '',
       plan: e.plan?.nombre ?? '',
+      inicio: mesInicio(e.fechaActivacion),
       activacion: fmtFecha(e.fechaActivacion),
       expiracion: fmtFecha(e.fechaExpiracion),
       vence: venceEn(e.fechaExpiracion),
@@ -1368,15 +1390,15 @@ export class EmpresaService {
     const genFecha = new Date().toLocaleString('es-PE', { timeZone: 'America/Lima' });
 
     if (formato === 'excel') {
-      const headers = ['RUC', 'Razón Social', 'Nombre Comercial', 'Ambiente', 'Rubro', 'Plan', 'Activación', 'Expiración', 'Vence en', 'Estado'];
+      const headers = ['RUC', 'Razón Social', 'Nombre Comercial', 'Ambiente', 'Rubro', 'Plan', 'Mes de Inicio', 'Activación', 'Expiración', 'Vence en', 'Estado'];
       const aoa = [
         [`Empresas registradas — ${filas.length} en total (${activas} activas) · Generado: ${genFecha}`],
         [],
         headers,
-        ...filas.map((f) => [f.ruc, f.razonSocial, f.comercial, f.ambiente, f.rubro, f.plan, f.activacion, f.expiracion, f.vence, f.estado]),
+        ...filas.map((f) => [f.ruc, f.razonSocial, f.comercial, f.ambiente, f.rubro, f.plan, f.inicio, f.activacion, f.expiracion, f.vence, f.estado]),
       ];
       const ws = XLSX.utils.aoa_to_sheet(aoa);
-      ws['!cols'] = [{ wch: 13 }, { wch: 38 }, { wch: 24 }, { wch: 11 }, { wch: 22 }, { wch: 18 }, { wch: 12 }, { wch: 12 }, { wch: 18 }, { wch: 10 }];
+      ws['!cols'] = [{ wch: 13 }, { wch: 38 }, { wch: 24 }, { wch: 11 }, { wch: 22 }, { wch: 18 }, { wch: 13 }, { wch: 12 }, { wch: 12 }, { wch: 18 }, { wch: 10 }];
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Empresas');
       const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
@@ -1398,6 +1420,7 @@ export class EmpresaService {
           <td>${esc(f.ambiente)}</td>
           <td>${esc(f.rubro)}</td>
           <td>${esc(f.plan)}</td>
+          <td>${esc(f.inicio)}</td>
           <td>${esc(f.expiracion)}</td>
           <td>${esc(f.vence)}</td>
           <td>${esc(f.estado)}</td>
@@ -1417,7 +1440,7 @@ export class EmpresaService {
       <h1>Empresas registradas</h1>
       <div class="meta">${filas.length} empresa(s) · ${activas} activas · Generado: ${esc(genFecha)}</div>
       <table>
-        <thead><tr><th>RUC</th><th>Razón Social</th><th>Ambiente</th><th>Rubro</th><th>Plan</th><th>Expiración</th><th>Vence en</th><th>Estado</th></tr></thead>
+        <thead><tr><th>RUC</th><th>Razón Social</th><th>Ambiente</th><th>Rubro</th><th>Plan</th><th>Mes de Inicio</th><th>Expiración</th><th>Vence en</th><th>Estado</th></tr></thead>
         <tbody>${filasHtml}</tbody>
       </table>
     </body></html>`;
