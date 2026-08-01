@@ -315,6 +315,10 @@ export class ComprasService {
     // Update Inventory (Kardex)
     // We do this outside the transaction because KardexService manages its own logic.
     // In a production system, we might want to wrap this in the transaction or use a saga.
+    // Los fallos al actualizar stock NO se tragan en silencio: se recogen aquí y
+    // se devuelven como aviso, para que el usuario sepa que la compra se guardó
+    // pero el stock de algún ítem no subió (y pueda corregirlo).
+    const stockWarnings: string[] = [];
     for (const item of data.detalles) {
       if (item.productoId) {
         try {
@@ -361,7 +365,13 @@ export class ComprasService {
             `Error updating kardex for product ${item.productoId}:`,
             error,
           );
-          // Continue with other items, or flag warning?
+          // No se traga en silencio: se registra un aviso que viaja en la respuesta.
+          const nombreItem = item.descripcion ?? `producto ${item.productoId}`;
+          stockWarnings.push(
+            `No se pudo actualizar el stock de "${nombreItem}": ${
+              (error as any)?.message ?? 'error desconocido'
+            }. La compra se guardó; revisa/ajusta el stock manualmente.`,
+          );
         }
       }
     }
@@ -473,7 +483,10 @@ export class ComprasService {
       });
     }
 
-    return this.normalizeCompraForResponse(compra);
+    const respuesta = this.normalizeCompraForResponse(compra);
+    return stockWarnings.length
+      ? { ...respuesta, stockWarnings }
+      : respuesta;
   }
 
   async listar(empresaId: number, query: any, sedeId?: number) {
