@@ -1151,11 +1151,13 @@ export class TiendaService {
   ) {
     const empresa = await this.prisma.empresa.findUnique({
       where: { slugTienda: slug },
-      select: { id: true },
+      select: { id: true, plan: { select: { tieneTienda: true } } },
     });
 
     try {
-      if (!empresa) {
+      // Gating: si el plan no incluye tienda, la tienda pública no está disponible
+      // (NotFound neutro: no se expone al cliente el detalle del plan).
+      if (!empresa || !empresa.plan?.tieneTienda) {
         throw new NotFoundException('Tienda no encontrada');
       }
       console.log('obtenerProductosTienda', {
@@ -2237,10 +2239,12 @@ export class TiendaService {
         minimoCompra: true,
         aceptaRecojo: true,
         aceptaEnvio: true,
+        plan: { select: { tieneTienda: true } },
       },
     });
 
-    if (!empresa) {
+    // Gating: no aceptar pedidos si el plan no incluye tienda.
+    if (!empresa || !empresa.plan?.tieneTienda) {
       throw new NotFoundException('Tienda no encontrada');
     }
     const tipoEntrega = dto.tipoEntrega || 'RECOJO';
