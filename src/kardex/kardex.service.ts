@@ -583,9 +583,19 @@ export class KardexService {
       throw new NotFoundException('Producto no encontrado');
     }
 
+    // Base del ajuste = stock de ESTA sede (no el global de todas las sedes).
+    // Antes usaba producto.stock (suma de todas las sedes), lo que en negocios
+    // multi-sede hacía que NEGATIVO/CORRECCION calcularan mal el delta.
+    const stockSede = await this.prisma.productoStock.findUnique({
+      where: {
+        productoId_sedeId: { productoId: ajusteDto.productoId, sedeId },
+      },
+      select: { stock: true },
+    });
+
     let cantidad: number;
     let nuevoStock: number;
-    const stockProd = num(producto.stock);
+    const stockProd = num(stockSede?.stock ?? 0);
 
     switch (ajusteDto.tipoAjuste) {
       case TipoAjuste.POSITIVO:
