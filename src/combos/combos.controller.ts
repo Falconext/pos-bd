@@ -45,8 +45,11 @@ export class CombosController {
   }
 
   @Get(':id/stock')
-  checkStock(@Param('id', ParseIntPipe) id: number) {
-    return this.combosService.checkStock(id);
+  checkStock(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('sedeId') sedeId?: string,
+  ) {
+    return this.combosService.checkStock(id, sedeId ? Number(sedeId) : undefined);
   }
 
   @Post(':id/imagen')

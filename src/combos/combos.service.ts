@@ -289,23 +289,35 @@ export class CombosService {
    * Verifica el stock disponible del combo
    * El stock del combo es el mínimo entre todos los productos considerando las cantidades
    */
-  async checkStock(comboId: number): Promise<number> {
+  async checkStock(comboId: number, sedeId?: number): Promise<number> {
     const combo = await this.prisma.combo.findUnique({
       where: { id: comboId },
       include: {
         items: {
-          include: { producto: true },
+          include: {
+            // Con sedeId: además del producto, traer su stock en ESA sede.
+            producto: sedeId
+              ? {
+                  include: {
+                    stocks: { where: { sedeId }, select: { stock: true } },
+                  },
+                }
+              : true,
+          },
         },
       },
     });
 
     if (!combo) return 0;
 
-    // El stock del combo es el mínimo entre todos los productos
+    // El stock del combo es el mínimo entre todos los productos.
+    // Con sede: usa el stock de esa sede (ProductoStock); sin fila en la sede = 0.
+    // Sin sede: usa el stock global del producto (comportamiento previo).
     const stockDisponible = combo.items.reduce((min, item) => {
-      const stockProducto = Math.floor(
-        Number(item.producto.stock) / item.cantidad,
-      );
+      const stockBase = sedeId
+        ? Number((item.producto as any).stocks?.[0]?.stock ?? 0)
+        : Number(item.producto.stock);
+      const stockProducto = Math.floor(stockBase / item.cantidad);
       return Math.min(min, stockProducto);
     }, Infinity);
 
@@ -315,8 +327,12 @@ export class CombosService {
   /**
    * Valida si hay stock suficiente para un combo
    */
-  async validateStock(comboId: number, cantidad: number): Promise<boolean> {
-    const stockDisponible = await this.checkStock(comboId);
+  async validateStock(
+    comboId: number,
+    cantidad: number,
+    sedeId?: number,
+  ): Promise<boolean> {
+    const stockDisponible = await this.checkStock(comboId, sedeId);
     return stockDisponible >= cantidad;
   }
 
