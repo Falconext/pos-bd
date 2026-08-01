@@ -1,6 +1,8 @@
 import {
   BadRequestException,
   ForbiddenException,
+  forwardRef,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -17,6 +19,8 @@ import {
 import { SedeService } from '../sede/sede.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import axios from 'axios';
+import * as XLSX from 'xlsx';
+import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
 
 function parseDDMMYYYY(input: string): Date {
   if (!input || input.trim() === '') {
@@ -204,6 +208,8 @@ export class EmpresaService {
     private readonly prisma: PrismaService,
     private readonly sedeService: SedeService,
     private readonly whatsappService: WhatsAppService,
+    @Inject(forwardRef(() => PdfGeneratorService))
+    private readonly pdfGenerator: PdfGeneratorService,
   ) {}
 
   private async asegurarSedePrincipalPorDefecto(
@@ -1266,6 +1272,158 @@ export class EmpresaService {
         `Error al eliminar empresa: ${error.message}. Puede tener datos relacionados que deben eliminarse primero.`,
       );
     }
+  }
+
+
+  /**
+   * Exporta el listado de empresas (con los mismos filtros del listado) en
+   * Excel o PDF imprimible — para el admin de sistema.
+   */
+  async exportarListado(
+    params: {
+      search?: string;
+      estado?: 'ACTIVO' | 'INACTIVO' | 'TODOS';
+      tipoEmpresa?: 'FORMAL' | 'INFORMAL' | '';
+      brand?: string;
+      producto?: string;
+      formato?: 'pdf' | 'excel';
+    },
+    adminSistemaNegocio?: string | null,
+    adminSistemaProducto?: string | null,
+  ): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
+    const { search, estado = 'TODOS', tipoEmpresa = '', formato = 'excel' } = params;
+
+    const brandFiltro = adminSistemaNegocio
+      ? normalizeBrand(adminSistemaNegocio)
+      : params.brand
+        ? normalizeBrand(params.brand)
+        : undefined;
+    const productoFiltro = adminSistemaProducto
+      ? normalizeProducto(adminSistemaProducto)
+      : params.producto
+        ? normalizeProducto(params.producto)
+        : undefined;
+
+    const filtros: any[] = [
+      ...(estado !== 'TODOS' ? [{ estado }] : []),
+      ...(tipoEmpresa ? [{ tipoEmpresa }] : []),
+      ...(brandFiltro ? [{ brand: brandFiltro }] : []),
+      ...(productoFiltro ? [{ producto: productoFiltro }] : []),
+      ...(search
+        ? [{ OR: [{ ruc: { contains: search } }, { razonSocial: { contains: search } }] }]
+        : []),
+    ];
+    const where = filtros.length ? { AND: filtros } : {};
+
+    const empresas = await this.prisma.empresa.findMany({
+      where,
+      orderBy: [{ estado: 'asc' }, { fechaExpiracion: 'asc' }],
+      select: {
+        ruc: true,
+        razonSocial: true,
+        nombreComercial: true,
+        estado: true,
+        usaDemo: true,
+        fechaActivacion: true,
+        fechaExpiracion: true,
+        brand: true,
+        plan: { select: { nombre: true } },
+        rubro: { select: { nombre: true } },
+      },
+    });
+
+    if (empresas.length === 0) {
+      throw new NotFoundException('No se encontraron empresas con los filtros seleccionados');
+    }
+
+    const fmtFecha = (d?: Date | null) =>
+      d
+        ? new Date(d).toLocaleDateString('es-PE', {
+            timeZone: 'America/Lima',
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+          })
+        : '';
+    const hoy = Date.now();
+    const venceEn = (d?: Date | null) => {
+      if (!d) return '';
+      const dias = Math.ceil((new Date(d).getTime() - hoy) / 86_400_000);
+      return dias >= 0 ? `${dias} días` : `Vencida hace ${Math.abs(dias)} días`;
+    };
+
+    const filas = empresas.map((e) => ({
+      ruc: e.ruc,
+      razonSocial: e.razonSocial,
+      comercial: e.nombreComercial ?? '',
+      ambiente: e.usaDemo ? 'Demo' : 'Producción',
+      rubro: e.rubro?.nombre ?? '',
+      plan: e.plan?.nombre ?? '',
+      activacion: fmtFecha(e.fechaActivacion),
+      expiracion: fmtFecha(e.fechaExpiracion),
+      vence: venceEn(e.fechaExpiracion),
+      estado: e.estado === 'ACTIVO' ? 'Activo' : 'Inactivo',
+    }));
+    const activas = filas.filter((f) => f.estado === 'Activo').length;
+    const genFecha = new Date().toLocaleString('es-PE', { timeZone: 'America/Lima' });
+
+    if (formato === 'excel') {
+      const headers = ['RUC', 'Razón Social', 'Nombre Comercial', 'Ambiente', 'Rubro', 'Plan', 'Activación', 'Expiración', 'Vence en', 'Estado'];
+      const aoa = [
+        [`Empresas registradas — ${filas.length} en total (${activas} activas) · Generado: ${genFecha}`],
+        [],
+        headers,
+        ...filas.map((f) => [f.ruc, f.razonSocial, f.comercial, f.ambiente, f.rubro, f.plan, f.activacion, f.expiracion, f.vence, f.estado]),
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = [{ wch: 13 }, { wch: 38 }, { wch: 24 }, { wch: 11 }, { wch: 22 }, { wch: 18 }, { wch: 12 }, { wch: 12 }, { wch: 18 }, { wch: 10 }];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Empresas');
+      const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+      return {
+        buffer,
+        filename: 'empresas.xlsx',
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      };
+    }
+
+    const esc = (v: string) =>
+      String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const filasHtml = filas
+      .map(
+        (f) => `
+        <tr${f.estado === 'Inactivo' ? ' style="color:#9ca3af;"' : ''}>
+          <td>${esc(f.ruc)}</td>
+          <td><strong>${esc(f.razonSocial)}</strong>${f.comercial ? `<br/><span class="sub">${esc(f.comercial)}</span>` : ''}</td>
+          <td>${esc(f.ambiente)}</td>
+          <td>${esc(f.rubro)}</td>
+          <td>${esc(f.plan)}</td>
+          <td>${esc(f.expiracion)}</td>
+          <td>${esc(f.vence)}</td>
+          <td>${esc(f.estado)}</td>
+        </tr>`,
+      )
+      .join('');
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+      * { font-family: Arial, Helvetica, sans-serif; box-sizing: border-box; }
+      body { margin: 24px; color: #111827; font-size: 10.5px; }
+      h1 { font-size: 16px; margin: 0 0 2px; }
+      .sub { color: #6b7280; font-size: 9.5px; }
+      .meta { color: #6b7280; margin-bottom: 14px; }
+      table { width: 100%; border-collapse: collapse; }
+      th { background: #f3f4f6; text-align: left; padding: 6px 8px; border-bottom: 2px solid #d1d5db; font-size: 9.5px; text-transform: uppercase; }
+      td { padding: 5px 8px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+    </style></head><body>
+      <h1>Empresas registradas</h1>
+      <div class="meta">${filas.length} empresa(s) · ${activas} activas · Generado: ${esc(genFecha)}</div>
+      <table>
+        <thead><tr><th>RUC</th><th>Razón Social</th><th>Ambiente</th><th>Rubro</th><th>Plan</th><th>Expiración</th><th>Vence en</th><th>Estado</th></tr></thead>
+        <tbody>${filasHtml}</tbody>
+      </table>
+    </body></html>`;
+
+    const buffer = await this.pdfGenerator.generarPdfDesdeHtml(html);
+    return { buffer, filename: 'empresas.pdf', contentType: 'application/pdf' };
   }
 
   async listarSeries(

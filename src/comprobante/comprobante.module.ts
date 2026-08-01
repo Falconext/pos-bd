@@ -19,7 +19,7 @@ import { ImportarNotaVentaService } from './importar-nota-venta.service';
 
 @Module({
   imports: [
-    EmpresaModule,
+    forwardRef(() => EmpresaModule),
     forwardRef(() => KardexModule),
     NotificacionesModule,
     S3Module,

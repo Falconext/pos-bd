@@ -106,6 +106,28 @@ export class EmpresaController {
     return empresas;
   }
 
+  /** Exporta el listado de empresas filtrado en Excel o PDF (admin de sistema). */
+  @Get('exportar')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  async exportar(
+    @Query() query: ListEmpresaDto,
+    @User() user: any,
+    @Res() res: Response,
+  ) {
+    const file = await this.empresaService.exportarListado(
+      query,
+      user.sistemaNegocio,
+      user.sistemaProducto,
+    );
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${file.filename}"`,
+    );
+    res.end(file.buffer);
+  }
+
   @Put(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN_SISTEMA')
