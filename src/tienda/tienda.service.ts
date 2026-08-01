@@ -2233,6 +2233,7 @@ export class TiendaService {
       select: {
         id: true,
         costoEnvioFijo: true,
+        envioGratisDesdeSoles: true,
         minimoCompra: true,
         aceptaRecojo: true,
         aceptaEnvio: true,
@@ -2257,9 +2258,6 @@ export class TiendaService {
         'La dirección es obligatoria para pedidos con envío',
       );
     }
-
-    const costoEnvio =
-      tipoEntrega === 'ENVIO' ? Number(empresa.costoEnvioFijo || 0) : 0;
 
     let subtotal = 0;
     const itemsData: {
@@ -2319,6 +2317,14 @@ export class TiendaService {
         subtotal: itemSubtotal,
         observacion: item.observacion,
       });
+    }
+    // Envío gratis si el subtotal alcanza el umbral configurado (envioGratisDesdeSoles).
+    let costoEnvio = 0;
+    if (tipoEntrega === 'ENVIO') {
+      const umbralEnvioGratis = Number(empresa.envioGratisDesdeSoles || 0);
+      const aplicaEnvioGratis =
+        umbralEnvioGratis > 0 && subtotal >= umbralEnvioGratis;
+      costoEnvio = aplicaEnvioGratis ? 0 : Number(empresa.costoEnvioFijo || 0);
     }
     const igv = subtotal - subtotal / 1.18;
     const total = subtotal + costoEnvio;

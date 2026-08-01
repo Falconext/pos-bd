@@ -76,8 +76,9 @@ export class PagoController {
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async obtenerPagos(
     @Param('comprobanteId', ParseIntPipe) comprobanteId: number,
+    @User() user: any,
   ) {
-    return this.service.obtenerPagos(comprobanteId);
+    return this.service.obtenerPagos(comprobanteId, user.empresaId);
   }
 
   @Delete(':pagoId/reversar')

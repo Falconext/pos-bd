@@ -488,8 +488,27 @@ export class FinanzasService {
       },
       orderBy: { fecha: 'desc' },
     });
-    const total = items.reduce((s, i) => s + Number(i.monto), 0);
-    return { items, total };
+    // Un gasto recurrente diario cuenta su `monto` (tarifa diaria) por cada día
+    // ACTIVO dentro del rango (antes se sumaba una sola vez, subestimando egresos).
+    // Se agregan `dias` y `montoPeriodo` sin quitar `monto`, para no romper consumidores.
+    const hoy = new Date();
+    const itemsConPeriodo = items.map((i) => {
+      let dias = 1;
+      if (i.recurrenteDiario) {
+        const inicioBase =
+          i.fechaInicio && i.fechaInicio > rango.gte ? i.fechaInicio : rango.gte;
+        const finClamp =
+          i.fechaFin && i.fechaFin < rango.lte ? i.fechaFin : rango.lte;
+        const fin = hoy < finClamp ? hoy : finClamp;
+        dias =
+          fin > inicioBase
+            ? Math.ceil((fin.getTime() - inicioBase.getTime()) / 86400000)
+            : 0;
+      }
+      return { ...i, dias, montoPeriodo: Number(i.monto) * dias };
+    });
+    const total = itemsConPeriodo.reduce((s, i) => s + i.montoPeriodo, 0);
+    return { items: itemsConPeriodo, total };
   }
 
   async crearEgreso(

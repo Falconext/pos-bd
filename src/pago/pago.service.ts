@@ -113,7 +113,7 @@ export class PagoService {
     return { pago, comprobanteActualizado };
   }
 
-  async obtenerPagos(comprobanteId: number) {
+  async obtenerPagos(comprobanteId: number, empresaId?: number) {
     const comprobante = await this.prisma.comprobante.findUnique({
       where: { id: comprobanteId },
       include: {
@@ -125,6 +125,10 @@ export class PagoService {
     });
 
     if (!comprobante) {
+      throw new NotFoundException('Comprobante no encontrado');
+    }
+
+    if (empresaId !== undefined && comprobante.empresaId !== empresaId) {
       throw new NotFoundException('Comprobante no encontrado');
     }
 
@@ -335,7 +339,9 @@ export class PagoService {
     const pagosAEliminar: number[] = [];
 
     for (const pago of comprobante.pagos) {
-      if (saldoRestante >= pago.monto) {
+      // Comparar con tolerancia de 1 céntimo para evitar que errores de
+      // redondeo en floats descarten (y borren) pagos válidos.
+      if (saldoRestante - pago.monto >= -0.01) {
         // Este pago es válido
         saldoRestante -= pago.monto;
         pagosValidos.push(pago.id);

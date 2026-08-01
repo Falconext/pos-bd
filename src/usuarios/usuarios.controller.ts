@@ -30,6 +30,8 @@ import { User } from '../common/decorators/user.decorator';
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN_EMPRESA')
   @Post()
   async crear(
     @Body() dto: CreateUserDto,
@@ -42,6 +44,8 @@ export class UsersController {
     return nuevo;
   }
 
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN_EMPRESA')
   @Get()
   async listar(
     @User() user: any,
@@ -61,17 +65,26 @@ export class UsersController {
     return resultado;
   }
 
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN_EMPRESA')
   @Patch(':id/estado')
   async cambiarEstado(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: ChangeStateDto,
+    @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.usersService.changeState(id, dto.estado);
+    const result = await this.usersService.changeState(
+      id,
+      dto.estado,
+      user.empresaId,
+    );
     res.locals.message = `Usuario ${dto.estado === 'ACTIVO' ? 'activado' : 'desactivado'} correctamente`;
     return result;
   }
 
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN_EMPRESA')
   @Put(':id')
   async editar(
     @Param('id', ParseIntPipe) id: number,

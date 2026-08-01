@@ -86,7 +86,11 @@ export class SireService {
         ...(empresarial || !sedeId ? {} : { sedeId }),
         tipoDoc: { in: ['01', '03', '07', '08'] },
         fechaEmision,
-        estadoEnvioSunat: { not: 'PENDIENTE' as any },
+        // Excluir no válidos para el Libro de Ventas: PENDIENTE (sin enviar),
+        // RECHAZADO y FALLIDO_ENVIO (no aceptados por SUNAT). Antes se colaban como estado '1'.
+        estadoEnvioSunat: {
+          notIn: ['PENDIENTE', 'RECHAZADO', 'FALLIDO_ENVIO'] as any,
+        },
       },
       orderBy: { fechaEmision: 'asc' },
       select: {
@@ -142,10 +146,13 @@ export class SireService {
       );
       const nroDocCliente = c.cliente?.nroDoc ?? '';
       const razonSocial = (c.cliente?.nombre ?? '').replace(/\|/g, ' ');
-      const baseGravadas = this.fmt(c.mtoOperGravadas);
-      const igv = this.fmt(c.mtoIGV);
-      const inafectas = this.fmt(c.mtoOperInafectas);
-      const total = this.fmt(c.mtoImpVenta);
+      // Las notas de crédito (07) reducen el Libro de Ventas: sus montos van en
+      // NEGATIVO. Antes se emitían en positivo, sobrestimando ventas e IGV.
+      const signo = c.tipoDoc === '07' ? -1 : 1;
+      const baseGravadas = this.fmt(Number(c.mtoOperGravadas ?? 0) * signo);
+      const igv = this.fmt(Number(c.mtoIGV ?? 0) * signo);
+      const inafectas = this.fmt(Number(c.mtoOperInafectas ?? 0) * signo);
+      const total = this.fmt(Number(c.mtoImpVenta ?? 0) * signo);
       const tipoCambio = c.tipoMoneda === 'USD' ? '' : '1.000';
       const tipRef = c.tipDocAfectado ?? '';
       const nroRef = c.numDocAfectado ?? '';
@@ -244,6 +251,8 @@ export class SireService {
         c.cliente?.tipoDocumento?.codigo,
       );
       const estado = (c.estadoEnvioSunat as any) === 'ANULADO' ? '6' : '1';
+      // Notas de crédito (07) restan en el Libro de Ventas → montos en negativo.
+      const signo = c.tipoDoc === '07' ? -1 : 1;
 
       if (simple) {
         return {
@@ -256,10 +265,10 @@ export class SireService {
           'TIPO DOC CLIENTE': tipoDocCliente,
           'NRO DOC CLIENTE': c.cliente?.nroDoc ?? '',
           'RAZÓN SOCIAL': c.cliente?.nombre ?? '',
-          'BASE GRAVADA': +(c.mtoOperGravadas ?? 0).toFixed(2),
-          IGV: +(c.mtoIGV ?? 0).toFixed(2),
-          INAFECTAS: +(c.mtoOperInafectas ?? 0).toFixed(2),
-          'IMPORTE TOTAL': +(c.mtoImpVenta ?? 0).toFixed(2),
+          'BASE GRAVADA': +(Number(c.mtoOperGravadas ?? 0) * signo).toFixed(2),
+          IGV: +(Number(c.mtoIGV ?? 0) * signo).toFixed(2),
+          INAFECTAS: +(Number(c.mtoOperInafectas ?? 0) * signo).toFixed(2),
+          'IMPORTE TOTAL': +(Number(c.mtoImpVenta ?? 0) * signo).toFixed(2),
           ESTADO: estado,
         };
       }
@@ -277,18 +286,18 @@ export class SireService {
         'NRO DOC CLIENTE': c.cliente?.nroDoc ?? '',
         'RAZÓN SOCIAL': c.cliente?.nombre ?? '',
         EXPORTACIÓN: 0,
-        'BASE GRAVADA': +(c.mtoOperGravadas ?? 0).toFixed(2),
+        'BASE GRAVADA': +(Number(c.mtoOperGravadas ?? 0) * signo).toFixed(2),
         'DCTO. BASE IMP.': 0,
-        IGV: +(c.mtoIGV ?? 0).toFixed(2),
+        IGV: +(Number(c.mtoIGV ?? 0) * signo).toFixed(2),
         'DCTO. IGV': 0,
         EXONERADAS: 0,
-        INAFECTAS: +(c.mtoOperInafectas ?? 0).toFixed(2),
+        INAFECTAS: +(Number(c.mtoOperInafectas ?? 0) * signo).toFixed(2),
         ISC: 0,
         'BASE IVAP': 0,
         IVAP: 0,
         ICBPER: 0,
         'OTROS TRIBUTOS': 0,
-        'IMPORTE TOTAL': +(c.mtoImpVenta ?? 0).toFixed(2),
+        'IMPORTE TOTAL': +(Number(c.mtoImpVenta ?? 0) * signo).toFixed(2),
         'TIPO CAMBIO': c.tipoMoneda === 'USD' ? '' : 1,
         'FECHA CDP REF.': '',
         'TIPO CDP REF.': c.tipDocAfectado ?? '',

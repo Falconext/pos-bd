@@ -6,15 +6,21 @@ import {
   Query,
   Param,
   ParseIntPipe,
+  UseGuards,
+  ForbiddenException,
 } from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { GeminiService } from '../gemini/gemini.service';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { User } from '../common/decorators/user.decorator';
 
 /**
- * Public endpoints for the AI Dashboard module.
- * These endpoints do not require authentication and are meant for internal use.
+ * Endpoints del Dashboard IA.
+ * Requieren autenticación: cada request debe pertenecer a la empresa del token
+ * (o ser ADMIN_SISTEMA). Antes exponían datos financieros de cualquier empresa.
  */
+@UseGuards(JwtAuthGuard)
 @Controller('ia')
 export class DashboardPublicController {
   constructor(
@@ -23,22 +29,34 @@ export class DashboardPublicController {
     private readonly geminiService: GeminiService,
   ) {}
 
+  /** Impide leer datos de una empresa distinta a la del token. */
+  private assertAcceso(user: any, empresaId: number) {
+    if (user?.rol === 'ADMIN_SISTEMA') return;
+    if (!user || user.empresaId !== empresaId) {
+      throw new ForbiddenException('No autorizado para esta empresa');
+    }
+  }
+
   @Get('resumen/:empresaId')
   async resumen(
+    @User() user: any,
     @Param('empresaId', ParseIntPipe) empresaId: number,
     @Query('fechaInicio') fechaInicio?: string,
     @Query('fechaFin') fechaFin?: string,
   ) {
+    this.assertAcceso(user, empresaId);
     return this.service.headerResumen(empresaId, fechaInicio, fechaFin);
   }
 
   @Get('top-productos/:empresaId')
   async topProductos(
+    @User() user: any,
     @Param('empresaId', ParseIntPipe) empresaId: number,
     @Query('fechaInicio') fechaInicio?: string,
     @Query('fechaFin') fechaFin?: string,
     @Query('limit') limitRaw?: string,
   ) {
+    this.assertAcceso(user, empresaId);
     const limit = limitRaw ? Number(limitRaw) : 10;
     return this.service.topProductos(empresaId, fechaInicio, fechaFin, limit);
   }
@@ -46,7 +64,9 @@ export class DashboardPublicController {
   @Get('productos-bajo-stock/:empresaId')
   async productosBajoStock(
     @Param('empresaId', ParseIntPipe) empresaId: number,
+    @User() user?: any,
   ) {
+    this.assertAcceso(user, empresaId);
     const productos = await this.prisma.producto.findMany({
       where: {
         empresaId,
@@ -70,16 +90,22 @@ export class DashboardPublicController {
 
   @Get('ingresos-medio-pago/:empresaId')
   async ingresosPorMedioPago(
+    @User() user: any,
     @Param('empresaId', ParseIntPipe) empresaId: number,
     @Query('fechaInicio') fechaInicio?: string,
     @Query('fechaFin') fechaFin?: string,
   ) {
+    this.assertAcceso(user, empresaId);
     return this.service.ingresosPorMedioPago(empresaId, fechaInicio, fechaFin);
   }
 
   @Post('chat')
-  async chat(@Body() body: { message: string; empresaId: number }) {
+  async chat(
+    @User() user: any,
+    @Body() body: { message: string; empresaId: number },
+  ) {
     const { message, empresaId } = body;
+    this.assertAcceso(user, empresaId);
 
     // 1. Gather context for the AI
     // Default to last 30 days context if no dates provided
@@ -92,7 +118,7 @@ export class DashboardPublicController {
     const [resumen, topProductos, bajoStock] = await Promise.all([
       this.service.headerResumen(empresaId, fechaInicio, fechaFin),
       this.service.topProductos(empresaId, fechaInicio, fechaFin, 5),
-      this.productosBajoStock(empresaId),
+      this.productosBajoStock(empresaId, user),
     ]);
 
     const context = {

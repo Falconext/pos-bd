@@ -204,6 +204,14 @@ export class CombosService {
       }, 0);
 
       const precioCombo = dto.precioCombo ?? 0;
+
+      // Validar que el precio del combo sea menor al precio regular (igual que create)
+      if (precioCombo >= precioRegular) {
+        throw new BadRequestException(
+          'El precio del combo debe ser menor al precio regular',
+        );
+      }
+
       const descuentoPorcentaje =
         precioCombo > 0
           ? ((precioRegular - precioCombo) / precioRegular) * 100

@@ -412,8 +412,13 @@ export class ComprobanteController {
   async anularComprobante(
     @Param('comprobanteId', ParseIntPipe) comprobanteId: number,
     @Body() input: any,
+    @User() user: any,
   ) {
-    return this.service.anularComprobante(comprobanteId, input?.motivo);
+    return this.service.anularComprobante(
+      comprobanteId,
+      input?.motivo,
+      user.empresaId,
+    );
   }
 
   @Patch(':comprobanteId/completar-pago')

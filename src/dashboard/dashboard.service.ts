@@ -621,7 +621,13 @@ export class DashboardService {
 
     const ventasCanalRows = await this.prisma.comprobante.groupBy({
       by: ['medioPago'],
-      where: { ...baseComprobanteWhere, fechaEmision: currentRange },
+      // Excluir notas de crédito (07): su mtoImpVenta está guardado en positivo y
+      // antes inflaba los importes por canal en vez de representar ventas reales.
+      where: {
+        ...baseComprobanteWhere,
+        tipoDoc: { not: '07' },
+        fechaEmision: currentRange,
+      },
       _sum: { mtoImpVenta: true },
     });
 

@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import {
   Prisma,
+  EstadoComision,
   EstadoPago,
   EstadoProductoSerie,
   EstadoReserva,
@@ -621,10 +622,14 @@ export class ComprobanteService {
     const DIA_MS = 24 * 60 * 60 * 1000;
     let totalPorCobrar = 0;
     let vencidos = 0;
+    // Desglose por moneda: PEN y USD NO deben sumarse en un mismo total.
+    const totalPorMoneda: Record<string, number> = {};
 
     const comprobantes = rawItems.map((it) => {
       const saldo = Number(it.saldo ?? 0);
       totalPorCobrar += saldo;
+      const moneda = (it as any).tipoMoneda || 'PEN';
+      totalPorMoneda[moneda] = (totalPorMoneda[moneda] ?? 0) + saldo;
       const dias = it.fechaEmision
         ? Math.floor((ahora - new Date(it.fechaEmision).getTime()) / DIA_MS)
         : 0;
@@ -636,7 +641,14 @@ export class ComprobanteService {
       comprobantes,
       resumen: {
         cantidad: comprobantes.length,
+        // Se mantiene por compatibilidad; para multi-moneda usar totalPorCobrarPorMoneda.
         totalPorCobrar: Number(totalPorCobrar.toFixed(2)),
+        totalPorCobrarPorMoneda: Object.fromEntries(
+          Object.entries(totalPorMoneda).map(([m, v]) => [
+            m,
+            Number(v.toFixed(2)),
+          ]),
+        ),
         vencidos,
       },
     };
@@ -838,12 +850,18 @@ export class ComprobanteService {
     return { ...comp, detalles: detallesConLotes };
   }
 
-  async anularComprobante(comprobanteId: number, motivo?: string) {
+  async anularComprobante(
+    comprobanteId: number,
+    motivo?: string,
+    empresaId?: number,
+  ) {
     const comp = await this.prisma.comprobante.findUnique({
       where: { id: comprobanteId },
       include: { detalles: true },
     });
     if (!comp) throw new NotFoundException('Comprobante no encontrado');
+    if (empresaId !== undefined && comp.empresaId !== empresaId)
+      throw new NotFoundException('Comprobante no encontrado');
     const isInformal = ['TICKET', 'NV', 'RH', 'CP', 'NP', 'OT'].includes(
       comp.tipoDoc,
     );
@@ -880,6 +898,16 @@ export class ComprobanteService {
     // pero los pagos individuales deben borrarse para no inflar reportes de ingresos.
     await this.prisma.pago.deleteMany({
       where: { comprobanteId: comp.id },
+    });
+
+    // Eliminar las comisiones de vendedor PENDIENTES generadas por esta venta.
+    // Una venta anulada no debe seguir generando comisión (inflaba los reportes).
+    // Las comisiones ya PAGADAS no se tocan para no descuadrar pagos ya realizados.
+    await this.prisma.comisionVendedor.deleteMany({
+      where: {
+        comprobanteId: comp.id,
+        estado: EstadoComision.PENDIENTE,
+      },
     });
 
     return this.prisma.comprobante.update({
@@ -3141,6 +3169,14 @@ export class ComprobanteService {
       throw new BadRequestException('Documento afectado no encontrado');
     }
 
+    // 4.1) Guarda: no permitir NC sobre un comprobante ya ANULADO (evita
+    // revertir el stock más de una vez y dejar el inventario inflado).
+    if (afectado.estadoEnvioSunat === EstadoSunat.ANULADO) {
+      throw new BadRequestException(
+        'El comprobante afectado ya fue anulado / ya tiene una nota de crédito',
+      );
+    }
+
     // 5) Variables de totales originales
     let mtoOperGravadas = afectado.mtoOperGravadas;
     let totalIGV = afectado.mtoIGV;
@@ -3370,9 +3406,34 @@ export class ComprobanteService {
       totalIGV = this.round2(totalIgv);
     }
 
-    // 7) Calcular subtotales
-    const subTotal = this.round2(mtoOperGravadas + totalIGV);
-    const mtoImpVenta = this.round2(mtoOperGravadas + totalIGV);
+    // 7) Montos por tipo de afectación tomados de las líneas de la NC (mismo
+    // criterio que la emisión: 20=exonerado, 30=inafecto, 40=exportación).
+    // Antes la cabecera solo consideraba gravadas → una NC de un comprobante
+    // EXONERADO/INAFECTO/EXPORTACIÓN salía con totales en 0.
+    const mtoOperExoneradas = this.round2(
+      detalleFinal
+        .filter((d) => Number(d.tipAfeIgv) === 20)
+        .reduce((s, d) => s + Number(d.mtoValorVenta || 0), 0),
+    );
+    const mtoOperInafectas = this.round2(
+      detalleFinal
+        .filter((d) => Number(d.tipAfeIgv) === 30)
+        .reduce((s, d) => s + Number(d.mtoValorVenta || 0), 0),
+    );
+    const mtoOperExportacion = this.round2(
+      detalleFinal
+        .filter((d) => Number(d.tipAfeIgv) === 40)
+        .reduce((s, d) => s + Number(d.mtoValorVenta || 0), 0),
+    );
+
+    // Subtotales: incluyen TODAS las operaciones (no solo gravadas) + IGV.
+    const baseSinIgv =
+      Number(mtoOperGravadas) +
+      mtoOperExoneradas +
+      mtoOperInafectas +
+      mtoOperExportacion;
+    const subTotal = this.round2(baseSinIgv + Number(totalIGV));
+    const mtoImpVenta = this.round2(baseSinIgv + Number(totalIGV));
 
     // 8) Validar tipoOperacion si se envía
     let tipoOperacionIdFinal: number | null = null;
@@ -3413,9 +3474,12 @@ export class ComprobanteService {
         sedeId,
         usuarioId: usuarioId ?? undefined,
         mtoOperGravadas,
+        mtoOperExoneradas,
+        mtoOperInafectas,
+        mtoOperExportacion,
         mtoIGV: totalIGV,
         medioPago,
-        valorVenta: mtoOperGravadas,
+        valorVenta: this.round2(baseSinIgv),
         mtoDescuentoGlobal:
           motivoNota.codigo === '04' ? montoDescuentoGlobal : undefined,
         totalImpuestos: totalIGV,

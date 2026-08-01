@@ -179,7 +179,26 @@ export class CajaService {
       cierreCajaDto.montoTransferencia +
       cierreCajaDto.montoTarjeta;
 
-    const diferencia = montoDeclarado - ventasDelTurno.totalIngresos;
+    // Egresos en efectivo del turno (dinero que salió de la caja).
+    const egresosTurno = await this.prisma.movimientoCaja.aggregate({
+      where: {
+        empresaId,
+        ...(sedeId ? { sedeId } : {}),
+        tipoMovimiento: 'EGRESO',
+        fecha: { gte: fechaApertura },
+        estado: 'ACTIVO',
+      },
+      _sum: { monto: true },
+    });
+    const totalEgresos = Number(egresosTurno._sum.monto || 0);
+    const fondoInicial = Number(cajaAbierta.montoInicial || 0);
+
+    // Lo que DEBERÍA haber al cierre = fondo de apertura + ventas del turno − egresos.
+    // Antes la diferencia comparaba el declarado (que incluye el fondo en efectivo)
+    // contra solo las ventas, ignorando el fondo y los egresos → salía inflada.
+    const montoEsperado =
+      fondoInicial + ventasDelTurno.totalIngresos - totalEgresos;
+    const diferencia = montoDeclarado - montoEsperado;
 
     // Usar el mismo turno que la apertura
     const turnoApertura = cajaAbierta.turno || this.detectarTurno();
@@ -217,6 +236,9 @@ export class CajaService {
       data: {
         ...cierre,
         ventasDelTurno,
+        fondoInicial,
+        totalEgresos,
+        montoEsperado,
         diferencia: parseFloat(diferencia.toString()),
       },
     };

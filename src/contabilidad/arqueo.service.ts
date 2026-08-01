@@ -48,7 +48,9 @@ export class ArqueoService {
         orderBy: { fechaEmision: 'desc' },
       });
 
-    // 2. Obtener comprobantes formales CON PAGOS AL CONTADO
+    // 2. Obtener comprobantes formales al contado SIN registro de pago propio.
+    //    Las que sí tienen filas en `pagos` se contabilizan en el paso 3 para
+    //    no duplicar el ingreso (antes se sumaba el comprobante Y su pago).
     const comprobantesFormales = await this.prisma.comprobante.findMany({
       where: {
         empresaId,
@@ -59,6 +61,7 @@ export class ArqueoService {
         NOT: {
           formaPagoTipo: { equals: 'CREDITO', mode: 'insensitive' } as any,
         },
+        pagos: { none: {} },
       },
       select: {
         id: true,

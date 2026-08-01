@@ -391,21 +391,45 @@ export class ContabilidadService {
       orderBy: [{ fecha: 'desc' }, { creadoEn: 'desc' }],
     });
 
-    const gastos = gastosRaw.map((g) => ({
-      id: g.id,
-      fecha: g.fecha ?? g.fechaInicio ?? g.creadoEn,
-      categoria: g.categoria,
-      etiqueta: g.etiqueta ?? '',
-      descripcion: g.descripcion ?? '',
-      recurrenteDiario: g.recurrenteDiario,
-      monto: Number(g.monto || 0),
-    }));
+    // Un gasto recurrente diario cuenta su `monto` (tarifa diaria) por cada día
+    // ACTIVO dentro del rango; los no recurrentes cuentan 1 vez. `montoPeriodo`
+    // es el total del período (antes se sumaba `monto` una sola vez, subestimando).
+    const hoy = new Date();
+    const gastos = gastosRaw.map((g) => {
+      const monto = Number(g.monto || 0);
+      let dias = 1;
+      if (g.recurrenteDiario) {
+        const inicioBase =
+          g.fechaInicio && g.fechaInicio > rango.gte
+            ? g.fechaInicio
+            : rango.gte;
+        const finClamp =
+          g.fechaFin && g.fechaFin < rango.lte ? g.fechaFin : rango.lte;
+        const fin = hoy < finClamp ? hoy : finClamp;
+        dias =
+          fin > inicioBase
+            ? Math.ceil((fin.getTime() - inicioBase.getTime()) / 86400000)
+            : 0;
+      }
+      return {
+        id: g.id,
+        fecha: g.fecha ?? g.fechaInicio ?? g.creadoEn,
+        categoria: g.categoria,
+        etiqueta: g.etiqueta ?? '',
+        descripcion: g.descripcion ?? '',
+        recurrenteDiario: g.recurrenteDiario,
+        monto,
+        dias,
+        montoPeriodo: monto * dias,
+      };
+    });
 
     const porCategoria: Record<string, number> = {};
     let totalGastos = 0;
     for (const g of gastos) {
-      totalGastos += g.monto;
-      porCategoria[g.categoria] = (porCategoria[g.categoria] ?? 0) + g.monto;
+      totalGastos += g.montoPeriodo;
+      porCategoria[g.categoria] =
+        (porCategoria[g.categoria] ?? 0) + g.montoPeriodo;
     }
 
     const resumen = {

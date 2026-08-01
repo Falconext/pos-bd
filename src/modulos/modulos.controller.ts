@@ -8,12 +8,16 @@ import {
   Put,
   Delete,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { ModulosService } from './modulos.service';
 import { CreateModuloDto } from './dto/create-modulo.dto';
 import { UpdateModuloDto } from './dto/update-modulo.dto';
 import { CreateSubModuloDto } from './dto/create-submodulo.dto';
 import { UpdateSubModuloDto } from './dto/update-submodulo.dto';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 
 @Controller('modulos')
 export class ModulosController {
@@ -36,11 +40,15 @@ export class ModulosController {
     return this.modulosService.findByCodigo(codigo);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
   @Post('submodulos')
   createSubModulo(@Body() dto: CreateSubModuloDto) {
     return this.modulosService.createSubModulo(dto);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
   @Put('submodulos/:id')
   updateSubModulo(
     @Param('id', ParseIntPipe) id: number,
@@ -49,6 +57,8 @@ export class ModulosController {
     return this.modulosService.updateSubModulo(id, dto);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
   @Delete('submodulos/:id')
   removeSubModulo(@Param('id', ParseIntPipe) id: number) {
     return this.modulosService.removeSubModulo(id);
@@ -59,11 +69,15 @@ export class ModulosController {
     return this.modulosService.findOne(id);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
   @Post()
   create(@Body() createModuloDto: CreateModuloDto) {
     return this.modulosService.create(createModuloDto);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
   @Put(':id')
   update(
     @Param('id', ParseIntPipe) id: number,
@@ -72,6 +86,8 @@ export class ModulosController {
     return this.modulosService.update(id, updateModuloDto);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
   @Delete(':id')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.modulosService.remove(id);

@@ -104,6 +104,15 @@ export class UsersService {
 
     // Asignar sedes si vienen
     if (sedeIds && sedeIds.length > 0) {
+      const sedesValidas = await this.prisma.sede.findMany({
+        where: { id: { in: sedeIds }, empresaId: empresaIdFromToken },
+        select: { id: true },
+      });
+      if (sedesValidas.length !== sedeIds.length) {
+        throw new BadRequestException(
+          'Una o más sedes no pertenecen a tu empresa',
+        );
+      }
       await this.prisma.usuarioSede.createMany({
         data: sedeIds.map((sedeId) => ({ usuarioId: nuevo.id, sedeId })),
         skipDuplicates: true,
@@ -210,9 +219,15 @@ export class UsersService {
     return { total, page, limit, items: itemsConSedes };
   }
 
-  async changeState(id: number, estado: 'ACTIVO' | 'INACTIVO') {
+  async changeState(
+    id: number,
+    estado: 'ACTIVO' | 'INACTIVO',
+    empresaId: number,
+  ) {
     const exists = await this.prisma.usuario.findUnique({ where: { id } });
     if (!exists) throw new NotFoundException('Usuario no encontrado');
+    if (exists.empresaId !== empresaId)
+      throw new ForbiddenException('Empresa no identificada');
     return this.prisma.usuario.update({ where: { id }, data: { estado } });
   }
 
@@ -269,6 +284,17 @@ export class UsersService {
 
     // Sincronizar sedes si vienen
     if (sedeIds !== undefined) {
+      if (sedeIds.length > 0) {
+        const sedesValidas = await this.prisma.sede.findMany({
+          where: { id: { in: sedeIds }, empresaId },
+          select: { id: true },
+        });
+        if (sedesValidas.length !== sedeIds.length) {
+          throw new BadRequestException(
+            'Una o más sedes no pertenecen a tu empresa',
+          );
+        }
+      }
       await this.prisma.usuarioSede.deleteMany({ where: { usuarioId: id } });
       if (sedeIds.length > 0) {
         await this.prisma.usuarioSede.createMany({
