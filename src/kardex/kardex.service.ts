@@ -302,6 +302,27 @@ export class KardexService {
       data.cantidad,
     );
 
+    // El stockActual del movimiento se calculó desde una lectura previa; bajo
+    // concurrencia el descuento atómico puede dejar un valor real distinto. Se
+    // relee el stock real de la sede y se corrige el log solo si difiere.
+    const psReal = await this.prisma.productoStock.findUnique({
+      where: {
+        productoId_sedeId: {
+          productoId: data.productoId,
+          sedeId: data.sedeId,
+        },
+      },
+      select: { stock: true },
+    });
+    const stockReal = round3(num(psReal?.stock));
+    if (stockReal !== round3(num(movimiento.stockActual))) {
+      await this.prisma.movimientoKardex.update({
+        where: { id: movimiento.id },
+        data: { stockActual: stockReal },
+      });
+      (movimiento as any).stockActual = stockReal;
+    }
+
     return movimiento;
   }
 
