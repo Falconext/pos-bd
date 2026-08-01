@@ -167,6 +167,7 @@ async function seedModulos() {
     // Compras
     { moduloCodigo: 'compras', codigo: 'compras:gestion',     nombre: 'Gestión de compras', descripcion: 'Registrar y gestionar órdenes de compra', orden: 1 },
     { moduloCodigo: 'compras', codigo: 'compras:proveedores', nombre: 'Proveedores',        descripcion: 'Gestión del catálogo de proveedores',     orden: 2 },
+    { moduloCodigo: 'compras', codigo: 'compras:ordenes',     nombre: 'Órdenes de compra',  descripcion: 'Órdenes de compra a proveedores (pedido → recepción)', orden: 3 },
     // Reportes
     { moduloCodigo: 'reportes', codigo: 'reportes:formal',   nombre: 'Reportes formales',   descripcion: 'Reportes de contabilidad y facturación SUNAT', orden: 1 },
     { moduloCodigo: 'reportes', codigo: 'reportes:informal', nombre: 'Reportes informales', descripcion: 'Reportes de notas de venta y arqueo de caja',  orden: 2 },

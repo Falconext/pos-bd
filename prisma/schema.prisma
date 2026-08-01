@@ -170,6 +170,7 @@ model Empresa {
   categorias                    Categoria[]
   clientes                      Cliente[]
   compras                       Compra[]
+  ordenesCompra                 OrdenCompra[]
   comprobantes                  Comprobante[]
   ubicacion                     Ubigeo?                       @relation(fields: [empresaUbigeo], references: [codigo])
   plan                          Plan                          @relation(fields: [planId], references: [id])
@@ -286,6 +287,7 @@ model Usuario {
   telefono                          String?
   permisos                          String?
   compras                           Compra[]
+  ordenesCompra                     OrdenCompra[]
   comprobantes                      Comprobante[]
   historialEstadosPedido            HistorialEstadoPedido[]
   movimientosCaja                   MovimientoCaja[]
@@ -428,6 +430,7 @@ model Producto {
   porcentajeVenta     Int                  @default(100)
   porcentajeProvision Int                  @default(0)
   detalleCompras      DetalleCompra[]
+  detallesOrdenCompra DetalleOrdenCompra[]
   detalleComprobantes DetalleComprobante[]
   galeria             GaleriaProducto[]
   itemsPedido         ItemPedidoTienda[]
@@ -656,6 +659,7 @@ model Cliente {
   tipoDocumento         TipoDocumento?       @relation(fields: [tipoDocumentoId], references: [id])
   medicoTratante        Doctor?              @relation("PacienteMedico", fields: [medicoTratanteId], references: [id])
   compras               Compra[]
+  ordenesCompra         OrdenCompra[] @relation("OrdenCompraProveedor")
   comprobantes          Comprobante[]
   guiasRemision         GuiaRemision[]
   productoReviews       ProductoReview[]
@@ -1458,6 +1462,7 @@ model Sede {
   productoSeries    ProductoSerie[]
 
   @@index([empresaId])
+  ordenesCompra    OrdenCompra[]
 }
 
 model Reserva {
@@ -1557,6 +1562,7 @@ model Compra {
   proveedor        Cliente            @relation(fields: [proveedorId], references: [id])
   usuario          Usuario?           @relation(fields: [usuarioId], references: [id])
   detalles         DetalleCompra[]
+  ordenCompra      OrdenCompra?
   movimientos      MovimientoKardex[]
   pagos            PagoCompra[]
   seriesGarantias  ProductoSerie[]
@@ -1779,6 +1785,60 @@ enum WhatsAppProvider {
   EMPRESA
   ZAVU
   DISABLED
+}
+
+// ─── Órdenes de Compra: pedido al proveedor previo a la Compra ───────────────
+model OrdenCompra {
+  id              Int                  @id @default(autoincrement())
+  empresaId       Int
+  sedeId          Int?
+  proveedorId     Int
+  usuarioId       Int?
+  numero          Int
+  fechaEmision    DateTime             @default(now())
+  fechaEntrega    DateTime?
+  moneda          String               @default("PEN")
+  tipoCambio      Decimal?             @default(1)
+  subtotal        Decimal              @default(0)
+  igv             Decimal              @default(0)
+  total           Decimal              @default(0)
+  estado          EstadoOrdenCompra    @default(EMITIDA)
+  observaciones   String?
+  condicionesPago String?
+  lugarEntrega    String?
+  compraId        Int?                 @unique
+  creadoEn        DateTime             @default(now())
+  actualizadoEn   DateTime             @updatedAt
+  empresa         Empresa              @relation(fields: [empresaId], references: [id])
+  sede            Sede?                @relation(fields: [sedeId], references: [id])
+  proveedor       Cliente              @relation("OrdenCompraProveedor", fields: [proveedorId], references: [id])
+  usuario         Usuario?             @relation(fields: [usuarioId], references: [id])
+  compra          Compra?              @relation(fields: [compraId], references: [id])
+  detalles        DetalleOrdenCompra[]
+
+  @@unique([empresaId, numero])
+  @@index([empresaId, estado])
+}
+
+model DetalleOrdenCompra {
+  id             Int         @id @default(autoincrement())
+  ordenCompraId  Int
+  productoId     Int?
+  descripcion    String
+  cantidad       Decimal
+  precioUnitario Decimal
+  subtotal       Decimal
+  ordenCompra    OrdenCompra @relation(fields: [ordenCompraId], references: [id], onDelete: Cascade)
+  producto       Producto?   @relation(fields: [productoId], references: [id])
+
+  @@index([ordenCompraId])
+}
+
+enum EstadoOrdenCompra {
+  BORRADOR
+  EMITIDA
+  RECIBIDA
+  ANULADA
 }
 
 enum EstadoCompra {
