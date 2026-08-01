@@ -3281,9 +3281,25 @@ export class TiendaService {
       throw new NotFoundException('Pedido no encontrado');
     }
 
+    // Seguimiento PÚBLICO (cualquiera con el código lo abre): NO exponer datos
+    // sensibles del cliente ni de pago. La página de seguimiento solo usa estado,
+    // items, totales, fechas e historial. Se omiten teléfono/email/dirección y
+    // los datos de pago (medio, montos, referencia de transferencia).
+    const {
+      clienteTelefono: _tel,
+      clienteEmail: _mail,
+      clienteDireccion: _dir,
+      clienteReferencia: _ref,
+      medioPago: _mp,
+      montoPagado: _pagado,
+      saldoPendiente: _saldo,
+      referenciaTransf: _reftransf,
+      ...pedidoPublico
+    } = pedido as any;
+
     // Firmar URLs de S3 para las imágenes de productos
     const pedidoConImagenesFirmadas = {
-      ...pedido,
+      ...pedidoPublico,
       items: await Promise.all(
         pedido.items.map(async (item) => ({
           ...item,
