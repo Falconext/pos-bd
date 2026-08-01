@@ -908,11 +908,32 @@ export class KardexService {
     costoUnitario?: number,
     cantidad?: number,
   ) {
-    // Actualizar stock en la sede específica
-    await this.prisma.productoStock.update({
-      where: { productoId_sedeId: { productoId, sedeId } },
-      data: { stock: round3(Math.max(0, nuevoStock)) },
-    });
+    // Actualizar stock en la sede específica.
+    const esSalida =
+      tipoMovimiento === 'SALIDA' || tipoMovimiento === 'TRANSFERENCIA';
+    if (esSalida && cantidad != null) {
+      // Descuento ATÓMICO: resta la cantidad en UNA sola operación condicionada
+      // al stock disponible. Evita el "lost update" de dos ventas simultáneas
+      // (antes ambas leían el mismo stock y escribían el mismo valor → sobreventa).
+      const qty = round3(num(cantidad));
+      const dec = await this.prisma.productoStock.updateMany({
+        where: { productoId, sedeId, stock: { gte: qty } },
+        data: { stock: { decrement: qty } },
+      });
+      if (dec.count === 0) {
+        // No alcanzaba el stock (venta sin stock permitida / servicio): se deja
+        // en 0, idéntico al comportamiento previo (Math.max(0, ...)). No bloquea.
+        await this.prisma.productoStock.update({
+          where: { productoId_sedeId: { productoId, sedeId } },
+          data: { stock: 0 },
+        });
+      }
+    } else {
+      await this.prisma.productoStock.update({
+        where: { productoId_sedeId: { productoId, sedeId } },
+        data: { stock: round3(Math.max(0, nuevoStock)) },
+      });
+    }
 
     // Sincronizar el campo 'stock' global en Producto (suma de todas las sedes) para que las
     // notificaciones de stock mínimo y otras consultas legacy lean el valor correcto.
