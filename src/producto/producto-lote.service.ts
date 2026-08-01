@@ -335,32 +335,34 @@ export class ProductoLoteService {
       }
     }
 
-    // Ejecutar transacciones
-    const transacciones: any[] = [];
-    for (const item of lotesAfectados) {
-      // Actualizar Lote
-      transacciones.push(
-        this.prisma.productoLote.update({
-          where: { id: item.lote.id },
-          data: { stockActual: { decrement: item.cantidadAdescontar } },
-        }),
-      );
-
-      // Registrar Movimiento Lote
-      transacciones.push(
-        this.prisma.movimientoKardexLote.create({
+    // Ejecutar el descuento dentro de UNA transacción, con decremento ATÓMICO
+    // condicional por lote (guarda stockActual >= cantidad). Evita que dos ventas
+    // simultáneas dejen el stock del lote en negativo / doble venta. Si un lote ya
+    // no alcanza (otra venta lo tomó primero), se lanza error y toda la transacción
+    // se revierte (no queda un descuento parcial). Mismo criterio que descontarStockLoteEnTx.
+    await this.prisma.$transaction(async (tx) => {
+      for (const item of lotesAfectados) {
+        const qty = item.cantidadAdescontar;
+        const dec = await tx.productoLote.updateMany({
+          where: { id: item.lote.id, stockActual: { gte: qty } },
+          data: { stockActual: { decrement: qty } },
+        });
+        if (dec.count === 0) {
+          throw new BadRequestException(
+            `Stock insuficiente en el lote "${item.lote.lote}": otra venta lo tomó primero.`,
+          );
+        }
+        await tx.movimientoKardexLote.create({
           data: {
             productoLoteId: item.lote.id,
             movimientoId: movimientoKardexId,
-            cantidad: item.cantidadAdescontar,
-            stockAnterior: item.lote.stockActual,
-            stockActual: item.lote.stockActual - item.cantidadAdescontar,
+            cantidad: qty,
+            stockAnterior: num(item.lote.stockActual),
+            stockActual: round3(num(item.lote.stockActual) - qty),
           },
-        }),
-      );
-    }
-
-    await this.prisma.$transaction(transacciones);
+        });
+      }
+    });
 
     return lotesAfectados;
   }
