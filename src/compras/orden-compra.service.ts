@@ -319,7 +319,7 @@ export class OrdenCompraService {
     return { ordenId: id, compra };
   }
 
-  /** PDF imprimible de la orden para enviar al proveedor. */
+  /** PDF imprimible de la orden para enviar al proveedor (formato A4 con logo). */
   async pdf(
     empresaId: number,
     id: number,
@@ -332,6 +332,7 @@ export class OrdenCompraService {
         nombreComercial: true,
         ruc: true,
         direccion: true,
+        logo: true,
       },
     });
 
@@ -351,10 +352,13 @@ export class OrdenCompraService {
         : '—';
     const mon = orden.moneda === 'USD' ? 'US$' : 'S/';
     const fmt = (n: any) => `${mon} ${Number(n ?? 0).toFixed(2)}`;
+    const prov: any = orden.proveedor ?? {};
+    const logo = String(empresa?.logo || '').trim();
 
-    const filas = orden.detalles
-      .map(
-        (d: any, i: number) => `
+    // Filas reales + relleno hasta un mínimo para que la tabla ocupe la hoja
+    const MIN_FILAS = 14;
+    const filasReales = orden.detalles.map(
+      (d: any, i: number) => `
         <tr>
           <td class="num">${i + 1}</td>
           <td>${esc(d.producto?.codigo ?? '')}</td>
@@ -363,66 +367,106 @@ export class OrdenCompraService {
           <td class="num">${fmt(d.precioUnitario)}</td>
           <td class="num">${fmt(d.subtotal)}</td>
         </tr>`,
-      )
-      .join('');
+    );
+    const filasVacias = Array.from(
+      { length: Math.max(0, MIN_FILAS - filasReales.length) },
+      (_, i) => `
+        <tr class="empty">
+          <td class="num">${filasReales.length + i + 1}</td>
+          <td></td><td></td><td></td><td></td><td></td>
+        </tr>`,
+    );
+    const filas = [...filasReales, ...filasVacias].join('');
+
+    const contacto = (tel?: string | null, mail?: string | null) =>
+      [tel ? `Tel: ${esc(tel)}` : '', mail ? esc(mail) : '']
+        .filter(Boolean)
+        .join(' · ');
 
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
       * { font-family: Arial, Helvetica, sans-serif; box-sizing: border-box; }
-      body { margin: 28px; color: #111827; font-size: 11.5px; }
+      body { margin: 26px 30px; color: #111827; font-size: 11px; }
       .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
-      h1 { font-size: 15px; margin: 0; }
-      .muted { color: #6b7280; }
-      .doc { border: 2px solid #111827; border-radius: 10px; padding: 10px 18px; text-align: center; }
-      .doc .t { font-size: 12px; font-weight: bold; letter-spacing: 1px; }
-      .doc .n { font-size: 16px; font-weight: 900; margin-top: 2px; }
-      .box { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px 14px; margin-top: 14px; }
-      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px; }
-      .lbl { color: #6b7280; font-size: 10px; text-transform: uppercase; letter-spacing: .5px; }
-      table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-      th { background: #111827; color: #fff; text-align: left; padding: 7px 9px; font-size: 10px; text-transform: uppercase; }
-      td { padding: 6px 9px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+      h1 { font-size: 30px; font-weight: 900; letter-spacing: -0.5px; margin: 0 0 10px; color: #1f2937; }
+      .metaline { display: flex; gap: 28px; font-size: 12px; }
+      .metaline .lbl { font-weight: 800; }
+      .brand { text-align: right; max-width: 260px; }
+      .brand img { max-height: 64px; max-width: 200px; object-fit: contain; margin-bottom: 6px; }
+      .brand .n { font-weight: 900; font-size: 12.5px; }
+      .brand .d { color: #4b5563; font-size: 10.5px; line-height: 1.45; }
+      .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1px solid #d1d5db; margin-top: 18px; }
+      .col { padding: 0; }
+      .col + .col { border-left: 1px solid #d1d5db; }
+      .colhead { background: #2f3b52; color: #fff; font-weight: 800; font-size: 11px; letter-spacing: .8px; padding: 7px 12px; text-transform: uppercase; }
+      .colbody { padding: 10px 12px 12px; line-height: 1.7; }
+      .colbody .name { font-weight: 800; font-size: 12px; }
+      .colbody .muted { color: #4b5563; }
+      .secthead { background: #2f3b52; color: #fff; font-weight: 800; font-size: 11px; letter-spacing: .8px; padding: 7px 12px; text-transform: uppercase; margin-top: 18px; border: 1px solid #2f3b52; border-bottom: none; }
+      table { width: 100%; border-collapse: collapse; }
+      thead th { background: #e6e9ef; color: #1f2937; text-align: left; padding: 7px 9px; font-size: 10px; text-transform: uppercase; border: 1px solid #d1d5db; }
+      td { padding: 6px 9px; border: 1px solid #d1d5db; vertical-align: top; }
+      tr.empty td { height: 22px; }
       .num { text-align: right; white-space: nowrap; }
-      th.num { text-align: right; }
-      .totales { margin-left: auto; width: 240px; margin-top: 10px; }
-      .totales div { display: flex; justify-content: space-between; padding: 4px 0; }
-      .totales .tt { border-top: 2px solid #111827; font-weight: 900; font-size: 14px; padding-top: 6px; }
-      .obs { margin-top: 14px; }
+      thead th.num { text-align: right; }
+      .tot td { border: 1px solid #d1d5db; font-weight: 800; }
+      .tot .lblcell { text-align: right; text-transform: uppercase; font-size: 10.5px; }
+      .tot.final td { background: #e6e9ef; font-size: 12.5px; font-weight: 900; }
+      .comments { border: 1px solid #d1d5db; border-top: none; min-height: 84px; padding: 10px 12px; line-height: 1.6; color: #374151; }
+      .foot { margin-top: 16px; display: flex; justify-content: flex-end; align-items: center; gap: 8px; color: #9ca3af; font-size: 10px; }
+      .foot img { max-height: 26px; opacity: .85; }
     </style></head><body>
       <div class="top">
         <div>
-          <h1>${esc(empresa?.nombreComercial || empresa?.razonSocial)}</h1>
-          <div class="muted">RUC ${esc(empresa?.ruc)} · ${esc(empresa?.direccion ?? '')}</div>
+          <h1>Orden de compra</h1>
+          <div class="metaline">
+            <div><span class="lbl">N.º:</span> ${esc(orden.numeroFormato)}</div>
+            <div><span class="lbl">Fecha:</span> ${fmtFecha(orden.fechaEmision)}</div>
+          </div>
         </div>
-        <div class="doc">
-          <div class="t">ORDEN DE COMPRA</div>
-          <div class="n">${esc(orden.numeroFormato)}</div>
-          <div class="muted">${fmtFecha(orden.fechaEmision)}</div>
-        </div>
-      </div>
-
-      <div class="box">
-        <div class="grid">
-          <div><div class="lbl">Proveedor</div><strong>${esc(orden.proveedor?.nombre)}</strong></div>
-          <div><div class="lbl">RUC / Doc.</div>${esc(orden.proveedor?.nroDoc ?? '—')}</div>
-          <div><div class="lbl">Fecha de entrega</div>${fmtFecha(orden.fechaEntrega)}</div>
-          <div><div class="lbl">Condiciones de pago</div>${esc(orden.condicionesPago ?? '—')}</div>
-          <div><div class="lbl">Lugar de entrega</div>${esc(orden.lugarEntrega ?? orden.sede?.nombre ?? '—')}</div>
-          <div><div class="lbl">Solicitado por</div>${esc(orden.usuario?.nombre ?? '—')}</div>
+        <div class="brand">
+          ${logo ? `<img src="${logo}" alt="logo" />` : ''}
+          <div class="n">${esc(empresa?.nombreComercial || empresa?.razonSocial)}</div>
+          <div class="d">RUC ${esc(empresa?.ruc)}${empresa?.direccion ? `<br/>${esc(empresa.direccion)}` : ''}</div>
         </div>
       </div>
 
+      <div class="cols">
+        <div class="col">
+          <div class="colhead">Vendedor (Proveedor)</div>
+          <div class="colbody">
+            <div class="name">${esc(prov.nombre)}</div>
+            <div class="muted">${prov.nroDoc ? `RUC/Doc: ${esc(prov.nroDoc)}` : ''}</div>
+            ${prov.direccion ? `<div class="muted">${esc(prov.direccion)}</div>` : ''}
+            ${contacto(prov.telefono, prov.email) ? `<div class="muted">${contacto(prov.telefono, prov.email)}</div>` : ''}
+          </div>
+        </div>
+        <div class="col">
+          <div class="colhead">Comprador</div>
+          <div class="colbody">
+            <div class="name">${esc(empresa?.razonSocial)}</div>
+            <div class="muted">RUC: ${esc(empresa?.ruc)}</div>
+            <div class="muted">Entrega: ${fmtFecha(orden.fechaEntrega)}${orden.lugarEntrega || orden.sede?.nombre ? ` · ${esc(orden.lugarEntrega ?? orden.sede?.nombre)}` : ''}</div>
+            <div class="muted">Cond. de pago: ${esc(orden.condicionesPago ?? '—')} · Solicita: ${esc(orden.usuario?.nombre ?? '—')}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="secthead">Producto o servicio</div>
       <table>
-        <thead><tr><th class="num">#</th><th>Código</th><th>Descripción</th><th class="num">Cant.</th><th class="num">P. Unit.</th><th class="num">Subtotal</th></tr></thead>
-        <tbody>${filas}</tbody>
+        <thead><tr><th class="num" style="width:34px">N.º</th><th style="width:80px">Código</th><th>Descripción</th><th class="num" style="width:70px">Cant.</th><th class="num" style="width:95px">P. Unitario</th><th class="num" style="width:95px">Total</th></tr></thead>
+        <tbody>${filas}
+          <tr class="tot"><td colspan="4" style="border:none"></td><td class="lblcell">Subtotal</td><td class="num">${fmt(orden.subtotal)}</td></tr>
+          <tr class="tot"><td colspan="4" style="border:none"></td><td class="lblcell">IGV (18%)</td><td class="num">${fmt(orden.igv)}</td></tr>
+          <tr class="tot final"><td colspan="4" style="border:none"></td><td class="lblcell">Total</td><td class="num">${fmt(orden.total)}</td></tr>
+        </tbody>
       </table>
 
-      <div class="totales">
-        <div><span class="muted">Subtotal</span><span>${fmt(orden.subtotal)}</span></div>
-        <div><span class="muted">IGV (18%)</span><span>${fmt(orden.igv)}</span></div>
-        <div class="tt"><span>TOTAL</span><span>${fmt(orden.total)}</span></div>
-      </div>
+      <div class="secthead">Comentarios o instrucciones especiales</div>
+      <div class="comments">${esc(orden.observaciones ?? '')}</div>
 
-      ${orden.observaciones ? `<div class="obs"><div class="lbl">Observaciones</div>${esc(orden.observaciones)}</div>` : ''}
+      <div class="foot">
+        ${logo ? `<img src="${logo}" alt="logo" />` : `<span>${esc(empresa?.nombreComercial || empresa?.razonSocial)}</span>`}
+      </div>
     </body></html>`;
 
     const buffer = await this.pdfGenerator.generarPdfDesdeHtml(html);
