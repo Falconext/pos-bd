@@ -538,6 +538,7 @@ export class ProductoService {
     incluirVariantes?: string | boolean;
     soloVendibles?: boolean;
     usarPrecioSede?: boolean;
+    soloStockBajo?: boolean;
   }) {
     const {
       empresaId,
@@ -589,6 +590,17 @@ export class ProductoService {
           vendibleEnSede: true,
         },
       };
+    }
+
+    if (params.soloStockBajo) {
+      // Pre-filter: only include products that have a stockMinimo configured > 0
+      // (products without stockMinimo can never be "low stock").
+      // Field-to-field comparison (stock <= stockMinimo) is not supported by Prisma,
+      // so a JS post-filter is applied after computing effective stock values.
+      where.AND = [
+        ...(where.AND ?? []),
+        { stockMinimo: { gt: 0 } },
+      ];
     }
 
     const [productosRaw, total] = await Promise.all([
@@ -923,7 +935,18 @@ export class ProductoService {
       }),
     );
 
-    return { productos, total, page, limit };
+    // Post-filter for soloStockBajo: keep only products where effective stock <= stockMinimo.
+    // Prisma can't express column-to-column comparison natively, so we filter in JS
+    // after computing the effective stock values.
+    const productosFinales = params.soloStockBajo
+      ? productos.filter((p: any) => {
+          const stockEfectivo = Number(p.stock ?? 0);
+          const minimo = Number(p.stockMinimo ?? 0);
+          return minimo > 0 && stockEfectivo <= minimo;
+        })
+      : productos;
+
+    return { productos: productosFinales, total: params.soloStockBajo ? productosFinales.length : total, page, limit };
   }
 
   /**
