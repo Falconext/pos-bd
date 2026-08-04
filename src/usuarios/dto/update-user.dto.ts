@@ -31,6 +31,12 @@ export class UpdateUserDto {
   @IsOptional()
   celular?: string;
 
+  // Nueva contraseña (opcional). Si viene vacía o ausente, no se cambia.
+  @IsString()
+  @IsOptional()
+  @Length(6, 72)
+  password?: string;
+
   @IsInt()
   @IsOptional()
   empresaId?: number;
