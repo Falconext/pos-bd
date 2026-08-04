@@ -305,7 +305,9 @@ export class PdfGeneratorService {
         displayHeaderFooter: true,
         headerTemplate: '<span></span>',
         footerTemplate: footer,
-        margin: { top: '0', right: '0', bottom: '48px', left: '0' },
+        // top a nivel de PDF → deja espacio superior en TODAS las páginas
+        // (evita que el contenido de la página 2 quede pegado al borde).
+        margin: { top: '34px', right: '0', bottom: '48px', left: '0' },
       },
       '✅ PDF de contrato generado',
     );
