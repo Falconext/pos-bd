@@ -4589,6 +4589,11 @@ export class ComprobanteService {
     const razonSocialEmpresa = String(
       full.empresa?.razonSocial || (full.empresa as any)?.nombreComercial || '',
     ).toUpperCase();
+    // Monto realmente pagado vs saldo pendiente. En ventas al crédito el saldo
+    // suele ser el total → pagado 0 y no debe mostrarse un medio de pago
+    // cobrado (EFECTIVO) ni el total como "pagado".
+    const saldoPendiente = Math.max(0, Number((full as any).saldo || 0));
+    const montoPagado = Math.max(0, mtoImpVenta - saldoPendiente);
     const pdfData: any = {
       tipoMoneda: (full as any)?.tipoMoneda || 'PEN',
       tipoCambio: (full as any)?.tipoCambio ?? 1,
@@ -4646,9 +4651,14 @@ export class ComprobanteService {
       descuento,
       totalEnLetras: numeroALetras(mtoImpVenta).toUpperCase(),
       formaPago,
-      medioPago: (full.medioPago || 'EFECTIVO').toUpperCase(),
+      medioPago:
+        esVentaCredito && montoPagado <= 0
+          ? '—'
+          : (full.medioPago || 'EFECTIVO').toUpperCase(),
       vuelto: Number((full as any).vuelto || 0).toFixed(2),
-      pagado: (mtoImpVenta + Number((full as any).vuelto || 0)).toFixed(2),
+      pagado: montoPagado.toFixed(2),
+      saldoPendiente:
+        saldoPendiente > 0 ? saldoPendiente.toFixed(2) : undefined,
       vendedor: (full.usuario?.nombre || 'ADMIN').toUpperCase(),
       observaciones: full.observaciones
         ? full.observaciones.toUpperCase()

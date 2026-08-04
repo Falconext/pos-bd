@@ -168,9 +168,12 @@
         <tr><td>HORA:</td><td>{{hora}}</td></tr>
         <tr><td>MONEDA:</td><td>{{monedaNombre}}</td></tr>
         <tr><td>FORMA PAGO:</td><td>{{formaPago}}</td></tr>
-        <tr><td>MEDIO PAGO:</td><td>{{medioPago}} {{simboloMoneda}} {{mtoImpVenta}}</td></tr>
+        <tr><td>MEDIO PAGO:</td><td>{{medioPago}} {{simboloMoneda}} {{pagado}}</td></tr>
         <tr><td>VUELTO:</td><td>{{simboloMoneda}} {{vuelto}}</td></tr>
         <tr><td>PAGADO:</td><td>{{simboloMoneda}} {{pagado}}</td></tr>
+        {{#if saldoPendiente}}
+        <tr><td>SALDO:</td><td>{{simboloMoneda}} {{saldoPendiente}}</td></tr>
+        {{/if}}
         <tr><td>VENDEDOR:</td><td>{{vendedor}}</td></tr>
       </table>
     </div>
