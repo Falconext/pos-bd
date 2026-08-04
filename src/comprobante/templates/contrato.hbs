@@ -5,62 +5,52 @@
   <style>
     * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     body { font-family: 'Helvetica Neue', Arial, sans-serif; color: #1f2937; font-size: 11.5px; line-height: 1.6; margin: 0; }
-    .page { padding: 34px 44px 90px; }
+    .page { padding: 34px 44px 24px; }
 
     /* Header */
-    .header { display: flex; align-items: center; justify-content: space-between; border-bottom: 3px solid #6d28d9; padding-bottom: 14px; margin-bottom: 6px; }
+    .header { display: flex; align-items: center; justify-content: space-between; border-bottom: 3px solid #111827; padding-bottom: 14px; margin-bottom: 6px; }
     .header img { height: 46px; }
     .header .doc-tag { text-align: right; }
-    .header .doc-tag .kicker { font-size: 9px; letter-spacing: 2px; color: #7c3aed; font-weight: 700; text-transform: uppercase; }
+    .header .doc-tag .kicker { font-size: 9px; letter-spacing: 2px; color: #111827; font-weight: 700; text-transform: uppercase; }
     .header .doc-tag .fecha { font-size: 10px; color: #6b7280; margin-top: 2px; }
 
-    .title-band { background: linear-gradient(90deg, #4c1d95, #6d28d9); color: #fff; text-align: center; padding: 11px 14px; border-radius: 8px; margin: 12px 0 16px; }
+    .title-band { background: #111827; color: #fff; text-align: center; padding: 11px 14px; border-radius: 8px; margin: 12px 0 16px; }
     .title-band h1 { margin: 0; font-size: 15px; letter-spacing: .6px; font-weight: 800; }
 
     .intro { margin: 0 0 12px; text-align: justify; }
-    .brand { color: #6d28d9; font-weight: 800; }
+    .brand { color: #111827; font-weight: 800; }
 
     /* Client card */
-    .card { border: 1px solid #e5e7eb; border-left: 4px solid #6d28d9; border-radius: 8px; background: #faf9ff; padding: 12px 16px; margin: 0 0 16px; }
+    .card { border: 1px solid #e5e7eb; border-left: 4px solid #111827; border-radius: 8px; background: #f9fafb; padding: 12px 16px; margin: 0 0 16px; }
     .card .row { display: flex; margin: 3px 0; }
     .card .lbl { width: 92px; color: #6b7280; font-weight: 700; font-size: 10.5px; text-transform: uppercase; letter-spacing: .3px; }
     .card .val { flex: 1; font-weight: 600; color: #111827; }
 
     /* Sections */
-    h2 { font-size: 11.5px; color: #4c1d95; margin: 16px 0 5px; padding-left: 9px; border-left: 3px solid #a78bfa; font-weight: 800; letter-spacing: .2px; }
+    h2 { font-size: 11.5px; color: #111827; margin: 16px 0 5px; padding-left: 9px; border-left: 3px solid #111827; font-weight: 800; letter-spacing: .2px; page-break-after: avoid; break-after: avoid; }
     p { margin: 5px 0; text-align: justify; }
     ul { margin: 5px 0; padding-left: 20px; }
     li { margin: 1px 0; }
 
     /* Plan */
     .plan-box { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
-    .plan-chip { border: 1px solid #e5e7eb; border-radius: 999px; padding: 5px 12px; font-weight: 700; font-size: 10.5px; color: #6b7280; }
-    .plan-chip.on { background: #6d28d9; border-color: #6d28d9; color: #fff; }
+    .plan-chip { border: 1px solid #d1d5db; border-radius: 999px; padding: 5px 12px; font-weight: 700; font-size: 10.5px; color: #6b7280; }
+    .plan-chip.on { background: #111827; border-color: #111827; color: #fff; }
     .pago { margin-top: 8px; font-size: 13px; }
     .pago strong { color: #111827; }
-    .pago .monto { color: #059669; font-weight: 800; }
+    .pago .monto { color: #111827; font-weight: 800; }
 
     /* Firmas */
-    .firmas { display: flex; justify-content: space-between; gap: 48px; margin-top: 34px; page-break-inside: avoid; }
+    .firmas { display: flex; justify-content: space-between; gap: 48px; margin-top: 34px; page-break-inside: avoid; break-inside: avoid; }
     .firma { flex: 1; text-align: center; }
     .firma .quien { font-weight: 800; color: #111827; }
     .firma .rep { font-size: 9.5px; color: #6b7280; margin-top: 2px; }
     .firma-img { display: block; height: 60px; margin: 4px auto -6px; }
     .firma .linea { border-top: 1.5px solid #111827; margin-top: 40px; padding-top: 4px; font-size: 10px; color: #6b7280; }
     .firma .linea.con-firma { margin-top: 6px; }
-
-    /* Footer */
-    .footer { position: fixed; bottom: 0; left: 0; right: 0; border-top: 1px solid #ede9fe; padding: 8px 44px; font-size: 8.5px; color: #9ca3af; display: flex; justify-content: space-between; }
-    .footer .b { color: #6d28d9; font-weight: 700; }
   </style>
 </head>
 <body>
-  <div class="footer">
-    <span class="b">KREZKA</span>
-    <span>Software · Facturación · POS</span>
-    <span>Contrato de Prestación de Servicios Digitales</span>
-  </div>
-
   <div class="page">
     <div class="header">
       {{#if logoKrezka}}<img src="{{logoKrezka}}" alt="KREZKA" />{{else}}<span class="brand" style="font-size:22px">KREZKA</span>{{/if}}

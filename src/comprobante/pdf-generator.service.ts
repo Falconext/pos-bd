@@ -294,12 +294,18 @@ export class PdfGeneratorService {
   /** Genera el PDF del contrato de servicios con los datos del cliente autollenados. */
   async generarContrato(data: Record<string, any>): Promise<Buffer> {
     const html = this.loadContratoTemplate()(data);
+    const footer = `<div style="width:100%;font-size:8px;color:#9ca3af;padding:0 44px;display:flex;justify-content:space-between;-webkit-print-color-adjust:exact;"><span style="font-weight:700;color:#111827">KREZKA</span><span>Software · Facturación · POS</span><span>Contrato de Prestación de Servicios Digitales</span></div>`;
     return this.renderPdfBuffer(
       html,
       {
         format: 'A4',
         printBackground: true,
-        margin: { top: '0', right: '0', bottom: '0', left: '0' },
+        // Footer nativo: reserva el margen inferior en TODAS las páginas, así el
+        // contenido nunca se solapa con el pie.
+        displayHeaderFooter: true,
+        headerTemplate: '<span></span>',
+        footerTemplate: footer,
+        margin: { top: '0', right: '0', bottom: '48px', left: '0' },
       },
       '✅ PDF de contrato generado',
     );
