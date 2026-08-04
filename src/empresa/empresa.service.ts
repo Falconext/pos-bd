@@ -23,6 +23,7 @@ import * as XLSX from 'xlsx';
 import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
 import { S3Service } from '../s3/s3.service';
 import { FIRMA_KREZKA_DATA_URI } from './firma-krezka';
+import { LOGO_KREZKA_DATA_URI } from './logo-krezka';
 
 function parseDDMMYYYY(input: string): Date {
   if (!input || input.trim() === '') {
@@ -253,6 +254,7 @@ export class EmpresaService {
       pagoMensual: Number(empresa.plan?.costo ?? 0).toFixed(2),
       fecha: `${hoy.getDate()} de ${MESES[hoy.getMonth()]} del ${hoy.getFullYear()}`,
       firmaKrezka: FIRMA_KREZKA_DATA_URI,
+      logoKrezka: LOGO_KREZKA_DATA_URI,
     };
     const safe = String(empresa.razonSocial || 'cliente')
       .replace(/[^a-z0-9]+/gi, '_')
@@ -285,20 +287,20 @@ export class EmpresaService {
         to: correo,
         subject: 'Contrato de Prestación de Servicios — KREZKA',
         html: `<p>Estimado(a) ${empresa.razonSocial},</p><p>Adjuntamos el <strong>Contrato de Prestación de Servicios Digitales</strong> correspondiente a tu plan <strong>${data.planNombre || '—'}</strong>. Por favor revísalo, fírmalo y devuélvelo.</p><p>Gracias por confiar en KREZKA.</p>`,
-        attachments: [{ filename, content: buffer.toString('base64') }],
+        attachments: [{ filename, content: buffer }],
       });
       if (error) throw new BadRequestException(error.message);
       return { canal, destino: correo };
     }
 
-    // WhatsApp: se sube el PDF a S3 y se envía el enlace de descarga.
+    // WhatsApp: se sube el PDF a S3 y se envía como documento (con la firma incluida).
     const telefono = admin?.celular;
     if (!telefono) throw new BadRequestException('El cliente no tiene un teléfono registrado');
     const key = `contratos/empresa-${empresaId}/${Date.now()}-${filename}`;
     await this.s3Service.uploadPDF(buffer, key);
     const url = await this.s3Service.getSignedGetUrl(key, 7 * 24 * 3600);
-    const mensaje = `📄 *KREZKA*\nHola ${empresa.razonSocial}, te compartimos tu *Contrato de Prestación de Servicios* (Plan ${data.planNombre || '—'}).\n\nDescárgalo, revísalo y fírmalo aquí:\n${url}\n\n¡Gracias por tu confianza!`;
-    const res = await this.whatsappService.enviarTexto(telefono, mensaje);
+    const caption = `📄 *KREZKA*\nHola ${empresa.razonSocial}, te compartimos tu *Contrato de Prestación de Servicios* (Plan ${data.planNombre || '—'}). Revísalo, fírmalo y devuélvelo. ¡Gracias por tu confianza!`;
+    const res = await this.whatsappService.enviarDocumentoUrl(telefono, url, filename, caption);
     if (!res.success) throw new BadRequestException(res.error || 'No se pudo enviar por WhatsApp');
     return { canal, destino: telefono };
   }

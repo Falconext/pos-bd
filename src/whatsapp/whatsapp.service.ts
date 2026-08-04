@@ -172,6 +172,42 @@ export class WhatsAppService {
     }
   }
 
+  /** Envía un documento (PDF por URL) por WhatsApp usando las credenciales de plataforma. */
+  async enviarDocumentoUrl(
+    numero: string,
+    pdfUrl: string,
+    filename: string,
+    caption?: string,
+  ): Promise<{ success: boolean; error?: string }> {
+    const { token, phoneId } = this.getCredentials();
+    if (!token || !phoneId)
+      return { success: false, error: 'WhatsApp no configurado' };
+    const to = this.formatearNumero(numero);
+    try {
+      await axios.post(
+        `${this.apiUrl}/${phoneId}/messages`,
+        {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to,
+          type: 'document',
+          document: { link: pdfUrl, caption, filename },
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+      return { success: true };
+    } catch (error) {
+      const msg = error.response?.data?.error?.message || error.message;
+      this.logger.warn(`WhatsApp documento fallido a ${to}: ${msg}`);
+      return { success: false, error: msg };
+    }
+  }
+
   /**
    * Envía comprobante por WhatsApp usando Meta Cloud API
    */
