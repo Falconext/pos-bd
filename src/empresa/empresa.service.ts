@@ -22,6 +22,7 @@ import axios from 'axios';
 import * as XLSX from 'xlsx';
 import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
 import { S3Service } from '../s3/s3.service';
+import { FIRMA_KREZKA_DATA_URI } from './firma-krezka';
 
 function parseDDMMYYYY(input: string): Date {
   if (!input || input.trim() === '') {
@@ -251,6 +252,7 @@ export class EmpresaService {
       esOtro: !esEmprendedor && !esNegocio && !esCorporativo,
       pagoMensual: Number(empresa.plan?.costo ?? 0).toFixed(2),
       fecha: `${hoy.getDate()} de ${MESES[hoy.getMonth()]} del ${hoy.getFullYear()}`,
+      firmaKrezka: FIRMA_KREZKA_DATA_URI,
     };
     const safe = String(empresa.razonSocial || 'cliente')
       .replace(/[^a-z0-9]+/gi, '_')

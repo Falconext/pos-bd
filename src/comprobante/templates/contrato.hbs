@@ -18,6 +18,8 @@
     .firma-wrap { display: flex; justify-content: space-between; margin-top: 40px; gap: 40px; }
     .firma { flex: 1; }
     .linea { border-top: 1px solid #111827; margin-top: 42px; padding-top: 4px; }
+    .linea.con-firma { margin-top: 4px; }
+    .firma-img { display: block; height: 64px; margin: 6px 0 0; }
     .brand { color: #6d28d9; font-weight: bold; }
   </style>
 </head>
@@ -86,7 +88,8 @@
     <div class="firma">
       <div><strong>KREZKA</strong></div>
       <div class="muted">Representante Legal: YAN GAMONAL SILVA - DNI 70683772</div>
-      <div class="linea">Firma</div>
+      {{#if firmaKrezka}}<img class="firma-img" src="{{firmaKrezka}}" alt="Firma KREZKA" />{{/if}}
+      <div class="linea{{#if firmaKrezka}} con-firma{{/if}}">Firma</div>
     </div>
     <div class="firma">
       <div><strong>CLIENTE</strong></div>
