@@ -77,6 +77,23 @@ export class UpdateEmpresaDto {
   @IsString()
   fechaExpiracion?: string;
 
+  // Seguimiento de onboarding (clientes mensuales/anuales)
+  @IsOptional()
+  @IsBoolean()
+  capacitacion?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  altaSunat?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  contrato?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  bienvenidaRedes?: boolean;
+
   @IsOptional()
   @IsString()
   providerToken?: string;

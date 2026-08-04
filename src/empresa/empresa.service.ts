@@ -839,6 +839,10 @@ export class EmpresaService {
           direccion: true,
           fechaActivacion: true,
           fechaExpiracion: true,
+          capacitacion: true,
+          altaSunat: true,
+          contrato: true,
+          bienvenidaRedes: true,
           logo: true,
           slugTienda: true,
           brand: true,
@@ -895,6 +899,10 @@ export class EmpresaService {
         logo: e.logo,
         fechaActivacion: e.fechaActivacion,
         fechaExpiracion: e.fechaExpiracion,
+        capacitacion: e.capacitacion,
+        altaSunat: e.altaSunat,
+        contrato: e.contrato,
+        bienvenidaRedes: e.bienvenidaRedes,
         slugTienda: e.slugTienda,
         brand: e.brand,
         producto: e.producto,
@@ -983,6 +991,12 @@ export class EmpresaService {
         updateData.fechaActivacion = parseDDMMYYYY(dto.fechaActivacion);
       if (dto.fechaExpiracion !== undefined)
         updateData.fechaExpiracion = parseDDMMYYYY(dto.fechaExpiracion);
+      if (dto.capacitacion !== undefined)
+        updateData.capacitacion = dto.capacitacion;
+      if (dto.altaSunat !== undefined) updateData.altaSunat = dto.altaSunat;
+      if (dto.contrato !== undefined) updateData.contrato = dto.contrato;
+      if (dto.bienvenidaRedes !== undefined)
+        updateData.bienvenidaRedes = dto.bienvenidaRedes;
       if (dto.providerToken !== undefined)
         updateData.providerToken = dto.providerToken;
       if (dto.providerId !== undefined) updateData.providerId = dto.providerId;

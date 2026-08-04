@@ -97,6 +97,11 @@ model Empresa {
   logo                          String?
   fechaActivacion               DateTime
   fechaExpiracion               DateTime
+  // Seguimiento de onboarding (solo aplica a clientes mensuales/anuales, no demo)
+  capacitacion                  Boolean                       @default(false)
+  altaSunat                     Boolean                       @default(false)
+  contrato                      Boolean                       @default(false)
+  bienvenidaRedes               Boolean                       @default(false)
   planId                        Int
   estado                        EstadoType                    @default(ACTIVO)
   departamento                  String?
