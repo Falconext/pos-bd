@@ -313,6 +313,12 @@ export class GuiaRemisionService {
       );
     }
 
+    // Validar el RESULTADO de la edición (guía existente + cambios) para no
+    // reenviar a SUNAT datos inválidos (p. ej. transportista = remitente en
+    // transporte público → error 2560). Se valida el merge porque updateDto
+    // es parcial.
+    this.validateGuiaRemision({ ...guia, ...updateDto } as any);
+
     // Si se actualizan detalles, eliminar los anteriores y crear los nuevos
     const { detalles, ...guiaData } = updateDto;
 
@@ -501,11 +507,22 @@ export class GuiaRemisionService {
         );
       }
 
+      // Rechazo DEFINITIVO de SUNAT: recibió y procesó la guía y la rechazó
+      // (devuelve CDR). Reintentar los mismos datos inválidos siempre volverá
+      // a fallar → RECHAZADO (sin reintentos). FALLIDO_ENVIO se reserva para
+      // fallos transitorios (no se pudo enviar / SUNAT caída), que sí reintentan.
+      const esRechazoDefinitivo =
+        !resultado.success &&
+        !resultado.pendienteVerificacion &&
+        !!resultado.cdrResponse;
+
       const nuevoEstado = resultado.success
         ? 'EMITIDO'
         : resultado.pendienteVerificacion
           ? 'PENDIENTE'
-          : 'FALLIDO_ENVIO';
+          : esRechazoDefinitivo
+            ? 'RECHAZADO'
+            : 'FALLIDO_ENVIO';
 
       const guiaActualizada = await this.prisma.guiaRemision.update({
         where: { id },
@@ -516,11 +533,12 @@ export class GuiaRemisionService {
           sunatCdrZip: resultado.cdrZip || null,
           sunatErrorMsg: resultado.error || null,
           documentoId: resultado.documentoId || null,
-          // Resetear reintentos si hubo éxito
+          // Éxito o rechazo definitivo: cortar reintentos.
           ...(resultado.success && {
             sunatRetriesCount: 0,
             sunatNextRetryAt: null,
           }),
+          ...(esRechazoDefinitivo && { sunatNextRetryAt: null }),
         },
       });
 
@@ -727,6 +745,20 @@ export class GuiaRemisionService {
       if (!dto.transportistaRuc || !dto.transportistaRazonSocial) {
         throw new BadRequestException(
           'Para transporte público se requieren los datos del transportista',
+        );
+      }
+      // SUNAT (cód. 2560): en transporte público el transportista debe ser un
+      // TERCERO distinto al remitente. Si el propio remitente traslada su
+      // mercadería, debe usar Transporte Privado (02) con placa y conductor.
+      const transportistaRucPublico = String(dto.transportistaRuc || '').trim();
+      if (
+        remitenteRuc &&
+        transportistaRucPublico &&
+        transportistaRucPublico === remitenteRuc
+      ) {
+        throw new BadRequestException(
+          'En transporte público el transportista debe ser un tercero distinto al remitente. ' +
+            'Si tú mismo trasladas la mercadería, usa Transporte Privado (indica placa y conductor del vehículo).',
         );
       }
     }
