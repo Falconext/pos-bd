@@ -4509,12 +4509,16 @@ export class ComprobanteService {
       COT: 'COTIZACIÓN',
     };
     const fecha = new Date(full.fechaEmision as any);
-    const pagosAlContado = ['EFECTIVO', 'YAPE', 'PLIN'];
-    const formaPago = pagosAlContado.includes(
-      (full.medioPago || '').toUpperCase(),
-    )
-      ? 'CONTADO'
-      : 'CRÉDITO';
+    // La condición de pago (CONTADO/CRÉDITO) depende de si la venta es a
+    // crédito, NO del medio de pago. Una nota a crédito tiene medioPago
+    // 'EFECTIVO' por defecto, pero formaPagoTipo=CREDITO / estadoPago pendiente
+    // / saldo>0. Antes se calculaba solo por medioPago → salía "CONTADO".
+    const estadoPagoUp = String((full as any).estadoPago || '').toUpperCase();
+    const esVentaCredito =
+      String((full as any).formaPagoTipo || '').toUpperCase() === 'CREDITO' ||
+      ['PENDIENTE_PAGO', 'PAGO_PARCIAL'].includes(estadoPagoUp) ||
+      Number((full as any).saldo || 0) > 0;
+    const formaPago = esVentaCredito ? 'CRÉDITO' : 'CONTADO';
 
     const buildLogoDataUrl = (raw?: string | null): string | undefined => {
       if (!raw) return undefined;
