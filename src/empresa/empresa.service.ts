@@ -21,6 +21,7 @@ import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import axios from 'axios';
 import * as XLSX from 'xlsx';
 import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
+import { S3Service } from '../s3/s3.service';
 
 function parseDDMMYYYY(input: string): Date {
   if (!input || input.trim() === '') {
@@ -210,7 +211,95 @@ export class EmpresaService {
     private readonly whatsappService: WhatsAppService,
     @Inject(forwardRef(() => PdfGeneratorService))
     private readonly pdfGenerator: PdfGeneratorService,
+    private readonly s3Service: S3Service,
   ) {}
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Contrato de servicios (PDF autollenado) — descarga / envío por correo o WhatsApp
+  // ─────────────────────────────────────────────────────────────────────────
+  private async construirDatosContrato(empresaId: number) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      include: {
+        plan: { select: { nombre: true, costo: true } },
+        usuarios: {
+          where: { rol: 'ADMIN_EMPRESA' },
+          orderBy: { id: 'asc' },
+          select: { nombre: true, email: true, celular: true },
+          take: 1,
+        },
+      },
+    });
+    if (!empresa) throw new NotFoundException('Empresa no encontrada');
+    const admin = empresa.usuarios?.[0];
+    const planNombre = empresa.plan?.nombre || '';
+    const pn = planNombre.toLowerCase();
+    const esEmprendedor = pn.includes('emprendedor');
+    const esNegocio = pn.includes('negocio');
+    const esCorporativo = pn.includes('corporativo');
+    const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    const hoy = new Date();
+    const data = {
+      cliente: empresa.razonSocial,
+      dniRuc: empresa.ruc,
+      correo: admin?.email || '',
+      telefono: admin?.celular || '',
+      planNombre,
+      esEmprendedor,
+      esNegocio,
+      esCorporativo,
+      esOtro: !esEmprendedor && !esNegocio && !esCorporativo,
+      pagoMensual: Number(empresa.plan?.costo ?? 0).toFixed(2),
+      fecha: `${hoy.getDate()} de ${MESES[hoy.getMonth()]} del ${hoy.getFullYear()}`,
+    };
+    const safe = String(empresa.razonSocial || 'cliente')
+      .replace(/[^a-z0-9]+/gi, '_')
+      .slice(0, 40);
+    const filename = `Contrato_KREZKA_${safe}.pdf`;
+    return { empresa, admin, data, filename };
+  }
+
+  async generarContratoPdf(empresaId: number): Promise<{ buffer: Buffer; filename: string }> {
+    const { data, filename } = await this.construirDatosContrato(empresaId);
+    const buffer = await this.pdfGenerator.generarContrato(data);
+    return { buffer, filename };
+  }
+
+  async enviarContrato(empresaId: number, canal: 'email' | 'whatsapp') {
+    const { empresa, admin, data, filename } = await this.construirDatosContrato(empresaId);
+    const buffer = await this.pdfGenerator.generarContrato(data);
+
+    if (canal === 'email') {
+      const correo = admin?.email;
+      if (!correo) throw new BadRequestException('El cliente no tiene un correo registrado');
+      const resendKey = process.env.RESEND_API_KEY;
+      if (!resendKey) throw new BadRequestException('Envío de correo no configurado (RESEND_API_KEY)');
+      const { Resend } = await import('resend');
+      const resend = new Resend(resendKey);
+      const fromEmail =
+        process.env.RESEND_FROM_EMAIL || process.env.MAIL_FROM || 'noreply@falconext.pe';
+      const { error } = await resend.emails.send({
+        from: `KREZKA <${fromEmail}>`,
+        to: correo,
+        subject: 'Contrato de Prestación de Servicios — KREZKA',
+        html: `<p>Estimado(a) ${empresa.razonSocial},</p><p>Adjuntamos el <strong>Contrato de Prestación de Servicios Digitales</strong> correspondiente a tu plan <strong>${data.planNombre || '—'}</strong>. Por favor revísalo, fírmalo y devuélvelo.</p><p>Gracias por confiar en KREZKA.</p>`,
+        attachments: [{ filename, content: buffer.toString('base64') }],
+      });
+      if (error) throw new BadRequestException(error.message);
+      return { canal, destino: correo };
+    }
+
+    // WhatsApp: se sube el PDF a S3 y se envía el enlace de descarga.
+    const telefono = admin?.celular;
+    if (!telefono) throw new BadRequestException('El cliente no tiene un teléfono registrado');
+    const key = `contratos/empresa-${empresaId}/${Date.now()}-${filename}`;
+    await this.s3Service.uploadPDF(buffer, key);
+    const url = await this.s3Service.getSignedGetUrl(key, 7 * 24 * 3600);
+    const mensaje = `📄 *KREZKA*\nHola ${empresa.razonSocial}, te compartimos tu *Contrato de Prestación de Servicios* (Plan ${data.planNombre || '—'}).\n\nDescárgalo, revísalo y fírmalo aquí:\n${url}\n\n¡Gracias por tu confianza!`;
+    const res = await this.whatsappService.enviarTexto(telefono, mensaje);
+    if (!res.success) throw new BadRequestException(res.error || 'No se pudo enviar por WhatsApp');
+    return { canal, destino: telefono };
+  }
 
   private async asegurarSedePrincipalPorDefecto(
     empresaId: number,

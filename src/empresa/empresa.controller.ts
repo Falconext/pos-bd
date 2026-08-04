@@ -128,6 +128,38 @@ export class EmpresaController {
     res.end(file.buffer);
   }
 
+  /** Descarga el contrato de servicios (PDF autollenado) de la empresa. */
+  @Get(':id/contrato')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  async descargarContrato(
+    @Param('id', ParseIntPipe) id: number,
+    @Res() res: Response,
+  ) {
+    const { buffer, filename } = await this.empresaService.generarContratoPdf(id);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.end(buffer);
+  }
+
+  /** Envía el contrato al cliente por correo o WhatsApp. */
+  @Post(':id/contrato/enviar')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  async enviarContrato(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { canal?: 'email' | 'whatsapp' },
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const canal = body?.canal === 'whatsapp' ? 'whatsapp' : 'email';
+    const result = await this.empresaService.enviarContrato(id, canal);
+    res.locals.message =
+      canal === 'email'
+        ? 'Contrato enviado por correo correctamente'
+        : 'Contrato enviado por WhatsApp correctamente';
+    return result;
+  }
+
   @Put(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN_SISTEMA')

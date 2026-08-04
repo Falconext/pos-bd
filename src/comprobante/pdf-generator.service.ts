@@ -11,6 +11,7 @@ export class PdfGeneratorService {
   private template: HandlebarsTemplateDelegate | null = null;
   private cotizacionTemplate: HandlebarsTemplateDelegate | null = null;
   private guiaTemplate: HandlebarsTemplateDelegate | null = null;
+  private contratoTemplate: HandlebarsTemplateDelegate | null = null;
 
   async onModuleInit() {
     // Cargar template: intentar en dist y src para soportar start y start:dev
@@ -278,6 +279,32 @@ export class PdfGeneratorService {
    * Genera un PDF A4 a partir de un documento HTML autocontenido.
    * Útil para documentos que ya traen su propio HTML/estilos (p. ej. contratos).
    */
+  private loadContratoTemplate(): HandlebarsTemplateDelegate {
+    if (this.contratoTemplate) return this.contratoTemplate;
+    const candidates = [
+      path.join(__dirname, 'templates', 'contrato.hbs'),
+      path.join(process.cwd(), 'src', 'comprobante', 'templates', 'contrato.hbs'),
+    ];
+    const found = candidates.find((p) => fs.existsSync(p));
+    if (!found) throw new Error('Template de contrato no encontrado');
+    this.contratoTemplate = Handlebars.compile(fs.readFileSync(found, 'utf-8'));
+    return this.contratoTemplate;
+  }
+
+  /** Genera el PDF del contrato de servicios con los datos del cliente autollenados. */
+  async generarContrato(data: Record<string, any>): Promise<Buffer> {
+    const html = this.loadContratoTemplate()(data);
+    return this.renderPdfBuffer(
+      html,
+      {
+        format: 'A4',
+        printBackground: true,
+        margin: { top: '0', right: '0', bottom: '0', left: '0' },
+      },
+      '✅ PDF de contrato generado',
+    );
+  }
+
   async generarPdfDesdeHtml(html: string): Promise<Buffer> {
     return this.renderPdfBuffer(
       html,

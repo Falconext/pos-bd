@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: Arial, Helvetica, sans-serif; color: #1f2937; font-size: 12.5px; line-height: 1.6; margin: 0; padding: 40px 48px; }
+    h1 { text-align: center; font-size: 17px; letter-spacing: .5px; margin: 0 0 22px; }
+    h2 { font-size: 12.5px; margin: 18px 0 6px; }
+    p { margin: 6px 0; text-align: justify; }
+    ul { margin: 6px 0; padding-left: 22px; }
+    li { margin: 2px 0; }
+    .datos { margin: 4px 0 10px; }
+    .datos div { margin: 2px 0; }
+    .plan { margin: 6px 0; }
+    .chk { font-size: 14px; margin-right: 6px; }
+    .muted { color: #6b7280; }
+    .firma-wrap { display: flex; justify-content: space-between; margin-top: 40px; gap: 40px; }
+    .firma { flex: 1; }
+    .linea { border-top: 1px solid #111827; margin-top: 42px; padding-top: 4px; }
+    .brand { color: #6d28d9; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>CONTRATO DE PRESTACIÓN DE SERVICIOS DIGITALES</h1>
+
+  <p>Entre:</p>
+  <p><span class="brand">KREZKA</span>, empresa dedicada a brindar soluciones digitales, sistemas de facturación electrónica, automatización empresarial, herramientas de gestión y servicios tecnológicos, en adelante denominada "KREZKA";</p>
+  <p>y por otra parte:</p>
+
+  <div class="datos">
+    <div><strong>CLIENTE:</strong> {{cliente}}</div>
+    <div><strong>DNI/RUC:</strong> {{dniRuc}}</div>
+    <div><strong>Correo:</strong> {{correo}}</div>
+    <div><strong>Teléfono:</strong> {{telefono}}</div>
+  </div>
+
+  <p>Se acuerda celebrar el presente Contrato de Prestación de Servicios Digitales bajo las siguientes cláusulas:</p>
+
+  <h2>PRIMERA: OBJETO DEL CONTRATO</h2>
+  <p>KREZKA brindará al CLIENTE servicios tecnológicos y digitales de acuerdo con el plan contratado, incluyendo acceso al sistema, soporte técnico, funcionalidades habilitadas y herramientas relacionadas con la gestión empresarial y facturación electrónica.</p>
+
+  <h2>SEGUNDA: PLAN CONTRATADO</h2>
+  <p>El CLIENTE contrata el siguiente plan:</p>
+  <div class="plan"><span class="chk">{{#if esEmprendedor}}☑{{else}}☐{{/if}}</span> Plan Emprendedor</div>
+  <div class="plan"><span class="chk">{{#if esNegocio}}☑{{else}}☐{{/if}}</span> Plan Negocio</div>
+  <div class="plan"><span class="chk">{{#if esCorporativo}}☑{{else}}☐{{/if}}</span> Plan Corporativo</div>
+  <div class="plan"><span class="chk">{{#if esOtro}}☑{{else}}☐{{/if}}</span> Otro: {{#if esOtro}}{{planNombre}}{{else}}_______________________{{/if}}</div>
+  <p><strong>Pago mensual:</strong> S/ {{pagoMensual}}</p>
+
+  <h2>TERCERA: FORMA Y FECHA DE PAGO</h2>
+  <p>El CLIENTE se compromete a realizar el pago correspondiente dentro de las fechas acordadas entre ambas partes.</p>
+  <p>Fechas de pago: 01 de cada mes</p>
+  <p>El retraso en los pagos podrá generar:</p>
+  <ul>
+    <li>Suspensión temporal del servicio,</li>
+    <li>Limitación de accesos,</li>
+    <li>o cancelación definitiva del servicio.</li>
+  </ul>
+  <p>KREZKA podrá reactivar el servicio una vez regularizado el pago pendiente.</p>
+
+  <h2>CUARTA: SOPORTE Y ATENCIÓN</h2>
+  <p>KREZKA brindará soporte técnico y atención de acuerdo con el plan contratado por el CLIENTE. El soporte podrá realizarse mediante: WhatsApp, correo electrónico, llamadas, asistencia remota o canales digitales habilitados. Los tiempos de respuesta podrán variar según la complejidad del requerimiento y el plan adquirido.</p>
+
+  <h2>QUINTA: CONFIDENCIALIDAD Y PROTECCIÓN DE DATOS</h2>
+  <p>KREZKA se compromete a mantener en absoluta confidencialidad toda información proporcionada por el CLIENTE, incluyendo datos empresariales, información financiera, documentos, clientes, productos, reportes, comprobantes y cualquier información interna relacionada con el negocio. KREZKA no compartirá dicha información con terceros sin autorización del CLIENTE, salvo requerimiento legal.</p>
+
+  <h2>SEXTA: RESPONSABILIDAD SOBRE EL GIRO DEL NEGOCIO</h2>
+  <p>El CLIENTE reconoce que KREZKA actúa únicamente como proveedor tecnológico y no participa ni se responsabiliza por: actividades comerciales del CLIENTE, obligaciones tributarias, manejo financiero, inventarios, operaciones internas, productos vendidos, servicios brindados, ni el uso que el CLIENTE realice del sistema. Toda responsabilidad respecto al giro del negocio corresponde exclusivamente al CLIENTE.</p>
+
+  <h2>SÉPTIMA: USO DE INFORMACIÓN Y DATA OPERATIVA</h2>
+  <p>El CLIENTE autoriza a KREZKA a utilizar información estadística, técnica y operativa generada dentro del sistema con fines de: mejora del servicio, optimización de funcionalidades, desarrollo tecnológico, análisis de rendimiento, automatización y mejoras internas del software. KREZKA no comercializará información sensible ni datos personales del CLIENTE.</p>
+
+  <h2>OCTAVA: DISPONIBILIDAD DEL SERVICIO</h2>
+  <p>KREZKA realizará esfuerzos razonables para mantener el sistema operativo y disponible; sin embargo, no se responsabiliza por interrupciones ocasionadas por: fallas de internet, problemas de terceros, servidores externos, mantenimiento, ataques informáticos, cortes eléctricos o situaciones fuera de su control.</p>
+
+  <h2>NOVENA: TERMINACIÓN DEL SERVICIO</h2>
+  <p>Cualquiera de las partes podrá finalizar el presente contrato comunicándose previamente. KREZKA podrá suspender o cancelar el servicio en caso de: incumplimiento de pagos, uso indebido del sistema, actividades fraudulentas o afectación a la plataforma.</p>
+
+  <h2>DÉCIMA: ACEPTACIÓN</h2>
+  <p>Las partes declaran haber leído y aceptado todas las condiciones del presente contrato.</p>
+
+  <p style="margin-top:18px">LIMA, {{fecha}}</p>
+
+  <div class="firma-wrap">
+    <div class="firma">
+      <div><strong>KREZKA</strong></div>
+      <div class="muted">Representante Legal: YAN GAMONAL SILVA - DNI 70683772</div>
+      <div class="linea">Firma</div>
+    </div>
+    <div class="firma">
+      <div><strong>CLIENTE</strong></div>
+      <div class="muted">Nombre: {{cliente}}</div>
+      <div class="muted">DNI/RUC: {{dniRuc}}</div>
+      <div class="linea">Firma</div>
+    </div>
+  </div>
+</body>
+</html>
