@@ -1078,6 +1078,8 @@ export class EmpresaService {
         updateData.cotizMostrarDetraccion = dto.cotizMostrarDetraccion;
       if (dto.cotizFormatoConfig !== undefined)
         updateData.cotizFormatoConfig = dto.cotizFormatoConfig as any;
+      if (dto.notaVentaFormatoConfig !== undefined)
+        updateData.notaVentaFormatoConfig = dto.notaVentaFormatoConfig as any;
       if (dto.cuentaDetraccionBN !== undefined)
         updateData.cuentaDetraccionBN = dto.cuentaDetraccionBN;
       if (dto.fechaActivacion !== undefined)
@@ -1117,6 +1119,8 @@ export class EmpresaService {
         updateData.usarPrecioLoteFefo = dto.usarPrecioLoteFefo;
       if (dto.permitirVentaSinStock !== undefined)
         updateData.permitirVentaSinStock = dto.permitirVentaSinStock;
+      if (dto.cobranzaCampo !== undefined)
+        updateData.cobranzaCampo = dto.cobranzaCampo;
       if (dto.directorTecnico !== undefined)
         updateData.directorTecnico = dto.directorTecnico;
       if (dto.logo !== undefined) updateData.logo = dto.logo;

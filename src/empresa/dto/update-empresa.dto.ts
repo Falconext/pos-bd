@@ -123,6 +123,10 @@ export class UpdateEmpresaDto {
   cotizFormatoConfig?: Record<string, { visible?: boolean; size?: number }>;
 
   @IsOptional()
+  @IsObject()
+  notaVentaFormatoConfig?: Record<string, { visible?: boolean; size?: number }>;
+
+  @IsOptional()
   @IsBoolean()
   usaCodigoBarrasManual?: boolean;
 
@@ -137,6 +141,10 @@ export class UpdateEmpresaDto {
   @IsOptional()
   @IsBoolean()
   permitirVentaSinStock?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  cobranzaCampo?: boolean;
 
   @IsOptional()
   @IsString()

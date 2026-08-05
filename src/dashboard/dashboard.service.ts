@@ -275,18 +275,33 @@ export class DashboardService {
             .filter((id): id is number => id !== null),
         },
       },
-      select: { id: true, descripcion: true, codigo: true, stock: true },
+      select: {
+        id: true,
+        descripcion: true,
+        codigo: true,
+        stock: true,
+        costoPromedio: true,
+        precioUnitario: true,
+      },
     });
     const mapProd = new Map(productos.map((p) => [p.id, p] as const));
     return detalles.map((d) => {
       const prod = d.productoId ? mapProd.get(d.productoId) || null : null;
       const stock = prod ? (prod as any).stock : 0;
+      const cantidad = Number(d._sum.cantidad ?? 0);
+      const total = Number(d._sum.mtoValorVenta ?? 0);
+      // Rentabilidad por producto: valor de venta (sin IGV) menos el costo
+      // promedio por las unidades vendidas en el periodo.
+      const costoPromedio = prod ? Number((prod as any).costoPromedio ?? 0) : 0;
+      const ganancia = Number((total - costoPromedio * cantidad).toFixed(2));
       return {
         productoId: d.productoId,
         producto: prod,
         stock,
-        cantidad: Number(d._sum.cantidad ?? 0),
-        total: Number(d._sum.mtoValorVenta ?? 0),
+        cantidad,
+        total,
+        costoPromedio,
+        ganancia,
       };
     });
   }

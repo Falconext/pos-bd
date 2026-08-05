@@ -63,13 +63,42 @@ export class SunatGuiaService {
     );
 
     // 3. Enviar a SUNAT
-    const initialResponse = await this.qpseClient.enviarXML({
-      accessToken,
-      xmlFilename,
-      externalId: signResponse.external_id,
-      xmlSignedBase64: signedXmlBase64,
-      usaDemo,
-    });
+    let initialResponse: QpseSendResponse;
+    try {
+      initialResponse = await this.qpseClient.enviarXML({
+        accessToken,
+        xmlFilename,
+        externalId: signResponse.external_id,
+        xmlSignedBase64: signedXmlBase64,
+        usaDemo,
+      });
+    } catch (error: any) {
+      // QPSE puede devolver el 1033 (numeración repetida) como error HTTP y no
+      // como respuesta estructurada. Si no lo tratamos aquí, la guía queda en
+      // reintentos infinitos con el MISMO número → 1033 eterno. Lo convertimos en
+      // el flag de numeración repetida para que el caller avance el correlativo.
+      const errPayload = {
+        message: error?.message,
+        data: error?.response?.data ?? (error as any)?.response,
+      };
+      if (this.isNumeracionRepetida(errPayload)) {
+        this.logger.warn(
+          `[QPSE] 1033 recibido como excepción para ${xmlFilename}. ` +
+            `Se marca numeración repetida para avanzar correlativo.`,
+        );
+        return {
+          success: false,
+          numeracionRepetida: true,
+          xml: signedXmlContent,
+          cdrResponse: JSON.stringify(errPayload),
+          cdrZip: null,
+          documentoId: null,
+          message: 'Numeración repetida en SUNAT',
+          error: 'Numeración repetida en SUNAT',
+        };
+      }
+      throw error;
+    }
 
     // 4. Manejar numeración repetida — retornar flag para que el caller avance correlativo
     if (this.isNumeracionRepetida(initialResponse)) {
@@ -192,7 +221,11 @@ export class SunatGuiaService {
     const text = JSON.stringify(response || {}).toLowerCase();
     const code = String(response?.code ?? response?.error?.code ?? '');
     return (
-      code === '1033' || text.includes('1033') || text.includes('numeraci')
+      code === '1033' ||
+      text.includes('1033') ||
+      text.includes('numeraci') ||
+      // Texto SUNAT del 1033 (llega así cuando QPSE lo lanza como excepción, sin el código)
+      text.includes('registrado previamente')
     );
   }
 

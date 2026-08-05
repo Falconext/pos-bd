@@ -471,21 +471,26 @@ export class GuiaRemisionService {
         usaDemo,
       );
 
-      // Auto-avance de correlativo cuando SUNAT reporta numeración repetida
-      if (resultado.numeracionRepetida) {
-        this.logger.warn(
-          `Numeración repetida (${guia.serie}-${guia.correlativo}). ` +
-            `Buscando siguiente correlativo disponible…`,
-        );
+      // Auto-avance de correlativo cuando SUNAT reporta numeración repetida.
+      // Se repite MIENTRAS siga chocando: si SUNAT tiene correlativos que la BD
+      // local no registra (p. ej. un número aceptado cuyo registro local se
+      // perdió), un solo avance volvería a colisionar. Acotado a 10 intentos.
+      let intentosAvance = 0;
+      while (resultado.numeracionRepetida && intentosAvance < 10) {
+        intentosAvance++;
 
         const ultimaGuia = await this.prisma.guiaRemision.findFirst({
           where: { empresaId, serie: guia.serie },
           orderBy: { correlativo: 'desc' },
           select: { correlativo: true },
         });
-        const nuevoCorrelativo = (ultimaGuia?.correlativo ?? 0) + 1;
-        this.logger.log(
-          `Nuevo correlativo asignado a guía ${id}: ${guia.serie}-${nuevoCorrelativo}`,
+        // Avanza siempre por encima del propio correlativo actual para garantizar
+        // progreso aunque el MAX de BD ya lo incluya.
+        const nuevoCorrelativo =
+          Math.max(ultimaGuia?.correlativo ?? 0, guiaParaEnviar.correlativo) + 1;
+        this.logger.warn(
+          `Numeración repetida (${guia.serie}-${guiaParaEnviar.correlativo}). ` +
+            `Auto-avanzando a ${guia.serie}-${nuevoCorrelativo} (intento ${intentosAvance}/10).`,
         );
 
         const guiaConNuevoCorrelativo = await this.prisma.guiaRemision.update({

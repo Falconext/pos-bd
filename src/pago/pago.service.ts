@@ -4,11 +4,48 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { S3Service } from '../s3/s3.service';
 import { CrearPagoDto } from './dto/crear-pago.dto';
 
 @Injectable()
 export class PagoService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly s3: S3Service,
+  ) {}
+
+  // Sube la imagen del comprobante de pago a S3 y la guarda en pago.comprobanteUrl.
+  async subirComprobante(
+    pagoId: number,
+    file: Express.Multer.File,
+    empresaId?: number,
+  ) {
+    if (!file?.buffer) {
+      throw new BadRequestException('No se recibió ninguna imagen');
+    }
+    const ct = file.mimetype || 'image/jpeg';
+    if (!/^image\//i.test(ct)) {
+      throw new BadRequestException('El comprobante debe ser una imagen');
+    }
+
+    const pago = await this.prisma.pago.findUnique({ where: { id: pagoId } });
+    if (!pago) {
+      throw new NotFoundException('Pago no encontrado');
+    }
+    if (empresaId && pago.empresaId && pago.empresaId !== empresaId) {
+      throw new BadRequestException('El pago no pertenece a tu empresa');
+    }
+
+    const key = `pagos/empresa-${empresaId ?? pago.empresaId ?? 0}/pago-${pagoId}/comprobante-${Date.now()}.webp`;
+    const url = await this.s3.uploadImage(file.buffer, key, ct);
+
+    const actualizado = await this.prisma.pago.update({
+      where: { id: pagoId },
+      data: { comprobanteUrl: url },
+    });
+
+    return { comprobanteUrl: actualizado.comprobanteUrl };
+  }
 
   async registrarPago(
     comprobanteId: number,
@@ -91,6 +128,11 @@ export class PagoService {
         observacion: dto.observacion,
         referencia: dto.referencia,
         cuentaBancariaId: dto.cuentaBancariaId ?? null,
+        dirigidoA: dto.dirigidoA ? dto.dirigidoA.toUpperCase() : null,
+        // El vendedor de campo (quién envió el comprobante) se registra SIEMPRE,
+        // independiente de a qué cuenta se dirigió el dinero (dirigidoA).
+        vendedorId: dto.vendedorId ?? null,
+        vendedorNombre: dto.vendedorNombre ?? null,
       },
     });
 

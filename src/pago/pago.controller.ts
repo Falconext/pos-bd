@@ -8,13 +8,17 @@ import {
   Body,
   Query,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { PagoService } from './pago.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CrearPagoDto } from './dto/crear-pago.dto';
 import { User } from '../common/decorators/user.decorator';
+import { imageUploadOptions } from '../common/utils/multer.config';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('pago')
@@ -70,6 +74,17 @@ export class PagoController {
       user.id,
       user.empresaId,
     );
+  }
+
+  @Post(':pagoId/comprobante')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  @UseInterceptors(FileInterceptor('file', imageUploadOptions))
+  async subirComprobante(
+    @Param('pagoId', ParseIntPipe) pagoId: number,
+    @User() user: any,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.service.subirComprobante(pagoId, file, user.empresaId);
   }
 
   @Get('comprobante/:comprobanteId/historial')
