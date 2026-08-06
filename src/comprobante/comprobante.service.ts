@@ -3904,6 +3904,10 @@ export class ComprobanteService {
       cuentaBancoNacion,
       porcentajeDetraccion,
       montoDetraccion,
+      tipoMoneda,
+      cotizMoneda,
+      formaPagoMoneda,
+      tipoCambio,
     } = input;
 
     const comp = await this.prisma.comprobante.findFirst({
@@ -3980,6 +3984,12 @@ export class ComprobanteService {
           mtoImpVenta,
           cotizVigencia: cotizVigencia ? Number(cotizVigencia) : null,
           cotizTerminos: cotizTerminos ?? null,
+          // Moneda: al editar la cotización se persiste el cambio de moneda (Soles/Dólares).
+          // `undefined` = no cambiar (Prisma), para no pisar el valor si el front no lo envía.
+          tipoMoneda: tipoMoneda ?? undefined,
+          formaPagoMoneda: formaPagoMoneda ?? undefined,
+          cotizMoneda: cotizMoneda ?? undefined,
+          tipoCambio: tipoCambio ?? undefined,
           // Detracción: solo se sobreescribe si el frontend la envía;
           // `undefined` en Prisma = "no cambiar", así editar no borra la detracción existente.
           tipoOperacionId: tipoOperacionId ?? undefined,
