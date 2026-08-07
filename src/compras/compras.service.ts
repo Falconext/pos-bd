@@ -489,6 +489,445 @@ export class ComprasService {
       : respuesta;
   }
 
+  // Resuelve la sede/almacén destino del stock: prioriza la sede indicada en el
+  // payload (validada contra la empresa), luego un fallback (sesión), y por
+  // último la sede principal. Igual criterio que `crear`.
+  private async resolverSedeDestino(
+    empresaId: number,
+    dataSedeId?: number,
+    fallbackSedeId?: number,
+  ): Promise<number> {
+    let sedeId = fallbackSedeId;
+    if (dataSedeId) {
+      const destino = await this.prisma.sede.findFirst({
+        where: { id: Number(dataSedeId), empresaId, activo: true },
+        select: { id: true },
+      });
+      if (!destino) {
+        throw new BadRequestException(
+          'La sede/almacén destino no es válida o no pertenece a la empresa.',
+        );
+      }
+      sedeId = destino.id;
+    }
+    if (!sedeId) {
+      const principal = await this.prisma.sede.findFirst({
+        where: { empresaId, esPrincipal: true, activo: true },
+        select: { id: true },
+      });
+      if (!principal) {
+        throw new BadRequestException(
+          'No se pudo determinar la sede. Asigne una sede al usuario o configure una sede principal.',
+        );
+      }
+      sedeId = principal.id;
+    }
+    return sedeId;
+  }
+
+  // Impide anular/editar una compra cuando alguna de sus series/IMEI ya no está
+  // DISPONIBLE (fue vendida o asignada). Revertir el ingreso en ese caso dejaría
+  // inconsistencias graves, así que se bloquea con un mensaje claro.
+  private async assertSinSeriesUsadas(compraId: number, empresaId: number) {
+    const usadas = await this.prisma.productoSerie.count({
+      where: {
+        compraId,
+        empresaId,
+        estado: { not: 'DISPONIBLE' as any },
+      },
+    });
+    if (usadas > 0) {
+      throw new BadRequestException(
+        'No se puede modificar/anular esta compra: tiene series/IMEI que ya fueron vendidas o asignadas. Revierte esas ventas primero.',
+      );
+    }
+  }
+
+  // Revierte el inventario ingresado por una compra: por cada detalle con
+  // producto registra un movimiento de kardex compensatorio (SALIDA) que baja el
+  // stock, y descuenta el lote FEFO correspondiente. Best-effort: los fallos no
+  // bloquean, se acumulan como avisos.
+  private async revertirInventarioCompra(
+    compra: {
+      id: number;
+      serie: string;
+      numero: string;
+      sedeId: number | null;
+      detalles: {
+        productoId: number | null;
+        cantidad: any;
+        precioUnitario: any;
+        lote: string | null;
+        fechaVencimiento: Date | null;
+        descripcion: string | null;
+      }[];
+    },
+    empresaId: number,
+    usuarioId: number,
+    conceptoPrefix: string,
+  ): Promise<string[]> {
+    const warnings: string[] = [];
+    const sedeId =
+      compra.sedeId ??
+      (await this.resolverSedeDestino(empresaId, undefined, undefined));
+
+    for (const det of compra.detalles) {
+      if (!det.productoId) continue;
+      const cantidad = Number(det.cantidad) || 0;
+      if (cantidad <= 0) continue;
+      const nombreItem = det.descripcion ?? `producto ${det.productoId}`;
+      try {
+        const movimiento = await this.kardexService.registrarMovimiento({
+          empresaId,
+          productoId: det.productoId,
+          tipoMovimiento: 'SALIDA',
+          concepto: `${conceptoPrefix} ${compra.serie}-${compra.numero}`,
+          cantidad,
+          costoUnitario: Number(det.precioUnitario) || 0,
+          compraId: compra.id,
+          usuarioId,
+          sedeId,
+        });
+
+        // Revertir el lote FEFO ingresado por esta línea (si aplicaba).
+        if (det.lote && det.fechaVencimiento) {
+          const lote = await this.prisma.productoLote.findUnique({
+            where: {
+              productoId_lote: { productoId: det.productoId, lote: det.lote },
+            },
+            select: { id: true },
+          });
+          if (lote) {
+            await this.productoLoteService.descontarStockLote(
+              det.productoId,
+              cantidad,
+              movimiento.id,
+              lote.id,
+            );
+          }
+        }
+      } catch (error) {
+        console.error(
+          `Error revirtiendo stock del producto ${det.productoId} (compra ${compra.id}):`,
+          error,
+        );
+        warnings.push(
+          `No se pudo revertir el stock de "${nombreItem}": ${
+            (error as any)?.message ?? 'error desconocido'
+          }. Revisa/ajusta el stock manualmente.`,
+        );
+      }
+    }
+    return warnings;
+  }
+
+  // Anulación lógica de una compra: revierte el inventario, libera las series
+  // DISPONIBLE, marca estado=ANULADO y deja saldo en 0. No borra el registro ni
+  // los pagos (auditoría). Las compras ANULADO se excluyen del listado.
+  async anular(
+    empresaId: number,
+    usuarioId: number,
+    id: number,
+    _sedeId?: number,
+  ) {
+    const compra = await this.prisma.compra.findFirst({
+      where: { id, empresaId },
+      include: { detalles: { orderBy: { id: 'asc' } } },
+    });
+    if (!compra) throw new NotFoundException('Compra no encontrada');
+    if (compra.estado === ('ANULADO' as any)) {
+      throw new BadRequestException('La compra ya está anulada.');
+    }
+    await this.assertSinSeriesUsadas(id, empresaId);
+
+    const stockWarnings = await this.revertirInventarioCompra(
+      compra as any,
+      empresaId,
+      usuarioId,
+      'ANULACION COMPRA',
+    );
+
+    // Liberar (borrar) las series DISPONIBLE registradas por esta compra: el
+    // ingreso ya no existe. Best-effort.
+    try {
+      await this.prisma.productoSerie.deleteMany({
+        where: { compraId: id, empresaId, estado: 'DISPONIBLE' as any },
+      });
+    } catch (error) {
+      console.error('No se pudieron liberar las series de la compra:', error);
+    }
+
+    await this.prisma.compra.update({
+      where: { id },
+      data: { estado: 'ANULADO' as any, saldo: 0 },
+    });
+
+    return {
+      success: true,
+      message: 'Compra anulada y stock revertido correctamente.',
+      ...(stockWarnings.length ? { stockWarnings } : {}),
+    };
+  }
+
+  // Edición completa de una compra: revierte los efectos de inventario previos y
+  // re-aplica los nuevos a partir del payload (mismos cálculos que `crear`). No
+  // toca los pagos ya registrados; sí recalcula el saldo según el nuevo total.
+  async actualizar(
+    empresaId: number,
+    usuarioId: number,
+    id: number,
+    data: CrearCompraDto,
+    reqSedeId?: number,
+  ) {
+    const existente = await this.prisma.compra.findFirst({
+      where: { id, empresaId },
+      include: {
+        detalles: { orderBy: { id: 'asc' } },
+        pagos: { select: { monto: true } },
+      },
+    });
+    if (!existente) throw new NotFoundException('Compra no encontrada');
+    if (existente.estado === ('ANULADO' as any)) {
+      throw new BadRequestException('No se puede editar una compra anulada.');
+    }
+    await this.assertSinSeriesUsadas(id, empresaId);
+
+    // Duplicado serie+numero excluyendo la propia compra.
+    const duplicado = await this.prisma.compra.findFirst({
+      where: {
+        empresaId,
+        serie: data.serie,
+        numero: data.numero,
+        id: { not: id },
+      },
+      select: { id: true },
+    });
+    if (duplicado) {
+      throw new BadRequestException(
+        `Ya existe otra compra registrada con la serie ${data.serie} y número ${data.numero}.`,
+      );
+    }
+
+    // Series / IMEI: validar unicidad ANTES de tocar nada, excluyendo las de
+    // esta misma compra (que se reemplazan).
+    const seriesPorLinea = data.detalles.map((item) =>
+      this.normalizarNumerosSerie(item.numerosSerie),
+    );
+    const todasLasSeries = seriesPorLinea.flat();
+    if (todasLasSeries.length) {
+      const vistos = new Set<string>();
+      for (const s of todasLasSeries) {
+        if (vistos.has(s)) {
+          throw new BadRequestException(
+            `La serie "${s}" está repetida en la compra.`,
+          );
+        }
+        vistos.add(s);
+      }
+      const existentes = await this.prisma.productoSerie.findMany({
+        where: {
+          empresaId,
+          numeroSerie: { in: todasLasSeries },
+          compraId: { not: id },
+        },
+        select: { numeroSerie: true },
+      });
+      if (existentes.length) {
+        throw new BadRequestException(
+          `La(s) serie(s) ${existentes
+            .map((e) => e.numeroSerie)
+            .join(', ')} ya están registradas en el sistema.`,
+        );
+      }
+    }
+
+    const sedeId = await this.resolverSedeDestino(
+      empresaId,
+      data.sedeId,
+      existente.sedeId ?? reqSedeId,
+    );
+
+    // 1) Revertir el inventario de la versión anterior.
+    const warningsRevertir = await this.revertirInventarioCompra(
+      existente as any,
+      empresaId,
+      usuarioId,
+      'AJUSTE EDICION COMPRA',
+    );
+    // Liberar las series previas (se re-crearán las nuevas del payload).
+    try {
+      await this.prisma.productoSerie.deleteMany({
+        where: { compraId: id, empresaId, estado: 'DISPONIBLE' as any },
+      });
+    } catch (error) {
+      console.error('No se pudieron liberar las series previas:', error);
+    }
+
+    // 2) Recalcular detalles y totales (idéntico criterio que `crear`).
+    let subtotal = 0;
+    let totalLineas = 0;
+    const detallesData: any[] = [];
+    for (const item of data.detalles) {
+      const precioIngresado = Number(item.precioUnitario);
+      const costoNeto = item.incluyeIgv
+        ? parseFloat((precioIngresado / 1.18).toFixed(4))
+        : precioIngresado;
+      const igvItem = parseFloat((costoNeto * 0.18).toFixed(4));
+      const sub = costoNeto * Number(item.cantidad);
+      const totalLinea = item.incluyeIgv
+        ? precioIngresado * Number(item.cantidad)
+        : (costoNeto + igvItem) * Number(item.cantidad);
+      subtotal += sub;
+      totalLineas += totalLinea;
+      detallesData.push({
+        productoId: item.productoId,
+        descripcion: item.descripcion,
+        cantidad: item.cantidad,
+        precioUnitario: costoNeto,
+        subtotal: sub,
+        igv: totalLinea - sub,
+        total: totalLinea,
+        lote: item.lote,
+        fechaVencimiento: item.fechaVencimiento
+          ? parseFechaSoloDia(item.fechaVencimiento)
+          : null,
+      });
+    }
+    const subtotalTotal = this.roundMoney(subtotal);
+    const total = this.roundMoney(
+      data.total !== undefined ? Number(data.total) : totalLineas,
+    );
+    const igvTotal = this.roundMoney(
+      data.igv !== undefined ? Number(data.igv) : total - subtotalTotal,
+    );
+    // Saldo recalculado con los pagos YA registrados (no se tocan).
+    const totalPagado = existente.pagos.reduce(
+      (acc, p) => acc + Number(p.monto),
+      0,
+    );
+    const nuevoSaldo = Math.max(0, this.roundMoney(total - totalPagado));
+    const nuevoEstadoPago = this.normalizeEstadoPagoBySaldo(total, nuevoSaldo);
+
+    // 3) Reemplazar cabecera + detalles en una transacción.
+    const compra = await this.prisma.$transaction(async (tx) => {
+      await tx.detalleCompra.deleteMany({ where: { compraId: id } });
+      return tx.compra.update({
+        where: { id },
+        include: { detalles: { orderBy: { id: 'asc' } } },
+        data: {
+          proveedorId: data.proveedorId,
+          tipoDoc: data.tipoDoc || existente.tipoDoc,
+          serie: data.serie,
+          numero: data.numero,
+          fechaEmision: new Date(data.fechaEmision),
+          fechaVencimiento: data.fechaVencimiento
+            ? new Date(data.fechaVencimiento)
+            : null,
+          moneda: data.moneda || existente.moneda,
+          tipoCambio: data.tipoCambio,
+          subtotal: subtotalTotal,
+          igv: igvTotal,
+          total,
+          saldo: nuevoSaldo,
+          estadoPago: nuevoEstadoPago as any,
+          observaciones: data.observaciones,
+          cuotas: data.cuotas ? JSON.stringify(data.cuotas) : undefined,
+          sedeId,
+          detalles: { create: detallesData },
+        },
+      });
+    });
+
+    // 4) Re-aplicar el inventario nuevo (INGRESO + lotes FEFO).
+    const warningsAplicar: string[] = [];
+    for (const item of data.detalles) {
+      if (!item.productoId) continue;
+      try {
+        const costoNetoKardex = item.incluyeIgv
+          ? parseFloat((Number(item.precioUnitario) / 1.18).toFixed(4))
+          : Number(item.precioUnitario);
+        const movimiento = await this.kardexService.registrarMovimiento({
+          empresaId,
+          productoId: item.productoId,
+          tipoMovimiento: 'INGRESO',
+          concepto: `COMPRA ${compra.serie}-${compra.numero}`,
+          cantidad: Number(item.cantidad),
+          costoUnitario: costoNetoKardex,
+          compraId: compra.id,
+          usuarioId,
+          sedeId,
+          lote: item.lote,
+          fechaVencimiento: item.fechaVencimiento
+            ? parseFechaSoloDia(item.fechaVencimiento)
+            : undefined,
+        });
+        if (item.lote && item.fechaVencimiento) {
+          await this.productoLoteService.sincronizarLoteDesdeIngreso({
+            productoId: item.productoId,
+            empresaId,
+            lote: item.lote,
+            fechaVencimiento: parseFechaSoloDia(item.fechaVencimiento),
+            cantidad: Number(item.cantidad),
+            costoUnitario: costoNetoKardex,
+            movimientoKardexId: movimiento.id,
+          });
+        }
+      } catch (error) {
+        console.error(
+          `Error re-aplicando kardex del producto ${item.productoId}:`,
+          error,
+        );
+        const nombreItem = item.descripcion ?? `producto ${item.productoId}`;
+        warningsAplicar.push(
+          `No se pudo actualizar el stock de "${nombreItem}": ${
+            (error as any)?.message ?? 'error desconocido'
+          }. Revisa/ajusta el stock manualmente.`,
+        );
+      }
+    }
+
+    // 5) Re-crear las series/IMEI del payload.
+    if (todasLasSeries.length) {
+      const detallesCreados = (compra as any).detalles ?? [];
+      const seriesData: Prisma.ProductoSerieCreateManyInput[] = [];
+      for (let i = 0; i < data.detalles.length; i++) {
+        const series = seriesPorLinea[i];
+        if (!series.length) continue;
+        const item = data.detalles[i];
+        const detalle = detallesCreados[i];
+        if (!item.productoId || !detalle) continue;
+        const garantiaHasta = this.calcularGarantiaHasta(item.garantiaMeses);
+        for (const numeroSerie of series) {
+          seriesData.push({
+            empresaId,
+            productoId: Number(item.productoId),
+            sedeId: sedeId ?? null,
+            numeroSerie,
+            estado: 'DISPONIBLE',
+            garantiaMeses:
+              item.garantiaMeses != null ? Number(item.garantiaMeses) : null,
+            garantiaHasta,
+            compraId: compra.id,
+            compraDetalleId: detalle.id,
+          });
+        }
+      }
+      if (seriesData.length) {
+        try {
+          await this.prisma.productoSerie.createMany({ data: seriesData });
+        } catch (error) {
+          console.error('No se pudieron registrar las series de la compra:', error);
+        }
+      }
+    }
+
+    const respuesta = this.normalizeCompraForResponse(compra);
+    const stockWarnings = [...warningsRevertir, ...warningsAplicar];
+    return stockWarnings.length
+      ? { ...respuesta, stockWarnings }
+      : respuesta;
+  }
+
   async listar(empresaId: number, query: any, sedeId?: number) {
     const {
       page = 1,
@@ -525,6 +964,8 @@ export class ComprasService {
     const where: Prisma.CompraWhereInput = {
       empresaId,
       ...sedeFilter,
+      // Las compras anuladas no se listan (borrado lógico).
+      estado: { not: 'ANULADO' as any },
       ...(estadoPagoFiltro ? { estadoPago: estadoPagoFiltro } : {}),
       ...(fechaInicio
         ? {
@@ -553,6 +994,7 @@ export class ComprasService {
       where: {
         empresaId,
         ...sedeFilter,
+        estado: { not: 'ANULADO' as any },
         saldo: { lte: new Prisma.Decimal(this.saldoTolerance) },
         estadoPago: { in: ['PENDIENTE_PAGO', 'PAGO_PARCIAL'] as any },
       },
@@ -593,6 +1035,9 @@ export class ComprasService {
         detalles: {
           include: {
             producto: true,
+            seriesGarantias: {
+              select: { numeroSerie: true, garantiaMeses: true, estado: true },
+            },
           },
         },
         pagos: true,

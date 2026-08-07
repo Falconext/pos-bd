@@ -2,6 +2,8 @@ import {
   Controller,
   Get,
   Post,
+  Put,
+  Delete,
   Body,
   Param,
   Query,
@@ -61,6 +63,36 @@ export class ComprasController {
       req.user.sedeId,
     );
   }
+
+  // Editar compra: revierte los efectos de inventario anteriores y re-aplica los
+  // nuevos (stock/kardex, lotes, series). No modifica los pagos ya registrados.
+  @Put(':id')
+  async actualizar(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: CrearCompraDto,
+  ) {
+    return this.comprasService.actualizar(
+      req.user.empresaId,
+      req.user.id,
+      id,
+      body,
+      req.user.sedeId,
+    );
+  }
+
+  // Anular compra (borrado lógico): marca estado ANULADO y revierte el stock con
+  // un movimiento de kardex compensatorio. No borra el registro (auditoría).
+  @Delete(':id')
+  async anular(@Request() req, @Param('id', ParseIntPipe) id: number) {
+    return this.comprasService.anular(
+      req.user.empresaId,
+      req.user.id,
+      id,
+      req.user.sedeId,
+    );
+  }
+
   @Post(':id/pagos')
   async registrarPago(
     @Request() req,
