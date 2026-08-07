@@ -466,9 +466,23 @@ export class DashboardService {
       ...this.filtroExcluirConvertidos,
     };
 
+    // Compras heredadas pueden tener sedeId = null (creadas antes del fix de sedeId en el JWT).
+    // Igual que el listado de /administrador/compras: si la sede activa es la PRINCIPAL se
+    // incluyen esas compras legacy (sedeId = null); de lo contrario se filtra estricto por sede.
+    // Sin esto, el "Resumen Financiero" mostraba COMPRAS = 0 aunque el módulo de compras sí las lista.
+    let compraSedeFilter: any = {};
+    if (sedeId) {
+      const esSedePrincipal = await this.prisma.sede.findFirst({
+        where: { empresaId, id: sedeId, esPrincipal: true },
+        select: { id: true },
+      });
+      compraSedeFilter = esSedePrincipal
+        ? { OR: [{ sedeId }, { sedeId: null }] }
+        : { sedeId };
+    }
     const baseCompraWhere = {
       empresaId,
-      ...(sedeId ? { sedeId } : {}),
+      ...compraSedeFilter,
     };
 
     const TIPOS_FINANCIAMIENTO = ['PRESTAMO', 'INVERSION', 'CAPITAL'];
