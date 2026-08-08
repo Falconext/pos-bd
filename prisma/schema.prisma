@@ -1435,6 +1435,30 @@ model ProductoCodigoBarras {
   @@map("producto_codigos_barras")
 }
 
+/// Tabla Maestra de Productos: catálogo GLOBAL (sin empresaId) indexado por
+/// código de barras. Devuelve imagen/categoría/marca sugeridas. Se consulta
+/// antes de la IA/Serper y se autopobla con lo que la IA resuelve (cache-through).
+model ProductoMaestro {
+  id            Int      @id @default(autoincrement())
+  codigoBarras  String?  @unique
+  nombre        String
+  nombreNorm    String
+  marca         String?
+  categoria     String?
+  imagenUrl     String?
+  descripcion   String?
+  fuente        String   @default("IA") // IA | SERPER | MANUAL | IMPORT
+  aprobada      Boolean  @default(false)
+  vecesUsada    Int      @default(1)
+  ultimoUsoEn   DateTime @default(now())
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  @@index([nombreNorm, marca])
+  @@index([aprobada])
+  @@map("producto_maestro")
+}
+
 model MovimientoKardexLote {
   id             Int              @id @default(autoincrement())
   productoLoteId Int

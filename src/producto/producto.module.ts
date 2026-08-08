@@ -1,5 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { ProductoService } from './producto.service';
+import { ProductoMaestroService } from './producto-maestro.service';
 import { ProductoController } from './producto.controller';
 import { ProductoPlantillaController } from './producto-plantilla.controller';
 import { ProductoPlantillaService } from './producto-plantilla.service';
@@ -20,10 +21,11 @@ import { DigemidModule } from '../digemid/digemid.module';
   controllers: [ProductoController, ProductoPlantillaController],
   providers: [
     ProductoService,
+    ProductoMaestroService,
     ProductoPlantillaService,
     ProductoLoteService,
     RolesGuard,
   ],
-  exports: [ProductoService, ProductoLoteService],
+  exports: [ProductoService, ProductoLoteService, ProductoMaestroService],
 })
 export class ProductoModule {}

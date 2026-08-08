@@ -17,6 +17,7 @@ import {
 } from '@nestjs/common';
 import axios from 'axios';
 import { ProductoService } from './producto.service';
+import { ProductoMaestroService } from './producto-maestro.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -47,6 +48,7 @@ export class ProductoController {
 
   constructor(
     private readonly service: ProductoService,
+    private readonly maestro: ProductoMaestroService,
     private readonly geminiService: GeminiService,
     private readonly loteService: ProductoLoteService,
     private readonly kardexService: KardexService,
@@ -83,10 +85,23 @@ export class ProductoController {
     return { success: false, message: 'No se pudo categorizar' };
   }
 
+  // Lookup a la Tabla Maestra de Productos (global). El frontend lo llama al
+  // escanear/ingresar un código de barras para autocompletar imagen/categoría/marca
+  // ANTES de recurrir a la IA. Fallback por nombre si no hay código de barras.
+  @Get('maestro')
+  async lookupMaestro(
+    @Query('codigoBarras') codigoBarras?: string,
+    @Query('nombre') nombre?: string,
+    @Query('marca') marca?: string,
+  ) {
+    const m = await this.maestro.buscar({ codigoBarras, nombre, marca });
+    return { success: true, data: m };
+  }
+
   @Post('ia/generar-imagen')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async generarImagenIA(
-    @Body() body: { nombre: string; marca?: string; categoria?: string },
+    @Body() body: { nombre: string; marca?: string; categoria?: string; codigoBarras?: string },
     @User() user: any,
   ) {
     const nombre = String(body?.nombre || '').trim();
@@ -96,6 +111,24 @@ export class ProductoController {
 
     const marca = String(body?.marca || '').trim();
     const categoria = String(body?.categoria || '').trim();
+    const codigoBarras = String(body?.codigoBarras || '').trim();
+
+    // 0) Tabla Maestra global (por código de barras) — antes que nada.
+    if (codigoBarras) {
+      const maestro = await this.maestro.buscarPorCodigoBarras(codigoBarras);
+      if (maestro?.imagenUrl) {
+        return {
+          success: true,
+          url: maestro.imagenUrl,
+          confidence: 100,
+          source: 'MAESTRO',
+          message: 'Imagen desde la tabla maestra de productos (código de barras).',
+          candidates: [maestro.imagenUrl],
+          categoria: maestro.categoria ?? undefined,
+          marca: maestro.marca ?? undefined,
+        };
+      }
+    }
 
     const imagenMemorizada = await this.service.buscarImagenMemorizada(
       user.empresaId,
@@ -601,6 +634,10 @@ export class ProductoController {
             categoria,
             url,
           })
+          .catch(() => {});
+        // Cache-through: alimentar la tabla maestra global para reusar entre empresas.
+        void this.maestro
+          .upsert({ codigoBarras: codigoBarras || undefined, nombre, marca, categoria, imagenUrl: url, fuente: 'SERPER' })
           .catch(() => {});
       };
 
