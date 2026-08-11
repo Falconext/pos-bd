@@ -758,6 +758,44 @@ export class EnviarSunatService {
           const montoACredito = Number(
             (comp.mtoImpVenta - (comp.montoDetraccion || 0)).toFixed(2),
           );
+
+          // SUNAT (error 3266) rechaza si la suma de las cuotas SUPERA el importe
+          // del comprobante. Por redondeo, una cuota puede quedar 1 céntimo por
+          // encima del total (ej. cuota 1096.64 vs total 1096.63). Normalizamos:
+          // la suma de las cuotas debe ser EXACTAMENTE el monto a crédito.
+          //  - desfase de céntimos (redondeo) → se absorbe en la última cuota.
+          //  - desfase grande → error de datos real: se bloquea el envío con
+          //    mensaje claro (el controller libera el correlativo).
+          const cuotasNormalizadas = cuotasData.map((c: any) => ({
+            ...c,
+            monto: Number(Number(c.monto || 0).toFixed(2)),
+          }));
+          const sumaCuotas = Number(
+            cuotasNormalizadas
+              .reduce((acc: number, c: any) => acc + Number(c.monto), 0)
+              .toFixed(2),
+          );
+          const desfase = Number((montoACredito - sumaCuotas).toFixed(2));
+          // Tolerancia de redondeo: hasta 1 céntimo por cuota (+ colchón).
+          const tolerancia = 0.05 + 0.01 * cuotasNormalizadas.length;
+          if (Math.abs(desfase) > tolerancia) {
+            throw new SunatPayloadException(
+              `La suma de las cuotas (${sumaCuotas.toFixed(2)}) no coincide con el importe del comprobante (${montoACredito.toFixed(2)}). ` +
+                `Corrige los montos de las cuotas antes de emitir.`,
+            );
+          }
+          if (desfase !== 0) {
+            // Ajustar la última cuota para que la suma cuadre exactamente con el
+            // total. Garantiza que ninguna cuota (ni su suma) supere el importe.
+            const ult = cuotasNormalizadas.length - 1;
+            cuotasNormalizadas[ult] = {
+              ...cuotasNormalizadas[ult],
+              monto: Number(
+                (Number(cuotasNormalizadas[ult].monto) + desfase).toFixed(2),
+              ),
+            };
+          }
+
           paymentTerms.push({
             'cbc:ID': { _text: 'FormaPago' },
             'cbc:PaymentMeansID': { _text: 'Credito' },
@@ -767,8 +805,8 @@ export class EnviarSunatService {
             },
           });
 
-          // 3. Agregar cuotas individuales
-          cuotasData.forEach((cuota: any, index: number) => {
+          // 3. Agregar cuotas individuales (ya normalizadas)
+          cuotasNormalizadas.forEach((cuota: any, index: number) => {
             paymentTerms.push({
               'cbc:ID': { _text: 'FormaPago' },
               'cbc:PaymentMeansID': {
