@@ -2984,6 +2984,40 @@ export class ComprobanteService {
    * Revierte el stock de los productos y borra el registro permanentemente.
    * No se permite sobre comprobantes ya EMITIDO o ANULADO.
    */
+  /**
+   * Marca un comprobante atascado en PENDIENTE_CONCILIACION como EMITIDO
+   * (aceptado). Se usa para BOLETAS cuyo CDR se perdió en el envío pero que
+   * SUNAT confirmó como registradas (error 1033 "informado anteriormente"):
+   * QPSE no permite reconsultar el CDR de una boleta (responde 409 "no aplica"),
+   * así que se concilia dejando constancia. No toca stock ni reenvía a SUNAT.
+   */
+  async conciliarComprobante(id: number, empresaId: number) {
+    const comp = await this.prisma.comprobante.findFirst({
+      where: { id, empresaId },
+      select: {
+        id: true,
+        estadoEnvioSunat: true,
+        serie: true,
+        correlativo: true,
+      },
+    });
+    if (!comp) throw new NotFoundException('Comprobante no encontrado');
+    if (comp.estadoEnvioSunat !== 'PENDIENTE_CONCILIACION') {
+      throw new BadRequestException(
+        `Solo se pueden conciliar comprobantes en estado PENDIENTE_CONCILIACION (estado actual: ${comp.estadoEnvioSunat}).`,
+      );
+    }
+    return this.prisma.comprobante.update({
+      where: { id: comp.id },
+      data: {
+        estadoEnvioSunat: 'EMITIDO' as any,
+        sunatNextRetryAt: null,
+        sunatErrorMsg:
+          'Conciliado manualmente: SUNAT confirmó registro previo (1033). CDR no disponible vía QPSE.',
+      },
+    });
+  }
+
   async descartarComprobante(id: number, empresaId: number) {
     const comp = await this.prisma.comprobante.findFirst({
       where: { id, empresaId },

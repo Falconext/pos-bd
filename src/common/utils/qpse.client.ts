@@ -209,6 +209,11 @@ export class QpseClient {
         },
         {
           headers: this.buildAccessHeaders(input.accessToken),
+          // Las boletas son síncronas: QPSE espera el CDR de SUNAT dentro de
+          // esta misma llamada. El CDR SOLO viaja en esta respuesta (QPSE no lo
+          // guarda para reconsulta), así que si cortamos antes de tiempo el CDR
+          // se pierde de forma irrecuperable. Damos margen amplio a SUNAT.
+          timeout: 90000,
         },
       );
       return data;

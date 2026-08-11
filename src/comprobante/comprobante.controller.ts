@@ -407,6 +407,17 @@ export class ComprobanteController {
     return this.service.descartarComprobante(id, user.empresaId);
   }
 
+  // Marca una boleta atascada en PENDIENTE_CONCILIACION como EMITIDO/aceptada
+  // (SUNAT ya la registró — error 1033 — pero el CDR no es recuperable vía QPSE).
+  @Patch(':id/conciliar')
+  @Roles('ADMIN_EMPRESA')
+  async conciliarComprobante(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+  ) {
+    return this.service.conciliarComprobante(id, user.empresaId);
+  }
+
   @Patch(':comprobanteId/anular')
   @Roles('ADMIN_EMPRESA')
   async anularComprobante(
