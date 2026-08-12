@@ -4417,6 +4417,275 @@ export class ComprobanteService {
    * ya emitido (retroactivo). Es solo un dato interno de atribución — NO forma
    * parte del XML/UBL enviado a SUNAT, por lo que no requiere reenvío.
    */
+  /**
+   * Edita una Nota de Venta (NV) in-place: revierte los efectos de la versión
+   * anterior (stock, pagos, comisiones) y aplica los nuevos, manteniendo el mismo
+   * documento (id/serie/correlativo). Editable esté COMPLETADO o PENDIENTE de pago.
+   * Bloquea si: no es NV, está ANULADO, ya fue convertida a un comprobante formal,
+   * o tiene comisiones ya liquidadas (PAGADO).
+   */
+  async editarNotaVenta(
+    comprobanteId: number,
+    input: any,
+    empresaId: number,
+    usuarioId?: number,
+    sedeId?: number,
+  ) {
+    const comp = await this.prisma.comprobante.findFirst({
+      where: { id: comprobanteId, empresaId },
+      include: { detalles: true },
+    });
+    if (!comp) throw new NotFoundException('Nota de venta no encontrada');
+    if (comp.tipoDoc !== 'NV')
+      throw new BadRequestException(
+        'Solo se pueden editar Notas de Venta (NV).',
+      );
+    if (comp.estadoEnvioSunat === 'ANULADO')
+      throw new BadRequestException(
+        'La nota de venta está anulada y no puede editarse.',
+      );
+
+    // No editar si ya fue convertida a un comprobante formal (boleta/factura).
+    const derivado = await this.prisma.comprobante.findFirst({
+      where: { comprobanteOrigenId: comprobanteId },
+      select: { serie: true, correlativo: true },
+    });
+    if (derivado)
+      throw new BadRequestException(
+        `No se puede editar: esta nota de venta ya fue convertida a ${derivado.serie}-${String(
+          derivado.correlativo,
+        ).padStart(8, '0')}.`,
+      );
+
+    // No editar si tiene comisiones ya liquidadas (PAGADO).
+    const comisionPagada = await this.prisma.comisionVendedor.count({
+      where: { comprobanteId, estado: 'PAGADO' },
+    });
+    if (comisionPagada > 0)
+      throw new BadRequestException(
+        'No se puede editar: esta nota de venta tiene comisiones ya liquidadas (PAGADO).',
+      );
+
+    const {
+      fechaEmision,
+      formaPagoTipo,
+      medioPago,
+      clienteId,
+      clienteName,
+      leyenda,
+      detalles,
+      observaciones,
+      tipoOperacionId,
+      montoDescuentoGlobal,
+      paymentDetails,
+      splitPayments,
+      adelanto,
+      vendedorCampoId,
+      vendedorCampoNombre,
+    } = input;
+
+    if (!Array.isArray(detalles) || detalles.length === 0)
+      throw new BadRequestException(
+        'La nota de venta debe tener al menos un producto.',
+      );
+
+    const finalSedeId = sedeId ?? comp.sedeId ?? undefined;
+
+    // Vendedor de campo: solo se cambia si la edición lo envía explícitamente.
+    // Si no viene (p. ej. empresa sin "cobranza en campo", donde el selector no
+    // se muestra), se PRESERVA el vendedor que ya tenía la nota — no se pierde
+    // la atribución de la comisión al editar otros campos.
+    const vendedorCampoIdFinal =
+      vendedorCampoId !== undefined
+        ? (vendedorCampoId ?? null)
+        : comp.vendedorCampoId;
+    const vendedorCampoNombreFinal =
+      vendedorCampoId !== undefined
+        ? (vendedorCampoNombre ?? null)
+        : comp.vendedorCampoNombre;
+
+    // Resolver cliente (permite cambiarlo)
+    let finalClienteId: number = comp.clienteId;
+    if (clienteName === 'CLIENTES VARIOS') {
+      const cv = await this.prisma.cliente.findFirst({
+        where: { nombre: 'CLIENTES VARIOS', empresaId, estado: 'ACTIVO' as any },
+        select: { id: true },
+      });
+      if (cv) finalClienteId = cv.id;
+    } else if (clienteId) {
+      finalClienteId = Number(clienteId);
+    }
+
+    // 1) Revertir efectos de la versión anterior (stock, pagos, comisiones, detalles, leyendas)
+    await this.revertirStock(comp.detalles, {
+      empresaId,
+      comprobanteId: comp.id,
+      concepto: `Edición NV ${comp.serie}-${comp.correlativo} (revertir stock anterior)`,
+    });
+    await this.prisma.pago.deleteMany({ where: { comprobanteId: comp.id } });
+    await this.prisma.comisionVendedor.deleteMany({
+      where: { comprobanteId: comp.id },
+    });
+    await this.prisma.leyenda.deleteMany({ where: { comprobanteId: comp.id } });
+    await this.prisma.detalleComprobante.deleteMany({
+      where: { comprobanteId: comp.id },
+    });
+
+    // 2) Recomputar totales con los nuevos detalles
+    const {
+      detalleFinal,
+      mtoOperGravadas,
+      mtoOpExoneradas,
+      mtoOpInafectas,
+      mtoOperExportacion,
+      totalIGV,
+    } = await this.cargarProductosYDetalles(
+      detalles,
+      empresaId,
+      tipoOperacionId,
+    );
+    const valorVenta = this.round2(
+      mtoOperGravadas + mtoOpExoneradas + mtoOpInafectas + mtoOperExportacion,
+    );
+    const subTotal = this.round2(valorVenta + totalIGV);
+    const descuentoGlobal = this.round2(
+      Math.max(0, Number(montoDescuentoGlobal ?? 0)),
+    );
+    const mtoImpVenta = this.round2(Math.max(0, subTotal - descuentoGlobal));
+
+    // 3) Estado de pago / saldo (misma lógica que la emisión)
+    const medioPagoFinal = (medioPago ?? '').toString().toUpperCase();
+    const mediosPermitidos = [
+      'YAPE',
+      'PLIN',
+      'EFECTIVO',
+      'TRANSFERENCIA',
+      'TARJETA',
+      'MIXTO',
+    ];
+    const medioPagoValido = mediosPermitidos.includes(medioPagoFinal)
+      ? medioPagoFinal
+      : 'EFECTIVO';
+    const pagosAlContado = [
+      'EFECTIVO',
+      'YAPE',
+      'PLIN',
+      'TRANSFERENCIA',
+      'TARJETA',
+      'MIXTO',
+    ];
+    const esCredito = (formaPagoTipo ?? '').toUpperCase() === 'CREDITO';
+    const adelantoNorm = adelanto ? Math.max(Number(adelanto), 0) : 0;
+    let estadoPago: any = 'COMPLETADO';
+    let saldo = 0;
+    if (adelantoNorm > 0) {
+      saldo = Math.max(0, this.round2(mtoImpVenta - adelantoNorm));
+      estadoPago = saldo > 0 ? 'PAGO_PARCIAL' : 'COMPLETADO';
+    } else if (esCredito) {
+      estadoPago = 'PENDIENTE_PAGO';
+      saldo = mtoImpVenta;
+    } else if (pagosAlContado.includes(medioPagoValido)) {
+      estadoPago = 'COMPLETADO';
+      saldo = 0;
+    } else {
+      estadoPago = 'PENDIENTE_PAGO';
+      saldo = mtoImpVenta;
+    }
+    const montoPagado =
+      adelantoNorm > 0
+        ? Math.min(adelantoNorm, mtoImpVenta)
+        : estadoPago === 'COMPLETADO'
+          ? mtoImpVenta
+          : 0;
+
+    // 4) Validar stock disponible para las nuevas cantidades (ya se revirtió el anterior)
+    await this.validarStockDisponibleParaVenta(detalleFinal, {
+      empresaId,
+      sedeId: finalSedeId,
+      usuarioId,
+    });
+
+    // 5) Actualizar el comprobante + recrear detalles (mismo id/serie/correlativo)
+    await this.prisma.comprobante.update({
+      where: { id: comp.id },
+      data: {
+        clienteId: finalClienteId,
+        observaciones: observaciones ?? null,
+        medioPago: medioPagoValido,
+        paymentDetails: paymentDetails ?? Prisma.JsonNull,
+        formaPagoTipo: formaPagoTipo ?? comp.formaPagoTipo,
+        mtoOperGravadas,
+        mtoOperInafectas: mtoOpInafectas,
+        mtoOperExoneradas: mtoOpExoneradas,
+        mtoOperExportacion,
+        mtoIGV: totalIGV,
+        valorVenta,
+        totalImpuestos: totalIGV,
+        subTotal,
+        mtoDescuentoGlobal: descuentoGlobal > 0 ? descuentoGlobal : 0,
+        mtoImpVenta,
+        estadoPago,
+        saldo,
+        adelanto: adelantoNorm > 0 ? adelantoNorm : null,
+        vendedorCampoId: vendedorCampoIdFinal ?? null,
+        vendedorCampoNombre: vendedorCampoNombreFinal ?? null,
+        detalles: {
+          create: this.limpiarDetalleParaPersistencia(detalleFinal),
+        },
+        leyendas: { create: [{ code: '1000', value: leyenda ?? '' }] },
+      },
+    });
+
+    // 6) Re-aplicar stock, pago y comisión
+    await this.ajustarStock(detalleFinal, {
+      empresaId,
+      comprobanteId: comp.id,
+      concepto: `Edición NV ${comp.serie}-${comp.correlativo}`,
+      sedeId: finalSedeId,
+      usuarioId,
+    });
+    if (montoPagado > 0) {
+      await this.registrarPagosDeEmision({
+        comprobanteId: comp.id,
+        empresaId,
+        usuarioId,
+        medioPago: medioPagoValido,
+        paymentDetails,
+        splitPayments,
+        montoPagado,
+        documento: `NV-${comp.serie}-${comp.correlativo}`,
+        fecha: new Date(fechaEmision ?? comp.fechaEmision),
+      });
+    }
+    const vendedorComisionId = vendedorCampoIdFinal ?? usuarioId;
+    if (vendedorComisionId && this.comisionesService) {
+      try {
+        await this.comisionesService.registrarComisionesDesdeComprobante({
+          comprobanteId: comp.id,
+          empresaId,
+          vendedorId: vendedorComisionId,
+          fechaEmision: new Date(fechaEmision ?? comp.fechaEmision),
+          detalles: detalleFinal.map((d: any) => ({
+            productoId: d.productoId ?? null,
+            descripcion: d.descripcion,
+            cantidad: d.cantidad,
+            mtoPrecioUnitario: d.mtoPrecioUnitario,
+          })),
+        });
+      } catch (err: any) {
+        console.warn(
+          '[editarNotaVenta] Error al registrar comisiones:',
+          err?.message,
+        );
+      }
+    }
+
+    return this.prisma.comprobante.findUnique({
+      where: { id: comp.id },
+      include: { detalles: true },
+    });
+  }
+
   async actualizarVendedorCampo(
     empresaId: number,
     id: number,

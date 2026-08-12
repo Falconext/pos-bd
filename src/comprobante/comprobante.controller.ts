@@ -474,6 +474,25 @@ export class ComprobanteController {
     );
   }
 
+  // Editar una Nota de Venta (NV) in-place: revierte y re-aplica stock, pagos y
+  // comisiones. Editable esté COMPLETADO o PENDIENTE de pago.
+  @Patch(':id/nota-venta')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async editarNotaVenta(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CrearComprobanteDto,
+    @User() user: any,
+  ) {
+    const effectiveSedeId = user.sedeId ?? (dto as any)?.sedeId ?? undefined;
+    return this.service.editarNotaVenta(
+      id,
+      dto,
+      user.empresaId,
+      user.id,
+      effectiveSedeId,
+    );
+  }
+
   @Patch(':id')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async actualizarCotizacion(
