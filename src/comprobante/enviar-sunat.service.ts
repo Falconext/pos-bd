@@ -3,8 +3,10 @@ import {
   HttpException,
   Injectable,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { ComisionesService } from '../comisiones/comisiones.service';
 import { S3Service } from '../s3/s3.service';
 import { PdfGeneratorService } from './pdf-generator.service';
 import { numeroALetras } from './utils/numero-a-letras';
@@ -173,7 +175,98 @@ export class EnviarSunatService {
     private readonly qpseClient: QpseClient,
     private readonly apisPeruClient: ApisPeruClient,
     private readonly jambleClient: JambleClient,
+    @Optional() private readonly comisionesService?: ComisionesService,
   ) {}
+
+  /**
+   * Registra las comisiones del vendedor cuando un comprobante FORMAL es aceptado
+   * por SUNAT. Se llama desde el punto de aceptación (cubre emisión directa y
+   * reintentos). Es idempotente (no duplica si ya se registró) y respeta el
+   * anti-doble cobro cuando el comprobante proviene de un informal (NV/TICKET)
+   * que ya generó comisión. Atribuye al vendedor apuntado (vendedorCampoId) o,
+   * en su defecto, al emisor (usuarioId). No bloqueante.
+   */
+  private async registrarComisionesAlAceptar(comp: any): Promise<void> {
+    if (!this.comisionesService) return;
+    // Solo generan comisión los comprobantes de VENTA: factura (01) y boleta (03).
+    // Notas de crédito (07) y débito (08) no generan comisión positiva; la nota
+    // de crédito que anula un documento revierte su comisión (ver procesarNotaCredito).
+    if (comp.tipoDoc !== '01' && comp.tipoDoc !== '03') return;
+    try {
+      // Idempotencia: si este comprobante ya tiene comisiones, no re-generar.
+      const yaTiene = await this.prisma.comisionVendedor.count({
+        where: { comprobanteId: comp.id },
+      });
+      if (yaTiene > 0) return;
+
+      // Anti-doble: si viene de un informal que ya generó comisión, no generar.
+      if (comp.comprobanteOrigenId != null) {
+        const origenYaGenero = await this.prisma.comisionVendedor.count({
+          where: { comprobanteId: Number(comp.comprobanteOrigenId) },
+        });
+        if (origenYaGenero > 0) return;
+      }
+
+      const vendedorComisionId = comp.vendedorCampoId ?? comp.usuarioId;
+      if (!vendedorComisionId) return;
+
+      await this.comisionesService.registrarComisionesDesdeComprobante({
+        comprobanteId: comp.id,
+        empresaId: comp.empresaId,
+        vendedorId: vendedorComisionId,
+        fechaEmision: new Date(comp.fechaEmision),
+        detalles: (comp.detalles ?? []).map((d: any) => ({
+          productoId: d.productoId ?? null,
+          descripcion: d.descripcion,
+          cantidad: Number(d.cantidad),
+          mtoPrecioUnitario: Number(d.mtoPrecioUnitario),
+        })),
+      });
+    } catch (err: any) {
+      this.logger.warn(
+        `[registrarComisionesAlAceptar] comprobante ${comp?.id}: ${err?.message}`,
+      );
+    }
+  }
+
+  /**
+   * Revierte las comisiones de un comprobante anulado (por nota de crédito de
+   * anulación/devolución total). Elimina las comisiones PENDIENTES. Si alguna ya
+   * fue liquidada (PAGADO), la conserva y avisa para revisión contable manual.
+   */
+  private async revertirComisionesComprobante(
+    comprobanteId: number,
+  ): Promise<void> {
+    try {
+      const comis = await this.prisma.comisionVendedor.findMany({
+        where: { comprobanteId },
+        select: { id: true, estado: true },
+      });
+      if (comis.length === 0) return;
+
+      const pagadas = comis.filter((c) => c.estado === 'PAGADO');
+      const pendientes = comis.filter((c) => c.estado !== 'PAGADO');
+
+      if (pendientes.length > 0) {
+        await this.prisma.comisionVendedor.deleteMany({
+          where: {
+            comprobanteId,
+            estado: { not: 'PAGADO' },
+          },
+        });
+      }
+      if (pagadas.length > 0) {
+        this.logger.warn(
+          `[revertirComisionesComprobante] comprobante ${comprobanteId} anulado ` +
+            `pero tiene ${pagadas.length} comisión(es) ya PAGADA(S); revisar manualmente.`,
+        );
+      }
+    } catch (err: any) {
+      this.logger.warn(
+        `[revertirComisionesComprobante] comprobante ${comprobanteId}: ${err?.message}`,
+      );
+    }
+  }
 
   async execute(comprobanteId: number) {
     const comp = await this.prisma.comprobante.findUnique({
@@ -2347,6 +2440,10 @@ export class EnviarSunatService {
         cdr: finalResponse.cdr ? 'Recibido' : 'No recibido',
       });
 
+      // Comprobante FORMAL aceptado por SUNAT → registrar comisión del vendedor
+      // (idempotente; cubre emisión directa y reintentos del scheduler).
+      await this.registrarComisionesAlAceptar(comp);
+
       // Actualizar estado del comprobante afectado si es nota de crédito/débito
       await this.procesarEfectoEnComprobanteAfectado(comp, status);
 
@@ -3396,6 +3493,9 @@ export class EnviarSunatService {
             saldo: 0,
           },
         });
+
+        // El documento fue anulado → revertir la comisión que generó.
+        await this.revertirComisionesComprobante(comprobanteAfectado.id);
 
         console.log('✅ Comprobante anulado correctamente');
         break;

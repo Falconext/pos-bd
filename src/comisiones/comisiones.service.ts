@@ -25,14 +25,18 @@ export class ComisionesService {
     const { comprobanteId, empresaId, vendedorId, fechaEmision, detalles } =
       params;
 
-    const vendedor = await this.prisma.usuario.findUnique({
-      where: { id: vendedorId },
+    // El vendedor DEBE pertenecer a la empresa del comprobante. Esto evita crear
+    // comisiones cruzadas entre empresas si llega un vendedorId de otra empresa
+    // (ej. un vendedorCampoId inválido). Si no pertenece, no se registra comisión.
+    const vendedor = await this.prisma.usuario.findFirst({
+      where: { id: vendedorId, empresaId },
       select: {
         comisionGlobal: true,
         comisionGlobalFija: true,
         comisionGlobalVenta: true,
       },
     });
+    if (!vendedor) return;
     const comisionGlobalPct = Number(vendedor?.comisionGlobal ?? 0);
     const comisionGlobalFija = Number(vendedor?.comisionGlobalFija ?? 0);
     const comisionGlobalVenta = Number(vendedor?.comisionGlobalVenta ?? 0);
@@ -70,6 +74,7 @@ export class ComisionesService {
       cantidad: string;
       montoComision: string;
       descripcion: string;
+      motivo: string;
     }> = [];
 
     for (const detalle of detalles) {
@@ -83,18 +88,23 @@ export class ComisionesService {
 
       // Calcular monto: primero se usa comisión fija (producto), luego % (producto), luego comisión fija (vendedor), luego % (vendedor)
       let montoComision = 0;
+      let motivo = '';
       if (comisionFija > 0) {
         montoComision = comisionFija * detalle.cantidad;
+        motivo = `Comisión fija del producto: S/ ${comisionFija.toFixed(2)} × ${detalle.cantidad} und.`;
       } else if (comisionPct > 0) {
         montoComision =
           (comisionPct / 100) * detalle.mtoPrecioUnitario * detalle.cantidad;
+        motivo = `Comisión del producto: ${comisionPct}% del precio (S/ ${detalle.mtoPrecioUnitario.toFixed(2)}) × ${detalle.cantidad} und.`;
       } else if (comisionGlobalFija > 0) {
         montoComision = comisionGlobalFija * detalle.cantidad;
+        motivo = `Comisión global fija del vendedor: S/ ${comisionGlobalFija.toFixed(2)} × ${detalle.cantidad} und.`;
       } else if (comisionGlobalPct > 0) {
         montoComision =
           (comisionGlobalPct / 100) *
           detalle.mtoPrecioUnitario *
           detalle.cantidad;
+        motivo = `Comisión global del vendedor: ${comisionGlobalPct}% del precio (S/ ${detalle.mtoPrecioUnitario.toFixed(2)}) × ${detalle.cantidad} und.`;
       }
 
       if (montoComision <= 0) continue;
@@ -109,6 +119,7 @@ export class ComisionesService {
         cantidad: String(detalle.cantidad),
         montoComision: montoComision.toFixed(2),
         descripcion: producto.descripcion,
+        motivo,
       });
     }
 
@@ -124,6 +135,7 @@ export class ComisionesService {
         cantidad: '1',
         montoComision: comisionGlobalVenta.toFixed(2),
         descripcion: 'Comisión Fija por Venta',
+        motivo: `Comisión fija por venta/ticket del vendedor: S/ ${comisionGlobalVenta.toFixed(2)} (una vez por comprobante)`,
       });
     }
 
@@ -149,6 +161,7 @@ export class ComisionesService {
             serie: true,
             correlativo: true,
             fechaEmision: true,
+            mtoImpVenta: true,
           },
         },
       },

@@ -18,6 +18,7 @@
     "start:debug": "NINJA_ENV=parentDisabled nest start --debug --watch",
     "start:prod": "npx prisma db push --accept-data-loss && npx ts-node prisma/seed.ts && npx ts-node src/scripts/migrate-sedes.ts && node dist/src/main.js",
     "sync:plans": "npx ts-node prisma/seeds/update-planes-v2.ts",
+    "backfill:comision-motivo": "npx ts-node src/scripts/backfill-comision-motivo.ts",
     "migrate:sedes": "npx ts-node src/scripts/migrate-sedes.ts",
     "reset:stock": "npx ts-node src/scripts/reset-stock-50.ts",
     "diagnose:empresa-scope": "npx ts-node src/scripts/diagnose-empresa-scope.ts",

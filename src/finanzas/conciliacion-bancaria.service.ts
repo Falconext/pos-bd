@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import * as XLSX from 'xlsx';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -388,6 +392,209 @@ export class ConciliacionBancariaService {
       movimientos,
       sistemaPendientes,
     };
+  }
+
+  /**
+   * Genera un .xlsx (base64) con el resultado de la conciliación: hoja Resumen
+   * (KPIs + observaciones), hoja Movimientos (banco vs sistema) y hoja
+   * "Pendientes sistema". No persiste nada.
+   */
+  exportarExcel(
+    resultado: ResultadoConciliacion,
+    observaciones?: string,
+  ): { nombreArchivo: string; base64: string } {
+    const resumen = resultado?.resumen;
+    const movimientos = resultado?.movimientos ?? [];
+    const sistemaPendientes = resultado?.sistemaPendientes ?? [];
+    if (!resumen) {
+      throw new BadRequestException(
+        'No se recibió un resultado de conciliación válido para exportar.',
+      );
+    }
+    const obs = (observaciones ?? '').trim();
+
+    const wb = XLSX.utils.book_new();
+
+    // Hoja 1: Resumen (KPIs) + observaciones
+    const resumenRows: { Indicador: string; Valor: string | number }[] = [
+      { Indicador: 'Movimientos banco', Valor: resumen.movimientosBanco },
+      { Indicador: 'Pagos sistema', Valor: resumen.pagosSistema },
+      { Indicador: 'Conciliados', Valor: resumen.conciliados },
+      { Indicador: 'Pendientes banco', Valor: resumen.pendientesBanco },
+      { Indicador: 'Pendientes sistema', Valor: resumen.pendientesSistema },
+      { Indicador: 'Monto banco', Valor: resumen.montoBanco },
+      { Indicador: 'Monto conciliado', Valor: resumen.montoConciliado },
+      { Indicador: 'Monto pendiente banco', Valor: resumen.montoPendienteBanco },
+      { Indicador: 'Diferencias de monto', Valor: resumen.diferenciasMonto },
+    ];
+    if (obs) resumenRows.push({ Indicador: 'Observaciones', Valor: obs });
+    const wsResumen = XLSX.utils.json_to_sheet(resumenRows);
+    XLSX.utils.book_append_sheet(wb, wsResumen, 'Resumen');
+
+    // Hoja 2: Movimientos del banco con su estado y match
+    const movRows = movimientos.map((m) => ({
+      Fila: m.fila,
+      Fecha: m.fecha ?? '',
+      'N° Operación': m.operacion,
+      Descripción: m.descripcion,
+      Monto: m.monto,
+      Tipo: m.tipo ?? '',
+      Estado: m.estado,
+      'Origen match': m.match?.origen ?? '',
+      'Documento sistema': m.match?.documento ?? '',
+      Contraparte: m.match?.contraparte ?? '',
+      'Monto sistema': m.match?.monto ?? '',
+      'Fecha sistema': m.match?.fecha ?? '',
+      Diferencia: m.match?.diferenciaMonto ?? '',
+    }));
+    const wsMov = XLSX.utils.json_to_sheet(movRows, {
+      header: [
+        'Fila',
+        'Fecha',
+        'N° Operación',
+        'Descripción',
+        'Monto',
+        'Tipo',
+        'Estado',
+        'Origen match',
+        'Documento sistema',
+        'Contraparte',
+        'Monto sistema',
+        'Fecha sistema',
+        'Diferencia',
+      ],
+    });
+    XLSX.utils.book_append_sheet(wb, wsMov, 'Movimientos');
+
+    // Hoja 3: Pagos del sistema sin coincidencia en el banco
+    const pendRows = sistemaPendientes.map((p) => ({
+      Origen: p.origen,
+      Documento: p.documento,
+      Contraparte: p.contraparte,
+      'N° Operación': p.operacion,
+      Método: p.medioPago,
+      Fecha: p.fecha,
+      Monto: p.monto,
+    }));
+    const wsPend = XLSX.utils.json_to_sheet(pendRows, {
+      header: [
+        'Origen',
+        'Documento',
+        'Contraparte',
+        'N° Operación',
+        'Método',
+        'Fecha',
+        'Monto',
+      ],
+    });
+    XLSX.utils.book_append_sheet(wb, wsPend, 'Pendientes sistema');
+
+    const buffer: Buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' });
+    return {
+      nombreArchivo: `conciliacion_bancaria_${new Date().toISOString().split('T')[0]}.xlsx`,
+      base64: buffer.toString('base64'),
+    };
+  }
+
+  // ── Persistencia (historial de conciliaciones) ────────────────────────────
+
+  /** Guarda una conciliación (resumen + resultado completo + observaciones + rango). */
+  async guardar(
+    empresaId: number,
+    data: {
+      resultado: ResultadoConciliacion;
+      observaciones?: string;
+      fechaInicio?: string;
+      fechaFin?: string;
+      usuarioId?: number;
+    },
+  ) {
+    const resultado = data?.resultado;
+    if (!resultado?.resumen || !Array.isArray(resultado?.movimientos)) {
+      throw new BadRequestException(
+        'No se recibió un resultado de conciliación válido para guardar.',
+      );
+    }
+    const registro = await this.prisma.conciliacionBancariaGuardada.create({
+      data: {
+        empresaId,
+        usuarioId: data.usuarioId ?? null,
+        fechaInicio: data.fechaInicio || null,
+        fechaFin: data.fechaFin || null,
+        observaciones: (data.observaciones ?? '').trim() || null,
+        resumen: resultado.resumen as any,
+        resultado: resultado as any,
+      },
+      select: { id: true, creadoEn: true },
+    });
+    return { id: registro.id, creadoEn: registro.creadoEn };
+  }
+
+  /** Lista liviana del historial (sin el JSON completo del resultado). */
+  async listarGuardadas(empresaId: number) {
+    const filas = await this.prisma.conciliacionBancariaGuardada.findMany({
+      where: { empresaId },
+      orderBy: { creadoEn: 'desc' },
+      select: {
+        id: true,
+        fechaInicio: true,
+        fechaFin: true,
+        observaciones: true,
+        resumen: true,
+        creadoEn: true,
+      },
+    });
+    return filas.map((f) => {
+      const r = (f.resumen ?? {}) as Record<string, number>;
+      return {
+        id: f.id,
+        fechaInicio: f.fechaInicio,
+        fechaFin: f.fechaFin,
+        observaciones: f.observaciones,
+        creadoEn: f.creadoEn,
+        resumen: {
+          movimientosBanco: r.movimientosBanco ?? 0,
+          conciliados: r.conciliados ?? 0,
+          pendientesBanco: r.pendientesBanco ?? 0,
+          pendientesSistema: r.pendientesSistema ?? 0,
+          montoBanco: r.montoBanco ?? 0,
+          montoConciliado: r.montoConciliado ?? 0,
+        },
+      };
+    });
+  }
+
+  /** Devuelve una conciliación guardada completa para re-visualizarla. */
+  async obtenerGuardada(empresaId: number, id: number) {
+    const registro = await this.prisma.conciliacionBancariaGuardada.findFirst({
+      where: { id, empresaId },
+    });
+    if (!registro) {
+      throw new NotFoundException('Conciliación guardada no encontrada.');
+    }
+    return {
+      id: registro.id,
+      fechaInicio: registro.fechaInicio,
+      fechaFin: registro.fechaFin,
+      observaciones: registro.observaciones,
+      creadoEn: registro.creadoEn,
+      resultado: registro.resultado as unknown as ResultadoConciliacion,
+    };
+  }
+
+  /** Elimina una conciliación guardada (validando pertenencia a la empresa). */
+  async eliminarGuardada(empresaId: number, id: number) {
+    const registro = await this.prisma.conciliacionBancariaGuardada.findFirst({
+      where: { id, empresaId },
+      select: { id: true },
+    });
+    if (!registro) {
+      throw new NotFoundException('Conciliación guardada no encontrada.');
+    }
+    await this.prisma.conciliacionBancariaGuardada.delete({
+      where: { id: registro.id },
+    });
+    return { id: registro.id, eliminado: true };
   }
 
   /** Genera la plantilla .xlsx (base64) con las columnas esperadas del banco. */

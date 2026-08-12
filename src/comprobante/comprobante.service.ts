@@ -2755,6 +2755,10 @@ export class ComprobanteService {
       empresaId,
       sedeId,
       usuarioId: usuarioId ?? undefined,
+      // Cobranza en campo: vendedor de campo atribuido (se muestra en lugar del
+      // usuario que registró la venta). Denormalizado como en Pago.
+      vendedorCampoId: input.vendedorCampoId ?? undefined,
+      vendedorCampoNombre: input.vendedorCampoNombre ?? undefined,
       mtoOperGravadas,
       mtoOperInafectas: mtoOpInafectas,
       mtoOperExoneradas: mtoOpExoneradas,
@@ -2874,13 +2878,34 @@ export class ComprobanteService {
       await this.registrarSeriesVendidas(comprobante.id, empresaId, sedeId);
     }
 
-    // Registrar comisiones del vendedor (no bloqueante)
-    if (usuarioId && this.comisionesService) {
+    // Registrar comisiones del vendedor (no bloqueante). La comisión se atribuye
+    // al vendedor apuntado (vendedorCampoId); si no hay, cae al emisor (usuarioId).
+    // Si este comprobante es la conversión de un informal (NV/TICKET/etc.) que YA
+    // generó comisión, no se vuelve a generar para evitar el doble cobro.
+    //
+    // IMPORTANTE: en emisión normal los comprobantes FORMALES generan comisión
+    // recién cuando SUNAT los ACEPTA (ver enviar-sunat.service). Aquí solo se
+    // registra para documentos IMPORTADOS (histórico ya aceptado) que no pasan
+    // por el envío a SUNAT.
+    const vendedorComisionId = input.vendedorCampoId ?? usuarioId;
+    let origenYaGeneroComision = false;
+    if (esConversionDesdeInformal && comprobanteOrigenId != null) {
+      origenYaGeneroComision =
+        (await this.prisma.comisionVendedor.count({
+          where: { comprobanteId: Number(comprobanteOrigenId) },
+        })) > 0;
+    }
+    if (
+      importado &&
+      vendedorComisionId &&
+      this.comisionesService &&
+      !origenYaGeneroComision
+    ) {
       try {
         await this.comisionesService.registrarComisionesDesdeComprobante({
           comprobanteId: comprobante.id,
           empresaId,
-          vendedorId: usuarioId,
+          vendedorId: vendedorComisionId,
           fechaEmision: new Date(fechaEmision),
           detalles: detalleFinal.map((d: any) => ({
             productoId: d.productoId ?? null,
@@ -3795,6 +3820,9 @@ export class ComprobanteService {
       empresaId,
       sedeId: finalSedeId,
       usuarioId: usuarioId ?? undefined,
+      // Cobranza en campo: vendedor de campo atribuido (denormalizado como en Pago).
+      vendedorCampoId: input.vendedorCampoId ?? undefined,
+      vendedorCampoNombre: input.vendedorCampoNombre ?? undefined,
       mtoOperGravadas,
       mtoOperInafectas: mtoOpInafectas,
       mtoOperExoneradas: mtoOpExoneradas,
@@ -3896,13 +3924,20 @@ export class ComprobanteService {
     }
 
     // Registrar comisiones del vendedor (no bloqueante). En importado histórico
-    // no se generan comisiones.
-    if (usuarioId && this.comisionesService && tipoDoc !== 'COT' && !importado) {
+    // no se generan comisiones. La comisión se atribuye al vendedor apuntado
+    // (vendedorCampoId); si no hay, cae al emisor (usuarioId).
+    const vendedorComisionId = input.vendedorCampoId ?? usuarioId;
+    if (
+      vendedorComisionId &&
+      this.comisionesService &&
+      tipoDoc !== 'COT' &&
+      !importado
+    ) {
       try {
         await this.comisionesService.registrarComisionesDesdeComprobante({
           comprobanteId: comp.id,
           empresaId,
-          vendedorId: usuarioId,
+          vendedorId: vendedorComisionId,
           fechaEmision: fecha,
           detalles: detalleFinal.map((d: any) => ({
             productoId: d.productoId ?? null,
@@ -4377,6 +4412,101 @@ export class ComprobanteService {
     return comp;
   }
 
+  /**
+   * Cobranza en campo: reasigna el vendedor de campo atribuido a un comprobante
+   * ya emitido (retroactivo). Es solo un dato interno de atribución — NO forma
+   * parte del XML/UBL enviado a SUNAT, por lo que no requiere reenvío.
+   */
+  async actualizarVendedorCampo(
+    empresaId: number,
+    id: number,
+    vendedorCampoId: number | null,
+    vendedorCampoNombre: string | null,
+  ) {
+    const comp = await this.prisma.comprobante.findFirst({
+      where: { id, empresaId },
+      select: {
+        id: true,
+        usuarioId: true,
+        fechaEmision: true,
+        detalles: {
+          select: {
+            productoId: true,
+            descripcion: true,
+            cantidad: true,
+            mtoPrecioUnitario: true,
+          },
+        },
+      },
+    });
+    if (!comp) throw new NotFoundException('Comprobante no encontrado');
+
+    // El nuevo vendedor de campo debe pertenecer a esta empresa.
+    if (vendedorCampoId != null) {
+      const vend = await this.prisma.usuario.findFirst({
+        where: { id: vendedorCampoId, empresaId },
+        select: { id: true },
+      });
+      if (!vend) {
+        throw new BadRequestException(
+          'El vendedor seleccionado no pertenece a esta empresa',
+        );
+      }
+    }
+
+    // Reasignar el vendedor MUEVE la comisión: se recalcula para el nuevo
+    // vendedor (o el emisor si se quita). No se toca si ya fue liquidada.
+    const comisiones = await this.prisma.comisionVendedor.findMany({
+      where: { comprobanteId: id },
+      select: { estado: true },
+    });
+    if (comisiones.length > 0) {
+      if (comisiones.some((c) => c.estado === 'PAGADO')) {
+        throw new BadRequestException(
+          'No se puede reasignar el vendedor: este comprobante ya tiene comisiones liquidadas (PAGADO).',
+        );
+      }
+      await this.prisma.comisionVendedor.deleteMany({
+        where: { comprobanteId: id },
+      });
+      const nuevoVendedorId = vendedorCampoId ?? comp.usuarioId;
+      if (nuevoVendedorId && this.comisionesService) {
+        try {
+          await this.comisionesService.registrarComisionesDesdeComprobante({
+            comprobanteId: id,
+            empresaId,
+            vendedorId: nuevoVendedorId,
+            fechaEmision: new Date(comp.fechaEmision),
+            detalles: comp.detalles.map((d) => ({
+              productoId: d.productoId ?? null,
+              descripcion: d.descripcion,
+              cantidad: Number(d.cantidad),
+              mtoPrecioUnitario: Number(d.mtoPrecioUnitario),
+            })),
+          });
+        } catch (err: any) {
+          console.warn(
+            '[actualizarVendedorCampo] Error al recalcular comisiones:',
+            err?.message,
+          );
+        }
+      }
+    }
+
+    return this.prisma.comprobante.update({
+      where: { id },
+      data: {
+        vendedorCampoId: vendedorCampoId ?? null,
+        vendedorCampoNombre: vendedorCampoNombre ?? null,
+      },
+      select: {
+        id: true,
+        vendedorCampoId: true,
+        vendedorCampoNombre: true,
+      },
+    });
+  }
+
   async actualizarEstadoOT(
     comprobanteId: number,
     input: { estadoOT: string; fechaRecojo?: string },
@@ -4703,7 +4833,8 @@ export class ComprobanteService {
       pagado: montoPagado.toFixed(2),
       saldoPendiente:
         saldoPendiente > 0 ? saldoPendiente.toFixed(2) : undefined,
-      vendedor: (full.usuario?.nombre || 'ADMIN').toUpperCase(),
+      // Cobranza en campo: prioriza el vendedor de campo atribuido.
+      vendedor: ((full as any).vendedorCampoNombre || full.usuario?.nombre || 'ADMIN').toUpperCase(),
       observaciones: full.observaciones
         ? full.observaciones.toUpperCase()
         : undefined,
@@ -5157,6 +5288,8 @@ export class ComprobanteService {
         estadoPago: true,
         estadoEnvioSunat: true,
         mtoImpVenta: true,
+        // Cobranza en campo: vendedor de campo atribuido (se muestra en vez del usuario).
+        vendedorCampoNombre: true,
         cliente: { select: { nombre: true, nroDoc: true } },
         usuario: { select: { nombre: true } },
       },
@@ -5212,7 +5345,7 @@ export class ComprobanteService {
         documento: `${c.serie}-${String(c.correlativo).padStart(8, '0')}`,
         cliente: c.cliente?.nombre ?? 'CLIENTES VARIOS',
         docCliente: c.cliente?.nroDoc ?? '',
-        vendedor: c.usuario?.nombre ?? '',
+        vendedor: c.vendedorCampoNombre ?? c.usuario?.nombre ?? '',
         medioPago: c.medioPago ?? '',
         estadoPago: anulado
           ? 'Anulado'

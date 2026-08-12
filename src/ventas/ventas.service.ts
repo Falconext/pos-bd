@@ -267,6 +267,9 @@ export class VentasService {
           porcentajeDetraccion: true,
           cuotas: true,
           observaciones: true,
+          // Cobranza en campo: vendedor de campo atribuido (se muestra en vez del usuario).
+          vendedorCampoId: true,
+          vendedorCampoNombre: true,
           cliente: { select: { nombre: true, nroDoc: true, telefono: true, email: true } },
           usuario: { select: { nombre: true } },
           sede: { select: { nombre: true } },
@@ -402,7 +405,9 @@ export class VentasService {
         courier: c.envioDespacho?.transportista ?? '',
         nroOrden: c.envioDespacho?.nroOrden ?? '',
         claveOrden: c.envioDespacho?.claveOrden ?? '',
-        vendedor: c.usuario?.nombre ?? '—',
+        vendedor: c.vendedorCampoNombre ?? c.usuario?.nombre ?? '—',
+        // Cobranza en campo: id del vendedor de campo para preseleccionarlo al registrar cobro.
+        vendedorCampoId: c.vendedorCampoId ?? null,
         sede: c.sede?.nombre ?? '—',
         comprobanteId: c.id,
         pedidoId: null,

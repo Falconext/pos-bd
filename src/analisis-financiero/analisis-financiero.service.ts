@@ -99,6 +99,8 @@ interface GastoPnl {
   categoria: string;
   etiqueta: string | null;
   monto: DecimalLike;
+  moneda?: string | null;
+  tipoCambio?: DecimalLike | null;
   fecha: Date | null;
   recurrenteDiario: boolean;
   fechaInicio: Date | null;
@@ -283,7 +285,12 @@ export class AnalisisFinancieroService {
     const gastosAplicados: GastoAplicadoPnl[] = [];
 
     for (const gasto of gastosRaw) {
-      const monto = this.toNumber(gasto.monto);
+      // Los gastos en USD se convierten a soles con su tipo de cambio para que
+      // todos los KPIs de rentabilidad queden en una sola moneda (PEN).
+      const montoBase = this.toNumber(gasto.monto);
+      const tc = gasto.tipoCambio != null ? this.toNumber(gasto.tipoCambio) : 0;
+      const monto =
+        gasto.moneda === 'USD' && tc > 0 ? montoBase * tc : montoBase;
       if (!gasto.recurrenteDiario) {
         gastosAplicados.push({
           categoria: gasto.categoria,
@@ -581,6 +588,8 @@ export class AnalisisFinancieroService {
             categoria: true,
             etiqueta: true,
             monto: true,
+            moneda: true,
+            tipoCambio: true,
             fecha: true,
             recurrenteDiario: true,
             fechaInicio: true,
@@ -634,6 +643,8 @@ export class AnalisisFinancieroService {
         categoria: 'PUBLICIDAD',
         etiqueta: `${c.plataforma} - ${c.nombre}`,
         monto: { toNumber: () => presupuesto },
+        moneda: 'PEN',
+        tipoCambio: null,
         fecha: null,
         recurrenteDiario: true,
         fechaInicio: inicio,
@@ -1314,6 +1325,10 @@ export class AnalisisFinancieroService {
         categoria: dto.categoria,
         etiqueta: dto.etiqueta,
         monto: dto.monto,
+        moneda: dto.moneda ?? 'PEN',
+        tipoCambio: dto.moneda === 'USD' ? (dto.tipoCambio ?? null) : null,
+        cuentaBancariaId: dto.cuentaBancariaId ?? null,
+        medioPago: dto.medioPago ?? null,
         descripcion: dto.descripcion,
       },
     });
@@ -1359,6 +1374,20 @@ export class AnalisisFinancieroService {
         ...(dto.categoria !== undefined && { categoria: dto.categoria }),
         ...(dto.etiqueta !== undefined && { etiqueta: dto.etiqueta }),
         ...(dto.monto !== undefined && { monto: dto.monto }),
+        ...(dto.moneda !== undefined && {
+          moneda: dto.moneda,
+          // Al cambiar a PEN se limpia el TC; en USD se toma el enviado (o el existente).
+          tipoCambio:
+            dto.moneda === 'USD'
+              ? (dto.tipoCambio ?? existing.tipoCambio ?? null)
+              : null,
+        }),
+        ...(dto.moneda === undefined &&
+          dto.tipoCambio !== undefined && { tipoCambio: dto.tipoCambio }),
+        ...(dto.cuentaBancariaId !== undefined && {
+          cuentaBancariaId: dto.cuentaBancariaId,
+        }),
+        ...(dto.medioPago !== undefined && { medioPago: dto.medioPago }),
         ...(dto.descripcion !== undefined && { descripcion: dto.descripcion }),
       },
     });

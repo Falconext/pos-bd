@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Get,
+  Patch,
   Delete,
   Param,
   ParseIntPipe,
@@ -94,6 +95,19 @@ export class PagoController {
     @User() user: any,
   ) {
     return this.service.obtenerPagos(comprobanteId, user.empresaId);
+  }
+
+  // Editar el N° de operación (referencia) / método / observación de un pago de
+  // venta ya registrado. No toca el XML SUNAT: es solo un dato interno del pago.
+  @Patch(':pagoId/referencia')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async editarReferenciaPago(
+    @Param('pagoId', ParseIntPipe) pagoId: number,
+    @Body()
+    body: { referencia?: string | null; medioPago?: string; observacion?: string | null },
+    @User() user: any,
+  ) {
+    return this.service.editarDatosPago(pagoId, user.empresaId, body);
   }
 
   @Delete(':pagoId/reversar')

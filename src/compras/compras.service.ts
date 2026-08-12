@@ -683,7 +683,10 @@ export class ComprasService {
       where: { id, empresaId },
       include: {
         detalles: { orderBy: { id: 'asc' } },
-        pagos: { select: { monto: true } },
+        pagos: {
+          select: { id: true, monto: true },
+          orderBy: { id: 'asc' },
+        },
       },
     });
     if (!existente) throw new NotFoundException('Compra no encontrada');
@@ -808,9 +811,34 @@ export class ComprasService {
     const nuevoSaldo = Math.max(0, this.roundMoney(total - totalPagado));
     const nuevoEstadoPago = this.normalizeEstadoPagoBySaldo(total, nuevoSaldo);
 
+    // Pago inicial a corregir: el primer pago registrado (el que muestra el
+    // modal de edición). Permite cambiar el N° de operación / método / cuenta
+    // de una compra ya inscrita sin tener que anularla y volver a crearla.
+    const pagoInicial = existente.pagos[0];
+    const debeActualizarPagoInicial =
+      !!pagoInicial &&
+      (data.referenciaInicial !== undefined ||
+        data.metodoPagoInicial !== undefined ||
+        data.cuentaBancariaIdInicial !== undefined);
+
     // 3) Reemplazar cabecera + detalles en una transacción.
     const compra = await this.prisma.$transaction(async (tx) => {
       await tx.detalleCompra.deleteMany({ where: { compraId: id } });
+      if (debeActualizarPagoInicial) {
+        await tx.pagoCompra.update({
+          where: { id: pagoInicial.id },
+          data: {
+            referencia: data.referenciaInicial || null,
+            ...(data.metodoPagoInicial
+              ? { metodoPago: data.metodoPagoInicial }
+              : {}),
+            cuentaBancariaId:
+              data.metodoPagoInicial === 'TRANSFERENCIA'
+                ? data.cuentaBancariaIdInicial || null
+                : null,
+          },
+        });
+      }
       return tx.compra.update({
         where: { id },
         include: { detalles: { orderBy: { id: 'asc' } } },

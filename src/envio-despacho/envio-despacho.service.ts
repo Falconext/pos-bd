@@ -364,6 +364,8 @@ export class EnvioDespachoService {
                 select: { nombre: true, telefono: true, nroDoc: true },
               },
               usuario: { select: { nombre: true } },
+              // Cobranza en campo: vendedor de campo atribuido (se muestra en vez del usuario).
+              vendedorCampoNombre: true,
             },
           },
           repartidor: true,
@@ -420,7 +422,7 @@ export class EnvioDespachoService {
         referencia: `${d.comprobante.serie}-${String(d.comprobante.correlativo).padStart(8, '0')}`,
         cliente: d.comprobante.cliente?.nombre ?? '—',
         telefono: d.comprobante.cliente?.telefono ?? '',
-        vendedor: d.comprobante.usuario?.nombre ?? '—',
+        vendedor: (d.comprobante as any).vendedorCampoNombre ?? d.comprobante.usuario?.nombre ?? '—',
         total,
         montoPagado,
         saldoPendiente: saldo,

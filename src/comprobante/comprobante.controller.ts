@@ -457,6 +457,23 @@ export class ComprobanteController {
     return this.service.actualizarEstadoOT(comprobanteId, input);
   }
 
+  // Cobranza en campo: reasignar el vendedor de campo de un comprobante ya
+  // emitido (retroactivo). No toca el XML SUNAT: es solo atribución interna.
+  @Patch(':id/vendedor-campo')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async actualizarVendedorCampo(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() input: { vendedorCampoId?: number | null; vendedorCampoNombre?: string | null },
+    @User() user: any,
+  ) {
+    return this.service.actualizarVendedorCampo(
+      user.empresaId,
+      id,
+      input.vendedorCampoId ?? null,
+      input.vendedorCampoNombre ?? null,
+    );
+  }
+
   @Patch(':id')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async actualizarCotizacion(

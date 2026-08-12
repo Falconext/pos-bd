@@ -162,6 +162,18 @@ export class CrearComprobanteDto {
   @IsInt()
   clienteId?: number;
 
+  // Cobranza en campo: vendedor de campo al que se le atribuye la venta
+  // (se muestra como "vendedor" en panel/notas/comprobante en vez del usuario
+  // que inició sesión). Solo aplica si la empresa tiene la casuística activada.
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  vendedorCampoId?: number;
+
+  @IsOptional()
+  @IsString()
+  vendedorCampoNombre?: string;
+
   @IsString()
   clienteName: string;
 

@@ -48,6 +48,58 @@ export class FinanzasController {
     );
   }
 
+  // Exporta a Excel el resultado de una conciliación ya calculada (sin persistir).
+  // Se recibe el `resultado` tal cual lo devolvió el endpoint /conciliacion/importar
+  // más las observaciones opcionales del usuario. Body tipado como `any` a propósito
+  // para no perder el objeto anidado con el ValidationPipe (whitelist).
+  @Post('conciliacion/exportar-excel')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  exportarConciliacionExcel(@Body() body: any) {
+    return this.conciliacionService.exportarExcel(
+      body?.resultado,
+      body?.observaciones,
+    );
+  }
+
+  // Persiste una conciliación para poder consultarla luego (historial).
+  // Body tipado como `any` a propósito: lleva el objeto anidado `resultado` que
+  // el ValidationPipe (whitelist) descartaría con un DTO estricto.
+  @Post('conciliacion/guardar')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  guardarConciliacion(@User() user: any, @Body() body: any) {
+    return this.conciliacionService.guardar(user.empresaId, {
+      resultado: body?.resultado,
+      observaciones: body?.observaciones,
+      fechaInicio: body?.fechaInicio,
+      fechaFin: body?.fechaFin,
+      usuarioId: user?.sub ?? user?.id ?? undefined,
+    });
+  }
+
+  @Get('conciliacion/guardadas')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  listarConciliacionesGuardadas(@User() user: any) {
+    return this.conciliacionService.listarGuardadas(user.empresaId);
+  }
+
+  @Get('conciliacion/guardadas/:id')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  obtenerConciliacionGuardada(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.conciliacionService.obtenerGuardada(user.empresaId, id);
+  }
+
+  @Delete('conciliacion/guardadas/:id')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  eliminarConciliacionGuardada(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.conciliacionService.eliminarGuardada(user.empresaId, id);
+  }
+
   @Get('ecommerce')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async getResumenEcommerce(

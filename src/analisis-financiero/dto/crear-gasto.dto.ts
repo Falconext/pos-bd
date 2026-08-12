@@ -1,6 +1,7 @@
 import {
   IsBoolean,
   IsEnum,
+  IsIn,
   IsInt,
   IsISO8601,
   IsNumber,
@@ -51,6 +52,25 @@ export class CrearGastoDto {
   @Min(0.01)
   @Max(9999999.99)
   monto: number;
+
+  @IsOptional()
+  @IsIn(['PEN', 'USD'])
+  moneda?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0.0001)
+  @Max(999999.9999)
+  tipoCambio?: number;
+
+  @IsOptional()
+  @IsInt()
+  cuentaBancariaId?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  medioPago?: string;
 
   @IsOptional()
   @IsString()

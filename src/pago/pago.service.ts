@@ -149,6 +149,15 @@ export class PagoService {
       data: {
         saldo: Math.max(0, nuevoSaldo),
         estadoPago: nuevoEstado as any,
+        // Cobranza en campo: si en el cobro se indicó el vendedor de campo que
+        // envió el comprobante, se atribuye la venta a ese vendedor (se muestra
+        // en panel/notas/comprobante en vez del usuario que la registró).
+        ...(dto.vendedorId
+          ? {
+              vendedorCampoId: dto.vendedorId,
+              vendedorCampoNombre: dto.vendedorNombre ?? null,
+            }
+          : {}),
       },
     });
 
@@ -312,6 +321,33 @@ export class PagoService {
       porMedioPago,
       pagos,
     };
+  }
+
+  /**
+   * Edita datos internos de un pago ya registrado (N° de operación/referencia,
+   * método de pago, observación). NO forma parte del XML/UBL declarado a SUNAT,
+   * por lo que es seguro para comprobantes ya emitidos y no requiere reenvío.
+   */
+  async editarDatosPago(
+    pagoId: number,
+    empresaId: number,
+    body: { referencia?: string | null; medioPago?: string; observacion?: string | null },
+  ) {
+    const pago = await this.prisma.pago.findUnique({ where: { id: pagoId } });
+    if (!pago) throw new NotFoundException('Pago no encontrado');
+    if (pago.empresaId !== empresaId) {
+      throw new BadRequestException('El pago no pertenece a tu empresa');
+    }
+
+    return this.prisma.pago.update({
+      where: { id: pagoId },
+      data: {
+        ...(body.referencia !== undefined ? { referencia: body.referencia || null } : {}),
+        ...(body.medioPago ? { medioPago: body.medioPago.toUpperCase() } : {}),
+        ...(body.observacion !== undefined ? { observacion: body.observacion || null } : {}),
+      },
+      select: { id: true, referencia: true, medioPago: true, observacion: true },
+    });
   }
 
   async reversarPago(pagoId: number, empresaId?: number) {

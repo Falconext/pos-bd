@@ -247,6 +247,7 @@ model Empresa {
   notas                NotaEmpresa[]
   logs                 EmpresaLog[]
   gastosOperativos     GastoOperativo[]
+  conciliacionesGuardadas ConciliacionBancariaGuardada[]
   ingresosManual       IngresoManual[]
   comisionesVendedor   ComisionVendedor[]
   campanas             CampanaMarketing[]
@@ -779,6 +780,11 @@ model Comprobante {
   descuentoPorcOT         Float?               @default(0)
   estadoOT                String?
   usuarioId               Int?
+  // Cobranza en campo: vendedor de campo al que se atribuye la venta (se muestra
+  // como "vendedor" en panel/notas/comprobante en vez del usuario que la registró).
+  // Denormalizado (sin FK), igual que Pago.vendedorId/vendedorNombre.
+  vendedorCampoId         Int?
+  vendedorCampoNombre     String?
   s3CdrUrl                String?
   s3PdfUrl                String?
   s3XmlUrl                String?
@@ -996,6 +1002,7 @@ model CuentaBancaria {
   empresa      Empresa  @relation(fields: [empresaId], references: [id])
   pagos        Pago[]
   pagosCompra  PagoCompra[]
+  gastosOperativos GastoOperativo[]
 
   @@index([empresaId])
 }
@@ -2367,15 +2374,38 @@ model GastoOperativo {
   categoria        CategoriaGasto
   etiqueta         String?
   monto            Decimal        @db.Decimal(12, 2)
+  moneda           String         @default("PEN")
+  tipoCambio       Decimal?       @db.Decimal(10, 4)
+  cuentaBancariaId Int?
+  medioPago        String?
   descripcion      String?
   creadoEn         DateTime       @default(now())
   actualizadoEn    DateTime       @updatedAt
   empresa          Empresa        @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  cuentaBancaria   CuentaBancaria? @relation(fields: [cuentaBancariaId], references: [id], onDelete: SetNull)
 
   @@index([empresaId, anio, mes])
   @@index([empresaId, fecha])
   @@index([empresaId, recurrenteDiario, fechaInicio, fechaFin])
   @@index([empresaId, categoria])
+}
+
+/// Historial de conciliaciones bancarias guardadas por el usuario.
+/// `resultado` almacena el objeto completo { resumen, movimientos, sistemaPendientes }
+/// para poder re-visualizar la conciliación tal cual se calculó.
+model ConciliacionBancariaGuardada {
+  id            Int      @id @default(autoincrement())
+  empresaId     Int
+  usuarioId     Int?
+  fechaInicio   String?
+  fechaFin      String?
+  observaciones String?
+  resumen       Json
+  resultado     Json
+  creadoEn      DateTime @default(now())
+  empresa       Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  @@index([empresaId, creadoEn])
 }
 
 enum EstadoComision {
@@ -2441,6 +2471,7 @@ model ComisionVendedor {
   cantidad      Decimal        @db.Decimal(12, 4)
   montoComision Decimal        @db.Decimal(12, 2)
   descripcion   String?
+  motivo        String?
   estado        EstadoComision @default(PENDIENTE)
   creadoEn      DateTime       @default(now())
   actualizadoEn DateTime       @updatedAt
