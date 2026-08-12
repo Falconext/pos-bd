@@ -4526,18 +4526,10 @@ export class ComprobanteService {
         (cantidadAnteriorPorProducto.get(d.productoId) ?? 0) + Number(d.cantidad),
       );
     }
-    // Lo YA PAGADO se conserva: editar cambia el contenido, NO cobra. El saldo se
-    // recalcula = nuevo total − ya pagado. Para cobrar (parcial/total) se usa el
-    // flujo "Registrar Pago" (abono). Los pagos existentes NO se borran.
-    const pagosPrevios = await this.prisma.pago.findMany({
-      where: { comprobanteId: comp.id },
-      select: { monto: true },
-    });
-    const yaPagado = this.round2(
-      pagosPrevios.reduce((s, p) => s + Number(p.monto), 0),
-    );
-    // Comisiones se recrean; se borran detalles/leyendas viejos. Stock se ajusta por
-    // diferencia más abajo. Pagos: se conservan.
+    // REEMPLAZAR: la pantalla de edición es la fuente de verdad del pago. Se borran
+    // pagos y comisiones (se recrean); también detalles/leyendas viejos. El stock se
+    // ajusta por diferencia más abajo.
+    await this.prisma.pago.deleteMany({ where: { comprobanteId: comp.id } });
     await this.prisma.comisionVendedor.deleteMany({
       where: { comprobanteId: comp.id },
     });
@@ -4568,12 +4560,50 @@ export class ComprobanteService {
     );
     const mtoImpVenta = this.round2(Math.max(0, subTotal - descuentoGlobal));
 
-    // 3) Estado de pago / saldo a partir de lo YA PAGADO (editar NO cobra):
-    //    saldo = nuevo total − ya pagado. La forma/medio de pago original se conserva.
-    const saldo = this.round2(Math.max(0, mtoImpVenta - yaPagado));
+    // 3) Estado de pago / saldo a partir de LO INGRESADO en esta edición (reemplaza).
+    //    El pago que se registra es exactamente lo que puso el usuario en el paso de
+    //    pago (mixto/parcial). El exceso sobre el total es vuelto, no sobrepago.
+    const medioPagoFinal = (medioPago ?? '').toString().toUpperCase();
+    const mediosPermitidos = [
+      'YAPE',
+      'PLIN',
+      'EFECTIVO',
+      'TRANSFERENCIA',
+      'TARJETA',
+      'MIXTO',
+    ];
+    const medioPagoValido = mediosPermitidos.includes(medioPagoFinal)
+      ? medioPagoFinal
+      : 'EFECTIVO';
+    const esCredito = (formaPagoTipo ?? '').toUpperCase() === 'CREDITO';
+    const adelantoNorm = adelanto ? Math.max(Number(adelanto), 0) : 0;
+
+    // Monto realmente ingresado (suma de líneas de pago; para crédito, el adelanto).
+    const sumaLineasPago = (): number => {
+      const arr =
+        Array.isArray(splitPayments) && splitPayments.length > 0
+          ? splitPayments
+          : Array.isArray(paymentDetails?.splitPayments)
+            ? paymentDetails.splitPayments
+            : null;
+      if (arr) {
+        return this.round2(
+          arr.reduce((s: number, l: any) => s + Number(l?.amount || 0), 0),
+        );
+      }
+      if (paymentDetails && paymentDetails.amount != null) {
+        return this.round2(Number(paymentDetails.amount));
+      }
+      return 0;
+    };
+    const montoIngresado = esCredito
+      ? Math.min(adelantoNorm, mtoImpVenta)
+      : Math.min(sumaLineasPago(), mtoImpVenta);
+    const montoPagado = this.round2(Math.max(0, montoIngresado));
+    const saldo = this.round2(Math.max(0, mtoImpVenta - montoPagado));
     let estadoPago: any;
-    if (yaPagado <= 0) estadoPago = 'PENDIENTE_PAGO';
-    else if (yaPagado >= mtoImpVenta) estadoPago = 'COMPLETADO';
+    if (montoPagado <= 0) estadoPago = 'PENDIENTE_PAGO';
+    else if (montoPagado >= mtoImpVenta) estadoPago = 'COMPLETADO';
     else estadoPago = 'PAGO_PARCIAL';
 
     // 4) Calcular la DIFERENCIA de stock por producto (nueva − anterior):
@@ -4617,6 +4647,9 @@ export class ComprobanteService {
       data: {
         clienteId: finalClienteId,
         observaciones: observaciones ?? null,
+        medioPago: medioPagoValido,
+        paymentDetails: paymentDetails ?? Prisma.JsonNull,
+        formaPagoTipo: formaPagoTipo ?? comp.formaPagoTipo,
         mtoOperGravadas,
         mtoOperInafectas: mtoOpInafectas,
         mtoOperExoneradas: mtoOpExoneradas,
@@ -4629,6 +4662,7 @@ export class ComprobanteService {
         mtoImpVenta,
         estadoPago,
         saldo,
+        adelanto: esCredito && adelantoNorm > 0 ? adelantoNorm : null,
         vendedorCampoId: vendedorCampoIdFinal ?? null,
         vendedorCampoNombre: vendedorCampoNombreFinal ?? null,
         detalles: {
@@ -4639,7 +4673,7 @@ export class ComprobanteService {
     });
 
     // 6) Ajustar stock SOLO por la diferencia (descontar el extra / devolver lo quitado),
-    //    y recrear la comisión. El PAGO NO se toca: editar no cobra (usar "Registrar Pago").
+    //    re-registrar el pago ingresado (reemplaza el anterior) y recrear la comisión.
     if (detallesDescontar.length > 0) {
       await this.ajustarStock(detallesDescontar, {
         empresaId,
@@ -4654,6 +4688,19 @@ export class ComprobanteService {
         empresaId,
         comprobanteId: comp.id,
         concepto: `Edición NV ${comp.serie}-${comp.correlativo} (devolución por edición)`,
+      });
+    }
+    if (montoPagado > 0) {
+      await this.registrarPagosDeEmision({
+        comprobanteId: comp.id,
+        empresaId,
+        usuarioId,
+        medioPago: medioPagoValido,
+        paymentDetails,
+        splitPayments,
+        montoPagado,
+        documento: `NV-${comp.serie}-${comp.correlativo}`,
+        fecha: new Date(fechaEmision ?? comp.fechaEmision),
       });
     }
     const vendedorComisionId = vendedorCampoIdFinal ?? usuarioId;
