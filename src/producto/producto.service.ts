@@ -2743,11 +2743,15 @@ export class ProductoService {
       PRODUCTO: producto.descripcion,
       'U.M': producto.unidadMedida?.nombre || '',
       AFECT: producto.tipoAfectacionIGV,
-      'PRECIO UNITARIO': Number(producto.precioUnitario),
+      'PRECIO UNITARIO CON IGV': Number(producto.precioUnitario),
+      'COSTO COMPRA SIN IGV': Number((producto as any).costoPromedio ?? 0),
       IGV: Number(producto.igvPorcentaje),
       STOCK: sedeId
         ? Number((producto as any).stocks?.[0]?.stock ?? 0)
         : Number(producto.stock),
+      'STOCK MINIMO': sedeId
+        ? Number((producto as any).stocks?.[0]?.stockMinimo ?? 0)
+        : Number((producto as any).stockMinimo ?? 0),
       CATEGORIA: producto.categoria?.nombre || '',
       MARCA: (producto as any)?.marca?.nombre || '',
     }));
@@ -2756,15 +2760,17 @@ export class ProductoService {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Productos');
     worksheet['!cols'] = [
-      { wch: 18 },
-      { wch: 100 },
-      { wch: 20 },
-      { wch: 10 },
-      { wch: 15 },
-      { wch: 8 },
-      { wch: 10 },
-      { wch: 20 },
-      { wch: 20 },
+      { wch: 18 }, // CÓDIGO
+      { wch: 100 }, // PRODUCTO
+      { wch: 20 }, // U.M
+      { wch: 10 }, // AFECT
+      { wch: 22 }, // PRECIO UNITARIO CON IGV
+      { wch: 20 }, // COSTO COMPRA SIN IGV
+      { wch: 8 }, // IGV
+      { wch: 10 }, // STOCK
+      { wch: 13 }, // STOCK MINIMO
+      { wch: 20 }, // CATEGORIA
+      { wch: 20 }, // MARCA
     ];
 
     const buffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
@@ -2776,22 +2782,26 @@ export class ProductoService {
       {
         CÓDIGO: 'PR001',
         PRODUCTO: 'Producto sin código de barras (SKU manual)',
-        'U.M': 'UNIDAD',
+        'U.M': 'Unidad (bienes)',
         AFECT: '10',
-        'PRECIO UNITARIO': 10.0,
+        'PRECIO UNITARIO CON IGV': 10.0,
+        'COSTO COMPRA SIN IGV': 6.0,
         IGV: 18,
         STOCK: 100,
+        'STOCK MINIMO': 10,
         CATEGORIA: 'General',
         MARCA: '',
       },
       {
         CÓDIGO: '7750243072366',
         PRODUCTO: 'Producto con código de barras EAN-13',
-        'U.M': 'UNIDAD',
+        'U.M': 'Unidad (bienes)',
         AFECT: '10',
-        'PRECIO UNITARIO': 25.5,
+        'PRECIO UNITARIO CON IGV': 25.5,
+        'COSTO COMPRA SIN IGV': 15.0,
         IGV: 18,
         STOCK: 50,
+        'STOCK MINIMO': 5,
         CATEGORIA: 'Abarrotes',
         MARCA: 'Ejemplo',
       },
@@ -2800,15 +2810,17 @@ export class ProductoService {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Productos');
     worksheet['!cols'] = [
-      { wch: 18 },
-      { wch: 50 },
-      { wch: 12 },
-      { wch: 8 },
-      { wch: 16 },
-      { wch: 6 },
-      { wch: 8 },
-      { wch: 20 },
-      { wch: 20 },
+      { wch: 18 }, // CÓDIGO
+      { wch: 50 }, // PRODUCTO
+      { wch: 12 }, // U.M
+      { wch: 8 }, // AFECT
+      { wch: 22 }, // PRECIO UNITARIO CON IGV
+      { wch: 20 }, // COSTO COMPRA SIN IGV
+      { wch: 6 }, // IGV
+      { wch: 8 }, // STOCK
+      { wch: 13 }, // STOCK MINIMO
+      { wch: 20 }, // CATEGORIA
+      { wch: 20 }, // MARCA
     ];
     return XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
   }
@@ -2830,6 +2842,9 @@ export class ProductoService {
       UND: 'NIU',
       UNID: 'NIU',
       UNIDAD: 'NIU',
+      'UNIDAD (BIENES)': 'NIU',
+      'UNIDAD (SERVICIOS)': 'ZZ',
+      SERVICIO: 'ZZ',
       ETIQ: 'NIU',
       PZA: 'NIU',
       PZ: 'NIU',
@@ -3006,6 +3021,12 @@ export class ProductoService {
       categorias.map((c) => [this.normClave(c.nombre), c.id]),
     );
 
+    const marcas = await this.prisma.marca.findMany({
+      where: { empresaId },
+      select: { id: true, nombre: true },
+    });
+    const marcaMap = new Map(marcas.map((m) => [this.normClave(m.nombre), m.id]));
+
     const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
 
     let rows: any[];
@@ -3043,16 +3064,31 @@ export class ProductoService {
           null;
         const afectRaw = row['AFECT'] ?? row['Afect'] ?? row['afect'] ?? null;
         const precioUnitarioRaw =
+          row['PRECIO UNITARIO CON IGV'] ??
           row['PRECIO UNITARIO'] ??
           row['Precio Unitario'] ??
           row['precioUnitario'] ??
           null;
         const precioCostoRaw =
-          row['PRECIO COSTO'] ?? row['Precio Costo'] ?? null;
+          row['COSTO COMPRA SIN IGV'] ??
+          row['COSTO COMPRA'] ??
+          row['Costo Compra'] ??
+          row['costoCompra'] ??
+          row['PRECIO COSTO'] ??
+          row['Precio Costo'] ??
+          null;
+        const stockMinimoRaw =
+          row['STOCK MINIMO'] ??
+          row['STOCK MÍNIMO'] ??
+          row['Stock Mínimo'] ??
+          row['Stock Minimo'] ??
+          row['stockMinimo'] ??
+          null;
         const igvRaw = row['IGV'] ?? row['igv'] ?? null;
         const stockRaw = row['STOCK'] ?? row['Stock'] ?? row['stock'] ?? null;
         const categoriaRaw =
           row['CATEGORIA'] ?? row['Categoría'] ?? row['categoria'] ?? null;
+        const marcaRaw = row['MARCA'] ?? row['Marca'] ?? row['marca'] ?? null;
         if (!codigo)
           throw new ForbiddenException(
             `Código no proporcionado en la fila ${index + 1}`,
@@ -3077,7 +3113,13 @@ export class ProductoService {
           .toUpperCase()
           .normalize('NFD')
           .replace(/[\u0300-\u036f]/g, '');
-        const unidadMedidaId = unidadMap.get(unidadKey);
+        // 1) match directo por nombre/código; 2) fallback: normalizar a código SUNAT
+        // (ej. "Unidad (bienes)" -> NIU) y buscar por ese código.
+        let unidadMedidaId = unidadMap.get(unidadKey);
+        if (!unidadMedidaId) {
+          const codigoSunat = this.resolverUmbSunat(unidadNombre.toString());
+          unidadMedidaId = unidadMap.get(this.normClave(codigoSunat));
+        }
         if (!unidadMedidaId)
           throw new ForbiddenException(
             `Unidad de medida no válida (${unidadNombre}) en la fila ${index + 1}`,
@@ -3095,6 +3137,10 @@ export class ProductoService {
         const costoPromedio =
           precioCostoRaw != null
             ? parseFloat(precioCostoRaw.toString())
+            : undefined;
+        const stockMinimoImport =
+          stockMinimoRaw != null && stockMinimoRaw.toString().trim() !== ''
+            ? parseInt(stockMinimoRaw.toString(), 10)
             : undefined;
         const stock = parseInt(stockRaw?.toString(), 10);
         const igvPorcentaje = igvRaw ? parseFloat(igvRaw.toString()) : 18;
@@ -3116,6 +3162,22 @@ export class ProductoService {
             categoriaMap.set(categoriaKey, id);
           }
           categoriaId = id;
+        }
+
+        // Auto-upsert marca: crear si no existe (por empresa)
+        let marcaId: number | undefined;
+        if (marcaRaw != null && String(marcaRaw).trim() !== '') {
+          const marcaNombre = String(marcaRaw).trim();
+          const marcaKey = this.normClave(marcaNombre);
+          let id = marcaMap.get(marcaKey);
+          if (!id) {
+            const nueva = await this.prisma.marca.create({
+              data: { nombre: marcaNombre, empresaId },
+            });
+            id = nueva.id;
+            marcaMap.set(marcaKey, id);
+          }
+          marcaId = id;
         }
 
         // Upsert: buscar por SKU (codigo) O por código de barras. Buscar por AMBOS
@@ -3193,7 +3255,11 @@ export class ProductoService {
               ...(costoPromedio != null
                 ? { costoPromedio: new Decimal(costoPromedio) }
                 : {}),
+              ...(stockMinimoImport != null && !Number.isNaN(stockMinimoImport)
+                ? { stockMinimo: stockMinimoImport }
+                : {}),
               ...(categoriaId != null ? { categoriaId } : {}),
+              ...(marcaId != null ? { marcaId } : {}),
               ...(codigoBarras != null ? { codigoBarras } : {}),
             },
           });
@@ -3222,7 +3288,12 @@ export class ProductoService {
               costoPromedio,
               igvPorcentaje,
               stock: stockDestino ?? 0,
+              stockMinimo:
+                stockMinimoImport != null && !Number.isNaN(stockMinimoImport)
+                  ? stockMinimoImport
+                  : undefined,
               categoriaId,
+              marcaId,
               codigoBarras,
             },
             empresaId,
