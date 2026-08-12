@@ -4516,12 +4516,18 @@ export class ComprobanteService {
       finalClienteId = Number(clienteId);
     }
 
-    // 1) Revertir efectos de la versión anterior (stock, pagos, comisiones, detalles, leyendas)
-    await this.revertirStock(comp.detalles, {
-      empresaId,
-      comprobanteId: comp.id,
-      concepto: `Edición NV ${comp.serie}-${comp.correlativo} (revertir stock anterior)`,
-    });
+    // 1) Cantidades ANTERIORES por producto (para mover solo la diferencia en el
+    // Kardex, sin registrar el par revertir+aplicar que ensucia el historial).
+    const cantidadAnteriorPorProducto = new Map<number, number>();
+    for (const d of comp.detalles) {
+      if (d.productoId == null) continue;
+      cantidadAnteriorPorProducto.set(
+        d.productoId,
+        (cantidadAnteriorPorProducto.get(d.productoId) ?? 0) + Number(d.cantidad),
+      );
+    }
+    // Revertir pagos y comisiones (se recrean); borrar detalles/leyendas viejos.
+    // El STOCK NO se revierte aquí: se ajusta por diferencia más abajo.
     await this.prisma.pago.deleteMany({ where: { comprobanteId: comp.id } });
     await this.prisma.comisionVendedor.deleteMany({
       where: { comprobanteId: comp.id },
@@ -4598,12 +4604,40 @@ export class ComprobanteService {
           ? mtoImpVenta
           : 0;
 
-    // 4) Validar stock disponible para las nuevas cantidades (ya se revirtió el anterior)
-    await this.validarStockDisponibleParaVenta(detalleFinal, {
-      empresaId,
-      sedeId: finalSedeId,
-      usuarioId,
-    });
+    // 4) Calcular la DIFERENCIA de stock por producto (nueva − anterior):
+    //    delta > 0 ⇒ hay que descontar más (SALIDA); delta < 0 ⇒ devolver (INGRESO);
+    //    delta = 0 ⇒ no se genera movimiento. Así el Kardex solo refleja el cambio real.
+    const cantidadNuevaPorProducto = new Map<number, number>();
+    for (const d of detalleFinal) {
+      if (d.productoId == null) continue;
+      cantidadNuevaPorProducto.set(
+        d.productoId,
+        (cantidadNuevaPorProducto.get(d.productoId) ?? 0) + Number(d.cantidad),
+      );
+    }
+    const productosAfectados = new Set<number>([
+      ...cantidadAnteriorPorProducto.keys(),
+      ...cantidadNuevaPorProducto.keys(),
+    ]);
+    const detallesDescontar: any[] = [];
+    const detallesReponer: any[] = [];
+    for (const pid of productosAfectados) {
+      const delta =
+        (cantidadNuevaPorProducto.get(pid) ?? 0) -
+        (cantidadAnteriorPorProducto.get(pid) ?? 0);
+      if (delta > 0) detallesDescontar.push({ productoId: pid, cantidad: delta });
+      else if (delta < 0)
+        detallesReponer.push({ productoId: pid, cantidad: -delta });
+    }
+
+    // Validar disponibilidad solo del EXTRA a descontar (lo ya vendido no se revalida).
+    if (detallesDescontar.length > 0) {
+      await this.validarStockDisponibleParaVenta(detallesDescontar, {
+        empresaId,
+        sedeId: finalSedeId,
+        usuarioId,
+      });
+    }
 
     // 5) Actualizar el comprobante + recrear detalles (mismo id/serie/correlativo)
     await this.prisma.comprobante.update({
@@ -4636,14 +4670,24 @@ export class ComprobanteService {
       },
     });
 
-    // 6) Re-aplicar stock, pago y comisión
-    await this.ajustarStock(detalleFinal, {
-      empresaId,
-      comprobanteId: comp.id,
-      concepto: `Edición NV ${comp.serie}-${comp.correlativo}`,
-      sedeId: finalSedeId,
-      usuarioId,
-    });
+    // 6) Ajustar stock SOLO por la diferencia (descontar el extra / devolver lo quitado),
+    //    y re-aplicar pago y comisión.
+    if (detallesDescontar.length > 0) {
+      await this.ajustarStock(detallesDescontar, {
+        empresaId,
+        comprobanteId: comp.id,
+        concepto: `Edición NV ${comp.serie}-${comp.correlativo}`,
+        sedeId: finalSedeId,
+        usuarioId,
+      });
+    }
+    if (detallesReponer.length > 0) {
+      await this.revertirStock(detallesReponer, {
+        empresaId,
+        comprobanteId: comp.id,
+        concepto: `Edición NV ${comp.serie}-${comp.correlativo} (devolución por edición)`,
+      });
+    }
     if (montoPagado > 0) {
       await this.registrarPagosDeEmision({
         comprobanteId: comp.id,
