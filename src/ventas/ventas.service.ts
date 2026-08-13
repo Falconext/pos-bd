@@ -153,7 +153,17 @@ export class VentasService {
     if (cached && cached.expira > Date.now()) return cached.valor;
 
     const sedeFilter = sedeId ? { sedeId } : {};
-    const comprobanteUsuarioFilter = usuarioId ? { usuarioId } : {};
+    // Filtro por VENDEDOR efectivo: el vendedor de campo (vendedorCampoId) si existe,
+    // o el emisor (usuarioId) si la venta no tiene vendedor de campo asignado. Así el
+    // filtro coincide con la atribución de comisiones (no solo quién emitió el doc).
+    const comprobanteUsuarioFilter = usuarioId
+      ? {
+          OR: [
+            { vendedorCampoId: usuarioId },
+            { vendedorCampoId: null, usuarioId },
+          ],
+        }
+      : {};
     const pedidoUsuarioFilter = usuarioId ? { vendedorId: usuarioId } : {};
 
     const [comprobantes, pedidos] = await Promise.all([
@@ -235,7 +245,17 @@ export class VentasService {
     const finLima = new Date(`${params.fechaFin || fecha}T23:59:59-05:00`);
 
     const sedeFilter = sedeId ? { sedeId } : {};
-    const comprobanteUsuarioFilter = usuarioId ? { usuarioId } : {};
+    // Filtro por VENDEDOR efectivo: el vendedor de campo (vendedorCampoId) si existe,
+    // o el emisor (usuarioId) si la venta no tiene vendedor de campo asignado. Así el
+    // filtro coincide con la atribución de comisiones (no solo quién emitió el doc).
+    const comprobanteUsuarioFilter = usuarioId
+      ? {
+          OR: [
+            { vendedorCampoId: usuarioId },
+            { vendedorCampoId: null, usuarioId },
+          ],
+        }
+      : {};
     const pedidoUsuarioFilter = usuarioId ? { vendedorId: usuarioId } : {};
 
     const [comprobantesRaw, pedidosRaw, porCobrarGlobal] = await Promise.all([

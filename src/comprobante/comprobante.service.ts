@@ -847,7 +847,15 @@ export class ComprobanteService {
       };
     });
 
-    return { ...comp, detalles: detallesConLotes };
+    // ¿La comisión de este comprobante ya fue liquidada (PAGADO)? Si es así, el
+    // frontend deshabilita la reasignación de vendedor (no se puede mover una
+    // comisión ya pagada al vendedor).
+    const comisionLiquidada =
+      (await this.prisma.comisionVendedor.count({
+        where: { comprobanteId: id, estado: 'PAGADO' },
+      })) > 0;
+
+    return { ...comp, detalles: detallesConLotes, comisionLiquidada };
   }
 
   async anularComprobante(
@@ -4482,6 +4490,8 @@ export class ComprobanteService {
       adelanto,
       vendedorCampoId,
       vendedorCampoNombre,
+      cuotas,
+      fechaVencimientoCredito,
     } = input;
 
     if (!Array.isArray(detalles) || detalles.length === 0)
@@ -4641,6 +4651,21 @@ export class ComprobanteService {
       });
     }
 
+    // Cronograma de cuotas (solo si es crédito con saldo e info de cuotas/fecha).
+    let cuotasCronograma: any = null;
+    if (esCredito && saldo > 0) {
+      const tieneInfoCredito =
+        (Array.isArray(cuotas) && cuotas.length > 0) ||
+        !!fechaVencimientoCredito;
+      if (tieneInfoCredito) {
+        cuotasCronograma = this.normalizarCuotasCredito(
+          saldo,
+          cuotas,
+          fechaVencimientoCredito,
+        );
+      }
+    }
+
     // 5) Actualizar el comprobante + recrear detalles (mismo id/serie/correlativo)
     await this.prisma.comprobante.update({
       where: { id: comp.id },
@@ -4663,6 +4688,11 @@ export class ComprobanteService {
         estadoPago,
         saldo,
         adelanto: esCredito && adelantoNorm > 0 ? adelantoNorm : null,
+        fechaVencimientoCredito:
+          esCredito && fechaVencimientoCredito
+            ? new Date(fechaVencimientoCredito)
+            : null,
+        cuotas: cuotasCronograma ?? Prisma.JsonNull,
         vendedorCampoId: vendedorCampoIdFinal ?? null,
         vendedorCampoNombre: vendedorCampoNombreFinal ?? null,
         detalles: {
