@@ -459,10 +459,35 @@ export class ComprobanteService {
         OT: 'ORDEN DE TRABAJO',
       };
 
+      // Conversión: para las notas informales (NV/NP/TICKET/OT), detectar si ya
+      // fueron convertidas a un comprobante formal (boleta/factura). Se resuelve en
+      // UNA sola consulta para evitar N+1.
+      const informalIds = rawItems
+        .filter((it) =>
+          ['NV', 'NP', 'TICKET', 'OT', 'CP', 'RH'].includes(it.tipoDoc),
+        )
+        .map((it) => it.id);
+      const convertidoMap = new Map<number, string>();
+      if (informalIds.length > 0) {
+        const derivados = await this.prisma.comprobante.findMany({
+          where: { comprobanteOrigenId: { in: informalIds } },
+          select: { comprobanteOrigenId: true, serie: true, correlativo: true },
+        });
+        for (const d of derivados) {
+          if (d.comprobanteOrigenId != null && !convertidoMap.has(d.comprobanteOrigenId)) {
+            convertidoMap.set(
+              d.comprobanteOrigenId,
+              `${d.serie}-${String(d.correlativo).padStart(8, '0')}`,
+            );
+          }
+        }
+      }
+
       // Mapear etiqueta de comprobante (estadoPago/saldo ya vienen de DB si existen)
       const mapped = rawItems.map((it) => {
         const comprobante = tipoLabels[it.tipoDoc] || it.tipoDoc;
-        return { ...it, comprobante } as any;
+        const convertidoA = convertidoMap.get(it.id) ?? null;
+        return { ...it, comprobante, convertidoA } as any;
       });
 
       return { comprobantes: mapped, total: totalDb, page, limit };
@@ -855,7 +880,22 @@ export class ComprobanteService {
         where: { comprobanteId: id, estado: 'PAGADO' },
       })) > 0;
 
-    return { ...comp, detalles: detallesConLotes, comisionLiquidada };
+    // Si esta nota ya fue convertida a un comprobante formal, exponer cuál (para
+    // que la app avise al usuario y bloquee la edición proactivamente).
+    const derivadoConv = await this.prisma.comprobante.findFirst({
+      where: { comprobanteOrigenId: id },
+      select: { serie: true, correlativo: true },
+    });
+    const convertidoA = derivadoConv
+      ? `${derivadoConv.serie}-${String(derivadoConv.correlativo).padStart(8, '0')}`
+      : null;
+
+    return {
+      ...comp,
+      detalles: detallesConLotes,
+      comisionLiquidada,
+      convertidoA,
+    };
   }
 
   async anularComprobante(
@@ -5616,10 +5656,20 @@ export class ComprobanteService {
     tipoDoc?: string;
     estado?: string;
     estadoPago?: string;
+    columnas?: string;
     formato: 'excel' | 'pdf';
   }): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
     const { fechaInicio, fechaFin, formato } = params;
     const where = await this.construirWhereComprobantesMasivo(params);
+
+    // Columnas opcionales que el usuario dejó visibles en la tabla (CSV de keys).
+    // Si no llega el parámetro, se exportan todas las opcionales (comportamiento
+    // por defecto amigable).
+    const colsVisibles: Set<string> | null =
+      typeof params.columnas === 'string' && params.columnas.trim().length > 0
+        ? new Set(params.columnas.split(',').map((s) => s.trim()).filter(Boolean))
+        : null;
+    const verCol = (key: string) => (colsVisibles ? colsVisibles.has(key) : true);
 
     const comprobantes = await this.prisma.comprobante.findMany({
       where,
@@ -5633,10 +5683,29 @@ export class ComprobanteService {
         estadoPago: true,
         estadoEnvioSunat: true,
         mtoImpVenta: true,
+        saldo: true,
         // Cobranza en campo: vendedor de campo atribuido (se muestra en vez del usuario).
         vendedorCampoNombre: true,
         cliente: { select: { nombre: true, nroDoc: true } },
         usuario: { select: { nombre: true } },
+        // Cobros: a quién se dirigió el pago (registrar cobro).
+        pagos: {
+          select: { dirigidoA: true, vendedorNombre: true },
+          orderBy: { fecha: 'asc' },
+        },
+        // Despacho (para columnas de turno/celular/agencia/paquetes/repartidor).
+        envioDespacho: {
+          select: {
+            estado: true,
+            turnoEnvio: true,
+            celularDest: true,
+            agenciaDestino: true,
+            nroPaquetes: true,
+            repartidor: { select: { nombre: true } },
+          },
+        },
+        // Productos (para la columna Productos del export).
+        detalles: { select: { descripcion: true, cantidad: true } },
       },
     });
 
@@ -5682,8 +5751,39 @@ export class ComprobanteService {
         minute: '2-digit',
       });
 
+    // Etiqueta legible de "a quién fue dirigido el cobro" (dirigidoA del pago).
+    const etiquetaDirigido = (d?: string | null, v?: string | null) => {
+      const x = String(d ?? '').toUpperCase();
+      if (x === 'VENDEDOR') return v ? `Vendedor: ${v}` : 'Vendedor';
+      if (x === 'ADMINISTRADOR') return 'Administrador';
+      if (x === 'EMPRESA') return 'Empresa';
+      return '';
+    };
+
+    const SUNAT_LABEL: Record<string, string> = {
+      ACEPTADO: 'Aceptado',
+      EMITIDO: 'Aceptado',
+      PENDIENTE: 'Pendiente',
+      RECHAZADO: 'Rechazado',
+      ANULADO: 'Anulado',
+    };
+    const DESPACHO_LABEL: Record<string, string> = {
+      PREPARANDO: 'Preparando',
+      EN_CAMINO: 'En camino',
+      EN_DESTINO: 'En destino',
+      ENTREGADO: 'Entregado',
+      DEVUELTO: 'Devuelto',
+    };
+    const TIPOS_SUNAT_EXPORT = ['01', '03', '07', '08'];
+
     const filas = comprobantes.map((c) => {
       const anulado = String(c.estadoEnvioSunat) === 'ANULADO';
+      const dirigidos: string[] = [];
+      for (const p of c.pagos ?? []) {
+        const et = etiquetaDirigido(p.dirigidoA, p.vendedorNombre);
+        if (et && !dirigidos.includes(et)) dirigidos.push(et);
+      }
+      const tieneDespacho = !!c.envioDespacho;
       return {
         fecha: fmtFecha(c.fechaEmision as any),
         tipo: TIPO_LABEL[c.tipoDoc] ?? c.tipoDoc,
@@ -5691,7 +5791,21 @@ export class ComprobanteService {
         cliente: c.cliente?.nombre ?? 'CLIENTES VARIOS',
         docCliente: c.cliente?.nroDoc ?? '',
         vendedor: c.vendedorCampoNombre ?? c.usuario?.nombre ?? '',
+        cobroDirigidoA: dirigidos.join(', '),
         medioPago: c.medioPago ?? '',
+        saldo: Number(c.saldo ?? 0),
+        sunat: TIPOS_SUNAT_EXPORT.includes(c.tipoDoc)
+          ? (SUNAT_LABEL[String(c.estadoEnvioSunat)] ?? String(c.estadoEnvioSunat ?? ''))
+          : '—',
+        despacho: tieneDespacho ? (DESPACHO_LABEL[String(c.envioDespacho!.estado)] ?? String(c.envioDespacho!.estado ?? '')) : '—',
+        turno: tieneDespacho ? (c.envioDespacho!.turnoEnvio ?? '—') : '—',
+        celular: tieneDespacho ? (c.envioDespacho!.celularDest ?? '—') : '—',
+        agencia: tieneDespacho ? (c.envioDespacho!.agenciaDestino ?? '—') : '—',
+        paquetes: tieneDespacho ? (c.envioDespacho!.nroPaquetes ?? '—') : '—',
+        repartidor: tieneDespacho ? (c.envioDespacho!.repartidor?.nombre ?? '—') : '—',
+        productos: (c.detalles ?? [])
+          .map((d) => `${Number(d.cantidad)}x ${d.descripcion}`)
+          .join(', '),
         estadoPago: anulado
           ? 'Anulado'
           : (ESTADO_PAGO_LABEL[String(c.estadoPago)] ?? String(c.estadoPago ?? '')),
@@ -5712,29 +5826,39 @@ export class ComprobanteService {
     const rango = `${fechaInicio || '—'} al ${fechaFin || '—'}`;
     const baseNombre = `${tituloTipo.toLowerCase().replace(/ /g, '_')}_${fechaInicio || 'inicio'}_a_${fechaFin || 'fin'}`;
 
+    // Registro de columnas del export. Las FIJAS siempre salen; las OPCIONALES
+    // solo si el usuario las dejó visibles en la tabla (parámetro `columnas`).
+    // `key` debe coincidir con las keys del configurador de columnas del panel.
+    type ColDef = { header: string; wch: number; get: (f: (typeof filas)[number]) => any; total?: boolean };
+    const columnasExport: ColDef[] = [
+      { header: 'Fecha', wch: 17, get: (f) => f.fecha },
+      { header: 'Tipo', wch: 14, get: (f) => f.tipo },
+      { header: 'Documento', wch: 16, get: (f) => f.documento },
+      { header: 'Cliente', wch: 34, get: (f) => f.cliente },
+      { header: 'Doc. Cliente', wch: 13, get: (f) => f.docCliente },
+      { header: 'Vendedor', wch: 20, get: (f) => f.vendedor },
+      ...(verCol('dirigidoA') ? [{ header: 'Cobro dirigido a', wch: 22, get: (f: any) => f.cobroDirigidoA }] : []),
+      ...(verCol('mpago') ? [{ header: 'Medio Pago', wch: 13, get: (f: any) => f.medioPago }] : []),
+      ...(verCol('saldo') ? [{ header: 'Saldo S/', wch: 12, get: (f: any) => f.saldo }] : []),
+      { header: 'Estado Pago', wch: 13, get: (f) => f.estadoPago },
+      ...(verCol('sunat') ? [{ header: 'SUNAT', wch: 12, get: (f: any) => f.sunat }] : []),
+      ...(verCol('despacho') ? [{ header: 'Despacho', wch: 13, get: (f: any) => f.despacho }] : []),
+      ...(verCol('turno') ? [{ header: 'Turno', wch: 12, get: (f: any) => f.turno }] : []),
+      ...(verCol('celular') ? [{ header: 'Celular', wch: 13, get: (f: any) => f.celular }] : []),
+      ...(verCol('agencia') ? [{ header: 'Agencia', wch: 22, get: (f: any) => f.agencia }] : []),
+      ...(verCol('paq') ? [{ header: 'Paquetes', wch: 10, get: (f: any) => f.paquetes }] : []),
+      ...(verCol('repartidor') ? [{ header: 'Repartidor', wch: 20, get: (f: any) => f.repartidor }] : []),
+      ...(verCol('productos') ? [{ header: 'Productos', wch: 40, get: (f: any) => f.productos }] : []),
+      { header: 'Total S/', wch: 12, get: (f) => f.total, total: true },
+    ];
+
     if (formato === 'excel') {
-      const headers = [
-        'Fecha',
-        'Tipo',
-        'Documento',
-        'Cliente',
-        'Doc. Cliente',
-        'Vendedor',
-        'Medio Pago',
-        'Estado Pago',
-        'Total S/',
-      ];
-      const rows = filas.map((f) => [
-        f.fecha,
-        f.tipo,
-        f.documento,
-        f.cliente,
-        f.docCliente,
-        f.vendedor,
-        f.medioPago,
-        f.estadoPago,
-        f.total,
-      ]);
+      const headers = columnasExport.map((c) => c.header);
+      const rows = filas.map((f) => columnasExport.map((c) => c.get(f)));
+      // Fila TOTAL alineada bajo la columna de total.
+      const totalRow = columnasExport.map((c, i) =>
+        c.total ? totalGeneral : i === columnasExport.length - 2 ? 'TOTAL (sin anulados)' : '',
+      );
       const aoa = [
         [
           `${empresa?.nombreComercial || empresa?.razonSocial || ''} — ${tituloTipo} del ${rango}`,
@@ -5743,20 +5867,10 @@ export class ComprobanteService {
         headers,
         ...rows,
         [],
-        ['', '', '', '', '', '', '', 'TOTAL (sin anulados)', totalGeneral],
+        totalRow,
       ];
       const ws = XLSX.utils.aoa_to_sheet(aoa);
-      ws['!cols'] = [
-        { wch: 17 },
-        { wch: 14 },
-        { wch: 16 },
-        { wch: 34 },
-        { wch: 13 },
-        { wch: 20 },
-        { wch: 13 },
-        { wch: 13 },
-        { wch: 12 },
-      ];
+      ws['!cols'] = columnasExport.map((c) => ({ wch: c.wch }));
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, tituloTipo.slice(0, 31));
       const buffer = XLSX.write(wb, {
@@ -5777,20 +5891,23 @@ export class ComprobanteService {
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
+    // Mismas columnas que el Excel (respeta la configuración del usuario).
     const filasHtml = filas
       .map(
         (f) => `
         <tr${f.anulado ? ' style="color:#b91c1c;text-decoration:line-through;"' : ''}>
-          <td>${esc(f.fecha)}</td>
-          <td>${esc(f.tipo)}</td>
-          <td>${esc(f.documento)}</td>
-          <td>${esc(f.cliente)}</td>
-          <td>${esc(f.vendedor)}</td>
-          <td>${esc(f.medioPago)}</td>
-          <td>${esc(f.estadoPago)}</td>
-          <td class="num">${f.total.toFixed(2)}</td>
+          ${columnasExport
+            .map((c) =>
+              c.total
+                ? `<td class="num">${Number(c.get(f)).toFixed(2)}</td>`
+                : `<td>${esc(String(c.get(f) ?? ''))}</td>`,
+            )
+            .join('')}
         </tr>`,
       )
+      .join('');
+    const theadHtml = columnasExport
+      .map((c) => (c.total ? `<th class="num">${esc(c.header)}</th>` : `<th>${esc(c.header)}</th>`))
       .join('');
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
       * { font-family: Arial, Helvetica, sans-serif; box-sizing: border-box; }
@@ -5806,9 +5923,9 @@ export class ComprobanteService {
       <h1>${esc(empresa?.nombreComercial || empresa?.razonSocial || '')} — ${esc(tituloTipo)}</h1>
       <div class="sub">RUC ${esc(empresa?.ruc || '')} · Periodo: ${esc(rango)} · ${filas.length} documento(s) · Generado: ${fmtFecha(new Date())}</div>
       <table>
-        <thead><tr><th>Fecha</th><th>Tipo</th><th>Documento</th><th>Cliente</th><th>Vendedor</th><th>Medio Pago</th><th>Estado Pago</th><th class="num">Total S/</th></tr></thead>
+        <thead><tr>${theadHtml}</tr></thead>
         <tbody>${filasHtml}</tbody>
-        <tfoot><tr><td colspan="7">TOTAL (sin anulados)</td><td class="num">S/ ${totalGeneral.toFixed(2)}</td></tr></tfoot>
+        <tfoot><tr><td colspan="${columnasExport.length - 1}">TOTAL (sin anulados)</td><td class="num">S/ ${totalGeneral.toFixed(2)}</td></tr></tfoot>
       </table>
     </body></html>`;
 

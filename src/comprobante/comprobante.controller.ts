@@ -322,6 +322,9 @@ export class ComprobanteController {
       tipoDoc: query.tipoDoc,
       estado: query.estado,
       estadoPago: query.estadoPago,
+      // Columnas visibles elegidas por el usuario en la tabla (CSV de keys). Si no
+      // llega, se exportan las columnas por defecto.
+      columnas: (query as any).columnas,
       formato,
     });
 

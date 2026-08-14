@@ -13,6 +13,168 @@ import { UpdateUserDto } from './dto/update-user.dto';
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * Recalcula las comisiones PENDIENTES de un vendedor con su configuración de
+   * comisión ACTUAL (útil cuando se cambia el %/monto de comisión del usuario).
+   * NO toca las comisiones ya liquidadas (estado PAGADO): esas ya se pagaron y
+   * deben conservar el valor con que se liquidaron. Devuelve cuántos comprobantes
+   * se recalcularon.
+   */
+  async recalcularComisionesPendientes(
+    empresaId: number,
+    vendedorId: number,
+  ): Promise<number> {
+    // 1) Config de comisión ACTUAL del vendedor (una sola lectura).
+    const vendedor = await this.prisma.usuario.findFirst({
+      where: { id: vendedorId, empresaId },
+      select: {
+        comisionGlobal: true,
+        comisionGlobalFija: true,
+        comisionGlobalVenta: true,
+      },
+    });
+    if (!vendedor) return 0;
+    const gPct = Number(vendedor.comisionGlobal ?? 0);
+    const gFija = Number(vendedor.comisionGlobalFija ?? 0);
+    const gVenta = Number(vendedor.comisionGlobalVenta ?? 0);
+
+    // 2) Comprobantes con comisiones PENDIENTES, excluyendo los que tengan alguna
+    //    comisión liquidada (PAGADO) — esos NO se tocan. Dos lecturas.
+    const [pendientes, pagados] = await Promise.all([
+      this.prisma.comisionVendedor.findMany({
+        where: { empresaId, vendedorId, estado: 'PENDIENTE' },
+        select: { comprobanteId: true },
+        distinct: ['comprobanteId'],
+      }),
+      this.prisma.comisionVendedor.findMany({
+        where: { empresaId, vendedorId, estado: 'PAGADO' },
+        select: { comprobanteId: true },
+        distinct: ['comprobanteId'],
+      }),
+    ]);
+    const conPagado = new Set(pagados.map((c) => c.comprobanteId));
+    const comprobanteIds = pendientes
+      .map((c) => c.comprobanteId)
+      .filter((id) => !conPagado.has(id));
+    if (comprobanteIds.length === 0) return 0;
+
+    // 3) Todos los comprobantes con sus detalles (una sola lectura).
+    const comprobantes = await this.prisma.comprobante.findMany({
+      where: { id: { in: comprobanteIds }, empresaId },
+      select: {
+        id: true,
+        fechaEmision: true,
+        detalles: {
+          select: {
+            productoId: true,
+            descripcion: true,
+            cantidad: true,
+            mtoPrecioUnitario: true,
+          },
+        },
+      },
+    });
+
+    // 4) Config de comisión de TODOS los productos involucrados (una sola lectura).
+    const productoIds = [
+      ...new Set(
+        comprobantes.flatMap((c) =>
+          c.detalles.map((d) => d.productoId).filter((x): x is number => x != null),
+        ),
+      ),
+    ];
+    const productos = productoIds.length
+      ? await this.prisma.producto.findMany({
+          where: { id: { in: productoIds }, empresaId },
+          select: {
+            id: true,
+            descripcion: true,
+            comisionPorVenta: true,
+            comisionPorcentaje: true,
+          },
+        })
+      : [];
+    const productoMap = new Map(productos.map((p) => [p.id, p]));
+
+    // 5) Calcular en memoria todas las nuevas comisiones (misma lógica que
+    //    registrarComisionesDesdeComprobante: producto fijo → producto % →
+    //    global fijo → global %, más la comisión por venta/ticket una vez).
+    const nuevas: any[] = [];
+    for (const comp of comprobantes) {
+      const fecha = new Date(comp.fechaEmision);
+      const mes = fecha.getMonth() + 1;
+      const anio = fecha.getFullYear();
+      for (const d of comp.detalles) {
+        if (d.productoId == null) continue;
+        const prod = productoMap.get(d.productoId);
+        if (!prod) continue;
+        const cant = Number(d.cantidad);
+        const precio = Number(d.mtoPrecioUnitario);
+        const pFija = Number(prod.comisionPorVenta ?? 0);
+        const pPct = Number(prod.comisionPorcentaje ?? 0);
+        let monto = 0;
+        let motivo = '';
+        if (pFija > 0) {
+          monto = pFija * cant;
+          motivo = `Comisión fija del producto: S/ ${pFija.toFixed(2)} × ${cant} und.`;
+        } else if (pPct > 0) {
+          monto = (pPct / 100) * precio * cant;
+          motivo = `Comisión del producto: ${pPct}% del precio (S/ ${precio.toFixed(2)}) × ${cant} und.`;
+        } else if (gFija > 0) {
+          monto = gFija * cant;
+          motivo = `Comisión global fija del vendedor: S/ ${gFija.toFixed(2)} × ${cant} und.`;
+        } else if (gPct > 0) {
+          monto = (gPct / 100) * precio * cant;
+          motivo = `Comisión global del vendedor: ${gPct}% del precio (S/ ${precio.toFixed(2)}) × ${cant} und.`;
+        }
+        if (monto <= 0) continue;
+        nuevas.push({
+          vendedorId,
+          comprobanteId: comp.id,
+          productoId: d.productoId,
+          empresaId,
+          mes,
+          anio,
+          cantidad: String(cant),
+          montoComision: monto.toFixed(2),
+          descripcion: prod.descripcion,
+          motivo,
+        });
+      }
+      if (gVenta > 0) {
+        nuevas.push({
+          vendedorId,
+          comprobanteId: comp.id,
+          productoId: null,
+          empresaId,
+          mes,
+          anio,
+          cantidad: '1',
+          montoComision: gVenta.toFixed(2),
+          descripcion: 'Comisión Fija por Venta',
+          motivo: `Comisión fija por venta/ticket del vendedor: S/ ${gVenta.toFixed(2)} (una vez por comprobante)`,
+        });
+      }
+    }
+
+    // 6) Reemplazo atómico: borra las PENDIENTES del vendedor en esos comprobantes
+    //    y crea las recalculadas, todo en una transacción (rápido y consistente).
+    await this.prisma.$transaction([
+      this.prisma.comisionVendedor.deleteMany({
+        where: {
+          vendedorId,
+          estado: 'PENDIENTE',
+          comprobanteId: { in: comprobanteIds },
+        },
+      }),
+      ...(nuevas.length
+        ? [this.prisma.comisionVendedor.createMany({ data: nuevas })]
+        : []),
+    ]);
+
+    return comprobanteIds.length;
+  }
+
   private buildSistemaScope(actor?: {
     sistemaNegocio?: string | null;
     sistemaProducto?: string | null;
@@ -252,6 +414,16 @@ export class UsersService {
     if (usuario.empresaId !== empresaId)
       throw new ForbiddenException('Empresa no identificada');
 
+    // ¿Cambió la configuración de comisión? Se compara contra el valor previo para
+    // recalcular después las comisiones PENDIENTES (las liquidadas no se tocan).
+    const comisionCambio =
+      (comisionGlobal !== undefined &&
+        Number(comisionGlobal) !== Number(usuario.comisionGlobal ?? 0)) ||
+      (comisionGlobalFija !== undefined &&
+        Number(comisionGlobalFija) !== Number(usuario.comisionGlobalFija ?? 0)) ||
+      (comisionGlobalVenta !== undefined &&
+        Number(comisionGlobalVenta) !== Number(usuario.comisionGlobalVenta ?? 0));
+
     // Solo se cambia la contraseña si viene una nueva no vacía; si no, se deja igual.
     const nuevaPasswordHash =
       typeof password === 'string' && password.trim() !== ''
@@ -365,6 +537,26 @@ export class UsersService {
       },
     });
 
+    // Si cambió la comisión, recalcular las comisiones PENDIENTES del vendedor con
+    // el nuevo %/monto (las liquidadas se conservan). Es síncrono pero optimizado
+    // (~5 consultas + 1 transacción), así el panel queda actualizado al instante y
+    // sin timeouts.
+    let comisionesRecalculadas = 0;
+    if (comisionCambio) {
+      try {
+        comisionesRecalculadas = await this.recalcularComisionesPendientes(
+          empresaId,
+          id,
+        );
+      } catch (err: any) {
+        // No bloquear la edición del usuario si el recálculo falla; se registra.
+        console.warn(
+          '[usuarios.update] Error al recalcular comisiones pendientes:',
+          err?.message,
+        );
+      }
+    }
+
     return {
       ...updatedConRelaciones,
       sedes: (updatedConRelaciones?.sedesAsignadas || []).map((us) => us.sede),
@@ -373,6 +565,7 @@ export class UsersService {
         (us) => us.subModulo,
       ),
       subModulosAsignados: undefined,
+      comisionesRecalculadas,
     };
   }
 
