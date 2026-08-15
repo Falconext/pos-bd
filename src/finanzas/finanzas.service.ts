@@ -54,6 +54,10 @@ export class FinanzasService {
 
     // 3. Flujo de Caja (Ingresos vs Egresos) en el rango de fechas.
     // Fuente principal: pagos reales. Respaldo: comprobantes antiguos completados sin pagos.
+    // Se excluyen las COTIZACIONES (COT) — son presupuestos, no ventas — y las
+    // notas de crédito (07) — son devoluciones, no ingresos. Antes se colaban en el
+    // flujo de caja e inflaban los ingresos del día (ej. cotizaciones marcadas COMPLETADO).
+    const TIPOS_NO_INGRESO = ['COT', '07'];
     const pagosIngreso = await this.prisma.pago.findMany({
       where: {
         empresaId,
@@ -62,6 +66,7 @@ export class FinanzasService {
           ...(sedeId ? { sedeId } : {}),
           ...(usuarioId ? { usuarioId } : {}),
           estadoEnvioSunat: { not: 'ANULADO' },
+          tipoDoc: { notIn: TIPOS_NO_INGRESO },
         },
       },
       select: {
@@ -84,6 +89,7 @@ export class FinanzasService {
         formaPagoTipo: { in: ['Contado', 'CONTADO', 'contado'] },
         estadoEnvioSunat: { not: 'ANULADO' },
         estadoPago: 'COMPLETADO',
+        tipoDoc: { notIn: TIPOS_NO_INGRESO },
         pagos: { none: {} },
       },
       select: {
@@ -221,6 +227,9 @@ export class FinanzasService {
     const comprobanteWhere: any = {
       empresaId,
       estadoEnvioSunat: { not: 'ANULADO' },
+      // Excluir cotizaciones (COT, presupuestos) y notas de crédito (07, devoluciones):
+      // no son ventas reales y no deben contar en ingresos/rentabilidad.
+      tipoDoc: { notIn: ['COT', '07'] },
       fechaEmision: { gte: inicioRango, lte: finRango },
     };
     if (sedeId) {
