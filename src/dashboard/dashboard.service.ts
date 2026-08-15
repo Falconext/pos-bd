@@ -483,6 +483,9 @@ export class DashboardService {
     const baseCompraWhere = {
       empresaId,
       ...compraSedeFilter,
+      // Excluir compras anuladas (borrado lógico): igual que el listado de compras,
+      // no deben contar en el Resumen Financiero una vez eliminadas.
+      estado: { not: 'ANULADO' as any },
     };
 
     const TIPOS_FINANCIAMIENTO = ['PRESTAMO', 'INVERSION', 'CAPITAL'];
