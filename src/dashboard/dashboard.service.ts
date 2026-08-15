@@ -943,13 +943,22 @@ export class DashboardService {
       prevRange.lte,
     );
 
-    const gastosCurr = comprasCurr + gastoOpCurr + marketingCurr;
-    const gastosPrev = comprasPrev + gastoOpPrev + marketingPrev;
-    const gananciasCurr = ingresosCurr - gastosCurr;
-    const gananciasPrev = ingresosPrev - gastosPrev;
+    // GASTOS = solo gastos operativos + marketing. Las COMPRAS se muestran en su
+    // propia línea, así que NO se suman aquí (antes gastos = compras + ... hacía que
+    // GASTOS y COMPRAS mostraran el mismo valor cuando no había gastos operativos).
+    const gastosCurr = gastoOpCurr + marketingCurr;
+    const gastosPrev = gastoOpPrev + marketingPrev;
+    // GANANCIAS = ingresos − compras − gastos operativos (el resultado es el mismo
+    // que antes; solo se separa "compras" de "gastos" en la presentación).
+    const gananciasCurr = ingresosCurr - comprasCurr - gastosCurr;
+    const gananciasPrev = ingresosPrev - comprasPrev - gastosPrev;
 
     const gastosTrend =
-      gastosPrev === 0 ? 100 : ((gastosCurr - gastosPrev) / gastosPrev) * 100;
+      gastosCurr === 0
+        ? 0
+        : gastosPrev === 0
+          ? 100
+          : ((gastosCurr - gastosPrev) / gastosPrev) * 100;
     const comprasTrend =
       comprasPrev === 0
         ? 100
