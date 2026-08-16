@@ -144,6 +144,88 @@ export class EnviarSunatService {
 
   public simulateSunatFailure = false;
 
+  // Importe (S/) a partir del cual SUNAT exige identificar al adquirente en una
+  // Boleta de Venta. Hasta este monto se acepta consumidor final sin documento.
+  private static readonly BOLETA_LIMITE_IDENTIFICACION = 700;
+
+  // ¿El número de documento es un placeholder (equivalente a "sin documento")?
+  // Cubre vacío, todo ceros ("0", "00000000") y el placeholder histórico de
+  // "CLIENTES VARIOS" (10000000) que se sembraba como DNI ficticio.
+  private esDocumentoPlaceholder(nroDoc: string | null | undefined): boolean {
+    const s = String(nroDoc ?? '').trim();
+    if (!s) return true;
+    if (/^0+$/.test(s)) return true; // "0", "00000000"
+    if (s === '10000000') return true; // placeholder de CLIENTES VARIOS
+    return false;
+  }
+
+  // ¿El adquirente NO está realmente identificado? (cliente genérico o doc placeholder)
+  private esClienteNoIdentificado(cliente: any): boolean {
+    const nombre = String(cliente?.nombre ?? '')
+      .trim()
+      .toUpperCase();
+    if (nombre === '' || nombre === 'CLIENTES VARIOS' || nombre === 'VARIOS') {
+      return true;
+    }
+    return this.esDocumentoPlaceholder(cliente?.nroDoc);
+  }
+
+  // Casuística SUNAT (Catálogo 06) para el adquirente en Boletas de Venta:
+  //  • Cliente NO identificado + importe ≤ S/700 → tipo doc "0" (SIN DOCUMENTO)
+  //    + número "0". SUNAT acepta consumidor final sin identificar por montos menores.
+  //  • Cliente NO identificado + importe > S/700 → SUNAT EXIGE documento real;
+  //    se bloquea la emisión (error de datos, NO reintentar) para que el usuario
+  //    corrija el cliente antes de reenviar.
+  //  • Factura (01) → siempre exige RUC (11 dígitos); no puede ir con placeholder.
+  //  • Cualquier otro caso → se respeta el tipo/número tal cual está registrado.
+  private resolveCustomerIdentity(comp: any): {
+    schemeID: string;
+    numero: string;
+    nombre: string;
+  } {
+    const esBoleta = comp.tipoDoc === '03';
+    const esFactura = comp.tipoDoc === '01';
+    const nombreOriginal = String(comp.cliente?.nombre ?? '').trim();
+    const nroDocOriginal = String(comp.cliente?.nroDoc ?? '').trim();
+    const total = Number(comp.mtoImpVenta ?? comp.total ?? 0);
+    const noIdentificado = this.esClienteNoIdentificado(comp.cliente);
+
+    // Factura: SUNAT exige identificar al adquirente con documento real (RUC en
+    // ventas internas). No puede emitirse con documento placeholder / cliente
+    // genérico. Los clientes con documento real (incluido no domiciliados en
+    // exportación) pasan sin problema; solo se bloquea el caso "sin identificar".
+    if (esFactura && noIdentificado) {
+      throw new SunatPayloadException(
+        `Factura sin adquirente identificado: SUNAT exige el RUC (11 dígitos) y la razón ` +
+          `social del cliente. No se puede emitir una Factura con documento en blanco, en ceros ` +
+          `o "CLIENTES VARIOS". Si el cliente no tiene RUC, emita una Boleta.`,
+      );
+    }
+
+    if (esBoleta && noIdentificado) {
+      if (total > EnviarSunatService.BOLETA_LIMITE_IDENTIFICACION) {
+        throw new SunatPayloadException(
+          `Boleta por S/ ${total.toFixed(2)} (mayor a S/ 700): SUNAT exige identificar al ` +
+            `adquirente con documento real (DNI de 8 dígitos o RUC). Registre el documento y ` +
+            `nombre del cliente antes de emitir.`,
+        );
+      }
+      // Consumidor final sin identificación → tipo "0" + número "0" (Catálogo 06).
+      // Se conserva el nombre si el usuario escribió uno real; si no, "VARIOS".
+      const nombreGenerico =
+        nombreOriginal && nombreOriginal.toUpperCase() !== 'CLIENTES VARIOS'
+          ? nombreOriginal
+          : 'VARIOS';
+      return { schemeID: '0', numero: '0', nombre: nombreGenerico };
+    }
+
+    return {
+      schemeID: getTipoDocumentoSchemeId(comp.cliente?.tipoDocumento?.codigo),
+      numero: nroDocOriginal,
+      nombre: nombreOriginal,
+    };
+  }
+
   private getJambleCorrelativoFloor(
     empresaId: number,
     serie: string,
@@ -418,6 +500,9 @@ export class EnviarSunatService {
         );
       }
 
+      // Casuística SUNAT del adquirente (boleta genérica ≤ S/700, factura con RUC, etc.)
+      const customerIdentity = this.resolveCustomerIdentity(comp);
+
       payload = {
         fileName,
         documentBody: {
@@ -506,15 +591,13 @@ export class EnviarSunatService {
               'cac:PartyIdentification': {
                 'cbc:ID': {
                   _attributes: {
-                    schemeID: getTipoDocumentoSchemeId(
-                      comp.cliente.tipoDocumento?.codigo,
-                    ),
+                    schemeID: customerIdentity.schemeID,
                   },
-                  _text: comp.cliente.nroDoc,
+                  _text: customerIdentity.numero,
                 },
               },
               'cac:PartyLegalEntity': {
-                'cbc:RegistrationName': { _text: comp.cliente.nombre },
+                'cbc:RegistrationName': { _text: customerIdentity.nombre },
                 'cac:RegistrationAddress': {
                   'cac:AddressLine': {
                     'cbc:Line': {

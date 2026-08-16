@@ -2989,14 +2989,40 @@ export class ComprobanteService {
    * por errores de red, ya que esos sí deben reintentarse.
    */
   async eliminarComprobante(id: number) {
+    // Este comprobante se descarta (p. ej. rechazo fatal de SUNAT por datos
+    // inválidos). Si al crearlo se descontó stock, hay que DEVOLVERLO: de lo
+    // contrario quedan SALIDAs de kardex huérfanas y el inventario baja por una
+    // venta que nunca existió. `revertirStock` es no-op si no hubo SALIDA
+    // (p. ej. conversión desde informal, donde la salida vive en el origen).
+    const comp = await this.prisma.comprobante.findUnique({
+      where: { id },
+      select: {
+        empresaId: true,
+        tipoDoc: true,
+        serie: true,
+        correlativo: true,
+        detalles: { select: { productoId: true, cantidad: true } },
+      },
+    });
+    if (comp && comp.tipoDoc !== '07') {
+      await this.revertirStock(comp.detalles as any[], {
+        empresaId: comp.empresaId,
+        comprobanteId: id,
+        concepto: `Descarte ${comp.tipoDoc} ${comp.serie}-${comp.correlativo} (rechazado)`,
+      });
+    }
+
     // Borrar hijos sin cascade antes de eliminar el padre
     await this.prisma.detalleComprobante.deleteMany({
       where: { comprobanteId: id },
     });
     await this.prisma.leyenda.deleteMany({ where: { comprobanteId: id } });
-    await this.prisma.movimientoKardex.updateMany({
+    // Al descartar un comprobante rechazado no debe quedar rastro en el kardex:
+    // se eliminan tanto la SALIDA original como el INGRESO de reversión (el
+    // stock ya quedó corregido por revertirStock). Otros movimientos ajenos no
+    // se tocan (el filtro es por comprobanteId).
+    await this.prisma.movimientoKardex.deleteMany({
       where: { comprobanteId: id },
-      data: { comprobanteId: null },
     });
     await this.prisma.comprobante.delete({ where: { id } });
   }
@@ -4483,14 +4509,18 @@ export class ComprobanteService {
       where: { id: comprobanteId, empresaId },
       include: { detalles: true },
     });
-    if (!comp) throw new NotFoundException('Nota de venta no encontrada');
-    if (comp.tipoDoc !== 'NV')
+    if (!comp) throw new NotFoundException('Comprobante no encontrado');
+    // Editables in-place: los comprobantes INFORMALES (no van a SUNAT). Las Boletas
+    // y Facturas (01/03) ya emitidas NO se editan (se anulan y reemplazan), y las
+    // cotizaciones (COT) tienen su propio flujo de edición.
+    const TIPOS_INFORMALES_EDITABLES = ['NV', 'TICKET', 'NP', 'OT', 'RH', 'CP'];
+    if (!TIPOS_INFORMALES_EDITABLES.includes(comp.tipoDoc))
       throw new BadRequestException(
-        'Solo se pueden editar Notas de Venta (NV).',
+        'Solo se pueden editar comprobantes informales (Nota de Venta, Ticket, Nota de Pedido, Orden de Trabajo, Recibo por Honorario, Comprobante de Pago).',
       );
     if (comp.estadoEnvioSunat === 'ANULADO')
       throw new BadRequestException(
-        'La nota de venta está anulada y no puede editarse.',
+        'El comprobante está anulado y no puede editarse.',
       );
 
     // No editar si ya fue convertida a un comprobante formal (boleta/factura).
@@ -4748,7 +4778,7 @@ export class ComprobanteService {
       await this.ajustarStock(detallesDescontar, {
         empresaId,
         comprobanteId: comp.id,
-        concepto: `Edición NV ${comp.serie}-${comp.correlativo}`,
+        concepto: `Edición ${comp.tipoDoc} ${comp.serie}-${comp.correlativo}`,
         sedeId: finalSedeId,
         usuarioId,
       });
@@ -4757,7 +4787,7 @@ export class ComprobanteService {
       await this.revertirStock(detallesReponer, {
         empresaId,
         comprobanteId: comp.id,
-        concepto: `Edición NV ${comp.serie}-${comp.correlativo} (devolución por edición)`,
+        concepto: `Edición ${comp.tipoDoc} ${comp.serie}-${comp.correlativo} (devolución por edición)`,
       });
     }
     if (montoPagado > 0) {
@@ -4769,7 +4799,7 @@ export class ComprobanteService {
         paymentDetails,
         splitPayments,
         montoPagado,
-        documento: `NV-${comp.serie}-${comp.correlativo}`,
+        documento: `${comp.tipoDoc}-${comp.serie}-${comp.correlativo}`,
         fecha: new Date(fechaEmision ?? comp.fechaEmision),
       });
     }

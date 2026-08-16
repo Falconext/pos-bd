@@ -138,9 +138,14 @@ export class ClienteService {
     this.validarDocumento(tipoDoc, nroDoc);
     const tipoDocumento = await this.obtenerTipoDocumento(tipoDoc);
 
-    const existe = await this.prisma.cliente.findFirst({
-      where: { nroDoc, empresaId: data.empresaId },
-    });
+    // Cliente "sin documento" (tipo Otros con número placeholder): se permite tener
+    // varios (p. ej. distintos colegios sin RUC), por eso NO se deduplica por nroDoc.
+    const esSinDocumento = tipoDoc === 'OTRO' && (!nroDoc || /^0+$/.test(nroDoc));
+    const existe = esSinDocumento
+      ? null
+      : await this.prisma.cliente.findFirst({
+          where: { nroDoc, empresaId: data.empresaId },
+        });
     const nuevaPersona = (data.persona as PersonaType) || PersonaType.CLIENTE;
     if (existe) {
       if (
