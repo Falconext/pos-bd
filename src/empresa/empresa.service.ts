@@ -1148,6 +1148,10 @@ export class EmpresaService {
       if (dto.usuarioPse !== undefined) updateData.usuarioPse = dto.usuarioPse;
       if (dto.contrasenaPse !== undefined)
         updateData.contrasenaPse = dto.contrasenaPse;
+      if (dto.sunatClientId !== undefined)
+        updateData.sunatClientId = dto.sunatClientId || null;
+      if (dto.sunatClientSecret !== undefined)
+        updateData.sunatClientSecret = dto.sunatClientSecret || null;
       if (dto.whatsappProvider !== undefined)
         updateData.whatsappProvider = dto.whatsappProvider;
       if (dto.whatsappApiToken !== undefined)

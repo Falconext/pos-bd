@@ -421,6 +421,17 @@ export class ComprobanteController {
     return this.service.conciliarComprobante(id, user.empresaId);
   }
 
+  // Consulta a SUNAT (API "Consulta de Validez de CPE") si el comprobante fue
+  // ACEPTADO. Si lo está y estaba pendiente, lo marca EMITIDO automáticamente.
+  @Patch(':id/verificar-sunat')
+  @Roles('ADMIN_EMPRESA')
+  async verificarValidezSunat(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+  ) {
+    return this.service.verificarValidezSunat(id, user.empresaId);
+  }
+
   @Patch(':comprobanteId/anular')
   @Roles('ADMIN_EMPRESA')
   async anularComprobante(

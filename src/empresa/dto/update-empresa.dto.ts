@@ -233,6 +233,15 @@ export class UpdateEmpresaDto {
   @IsString()
   contrasenaPse?: string;
 
+  // Credenciales de API "Consulta de Validez de CPE" de SUNAT (portal SOL).
+  @IsOptional()
+  @IsString()
+  sunatClientId?: string;
+
+  @IsOptional()
+  @IsString()
+  sunatClientSecret?: string;
+
   @IsOptional()
   @IsString()
   @IsIn(['PLATFORM', 'EMPRESA', 'DISABLED'])

@@ -1,4 +1,5 @@
 import { num, round3 } from '../common/utils/stock';
+import { SunatValidezClient } from '../common/utils/sunat-validez.client';
 import {
   BadRequestException,
   Injectable,
@@ -3090,6 +3091,105 @@ export class ComprobanteService {
    * QPSE no permite reconsultar el CDR de una boleta (responde 409 "no aplica"),
    * así que se concilia dejando constancia. No toca stock ni reenvía a SUNAT.
    */
+  /**
+   * Verifica en SUNAT (API "Consulta de Validez de CPE") si un comprobante fue
+   * ACEPTADO. Si lo está y estaba en PENDIENTE_CONCILIACION/PENDIENTE/FALLIDO_ENVIO,
+   * lo marca EMITIDO dejando constancia. No reenvía nada a SUNAT ni toca stock.
+   * Requiere que la empresa tenga cargadas las credenciales de API SUNAT
+   * (sunatClientId / sunatClientSecret) generadas en el portal SOL.
+   */
+  async verificarValidezSunat(id: number, empresaId: number) {
+    const comp = await this.prisma.comprobante.findFirst({
+      where: { id, empresaId },
+      select: {
+        id: true,
+        tipoDoc: true,
+        serie: true,
+        correlativo: true,
+        fechaEmision: true,
+        mtoImpVenta: true,
+        estadoEnvioSunat: true,
+        empresa: {
+          select: {
+            ruc: true,
+            sunatClientId: true,
+            sunatClientSecret: true,
+          },
+        },
+      },
+    });
+    if (!comp) throw new NotFoundException('Comprobante no encontrado');
+    if (!['01', '03', '07', '08'].includes(comp.tipoDoc)) {
+      throw new BadRequestException(
+        'Solo se puede verificar en SUNAT Facturas, Boletas y Notas (01/03/07/08).',
+      );
+    }
+    const clientId = comp.empresa?.sunatClientId?.trim();
+    const clientSecret = comp.empresa?.sunatClientSecret?.trim();
+    if (!clientId || !clientSecret) {
+      throw new BadRequestException(
+        'Faltan las credenciales de API SUNAT (Consulta de Validez). Configúralas en ' +
+          'Empresa → Facturación (client_id / client_secret generados en tu portal SOL).',
+      );
+    }
+
+    // Fecha de emisión en dd/mm/aaaa (formato que exige SUNAT).
+    const f = new Date(comp.fechaEmision as any);
+    const dd = String(f.getUTCDate()).padStart(2, '0');
+    const mm = String(f.getUTCMonth() + 1).padStart(2, '0');
+    const yyyy = f.getUTCFullYear();
+    const fechaEmision = `${dd}/${mm}/${yyyy}`;
+
+    const client = new SunatValidezClient();
+    let result;
+    try {
+      result = await client.verificar({
+        clientId,
+        clientSecret,
+        rucEmisor: comp.empresa!.ruc,
+        codComprobante: comp.tipoDoc,
+        serie: comp.serie,
+        numero: comp.correlativo,
+        fechaEmision,
+        monto: Number(comp.mtoImpVenta ?? 0).toFixed(2),
+      });
+    } catch (e: any) {
+      throw new BadRequestException(
+        `No se pudo consultar SUNAT: ${e?.message || 'error desconocido'}`,
+      );
+    }
+
+    let conciliado = false;
+    if (result.estado === 'ACEPTADO') {
+      const estadosConciliables = [
+        'PENDIENTE_CONCILIACION',
+        'PENDIENTE',
+        'FALLIDO_ENVIO',
+      ];
+      if (estadosConciliables.includes(String(comp.estadoEnvioSunat))) {
+        await this.prisma.comprobante.update({
+          where: { id: comp.id },
+          data: {
+            estadoEnvioSunat: 'EMITIDO' as any,
+            sunatNextRetryAt: null,
+            sunatErrorMsg:
+              'Verificado en SUNAT (Consulta de Validez): comprobante ACEPTADO.',
+          },
+        });
+        conciliado = true;
+      }
+    }
+
+    return {
+      estado: result.estado, // ACEPTADO | NO_EXISTE | ANULADO | DESCONOCIDO
+      estadoCp: result.estadoCp,
+      conciliado, // true si se marcó EMITIDO en este llamado
+      serie: comp.serie,
+      correlativo: comp.correlativo,
+      observaciones: result.observaciones,
+    };
+  }
+
   async conciliarComprobante(id: number, empresaId: number) {
     const comp = await this.prisma.comprobante.findFirst({
       where: { id, empresaId },

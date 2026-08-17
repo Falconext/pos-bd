@@ -242,6 +242,11 @@ model Empresa {
   hotelSyncAt          DateTime?
   usuarioPse           String?
   contrasenaPse        String?
+  // Credenciales de API "Consulta de Validez de CPE" de SUNAT (client credentials
+  // generadas en el portal SOL). Permiten verificar en SUNAT si un comprobante
+  // fue aceptado (usado para conciliar comprobantes cuyo CDR no llegó).
+  sunatClientId        String?
+  sunatClientSecret    String?
   usaDemo              Boolean                 @default(false)
   metodoSalidaLotes    String                  @default("LIFO")
   notas                NotaEmpresa[]
