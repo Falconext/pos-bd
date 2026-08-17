@@ -1792,11 +1792,20 @@ export class ComprobanteService {
         }
         const esGratLibre = this.esGratuito(tipAfeIgvLibre);
         const mtoValorVenta = this.round2(valorUnitario * cantidad);
+        // Producto externo (ítem libre) con número de serie: se conserva la serie en
+        // el detalle para trazabilidad/garantía. No se valida contra inventario (no
+        // hay producto en catálogo), solo se guarda tal cual la ingresó el usuario.
+        const numerosSerieLibre = this.normalizarNumerosSerie(
+          item.numerosSerie ?? item.series,
+        );
         return {
           productoId: null,
           unidad: unidadLibre || 'ZZ',
           descripcion: String(item.descripcion).trim(),
           cantidad,
+          ...(numerosSerieLibre.length > 0
+            ? { numerosSerie: numerosSerieLibre }
+            : {}),
           // Valor referencial UNITARIO (sin IGV) para gratuitas → debe cuadrar con el
           // LineExtensionAmount (base). Para líneas onerosas, precio de venta incl. IGV.
           mtoPrecioUnitario: esGratLibre
