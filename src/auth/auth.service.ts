@@ -727,6 +727,8 @@ export class AuthService {
             cotizFormatoConfig: true,
             notaVentaFormatoConfig: true,
             directorTecnico: true,
+            sunatClientId: true,
+            sunatClientSecret: true,
             whatsappProvider: true,
             whatsappApiToken: true,
             shalomEmail: true,
