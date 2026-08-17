@@ -4141,6 +4141,11 @@ export class ComprobanteService {
       clienteName,
       cotizVigencia,
       cotizTerminos,
+      cotizTipoPago,
+      cotizFirmante,
+      cotizAdelanto,
+      cotizIncluirImagenes,
+      cotizDescuento,
       tipoOperacionId,
       tipoDetraccionId,
       medioPagoDetraccionId,
@@ -4227,6 +4232,14 @@ export class ComprobanteService {
           mtoImpVenta,
           cotizVigencia: cotizVigencia ? Number(cotizVigencia) : null,
           cotizTerminos: cotizTerminos ?? null,
+          // Forma de pago / firmante / adelanto / opciones de la cotización: antes NO
+          // se persistían al ACTUALIZAR, por eso el cambio (p. ej. "Crédito 30 días")
+          // no se reflejaba en el PDF/impresión. `undefined` = no cambiar (Prisma).
+          cotizTipoPago: cotizTipoPago ?? undefined,
+          cotizFirmante: cotizFirmante ?? undefined,
+          cotizAdelanto: cotizAdelanto !== undefined ? Number(cotizAdelanto) : undefined,
+          cotizIncluirImagenes: cotizIncluirImagenes ?? undefined,
+          cotizDescuento: cotizDescuento !== undefined ? Number(cotizDescuento) : undefined,
           // Moneda: al editar la cotización se persiste el cambio de moneda (Soles/Dólares).
           // `undefined` = no cambiar (Prisma), para no pisar el valor si el front no lo envía.
           tipoMoneda: tipoMoneda ?? undefined,
@@ -5429,17 +5442,16 @@ export class ComprobanteService {
         celular: (full as any).usuario?.celular || '',
         email: (full as any).usuario?.email || '',
         formaPago: (() => {
-          const tipo = (full as any).cotizTipoPago || 'CONTADO';
+          // Robusto: acepta el código (CREDITO_30, CREDITO_15/45/90) y también datos
+          // legacy guardados como texto ("CREDITO 30 DÍAS").
+          const raw = String((full as any).cotizTipoPago || 'CONTADO').toUpperCase();
           const adelanto = (full as any).cotizAdelanto || 0;
-          const map: Record<string, string> = {
-            CONTADO: 'CONTADO',
-            CREDITO_30: 'CRÉDITO 30 DÍAS',
-            CREDITO_60: 'CRÉDITO 60 DÍAS',
-            CREDITO_90: 'CRÉDITO 90 DÍAS',
-          };
-          return tipo === 'ADELANTO'
-            ? `ADELANTO ${adelanto}%`
-            : map[tipo] || tipo;
+          if (raw.startsWith('ADELANTO')) return `ADELANTO ${adelanto}%`;
+          if (raw.includes('CREDITO') || raw.includes('CRÉDITO')) {
+            const dias = raw.match(/\d+/)?.[0];
+            return dias ? `CRÉDITO ${dias} DÍAS` : 'CRÉDITO';
+          }
+          return 'CONTADO';
         })(),
         subTotal: Number(full.subTotal || 0).toFixed(2),
         descuento: full.mtoDescuentoGlobal
