@@ -127,6 +127,10 @@ model Empresa {
   cotizMostrarDetraccion        Boolean                       @default(true)
   cotizFormatoConfig            Json?
   notaVentaFormatoConfig        Json?
+  // Textos por defecto que el negocio decide recordar para próximas cotizaciones
+  // (Términos y Condiciones / Observaciones). Se autocompletan al crear una cotización.
+  cotizTerminosDefault          String?
+  cotizObservacionesDefault     String?
   rubroId                       Int?
   providerId                    String?
   tipoEmpresa                   TipoEmpresa                   @default(FORMAL)

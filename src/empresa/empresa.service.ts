@@ -1080,6 +1080,10 @@ export class EmpresaService {
         updateData.cotizFormatoConfig = dto.cotizFormatoConfig as any;
       if (dto.notaVentaFormatoConfig !== undefined)
         updateData.notaVentaFormatoConfig = dto.notaVentaFormatoConfig as any;
+      if (dto.cotizTerminosDefault !== undefined)
+        updateData.cotizTerminosDefault = dto.cotizTerminosDefault || null;
+      if (dto.cotizObservacionesDefault !== undefined)
+        updateData.cotizObservacionesDefault = dto.cotizObservacionesDefault || null;
       if (dto.cuentaDetraccionBN !== undefined)
         updateData.cuentaDetraccionBN = dto.cuentaDetraccionBN;
       if (dto.fechaActivacion !== undefined)
