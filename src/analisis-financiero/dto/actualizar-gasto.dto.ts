@@ -66,6 +66,21 @@ export class ActualizarGastoDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(150)
+  proveedor?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  numeroDocumento?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  numeroOperacion?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(255)
   descripcion?: string;
 }

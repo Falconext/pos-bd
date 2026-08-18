@@ -1329,6 +1329,10 @@ export class AnalisisFinancieroService {
         tipoCambio: dto.moneda === 'USD' ? (dto.tipoCambio ?? null) : null,
         cuentaBancariaId: dto.cuentaBancariaId ?? null,
         medioPago: dto.medioPago ?? null,
+        proveedor: dto.proveedor ?? null,
+        numeroDocumento: dto.numeroDocumento ?? null,
+        // El N° de operación solo aplica cuando el pago es con cuenta de banco.
+        numeroOperacion: dto.cuentaBancariaId ? (dto.numeroOperacion ?? null) : null,
         descripcion: dto.descripcion,
       },
     });
@@ -1388,6 +1392,16 @@ export class AnalisisFinancieroService {
           cuentaBancariaId: dto.cuentaBancariaId,
         }),
         ...(dto.medioPago !== undefined && { medioPago: dto.medioPago }),
+        ...(dto.proveedor !== undefined && { proveedor: dto.proveedor }),
+        ...(dto.numeroDocumento !== undefined && {
+          numeroDocumento: dto.numeroDocumento,
+        }),
+        ...(dto.numeroOperacion !== undefined && {
+          numeroOperacion: dto.numeroOperacion,
+        }),
+        // Si se quita la cuenta de banco, el N° de operación pierde sentido.
+        ...(dto.cuentaBancariaId !== undefined &&
+          !dto.cuentaBancariaId && { numeroOperacion: null }),
         ...(dto.descripcion !== undefined && { descripcion: dto.descripcion }),
       },
     });

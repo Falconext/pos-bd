@@ -266,7 +266,7 @@ export class ComprasService {
     // Create Purchase Transaction
     const compra = await this.prisma.$transaction(async (tx) => {
       return await tx.compra.create({
-        include: { detalles: { orderBy: { id: 'asc' } } },
+        include: { detalles: { orderBy: { id: 'asc' } }, proveedor: true },
         data: {
           empresaId,
           proveedorId: data.proveedorId,

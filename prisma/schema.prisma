@@ -2387,6 +2387,9 @@ model GastoOperativo {
   tipoCambio       Decimal?       @db.Decimal(10, 4)
   cuentaBancariaId Int?
   medioPago        String?
+  proveedor        String?
+  numeroDocumento  String?
+  numeroOperacion  String?
   descripcion      String?
   creadoEn         DateTime       @default(now())
   actualizadoEn    DateTime       @updatedAt
