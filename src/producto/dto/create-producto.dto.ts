@@ -6,8 +6,22 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+
+// Regla de precio por volumen (mayorista). Se declara como clase para que
+// class-transformer sepa instanciar cada elemento del array; sin esto y con
+// enableImplicitConversion activo, los objetos se convertían a [] al crear.
+export class PrecioMayoristaDto {
+  @Type(() => Number)
+  @IsNumber()
+  cantidadMinima: number;
+
+  @Type(() => Number)
+  @IsNumber()
+  precio: number;
+}
 
 export class CreateProductoDto {
   @IsOptional()
@@ -210,7 +224,10 @@ export class CreateProductoDto {
   factorConversion?: number;
 
   @IsOptional()
-  preciosMayorista?: { cantidadMinima: number; precio: number }[];
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PrecioMayoristaDto)
+  preciosMayorista?: PrecioMayoristaDto[];
 
   @IsOptional()
   @IsString()

@@ -5,8 +5,10 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { PrecioMayoristaDto } from './create-producto.dto';
 
 export class UpdateProductoDto {
   @IsInt()
@@ -212,7 +214,10 @@ export class UpdateProductoDto {
   fechaFinOferta?: string | Date;
 
   @IsOptional()
-  preciosMayorista?: { cantidadMinima: number; precio: number }[];
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PrecioMayoristaDto)
+  preciosMayorista?: PrecioMayoristaDto[];
 
   @IsOptional()
   @IsString()
