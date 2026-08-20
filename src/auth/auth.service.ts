@@ -9,6 +9,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
+import { S3Service } from '../s3/s3.service';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 
@@ -28,6 +29,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    private readonly s3Service: S3Service,
   ) {
     const accessEnv =
       this.config.get<string>('JWT_ACCESS_EXPIRES_IN') ?? '86400';
@@ -622,6 +624,10 @@ export class AuthService {
             numeroCuenta: true,
             cci: true,
             monedaCuenta: true,
+            yapeNumero: true,
+            yapeQrUrl: true,
+            plinNumero: true,
+            plinQrUrl: true,
             reseller: {
               select: {
                 id: true,
@@ -637,6 +643,13 @@ export class AuthService {
     } as any);
 
     if (!usuario) return null;
+
+    // QR de pago (Yape/Plin): el bucket es privado; se entregan firmados para
+    // poder mostrarse (p. ej. en el formato de cotización).
+    if (usuario.empresa) {
+      usuario.empresa.yapeQrUrl = await this.signIfS3(usuario.empresa.yapeQrUrl);
+      usuario.empresa.plinQrUrl = await this.signIfS3(usuario.empresa.plinQrUrl);
+    }
 
     if (usuario.empresa?.plan?.features) {
       usuario.empresa.plan.features = Object.fromEntries(
@@ -816,6 +829,10 @@ export class AuthService {
             numeroCuenta: true,
             cci: true,
             monedaCuenta: true,
+            yapeNumero: true,
+            yapeQrUrl: true,
+            plinNumero: true,
+            plinQrUrl: true,
             reseller: {
               select: {
                 id: true,
@@ -864,9 +881,31 @@ export class AuthService {
         usuario.empresa.shalomPassword,
       );
       delete usuario.empresa.shalomPassword;
+
+      // QR de pago (Yape/Plin): el bucket es privado, así que se entregan
+      // firmados para que puedan mostrarse (p. ej. en el formato de cotización).
+      usuario.empresa.yapeQrUrl = await this.signIfS3(usuario.empresa.yapeQrUrl);
+      usuario.empresa.plinQrUrl = await this.signIfS3(usuario.empresa.plinQrUrl);
     }
 
     return usuario;
+  }
+
+  /**
+   * Si la URL apunta a nuestro bucket S3 (privado), devuelve una URL firmada
+   * temporal para poder mostrar el recurso; en caso contrario la deja igual.
+   */
+  private async signIfS3(url?: string | null): Promise<string | null> {
+    try {
+      if (!url) return url ?? null;
+      const idx = url.indexOf('amazonaws.com/');
+      if (idx === -1) return url;
+      const key = url.substring(idx + 'amazonaws.com/'.length);
+      if (!key) return url;
+      return (await this.s3Service.getSignedGetUrl(key, 3600)) || url;
+    } catch {
+      return url ?? null;
+    }
   }
 
   async forgotPassword(
