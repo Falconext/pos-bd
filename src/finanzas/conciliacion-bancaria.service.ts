@@ -8,14 +8,15 @@ import { PrismaService } from '../prisma/prisma.service';
 
 /**
  * Conciliación bancaria: importa un Excel del banco (movimientos con N° de
- * operación) y lo cruza contra los pagos de VENTAS (Pago.referencia) y de
- * COMPRAS (PagoCompra.referencia) del sistema mediante el número de operación.
+ * operación) y lo cruza contra los pagos de VENTAS (Pago.referencia), de
+ * COMPRAS (PagoCompra.referencia) y de GASTOS (GastoOperativo.numeroOperacion)
+ * del sistema mediante el número de operación.
  *
  * No persiste nada: es un proceso de solo lectura que devuelve el resultado
  * del cruce (conciliados, pendientes de banco, pendientes de sistema).
  */
 
-export type OrigenPago = 'VENTA' | 'COMPRA';
+export type OrigenPago = 'VENTA' | 'COMPRA' | 'GASTO';
 export type EstadoConciliacion = 'CONCILIADO' | 'PENDIENTE';
 
 export interface PagoSistema {
@@ -158,7 +159,7 @@ export class ConciliacionBancariaService {
     }
   }
 
-  /** Carga los pagos del sistema (ventas + compras) con N° de operación. */
+  /** Carga los pagos del sistema (ventas + compras + gastos) con N° de operación. */
   private async cargarPagosSistema(
     empresaId: number,
     fechaInicio?: string,
@@ -172,7 +173,7 @@ export class ConciliacionBancariaService {
           }
         : undefined;
 
-    const [pagosVenta, pagosCompra] = await Promise.all([
+    const [pagosVenta, pagosCompra, gastos] = await Promise.all([
       this.prisma.pago.findMany({
         where: {
           empresaId,
@@ -215,6 +216,24 @@ export class ConciliacionBancariaService {
           },
         },
       }),
+      this.prisma.gastoOperativo.findMany({
+        where: {
+          empresaId,
+          numeroOperacion: { not: null },
+          ...(rango ? { fecha: rango } : {}),
+        },
+        select: {
+          fecha: true,
+          fechaInicio: true,
+          monto: true,
+          medioPago: true,
+          numeroOperacion: true,
+          numeroDocumento: true,
+          proveedor: true,
+          etiqueta: true,
+          categoria: true,
+        },
+      }),
     ]);
 
     const ventas: PagoSistema[] = pagosVenta
@@ -247,7 +266,23 @@ export class ConciliacionBancariaService {
         fecha: p.fecha.toISOString().split('T')[0],
       }));
 
-    return [...ventas, ...compras];
+    const gastosPagos: PagoSistema[] = gastos
+      .filter((g) => this.normOp(g.numeroOperacion).length > 0)
+      .map((g) => {
+        const fecha = g.fecha ?? g.fechaInicio ?? new Date();
+        return {
+          origen: 'GASTO' as const,
+          operacion: String(g.numeroOperacion ?? ''),
+          operacionNorm: this.normOp(g.numeroOperacion),
+          documento: g.numeroDocumento || g.etiqueta || String(g.categoria),
+          contraparte: g.proveedor || g.etiqueta || String(g.categoria),
+          medioPago: String(g.medioPago || '—'),
+          monto: Number(g.monto || 0),
+          fecha: fecha.toISOString().split('T')[0],
+        };
+      });
+
+    return [...ventas, ...compras, ...gastosPagos];
   }
 
   async conciliar(
@@ -338,12 +373,19 @@ export class ConciliacionBancariaService {
     for (const mov of movimientos) {
       montoBanco += mov.monto;
       const candidatos = indice.get(this.normOp(mov.operacion)) ?? [];
-      // Preferir un candidato del mismo signo (abono→venta, cargo→compra) y sin usar.
-      const preferido: OrigenPago | null =
-        mov.tipo === 'ABONO' ? 'VENTA' : mov.tipo === 'CARGO' ? 'COMPRA' : null;
+      // Preferir un candidato del mismo signo y sin usar. Un ABONO (entra dinero)
+      // cruza con VENTAS; un CARGO (sale dinero) cruza con COMPRAS o GASTOS.
+      const preferidos: OrigenPago[] =
+        mov.tipo === 'ABONO'
+          ? ['VENTA']
+          : mov.tipo === 'CARGO'
+            ? ['COMPRA', 'GASTO']
+            : [];
 
       let elegido = candidatos.find(
-        (c) => !usados.has(c) && (!preferido || c.origen === preferido),
+        (c) =>
+          !usados.has(c) &&
+          (preferidos.length === 0 || preferidos.includes(c.origen)),
       );
       if (!elegido) elegido = candidatos.find((c) => !usados.has(c));
 
