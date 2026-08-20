@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { montoEnPen } from '../common/utils/moneda.util';
 
 @Injectable()
 export class FinanzasService {
@@ -96,6 +97,8 @@ export class FinanzasService {
         fechaEmision: true,
         mtoImpVenta: true,
         medioPago: true,
+        tipoMoneda: true,
+        tipoCambio: true,
       },
     });
 
@@ -147,10 +150,11 @@ export class FinanzasService {
 
     ventasContadoSinPago.forEach((v) => {
       const fecha = v.fechaEmision.toISOString().split('T')[0];
+      const montoPen = montoEnPen(v.mtoImpVenta, v.tipoMoneda, v.tipoCambio);
       const actual = mapDatos.get(fecha) || { fecha, ingresos: 0, egresos: 0 };
-      actual.ingresos += Number(v.mtoImpVenta || 0);
+      actual.ingresos += montoPen;
       mapDatos.set(fecha, actual);
-      sumarMetodo(v.medioPago, Number(v.mtoImpVenta || 0), false);
+      sumarMetodo(v.medioPago, montoPen, false);
     });
 
     // Procesar Egresos (Pagos a Proveedores)

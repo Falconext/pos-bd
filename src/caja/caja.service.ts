@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { montoEnPen } from '../common/utils/moneda.util';
 import {
   AperturaCajaDto,
   CierreCajaDto,
@@ -504,7 +505,7 @@ export class CajaService {
         OR: [{ adelanto: null }, { adelanto: 0 }],
         pagos: { none: {} },
       },
-      select: { mtoImpVenta: true, medioPago: true },
+      select: { mtoImpVenta: true, medioPago: true, tipoMoneda: true, tipoCambio: true },
     });
 
     // Comprobantes formales de contado
@@ -520,7 +521,7 @@ export class CajaService {
         formaPagoTipo: 'Contado',
         pagos: { none: {} },
       },
-      select: { mtoImpVenta: true, medioPago: true },
+      select: { mtoImpVenta: true, medioPago: true, tipoMoneda: true, tipoCambio: true },
     });
 
     // Pagos del período
@@ -547,7 +548,7 @@ export class CajaService {
         .toString()
         .toUpperCase()
         .trim();
-      const monto = Number(comp.mtoImpVenta || 0);
+      const monto = montoEnPen(comp.mtoImpVenta, comp.tipoMoneda, comp.tipoCambio);
 
       // Normalizar nombres de medios de pago
       if (medio === 'EFECTIVO' || medio === 'CASH') {

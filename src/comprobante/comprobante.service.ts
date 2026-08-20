@@ -4043,6 +4043,13 @@ export class ComprobanteService {
       formaPagoTipo,
       formaPagoMoneda,
       tipoMoneda,
+      // TC del día para comprobantes en USD (p.ej. Nota de Venta en dólares).
+      // Sin esto, los reportes sumaban el monto en USD como si fuera soles.
+      tipoCambio:
+        String(tipoMoneda || 'PEN').toUpperCase() === 'USD' &&
+        input.tipoCambio != null
+          ? Number(input.tipoCambio)
+          : 1,
       cuotas: cuotasCredito ?? Prisma.JsonNull,
       observaciones: observaciones ?? null,
       clienteId: finalClienteId,

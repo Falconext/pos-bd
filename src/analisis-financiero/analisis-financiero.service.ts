@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { EstadoSunat, GastoOperativo } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { montoEnPen } from '../common/utils/moneda.util';
 import { CrearGastoDto } from './dto/crear-gasto.dto';
 import { ActualizarGastoDto } from './dto/actualizar-gasto.dto';
 
@@ -75,6 +76,8 @@ interface ComprobantePnl {
   tipoDoc: string;
   estadoEnvioSunat: EstadoSunat;
   mtoImpVenta: number;
+  tipoMoneda?: string | null;
+  tipoCambio?: number | null;
   fechaEmision?: Date;
   detalles: DetalleComprobantePnl[];
 }
@@ -378,11 +381,19 @@ export class AnalisisFinancieroService {
     );
     const ventasBrutas = documentosVenta
       .filter((c) => c.tipoDoc !== '07')
-      .reduce((acc, c) => acc + c.mtoImpVenta, 0);
+      .reduce(
+        (acc, c) =>
+          acc + montoEnPen(c.mtoImpVenta, c.tipoMoneda, this.toNumber(c.tipoCambio)),
+        0,
+      );
 
     const notasCredito = documentosVenta
       .filter((c) => c.tipoDoc === '07')
-      .reduce((acc, c) => acc + c.mtoImpVenta, 0);
+      .reduce(
+        (acc, c) =>
+          acc + montoEnPen(c.mtoImpVenta, c.tipoMoneda, this.toNumber(c.tipoCambio)),
+        0,
+      );
 
     const costosProducto = documentosVenta.reduce(
       (acc, comprobante) => {
@@ -426,7 +437,12 @@ export class AnalisisFinancieroService {
         roas: null,
         costoPublicidadPorPedido: null,
       };
-      current.ventasNetas += Number(comprobante.mtoImpVenta || 0) * signo;
+      current.ventasNetas +=
+        montoEnPen(
+          comprobante.mtoImpVenta,
+          comprobante.tipoMoneda,
+          this.toNumber(comprobante.tipoCambio),
+        ) * signo;
       current.costoMercaderia += costo.costoMercaderia;
       if (signo > 0) current.pedidos += 1;
       resumenDiarioMap.set(fecha, current);
@@ -567,6 +583,8 @@ export class AnalisisFinancieroService {
             tipoDoc: true,
             estadoEnvioSunat: true,
             mtoImpVenta: true,
+            tipoMoneda: true,
+            tipoCambio: true,
             fechaEmision: true,
             detalles: {
               select: {

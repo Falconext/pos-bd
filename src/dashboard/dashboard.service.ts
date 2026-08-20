@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { EstadoSunat, EstadoPago } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { montoEnPen } from '../common/utils/moneda.util';
 
 @Injectable()
 export class DashboardService {
@@ -37,6 +38,22 @@ export class DashboardService {
         },
       ],
     };
+  }
+
+  /**
+   * Suma `mtoImpVenta` de comprobantes convirtiendo USD→PEN por su tipo de cambio.
+   * Reemplaza a `aggregate({ _sum: { mtoImpVenta } })` cuando puede haber montos
+   * en dólares (p.ej. Notas de Venta o Facturas de exportación en USD).
+   */
+  private async sumaComprobantesPen(where: any): Promise<number> {
+    const rows = await this.prisma.comprobante.findMany({
+      where,
+      select: { mtoImpVenta: true, tipoMoneda: true, tipoCambio: true },
+    });
+    return rows.reduce(
+      (acc, r) => acc + montoEnPen(r.mtoImpVenta, r.tipoMoneda, r.tipoCambio),
+      0,
+    );
   }
 
   private parseRange(fechaInicio?: string, fechaFin?: string) {
@@ -85,16 +102,10 @@ export class DashboardService {
         totalProductos,
         ingresosManuales,
       ] = await Promise.all([
-        // Suma facturas/boletas/informales (positivos)
-        this.prisma.comprobante.aggregate({
-          _sum: { mtoImpVenta: true },
-          where: { ...whereBase, tipoDoc: { notIn: ['07'] } },
-        }),
-        // Suma notas de crédito (se restan)
-        this.prisma.comprobante.aggregate({
-          _sum: { mtoImpVenta: true },
-          where: { ...whereBase, tipoDoc: '07' },
-        }),
+        // Suma facturas/boletas/informales (positivos) — USD convertido a PEN
+        this.sumaComprobantesPen({ ...whereBase, tipoDoc: { notIn: ['07'] } }),
+        // Suma notas de crédito (se restan) — USD convertido a PEN
+        this.sumaComprobantesPen({ ...whereBase, tipoDoc: '07' }),
         this.prisma.comprobante.count({ where: whereBase }),
         this.prisma.guiaRemision.count({ where: guiaWhere }),
         this.prisma.cliente.count({ where: { empresaId } }),
@@ -130,8 +141,8 @@ export class DashboardService {
 
       return {
         totalIngresos:
-          Number(totalIngresosPositivo._sum.mtoImpVenta ?? 0) -
-          Number(totalIngresosNC._sum.mtoImpVenta ?? 0) +
+          Number(totalIngresosPositivo ?? 0) -
+          Number(totalIngresosNC ?? 0) +
           otrosIngresos,
         totalComprobantes: totalComprobantes + totalGuias,
         totalClientes,
@@ -155,7 +166,7 @@ export class DashboardService {
   ) {
     const fechaEmision = this.parseRange(fechaInicio, fechaFin);
     const rows = await this.prisma.comprobante.groupBy({
-      by: ['fechaEmision', 'tipoDoc'],
+      by: ['fechaEmision', 'tipoDoc', 'tipoMoneda', 'tipoCambio'],
       where: {
         empresaId,
         ...(sedeId ? { sedeId } : {}),
@@ -188,7 +199,7 @@ export class DashboardService {
         notasDebito: 0,
         informales: 0,
       };
-      const total = Number(r._sum.mtoImpVenta ?? 0);
+      const total = montoEnPen(r._sum.mtoImpVenta, r.tipoMoneda, r.tipoCambio);
       if (r.tipoDoc === '01') item.facturas += total;
       else if (r.tipoDoc === '03') item.boletas += total;
       else if (r.tipoDoc === '07') item.notasCredito += total;
@@ -209,7 +220,7 @@ export class DashboardService {
   ) {
     const fechaEmision = this.parseRange(fechaInicio, fechaFin);
     const rows = await this.prisma.comprobante.groupBy({
-      by: ['fechaEmision', 'medioPago'],
+      by: ['fechaEmision', 'medioPago', 'tipoMoneda', 'tipoCambio'],
       where: {
         empresaId,
         ...(sedeId ? { sedeId } : {}),
@@ -226,7 +237,7 @@ export class DashboardService {
     for (const r of rows) {
       const fecha = this.toFechaLima(r.fechaEmision);
       const item = map.get(fecha) || { fecha, YAPE: 0, PLIN: 0, EFECTIVO: 0 };
-      const total = Number(r._sum.mtoImpVenta ?? 0);
+      const total = montoEnPen(r._sum.mtoImpVenta, r.tipoMoneda, r.tipoCambio);
       const medio = (r.medioPago || '').toString().toUpperCase();
       if (medio === 'YAPE') item.YAPE += total;
       else if (medio === 'PLIN') item.PLIN += total;
@@ -259,6 +270,10 @@ export class DashboardService {
     });
     const compIds = comprobantes.map((c) => c.id);
     if (compIds.length === 0) return [];
+    // NOTA: el ranking y los importes (mtoValorVenta) se suman en moneda nativa
+    // del detalle. Para comprobantes en USD (edge case) el monto no se convierte
+    // a soles aquí porque la moneda vive en el comprobante padre, no en el
+    // detalle. El ranking por unidades (cantidad) no se ve afectado.
     const detalles = await this.prisma.detalleComprobante.groupBy({
       by: ['productoId'],
       where: { comprobanteId: { in: compIds } },
@@ -498,37 +513,25 @@ export class DashboardService {
       ingresosManualesCurr,
       ingresosManualesPrev,
     ] = await Promise.all([
-      this.prisma.comprobante.aggregate({
-        _sum: { mtoImpVenta: true },
-        where: {
-          ...baseComprobanteWhere,
-          fechaEmision: currentRange,
-          tipoDoc: { notIn: ['07'] },
-        },
+      this.sumaComprobantesPen({
+        ...baseComprobanteWhere,
+        fechaEmision: currentRange,
+        tipoDoc: { notIn: ['07'] },
       }),
-      this.prisma.comprobante.aggregate({
-        _sum: { mtoImpVenta: true },
-        where: {
-          ...baseComprobanteWhere,
-          fechaEmision: prevRange,
-          tipoDoc: { notIn: ['07'] },
-        },
+      this.sumaComprobantesPen({
+        ...baseComprobanteWhere,
+        fechaEmision: prevRange,
+        tipoDoc: { notIn: ['07'] },
       }),
-      this.prisma.comprobante.aggregate({
-        _sum: { mtoImpVenta: true },
-        where: {
-          ...baseComprobanteWhere,
-          fechaEmision: currentRange,
-          tipoDoc: '07',
-        },
+      this.sumaComprobantesPen({
+        ...baseComprobanteWhere,
+        fechaEmision: currentRange,
+        tipoDoc: '07',
       }),
-      this.prisma.comprobante.aggregate({
-        _sum: { mtoImpVenta: true },
-        where: {
-          ...baseComprobanteWhere,
-          fechaEmision: prevRange,
-          tipoDoc: '07',
-        },
+      this.sumaComprobantesPen({
+        ...baseComprobanteWhere,
+        fechaEmision: prevRange,
+        tipoDoc: '07',
       }),
       sedeId
         ? Promise.resolve([] as any[])
@@ -554,12 +557,12 @@ export class DashboardService {
     );
 
     const ingresosCurr =
-      Number(ventasCurr._sum?.mtoImpVenta ?? 0) -
-      Number(ventasNCCurr._sum?.mtoImpVenta ?? 0) +
+      Number(ventasCurr ?? 0) -
+      Number(ventasNCCurr ?? 0) +
       otrosIngresosCurr;
     const ingresosPrev =
-      Number(ventasPrev._sum?.mtoImpVenta ?? 0) -
-      Number(ventasNCPrev._sum?.mtoImpVenta ?? 0) +
+      Number(ventasPrev ?? 0) -
+      Number(ventasNCPrev ?? 0) +
       otrosIngresosPrev;
     const ventasTrend =
       ingresosPrev === 0
@@ -630,7 +633,7 @@ export class DashboardService {
           100;
 
     const dailyVentasRows = await this.prisma.comprobante.groupBy({
-      by: ['fechaEmision'],
+      by: ['fechaEmision', 'tipoMoneda', 'tipoCambio'],
       where: {
         ...baseComprobanteWhere,
         fechaEmision: currentRange,
@@ -644,7 +647,8 @@ export class DashboardService {
       const f = this.toFechaLima(r.fechaEmision);
       mapDaily.set(
         f,
-        (mapDaily.get(f) || 0) + Number(r._sum?.mtoImpVenta ?? 0),
+        (mapDaily.get(f) || 0) +
+          montoEnPen(r._sum?.mtoImpVenta, r.tipoMoneda, r.tipoCambio),
       );
     }
     const chartVentas = Array.from(mapDaily.entries())
@@ -652,7 +656,7 @@ export class DashboardService {
       .sort((a, b) => a.date.localeCompare(b.date));
 
     const ventasCanalRows = await this.prisma.comprobante.groupBy({
-      by: ['medioPago'],
+      by: ['medioPago', 'tipoMoneda', 'tipoCambio'],
       // Excluir notas de crédito (07): su mtoImpVenta está guardado en positivo y
       // antes inflaba los importes por canal en vez de representar ventas reales.
       where: {
@@ -670,7 +674,7 @@ export class DashboardService {
     let sumOtros = 0;
     for (const r of ventasCanalRows) {
       const m = (r.medioPago || '').toString().toUpperCase();
-      const t = Number(r._sum?.mtoImpVenta ?? 0);
+      const t = montoEnPen(r._sum?.mtoImpVenta, r.tipoMoneda, r.tipoCambio);
       if (m === 'TARJETA') sumTarjeta += t;
       else if (m === 'TRANSFERENCIA') sumTransferencia += t;
       else if (m === 'YAPE' || m === 'PLIN') sumRedes += t;
@@ -716,14 +720,17 @@ export class DashboardService {
       take: 4,
       include: { cliente: { select: { nombre: true } } },
     });
-    const actividad = recientes.map((r: any) => ({
-      id: r.id,
-      tipo: r.tipoDoc === '07' ? 'Reembolso procesado' : 'Nueva venta',
-      descripcion: `#${r.serie}-${r.correlativo}`,
-      fecha: r.fechaEmision,
-      monto: r.tipoDoc === '07' ? -r.mtoImpVenta : r.mtoImpVenta,
-      cliente: r.cliente?.nombre || 'CLIENTES VARIOS',
-    }));
+    const actividad = recientes.map((r: any) => {
+      const montoPen = montoEnPen(r.mtoImpVenta, r.tipoMoneda, r.tipoCambio);
+      return {
+        id: r.id,
+        tipo: r.tipoDoc === '07' ? 'Reembolso procesado' : 'Nueva venta',
+        descripcion: `#${r.serie}-${r.correlativo}`,
+        fecha: r.fechaEmision,
+        monto: r.tipoDoc === '07' ? -montoPen : montoPen,
+        cliente: r.cliente?.nombre || 'CLIENTES VARIOS',
+      };
+    });
 
     const topProds = await this.topProductos(
       empresaId,
@@ -747,7 +754,7 @@ export class DashboardService {
       productosBajoStockRaw,
       sunatPendientesRows,
       sunatPendientesCount,
-      cuentasCobrarAgg,
+      cuentasCobrarRows,
       pedidosTiendaCount,
     ] = await Promise.all([
       this.prisma.producto.findMany({
@@ -781,6 +788,8 @@ export class DashboardService {
           tipoDoc: true,
           estadoEnvioSunat: true,
           mtoImpVenta: true,
+          tipoMoneda: true,
+          tipoCambio: true,
         },
         orderBy: { fechaEmision: 'desc' },
         take: 4,
@@ -799,10 +808,10 @@ export class DashboardService {
           tipoDoc: { notIn: TIPOS_INFORMALES_ARRAY },
         },
       }),
-      this.prisma.comprobante.aggregate({
-        // Suma el saldo pendiente (no el total), igual que Cuentas por Cobrar.
-        _sum: { saldo: true },
-        _count: { id: true },
+      // Cuentas por Cobrar: se traen filas (saldo/moneda/TC) para convertir el
+      // saldo pendiente en USD a soles antes de sumar.
+      this.prisma.comprobante.findMany({
+        select: { saldo: true, tipoMoneda: true, tipoCambio: true },
         where: {
           empresaId,
           ...(sedeId ? { sedeId } : {}),
@@ -1006,12 +1015,15 @@ export class DashboardService {
             correlativo: c.correlativo,
             tipoDoc: c.tipoDoc,
             estado: c.estadoEnvioSunat,
-            monto: Number(c.mtoImpVenta),
+            monto: montoEnPen(c.mtoImpVenta, c.tipoMoneda, c.tipoCambio),
           })),
         },
         cuentasCobrar: {
-          cantidad: cuentasCobrarAgg._count.id,
-          total: Number(cuentasCobrarAgg._sum.saldo ?? 0),
+          cantidad: cuentasCobrarRows.length,
+          total: cuentasCobrarRows.reduce(
+            (acc, c) => acc + montoEnPen(c.saldo, c.tipoMoneda, c.tipoCambio),
+            0,
+          ),
         },
         pedidosTiendaPendientes: pedidosTiendaCount,
       },
