@@ -1889,6 +1889,17 @@ export class ComprobanteService {
 
       const esGratProd = this.esGratuito(tipAfeIgv);
       const mtoValorVenta = valorUnitario * cantidad;
+      const mtoValorVentaRedondeado = this.round2(mtoValorVenta);
+      // Valor unitario (sin IGV) que va a cac:Price/cbc:PriceAmount. SUNAT valida
+      // (código 3271) que  cantidad × valorUnitario == valorVenta de la línea.
+      // Redondear el unitario a 2 decimales rompe la línea con cantidades altas
+      // (p. ej. 0.24×1000=240 ≠ 237.29). Por eso lo derivamos del valorVenta ya
+      // redondeado, con más decimales (SUNAT admite hasta 10 en el valor unitario).
+      const mtoValorUnitarioSunat = esGratProd
+        ? 0
+        : cantidad > 0
+          ? parseFloat((mtoValorVentaRedondeado / cantidad).toFixed(10))
+          : this.round2(valorUnitario);
       // Descuento por línea a mostrar en el ticket (monto bruto, incl. IGV). precioConIgv ya
       // viene con el descuento aplicado; precioUnitarioOriginal es el precio de lista. No
       // afecta base/IGV/total ni el XML de SUNAT: es únicamente informativo para la impresión.
@@ -1908,9 +1919,9 @@ export class ComprobanteService {
         mtoPrecioUnitario: esGratProd
           ? this.round2(valorUnitario)
           : this.round2(precioConIgv),
-        mtoValorUnitario: esGratProd ? 0 : this.round2(valorUnitario),
-        mtoValorVenta: this.round2(mtoValorVenta),
-        mtoBaseIgv: this.round2(mtoValorVenta),
+        mtoValorUnitario: mtoValorUnitarioSunat,
+        mtoValorVenta: mtoValorVentaRedondeado,
+        mtoBaseIgv: mtoValorVentaRedondeado,
         porcentajeIgv: igvPct,
         igv: this.round2(igvMonto),
         tipAfeIgv,
