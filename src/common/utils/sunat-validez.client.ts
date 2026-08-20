@@ -70,13 +70,37 @@ export class SunatValidezClient {
       client_id: clientId,
       client_secret: clientSecret,
     });
-    const { data } = await axios.post(AUTH_URL(clientId), body.toString(), {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      timeout: 15000,
-    });
+    const { data, status } = await axios.post(
+      AUTH_URL(clientId),
+      body.toString(),
+      {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        timeout: 15000,
+        // No lanzar por código de estado: necesitamos inspeccionar la respuesta
+        // real de SUNAT para dar un mensaje correcto en vez de culpar siempre a
+        // las credenciales.
+        validateStatus: () => true,
+      },
+    );
     const token = data?.access_token;
     if (!token) {
-      throw new Error('SUNAT no devolvió access_token (revisa client_id/secret)');
+      // SUNAT devuelve 204 (sin contenido) a TODAS las solicitudes de token
+      // durante sus ventanas de mantenimiento/incidencias — incluso con
+      // credenciales inválidas. En ese caso NO es un problema de client_id/secret.
+      if (status === 204 || data == null || data === '') {
+        throw new Error(
+          'SUNAT no está emitiendo token en este momento (respondió 204 sin ' +
+            'contenido). Suele ser mantenimiento o incidencia temporal de SUNAT; ' +
+            'reintenta más tarde (normalmente en horario diurno de Perú).',
+        );
+      }
+      // Cualquier otra respuesta sin token sí trae el motivo real de SUNAT
+      // (p. ej. { "error": "invalid_client" }): mostrarlo tal cual.
+      const detalle =
+        typeof data === 'string' ? data : JSON.stringify(data);
+      throw new Error(
+        `SUNAT rechazó la autenticación (HTTP ${status}): ${detalle}`,
+      );
     }
     return token;
   }
