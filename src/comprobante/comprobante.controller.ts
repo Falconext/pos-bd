@@ -432,6 +432,41 @@ export class ComprobanteController {
     return this.service.verificarValidezSunat(id, user.empresaId);
   }
 
+  // Reemite a SUNAT un comprobante RECHAZADO o con envío fallido, reenviando la
+  // misma serie-correlativo con el XML reconstruido (ya con los cálculos
+  // corregidos). No aplica a comprobantes aceptados (esos van con nota de crédito).
+  @Patch(':id/reemitir')
+  @Roles('ADMIN_EMPRESA')
+  async reemitirComprobante(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+  ) {
+    // Valida propiedad y estado (RECHAZADO/FALLIDO_ENVIO). Lanza si no aplica.
+    const comp = await this.service.prepararReemision(id, user.empresaId);
+    try {
+      const sunatResp = await this.enviarSunat.execute(comp.id);
+      return { ...sunatResp, comprobanteId: comp.id, reemitido: true };
+    } catch (error: any) {
+      // A diferencia de la creación, NUNCA eliminamos el comprobante al reemitir:
+      // se deja como FALLIDO_ENVIO para poder reintentar de nuevo.
+      try {
+        await this.service.registrarErrorSunat(
+          comp.id,
+          error?.message || 'Error desconocido al reemitir a SUNAT',
+        );
+      } catch (_) {}
+      if (error instanceof SunatPayloadException) {
+        throw new BadRequestException(
+          `No se pudo reemitir: SUNAT rechazó los datos: ${error.message}. ` +
+            `Revise los datos del comprobante e intente nuevamente.`,
+        );
+      }
+      throw new BadRequestException(
+        `No se pudo reemitir a SUNAT: ${error?.message || 'error desconocido'}.`,
+      );
+    }
+  }
+
   @Patch(':comprobanteId/anular')
   @Roles('ADMIN_EMPRESA')
   async anularComprobante(

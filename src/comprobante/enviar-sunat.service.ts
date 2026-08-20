@@ -350,6 +350,24 @@ export class EnviarSunatService {
     }
   }
 
+  /**
+   * Valor unitario (sin IGV) para `cac:Price/cbc:PriceAmount`. SUNAT valida
+   * (código 3271) que `cantidad × valorUnitario == LineExtensionAmount`
+   * (valorVenta). Se deriva del valorVenta ya redondeado con precisión
+   * suficiente (SUNAT admite hasta 10 decimales), de modo que la igualdad se
+   * cumpla aun con cantidades altas y también al REEMITIR comprobantes antiguos
+   * cuyo `mtoValorUnitario` quedó redondeado a 2 decimales. En gratuitas
+   * (valorVenta 0) se conserva el valor referencial guardado.
+   */
+  private priceAmountSunat(d: any): number {
+    const cantidad = Number(d.cantidad) || 0;
+    const valorVenta = Number(d.mtoValorVenta) || 0;
+    if (cantidad > 0 && valorVenta > 0) {
+      return parseFloat((valorVenta / cantidad).toFixed(10));
+    }
+    return Number(d.mtoValorUnitario) || 0;
+  }
+
   async execute(comprobanteId: number) {
     const comp = await this.prisma.comprobante.findUnique({
       where: { id: comprobanteId },
@@ -870,7 +888,7 @@ export class EnviarSunatService {
               'cac:Price': {
                 'cbc:PriceAmount': {
                   _attributes: { currencyID: comp.tipoMoneda },
-                  _text: d.mtoValorUnitario,
+                  _text: this.priceAmountSunat(d),
                 },
               },
             };
@@ -1264,7 +1282,7 @@ export class EnviarSunatService {
               'cac:Price': {
                 'cbc:PriceAmount': {
                   _attributes: { currencyID: comp.tipoMoneda },
-                  _text: d.mtoValorUnitario,
+                  _text: this.priceAmountSunat(d),
                 },
               },
             };
@@ -1456,7 +1474,7 @@ export class EnviarSunatService {
             'cac:Price': {
               'cbc:PriceAmount': {
                 _attributes: { currencyID: comp.tipoMoneda },
-                _text: d.mtoValorUnitario,
+                _text: this.priceAmountSunat(d),
               },
             },
           };

@@ -3210,6 +3210,41 @@ export class ComprobanteService {
     };
   }
 
+  /**
+   * Valida que un comprobante pueda REEMITIRSE a SUNAT. Solo se permite cuando
+   * NO fue aceptado: RECHAZADO (SUNAT devolvió CDR con error) o FALLIDO_ENVIO
+   * (nunca llegó a enviarse). En esos casos la serie-correlativo sigue libre y
+   * puede reenviarse el mismo número con el XML corregido. Un comprobante
+   * EMITIDO/aceptado NO se reemite: se corrige con nota de crédito.
+   * Devuelve los datos del comprobante; el reenvío real lo hace
+   * EnviarSunatService.execute() desde el controller.
+   */
+  async prepararReemision(id: number, empresaId: number) {
+    const comp = await this.prisma.comprobante.findFirst({
+      where: { id, empresaId },
+      select: {
+        id: true,
+        estadoEnvioSunat: true,
+        serie: true,
+        correlativo: true,
+        tipoDoc: true,
+      },
+    });
+    if (!comp) throw new NotFoundException('Comprobante no encontrado');
+    const reemitibles: EstadoSunat[] = [
+      EstadoSunat.RECHAZADO,
+      EstadoSunat.FALLIDO_ENVIO,
+    ];
+    if (!reemitibles.includes(comp.estadoEnvioSunat as EstadoSunat)) {
+      throw new BadRequestException(
+        `Solo se pueden reemitir comprobantes RECHAZADOS o con envío fallido. ` +
+          `Este está en estado ${comp.estadoEnvioSunat}. ` +
+          `Un comprobante aceptado por SUNAT se corrige con una nota de crédito.`,
+      );
+    }
+    return comp;
+  }
+
   async conciliarComprobante(id: number, empresaId: number) {
     const comp = await this.prisma.comprobante.findFirst({
       where: { id, empresaId },
