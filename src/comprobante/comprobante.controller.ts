@@ -109,7 +109,14 @@ export class ComprobanteController {
     const isAdmin =
       user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
     const sedeId = isAdmin ? (query.sedeId ?? null) : user.sedeId;
-    const usuarioId = isAdmin ? query.usuarioId : user.id;
+    // Las COTIZACIONES son visibles para todos los vendedores de la empresa (no
+    // se restringen a las propias). El resto (FORMAL/INFORMAL) sí se limita al
+    // usuario cuando no es admin.
+    const usuarioId = isAdmin
+      ? query.usuarioId
+      : query.tipoComprobante === 'COTIZACION'
+        ? undefined
+        : user.id;
 
     const resultado = await this.service.listar({
       empresaId: user.empresaId,
