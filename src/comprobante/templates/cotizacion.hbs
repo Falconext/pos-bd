@@ -176,10 +176,10 @@
         <div class="logo-empresa">
             {{#if fc.logo.visible}}{{#if logo}}<img src="{{logo}}" alt="Logo" style="width: {{fc.logo.size}}px; height: {{fc.logo.size}}px;">{{/if}}{{/if}}
             <div class="empresa-info">
-                {{#if fc.nombreComercial.visible}}<h1 style="font-size: {{fc.nombreComercial.size}}px;">{{nombreComercial}}</h1>{{/if}}
+                {{#if fc.razonSocial.visible}}<h1 style="font-size: {{fc.nombreComercial.size}}px;">{{razonSocial}}</h1>{{/if}}
                 {{#if fc.direccion.visible}}<div class="linea" style="font-size: {{fc.direccion.size}}px;">{{direccion}}</div>{{/if}}
                 {{#if fc.rubro.visible}}<div class="linea" style="font-size: {{fc.rubro.size}}px;">{{rubro}}</div>{{/if}}
-                {{#if fc.razonSocial.visible}}<div class="linea" style="font-size: {{fc.razonSocial.size}}px;">RAZON SOCIAL: {{razonSocial}}</div>{{/if}}
+                {{#if fc.nombreComercial.visible}}{{#if nombreComercial}}<div class="linea" style="font-size: {{fc.razonSocial.size}}px;">NOMBRE COMERCIAL: {{nombreComercial}}</div>{{/if}}{{/if}}
                 {{#if fc.celular.visible}}{{#if celular}}<div class="linea" style="font-size: {{fc.celular.size}}px;">CELULAR: {{celular}}</div>{{/if}}{{/if}}
                 {{#if fc.email.visible}}{{#if email}}<div class="linea" style="font-size: {{fc.email.size}}px;">EMAIL: {{email}}</div>{{/if}}{{/if}}
                 {{#if fc.web.visible}}{{#if paginaWeb}}<div class="linea" style="font-size: {{fc.web.size}}px;">WEB: {{paginaWeb}}</div>{{/if}}{{/if}}
