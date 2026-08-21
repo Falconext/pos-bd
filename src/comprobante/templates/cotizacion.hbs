@@ -150,6 +150,13 @@
         .bank-table th { font-weight: bold; background: #f3f4f6; }
         .bank-table .bank-td-name { font-weight: bold; }
 
+        /* ── QR DE PAGO (Yape / Plin) — dentro del recuadro de totales ── */
+        .qr-pagos { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
+        .qr-item { display: flex; flex-direction: column; align-items: center; }
+        .qr-item .qr-label { font-weight: bold; font-size: 11px; margin-bottom: 4px; }
+        .qr-item img { object-fit: contain; border: 1px solid #d1d5db; }
+        .qr-item .qr-num { font-size: 10px; margin-top: 4px; }
+
         /* ── GRACIAS ────────────────────────────────────────────── */
         .footer-thanks { text-align: center; margin-top: 24px; margin-bottom: 8px; }
         .footer-thanks p { font-weight: bold; line-height: 1.6; }
@@ -303,6 +310,25 @@
             {{/if}}
             {{#if fc.montoTotal.visible}}
             <div class="row total-final" style="font-size: {{fc.montoTotal.size}}px;"><span>MONTO TOTAL:</span><span>{{monedaSimbolo}} {{mtoImpVenta}}</span></div>
+            {{/if}}
+            <!-- QR de pago (Yape / Plin): dentro del recuadro, debajo del monto total -->
+            {{#if fc.qrPagos.visible}}
+            <div class="qr-pagos">
+                {{#if yapeQrUrl}}
+                <div class="qr-item">
+                    <div class="qr-label">Yape</div>
+                    <img src="{{yapeQrUrl}}" alt="QR Yape" style="width: {{fc.qrPagos.size}}px; height: {{fc.qrPagos.size}}px;">
+                    {{#if yapeNumero}}<div class="qr-num">{{yapeNumero}}</div>{{/if}}
+                </div>
+                {{/if}}
+                {{#if plinQrUrl}}
+                <div class="qr-item">
+                    <div class="qr-label">Plin</div>
+                    <img src="{{plinQrUrl}}" alt="QR Plin" style="width: {{fc.qrPagos.size}}px; height: {{fc.qrPagos.size}}px;">
+                    {{#if plinNumero}}<div class="qr-num">{{plinNumero}}</div>{{/if}}
+                </div>
+                {{/if}}
+            </div>
             {{/if}}
         </div>
     </div>

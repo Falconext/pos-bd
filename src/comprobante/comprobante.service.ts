@@ -5298,6 +5298,22 @@ export class ComprobanteService {
       if (/^https?:\/\//i.test(t) || t.startsWith('/')) return t;
       return `data:${t.startsWith('/9j/') ? 'image/jpeg' : 'image/png'};base64,${t}`;
     };
+    // Los QR de pago (Yape/Plin) viven en un bucket S3 PRIVADO. Para que Puppeteer
+    // pueda incrustarlos en el PDF (el que se comparte por WhatsApp) hay que darle una
+    // URL firmada temporal — con la URL cruda daría 403 y el QR no aparecería.
+    const signS3Url = async (raw?: string | null): Promise<string | undefined> => {
+      try {
+        if (!raw) return undefined;
+        const idx = raw.indexOf('amazonaws.com/');
+        if (idx === -1) return raw;
+        const key = raw.substring(idx + 'amazonaws.com/'.length);
+        return (await this.s3Service.getSignedGetUrl(key, 3600)) || raw;
+      } catch {
+        return raw ?? undefined;
+      }
+    };
+    const yapeQrSigned = await signS3Url((full.empresa as any).yapeQrUrl);
+    const plinQrSigned = await signS3Url((full.empresa as any).plinQrUrl);
     const formatCantidad = (value: any): string => {
       const cantidad = Number(value || 0);
       if (!Number.isFinite(cantidad)) return '0';
@@ -5450,9 +5466,9 @@ export class ComprobanteService {
         ? `${full.medioPagoDetraccion.codigo} - ${full.medioPagoDetraccion.descripcion}`
         : undefined,
       yapeNumero: (full.empresa as any).yapeNumero || undefined,
-      yapeQrUrl: buildLogoDataUrl((full.empresa as any).yapeQrUrl),
+      yapeQrUrl: buildLogoDataUrl(yapeQrSigned),
       plinNumero: (full.empresa as any).plinNumero || undefined,
-      plinQrUrl: buildLogoDataUrl((full.empresa as any).plinQrUrl),
+      plinQrUrl: buildLogoDataUrl(plinQrSigned),
       usuario: 'ADMIN',
       sistemaNombre: process.env.APP_NAME || 'Falconext',
       sistemaWeb: (
@@ -5491,6 +5507,14 @@ export class ComprobanteService {
         const c = rawFormatoCfg[k] || {};
         fc[k] = { visible: c.visible !== false, size: Number(c.size) || def };
       }
+      // QR de pago (Yape/Plin): OCULTO por defecto (igual que el frontend, donde
+      // defaultVisible es false). Solo se muestra si se activó explícitamente en el
+      // formato de la cotización. Antes el PDF del backend (el que se comparte por
+      // WhatsApp) nunca lo renderizaba aunque estuviera activado.
+      fc.qrPagos = {
+        visible: rawFormatoCfg.qrPagos?.visible === true,
+        size: Number(rawFormatoCfg.qrPagos?.size) || 90,
+      };
 
       // SON: en letras alineado al frontend (decimales con "CON" + moneda).
       const sonBase = numeroALetras(mtoImpVenta)
