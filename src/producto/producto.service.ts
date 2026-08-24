@@ -949,6 +949,85 @@ export class ProductoService {
     return { productos: productosFinales, total: params.soloStockBajo ? productosFinales.length : total, page, limit };
   }
 
+  async resumen(params: {
+    empresaId: number;
+    sedeId?: number;
+    search?: string;
+    marcaId?: number;
+    categoriaId?: number;
+  }) {
+    const { empresaId, marcaId, categoriaId } = params;
+    const productosDelSistema = ['PLD', 'IPM', 'DGD'];
+    const searchTerm = params.search?.trim();
+
+    const where: any = {
+      empresaId,
+      estado: { in: [EstadoType.ACTIVO, EstadoType.INACTIVO] },
+      codigo: { notIn: productosDelSistema },
+      productoPadreId: null,
+      marcaId: marcaId ? Number(marcaId) : undefined,
+      categoriaId: categoriaId ? Number(categoriaId) : undefined,
+      OR: searchTerm
+        ? [
+            { descripcion: { contains: searchTerm, mode: 'insensitive' } },
+            { codigo: { contains: searchTerm, mode: 'insensitive' } },
+            { principioActivo: { contains: searchTerm, mode: 'insensitive' } },
+            { codigoBarras: { contains: searchTerm, mode: 'insensitive' } },
+            { codigoDigemid: { contains: searchTerm, mode: 'insensitive' } },
+            { laboratorio: { contains: searchTerm, mode: 'insensitive' } },
+          ]
+        : undefined,
+    };
+
+    const [totalProductos, productos] = await Promise.all([
+      this.prisma.producto.count({ where }),
+      this.prisma.producto.findMany({
+        where,
+        select: {
+          stock: true,
+          costoPromedio: true,
+          atributosTecnicos: true,
+          stocks: {
+            where: {
+              ...(params.sedeId ? { sedeId: params.sedeId } : {}),
+            },
+            select: { stock: true },
+          },
+          lotes: {
+            where: { activo: true, stockActual: { gt: 0 } },
+            select: { stockActual: true },
+          },
+        },
+      }),
+    ]);
+
+    let totalCantidad = 0;
+    let totalValorInventario = 0;
+
+    for (const p of productos) {
+      if (this.esProductoServicio((p as any).atributosTecnicos)) continue;
+
+      const stockDesdeLotes = (p.lotes || []).reduce(
+        (acc, lote) => acc + Number(lote.stockActual || 0),
+        0,
+      );
+      const usaStockLotes = stockDesdeLotes > 0;
+      const stockTotalBase = params.sedeId
+        ? num(p.stocks[0]?.stock)
+        : p.stocks.length > 0
+          ? p.stocks.reduce((sum, s) => sum + num(s.stock), 0)
+          : num((p as any).stock);
+      const stockTotal =
+        usaStockLotes && !params.sedeId ? stockDesdeLotes : stockTotalBase;
+      const costo = Number(p.costoPromedio) || 0;
+
+      totalCantidad += stockTotal;
+      totalValorInventario += stockTotal * costo;
+    }
+
+    return { totalProductos, totalCantidad, totalValorInventario };
+  }
+
   /**
    * Catálogo optimizado para POS de farmacia / botica / droguería.
    * Incluye lote FEFO, diasAlVencimiento y stockDisponibleVenta por producto.
@@ -2732,29 +2811,84 @@ export class ProductoService {
         unidadMedida: true,
         categoria: true,
         marca: true,
-        // Cuando se pide una sede concreta, traer solo su stock para exportar
-        // el stock de ese almacén (no el global/suma de sedes).
-        ...(sedeId ? { stocks: { where: { sedeId: Number(sedeId) } } } : {}),
+        // Cuando se pide una sede concreta, traer solo su stock; si no
+        // ("Todas las sedes"), traer el stock de todas para sumarlo y
+        // para armar la columna de ubicaciones por almacén.
+        stocks: {
+          where: sedeId ? { sedeId: Number(sedeId) } : undefined,
+          include: { sede: { select: { nombre: true } } },
+        },
+        lotes: {
+          where: { activo: true, stockActual: { gt: 0 } },
+          select: { stockActual: true },
+        },
       },
     });
 
-    const datosExcel = productos.map((producto) => ({
-      CÓDIGO: (producto as any)?.codigoBarras || producto.codigo,
-      PRODUCTO: producto.descripcion,
-      'U.M': producto.unidadMedida?.nombre || '',
-      AFECT: producto.tipoAfectacionIGV,
-      'PRECIO UNITARIO CON IGV': Number(producto.precioUnitario),
-      'COSTO COMPRA SIN IGV': Number((producto as any).costoPromedio ?? 0),
-      IGV: Number(producto.igvPorcentaje),
-      STOCK: sedeId
-        ? Number((producto as any).stocks?.[0]?.stock ?? 0)
-        : Number(producto.stock),
-      'STOCK MINIMO': sedeId
-        ? Number((producto as any).stocks?.[0]?.stockMinimo ?? 0)
-        : Number((producto as any).stockMinimo ?? 0),
-      CATEGORIA: producto.categoria?.nombre || '',
-      MARCA: (producto as any)?.marca?.nombre || '',
-    }));
+    const datosExcel: Record<string, any>[] = productos.map((producto) => {
+      const p: any = producto;
+      const stockDesdeLotes = (p.lotes || []).reduce(
+        (acc: number, lote: any) => acc + Number(lote.stockActual || 0),
+        0,
+      );
+      const usaStockLotes = stockDesdeLotes > 0;
+      const stockTotalBase = sedeId
+        ? num(p.stocks?.[0]?.stock)
+        : p.stocks?.length > 0
+          ? p.stocks.reduce((sum: number, s: any) => sum + num(s.stock), 0)
+          : num(p.stock);
+      const stockTotal =
+        usaStockLotes && !sedeId ? stockDesdeLotes : stockTotalBase;
+      const stockMinimo = sedeId
+        ? (p.stocks?.[0]?.stockMinimo ?? 0)
+        : p.stocks?.length > 0
+          ? p.stocks.reduce((sum: number, s: any) => sum + (s.stockMinimo || 0), 0)
+          : (p.stockMinimo ?? 0);
+      const costo = Number(p.costoPromedio ?? 0);
+      const valorInventario = Math.round(stockTotal * costo * 100) / 100;
+      const ubicaciones = (p.stocks || [])
+        .filter((s: any) => Number(s.stock) > 0 || s.ubicacion)
+        .map((s: any) => {
+          const nombreSede = s.sede?.nombre || `Sede ${s.sedeId}`;
+          return s.ubicacion ? `${nombreSede}: ${s.ubicacion}` : nombreSede;
+        })
+        .join(' | ');
+
+      return {
+        CÓDIGO: p?.codigoBarras || producto.codigo,
+        PRODUCTO: producto.descripcion,
+        'U.M': producto.unidadMedida?.nombre || '',
+        AFECT: producto.tipoAfectacionIGV,
+        'PRECIO UNITARIO CON IGV': Number(producto.precioUnitario),
+        'COSTO COMPRA SIN IGV': costo,
+        IGV: Number(producto.igvPorcentaje),
+        STOCK: stockTotal,
+        'VALOR INVENTARIO': valorInventario,
+        'STOCK MINIMO': stockMinimo,
+        CATEGORIA: producto.categoria?.nombre || '',
+        MARCA: p?.marca?.nombre || '',
+        UBICACIONES: ubicaciones || '-',
+      };
+    });
+
+    const totalStock = datosExcel.reduce((sum, r) => sum + Number(r.STOCK || 0), 0);
+    const totalValorInventario =
+      Math.round(datosExcel.reduce((sum, r) => sum + Number(r['VALOR INVENTARIO'] || 0), 0) * 100) / 100;
+    datosExcel.push({
+      CÓDIGO: '',
+      PRODUCTO: 'TOTAL',
+      'U.M': '',
+      AFECT: '',
+      'PRECIO UNITARIO CON IGV': '',
+      'COSTO COMPRA SIN IGV': '',
+      IGV: '',
+      STOCK: totalStock,
+      'VALOR INVENTARIO': totalValorInventario,
+      'STOCK MINIMO': '',
+      CATEGORIA: '',
+      MARCA: '',
+      UBICACIONES: '',
+    });
 
     const worksheet = XLSX.utils.json_to_sheet(datosExcel);
     const workbook = XLSX.utils.book_new();
@@ -2768,9 +2902,11 @@ export class ProductoService {
       { wch: 20 }, // COSTO COMPRA SIN IGV
       { wch: 8 }, // IGV
       { wch: 10 }, // STOCK
+      { wch: 18 }, // VALOR INVENTARIO
       { wch: 13 }, // STOCK MINIMO
       { wch: 20 }, // CATEGORIA
       { wch: 20 }, // MARCA
+      { wch: 40 }, // UBICACIONES
     ];
 
     const buffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });

@@ -25,6 +25,7 @@ import { User } from '../common/decorators/user.decorator';
 import type { Response } from 'express';
 import { CreateProductoDto } from './dto/create-producto.dto';
 import { ListProductoDto } from './dto/list-producto.dto';
+import { ResumenProductoDto } from './dto/resumen-producto.dto';
 import { UpdateProductoDto } from './dto/update-producto.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -942,6 +943,31 @@ export class ProductoController {
       soloStockBajo: query.soloStockBajo,
     });
     res.locals.message = 'Productos listados correctamente';
+    return resultado;
+  }
+
+  @Get('resumen')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async resumen(
+    @User() user: any,
+    @Query() query: ResumenProductoDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const isAdmin =
+      user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
+    const sedeId = isAdmin
+      ? query.sedeId
+        ? Number(query.sedeId)
+        : null
+      : user.sedeId;
+    const resultado = await this.service.resumen({
+      empresaId: user.empresaId,
+      sedeId,
+      search: query.search,
+      marcaId: query.marcaId,
+      categoriaId: query.categoriaId,
+    });
+    res.locals.message = 'Resumen de productos obtenido correctamente';
     return resultado;
   }
 
