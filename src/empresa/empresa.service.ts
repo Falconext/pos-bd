@@ -941,6 +941,7 @@ export class EmpresaService {
           brand: true,
           producto: true,
           usaDemo: true,
+          estadoGestion: true,
           billingProvider: true,
           billingApiBaseUrl: true,
           billingApiDemoBaseUrl: true,
@@ -980,6 +981,86 @@ export class EmpresaService {
       this.prisma.empresa.count({ where }),
     ]);
 
+    // --- Salud / riesgo de fuga: se deriva de la actividad de facturación ---
+    // (la señal más confiable de uso real; no hay lastLogin ni updatedAt en Empresa).
+    // Umbrales: 🟢 facturó ≤7 días | 🟡 8-14 días | 🔴 >14 días sin facturar.
+    const empresaIds = empresas.map((e) => e.id);
+    const ahora = new Date();
+    const hace7 = new Date(ahora.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const hace30 = new Date(ahora.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    const saludMap = new Map<
+      number,
+      { ultimaVenta: Date | null; ventas7: number; ventas30: number }
+    >();
+
+    if (empresaIds.length > 0) {
+      const [ultimas, count7, count30] = await Promise.all([
+        this.prisma.comprobante.groupBy({
+          by: ['empresaId'],
+          where: { empresaId: { in: empresaIds } },
+          _max: { fechaEmision: true },
+        }),
+        this.prisma.comprobante.groupBy({
+          by: ['empresaId'],
+          where: { empresaId: { in: empresaIds }, fechaEmision: { gte: hace7 } },
+          _count: { _all: true },
+        }),
+        this.prisma.comprobante.groupBy({
+          by: ['empresaId'],
+          where: {
+            empresaId: { in: empresaIds },
+            fechaEmision: { gte: hace30 },
+          },
+          _count: { _all: true },
+        }),
+      ]);
+
+      for (const id of empresaIds) {
+        saludMap.set(id, { ultimaVenta: null, ventas7: 0, ventas30: 0 });
+      }
+      for (const u of ultimas) {
+        const s = saludMap.get(u.empresaId);
+        if (s) s.ultimaVenta = u._max.fechaEmision ?? null;
+      }
+      for (const c of count7) {
+        const s = saludMap.get(c.empresaId);
+        if (s) s.ventas7 = c._count._all;
+      }
+      for (const c of count30) {
+        const s = saludMap.get(c.empresaId);
+        if (s) s.ventas30 = c._count._all;
+      }
+    }
+
+    const resolverSalud = (
+      e: { id: number; fechaActivacion: Date | null },
+    ) => {
+      const s = saludMap.get(e.id) ?? {
+        ultimaVenta: null,
+        ventas7: 0,
+        ventas30: 0,
+      };
+      // Empresas recién activadas que aún no facturan no deben salir en rojo:
+      // se cuentan los días desde la última venta, o desde la activación si nunca vendió.
+      const referencia = s.ultimaVenta ?? e.fechaActivacion ?? ahora;
+      const diasSinVender = Math.floor(
+        (ahora.getTime() - new Date(referencia).getTime()) /
+          (24 * 60 * 60 * 1000),
+      );
+      let estado: 'sana' | 'riesgo' | 'critico';
+      if (diasSinVender <= 7) estado = 'sana';
+      else if (diasSinVender <= 14) estado = 'riesgo';
+      else estado = 'critico';
+      return {
+        estado,
+        diasSinVender,
+        ultimaVenta: s.ultimaVenta,
+        ventas7: s.ventas7,
+        ventas30: s.ventas30,
+      };
+    };
+
     return {
       empresas: empresas.map((e) => ({
         id: e.id,
@@ -1000,6 +1081,7 @@ export class EmpresaService {
         brand: e.brand,
         producto: e.producto,
         usaDemo: e.usaDemo,
+        estadoGestion: e.estadoGestion,
         billingProvider: e.billingProvider,
         ambienteFacturacion: resolveAmbienteFacturacion(e),
         hotelTenantId: e.hotelTenantId,
@@ -1017,6 +1099,7 @@ export class EmpresaService {
           tipoFacturacion: e.plan.tipoFacturacion,
           duracionDias: e.plan.duracionDias,
         },
+        salud: resolverSalud(e),
       })),
       total,
       page,
@@ -1080,6 +1163,10 @@ export class EmpresaService {
         updateData.cotizFormatoConfig = dto.cotizFormatoConfig as any;
       if (dto.notaVentaFormatoConfig !== undefined)
         updateData.notaVentaFormatoConfig = dto.notaVentaFormatoConfig as any;
+      if (dto.facturaFormatoConfig !== undefined)
+        updateData.facturaFormatoConfig = dto.facturaFormatoConfig as any;
+      if (dto.boletaFormatoConfig !== undefined)
+        updateData.boletaFormatoConfig = dto.boletaFormatoConfig as any;
       if (dto.cotizTerminosDefault !== undefined)
         updateData.cotizTerminosDefault = dto.cotizTerminosDefault || null;
       if (dto.cotizObservacionesDefault !== undefined)
@@ -2231,6 +2318,109 @@ export class EmpresaService {
       orderBy: { creadoEn: 'desc' },
       take: 100,
     });
+  }
+
+  // ── Postventa / retención: bitácora de seguimiento y estado de gestión ──────
+
+  private readonly ESTADOS_GESTION = [
+    'POR_CONTACTAR',
+    'CONTACTADA',
+    'EN_NEGOCIACION',
+    'RECUPERADA',
+    'PERDIDA',
+  ];
+
+  async listarSeguimientos(empresaId: number) {
+    return this.prisma.seguimientoEmpresa.findMany({
+      where: { empresaId },
+      orderBy: { creadoEn: 'desc' },
+      take: 100,
+    });
+  }
+
+  async crearSeguimiento(
+    empresaId: number,
+    dto: { nota?: string; canal?: string; estadoGestion?: string },
+    userId: number,
+  ) {
+    const nota = (dto.nota ?? '').trim();
+    if (!nota) {
+      throw new BadRequestException('La nota de seguimiento no puede estar vacía');
+    }
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { id: true },
+    });
+    if (!empresa) {
+      throw new NotFoundException('Empresa no encontrada');
+    }
+    const estadoGestion =
+      dto.estadoGestion && this.ESTADOS_GESTION.includes(dto.estadoGestion)
+        ? dto.estadoGestion
+        : null;
+    const autor = await this.resolverAutor(userId);
+
+    const [seguimiento] = await this.prisma.$transaction([
+      this.prisma.seguimientoEmpresa.create({
+        data: {
+          empresaId,
+          nota,
+          canal: dto.canal ?? null,
+          estadoGestion,
+          autorNombre: autor.nombre,
+          autorEmail: autor.email,
+        },
+      }),
+      // Si el seguimiento fija un estado, se refleja como estado actual de la empresa.
+      ...(estadoGestion
+        ? [
+            this.prisma.empresa.update({
+              where: { id: empresaId },
+              data: { estadoGestion },
+            }),
+          ]
+        : []),
+    ]);
+    return seguimiento;
+  }
+
+  async actualizarGestion(
+    empresaId: number,
+    dto: { estadoGestion: string | null; nota?: string },
+    userId: number,
+  ) {
+    const estadoGestion =
+      dto.estadoGestion && this.ESTADOS_GESTION.includes(dto.estadoGestion)
+        ? dto.estadoGestion
+        : null;
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { id: true },
+    });
+    if (!empresa) {
+      throw new NotFoundException('Empresa no encontrada');
+    }
+    const autor = await this.resolverAutor(userId);
+    const nota = (dto.nota ?? '').trim();
+
+    await this.prisma.$transaction([
+      this.prisma.empresa.update({
+        where: { id: empresaId },
+        data: { estadoGestion },
+      }),
+      // Deja rastro del cambio de estado en la bitácora.
+      this.prisma.seguimientoEmpresa.create({
+        data: {
+          empresaId,
+          nota: nota || `Estado de gestión cambiado a ${estadoGestion ?? 'Sin gestión'}`,
+          canal: null,
+          estadoGestion,
+          autorNombre: autor.nombre,
+          autorEmail: autor.email,
+        },
+      }),
+    ]);
+    return { estadoGestion };
   }
 
   async registrarLog(

@@ -8,7 +8,10 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { ComisionesService } from '../comisiones/comisiones.service';
 import { S3Service } from '../s3/s3.service';
-import { PdfGeneratorService } from './pdf-generator.service';
+import {
+  PdfGeneratorService,
+  buildFiscalFormatoFc,
+} from './pdf-generator.service';
 import { numeroALetras } from './utils/numero-a-letras';
 import axios from 'axios';
 import { QpseClient, QpseSendResponse } from '../common/utils/qpse.client';
@@ -2385,6 +2388,8 @@ export class EnviarSunatService {
               medioPagoDetraccion: comp.medioPagoDetraccion
                 ? `${comp.medioPagoDetraccion.codigo} - ${comp.medioPagoDetraccion.descripcion}`
                 : undefined,
+              // Formato configurable por empresa (visibilidad por elemento).
+              fc: buildFiscalFormatoFc(comp.empresa, comp.tipoDoc),
             };
 
             const pdfBuffer =
@@ -3503,6 +3508,8 @@ export class EnviarSunatService {
         medioPagoDetraccion: (comp as any).medioPagoDetraccion
           ? `${(comp as any).medioPagoDetraccion.codigo} - ${(comp as any).medioPagoDetraccion.descripcion}`
           : undefined,
+        // Formato configurable por empresa (visibilidad por elemento).
+        fc: buildFiscalFormatoFc((comp as any).empresa, comp.tipoDoc),
       };
 
       const pdfBuffer = await this.pdfGenerator.generarPDFComprobante(pdfData);

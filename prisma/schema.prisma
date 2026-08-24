@@ -127,6 +127,8 @@ model Empresa {
   cotizMostrarDetraccion        Boolean                       @default(true)
   cotizFormatoConfig            Json?
   notaVentaFormatoConfig        Json?
+  facturaFormatoConfig          Json?
+  boletaFormatoConfig           Json?
   // Textos por defecto que el negocio decide recordar para próximas cotizaciones
   // (Términos y Condiciones / Observaciones). Se autocompletan al crear una cotización.
   cotizTerminosDefault          String?
@@ -253,7 +255,19 @@ model Empresa {
   sunatClientSecret    String?
   usaDemo              Boolean                 @default(false)
   metodoSalidaLotes    String                  @default("LIFO")
+  // Mercado Pago (OAuth Marketplace): credenciales de la cuenta MP conectada por la empresa.
+  // La plata de cada venta cae directo en la cuenta del negocio; la plataforma puede cobrar comisión.
+  mpUserId             String?
+  mpAccessToken        String?
+  mpRefreshToken       String?
+  mpTokenExpira        DateTime?
+  mpPublicKey          String?
+  mpConectado          Boolean                 @default(false)
+  // Postventa / retención: estado de gestión de la cuenta cuando entra en riesgo de fuga.
+  // Valores: POR_CONTACTAR | CONTACTADA | EN_NEGOCIACION | RECUPERADA | PERDIDA (null = sin gestión).
+  estadoGestion        String?
   notas                NotaEmpresa[]
+  seguimientos         SeguimientoEmpresa[]
   logs                 EmpresaLog[]
   gastosOperativos     GastoOperativo[]
   conciliacionesGuardadas ConciliacionBancariaGuardada[]
@@ -1120,6 +1134,9 @@ model PedidoTienda {
   saldoPendiente    Decimal                 @default(0)
   observaciones     String?
   referenciaTransf  String?
+  // Mercado Pago Checkout Pro: preferencia creada y pago confirmado vía webhook.
+  mpPreferenceId    String?
+  mpPaymentId       String?
   creadoEn          DateTime                @default(now())
   actualizadoEn     DateTime                @updatedAt
   fechaConfirmacion DateTime?
@@ -1727,6 +1744,7 @@ enum MedioPagoTienda {
   EFECTIVO
   TRANSFERENCIA
   TARJETA
+  MERCADO_PAGO
 }
 
 enum TipoEntrega {
@@ -2308,6 +2326,22 @@ model EmpresaLog {
 
   @@index([empresaId])
   @@index([creadoEn])
+}
+
+// Bitácora de seguimiento postventa/retención por empresa. Cada entrada registra un
+// contacto o gestión (nota libre), opcionalmente el canal y el estado de gestión resultante.
+model SeguimientoEmpresa {
+  id             Int      @id @default(autoincrement())
+  empresaId      Int
+  empresa        Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  nota           String
+  canal          String? // WHATSAPP, LLAMADA, CORREO, PRESENCIAL, OTRO
+  estadoGestion  String? // estado fijado en este seguimiento (snapshot)
+  autorNombre    String
+  autorEmail     String
+  creadoEn       DateTime @default(now())
+
+  @@index([empresaId, creadoEn])
 }
 
 model IngresoManual {

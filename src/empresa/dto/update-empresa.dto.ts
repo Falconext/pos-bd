@@ -136,6 +136,14 @@ export class UpdateEmpresaDto {
   notaVentaFormatoConfig?: Record<string, { visible?: boolean; size?: number }>;
 
   @IsOptional()
+  @IsObject()
+  facturaFormatoConfig?: Record<string, { visible?: boolean; size?: number }>;
+
+  @IsOptional()
+  @IsObject()
+  boletaFormatoConfig?: Record<string, { visible?: boolean; size?: number }>;
+
+  @IsOptional()
   @IsBoolean()
   usaCodigoBarrasManual?: boolean;
 

@@ -22,7 +22,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { KardexService } from '../kardex/kardex.service';
 import { InventarioNotificacionesService } from '../notificaciones/inventario-notificaciones.service';
 import { S3Service } from '../s3/s3.service';
-import { PdfGeneratorService } from './pdf-generator.service';
+import {
+  PdfGeneratorService,
+  buildFiscalFormatoFc,
+} from './pdf-generator.service';
 import { numeroALetras } from './utils/numero-a-letras';
 import { ProductoLoteService } from '../producto/producto-lote.service';
 import { EnviarSunatService } from './enviar-sunat.service';
@@ -253,6 +256,7 @@ export class ComprobanteService {
     estado?: string;
     tipoDoc?: string;
     estadoPago?: string;
+    soloPendientesSunat?: string | boolean;
   }) {
     const {
       empresaId,
@@ -385,6 +389,19 @@ export class ComprobanteService {
           : {}),
         ...(['INFORMAL', 'TODOS'].includes(tipoComprobante) && estadoPago
           ? { estadoPago: estadoPago as any }
+          : {}),
+        ...(String(params.soloPendientesSunat) === 'true'
+          ? {
+              // Debe coincidir con el conteo del dashboard (dashboard.service):
+              // pendientes = PENDIENTE + FALLIDO_ENVIO + RECHAZADO.
+              estadoEnvioSunat: {
+                in: [
+                  EstadoSunat.PENDIENTE,
+                  EstadoSunat.FALLIDO_ENVIO,
+                  EstadoSunat.RECHAZADO,
+                ],
+              },
+            }
           : {}),
       };
 
@@ -5596,7 +5613,21 @@ export class ComprobanteService {
       };
       buffer = await this.pdfGenerator.generarPDFCotizacion(cotizacionData);
     } else {
-      buffer = await this.pdfGenerator.generarPDFComprobante(pdfData);
+      // Formato configurable de comprobante fiscal (visibilidad por elemento).
+      // Debe reflejar lo mismo que respeta el frontend (comprobanteImprimir.tsx)
+      // para que "Ver PDF" e "Imprimir" coincidan.
+      const fcFiscal = buildFiscalFormatoFc(full.empresa, full.tipoDoc);
+      // Sub total = suma de operaciones (gravadas + exoneradas + inafectas).
+      const subTotalFiscal = (
+        Number(full.mtoOperGravadas || 0) +
+        Number((full as any).mtoOperExoneradas || 0) +
+        Number((full as any).mtoOperInafectas || 0)
+      ).toFixed(2);
+      buffer = await this.pdfGenerator.generarPDFComprobante({
+        ...pdfData,
+        fc: fcFiscal,
+        subTotal: subTotalFiscal,
+      });
     }
 
     const key = this.s3Service.generateComprobanteKey(
@@ -6176,6 +6207,7 @@ export class ComprobanteService {
   async generarYSubirPdf(
     id: number,
     context?: { empresaId?: number; rol?: string },
+    force = false,
   ): Promise<string> {
     const comprobante = await this.prisma.comprobante.findFirst({
       where: {
@@ -6192,7 +6224,8 @@ export class ComprobanteService {
     // así que NO se cachea el PDF: siempre se regenera para reflejar el formato
     // vigente. Los comprobantes fiscales sí conservan el PDF cacheado.
     const esCotizacion = comprobante.tipoDoc === 'COT';
-    if (comprobante.s3PdfUrl && !esCotizacion) return comprobante.s3PdfUrl;
+    if (comprobante.s3PdfUrl && !esCotizacion && !force)
+      return comprobante.s3PdfUrl;
 
     let buffer: Buffer;
     let key: string;

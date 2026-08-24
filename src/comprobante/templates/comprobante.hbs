@@ -254,15 +254,15 @@
 
     <div class="totales-box">
       {{#if isDocumentoFiscal}}
-      <div class="row"><span class="lbl">OP. GRAVADAS:</span><span>{{simboloMoneda}} {{mtoOperGravadas}}</span></div>
-      <div class="row"><span class="lbl">EXPORTACIÓN:</span><span>{{simboloMoneda}} {{mtoOperExportacion}}</span></div>
-      <div class="row"><span class="lbl">OP. EXONERADAS:</span><span>{{simboloMoneda}} {{mtoOperExoneradas}}</span></div>
-      <div class="row"><span class="lbl">OP. INAFECTAS:</span><span>{{simboloMoneda}} {{mtoOperInafectas}}</span></div>
-      <div class="row"><span class="lbl">OP. GRATUITAS:</span><span>{{simboloMoneda}} 0.00</span></div>
-      <div class="row"><span class="lbl">ICBPER:</span><span>{{simboloMoneda}} 0.00</span></div>
-      <div class="row"><span class="lbl">SUB TOTAL:</span><span>{{simboloMoneda}} {{mtoOperGravadas}}</span></div>
-      <div class="row"><span>DESCUENTOS TOTAL:</span><span>{{simboloMoneda}} {{descuento}}</span></div>
-      <div class="row"><span class="lbl">IGV 18%:</span><span>{{simboloMoneda}} {{mtoIGV}}</span></div>
+      {{#if (vis fc 'opGravadas')}}<div class="row"><span class="lbl">OP. GRAVADAS:</span><span>{{simboloMoneda}} {{mtoOperGravadas}}</span></div>{{/if}}
+      {{#if (pos mtoOperExportacion)}}<div class="row"><span class="lbl">EXPORTACIÓN:</span><span>{{simboloMoneda}} {{mtoOperExportacion}}</span></div>{{/if}}
+      {{#if (vis fc 'opExoneradas')}}<div class="row"><span class="lbl">OP. EXONERADAS:</span><span>{{simboloMoneda}} {{mtoOperExoneradas}}</span></div>{{/if}}
+      {{#if (vis fc 'opInafectas')}}<div class="row"><span class="lbl">OP. INAFECTAS:</span><span>{{simboloMoneda}} {{mtoOperInafectas}}</span></div>{{/if}}
+      {{#if (vis fc 'opGratuitas')}}<div class="row"><span class="lbl">OP. GRATUITAS:</span><span>{{simboloMoneda}} 0.00</span></div>{{/if}}
+      {{#if (vis fc 'icbper')}}<div class="row"><span class="lbl">ICBPER:</span><span>{{simboloMoneda}} 0.00</span></div>{{/if}}
+      {{#if (vis fc 'subTotal')}}<div class="row"><span class="lbl">SUB TOTAL:</span><span>{{simboloMoneda}} {{subTotal}}</span></div>{{/if}}
+      {{#if (vis fc 'descuentos')}}<div class="row"><span>DESCUENTOS TOTAL:</span><span>{{simboloMoneda}} {{descuento}}</span></div>{{/if}}
+      {{#if (vis fc 'igv')}}<div class="row"><span class="lbl">IGV 18%:</span><span>{{simboloMoneda}} {{mtoIGV}}</span></div>{{/if}}
       {{/if}}
       {{#unless isDocumentoFiscal}}{{#if descuento}}
       <div class="row"><span>DESCUENTO:</span><span>- {{simboloMoneda}} {{descuento}}</span></div>

@@ -550,6 +550,8 @@ export class AuthService {
             cotizTerminosDefault: true,
             cotizObservacionesDefault: true,
             notaVentaFormatoConfig: true,
+            facturaFormatoConfig: true,
+            boletaFormatoConfig: true,
             tipoEmpresa: true,
             rubroId: true,
             cuentasBancarias: {
@@ -743,6 +745,8 @@ export class AuthService {
             cotizTerminosDefault: true,
             cotizObservacionesDefault: true,
             notaVentaFormatoConfig: true,
+            facturaFormatoConfig: true,
+            boletaFormatoConfig: true,
             directorTecnico: true,
             sunatClientId: true,
             sunatClientSecret: true,
