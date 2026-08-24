@@ -351,6 +351,43 @@ export class EmpresaController {
     return this.empresaService.listarLog(id);
   }
 
+  // ── Postventa / retención: bitácora de seguimiento y estado de gestión ──────
+
+  @Get(':id/seguimientos')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  listarSeguimientos(@Param('id', ParseIntPipe) id: number) {
+    return this.empresaService.listarSeguimientos(id);
+  }
+
+  @Post(':id/seguimientos')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  async crearSeguimiento(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { nota: string; canal?: string; estadoGestion?: string },
+    @User() user: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.empresaService.crearSeguimiento(id, dto, user.id);
+    res.locals.message = 'Seguimiento registrado';
+    return result;
+  }
+
+  @Patch(':id/gestion')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  async actualizarGestion(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { estadoGestion: string | null; nota?: string },
+    @User() user: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.empresaService.actualizarGestion(id, dto, user.id);
+    res.locals.message = 'Estado de gestión actualizado';
+    return result;
+  }
+
   @Delete(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN_SISTEMA')
