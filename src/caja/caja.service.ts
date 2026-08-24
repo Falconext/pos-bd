@@ -12,6 +12,7 @@ import {
   MovimientoCajaDto,
   RegistrarEgresoDto,
   EditarEgresoDto,
+  TransferenciaCajaDto,
 } from './dto/caja.dto';
 
 @Injectable()
@@ -54,6 +55,29 @@ export class CajaService {
         usuarioId,
         empresaId,
         ...(sedeId ? { sedeId } : {}),
+        fecha: { gte: hoyInicio, lte: hoyFin },
+        estado: 'ACTIVO',
+        tipoMovimiento: { in: ['APERTURA', 'CIERRE'] },
+      },
+      orderBy: { fecha: 'desc' },
+    });
+
+    if (ultimoMovimiento && ultimoMovimiento.tipoMovimiento === 'APERTURA') {
+      return ultimoMovimiento;
+    }
+    return null;
+  }
+
+  // Verificar si hay una caja abierta en una sede hoy, sin importar qué
+  // usuario la abrió — usado para saber si una sede destino puede recibir
+  // una transferencia entre cajas.
+  async verificarCajaAbiertaEnSede(empresaId: number, sedeId: number) {
+    const { gte: hoyInicio, lte: hoyFin } = this.parseRangeDates();
+
+    const ultimoMovimiento = await this.prisma.movimientoCaja.findFirst({
+      where: {
+        empresaId,
+        sedeId,
         fecha: { gte: hoyInicio, lte: hoyFin },
         estado: 'ACTIVO',
         tipoMovimiento: { in: ['APERTURA', 'CIERRE'] },
@@ -180,25 +204,63 @@ export class CajaService {
       cierreCajaDto.montoTransferencia +
       cierreCajaDto.montoTarjeta;
 
-    // Egresos en efectivo del turno (dinero que salió de la caja).
-    const egresosTurno = await this.prisma.movimientoCaja.aggregate({
-      where: {
-        empresaId,
-        ...(sedeId ? { sedeId } : {}),
-        tipoMovimiento: 'EGRESO',
-        fecha: { gte: fechaApertura },
-        estado: 'ACTIVO',
-      },
-      _sum: { monto: true },
-    });
+    // Egresos en efectivo del turno (dinero que salió de la caja) — sin
+    // contar las transferencias a otra sede, que se calculan aparte para no
+    // mezclarlas con gastos reales del negocio.
+    const [egresosTurno, transferenciasEnviadas, transferenciasRecibidas] =
+      await Promise.all([
+        this.prisma.movimientoCaja.aggregate({
+          where: {
+            empresaId,
+            ...(sedeId ? { sedeId } : {}),
+            tipoMovimiento: 'EGRESO',
+            esTransferencia: false,
+            fecha: { gte: fechaApertura },
+            estado: 'ACTIVO',
+          },
+          _sum: { monto: true },
+        }),
+        this.prisma.movimientoCaja.aggregate({
+          where: {
+            empresaId,
+            ...(sedeId ? { sedeId } : {}),
+            tipoMovimiento: 'EGRESO',
+            esTransferencia: true,
+            fecha: { gte: fechaApertura },
+            estado: 'ACTIVO',
+          },
+          _sum: { monto: true },
+        }),
+        this.prisma.movimientoCaja.aggregate({
+          where: {
+            empresaId,
+            ...(sedeId ? { sedeId } : {}),
+            tipoMovimiento: 'INGRESO',
+            esTransferencia: true,
+            fecha: { gte: fechaApertura },
+            estado: 'ACTIVO',
+          },
+          _sum: { monto: true },
+        }),
+      ]);
     const totalEgresos = Number(egresosTurno._sum.monto || 0);
+    const totalTransferenciasEnviadas = Number(
+      transferenciasEnviadas._sum.monto || 0,
+    );
+    const totalTransferenciasRecibidas = Number(
+      transferenciasRecibidas._sum.monto || 0,
+    );
     const fondoInicial = Number(cajaAbierta.montoInicial || 0);
 
-    // Lo que DEBERÍA haber al cierre = fondo de apertura + ventas del turno − egresos.
-    // Antes la diferencia comparaba el declarado (que incluye el fondo en efectivo)
-    // contra solo las ventas, ignorando el fondo y los egresos → salía inflada.
+    // Lo que DEBERÍA haber al cierre = fondo de apertura + ventas del turno
+    // + transferencias recibidas de otra sede − egresos − transferencias
+    // enviadas a otra sede.
     const montoEsperado =
-      fondoInicial + ventasDelTurno.totalIngresos - totalEgresos;
+      fondoInicial +
+      ventasDelTurno.totalIngresos +
+      totalTransferenciasRecibidas -
+      totalEgresos -
+      totalTransferenciasEnviadas;
     const diferencia = montoDeclarado - montoEsperado;
 
     // Usar el mismo turno que la apertura
@@ -239,6 +301,8 @@ export class CajaService {
         ventasDelTurno,
         fondoInicial,
         totalEgresos,
+        totalTransferenciasEnviadas,
+        totalTransferenciasRecibidas,
         montoEsperado,
         diferencia: parseFloat(diferencia.toString()),
       },
@@ -297,33 +361,66 @@ export class CajaService {
 
     // Calcular total de egresos y obtener recientes
     let totalEgresos = 0;
+    let totalTransferenciasEnviadas = 0;
+    let totalTransferenciasRecibidas = 0;
     let egresosRecientes: any[] = [];
     if (estado === 'ABIERTA' && cajaAbierta) {
-      const [resumen, recientes] = await Promise.all([
-        this.prisma.movimientoCaja.aggregate({
-          where: {
-            empresaId,
-            ...(sedeId ? { sedeId } : {}),
-            tipoMovimiento: 'EGRESO',
-            fecha: { gte: cajaAbierta.fecha },
-            estado: 'ACTIVO',
-          },
-          _sum: { monto: true },
-        }),
-        this.prisma.movimientoCaja.findMany({
-          where: {
-            empresaId,
-            ...(sedeId ? { sedeId } : {}),
-            tipoMovimiento: 'EGRESO',
-            fecha: { gte: cajaAbierta.fecha },
-            estado: 'ACTIVO',
-          },
-          orderBy: { fecha: 'desc' },
-          take: 10,
-          include: { usuario: { select: { nombre: true } } },
-        }),
-      ]);
+      const [resumen, transferEnviadas, transferRecibidas, recientes] =
+        await Promise.all([
+          this.prisma.movimientoCaja.aggregate({
+            where: {
+              empresaId,
+              ...(sedeId ? { sedeId } : {}),
+              tipoMovimiento: 'EGRESO',
+              esTransferencia: false,
+              fecha: { gte: cajaAbierta.fecha },
+              estado: 'ACTIVO',
+            },
+            _sum: { monto: true },
+          }),
+          this.prisma.movimientoCaja.aggregate({
+            where: {
+              empresaId,
+              ...(sedeId ? { sedeId } : {}),
+              tipoMovimiento: 'EGRESO',
+              esTransferencia: true,
+              fecha: { gte: cajaAbierta.fecha },
+              estado: 'ACTIVO',
+            },
+            _sum: { monto: true },
+          }),
+          this.prisma.movimientoCaja.aggregate({
+            where: {
+              empresaId,
+              ...(sedeId ? { sedeId } : {}),
+              tipoMovimiento: 'INGRESO',
+              esTransferencia: true,
+              fecha: { gte: cajaAbierta.fecha },
+              estado: 'ACTIVO',
+            },
+            _sum: { monto: true },
+          }),
+          this.prisma.movimientoCaja.findMany({
+            where: {
+              empresaId,
+              ...(sedeId ? { sedeId } : {}),
+              tipoMovimiento: 'EGRESO',
+              esTransferencia: false,
+              fecha: { gte: cajaAbierta.fecha },
+              estado: 'ACTIVO',
+            },
+            orderBy: { fecha: 'desc' },
+            take: 10,
+            include: { usuario: { select: { nombre: true } } },
+          }),
+        ]);
       totalEgresos = Number(resumen._sum.monto || 0);
+      totalTransferenciasEnviadas = Number(
+        transferEnviadas._sum.monto || 0,
+      );
+      totalTransferenciasRecibidas = Number(
+        transferRecibidas._sum.monto || 0,
+      );
       egresosRecientes = recientes;
     }
 
@@ -332,6 +429,8 @@ export class CajaService {
       movimiento,
       ventasDelDia,
       totalEgresos,
+      totalTransferenciasEnviadas,
+      totalTransferenciasRecibidas,
       egresosRecientes,
       fecha: new Date(),
     };
@@ -839,6 +938,115 @@ export class CajaService {
       code: 1,
       message: 'Gasto registrado correctamente',
       data: egreso,
+    };
+  }
+
+  // Transfiere efectivo de la caja abierta del usuario (sedeOrigenId, sale
+  // siempre del JWT) hacia la caja abierta de otra sede de la misma
+  // empresa. Crea un EGRESO en origen y un INGRESO en destino, vinculados
+  // entre sí, dentro de una sola transacción.
+  async transferirCaja(
+    usuarioId: number,
+    empresaId: number,
+    sedeOrigenId: number | undefined,
+    dto: TransferenciaCajaDto,
+  ) {
+    if (!sedeOrigenId) {
+      throw new BadRequestException(
+        'No se pudo determinar la sede de origen de la transferencia.',
+      );
+    }
+    if (sedeOrigenId === dto.sedeDestinoId) {
+      throw new BadRequestException(
+        'La sede de origen y destino no pueden ser la misma.',
+      );
+    }
+
+    const [sedeOrigen, sedeDestino] = await Promise.all([
+      this.prisma.sede.findFirst({
+        where: { id: sedeOrigenId, empresaId },
+        select: { id: true, nombre: true },
+      }),
+      this.prisma.sede.findFirst({
+        where: { id: dto.sedeDestinoId, empresaId, activo: true },
+        select: { id: true, nombre: true },
+      }),
+    ]);
+    if (!sedeOrigen || !sedeDestino) {
+      throw new BadRequestException(
+        'La sede de origen o destino no existe o no pertenece a tu empresa.',
+      );
+    }
+
+    const cajaOrigenAbierta = await this.verificarCajaAbierta(
+      usuarioId,
+      empresaId,
+      sedeOrigenId,
+    );
+    if (!cajaOrigenAbierta) {
+      throw new BadRequestException(
+        'No tienes una caja abierta. Abre un turno antes de transferir.',
+      );
+    }
+
+    const cajaDestinoAbierta = await this.verificarCajaAbiertaEnSede(
+      empresaId,
+      dto.sedeDestinoId,
+    );
+    if (!cajaDestinoAbierta) {
+      throw new BadRequestException(
+        `La sede "${sedeDestino.nombre}" no tiene una caja abierta hoy. Abre un turno ahí antes de transferir.`,
+      );
+    }
+
+    const { egreso, ingreso } = await this.prisma.$transaction(async (tx) => {
+      const egreso = await tx.movimientoCaja.create({
+        data: {
+          usuarioId,
+          empresaId,
+          sedeId: sedeOrigenId,
+          tipoMovimiento: 'EGRESO',
+          monto: dto.monto,
+          categoriaGasto: 'Transferencia entre Cajas',
+          descripcionGasto:
+            dto.observaciones || `Transferencia a ${sedeDestino.nombre}`,
+          metodoPago: 'Efectivo',
+          esTransferencia: true,
+          sedeContraparteId: dto.sedeDestinoId,
+          estado: 'ACTIVO',
+        },
+      });
+
+      const ingreso = await tx.movimientoCaja.create({
+        data: {
+          usuarioId: cajaDestinoAbierta.usuarioId,
+          empresaId,
+          sedeId: dto.sedeDestinoId,
+          tipoMovimiento: 'INGRESO',
+          monto: dto.monto,
+          categoriaGasto: 'Transferencia entre Cajas',
+          descripcionGasto:
+            dto.observaciones || `Transferencia recibida de ${sedeOrigen.nombre}`,
+          metodoPago: 'Efectivo',
+          esTransferencia: true,
+          sedeContraparteId: sedeOrigenId,
+          movimientoVinculadoId: egreso.id,
+          estado: 'ACTIVO',
+        },
+      });
+
+      const egresoActualizado = await tx.movimientoCaja.update({
+        where: { id: egreso.id },
+        data: { movimientoVinculadoId: ingreso.id },
+      });
+
+      return { egreso: egresoActualizado, ingreso };
+    });
+
+    return {
+      code: 1,
+      message: `Transferencia de S/ ${dto.monto.toFixed(2)} a ${sedeDestino.nombre} registrada correctamente`,
+      data: { egreso, ingreso },
     };
   }
 

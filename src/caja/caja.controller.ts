@@ -23,6 +23,7 @@ import {
   EstadoCajaDto,
   RegistrarEgresoDto,
   EditarEgresoDto,
+  TransferenciaCajaDto,
 } from './dto/caja.dto';
 import type { Response } from 'express';
 import * as XLSX from 'xlsx';
@@ -267,6 +268,17 @@ export class CajaController {
       user.empresaId,
       dto,
       user.sedeId,
+    );
+  }
+
+  @Post('transferir')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async transferirCaja(@User() user: any, @Body() dto: TransferenciaCajaDto) {
+    return await this.cajaService.transferirCaja(
+      user.id,
+      user.empresaId,
+      user.sedeId,
+      dto,
     );
   }
 

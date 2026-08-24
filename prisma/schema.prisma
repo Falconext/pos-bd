@@ -1109,6 +1109,18 @@ model MovimientoCaja {
   compraId Int?
   compra   Compra? @relation(fields: [compraId], references: [id])
 
+  // Transferencia de efectivo entre cajas de distintas sedes: en la fila
+  // EGRESO (origen), sedeContraparteId apunta a la sede destino; en la fila
+  // INGRESO (destino), apunta a la sede origen. movimientoVinculadoId
+  // conecta cada fila con su contraparte en la otra caja.
+  esTransferencia   Boolean @default(false)
+  sedeContraparteId Int?
+  sedeContraparte   Sede?   @relation("MovimientoCajaContraparte", fields: [sedeContraparteId], references: [id])
+
+  movimientoVinculadoId Int?
+  movimientoVinculado   MovimientoCaja?  @relation("VinculoTransferenciaCaja", fields: [movimientoVinculadoId], references: [id])
+  movimientosVinculados MovimientoCaja[] @relation("VinculoTransferenciaCaja")
+
   @@index([usuarioId, fecha])
   @@index([empresaId, fecha])
   @@index([tipoMovimiento])
@@ -1529,6 +1541,7 @@ model Sede {
   comprobantes      Comprobante[]
   movimientosKardex MovimientoKardex[]
   MovimientoCaja    MovimientoCaja[]
+  movimientosCajaContraparte MovimientoCaja[] @relation("MovimientoCajaContraparte")
   PedidoTienda      PedidoTienda[]
   Compra            Compra[]
   GuiaRemision      GuiaRemision[]

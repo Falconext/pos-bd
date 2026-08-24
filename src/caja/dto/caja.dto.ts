@@ -2,6 +2,7 @@ import {
   IsOptional,
   IsString,
   IsNumber,
+  IsInt,
   IsEnum,
   IsIn,
   Min,
@@ -133,4 +134,19 @@ export class RegistrarEgresoDto {
   @IsOptional()
   @IsString()
   metodoPago?: string;
+}
+
+export class TransferenciaCajaDto {
+  @IsInt()
+  @Min(1, { message: 'Selecciona la sede destino' })
+  sedeDestinoId: number;
+
+  @IsNumber()
+  @Min(0.01, { message: 'El monto debe ser mayor a 0' })
+  @Transform(({ value }) => parseFloat(value))
+  monto: number;
+
+  @IsOptional()
+  @IsString()
+  observaciones?: string;
 }
