@@ -417,7 +417,7 @@ export class OrdenCompraService {
     </style></head><body>
       <div class="top">
         <div>
-          <h1>Orden de compra</h1>
+          <h1>Orden de compra / Servicio</h1>
           <div class="metaline">
             <div><span class="lbl">N.º:</span> ${esc(orden.numeroFormato)}</div>
             <div><span class="lbl">Fecha:</span> ${fmtFecha(orden.fechaEmision)}</div>
