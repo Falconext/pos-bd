@@ -24,6 +24,7 @@ import {
   RegistrarEgresoDto,
   EditarEgresoDto,
   TransferenciaCajaDto,
+  MarcarDepositadosDto,
 } from './dto/caja.dto';
 import type { Response } from 'express';
 import * as XLSX from 'xlsx';
@@ -268,7 +269,25 @@ export class CajaController {
       user.empresaId,
       dto,
       user.sedeId,
+      user.rol,
     );
+  }
+
+  // ── Aprobación de gastos (maker-checker) ── solo ADMIN_EMPRESA ────────
+
+  @Patch('egreso/:id/aprobar')
+  @Roles('ADMIN_EMPRESA')
+  async aprobarEgreso(@User() user: any, @Param('id', ParseIntPipe) id: number) {
+    return await this.cajaService.aprobarEgreso(user.empresaId, id, user.id);
+  }
+
+  @Patch('egreso/:id/rechazar')
+  @Roles('ADMIN_EMPRESA')
+  async rechazarEgreso(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return await this.cajaService.rechazarEgreso(user.empresaId, id, user.id);
   }
 
   @Post('transferir')
@@ -289,7 +308,12 @@ export class CajaController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: EditarEgresoDto,
   ) {
-    return await this.cajaService.editarEgreso(user.empresaId, id, dto);
+    return await this.cajaService.editarEgreso(
+      user.empresaId,
+      id,
+      dto,
+      user.rol,
+    );
   }
 
   @Delete('egreso/:id')
@@ -299,5 +323,57 @@ export class CajaController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return await this.cajaService.eliminarEgreso(user.empresaId, id);
+  }
+
+  // ── Depósito bancario del efectivo de caja ── solo ADMIN_EMPRESA ──────
+
+  @Get('depositos/pendientes')
+  @Roles('ADMIN_EMPRESA')
+  async obtenerCierresPendientesDeposito(
+    @User() user: any,
+    @Query('sedeId') sedeId?: string,
+  ) {
+    return await this.cajaService.obtenerCierresPendientesDeposito(
+      user.empresaId,
+      sedeId ? Number(sedeId) : undefined,
+    );
+  }
+
+  @Get('depositos/realizados')
+  @Roles('ADMIN_EMPRESA')
+  async obtenerDepositosRealizados(
+    @User() user: any,
+    @Query('sedeId') sedeId?: string,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
+  ) {
+    return await this.cajaService.obtenerDepositosRealizados(
+      user.empresaId,
+      sedeId ? Number(sedeId) : undefined,
+      fechaInicio,
+      fechaFin,
+    );
+  }
+
+  @Post('depositos')
+  @Roles('ADMIN_EMPRESA')
+  async marcarCierresDepositados(
+    @User() user: any,
+    @Body() dto: MarcarDepositadosDto,
+  ) {
+    return await this.cajaService.marcarCierresDepositados(
+      user.empresaId,
+      user.id,
+      dto,
+    );
+  }
+
+  @Delete('depositos/:cierreId')
+  @Roles('ADMIN_EMPRESA')
+  async desmarcarDeposito(
+    @User() user: any,
+    @Param('cierreId', ParseIntPipe) cierreId: number,
+  ) {
+    return await this.cajaService.desmarcarDeposito(user.empresaId, cierreId);
   }
 }

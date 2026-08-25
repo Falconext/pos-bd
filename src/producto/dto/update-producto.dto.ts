@@ -8,7 +8,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
-import { PrecioMayoristaDto } from './create-producto.dto';
+import { PrecioMayoristaDto, CodigoBarraExtraDto } from './create-producto.dto';
 
 export class UpdateProductoDto {
   @IsInt()
@@ -173,11 +173,13 @@ export class UpdateProductoDto {
   @IsString()
   codigoBarras?: string;
 
-  // 🆕 Códigos de barra ADICIONALES (mismo producto, distinto EAN por lote/importación)
+  // 🆕 Códigos de barra ADICIONALES (mismo producto, distinto EAN por lote/importación,
+  // o un código de PAQUETE con unidadesPorPaquete > 1 — ej. six-pack)
   @IsOptional()
   @IsArray()
-  @IsString({ each: true })
-  codigosBarrasExtra?: string[];
+  @ValidateNested({ each: true })
+  @Type(() => CodigoBarraExtraDto)
+  codigosBarrasExtra?: CodigoBarraExtraDto[];
 
   @IsOptional()
   @IsString()

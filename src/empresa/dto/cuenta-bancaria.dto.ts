@@ -18,6 +18,8 @@ const BANCOS_VALIDOS = [
 ];
 const TIPOS_CUENTA = ['AHORROS', 'CORRIENTE'];
 const MONEDAS = ['PEN', 'USD'];
+// Medios de pago digitales que abonan directo a una cuenta bancaria.
+const MEDIOS_VINCULABLES = ['YAPE', 'PLIN'];
 
 export class CreateCuentaBancariaDto {
   @IsString()
@@ -53,6 +55,11 @@ export class CreateCuentaBancariaDto {
   @IsOptional()
   @IsBoolean()
   mostrarEnCotizacion?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(MEDIOS_VINCULABLES)
+  medioPagoVinculado?: string;
 }
 
 export class UpdateCuentaBancariaDto {
@@ -95,4 +102,10 @@ export class UpdateCuentaBancariaDto {
   @IsOptional()
   @IsBoolean()
   mostrarEnCotizacion?: boolean;
+
+  // null desvincula el medio de la cuenta; @IsOptional también deja pasar null.
+  @IsOptional()
+  @IsString()
+  @IsIn(MEDIOS_VINCULABLES)
+  medioPagoVinculado?: string | null;
 }

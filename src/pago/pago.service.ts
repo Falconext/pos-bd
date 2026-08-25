@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import { CrearPagoDto } from './dto/crear-pago.dto';
+import { resolverCuentaVinculada } from '../common/utils/cuenta-vinculada.util';
 
 @Injectable()
 export class PagoService {
@@ -118,16 +119,24 @@ export class PagoService {
       );
     }
 
+    const medioPagoNormalizado = (dto.medioPago ?? 'EFECTIVO').toUpperCase();
     const pago = await this.prisma.pago.create({
       data: {
         comprobanteId,
         usuarioId,
         empresaId,
         monto: dto.monto,
-        medioPago: (dto.medioPago ?? 'EFECTIVO').toUpperCase(),
+        medioPago: medioPagoNormalizado,
         observacion: dto.observacion,
         referencia: dto.referencia,
-        cuentaBancariaId: dto.cuentaBancariaId ?? null,
+        cuentaBancariaId:
+          dto.cuentaBancariaId ??
+          // Yape/Plin abonan directo a la cuenta vinculada de la empresa.
+          (await resolverCuentaVinculada(
+            this.prisma,
+            comprobante.empresaId,
+            medioPagoNormalizado,
+          )),
         dirigidoA: dto.dirigidoA ? dto.dirigidoA.toUpperCase() : null,
         // El vendedor de campo (quién envió el comprobante) se registra SIEMPRE,
         // independiente de a qué cuenta se dirigió el dinero (dirigidoA).

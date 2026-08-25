@@ -23,6 +23,37 @@ export class PrecioMayoristaDto {
   precio: number;
 }
 
+// Código de barra ADICIONAL de un producto. `unidadesPorPaquete > 1` significa
+// que ese código es un PAQUETE (ej. six-pack) del mismo producto: comparte el
+// mismo stock, pero escanearlo vende/descuenta N unidades en vez de 1.
+export class CodigoBarraExtraDto {
+  @IsString()
+  @IsNotEmpty()
+  codigo: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  unidadesPorPaquete?: number;
+
+  // Precio TOTAL del paquete (opcional): si se define, escanear este código
+  // cobra ese total en vez de precioUnitario × unidades.
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  precioPaquete?: number;
+
+  // Nombre propio del paquete (ej. "SIX PACK CERVEZA PILSEN").
+  @IsOptional()
+  @IsString()
+  alias?: string;
+
+  // Imagen del paquete: URL S3 existente o data-URI base64 (se sube a S3).
+  @IsOptional()
+  @IsString()
+  imagenUrl?: string;
+}
+
 export class CreateProductoDto {
   @IsOptional()
   @IsBoolean()
@@ -155,11 +186,13 @@ export class CreateProductoDto {
   @IsString()
   codigoBarras?: string;
 
-  // 🆕 Códigos de barra ADICIONALES (mismo producto, distinto EAN por lote/importación)
+  // 🆕 Códigos de barra ADICIONALES (mismo producto, distinto EAN por lote/importación,
+  // o un código de PAQUETE con unidadesPorPaquete > 1 — ej. six-pack)
   @IsOptional()
   @IsArray()
-  @IsString({ each: true })
-  codigosBarrasExtra?: string[];
+  @ValidateNested({ each: true })
+  @Type(() => CodigoBarraExtraDto)
+  codigosBarrasExtra?: CodigoBarraExtraDto[];
 
   // Código de producto SUNAT (Catálogo 25 / UNSPSC) — requerido para detracción
   @IsOptional()

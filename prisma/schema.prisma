@@ -174,6 +174,17 @@ model Empresa {
   // campo que envió el comprobante, a quién se dirigió el pago y permite adjuntar el comprobante.
   // Default false = flujo de cobro estándar (la mayoría de negocios).
   cobranzaCampo                 Boolean                       @default(false)
+  // Aprobación (maker-checker): los GASTOS/egresos de caja registrados por
+  // USUARIO_EMPRESA quedan PENDIENTES y no afectan el cierre hasta que un
+  // ADMIN_EMPRESA los apruebe. Default false = efecto inmediato (la mayoría).
+  requiereAprobacionGastos      Boolean                       @default(false)
+  // Aprobación de COMPRAS de vendedores: quedan PENDIENTE_APROBACION sin
+  // ingresar stock ni aceptar pagos hasta que un ADMIN_EMPRESA las apruebe.
+  requiereAprobacionCompras     Boolean                       @default(false)
+  // Caja obligatoria: nadie (incluido el admin) puede emitir comprobantes
+  // (facturas/boletas/notas de venta/tickets) sin tener SU caja abierta en la
+  // sede. Las cotizaciones están exentas (no mueven stock ni caja).
+  requiereCajaParaEmitir        Boolean                       @default(false)
   costoActivacionReseller       Decimal?                      @default(0)
   costoEnvioFijo                Decimal?                      @default(0)
   envioGratisDesdeSoles         Decimal?                      @default(0)
@@ -325,6 +336,7 @@ model Usuario {
   comprobantes                      Comprobante[]
   historialEstadosPedido            HistorialEstadoPedido[]
   movimientosCaja                   MovimientoCaja[]
+  depositosCajaRealizados           MovimientoCaja[]                  @relation("DepositoCajaRealizadoPor")
   movimientosKardex                 MovimientoKardex[]
   Notificacion                      Notificacion[]
   pagos                             Pago[]
@@ -1021,11 +1033,18 @@ model CuentaBancaria {
   alias        String?
   activo       Boolean  @default(true)
   mostrarEnCotizacion Boolean @default(true)
+  /// Medio de pago digital vinculado ('YAPE' | 'PLIN' | null). Los pagos con ese
+  /// medio se consideran abonados automáticamente en esta cuenta (Yape/Plin
+  /// depositan directo al banco), así que no pasan por el flujo manual de
+  /// depósitos de caja (solo el efectivo). Máx. una cuenta activa por medio
+  /// por empresa (validado en servicio).
+  medioPagoVinculado String?
   creadoEn     DateTime @default(now())
   empresa      Empresa  @relation(fields: [empresaId], references: [id])
   pagos        Pago[]
   pagosCompra  PagoCompra[]
   gastosOperativos GastoOperativo[]
+  movimientosCajaDepositados MovimientoCaja[]
 
   @@index([empresaId])
 }
@@ -1109,6 +1128,14 @@ model MovimientoCaja {
   compraId Int?
   compra   Compra? @relation(fields: [compraId], references: [id])
 
+  // Aprobación de gastos (maker-checker, solo filas EGRESO): 'PENDIENTE' |
+  // 'APROBADO' | 'RECHAZADO'. null = sin flujo de aprobación (legacy o
+  // empresa con requiereAprobacionGastos apagado) y cuenta como aprobado.
+  // PENDIENTE/RECHAZADO se excluyen de los totales del cierre.
+  estadoAprobacion     String?
+  // Quién aprobó/rechazó (denormalizado, sin FK — igual que vendedorCampoId).
+  aprobadoPorUsuarioId Int?
+
   // Transferencia de efectivo entre cajas de distintas sedes: en la fila
   // EGRESO (origen), sedeContraparteId apunta a la sede destino; en la fila
   // INGRESO (destino), apunta a la sede origen. movimientoVinculadoId
@@ -1120,6 +1147,16 @@ model MovimientoCaja {
   movimientoVinculadoId Int?
   movimientoVinculado   MovimientoCaja?  @relation("VinculoTransferenciaCaja", fields: [movimientoVinculadoId], references: [id])
   movimientosVinculados MovimientoCaja[] @relation("VinculoTransferenciaCaja")
+
+  // Depósito bancario del efectivo declarado en un cierre (tipoMovimiento
+  // CIERRE): trazabilidad de qué depósito corresponde a qué cierre de caja.
+  depositado              Boolean         @default(false)
+  cuentaBancariaId        Int?
+  cuentaBancaria          CuentaBancaria? @relation(fields: [cuentaBancariaId], references: [id])
+  fechaDeposito           DateTime?
+  numeroOperacionDeposito String?
+  depositadoPorUsuarioId  Int?
+  depositadoPor           Usuario?        @relation("DepositoCajaRealizadoPor", fields: [depositadoPorUsuarioId], references: [id])
 
   @@index([usuarioId, fecha])
   @@index([empresaId, fecha])
@@ -1472,6 +1509,19 @@ model ProductoCodigoBarras {
   productoId Int
   empresaId  Int
   codigo     String
+  /// Unidades del producto base que representa este código al escanearlo (ej. el
+  /// código del six-pack de cervezas vale 6; el código individual de la cerveza
+  /// suelta usa el default 1). Todos los códigos comparten el MISMO stock.
+  unidadesPorPaquete Int      @default(1)
+  /// Precio TOTAL del paquete cuando se vende por este código (suele ser más
+  /// barato que unidades × precio unitario). null = sin precio propio: se
+  /// cobra precioUnitario × unidadesPorPaquete.
+  precioPaquete Decimal?
+  /// Nombre propio del paquete (ej. "SIX PACK CERVEZA PILSEN"): se muestra en
+  /// el formulario y como descripción de la línea al vender por este código.
+  alias      String?
+  /// Imagen propia del paquete (S3), opcional — solo presentación/orden.
+  imagenUrl  String?
   creadoEn   DateTime @default(now())
   producto   Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
 
@@ -1642,6 +1692,11 @@ model Compra {
   saldo            Decimal            @default(0)
   estado           EstadoCompra       @default(REGISTRADO)
   estadoPago       EstadoPago         @default(PENDIENTE_PAGO)
+  // Quién aprobó/rechazó la compra pendiente (denormalizado, sin FK).
+  aprobadoPorUsuarioId Int?
+  // Series/IMEI por línea de una compra PENDIENTE_APROBACION (string[][]):
+  // se guardan aquí y recién se crean como ProductoSerie al aprobar.
+  seriesPendientes Json?
   observaciones    String?
   creadoEn         DateTime           @default(now())
   actualizadoEn    DateTime           @updatedAt
@@ -1933,6 +1988,11 @@ enum EstadoOrdenCompra {
 enum EstadoCompra {
   REGISTRADO
   ANULADO
+  // Compra de un vendedor esperando visto bueno del admin
+  // (requiereAprobacionCompras): sin stock, sin pagos, hasta aprobarse.
+  PENDIENTE_APROBACION
+  // El admin rechazó la compra: terminal, nunca aplicó efectos.
+  RECHAZADA
 }
 
 enum TipoGuiaRemision {

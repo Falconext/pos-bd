@@ -5,6 +5,8 @@ import {
   IsInt,
   IsEnum,
   IsIn,
+  IsArray,
+  ArrayMinSize,
   Min,
   IsNotEmpty,
 } from 'class-validator';
@@ -149,4 +151,23 @@ export class TransferenciaCajaDto {
   @IsOptional()
   @IsString()
   observaciones?: string;
+}
+
+export class MarcarDepositadosDto {
+  @IsArray()
+  @ArrayMinSize(1, { message: 'Selecciona al menos un cierre para depositar' })
+  @IsInt({ each: true })
+  cierreIds: number[];
+
+  @IsInt()
+  @Min(1, { message: 'Selecciona la cuenta bancaria destino' })
+  cuentaBancariaId: number;
+
+  @IsOptional()
+  @IsString()
+  fecha?: string;
+
+  @IsOptional()
+  @IsString()
+  numeroOperacion?: string;
 }

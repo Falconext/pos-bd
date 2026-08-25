@@ -13,6 +13,7 @@ import {
   RegistrarEgresoDto,
   EditarEgresoDto,
   TransferenciaCajaDto,
+  MarcarDepositadosDto,
 } from './dto/caja.dto';
 
 @Injectable()
@@ -217,6 +218,10 @@ export class CajaService {
             esTransferencia: false,
             fecha: { gte: fechaApertura },
             estado: 'ACTIVO',
+            // Gastos pendientes/rechazados (maker-checker) no cuentan en el
+            // cierre. Lista blanca explícita: null = sin flujo (legacy/admin).
+            // OJO: NOT { in } excluiría también los null (trampa SQL de NULL).
+            OR: [{ estadoAprobacion: null }, { estadoAprobacion: 'APROBADO' }],
           },
           _sum: { monto: true },
         }),
@@ -375,6 +380,10 @@ export class CajaService {
               esTransferencia: false,
               fecha: { gte: cajaAbierta.fecha },
               estado: 'ACTIVO',
+              // Pendientes/rechazados no cuentan en el total (sí se listan
+              // en egresosRecientes para que se vean con su badge). Lista
+              // blanca explícita: NOT { in } excluiría también los null.
+              OR: [{ estadoAprobacion: null }, { estadoAprobacion: 'APROBADO' }],
             },
             _sum: { monto: true },
           }),
@@ -900,11 +909,31 @@ export class CajaService {
     };
   }
 
+  /**
+   * Un egreso queda PENDIENTE (maker-checker) solo si la empresa activó
+   * requiereAprobacionGastos Y quien lo registra es USUARIO_EMPRESA (vendedor).
+   * Los del admin se auto-aprueban. Devuelve null cuando no aplica el flujo
+   * (legacy / flag apagado) — null cuenta como aprobado en los totales.
+   */
+  private async resolverEstadoAprobacionEgreso(
+    empresaId: number,
+    usuarioRol?: string,
+  ): Promise<string | null> {
+    if (String(usuarioRol || '').toUpperCase() !== 'USUARIO_EMPRESA')
+      return null;
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { requiereAprobacionGastos: true },
+    });
+    return empresa?.requiereAprobacionGastos ? 'PENDIENTE' : null;
+  }
+
   async registrarEgreso(
     usuarioId: number,
     empresaId: number,
     dto: RegistrarEgresoDto,
     sedeId?: number,
+    usuarioRol?: string,
   ) {
     const cajaAbierta = await this.verificarCajaAbierta(
       usuarioId,
@@ -917,6 +946,11 @@ export class CajaService {
       );
     }
 
+    const estadoAprobacion = await this.resolverEstadoAprobacionEgreso(
+      empresaId,
+      usuarioRol,
+    );
+
     const egreso = await this.prisma.movimientoCaja.create({
       data: {
         usuarioId,
@@ -928,6 +962,7 @@ export class CajaService {
         descripcionGasto: dto.descripcionGasto,
         metodoPago: dto.metodoPago || 'Efectivo',
         estado: 'ACTIVO',
+        estadoAprobacion,
       },
       include: {
         usuario: { select: { nombre: true, email: true } },
@@ -936,9 +971,58 @@ export class CajaService {
 
     return {
       code: 1,
-      message: 'Gasto registrado correctamente',
+      message:
+        estadoAprobacion === 'PENDIENTE'
+          ? 'Gasto registrado. Queda pendiente de aprobación del administrador.'
+          : 'Gasto registrado correctamente',
       data: egreso,
     };
+  }
+
+  /** Aprueba un egreso PENDIENTE: pasa a contar en los totales del cierre. */
+  async aprobarEgreso(empresaId: number, egresoId: number, adminId: number) {
+    const egreso = await this.prisma.movimientoCaja.findFirst({
+      where: {
+        id: egresoId,
+        empresaId,
+        tipoMovimiento: 'EGRESO',
+        estado: 'ACTIVO',
+        estadoAprobacion: 'PENDIENTE',
+      },
+    });
+    if (!egreso) {
+      throw new NotFoundException(
+        'El gasto no existe, no pertenece a tu empresa o no está pendiente de aprobación.',
+      );
+    }
+    const actualizado = await this.prisma.movimientoCaja.update({
+      where: { id: egresoId },
+      data: { estadoAprobacion: 'APROBADO', aprobadoPorUsuarioId: adminId },
+    });
+    return { code: 1, message: 'Gasto aprobado', data: actualizado };
+  }
+
+  /** Rechaza un egreso PENDIENTE: queda como registro pero nunca afecta la caja. */
+  async rechazarEgreso(empresaId: number, egresoId: number, adminId: number) {
+    const egreso = await this.prisma.movimientoCaja.findFirst({
+      where: {
+        id: egresoId,
+        empresaId,
+        tipoMovimiento: 'EGRESO',
+        estado: 'ACTIVO',
+        estadoAprobacion: 'PENDIENTE',
+      },
+    });
+    if (!egreso) {
+      throw new NotFoundException(
+        'El gasto no existe, no pertenece a tu empresa o no está pendiente de aprobación.',
+      );
+    }
+    const actualizado = await this.prisma.movimientoCaja.update({
+      where: { id: egresoId },
+      data: { estadoAprobacion: 'RECHAZADO', aprobadoPorUsuarioId: adminId },
+    });
+    return { code: 1, message: 'Gasto rechazado', data: actualizado };
   }
 
   // Transfiere efectivo de la caja abierta del usuario (sedeOrigenId, sale
@@ -1050,11 +1134,27 @@ export class CajaService {
     };
   }
 
-  async editarEgreso(empresaId: number, id: number, dto: EditarEgresoDto) {
+  async editarEgreso(
+    empresaId: number,
+    id: number,
+    dto: EditarEgresoDto,
+    usuarioRol?: string,
+  ) {
     const egreso = await this.prisma.movimientoCaja.findFirst({
       where: { id, empresaId, tipoMovimiento: 'EGRESO', estado: 'ACTIVO' },
     });
     if (!egreso) throw new NotFoundException('Gasto no encontrado');
+
+    // Maker-checker: si un vendedor edita un gasto ya aprobado (o rechazado)
+    // con el flujo de aprobación activo, vuelve a PENDIENTE — si no, editar
+    // después de la aprobación sería una puerta para saltarse el control.
+    const nuevoEstadoAprobacion = await this.resolverEstadoAprobacionEgreso(
+      empresaId,
+      usuarioRol,
+    );
+    const rependiente =
+      nuevoEstadoAprobacion === 'PENDIENTE' &&
+      egreso.estadoAprobacion !== 'PENDIENTE';
 
     const updated = await this.prisma.movimientoCaja.update({
       where: { id },
@@ -1067,12 +1167,17 @@ export class CajaService {
           descripcionGasto: dto.descripcionGasto,
         }),
         ...(dto.metodoPago !== undefined && { metodoPago: dto.metodoPago }),
+        ...(rependiente
+          ? { estadoAprobacion: 'PENDIENTE', aprobadoPorUsuarioId: null }
+          : {}),
       },
     });
 
     return {
       code: 1,
-      message: 'Gasto actualizado correctamente',
+      message: rependiente
+        ? 'Gasto actualizado. Vuelve a quedar pendiente de aprobación.'
+        : 'Gasto actualizado correctamente',
       data: updated,
     };
   }
@@ -1089,5 +1194,190 @@ export class CajaService {
     });
 
     return { code: 1, message: 'Gasto eliminado correctamente' };
+  }
+
+  // ── Depósito bancario del efectivo de caja (trazabilidad) ──────────────
+  // Solo ADMIN_EMPRESA (ver @Roles en el controller). Se marca como
+  // depositado el CIERRE de turno (no hay tabla nueva: se reutiliza
+  // MovimientoCaja, igual que el resto del módulo).
+
+  async obtenerCierresPendientesDeposito(empresaId: number, sedeId?: number) {
+    const where: any = {
+      empresaId,
+      tipoMovimiento: 'CIERRE',
+      depositado: false,
+      estado: 'ACTIVO',
+      // Un cierre sin efectivo declarado no tiene nada que llevar al banco
+      // (ej. turno cobrado 100% por Yape/Plin): no es un depósito pendiente.
+      montoEfectivo: { gt: 0 },
+      ...(sedeId ? { sedeId } : {}),
+    };
+    const [cierres, total, cuentasVinculadas] = await Promise.all([
+      this.prisma.movimientoCaja.findMany({
+        where,
+        orderBy: { fecha: 'asc' },
+        include: {
+          usuario: { select: { nombre: true, email: true } },
+          sede: { select: { nombre: true } },
+        },
+      }),
+      this.prisma.movimientoCaja.aggregate({
+        where,
+        // Yape/Plin se suman solo como informativos: abonan automáticamente a
+        // la cuenta bancaria vinculada, no requieren depósito manual.
+        _sum: { montoEfectivo: true, montoYape: true, montoPlin: true },
+      }),
+      this.prisma.cuentaBancaria.findMany({
+        where: {
+          empresaId,
+          activo: true,
+          medioPagoVinculado: { in: ['YAPE', 'PLIN'] },
+        },
+        select: {
+          id: true,
+          banco: true,
+          numeroCuenta: true,
+          alias: true,
+          medioPagoVinculado: true,
+        },
+      }),
+    ]);
+    return {
+      cierres,
+      totalPendiente: Number(total._sum.montoEfectivo || 0),
+      // Resumen "ya abonado a tus cuentas": mismo set de cierres pendientes,
+      // pero el dinero Yape/Plin ya llegó solo al banco.
+      autoAbonado: {
+        totalYape: Number(total._sum.montoYape || 0),
+        totalPlin: Number(total._sum.montoPlin || 0),
+        cuentaYape:
+          cuentasVinculadas.find((c) => c.medioPagoVinculado === 'YAPE') ??
+          null,
+        cuentaPlin:
+          cuentasVinculadas.find((c) => c.medioPagoVinculado === 'PLIN') ??
+          null,
+      },
+    };
+  }
+
+  async obtenerDepositosRealizados(
+    empresaId: number,
+    sedeId?: number,
+    fechaInicio?: string,
+    fechaFin?: string,
+  ) {
+    const where: any = {
+      empresaId,
+      tipoMovimiento: 'CIERRE',
+      depositado: true,
+      estado: 'ACTIVO',
+      ...(sedeId ? { sedeId } : {}),
+      ...(fechaInicio || fechaFin
+        ? {
+            fechaDeposito: {
+              ...(fechaInicio ? { gte: new Date(`${fechaInicio}T00:00:00.000-05:00`) } : {}),
+              ...(fechaFin ? { lte: new Date(`${fechaFin}T23:59:59.999-05:00`) } : {}),
+            },
+          }
+        : {}),
+    };
+    const cierres = await this.prisma.movimientoCaja.findMany({
+      where,
+      orderBy: { fechaDeposito: 'desc' },
+      include: {
+        usuario: { select: { nombre: true, email: true } },
+        sede: { select: { nombre: true } },
+        cuentaBancaria: { select: { banco: true, numeroCuenta: true, alias: true } },
+        depositadoPor: { select: { nombre: true, email: true } },
+      },
+    });
+    return { cierres };
+  }
+
+  async marcarCierresDepositados(
+    empresaId: number,
+    usuarioId: number,
+    dto: MarcarDepositadosDto,
+  ) {
+    const cuenta = await this.prisma.cuentaBancaria.findFirst({
+      where: { id: dto.cuentaBancariaId, empresaId, activo: true },
+    });
+    if (!cuenta) {
+      throw new BadRequestException(
+        'La cuenta bancaria no existe o no pertenece a tu empresa.',
+      );
+    }
+
+    const cierres = await this.prisma.movimientoCaja.findMany({
+      where: { id: { in: dto.cierreIds }, empresaId },
+    });
+    if (cierres.length !== dto.cierreIds.length) {
+      throw new BadRequestException(
+        'Uno o más cierres seleccionados no existen o no pertenecen a tu empresa.',
+      );
+    }
+    const invalido = cierres.find(
+      (c) => c.tipoMovimiento !== 'CIERRE' || c.depositado,
+    );
+    if (invalido) {
+      throw new BadRequestException(
+        `El cierre #${invalido.id} no es válido para depositar (ya fue depositado o no es un cierre de turno).`,
+      );
+    }
+
+    const fechaDeposito = dto.fecha
+      ? new Date(`${dto.fecha}T12:00:00.000-05:00`)
+      : new Date();
+
+    await this.prisma.movimientoCaja.updateMany({
+      where: { id: { in: dto.cierreIds } },
+      data: {
+        depositado: true,
+        cuentaBancariaId: dto.cuentaBancariaId,
+        fechaDeposito,
+        numeroOperacionDeposito: dto.numeroOperacion || null,
+        depositadoPorUsuarioId: usuarioId,
+      },
+    });
+
+    const totalDepositado = cierres.reduce(
+      (sum, c) => sum + Number(c.montoEfectivo || 0),
+      0,
+    );
+
+    return {
+      code: 1,
+      message: `${cierres.length} cierre(s) marcados como depositados en ${cuenta.banco} (S/ ${totalDepositado.toFixed(2)})`,
+      data: { cierresActualizados: cierres.length, totalDepositado },
+    };
+  }
+
+  async desmarcarDeposito(empresaId: number, cierreId: number) {
+    const cierre = await this.prisma.movimientoCaja.findFirst({
+      where: {
+        id: cierreId,
+        empresaId,
+        tipoMovimiento: 'CIERRE',
+        depositado: true,
+      },
+    });
+    if (!cierre) {
+      throw new NotFoundException(
+        'El cierre no existe, no pertenece a tu empresa, o no está depositado.',
+      );
+    }
+
+    await this.prisma.movimientoCaja.update({
+      where: { id: cierreId },
+      data: {
+        depositado: false,
+        cuentaBancariaId: null,
+        fechaDeposito: null,
+        numeroOperacionDeposito: null,
+        depositadoPorUsuarioId: null,
+      },
+    });
+
+    return { code: 1, message: 'Depósito revertido, el cierre vuelve a estar pendiente.' };
   }
 }

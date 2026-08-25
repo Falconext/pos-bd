@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Put,
+  Patch,
   Delete,
   Body,
   Param,
@@ -17,6 +18,8 @@ import {
 import { ComprasService } from './compras.service';
 import { CrearCompraDto } from './dto/crear-compra.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { xmlUploadOptions } from '../common/utils/multer.config';
 
@@ -40,6 +43,31 @@ export class ComprasController {
       req.user.id,
       body,
       req.user.sedeId,
+      req.user.rol,
+    );
+  }
+
+  // ── Aprobación de compras (maker-checker) ── solo ADMIN_EMPRESA ────────
+
+  @Patch(':id/aprobar')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN_EMPRESA')
+  async aprobarCompra(@Request() req, @Param('id', ParseIntPipe) id: number) {
+    return this.comprasService.aprobarCompra(
+      req.user.empresaId,
+      req.user.id,
+      id,
+    );
+  }
+
+  @Patch(':id/rechazar')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN_EMPRESA')
+  async rechazarCompra(@Request() req, @Param('id', ParseIntPipe) id: number) {
+    return this.comprasService.rechazarCompra(
+      req.user.empresaId,
+      req.user.id,
+      id,
     );
   }
 

@@ -1212,6 +1212,12 @@ export class EmpresaService {
         updateData.permitirVentaSinStock = dto.permitirVentaSinStock;
       if (dto.cobranzaCampo !== undefined)
         updateData.cobranzaCampo = dto.cobranzaCampo;
+      if (dto.requiereAprobacionGastos !== undefined)
+        updateData.requiereAprobacionGastos = dto.requiereAprobacionGastos;
+      if (dto.requiereAprobacionCompras !== undefined)
+        updateData.requiereAprobacionCompras = dto.requiereAprobacionCompras;
+      if (dto.requiereCajaParaEmitir !== undefined)
+        updateData.requiereCajaParaEmitir = dto.requiereCajaParaEmitir;
       if (dto.directorTecnico !== undefined)
         updateData.directorTecnico = dto.directorTecnico;
       if (dto.logo !== undefined) updateData.logo = dto.logo;
@@ -2454,7 +2460,37 @@ export class EmpresaService {
     });
   }
 
+  /**
+   * Máximo una cuenta ACTIVA por medio digital (YAPE/PLIN) por empresa: es la
+   * cuenta a la que ese medio abona automáticamente, tener dos sería ambiguo.
+   */
+  private async validarMedioVinculadoUnico(
+    empresaId: number,
+    medioPagoVinculado: string,
+    excludeCuentaId?: number,
+  ) {
+    const existente = await this.prisma.cuentaBancaria.findFirst({
+      where: {
+        empresaId,
+        medioPagoVinculado,
+        activo: true,
+        ...(excludeCuentaId ? { id: { not: excludeCuentaId } } : {}),
+      },
+      select: { banco: true, numeroCuenta: true, alias: true },
+    });
+    if (existente) {
+      const nombre =
+        existente.alias || `${existente.banco} · ${existente.numeroCuenta}`;
+      throw new BadRequestException(
+        `${medioPagoVinculado} ya está vinculado a la cuenta "${nombre}". Desvincúlala primero si quieres cambiarlo.`,
+      );
+    }
+  }
+
   async crearCuentaBancaria(empresaId: number, dto: CreateCuentaBancariaDto) {
+    if (dto.medioPagoVinculado) {
+      await this.validarMedioVinculadoUnico(empresaId, dto.medioPagoVinculado);
+    }
     return this.prisma.cuentaBancaria.create({
       data: {
         empresaId,
@@ -2466,6 +2502,7 @@ export class EmpresaService {
         moneda: dto.moneda ?? 'PEN',
         alias: dto.alias ?? null,
         mostrarEnCotizacion: dto.mostrarEnCotizacion ?? true,
+        medioPagoVinculado: dto.medioPagoVinculado ?? null,
       },
     });
   }
@@ -2482,6 +2519,14 @@ export class EmpresaService {
     if (cuenta.empresaId !== empresaId)
       throw new BadRequestException('La cuenta no pertenece a tu empresa');
 
+    if (dto.medioPagoVinculado) {
+      await this.validarMedioVinculadoUnico(
+        empresaId,
+        dto.medioPagoVinculado,
+        id,
+      );
+    }
+
     return this.prisma.cuentaBancaria.update({
       where: { id },
       data: {
@@ -2497,6 +2542,9 @@ export class EmpresaService {
         ...(dto.activo !== undefined && { activo: dto.activo }),
         ...(dto.mostrarEnCotizacion !== undefined && {
           mostrarEnCotizacion: dto.mostrarEnCotizacion,
+        }),
+        ...(dto.medioPagoVinculado !== undefined && {
+          medioPagoVinculado: dto.medioPagoVinculado,
         }),
       },
     });

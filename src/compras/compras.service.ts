@@ -127,11 +127,31 @@ export class ComprasService {
     };
   }
 
+  /**
+   * Una compra queda PENDIENTE_APROBACION (maker-checker) solo si la empresa
+   * activó requiereAprobacionCompras Y quien la registra es USUARIO_EMPRESA.
+   * En ese estado NO ingresa stock, NO crea series y NO acepta pagos: todo se
+   * difiere hasta que un ADMIN_EMPRESA la apruebe.
+   */
+  private async requiereAprobacionCompra(
+    empresaId: number,
+    usuarioRol?: string,
+  ): Promise<boolean> {
+    if (String(usuarioRol || '').toUpperCase() !== 'USUARIO_EMPRESA')
+      return false;
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { requiereAprobacionCompras: true },
+    });
+    return Boolean(empresa?.requiereAprobacionCompras);
+  }
+
   async crear(
     empresaId: number,
     usuarioId: number,
     data: CrearCompraDto,
     reqSedeId?: number,
+    usuarioRol?: string,
   ) {
     const duplicado = await this.prisma.compra.findFirst({
       where: { empresaId, serie: data.serie, numero: data.numero },
@@ -250,10 +270,16 @@ export class ComprasService {
     const igvTotal = this.roundMoney(
       data.igv !== undefined ? Number(data.igv) : total - subtotalTotal,
     );
-    const montoPagadoInicial = Math.max(
-      0,
-      this.roundMoney(Number(data.montoPagadoInicial) || 0),
+    // Maker-checker: compra de vendedor con aprobación activada queda
+    // PENDIENTE_APROBACION — sin stock, sin pagos (ni el inicial), sin series.
+    const esPendiente = await this.requiereAprobacionCompra(
+      empresaId,
+      usuarioRol,
     );
+
+    const montoPagadoInicial = esPendiente
+      ? 0
+      : Math.max(0, this.roundMoney(Number(data.montoPagadoInicial) || 0));
     const saldoInicial = Math.max(
       0,
       this.roundMoney(total - montoPagadoInicial),
@@ -284,7 +310,11 @@ export class ComprasService {
           igv: igvTotal,
           total,
           saldo: saldoInicial,
-          estado: 'REGISTRADO',
+          estado: esPendiente ? 'PENDIENTE_APROBACION' : 'REGISTRADO',
+          // Los números de serie viajan en JSON y se materializan al aprobar.
+          ...(esPendiente && todasLasSeries.length
+            ? { seriesPendientes: seriesPorLinea as any }
+            : {}),
           estadoPago: estadoPagoInicial as any,
           observaciones: data.observaciones,
           // Save installments
@@ -319,7 +349,9 @@ export class ComprasService {
     // se devuelven como aviso, para que el usuario sepa que la compra se guardó
     // pero el stock de algún ítem no subió (y pueda corregirlo).
     const stockWarnings: string[] = [];
-    for (const item of data.detalles) {
+    // Compra pendiente de aprobación: el stock/series recién se aplican al
+    // aprobar (aprobarCompra). data.detalles queda intacto en DetalleCompra.
+    for (const item of esPendiente ? [] : data.detalles) {
       if (item.productoId) {
         try {
           // costoPromedio siempre se actualiza con el precio NETO (sin IGV)
@@ -379,7 +411,7 @@ export class ComprasService {
     // Registrar series / IMEI de la compra como ProductoSerie DISPONIBLE.
     // Se enlazan a la compra y a su línea; las series son opcionales (pueden
     // completarse luego desde Kardex → Series y Garantías).
-    if (todasLasSeries.length) {
+    if (!esPendiente && todasLasSeries.length) {
       const detallesCreados = (compra as any).detalles ?? [];
       const seriesData: Prisma.ProductoSerieCreateManyInput[] = [];
       for (let i = 0; i < data.detalles.length; i++) {
@@ -484,9 +516,157 @@ export class ComprasService {
     }
 
     const respuesta = this.normalizeCompraForResponse(compra);
-    return stockWarnings.length
-      ? { ...respuesta, stockWarnings }
-      : respuesta;
+    return {
+      ...(stockWarnings.length
+        ? { ...respuesta, stockWarnings }
+        : respuesta),
+      ...(esPendiente
+        ? {
+            mensajeAprobacion:
+              'Compra registrada. Queda pendiente de aprobación del administrador: el stock ingresará al aprobarse.',
+          }
+        : {}),
+    };
+  }
+
+  /**
+   * Aprueba una compra PENDIENTE_APROBACION: recién aquí ingresa el stock
+   * (kardex + lotes FEFO) y se materializan las series/IMEI guardadas.
+   */
+  async aprobarCompra(empresaId: number, adminId: number, id: number) {
+    const compra = await this.prisma.compra.findFirst({
+      where: { id, empresaId, estado: 'PENDIENTE_APROBACION' as any },
+      include: { detalles: { orderBy: { id: 'asc' } } },
+    });
+    if (!compra) {
+      throw new NotFoundException(
+        'La compra no existe, no pertenece a tu empresa o no está pendiente de aprobación.',
+      );
+    }
+
+    // Igual criterio que crear(): sede guardada en la compra, con respaldo en
+    // la sede principal si la compra vieja no la tuviera.
+    const sedeId = await this.resolverSedeDestino(
+      empresaId,
+      compra.sedeId ?? undefined,
+    );
+    const stockWarnings: string[] = [];
+    for (const detalle of compra.detalles) {
+      if (!detalle.productoId) continue;
+      try {
+        // precioUnitario en DetalleCompra ya está guardado NETO (sin IGV).
+        const movimiento = await this.kardexService.registrarMovimiento({
+          empresaId,
+          productoId: detalle.productoId,
+          tipoMovimiento: 'INGRESO',
+          concepto: `COMPRA ${compra.serie}-${compra.numero}`,
+          cantidad: Number(detalle.cantidad),
+          costoUnitario: Number(detalle.precioUnitario),
+          compraId: compra.id,
+          usuarioId: adminId,
+          sedeId,
+          lote: detalle.lote ?? undefined,
+          fechaVencimiento: detalle.fechaVencimiento ?? undefined,
+        });
+        if (detalle.lote && detalle.fechaVencimiento) {
+          await this.productoLoteService.sincronizarLoteDesdeIngreso({
+            productoId: detalle.productoId,
+            empresaId,
+            lote: detalle.lote,
+            fechaVencimiento: detalle.fechaVencimiento,
+            cantidad: Number(detalle.cantidad),
+            costoUnitario: Number(detalle.precioUnitario),
+            movimientoKardexId: movimiento.id,
+          });
+        }
+      } catch (error) {
+        stockWarnings.push(
+          `No se pudo ingresar el stock de "${detalle.descripcion ?? detalle.productoId}": ${
+            (error as any)?.message ?? 'error desconocido'
+          }. Revisa/ajusta el stock manualmente.`,
+        );
+      }
+    }
+
+    // Materializar series/IMEI guardadas al crear la compra pendiente.
+    const seriesPorLinea = Array.isArray(compra.seriesPendientes)
+      ? (compra.seriesPendientes as any as string[][])
+      : [];
+    if (seriesPorLinea.some((s) => Array.isArray(s) && s.length)) {
+      const seriesData: Prisma.ProductoSerieCreateManyInput[] = [];
+      for (let i = 0; i < compra.detalles.length; i++) {
+        const series = seriesPorLinea[i] || [];
+        const detalle = compra.detalles[i];
+        if (!series.length || !detalle?.productoId) continue;
+        for (const numeroSerie of series) {
+          seriesData.push({
+            empresaId,
+            productoId: detalle.productoId,
+            sedeId: sedeId ?? null,
+            numeroSerie,
+            estado: 'DISPONIBLE',
+            compraId: compra.id,
+            compraDetalleId: detalle.id,
+          });
+        }
+      }
+      if (seriesData.length) {
+        try {
+          await this.prisma.productoSerie.createMany({
+            data: seriesData,
+            skipDuplicates: true,
+          });
+        } catch (error) {
+          stockWarnings.push(
+            'No se pudieron registrar todas las series/IMEI de la compra; regístralas manualmente en Kardex → Series.',
+          );
+        }
+      }
+    }
+
+    const actualizada = await this.prisma.compra.update({
+      where: { id },
+      data: {
+        estado: 'REGISTRADO' as any,
+        aprobadoPorUsuarioId: adminId,
+        seriesPendientes: Prisma.DbNull,
+      },
+      include: { detalles: { orderBy: { id: 'asc' } }, proveedor: true },
+    });
+
+    return {
+      success: true,
+      message: 'Compra aprobada: el stock ya ingresó al inventario.',
+      data: this.normalizeCompraForResponse(actualizada),
+      ...(stockWarnings.length ? { stockWarnings } : {}),
+    };
+  }
+
+  /** Rechaza una compra PENDIENTE_APROBACION (terminal, nunca aplicó efectos). */
+  async rechazarCompra(empresaId: number, adminId: number, id: number) {
+    const compra = await this.prisma.compra.findFirst({
+      where: { id, empresaId, estado: 'PENDIENTE_APROBACION' as any },
+      select: { id: true },
+    });
+    if (!compra) {
+      throw new NotFoundException(
+        'La compra no existe, no pertenece a tu empresa o no está pendiente de aprobación.',
+      );
+    }
+    const actualizada = await this.prisma.compra.update({
+      where: { id },
+      data: {
+        estado: 'RECHAZADA' as any,
+        aprobadoPorUsuarioId: adminId,
+        saldo: 0,
+        seriesPendientes: Prisma.DbNull,
+      },
+    });
+    return {
+      success: true,
+      message: 'Compra rechazada.',
+      data: actualizada,
+    };
   }
 
   // Resuelve la sede/almacén destino del stock: prioriza la sede indicada en el
@@ -638,6 +818,20 @@ export class ComprasService {
     if (compra.estado === ('ANULADO' as any)) {
       throw new BadRequestException('La compra ya está anulada.');
     }
+
+    // Pendiente/rechazada: nunca aplicó stock ni series — anular es solo
+    // marcar el estado, sin movimientos compensatorios.
+    if (
+      compra.estado === ('PENDIENTE_APROBACION' as any) ||
+      compra.estado === ('RECHAZADA' as any)
+    ) {
+      await this.prisma.compra.update({
+        where: { id },
+        data: { estado: 'ANULADO' as any, saldo: 0 },
+      });
+      return { success: true, message: 'Compra anulada.' };
+    }
+
     await this.assertSinSeriesUsadas(id, empresaId);
 
     const stockWarnings = await this.revertirInventarioCompra(
@@ -692,6 +886,17 @@ export class ComprasService {
     if (!existente) throw new NotFoundException('Compra no encontrada');
     if (existente.estado === ('ANULADO' as any)) {
       throw new BadRequestException('No se puede editar una compra anulada.');
+    }
+    // La edición revierte y re-aplica stock — una compra pendiente/rechazada
+    // nunca aplicó stock, así que editarla corrompería el kardex. Anúlala y
+    // créala de nuevo, o espera la decisión del administrador.
+    if (
+      existente.estado === ('PENDIENTE_APROBACION' as any) ||
+      existente.estado === ('RECHAZADA' as any)
+    ) {
+      throw new BadRequestException(
+        'No se puede editar una compra pendiente de aprobación o rechazada. Anúlala y regístrala de nuevo.',
+      );
     }
     await this.assertSinSeriesUsadas(id, empresaId);
 
@@ -1093,6 +1298,14 @@ export class ComprasService {
     });
 
     if (!compra) throw new NotFoundException('Compra no encontrada');
+    if (
+      compra.estado === ('PENDIENTE_APROBACION' as any) ||
+      compra.estado === ('RECHAZADA' as any)
+    ) {
+      throw new BadRequestException(
+        'No se pueden registrar pagos en una compra pendiente de aprobación o rechazada.',
+      );
+    }
 
     const monto = Number(data.monto);
     if (monto <= 0)

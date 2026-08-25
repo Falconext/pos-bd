@@ -164,6 +164,18 @@ export class UpdateEmpresaDto {
   cobranzaCampo?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  requiereAprobacionGastos?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  requiereAprobacionCompras?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  requiereCajaParaEmitir?: boolean;
+
+  @IsOptional()
   @IsString()
   directorTecnico?: string;
 

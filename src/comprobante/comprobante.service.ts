@@ -1,5 +1,6 @@
 import { num, round3 } from '../common/utils/stock';
 import { SunatValidezClient } from '../common/utils/sunat-validez.client';
+import { resolverCuentaVinculada } from '../common/utils/cuenta-vinculada.util';
 import {
   BadRequestException,
   Injectable,
@@ -158,6 +159,15 @@ export class ComprobanteService {
   ) {
     const lines = this.normalizarDetallePago(input, medioPago, montoObjetivo);
     for (const line of lines) {
+      // Yape/Plin abonan directo a la cuenta bancaria vinculada de la empresa:
+      // si el pago no trae cuenta, se asigna automáticamente la configurada.
+      if (!line.cuentaBancariaId) {
+        line.cuentaBancariaId = await resolverCuentaVinculada(
+          this.prisma,
+          empresaId,
+          line.method,
+        );
+      }
       // El N° de operación/voucher es opcional: se puede emitir sin él y
       // registrarlo después (algunos clientes emiten la factura antes de pagar).
       if (line.method === 'TRANSFERENCIA') {
@@ -1024,16 +1034,24 @@ export class ComprobanteService {
     }
 
     // Create payment record
+    const medioPagoNormalizado = (input?.medioPago ?? 'EFECTIVO').toUpperCase();
     const pago = await this.prisma.pago.create({
       data: {
         comprobanteId,
         usuarioId,
         empresaId: comp.empresaId,
         monto: montoPagado,
-        medioPago: (input?.medioPago ?? 'EFECTIVO').toUpperCase(),
+        medioPago: medioPagoNormalizado,
         observacion: input?.observacion || null,
         referencia: input?.referencia || null,
-        cuentaBancariaId: input?.cuentaBancariaId ?? null,
+        cuentaBancariaId:
+          input?.cuentaBancariaId ??
+          // Yape/Plin abonan directo a la cuenta vinculada de la empresa.
+          (await resolverCuentaVinculada(
+            this.prisma,
+            comp.empresaId,
+            medioPagoNormalizado,
+          )),
       },
     });
 
@@ -2472,6 +2490,52 @@ export class ComprobanteService {
     return normalizadas;
   }
 
+  /**
+   * Caja obligatoria (empresa.requiereCajaParaEmitir): quien emite —
+   * incluido el admin — debe tener SU caja abierta hoy en su sede. Aplica a
+   * todo comprobante EXCEPTO cotizaciones (COT, que no mueven stock ni caja)
+   * y flujos sin usuario (tienda online / importaciones automáticas).
+   * Misma semántica que CajaService.verificarCajaAbierta (query directa para
+   * no acoplar módulos).
+   */
+  private async exigirCajaAbiertaSiConfigurado(
+    empresaId: number,
+    usuarioId?: number,
+    sedeId?: number,
+  ) {
+    if (!usuarioId) return;
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { requiereCajaParaEmitir: true },
+    });
+    if (!empresa?.requiereCajaParaEmitir) return;
+
+    const today = new Date().toLocaleDateString('en-CA', {
+      timeZone: 'America/Lima',
+    });
+    const ultimoMovimiento = await this.prisma.movimientoCaja.findFirst({
+      where: {
+        usuarioId,
+        empresaId,
+        ...(sedeId ? { sedeId } : {}),
+        fecha: {
+          gte: new Date(`${today}T00:00:00.000-05:00`),
+          lte: new Date(`${today}T23:59:59.999-05:00`),
+        },
+        estado: 'ACTIVO',
+        tipoMovimiento: { in: ['APERTURA', 'CIERRE'] },
+      },
+      orderBy: { fecha: 'desc' },
+    });
+    const cajaAbierta =
+      ultimoMovimiento && ultimoMovimiento.tipoMovimiento === 'APERTURA';
+    if (!cajaAbierta) {
+      throw new BadRequestException(
+        'Tu empresa exige tener la caja abierta para emitir comprobantes. Abre tu caja en Ventas → Caja e inténtalo de nuevo (las cotizaciones no lo requieren).',
+      );
+    }
+  }
+
   async crearFormal(
     input: any,
     empresaId: number,
@@ -2496,6 +2560,11 @@ export class ComprobanteService {
       throw new BadRequestException(
         'La importación de comprobantes emitidos solo admite Facturas (01) y Boletas (03).',
       );
+    }
+    // Caja obligatoria (si la empresa lo configuró). Las importaciones de
+    // comprobantes ya emitidos no son una venta en curso: quedan exentas.
+    if (!importado) {
+      await this.exigirCajaAbiertaSiConfigurado(empresaId, usuarioId, sedeId);
     }
     const afectarStockImport = opts?.afectarStock !== false; // default true
     const afectarCajaImport = opts?.afectarCaja !== false; // default true
@@ -3887,6 +3956,13 @@ export class ComprobanteService {
       porcentajeDetraccion,
       montoDetraccion,
     } = input;
+
+    // Caja obligatoria (si la empresa lo configuró). Las cotizaciones (COT)
+    // están exentas — no mueven stock ni caja — y las importaciones tampoco.
+    if (!importado && String(tipoDoc).toUpperCase() !== 'COT') {
+      await this.exigirCajaAbiertaSiConfigurado(empresaId, usuarioId, sedeId);
+    }
+
     // ¿Este informal debe afectar (descontar) el stock del almacén?
     // - COT (Cotización): nunca descuenta.
     // - NP (Nota de Pedido): por defecto NO descuenta; solo si el usuario marcó

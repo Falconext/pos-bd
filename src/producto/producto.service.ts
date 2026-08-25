@@ -153,7 +153,16 @@ export class ProductoService {
       unidadVenta?: string;
       factorConversion?: number | string;
       codigoBarras?: string;
-      codigosBarrasExtra?: string[];
+      codigosBarrasExtra?: Array<
+        | string
+        | {
+            codigo: string;
+            unidadesPorPaquete?: number;
+            precioPaquete?: number;
+            alias?: string;
+            imagenUrl?: string;
+          }
+      >;
       codigoDigemid?: string;
       codProdSunat?: string;
       costoUnitario?: number;
@@ -257,7 +266,8 @@ export class ProductoService {
       throw new ForbiddenException('Ya existe un producto con ese código');
     }
 
-    // 2. Validar unicidad de Código de Barras (si se proporciona)
+    // 2. Validar unicidad de Código de Barras (si se proporciona) — contra el
+    // código PRINCIPAL de otros productos y contra sus códigos ALTERNOS/de paquete.
     if (codigoBarras) {
       const existeBarras = await this.prisma.producto.findFirst({
         where: {
@@ -269,6 +279,15 @@ export class ProductoService {
       if (existeBarras) {
         throw new ForbiddenException(
           `El código de barras "${codigoBarras}" ya está asignado a otro producto: ${existeBarras.descripcion}`,
+        );
+      }
+      const existeAlterno = await this.prisma.productoCodigoBarras.findFirst({
+        where: { empresaId, codigo: codigoBarras },
+        select: { producto: { select: { descripcion: true } } },
+      });
+      if (existeAlterno) {
+        throw new ForbiddenException(
+          `El código de barras "${codigoBarras}" ya está asignado a otro producto: ${existeAlterno.producto?.descripcion}`,
         );
       }
     }
@@ -1289,7 +1308,7 @@ export class ProductoService {
           },
         },
         codigosBarras: {
-          select: { codigo: true },
+          select: { codigo: true, unidadesPorPaquete: true, precioPaquete: true, alias: true, imagenUrl: true },
           orderBy: { id: 'asc' },
         },
       },
@@ -1349,8 +1368,16 @@ export class ProductoService {
       imagenesExtra,
       imagenesExtraDisplay,
       costoUnitario: Number((producto as any).costoPromedio) || 0,
-      codigosBarrasExtra: (((producto as any).codigosBarras as any[]) || []).map(
-        (c) => c.codigo,
+      codigosBarrasExtra: await Promise.all(
+        (((producto as any).codigosBarras as any[]) || []).map(async (c) => ({
+          codigo: c.codigo,
+          unidadesPorPaquete: c.unidadesPorPaquete ?? 1,
+          precioPaquete:
+            c.precioPaquete != null ? Number(c.precioPaquete) : null,
+          alias: c.alias ?? null,
+          imagenUrl: c.imagenUrl ?? null,
+          imagenUrlDisplay: await signIfS3(c.imagenUrl),
+        })),
       ),
     };
   }
@@ -1362,20 +1389,66 @@ export class ProductoService {
    * `undefined` no se toca nada (el cliente no envió el campo). Normaliza, deduplica,
    * ignora el código principal y valida colisiones contra otros productos.
    */
-  /** Normaliza (trim + uppercase), quita vacíos/duplicados y descarta el código principal. */
+  /**
+   * Normaliza (trim + uppercase), quita vacíos/duplicados y descarta el código
+   * principal. Acepta tanto strings sueltos (compat con clientes viejos/sync
+   * offline) como objetos `{codigo, unidadesPorPaquete}` — un código con
+   * `unidadesPorPaquete > 1` representa un PAQUETE (ej. six-pack) del mismo
+   * producto: comparte el mismo stock, pero escanearlo vende/descuenta N
+   * unidades en vez de 1.
+   */
   private normalizarCodigosExtra(
-    codigos: string[],
+    codigos: Array<
+      | string
+      | {
+          codigo: string;
+          unidadesPorPaquete?: number;
+          precioPaquete?: number;
+          alias?: string;
+          imagenUrl?: string;
+        }
+    >,
     codigoBarrasPrincipal?: string | null,
-  ): string[] {
+  ): Array<{
+    codigo: string;
+    unidadesPorPaquete: number;
+    precioPaquete: number | null;
+    alias: string | null;
+    imagenUrl: string | null;
+  }> {
     const principal = (codigoBarrasPrincipal || '').trim().toUpperCase();
-    return Array.from(
-      new Set(
-        (codigos || [])
-          .map((c) => (c || '').trim().toUpperCase())
-          .filter((c) => c.length > 0)
-          .filter((c) => c !== principal),
-      ),
-    );
+    const vistos = new Map<
+      string,
+      {
+        unidadesPorPaquete: number;
+        precioPaquete: number | null;
+        alias: string | null;
+        imagenUrl: string | null;
+      }
+    >();
+    for (const raw of codigos || []) {
+      const esObjeto = typeof raw === 'object' && raw !== null;
+      const codigo = ((esObjeto ? raw.codigo : raw) || '').trim().toUpperCase();
+      if (!codigo || codigo === principal) continue;
+      const unidades = Math.max(
+        1,
+        Math.trunc(Number(esObjeto ? raw.unidadesPorPaquete : 1) || 1),
+      );
+      // Precio TOTAL del paquete (opcional; solo válido si es > 0).
+      const precioRaw = esObjeto ? Number(raw.precioPaquete) : NaN;
+      const precioPaquete =
+        Number.isFinite(precioRaw) && precioRaw > 0 ? precioRaw : null;
+      const alias = (esObjeto ? String(raw.alias || '').trim() : '') || null;
+      const imagenUrl =
+        (esObjeto ? String(raw.imagenUrl || '').trim() : '') || null;
+      vistos.set(codigo, {
+        unidadesPorPaquete: unidades,
+        precioPaquete,
+        alias,
+        imagenUrl,
+      });
+    }
+    return Array.from(vistos, ([codigo, extra]) => ({ codigo, ...extra }));
   }
 
   /**
@@ -1384,10 +1457,10 @@ export class ProductoService {
    */
   private async validarColisionCodigosExtra(
     empresaId: number,
-    codigos: string[],
+    codigos: Array<{ codigo: string }>,
     excludeProductoId?: number,
   ) {
-    for (const codigo of codigos) {
+    for (const { codigo } of codigos) {
       const chocaPrincipal = await this.prisma.producto.findFirst({
         where: {
           empresaId,
@@ -1421,7 +1494,18 @@ export class ProductoService {
   private async sincronizarCodigosBarrasExtra(
     productoId: number,
     empresaId: number,
-    codigos: string[] | undefined,
+    codigos:
+      | Array<
+          | string
+          | {
+              codigo: string;
+              unidadesPorPaquete?: number;
+              precioPaquete?: number;
+              alias?: string;
+              imagenUrl?: string;
+            }
+        >
+      | undefined,
     codigoBarrasPrincipal?: string | null,
   ) {
     if (codigos === undefined) return;
@@ -1430,13 +1514,49 @@ export class ProductoService {
 
     await this.validarColisionCodigosExtra(empresaId, limpios, productoId);
 
+    // Imagen del paquete: si el frontend mandó un data-URI base64, subir a S3
+    // y guardar la URL. Best-effort: si falla la subida, el código se guarda
+    // igual sin imagen (es solo presentación).
+    for (const item of limpios) {
+      if (item.imagenUrl?.startsWith('data:image')) {
+        try {
+          const match = item.imagenUrl.match(/^data:(image\/[\w.+-]+);base64,(.+)$/);
+          if (!match) {
+            item.imagenUrl = null;
+            continue;
+          }
+          const buffer = Buffer.from(match[2], 'base64');
+          const key = this.s3.generateProductoImageKey(
+            empresaId,
+            productoId,
+            match[1],
+            true,
+          );
+          item.imagenUrl = await this.s3.uploadImage(buffer, key, match[1]);
+        } catch (error) {
+          console.error('No se pudo subir la imagen del paquete:', error);
+          item.imagenUrl = null;
+        }
+      }
+    }
+
     // Reemplazar el set completo de alternos del producto de forma atómica.
     await this.prisma.$transaction([
       this.prisma.productoCodigoBarras.deleteMany({ where: { productoId } }),
       ...(limpios.length
         ? [
             this.prisma.productoCodigoBarras.createMany({
-              data: limpios.map((codigo) => ({ productoId, empresaId, codigo })),
+              data: limpios.map(
+                ({ codigo, unidadesPorPaquete, precioPaquete, alias, imagenUrl }) => ({
+                  productoId,
+                  empresaId,
+                  codigo,
+                  unidadesPorPaquete,
+                  precioPaquete,
+                  alias,
+                  imagenUrl,
+                }),
+              ),
             }),
           ]
         : []),
@@ -1494,6 +1614,9 @@ export class ProductoService {
           },
         },
         codigoBarras: true,
+        codigosBarras: {
+          select: { codigo: true, unidadesPorPaquete: true, precioPaquete: true, alias: true, imagenUrl: true },
+        },
         imagenUrl: true,
         tipoAfectacionIGV: true,
         unidadMedida: true,
@@ -1521,6 +1644,25 @@ export class ProductoService {
 
     if (!producto) return null;
 
+    // El código escaneado puede ser el principal (siempre 1 unidad) o un
+    // código alterno registrado con `unidadesPorPaquete` (ej. el six-pack).
+    const codigoAlternoMatch = (
+      (producto.codigosBarras as any[]) || []
+    ).find((c) => c.codigo === codigoBarras);
+    const unidadesPorPaquete = codigoAlternoMatch
+      ? Number(codigoAlternoMatch.unidadesPorPaquete) || 1
+      : 1;
+    // Precio TOTAL del paquete (si el código escaneado lo definió): el POS lo
+    // usa en vez de precioUnitario × unidades (los packs suelen ser más baratos).
+    const precioPaquete =
+      codigoAlternoMatch?.precioPaquete != null
+        ? Number(codigoAlternoMatch.precioPaquete) || null
+        : null;
+    // Nombre e imagen propios del paquete: el POS los usa como descripción e
+    // imagen de la línea cuando se escanea este código.
+    const aliasPaquete = codigoAlternoMatch?.alias || null;
+    const imagenPaquete = codigoAlternoMatch?.imagenUrl || null;
+
     const stockDesdeLotes = (producto.lotes || []).reduce(
       (acc, lote) => acc + Number(lote.stockActual || 0),
       0,
@@ -1545,6 +1687,12 @@ export class ProductoService {
         : null,
       isGlobal: false,
       costoUnitario: Number((producto as any).costoPromedio) || 0,
+      // Cuántas unidades del stock representa el código que se acaba de escanear.
+      unidadesPorPaquete,
+      precioPaquete,
+      aliasPaquete,
+      imagenPaquete,
+      codigoEscaneado: codigoBarras,
     };
   }
 
@@ -1768,7 +1916,16 @@ export class ProductoService {
       unidadVenta?: string;
       factorConversion?: number | string;
       codigoBarras?: string;
-      codigosBarrasExtra?: string[];
+      codigosBarrasExtra?: Array<
+        | string
+        | {
+            codigo: string;
+            unidadesPorPaquete?: number;
+            precioPaquete?: number;
+            alias?: string;
+            imagenUrl?: string;
+          }
+      >;
       codigoDigemid?: string;
       codProdSunat?: string;
       // Campos Ofertas
@@ -1808,7 +1965,8 @@ export class ProductoService {
       data.porcentajeProvision = 0;
     }
 
-    // Validar unicidad de Código de Barras (si cambió)
+    // Validar unicidad de Código de Barras (si cambió) — contra el código PRINCIPAL
+    // de otros productos y contra sus códigos ALTERNOS/de paquete.
     if (data.codigoBarras && data.codigoBarras !== producto.codigoBarras) {
       const existeBarras = await this.prisma.producto.findFirst({
         where: {
@@ -1821,6 +1979,19 @@ export class ProductoService {
       if (existeBarras) {
         throw new ForbiddenException(
           `El código de barras "${data.codigoBarras}" ya está asignado a otro producto: ${existeBarras.descripcion}`,
+        );
+      }
+      const existeAlterno = await this.prisma.productoCodigoBarras.findFirst({
+        where: {
+          empresaId: data.empresaId,
+          codigo: data.codigoBarras,
+          productoId: { not: data.id },
+        },
+        select: { producto: { select: { descripcion: true } } },
+      });
+      if (existeAlterno) {
+        throw new ForbiddenException(
+          `El código de barras "${data.codigoBarras}" ya está asignado a otro producto: ${existeAlterno.producto?.descripcion}`,
         );
       }
     }
