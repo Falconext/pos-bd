@@ -22,7 +22,7 @@ import { Logger } from '@nestjs/common';
  */
 
 const AUTH_URL = (clientId: string) =>
-  `https://api-seguridad.sunat.gob.pe/v1/clientessol/${encodeURIComponent(
+  `https://api-seguridad.sunat.gob.pe/v1/clientesextranet/${encodeURIComponent(
     clientId,
   )}/oauth2/token/`;
 
