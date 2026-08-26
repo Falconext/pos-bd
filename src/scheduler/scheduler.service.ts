@@ -419,7 +419,10 @@ export class SchedulerService {
           ? `Vence mañana: contrato del vehículo ${props.placa}`
           : `Vence en ${props.diasRestantes} días: contrato del vehículo ${props.placa}`;
     const { error } = await resend.emails.send({
-      from: `${props.appName} <${fromEmail}>`,
+      // Remitente = nombre del negocio del cliente (ej. "TECSI PERU"), igual que
+      // el correo de "contrato generado"; cae a Krezka/Falconext solo si la
+      // empresa no tiene nombre comercial/razón social configurado.
+      from: `${props.negocioNombre || props.appName} <${fromEmail}>`,
       to,
       subject: asunto,
       html,
