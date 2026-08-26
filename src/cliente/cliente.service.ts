@@ -378,10 +378,16 @@ export class ClienteService {
     }
   }
 
-  async exportar(empresaId: number, search?: string): Promise<Buffer> {
+  async exportar(
+    empresaId: number,
+    search?: string,
+    persona?: string,
+  ): Promise<Buffer> {
+    const personaFiltro = (persona || '').toString().trim().toUpperCase();
     const where: any = {
       empresaId,
       estado: { in: ['ACTIVO', 'INACTIVO'] },
+      ...(personaFiltro ? { persona: personaFiltro as any } : {}),
       OR: search
         ? [
             { nombre: { contains: search, mode: 'insensitive' } },
@@ -406,7 +412,8 @@ export class ClienteService {
 
     const worksheet = XLSX.utils.json_to_sheet(datosExcel);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Clientes');
+    const nombreHoja = personaFiltro === 'PROVEEDOR' ? 'Proveedores' : 'Clientes';
+    XLSX.utils.book_append_sheet(workbook, worksheet, nombreHoja);
     // Ajuste de anchos de columna aproximados
     (worksheet as any)['!cols'] = [
       { wch: 40 }, // NOMBRE O RAZON SOCIAL
@@ -421,7 +428,11 @@ export class ClienteService {
     return buffer;
   }
 
-  async cargaMasiva(fileBuffer: Buffer, empresaId: number) {
+  async cargaMasiva(
+    fileBuffer: Buffer,
+    empresaId: number,
+    personaDefault?: string,
+  ) {
     const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const rows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: null });
@@ -430,13 +441,23 @@ export class ClienteService {
 
     const resultados: { cliente?: any; error?: string }[] = [];
 
+    // Fallback cuando la fila no trae columna PERSONA: usa el que pide el
+    // caller (ej. "PROVEEDOR" al importar desde la pantalla de Proveedores),
+    // o "CLIENTE" si no se indicó nada (comportamiento previo).
+    const personaFallback = (() => {
+      const v = (personaDefault || '').toString().trim().toUpperCase();
+      if (v === 'PROVEEDOR') return 'PROVEEDOR';
+      if (v === 'CLIENTE-PROVEEDOR' || v === 'CLIENTE_PROVEEDOR')
+        return 'CLIENTE_PROVEEDOR';
+      return 'CLIENTE';
+    })();
     const normalizarPersona = (valor: any): string => {
       const v = (valor || '').toString().trim().toUpperCase();
       if (v === 'CLIENTE') return 'CLIENTE';
       if (v === 'PROVEEDOR') return 'PROVEEDOR';
       if (v === 'CLIENTE-PROVEEDOR' || v === 'CLIENTE_PROVEEDOR')
         return 'CLIENTE_PROVEEDOR';
-      return 'CLIENTE';
+      return personaFallback;
     };
 
     for (const [index, row] of rows.entries()) {

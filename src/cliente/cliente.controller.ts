@@ -102,21 +102,32 @@ export class ClienteController {
   async exportarArchivoEmpresa(
     @User() user: any,
     @Query('search') search: string | undefined,
+    // Filtra por tipo de persona (ej. PROVEEDOR) para reutilizar este mismo
+    // endpoint en la pantalla de Proveedores sin mezclar clientes.
+    @Query('persona') persona: string | undefined,
     @Res() res: Response,
   ) {
-    const buffer = await this.service.exportar(user.empresaId, search);
+    const buffer = await this.service.exportar(user.empresaId, search, persona);
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     );
-    res.setHeader('Content-Disposition', 'attachment; filename=clientes.xlsx');
+    const filename =
+      persona?.toUpperCase() === 'PROVEEDOR' ? 'proveedores.xlsx' : 'clientes.xlsx';
+    res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
     res.status(200).send(buffer);
   }
 
   @Post('importar')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   @UseInterceptors(FileInterceptor('file', excelUploadOptions))
-  async cargarMasivo(@UploadedFile() file: any, @User() user: any) {
+  async cargarMasivo(
+    @UploadedFile() file: any,
+    @User() user: any,
+    // Persona por defecto para las filas que no traen la columna PERSONA
+    // (ej. "PROVEEDOR" al importar desde la pantalla de Proveedores).
+    @Body('persona') persona: string | undefined,
+  ) {
     if (!file) {
       return {
         total: 0,
@@ -125,7 +136,7 @@ export class ClienteController {
         detalles: [{ error: 'No se proporcionó un archivo Excel' }],
       };
     }
-    return this.service.cargaMasiva(file.buffer, user.empresaId);
+    return this.service.cargaMasiva(file.buffer, user.empresaId, persona);
   }
 
   // Rutas con parámetros dinámicos al final
