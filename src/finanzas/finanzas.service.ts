@@ -78,6 +78,13 @@ export class FinanzasService {
         cuentaBancaria: {
           select: { banco: true, alias: true, numeroCuenta: true },
         },
+        // El pago se guarda en la moneda nativa del comprobante (p.ej. USD si la
+        // Nota de Venta/Factura se emitió en dólares). Se necesita para convertir
+        // a soles antes de sumar — de lo contrario un pago de US$ 4,000 se sumaba
+        // como si fueran S/ 4,000.
+        comprobante: {
+          select: { tipoMoneda: true, tipoCambio: true },
+        },
       },
     });
 
@@ -141,11 +148,16 @@ export class FinanzasService {
     };
 
     pagosIngreso.forEach((p) => {
+      const montoPen = montoEnPen(
+        p.monto,
+        p.comprobante?.tipoMoneda,
+        p.comprobante?.tipoCambio,
+      );
       const fecha = p.fecha.toISOString().split('T')[0];
       const actual = mapDatos.get(fecha) || { fecha, ingresos: 0, egresos: 0 };
-      actual.ingresos += Number(p.monto || 0);
+      actual.ingresos += montoPen;
       mapDatos.set(fecha, actual);
-      sumarMetodo(p.medioPago, Number(p.monto || 0), Boolean(p.referencia));
+      sumarMetodo(p.medioPago, montoPen, Boolean(p.referencia));
     });
 
     ventasContadoSinPago.forEach((v) => {

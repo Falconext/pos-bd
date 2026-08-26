@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EstadoSunat } from '@prisma/client';
+import { montoEnPen } from '../common/utils/moneda.util';
 
 const TIPOS_SUNAT = ['01', '03', '07', '08'];
 const TIPOS_INFORMALES = ['TICKET', 'NV', 'NP', 'RH', 'CP', 'OT'];
@@ -132,13 +133,19 @@ function calcularSaldoRealComprobante(comprobante: {
   saldo: any;
   adelanto?: any;
   pagos?: { monto: number }[];
+  tipoMoneda?: string | null;
+  tipoCambio?: any;
 }) {
-  const mtoImpVentaNum = Number(comprobante.mtoImpVenta ?? 0);
+  // mtoImpVenta/saldo/adelanto/pagos se guardan en la moneda nativa del comprobante
+  // (p.ej. USD). Se convierte todo a soles antes de operar para no mezclar montos.
+  const aPen = (v: any) =>
+    montoEnPen(v, comprobante.tipoMoneda, comprobante.tipoCambio);
+  const mtoImpVentaNum = aPen(comprobante.mtoImpVenta ?? 0);
   const epRaw = comprobante.estadoPago ?? '';
-  const saldoDB = Number(comprobante.saldo ?? 0);
-  const adelantoNum = Number(comprobante.adelanto ?? 0);
+  const saldoDB = aPen(comprobante.saldo ?? 0);
+  const adelantoNum = aPen(comprobante.adelanto ?? 0);
   const totalPagadoPagos = (comprobante.pagos ?? []).reduce(
-    (s, p) => s + Number(p.monto ?? 0),
+    (s, p) => s + aPen(p.monto ?? 0),
     0,
   );
 
@@ -237,6 +244,8 @@ export class VentasService {
           adelanto: true,
           pagos: { select: { monto: true } },
           comprobantesDerivados: { select: { id: true } },
+          tipoMoneda: true,
+          tipoCambio: true,
         },
       }),
       this.prisma.pedidoTienda.findMany({
@@ -324,6 +333,8 @@ export class VentasService {
           correlativo: true,
           fechaEmision: true,
           mtoImpVenta: true,
+          tipoMoneda: true,
+          tipoCambio: true,
           estadoEnvioSunat: true,
           sunatCdrResponse: true,
           estadoPago: true,
@@ -467,7 +478,9 @@ export class VentasService {
         clienteEmail: c.cliente?.email ?? '',
         cliente: c.cliente?.nombre ?? '—',
         seriesGarantia: (c.productoSeries ?? []).map((s) => s.numeroSerie),
-        total: Number(c.mtoImpVenta ?? 0),
+        // Convertido a soles para mostrar: mtoImpVenta se guarda en la moneda nativa
+        // del comprobante (p.ej. USD), y el panel siempre muestra montos en soles.
+        total: montoEnPen(c.mtoImpVenta, c.tipoMoneda, c.tipoCambio),
         estadoPago: resolverEstadoPagoComprobante(
           Number(c.mtoImpVenta ?? 0),
           c.estadoPago as string | null,
