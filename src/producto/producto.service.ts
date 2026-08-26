@@ -407,6 +407,46 @@ export class ProductoService {
           productoPadreId: data.productoPadreId ?? undefined,
         },
       });
+
+      // Un producto ELIMINADO conserva sus filas de stock por sede
+      // (ProductoStock). Al restaurarlo como un alta nueva, ese stock viejo NO
+      // debe heredarse — causaba stock "fantasma": al borrar productos y
+      // reimportar un Excel, filas sin stock aparecían con el stock del
+      // producto que antes tenía ese código. Se limpia y se re-inicializa con
+      // el mismo criterio que un producto nuevo (stock inicial solo en la sede
+      // que lo crea; las demás en 0).
+      await this.prisma.productoStock.deleteMany({
+        where: { productoId: existe.id },
+      });
+      const sedesRevive = await this.prisma.sede.findMany({
+        where: { empresaId, activo: true },
+      });
+      if (sedesRevive.length > 0) {
+        const sedePrincipalIdRev = sedesRevive.find((s) => s.esPrincipal)?.id;
+        const sedeConStockRev = sedeId ?? sedePrincipalIdRev;
+        await this.prisma.productoStock.createMany({
+          data: sedesRevive.map((s) => ({
+            productoId: existe.id,
+            sedeId: s.id,
+            stock: !esServicio && s.id === sedeConStockRev ? (stock ?? 0) : 0,
+            stockMinimo: stockMinimo ?? 0,
+            stockMaximo: stockMaximo ?? null,
+            visibleEnSede:
+              s.id === sedeConStockRev ? (visibleEnSede ?? true) : true,
+            vendibleEnSede:
+              s.id === sedeConStockRev ? (vendibleEnSede ?? true) : true,
+            precioUnitarioOverride:
+              s.id === sedeConStockRev && precioUnitarioSede != null
+                ? new Decimal(precioUnitarioSede)
+                : null,
+            precioOfertaOverride:
+              s.id === sedeConStockRev && precioOfertaSede != null
+                ? new Decimal(precioOfertaSede)
+                : null,
+            ubicacion: s.id === sedeConStockRev ? ubicacionSede || null : null,
+          })),
+        });
+      }
     } else {
       // Crear nuevo
       nuevo = await this.prisma.producto.create({
@@ -593,6 +633,18 @@ export class ProductoService {
             { codigoBarras: { contains: searchTerm, mode: 'insensitive' } },
             { codigoDigemid: { contains: searchTerm, mode: 'insensitive' } },
             { laboratorio: { contains: searchTerm, mode: 'insensitive' } },
+            // Códigos alternos/paquetes: encontrar el producto buscando por el
+            // nombre del pack (ej. "six pack") o su código de barras alterno.
+            {
+              codigosBarras: {
+                some: {
+                  OR: [
+                    { codigo: { contains: searchTerm, mode: 'insensitive' } },
+                    { alias: { contains: searchTerm, mode: 'insensitive' } },
+                  ],
+                },
+              },
+            },
           ]
         : undefined,
     };
@@ -676,6 +728,18 @@ export class ProductoService {
           preciosMayorista: true,
           atributosTecnicos: true,
           codigoBarras: true,
+          // Códigos de PAQUETE (ej. six-pack): el POS los muestra como tarjetas
+          // propias del catálogo, además de responder al escaneo.
+          codigosBarras: {
+            where: { unidadesPorPaquete: { gt: 1 } },
+            select: {
+              codigo: true,
+              unidadesPorPaquete: true,
+              precioPaquete: true,
+              alias: true,
+              imagenUrl: true,
+            },
+          },
           codigoDigemid: true,
           codProdSunat: true,
           requiereReceta: true,
@@ -950,6 +1014,21 @@ export class ProductoService {
             : null,
           imagenUrl,
           imagenUrlDisplay: await signIfS3(imagenUrl),
+          // Paquetes (códigos alternos con unidadesPorPaquete > 1), con la
+          // imagen firmada para que el POS pueda pintar la tarjeta del pack.
+          paquetes: await Promise.all(
+            (((p as any).codigosBarras as any[]) || []).map(async (c: any) => ({
+              codigo: c.codigo,
+              unidadesPorPaquete: Number(c.unidadesPorPaquete) || 1,
+              precioPaquete:
+                c.precioPaquete != null ? Number(c.precioPaquete) : null,
+              alias: c.alias || null,
+              imagenUrl: c.imagenUrl || null,
+              imagenUrlDisplay: await signIfS3(
+                normalizePersistentImageUrl(c.imagenUrl),
+              ),
+            })),
+          ),
         };
       }),
     );
@@ -1005,6 +1084,7 @@ export class ProductoService {
         select: {
           stock: true,
           costoPromedio: true,
+          tipoAfectacionIGV: true,
           atributosTecnicos: true,
           stocks: {
             where: {
@@ -1038,7 +1118,14 @@ export class ProductoService {
           : num((p as any).stock);
       const stockTotal =
         usaStockLotes && !params.sedeId ? stockDesdeLotes : stockTotalBase;
-      const costo = Number(p.costoPromedio) || 0;
+      // Costo "de bolsillo" (CON IGV) — misma regla que la columna Costo de la
+      // tabla de productos del frontend, para que el KPI calce con lo listado
+      // (costoPromedio se guarda NETO; se re-agrega el IGV si es gravado).
+      const costoNeto = Number(p.costoPromedio) || 0;
+      const esGravado = String((p as any).tipoAfectacionIGV ?? '10') === '10';
+      const costo = esGravado
+        ? parseFloat((costoNeto * 1.18).toFixed(2))
+        : costoNeto;
 
       totalCantidad += stockTotal;
       totalValorInventario += stockTotal * costo;
@@ -3015,7 +3102,14 @@ export class ProductoService {
         : p.stocks?.length > 0
           ? p.stocks.reduce((sum: number, s: any) => sum + (s.stockMinimo || 0), 0)
           : (p.stockMinimo ?? 0);
-      const costo = Number(p.costoPromedio ?? 0);
+      // Costo "de bolsillo" (CON IGV) — misma regla que la tabla de productos y
+      // el KPI de resumen: lo que el empresario pagó, no el neto contable.
+      const costoNeto = Number(p.costoPromedio ?? 0);
+      const esGravadoExport =
+        String(p.tipoAfectacionIGV ?? '10') === '10';
+      const costo = esGravadoExport
+        ? Math.round(costoNeto * 1.18 * 100) / 100
+        : costoNeto;
       const valorInventario = Math.round(stockTotal * costo * 100) / 100;
       const ubicaciones = (p.stocks || [])
         .filter((s: any) => Number(s.stock) > 0 || s.ubicacion)
@@ -3031,7 +3125,7 @@ export class ProductoService {
         'U.M': producto.unidadMedida?.nombre || '',
         AFECT: producto.tipoAfectacionIGV,
         'PRECIO UNITARIO CON IGV': Number(producto.precioUnitario),
-        'COSTO COMPRA SIN IGV': costo,
+        'COSTO CON IGV': costo,
         IGV: Number(producto.igvPorcentaje),
         STOCK: stockTotal,
         'VALOR INVENTARIO': valorInventario,
@@ -3051,7 +3145,7 @@ export class ProductoService {
       'U.M': '',
       AFECT: '',
       'PRECIO UNITARIO CON IGV': '',
-      'COSTO COMPRA SIN IGV': '',
+      'COSTO CON IGV': '',
       IGV: '',
       STOCK: totalStock,
       'VALOR INVENTARIO': totalValorInventario,
@@ -3070,7 +3164,7 @@ export class ProductoService {
       { wch: 20 }, // U.M
       { wch: 10 }, // AFECT
       { wch: 22 }, // PRECIO UNITARIO CON IGV
-      { wch: 20 }, // COSTO COMPRA SIN IGV
+      { wch: 20 }, // COSTO CON IGV
       { wch: 8 }, // IGV
       { wch: 10 }, // STOCK
       { wch: 18 }, // VALOR INVENTARIO
@@ -3092,7 +3186,7 @@ export class ProductoService {
         'U.M': 'Unidad (bienes)',
         AFECT: '10',
         'PRECIO UNITARIO CON IGV': 10.0,
-        'COSTO COMPRA SIN IGV': 6.0,
+        'COSTO CON IGV': 6.0,
         IGV: 18,
         STOCK: 100,
         'STOCK MINIMO': 10,
@@ -3105,7 +3199,7 @@ export class ProductoService {
         'U.M': 'Unidad (bienes)',
         AFECT: '10',
         'PRECIO UNITARIO CON IGV': 25.5,
-        'COSTO COMPRA SIN IGV': 15.0,
+        'COSTO CON IGV': 15.0,
         IGV: 18,
         STOCK: 50,
         'STOCK MINIMO': 5,
@@ -3122,7 +3216,7 @@ export class ProductoService {
       { wch: 12 }, // U.M
       { wch: 8 }, // AFECT
       { wch: 22 }, // PRECIO UNITARIO CON IGV
-      { wch: 20 }, // COSTO COMPRA SIN IGV
+      { wch: 20 }, // COSTO CON IGV
       { wch: 6 }, // IGV
       { wch: 8 }, // STOCK
       { wch: 13 }, // STOCK MINIMO
@@ -3376,6 +3470,11 @@ export class ProductoService {
           row['Precio Unitario'] ??
           row['precioUnitario'] ??
           null;
+        // Columna nueva (round-trip con el export): el costo viene CON IGV, tal
+        // como lo piensa el empresario; se convierte a neto al guardar.
+        const costoConIgvRaw =
+          row['COSTO CON IGV'] ?? row['Costo con IGV'] ?? row['costoConIgv'] ?? null;
+        // Columnas legacy: el costo viene NETO (sin IGV), se guarda tal cual.
         const precioCostoRaw =
           row['COSTO COMPRA SIN IGV'] ??
           row['COSTO COMPRA'] ??
@@ -3441,10 +3540,20 @@ export class ProductoService {
         }
 
         const precioUnitario = parseFloat(precioUnitarioRaw?.toString());
+        // Prioriza la columna nueva CON IGV (se des-agrega el IGV con 4 decimales
+        // para que el round-trip export→import→export no pierda centavos);
+        // cae a las legacy que ya vienen en neto.
+        const esGravadoImport = tipoAfectacionIGV === '10';
         const costoPromedio =
-          precioCostoRaw != null
-            ? parseFloat(precioCostoRaw.toString())
-            : undefined;
+          costoConIgvRaw != null && costoConIgvRaw.toString().trim() !== ''
+            ? esGravadoImport
+              ? parseFloat(
+                  (parseFloat(costoConIgvRaw.toString()) / 1.18).toFixed(4),
+                )
+              : parseFloat(costoConIgvRaw.toString())
+            : precioCostoRaw != null
+              ? parseFloat(precioCostoRaw.toString())
+              : undefined;
         const stockMinimoImport =
           stockMinimoRaw != null && stockMinimoRaw.toString().trim() !== ''
             ? parseInt(stockMinimoRaw.toString(), 10)

@@ -511,12 +511,83 @@ export class ComprobanteService {
         }
       }
 
+      // Detalles sin productoId (líneas guardadas sin vínculo, muy común en
+      // cotizaciones re-versionadas o ítems agregados a mano con el mismo
+      // nombre del producto): re-vincular por descripción exacta contra el
+      // catálogo de la empresa, para recuperar el producto y su imagen.
+      const descsSinVinculo = new Set<string>();
+      for (const it of rawItems as any[]) {
+        for (const det of it.detalles || []) {
+          if (!det.producto && det.descripcion) {
+            descsSinVinculo.add(String(det.descripcion).trim());
+          }
+        }
+      }
+      const productoPorDesc = new Map<string, any>();
+      if (descsSinVinculo.size > 0) {
+        const candidatos = await this.prisma.producto.findMany({
+          where: {
+            empresaId,
+            estado: { in: ['ACTIVO', 'INACTIVO'] as any },
+            descripcion: { in: [...descsSinVinculo], mode: 'insensitive' },
+          },
+          select: { id: true, descripcion: true, imagenUrl: true },
+        });
+        for (const p of candidatos) {
+          productoPorDesc.set(String(p.descripcion).trim().toUpperCase(), p);
+        }
+      }
+
+      // Firmar las imágenes de producto de los detalles (bucket S3 privado):
+      // sin firma, la URL cruda da 403 y el carrito/precarga de cotizaciones
+      // muestra las líneas sin imagen. Cache por key para no firmar la misma
+      // imagen repetida en varios comprobantes.
+      const firmaCache = new Map<string, string>();
+      const firmarImagen = async (raw?: string | null): Promise<string | null> => {
+        try {
+          if (!raw) return null;
+          const idx = raw.indexOf('amazonaws.com/');
+          if (idx === -1) return raw;
+          const cacheada = firmaCache.get(raw);
+          if (cacheada) return cacheada;
+          const key = raw.substring(idx + 'amazonaws.com/'.length).split('?')[0];
+          const signed = (await this.s3Service.getSignedGetUrl(key, 3600)) || raw;
+          firmaCache.set(raw, signed);
+          return signed;
+        } catch {
+          return raw ?? null;
+        }
+      };
+
       // Mapear etiqueta de comprobante (estadoPago/saldo ya vienen de DB si existen)
-      const mapped = rawItems.map((it) => {
-        const comprobante = tipoLabels[it.tipoDoc] || it.tipoDoc;
-        const convertidoA = convertidoMap.get(it.id) ?? null;
-        return { ...it, comprobante, convertidoA } as any;
-      });
+      const mapped = await Promise.all(
+        rawItems.map(async (it) => {
+          const comprobante = tipoLabels[it.tipoDoc] || it.tipoDoc;
+          const convertidoA = convertidoMap.get(it.id) ?? null;
+          const detalles = await Promise.all(
+            ((it as any).detalles || []).map(async (det: any) => {
+              // Producto del detalle, o el re-vinculado por descripción exacta.
+              const producto =
+                det.producto ??
+                (det.descripcion
+                  ? productoPorDesc.get(
+                      String(det.descripcion).trim().toUpperCase(),
+                    ) ?? null
+                  : null);
+              return {
+                ...det,
+                producto: producto
+                  ? {
+                      ...producto,
+                      imagenUrlDisplay: await firmarImagen(producto.imagenUrl),
+                    }
+                  : null,
+              };
+            }),
+          );
+          return { ...it, detalles, comprobante, convertidoA } as any;
+        }),
+      );
 
       return { comprobantes: mapped, total: totalDb, page, limit };
     } catch (error: any) {
