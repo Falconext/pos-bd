@@ -83,7 +83,7 @@ export class ContabilidadController {
   ) {
     if (!fechaInicio || !fechaFin)
       throw new BadRequestException('fechaInicio y fechaFin son requeridos');
-    const { comprobantes, resumen } = await this.service.obtenerReporte(
+    const { comprobantes, resumen, anulaciones } = await this.service.obtenerReporte(
       user.empresaId,
       fechaInicio,
       fechaFin,
@@ -178,6 +178,76 @@ export class ContabilidadController {
       ),
       { origin: -1 },
     );
+
+    // Sección informativa de anulaciones: los pares boleta/factura + NC de
+    // anulación se excluyen de los totales (neto S/ 0), pero se listan para
+    // que el contador pueda cuadrar el conteo de NCs contra SUNAT.
+    if (anulaciones && anulaciones.length > 0) {
+      const ncPorAfectado = new Map<string, string>();
+      for (const c of anulaciones) {
+        if (c.tipoDoc === '07' && c.numDocAfectado) {
+          ncPorAfectado.set(
+            String(c.numDocAfectado).trim(),
+            `${c.serie}-${c.correlativo}`,
+          );
+        }
+      }
+      XLSX.utils.sheet_add_aoa(
+        worksheet,
+        [
+          [''],
+          ['ANULACIONES DEL PERIODO (no incluidas en los totales — neto S/ 0)'],
+          [
+            'TIPO',
+            'SERIE',
+            'CORRELATIVO',
+            'FECHA EMISIÓN',
+            'RUC/DNI',
+            'CLIENTE',
+            'TOTAL',
+            'DETALLE',
+          ],
+          ...anulaciones.map((c: any) => {
+            const nc = ncPorAfectado.get(`${c.serie}-${c.correlativo}`);
+            return [
+              c.comprobante,
+              c.serie,
+              c.correlativo,
+              toFechaLima(new Date(c.fechaEmision)),
+              c.cliente?.nroDoc ?? '',
+              c.cliente?.nombre ?? '',
+              Number(c.mtoImpVenta ?? 0),
+              c.tipoDoc === '07'
+                ? `ANULA A ${c.numDocAfectado ?? ''}${c.motivo ? ` — ${c.motivo.descripcion}` : ''}`
+                : nc
+                  ? `ANULADO POR NC ${nc}`
+                  : 'ANULADO',
+            ];
+          }),
+        ],
+        { origin: -1 },
+      );
+      const ncsAnulacion = anulaciones.filter((c: any) => c.tipoDoc === '07');
+      XLSX.utils.sheet_add_aoa(
+        worksheet,
+        [
+          [
+            `NOTAS DE CREDITO POR ANULACIÓN: ${ncsAnulacion.length}`,
+            '',
+            '',
+            '',
+            '',
+            '',
+            ncsAnulacion.reduce(
+              (s: number, c: any) => s + Number(c.mtoImpVenta ?? 0),
+              0,
+            ),
+            'Estas NC anulan comprobantes del listado y no restan a los totales',
+          ],
+        ],
+        { origin: -1 },
+      );
+    }
 
     // Crear y devolver el archivo
     const workbook = XLSX.utils.book_new();

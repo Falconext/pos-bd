@@ -56,6 +56,64 @@ export class DashboardService {
     );
   }
 
+  /**
+   * Suma en PEN solo las notas de crédito que realmente restan ingresos: las
+   * que afectan a un comprobante que sigue vigente (p.ej. devolución parcial).
+   * Cuando la NC anuló la operación (motivo 01), la boleta afectada queda
+   * ANULADA y ya está fuera de la suma positiva — restar además su NC
+   * descontaba la misma venta dos veces.
+   */
+  private async sumaNotasCreditoNetasPen(
+    where: any,
+    empresaId: number,
+  ): Promise<number> {
+    const ncs = await this.prisma.comprobante.findMany({
+      where: { ...where, tipoDoc: '07' },
+      select: {
+        mtoImpVenta: true,
+        tipoMoneda: true,
+        tipoCambio: true,
+        numDocAfectado: true,
+      },
+    });
+    if (ncs.length === 0) return 0;
+
+    const claves = ncs
+      .map((n) => (n.numDocAfectado || '').trim())
+      .filter(Boolean)
+      .map((c) => {
+        const idx = c.lastIndexOf('-');
+        const serie = idx > 0 ? c.slice(0, idx) : '';
+        const correlativo = Number(c.slice(idx + 1));
+        return serie && Number.isFinite(correlativo)
+          ? { clave: c, serie, correlativo }
+          : null;
+      })
+      .filter(Boolean) as { clave: string; serie: string; correlativo: number }[];
+
+    const anulados = new Set<string>();
+    if (claves.length > 0) {
+      const rows = await this.prisma.comprobante.findMany({
+        where: {
+          empresaId,
+          estadoEnvioSunat: 'ANULADO' as any,
+          OR: claves.map((c) => ({
+            serie: c.serie,
+            correlativo: c.correlativo,
+          })),
+        },
+        select: { serie: true, correlativo: true },
+      });
+      rows.forEach((r) => anulados.add(`${r.serie}-${r.correlativo}`));
+    }
+
+    return ncs.reduce((sum, n) => {
+      const clave = (n.numDocAfectado || '').trim();
+      if (clave && anulados.has(clave)) return sum;
+      return sum + montoEnPen(n.mtoImpVenta, n.tipoMoneda, n.tipoCambio);
+    }, 0);
+  }
+
   private parseRange(fechaInicio?: string, fechaFin?: string) {
     const whereFecha: any = {};
     if (fechaInicio)
@@ -104,8 +162,8 @@ export class DashboardService {
       ] = await Promise.all([
         // Suma facturas/boletas/informales (positivos) — USD convertido a PEN
         this.sumaComprobantesPen({ ...whereBase, tipoDoc: { notIn: ['07'] } }),
-        // Suma notas de crédito (se restan) — USD convertido a PEN
-        this.sumaComprobantesPen({ ...whereBase, tipoDoc: '07' }),
+        // Suma notas de crédito que restan (afectado vigente) — USD→PEN
+        this.sumaNotasCreditoNetasPen(whereBase, empresaId),
         this.prisma.comprobante.count({ where: whereBase }),
         this.prisma.guiaRemision.count({ where: guiaWhere }),
         this.prisma.cliente.count({ where: { empresaId } }),
@@ -523,16 +581,14 @@ export class DashboardService {
         fechaEmision: prevRange,
         tipoDoc: { notIn: ['07'] },
       }),
-      this.sumaComprobantesPen({
-        ...baseComprobanteWhere,
-        fechaEmision: currentRange,
-        tipoDoc: '07',
-      }),
-      this.sumaComprobantesPen({
-        ...baseComprobanteWhere,
-        fechaEmision: prevRange,
-        tipoDoc: '07',
-      }),
+      this.sumaNotasCreditoNetasPen(
+        { ...baseComprobanteWhere, fechaEmision: currentRange },
+        empresaId,
+      ),
+      this.sumaNotasCreditoNetasPen(
+        { ...baseComprobanteWhere, fechaEmision: prevRange },
+        empresaId,
+      ),
       sedeId
         ? Promise.resolve([] as any[])
         : this.prisma.ingresoManual.findMany({

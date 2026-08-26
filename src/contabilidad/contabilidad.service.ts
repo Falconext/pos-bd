@@ -133,7 +133,19 @@ export class ContabilidadService {
       ...c,
       comprobante: tipoLabels[c.tipoDoc] || 'DESCONOCIDO',
     }));
-    return { comprobantes: comprobantesConTipo, resumen };
+
+    // Documentos excluidos de los totales (anulados y sus notas de crédito):
+    // se exponen aparte para que el contador pueda cuadrarlos contra SUNAT
+    // sin que alteren el neto (cada par boleta+NC suma 0).
+    const idsIncluidos = new Set(comprobantes.map((c) => c.id));
+    const anulaciones = comprobantesRaw
+      .filter((c) => !idsIncluidos.has(c.id))
+      .map((c) => ({
+        ...c,
+        comprobante: tipoLabels[c.tipoDoc] || 'DESCONOCIDO',
+      }));
+
+    return { comprobantes: comprobantesConTipo, resumen, anulaciones };
   }
 
   /**
