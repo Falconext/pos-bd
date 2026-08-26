@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { montoEnPen } from '../common/utils/moneda.util';
 
 @Injectable()
 export class ContabilidadService {
@@ -45,6 +46,7 @@ export class ContabilidadService {
         correlativo: true,
         fechaEmision: true,
         tipoMoneda: true,
+        tipoCambio: true,
         formaPagoTipo: true,
         medioPago: true,
         estadoPago: true,
@@ -70,10 +72,24 @@ export class ContabilidadService {
     });
 
     // Filtrar documentos según reglas contables
-    const comprobantes = await this.filtrarDocumentosParaReporte(
+    const comprobantesFiltrados = await this.filtrarDocumentosParaReporte(
       comprobantesRaw,
       empresaId,
     );
+
+    // Los montos se guardan en la moneda nativa del comprobante (p.ej. USD para
+    // una Factura de exportación); se convierten a soles antes de sumar y de
+    // mostrar cada fila, o un comprobante en USD infla el reporte como si fuera PEN.
+    const aPen = (c: (typeof comprobantesFiltrados)[number], v: any) =>
+      montoEnPen(v, c.tipoMoneda, c.tipoCambio);
+    const comprobantes = comprobantesFiltrados.map((c) => ({
+      ...c,
+      mtoOperGravadas: aPen(c, c.mtoOperGravadas),
+      mtoOperInafectas: aPen(c, c.mtoOperInafectas),
+      mtoIGV: aPen(c, c.mtoIGV),
+      mtoDescuentoGlobal: aPen(c, c.mtoDescuentoGlobal),
+      mtoImpVenta: aPen(c, c.mtoImpVenta),
+    }));
 
     // Calcular resumen con lógica contable correcta
     const resumen = comprobantes.reduce(
@@ -142,6 +158,11 @@ export class ContabilidadService {
       .filter((c) => !idsIncluidos.has(c.id))
       .map((c) => ({
         ...c,
+        mtoOperGravadas: aPen(c, c.mtoOperGravadas),
+        mtoOperInafectas: aPen(c, c.mtoOperInafectas),
+        mtoIGV: aPen(c, c.mtoIGV),
+        mtoDescuentoGlobal: aPen(c, c.mtoDescuentoGlobal),
+        mtoImpVenta: aPen(c, c.mtoImpVenta),
         comprobante: tipoLabels[c.tipoDoc] || 'DESCONOCIDO',
       }));
 
@@ -238,6 +259,8 @@ export class ContabilidadService {
         correlativo: true,
         fechaEmision: true,
         mtoImpVenta: true,
+        tipoMoneda: true,
+        tipoCambio: true,
         estadoPago: true,
         saldo: true,
         medioPago: true,
@@ -248,8 +271,16 @@ export class ContabilidadService {
       },
     });
 
+    // mtoImpVenta se guarda en la moneda nativa del comprobante (p.ej. USD para
+    // una Nota de Venta en dólares); se convierte a soles antes de sumar y de
+    // mostrar cada fila, o un comprobante en USD infla el reporte como si fuera PEN.
+    const comprobantesPen = comprobantes.map((c) => ({
+      ...c,
+      mtoImpVenta: montoEnPen(c.mtoImpVenta, c.tipoMoneda, c.tipoCambio),
+    }));
+
     // Calcular resumen por tipo de comprobante informal
-    const resumen = comprobantes.reduce(
+    const resumen = comprobantesPen.reduce(
       (acc, comp) => {
         const total = Number(comp.mtoImpVenta || 0);
 
@@ -292,7 +323,7 @@ export class ContabilidadService {
       },
     );
 
-    const comprobantesConTipo = comprobantes.map((c) => ({
+    const comprobantesConTipo = comprobantesPen.map((c) => ({
       ...c,
       comprobante: tipoLabels[c.tipoDoc] || 'DESCONOCIDO',
     }));
