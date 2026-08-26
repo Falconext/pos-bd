@@ -372,6 +372,7 @@ export class PdfGeneratorService {
     razonSocial: string;
     ruc: string;
     direccion: string;
+    sedeDireccion?: string; // dirección de la sede emisora (si difiere de la fiscal)
     rubro?: string;
     celular?: string;
     email?: string;

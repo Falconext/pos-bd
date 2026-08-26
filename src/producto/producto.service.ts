@@ -3255,6 +3255,25 @@ export class ProductoService {
       MT: 'MTR',
       MTS: 'MTR',
       METRO: 'MTR',
+      GALON: 'GLL',
+      GALONES: 'GLL',
+      GL: 'GLL',
+      KILOS: 'KGM',
+      GRAMO: 'GRM',
+      GRAMOS: 'GRM',
+      GR: 'GRM',
+      MILILITRO: 'MLT',
+      ML: 'MLT',
+      CAJA: 'BX',
+      CJ: 'BX',
+      BOLSA: 'BG',
+      ROLLO: 'ROL',
+      PAR: 'NIU',
+      PARES: 'NIU',
+      BLISTER: 'NIU',
+      PAQUETE: 'NIU',
+      PAQ: 'NIU',
+      DOCENA: 'NIU',
     };
     if (!raw) return 'NIU';
     const key = raw.trim().toUpperCase();
@@ -3525,6 +3544,11 @@ export class ProductoService {
         if (!unidadMedidaId) {
           const codigoSunat = this.resolverUmbSunat(unidadNombre.toString());
           unidadMedidaId = unidadMap.get(this.normClave(codigoSunat));
+        }
+        // Última red: unidades libres del cliente ("SET X", "CUARTO DC", etc.)
+        // caen a Unidad (NIU) para no perder el producto en la importación.
+        if (!unidadMedidaId) {
+          unidadMedidaId = unidadMap.get('NIU');
         }
         if (!unidadMedidaId)
           throw new ForbiddenException(

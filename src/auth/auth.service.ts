@@ -130,6 +130,7 @@ export class AuthService {
             tipo: true,
             esPrincipal: true,
             activo: true,
+            direccion: true,
           },
           orderBy: [{ esPrincipal: 'desc' }, { id: 'asc' }],
         });
@@ -146,6 +147,7 @@ export class AuthService {
                 tipo: true,
                 esPrincipal: true,
                 activo: true,
+                direccion: true,
               },
             },
           },
@@ -509,6 +511,7 @@ export class AuthService {
                 tipo: true,
                 esPrincipal: true,
                 activo: true,
+                direccion: true,
               },
             },
           },
@@ -694,6 +697,7 @@ export class AuthService {
           tipo: true,
           esPrincipal: true,
           activo: true,
+          direccion: true,
         },
         orderBy: [{ esPrincipal: 'desc' }, { id: 'asc' }],
       });

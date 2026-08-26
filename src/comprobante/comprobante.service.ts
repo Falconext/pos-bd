@@ -452,7 +452,7 @@ export class ComprobanteService {
             motivo: { select: { codigo: true, descripcion: true } },
             tipoOperacion: { select: { codigo: true, descripcion: true } },
             usuario: { select: { id: true, nombre: true } },
-            sede: { select: { id: true, nombre: true } },
+            sede: { select: { id: true, nombre: true, direccion: true } },
             envioDespacho: {
               select: {
                 id: true,
@@ -724,7 +724,7 @@ export class ComprobanteService {
         motivo: { select: { codigo: true, descripcion: true } },
         tipoOperacion: { select: { codigo: true, descripcion: true } },
         usuario: { select: { id: true, nombre: true } },
-        sede: { select: { id: true, nombre: true } },
+        sede: { select: { id: true, nombre: true, direccion: true } },
       },
     });
 
