@@ -2594,6 +2594,106 @@ export class ProductoService {
     return { url, signedUrl, variantesActualizadas: idsDelColor };
   }
 
+  // Descarga una imagen desde una URL externa (ej. sugerencia de Serper/IA) y la
+  // aplica a todas las variantes (tallas) del color, reutilizando la misma lógica
+  // que la subida por archivo. Una sola foto S3 compartida por color.
+  async subirImagenColorDesdeUrl(
+    empresaId: number,
+    productoPadreId: number,
+    color: string,
+    externalUrl: string,
+  ) {
+    if (!externalUrl || !String(externalUrl).trim())
+      throw new ForbiddenException('URL no proporcionada');
+    if (!color || !String(color).trim())
+      throw new ForbiddenException('Color no proporcionado');
+
+    let buffer: Buffer;
+    let contentType: string;
+    try {
+      const axios = (await import('axios')).default;
+      const response = await axios.get(externalUrl, {
+        responseType: 'arraybuffer',
+        timeout: 10000,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+      });
+      buffer = Buffer.from(response.data);
+      contentType = response.headers['content-type'] || 'image/jpeg';
+    } catch (error: any) {
+      console.error(
+        'Error downloading color image from URL:',
+        error?.message,
+      );
+      throw new ForbiddenException(
+        'Error al procesar la imagen desde la URL: ' + error?.message,
+      );
+    }
+
+    if (!/^image\//i.test(contentType))
+      throw new ForbiddenException('La URL no apunta a una imagen válida');
+
+    // Reutiliza la lógica de subida + asignación por color.
+    return this.subirImagenColorVariantes(empresaId, productoPadreId, color, {
+      buffer,
+      mimetype: contentType,
+    });
+  }
+
+  // Descarga una imagen desde una URL externa y la sube a S3, devolviendo la URL S3.
+  // NO modifica el producto: sirve para poblar galerías (por color) desde sugerencias IA.
+  async importarImagenUrlAS3(
+    empresaId: number,
+    productoId: number,
+    externalUrl: string,
+  ) {
+    const producto = await this.prisma.producto.findFirst({
+      where: { id: productoId, empresaId },
+    });
+    if (!producto) throw new NotFoundException('Producto no encontrado');
+    if (!externalUrl || !String(externalUrl).trim())
+      throw new ForbiddenException('URL no proporcionada');
+
+    try {
+      const axios = (await import('axios')).default;
+      const response = await axios.get(externalUrl, {
+        responseType: 'arraybuffer',
+        timeout: 10000,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+      });
+      const buffer = Buffer.from(response.data);
+      const contentType = response.headers['content-type'] || 'image/jpeg';
+      if (!contentType.startsWith('image/'))
+        throw new ForbiddenException('La URL no apunta a una imagen válida');
+
+      const s3Key = this.s3.generateProductoImageKey(
+        empresaId,
+        productoId,
+        contentType,
+        true,
+      );
+      const s3Url = await this.s3.uploadImage(buffer, s3Key, contentType);
+
+      const idx = s3Url.indexOf('amazonaws.com/');
+      const objKey =
+        idx !== -1 ? s3Url.substring(idx + 'amazonaws.com/'.length) : '';
+      const signedUrl = objKey
+        ? await this.s3.getSignedGetUrl(objKey, 600)
+        : s3Url;
+      return { url: s3Url, signedUrl };
+    } catch (error: any) {
+      console.error('Error importing image from URL:', error?.message);
+      throw new ForbiddenException(
+        'Error al procesar la imagen desde la URL: ' + error?.message,
+      );
+    }
+  }
+
   async subirImagenExtra(
     empresaId: number,
     productoId: number,

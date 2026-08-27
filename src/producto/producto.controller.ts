@@ -850,6 +850,33 @@ export class ProductoController {
     );
   }
 
+  // Descarga una imagen desde una URL (sugerencia IA/Serper) y la aplica a todas las tallas del color
+  @Post(':id/imagen-color-url')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async subirImagenColorDesdeUrl(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+    @Body() body: { color: string; url: string },
+  ) {
+    return this.service.subirImagenColorDesdeUrl(
+      user.empresaId,
+      id,
+      body.color,
+      body.url,
+    );
+  }
+
+  // Importa una imagen desde una URL a S3 y devuelve la URL S3 (para galerías por color)
+  @Post(':id/importar-imagen-url')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async importarImagenUrl(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+    @Body() body: { url: string },
+  ) {
+    return this.service.importarImagenUrlAS3(user.empresaId, id, body.url);
+  }
+
   // Catálogo optimizado para POS farmacia/botica/droguería — con FEFO, vencimientos y receta
   @Get('catalogo-farmacia')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
