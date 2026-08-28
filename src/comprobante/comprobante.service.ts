@@ -1336,6 +1336,63 @@ export class ComprobanteService {
   }
 
   // Crea el comprobante con reintentos automáticos en caso de colisión de correlativo (race condition)
+  // Ventana en la que dos emisiones idénticas se consideran un doble-submit.
+  // Corta para no bloquear ventas legítimas repetidas, amplia para cubrir el
+  // doble-clic y el reintento de red (el caso real fue de 1 ms de diferencia).
+  private static readonly DOBLE_SUBMIT_VENTANA_MS = 8000;
+
+  /**
+   * Rechaza una emisión si acaba de registrarse otro comprobante idéntico
+   * (misma empresa, tipo, cliente, sede, usuario y monto total) dentro de la
+   * ventana anti-doble-submit. Complementa al índice único: el índice evita
+   * correlativos duplicados, esto evita duplicar la MISMA venta con números
+   * distintos por un doble-clic. Sin clienteId no compara (evita falsos positivos).
+   */
+  private async assertNoDobleSubmitReciente(
+    data: any,
+    empresaId: number,
+    tipoDoc: string,
+  ) {
+    const clienteId = Number(data?.clienteId);
+    if (!clienteId) return;
+    const totalNuevo =
+      Number(data?.subTotal ?? 0) + Number(data?.totalImpuestos ?? 0);
+    const desde = new Date(
+      Date.now() - ComprobanteService.DOBLE_SUBMIT_VENTANA_MS,
+    );
+    const reciente = await this.prisma.comprobante.findFirst({
+      where: {
+        empresaId,
+        tipoDoc,
+        clienteId,
+        ...(data?.sedeId != null ? { sedeId: Number(data.sedeId) } : {}),
+        ...(data?.usuarioId != null ? { usuarioId: Number(data.usuarioId) } : {}),
+        creadoEn: { gte: desde },
+      },
+      orderBy: { creadoEn: 'desc' },
+      select: {
+        serie: true,
+        correlativo: true,
+        subTotal: true,
+        totalImpuestos: true,
+      },
+    });
+    if (
+      reciente &&
+      Math.abs(
+        Number(reciente.subTotal) +
+          Number(reciente.totalImpuestos) -
+          totalNuevo,
+      ) < 0.005
+    ) {
+      throw new BadRequestException(
+        `Parece un doble envío: ya se registró ${reciente.serie}-${reciente.correlativo} ` +
+          `por el mismo cliente y monto hace unos segundos. ` +
+          `Si es a propósito, espera unos segundos y vuelve a intentar.`,
+      );
+    }
+  }
+
   private async crearComprobanteConReintento(
     data: any,
     tipoDoc: string,
@@ -1343,6 +1400,11 @@ export class ComprobanteService {
     empresaId: number,
     maxIntentos = 20,
   ) {
+    // Anti-doble-submit: si en los últimos segundos ya se registró un comprobante
+    // idéntico (mismo cliente, sede, usuario, tipo y monto), es casi seguro un
+    // doble-clic / reintento de red. Bloqueamos antes de duplicar la venta.
+    await this.assertNoDobleSubmitReciente(data, empresaId, tipoDoc);
+
     let intento = 0;
     while (intento < maxIntentos) {
       const { serie, correlativo } = await this.obtenerSerieYCorrelativo(
