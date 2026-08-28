@@ -21,7 +21,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { xmlUploadOptions } from '../common/utils/multer.config';
+import { xmlUploadOptions, imageUploadOptions } from '../common/utils/multer.config';
 
 @Controller('compras')
 @UseGuards(JwtAuthGuard)
@@ -34,6 +34,20 @@ export class ComprasController {
     if (!file)
       throw new BadRequestException('No se proporcionó ningún archivo XML');
     return this.comprasService.parseXmlSunat(req.user.empresaId, file.buffer);
+  }
+
+  // Lee una FOTO de factura/boleta con IA y devuelve la compra pre-llenada
+  // (mismo formato que parse-xml).
+  @Post('parse-imagen')
+  @UseInterceptors(FileInterceptor('file', imageUploadOptions))
+  async parseImagen(@Request() req, @UploadedFile() file: Express.Multer.File) {
+    if (!file)
+      throw new BadRequestException('No se proporcionó ninguna imagen');
+    return this.comprasService.parseImagenFactura(
+      req.user.empresaId,
+      file.buffer,
+      file.mimetype,
+    );
   }
 
   @Post()

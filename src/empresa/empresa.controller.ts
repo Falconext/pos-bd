@@ -416,6 +416,39 @@ export class EmpresaController {
     return cuentas;
   }
 
+  // OJO: 'saldos' debe ir antes de rutas con ':id' para no ser capturado como id.
+  @Get('cuentas-bancarias/saldos')
+  @UseGuards(JwtAuthGuard)
+  async saldosCuentasBancarias(
+    @User() user: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const data = await this.empresaService.saldosCuentasBancarias(
+      user.empresaId,
+    );
+    res.locals.message = 'Saldos de cuentas obtenidos';
+    return data;
+  }
+
+  @Get('cuentas-bancarias/:id/movimientos')
+  @UseGuards(JwtAuthGuard)
+  async movimientosCuentaBancaria(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Query('desde') desde: string,
+    @Query('hasta') hasta: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const data = await this.empresaService.movimientosCuentaBancaria(
+      user.empresaId,
+      id,
+      desde,
+      hasta,
+    );
+    res.locals.message = 'Movimientos de la cuenta obtenidos';
+    return data;
+  }
+
   @Post('cuentas-bancarias')
   @UseGuards(JwtAuthGuard)
   async crearCuentaBancaria(

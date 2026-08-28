@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import * as https from 'https';
@@ -1410,6 +1411,25 @@ export class KardexService {
       throw new BadRequestException(
         'La sede de origen y destino no pueden ser iguales',
       );
+    }
+
+    // Restricción por usuario: si tiene restringirTransferenciasASuSede, la sede
+    // destino debe estar entre sus sedes asignadas. Se valida en backend además
+    // del filtro de UI, para que no se pueda forzar el request.
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { id: usuarioId },
+      select: { restringirTransferenciasASuSede: true },
+    });
+    if (usuario?.restringirTransferenciasASuSede) {
+      const asignada = await this.prisma.usuarioSede.findFirst({
+        where: { usuarioId, sedeId: sedeDestinoId },
+        select: { id: true },
+      });
+      if (!asignada) {
+        throw new ForbiddenException(
+          'No tienes permiso para transferir stock hacia esa sede.',
+        );
+      }
     }
 
     // Obtener nombres de las sedes para los conceptos

@@ -36,8 +36,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         rol: true,
         estado: true,
         empresaId: true,
+        permisos: true,
         sistemaNegocio: true,
         sistemaProducto: true,
+        bloquearEdicionPrecioVenta: true,
+        ocultarPrecioCosto: true,
+        ocultarPedidosEcommerce: true,
+        convertirEnSupervisor: true,
+        noPermitirVentaProductosGratuitos: true,
+        restringirTransferenciasASuSede: true,
         empresa: {
           select: {
             estado: true,
@@ -62,13 +69,37 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       }
     }
 
+    // permisos se guarda como JSON string (ej. '["*"]' o '["usuarios",...]').
+    // Lo normalizamos a string[] para que los guards por permiso lo consuman.
+    let permisos: string[] = [];
+    if (Array.isArray(user.permisos)) {
+      permisos = user.permisos as string[];
+    } else if (typeof user.permisos === 'string' && user.permisos.trim()) {
+      try {
+        const parsed = JSON.parse(user.permisos);
+        if (Array.isArray(parsed)) permisos = parsed;
+      } catch {
+        permisos = [];
+      }
+    }
+
     return {
       id: user.id,
       rol: user.rol,
       empresaId: user.empresaId ?? null,
+      permisos,
       sedeId: payload.sedeId ?? null,
       sistemaNegocio: user.sistemaNegocio ?? payload.sistemaNegocio ?? null,
       sistemaProducto: user.sistemaProducto ?? payload.sistemaProducto ?? null,
+      // Permisos finos por usuario (multi-local/minimarket) — se re-consultan
+      // en cada request, así que un cambio del admin aplica sin esperar a que
+      // expire el token.
+      bloquearEdicionPrecioVenta: user.bloquearEdicionPrecioVenta,
+      ocultarPrecioCosto: user.ocultarPrecioCosto,
+      ocultarPedidosEcommerce: user.ocultarPedidosEcommerce,
+      convertirEnSupervisor: user.convertirEnSupervisor,
+      noPermitirVentaProductosGratuitos: user.noPermitirVentaProductosGratuitos,
+      restringirTransferenciasASuSede: user.restringirTransferenciasASuSede,
       // Token temporal de selección de sede: el guard lo rechaza en todos los
       // endpoints salvo /auth/select-sede (marcado con @AllowPendingSede).
       pendingSedeSelection: payload.pendingSedeSelection === true,

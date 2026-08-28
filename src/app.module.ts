@@ -39,6 +39,7 @@ import { GuiaRemisionModule } from './guia-remision/guia-remision.module';
 import { ModulosModule } from './modulos/modulos.module';
 import { ResellerModule } from './reseller/reseller.module';
 import { SedeModule } from './sede/sede.module';
+import { ListaPrecioModule } from './lista-precio/lista-precio.module';
 import { StoreCatalogModule } from './store-catalog/store-catalog.module';
 import { SistemaFinanzasModule } from './sistema-finanzas/sistema-finanzas.module';
 import { ProduccionModule } from './produccion/produccion.module';
@@ -55,6 +56,7 @@ import { ShalomModule } from './shalom/shalom.module';
 import { VehiculoModule } from './vehiculo/vehiculo.module';
 import { ContratoVehicularModule } from './contrato-vehicular/contrato-vehicular.module';
 import { TipoCambioModule } from './tipo-cambio/tipo-cambio.module';
+import { MercadoPagoModule } from './mercadopago/mercadopago.module';
 
 @Module({
   imports: [
@@ -82,6 +84,7 @@ import { TipoCambioModule } from './tipo-cambio/tipo-cambio.module';
     WhatsAppModule,
     S3Module,
     SyncModule,
+    MercadoPagoModule,
     TiendaModule,
     MarcaModule,
     DisenoRubroModule,
@@ -96,6 +99,7 @@ import { TipoCambioModule } from './tipo-cambio/tipo-cambio.module';
     ModulosModule,
     ResellerModule,
     SedeModule,
+    ListaPrecioModule,
     StoreCatalogModule,
     SistemaFinanzasModule,
     ProduccionModule,

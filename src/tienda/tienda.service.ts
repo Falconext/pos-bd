@@ -16,6 +16,7 @@ import { ActualizarEstadoPedidoDto } from './dto/actualizar-pedido.dto';
 import { DisenoRubroService } from '../diseno-rubro/diseno-rubro.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
+import { MercadoPagoService } from '../mercadopago/mercadopago.service';
 import {
   esRubroComputo,
   obtenerPlantillaComputo,
@@ -134,6 +135,24 @@ const TEMPLATE_IMAGE_FIELDS = new Set([
   'modaCollection4Image',
 ]);
 
+/**
+ * Patrón de claves de imagen de plantilla (además del Set explícito de arriba).
+ * Toda plantilla con editor en vivo nombra sus imágenes con estos sufijos
+ * (p.ej. construccionHeroImageUrl, carterasHeroImage, joyeriaSlide2Image,
+ * modaHeroImg, mayeCatalogBannerUrl, urbanoGallery1). Aceptarlas por patrón evita
+ * que este allow-list quede desactualizado cada vez que se agrega una plantilla nueva.
+ * Solo camelCase alfanumérico (sin puntos/guiones bajos) → sin riesgo de prototype pollution.
+ */
+const TEMPLATE_IMAGE_FIELD_PATTERN =
+  /^[a-z][A-Za-z0-9]{2,64}(Image|ImageUrl|Img|Url|Gallery\d+)$/;
+
+function isTemplateImageField(campo: string): boolean {
+  return (
+    typeof campo === 'string' &&
+    (TEMPLATE_IMAGE_FIELDS.has(campo) || TEMPLATE_IMAGE_FIELD_PATTERN.test(campo))
+  );
+}
+
 const PREMIUM_TEMPLATE_PURCHASE_KEYS = [
   'plantillasPremiumCompradas',
   'premiumTemplatesPurchased',
@@ -167,6 +186,7 @@ export class TiendaService {
     private readonly disenoService: DisenoRubroService,
     private readonly whatsapp: WhatsAppService,
     private readonly notificaciones: NotificacionesService,
+    private readonly mercadoPago: MercadoPagoService,
   ) {}
 
   private parseImagenesExtra(value: unknown): string[] {
@@ -806,7 +826,7 @@ export class TiendaService {
     campo: string,
     file: { buffer: Buffer; mimetype?: string },
   ) {
-    if (!TEMPLATE_IMAGE_FIELDS.has(campo)) {
+    if (!isTemplateImageField(campo)) {
       throw new BadRequestException('Campo de template inválido');
     }
     if (!file || !file.buffer) {
@@ -2147,6 +2167,8 @@ export class TiendaService {
         plinNumero: true,
         aceptaEfectivo: true,
         whatsappTienda: true,
+        mpConectado: true,
+        mpPublicKey: true,
         plan: {
           select: {
             tieneCulqi: true,
@@ -2201,6 +2223,8 @@ export class TiendaService {
       aceptaTarjeta,
       culqiPublicKey: aceptaTarjeta ? culqiPublicKey : null,
       culqiBackendReady: Boolean(culqiSecretKey),
+      aceptaMercadoPago: Boolean(empresa.mpConectado),
+      mercadoPagoPublicKey: empresa.mpConectado ? empresa.mpPublicKey : null,
       cuentasBancarias: empresa.cuentasBancarias || [],
     };
   }
@@ -2239,6 +2263,9 @@ export class TiendaService {
         minimoCompra: true,
         aceptaRecojo: true,
         aceptaEnvio: true,
+        nombreComercial: true,
+        razonSocial: true,
+        mpConectado: true,
         plan: { select: { tieneTienda: true } },
       },
     });
@@ -2246,6 +2273,13 @@ export class TiendaService {
     // Gating: no aceptar pedidos si el plan no incluye tienda.
     if (!empresa || !empresa.plan?.tieneTienda) {
       throw new NotFoundException('Tienda no encontrada');
+    }
+
+    // Mercado Pago requiere que la empresa tenga su cuenta conectada.
+    if (dto.medioPago === 'MERCADO_PAGO' && !empresa.mpConectado) {
+      throw new BadRequestException(
+        'Esta tienda no tiene Mercado Pago habilitado',
+      );
     }
     const tipoEntrega = dto.tipoEntrega || 'RECOJO';
     if (tipoEntrega === 'RECOJO' && !empresa.aceptaRecojo) {
@@ -2456,6 +2490,22 @@ export class TiendaService {
       },
     });
 
+    // Mercado Pago (Checkout Pro): crear la preferencia y devolver el init_point
+    // para que el frontend redirija al comprador. El pago se confirma luego por webhook.
+    let mpInitPoint: string | null = null;
+    if (dto.medioPago === 'MERCADO_PAGO') {
+      const { initPoint } = await this.mercadoPago.crearPreferencia({
+        empresaId: empresa.id,
+        pedidoId: pedido.id,
+        codigoSeguimiento,
+        titulo: empresa.nombreComercial || empresa.razonSocial || 'Compra online',
+        total,
+        slug,
+        clienteEmail: dto.clienteEmail,
+      });
+      mpInitPoint = initPoint;
+    }
+
     // Notificar al empresario (in-app web/mobile + correo) y confirmar al cliente.
     // Nunca debe romper la compra.
     void this.notificarNuevoPedido(empresa.id, slug, pedido).catch((err) =>
@@ -2464,7 +2514,7 @@ export class TiendaService {
       ),
     );
 
-    return pedido;
+    return { ...pedido, mpInitPoint };
   }
 
   /**

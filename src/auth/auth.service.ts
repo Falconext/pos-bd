@@ -163,8 +163,17 @@ export class AuthService {
         );
       }
 
+      // Sede por defecto del usuario (Usuario.sedeId): si está seteada y sigue
+      // entre sus sedes activas, se usa directo y se evita el selector aunque
+      // tenga 2+ sedes asignadas.
+      const sedeDefaultValida =
+        user.sedeId != null &&
+        sedesActivas.some((s) => s.id === user.sedeId);
+
       if (sedesActivas.length === 1) {
         sedeIdFinal = sedesActivas[0].id;
+      } else if (sedeDefaultValida) {
+        sedeIdFinal = user.sedeId;
       } else {
         // Múltiples sedes → necesita seleccionar
         requiresSedeSelection = true;
@@ -291,12 +300,27 @@ export class AuthService {
         });
         sedeIdFinal = sede?.id ?? null;
       } else {
-        const usuarioSede = await this.prisma.usuarioSede.findFirst({
-          where: { usuarioId: user.id, sede: { activo: true } },
-          include: { sede: { select: { id: true, esPrincipal: true } } },
-          orderBy: { sedeId: 'asc' },
-        });
-        sedeIdFinal = usuarioSede?.sede?.id ?? null;
+        // Prioriza la sede por defecto del usuario si sigue asignada y activa.
+        const sedeDefault = user.sedeId
+          ? await this.prisma.usuarioSede.findFirst({
+              where: {
+                usuarioId: user.id,
+                sedeId: user.sedeId,
+                sede: { activo: true },
+              },
+              select: { sedeId: true },
+            })
+          : null;
+        if (sedeDefault) {
+          sedeIdFinal = sedeDefault.sedeId;
+        } else {
+          const usuarioSede = await this.prisma.usuarioSede.findFirst({
+            where: { usuarioId: user.id, sede: { activo: true } },
+            include: { sede: { select: { id: true, esPrincipal: true } } },
+            orderBy: { sedeId: 'asc' },
+          });
+          sedeIdFinal = usuarioSede?.sede?.id ?? null;
+        }
       }
     }
 
@@ -501,6 +525,13 @@ export class AuthService {
         permisos: true,
         sistemaNegocio: true,
         sistemaProducto: true,
+        sedeId: true,
+        bloquearEdicionPrecioVenta: true,
+        ocultarPrecioCosto: true,
+        ocultarPedidosEcommerce: true,
+        convertirEnSupervisor: true,
+        noPermitirVentaProductosGratuitos: true,
+        restringirTransferenciasASuSede: true,
         sedesAsignadas: {
           select: {
             sede: {

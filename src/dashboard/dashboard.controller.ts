@@ -13,7 +13,9 @@ export class DashboardController {
   private resolveSedeId(user: any, sedeIdQuery?: string): number | undefined {
     const isAdmin =
       user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
-    if (isAdmin) {
+    // El usuario-supervisor (convertirEnSupervisor) ve el dashboard de todas sus
+    // sedes: se lo trata como admin para el scope (puede elegir sede o ver todo).
+    if (isAdmin || user.convertirEnSupervisor) {
       return sedeIdQuery ? Number(sedeIdQuery) : undefined;
     }
     return user.sedeId ?? undefined;

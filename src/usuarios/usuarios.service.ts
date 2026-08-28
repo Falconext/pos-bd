@@ -194,8 +194,15 @@ export class UsersService {
       password,
       permisos,
       sedeIds,
+      sedeDefaultId,
       subModuloIds,
     } = dto;
+
+    if (sedeDefaultId && (!sedeIds || !sedeIds.includes(sedeDefaultId))) {
+      throw new BadRequestException(
+        'La sede por defecto debe estar entre las sedes asignadas',
+      );
+    }
 
     const existeEmail = await this.prisma.usuario.findUnique({
       where: { email },
@@ -247,6 +254,16 @@ export class UsersService {
           dto.comisionGlobalVenta !== undefined
             ? dto.comisionGlobalVenta
             : null,
+        sedeId: sedeDefaultId || null,
+        // Todos son restricciones opt-in: false = comportamiento actual.
+        bloquearEdicionPrecioVenta: dto.bloquearEdicionPrecioVenta ?? false,
+        ocultarPrecioCosto: dto.ocultarPrecioCosto ?? false,
+        ocultarPedidosEcommerce: dto.ocultarPedidosEcommerce ?? false,
+        convertirEnSupervisor: dto.convertirEnSupervisor ?? false,
+        noPermitirVentaProductosGratuitos:
+          dto.noPermitirVentaProductosGratuitos ?? false,
+        restringirTransferenciasASuSede:
+          dto.restringirTransferenciasASuSede ?? false,
       },
       select: {
         id: true,
@@ -261,6 +278,13 @@ export class UsersService {
         comisionGlobal: true,
         comisionGlobalFija: true,
         comisionGlobalVenta: true,
+        sedeId: true,
+        bloquearEdicionPrecioVenta: true,
+        ocultarPrecioCosto: true,
+        ocultarPedidosEcommerce: true,
+        convertirEnSupervisor: true,
+        noPermitirVentaProductosGratuitos: true,
+        restringirTransferenciasASuSede: true,
       },
     });
 
@@ -341,6 +365,13 @@ export class UsersService {
           comisionGlobal: true,
           comisionGlobalFija: true,
           comisionGlobalVenta: true,
+          sedeId: true,
+          bloquearEdicionPrecioVenta: true,
+          ocultarPrecioCosto: true,
+          ocultarPedidosEcommerce: true,
+          convertirEnSupervisor: true,
+          noPermitirVentaProductosGratuitos: true,
+          restringirTransferenciasASuSede: true,
           sedesAsignadas: {
             select: {
               sede: {
@@ -403,6 +434,7 @@ export class UsersService {
       password,
       permisos,
       sedeIds,
+      sedeDefaultId,
       subModuloIds,
       comisionGlobal,
       comisionGlobalFija,
@@ -413,6 +445,23 @@ export class UsersService {
     if (!usuario) throw new NotFoundException('Usuario no encontrado');
     if (usuario.empresaId !== empresaId)
       throw new ForbiddenException('Empresa no identificada');
+
+    if (sedeDefaultId) {
+      const sedeIdsEfectivos =
+        sedeIds !== undefined
+          ? sedeIds
+          : (
+              await this.prisma.usuarioSede.findMany({
+                where: { usuarioId: id },
+                select: { sedeId: true },
+              })
+            ).map((us) => us.sedeId);
+      if (!sedeIdsEfectivos.includes(sedeDefaultId)) {
+        throw new BadRequestException(
+          'La sede por defecto debe estar entre las sedes asignadas',
+        );
+      }
+    }
 
     // ¿Cambió la configuración de comisión? Se compara contra el valor previo para
     // recalcular después las comisiones PENDIENTES (las liquidadas no se tocan).
@@ -445,6 +494,13 @@ export class UsersService {
           comisionGlobalFija !== undefined ? comisionGlobalFija : undefined,
         comisionGlobalVenta:
           comisionGlobalVenta !== undefined ? comisionGlobalVenta : undefined,
+        sedeId: sedeDefaultId !== undefined ? sedeDefaultId || null : undefined,
+        bloquearEdicionPrecioVenta: dto.bloquearEdicionPrecioVenta,
+        ocultarPrecioCosto: dto.ocultarPrecioCosto,
+        ocultarPedidosEcommerce: dto.ocultarPedidosEcommerce,
+        convertirEnSupervisor: dto.convertirEnSupervisor,
+        noPermitirVentaProductosGratuitos: dto.noPermitirVentaProductosGratuitos,
+        restringirTransferenciasASuSede: dto.restringirTransferenciasASuSede,
       },
       select: {
         id: true,
@@ -459,6 +515,13 @@ export class UsersService {
         comisionGlobal: true,
         comisionGlobalFija: true,
         comisionGlobalVenta: true,
+        sedeId: true,
+        bloquearEdicionPrecioVenta: true,
+        ocultarPrecioCosto: true,
+        ocultarPedidosEcommerce: true,
+        convertirEnSupervisor: true,
+        noPermitirVentaProductosGratuitos: true,
+        restringirTransferenciasASuSede: true,
       },
     });
 
@@ -480,6 +543,19 @@ export class UsersService {
         await this.prisma.usuarioSede.createMany({
           data: sedeIds.map((sedeId) => ({ usuarioId: id, sedeId })),
           skipDuplicates: true,
+        });
+      }
+      // Si la sede por defecto actual quedó fuera del nuevo set de sedes
+      // asignadas (y esta llamada no mandó un nuevo default explícito), se
+      // limpia para no dejar un default apuntando a una sede ya no asignada.
+      if (
+        sedeDefaultId === undefined &&
+        usuario.sedeId != null &&
+        !sedeIds.includes(usuario.sedeId)
+      ) {
+        await this.prisma.usuario.update({
+          where: { id },
+          data: { sedeId: null },
         });
       }
     }
@@ -515,6 +591,13 @@ export class UsersService {
         comisionGlobal: true,
         comisionGlobalFija: true,
         comisionGlobalVenta: true,
+        sedeId: true,
+        bloquearEdicionPrecioVenta: true,
+        ocultarPrecioCosto: true,
+        ocultarPedidosEcommerce: true,
+        convertirEnSupervisor: true,
+        noPermitirVentaProductosGratuitos: true,
+        restringirTransferenciasASuSede: true,
         sedesAsignadas: {
           select: {
             sede: {

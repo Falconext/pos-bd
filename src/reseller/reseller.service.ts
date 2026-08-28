@@ -952,6 +952,9 @@ export class ResellerService {
         resellerId: { not: null },
         fechaExpiracion: { lte: now },
         estado: { in: ['ACTIVO', 'INACTIVO'] },
+        // Las cuentas demo NUNCA se cobran ni se suspenden por renovación:
+        // su fechaExpiracion es el fin del período de prueba, no un ciclo pagado.
+        usaDemo: false,
       },
       select: {
         id: true,

@@ -21,7 +21,8 @@ export class DetalleOrdenCompraDto {
   @IsNumber()
   cantidad: number;
 
-  // Precio pactado con el proveedor SIN IGV
+  // Precio pactado con el proveedor. Sin IGV, salvo que la orden tenga
+  // igvIncluido=true (en ese caso ya trae el IGV embebido).
   @IsNumber()
   precioUnitario: number;
 }
@@ -54,6 +55,11 @@ export class CrearOrdenCompraDto {
   @IsOptional()
   @IsBoolean()
   aplicaIgv?: boolean;
+
+  // Si es true, los precios ingresados ya incluyen el IGV (se extrae del total)
+  @IsOptional()
+  @IsBoolean()
+  igvIncluido?: boolean;
 
   @IsOptional()
   @IsString()

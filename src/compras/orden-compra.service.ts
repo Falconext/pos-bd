@@ -35,16 +35,27 @@ export class OrdenCompraService {
   private calcularTotales(
     detalles: { cantidad: number; precioUnitario: number }[],
     aplicaIgv: boolean,
+    igvIncluido = false,
   ) {
-    const subtotal = detalles.reduce(
+    const suma = detalles.reduce(
       (s, d) => s + Number(d.cantidad) * Number(d.precioUnitario),
       0,
     );
-    const igv = aplicaIgv ? subtotal * IGV_RATE : 0;
+    if (aplicaIgv && igvIncluido) {
+      // Los precios ya traen el IGV embebido: el total es la suma tal cual
+      // y el IGV se extrae (misma lógica que incluyeIgv en Compras)
+      const subtotal = suma / (1 + IGV_RATE);
+      return {
+        subtotal: Number(subtotal.toFixed(2)),
+        igv: Number((suma - subtotal).toFixed(2)),
+        total: Number(suma.toFixed(2)),
+      };
+    }
+    const igv = aplicaIgv ? suma * IGV_RATE : 0;
     return {
-      subtotal: Number(subtotal.toFixed(2)),
+      subtotal: Number(suma.toFixed(2)),
       igv: Number(igv.toFixed(2)),
-      total: Number((subtotal + igv).toFixed(2)),
+      total: Number((suma + igv).toFixed(2)),
     };
   }
 
@@ -64,7 +75,8 @@ export class OrdenCompraService {
     if (!proveedor) throw new NotFoundException('Proveedor no encontrado');
 
     const aplicaIgv = dto.aplicaIgv !== false;
-    const totales = this.calcularTotales(dto.detalles, aplicaIgv);
+    const igvIncluido = aplicaIgv && dto.igvIncluido === true;
+    const totales = this.calcularTotales(dto.detalles, aplicaIgv, igvIncluido);
 
     const ultimo = await this.prisma.ordenCompra.aggregate({
       where: { empresaId },
@@ -84,6 +96,7 @@ export class OrdenCompraService {
         moneda: dto.moneda || 'PEN',
         tipoCambio: dto.tipoCambio ?? 1,
         ...totales,
+        igvIncluido,
         estado: dto.estado ?? 'EMITIDA',
         observaciones: dto.observaciones || null,
         condicionesPago: dto.condicionesPago || null,
@@ -207,7 +220,8 @@ export class OrdenCompraService {
       throw new BadRequestException('La orden debe tener al menos un ítem');
     }
     const aplicaIgv = dto.aplicaIgv !== false;
-    const totales = this.calcularTotales(dto.detalles, aplicaIgv);
+    const igvIncluido = aplicaIgv && dto.igvIncluido === true;
+    const totales = this.calcularTotales(dto.detalles, aplicaIgv, igvIncluido);
 
     await this.prisma.detalleOrdenCompra.deleteMany({
       where: { ordenCompraId: id },
@@ -222,6 +236,7 @@ export class OrdenCompraService {
         moneda: dto.moneda || 'PEN',
         tipoCambio: dto.tipoCambio ?? 1,
         ...totales,
+        igvIncluido,
         ...(dto.estado ? { estado: dto.estado } : {}),
         observaciones: dto.observaciones || null,
         condicionesPago: dto.condicionesPago || null,
@@ -305,7 +320,7 @@ export class OrdenCompraService {
           descripcion: d.descripcion,
           cantidad: Number(d.cantidad),
           precioUnitario: Number(d.precioUnitario),
-          incluyeIgv: false,
+          incluyeIgv: orden.igvIncluido,
         })),
       } as any,
       reqSedeId,
@@ -453,7 +468,7 @@ export class OrdenCompraService {
 
       <div class="secthead">Producto o servicio</div>
       <table>
-        <thead><tr><th class="num" style="width:34px">N.º</th><th style="width:80px">Código</th><th>Descripción</th><th class="num" style="width:70px">Cant.</th><th class="num" style="width:95px">P. Unitario</th><th class="num" style="width:95px">Total</th></tr></thead>
+        <thead><tr><th class="num" style="width:34px">N.º</th><th style="width:80px">Código</th><th>Descripción</th><th class="num" style="width:70px">Cant.</th><th class="num" style="width:95px">P. Unitario${orden.igvIncluido ? ' (con IGV)' : ''}</th><th class="num" style="width:95px">Total</th></tr></thead>
         <tbody>${filas}
           <tr class="tot"><td colspan="4" style="border:none"></td><td class="lblcell">Subtotal</td><td class="num">${fmt(orden.subtotal)}</td></tr>
           <tr class="tot"><td colspan="4" style="border:none"></td><td class="lblcell">IGV (18%)</td><td class="num">${fmt(orden.igv)}</td></tr>

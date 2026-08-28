@@ -30,6 +30,7 @@ export enum MedioPagoTienda {
   EFECTIVO = 'EFECTIVO',
   TRANSFERENCIA = 'TRANSFERENCIA',
   TARJETA = 'TARJETA',
+  MERCADO_PAGO = 'MERCADO_PAGO',
 }
 
 export enum TipoEntrega {

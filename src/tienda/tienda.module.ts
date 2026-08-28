@@ -8,6 +8,7 @@ import { S3Module } from 'src/s3/s3.module';
 import { ModificadoresModule } from '../modificadores/modificadores.module';
 import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module';
+import { MercadoPagoModule } from '../mercadopago/mercadopago.module';
 import { RolesGuard } from '../common/guards/roles.guard';
 
 @Module({
@@ -18,6 +19,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
     ModificadoresModule,
     WhatsAppModule,
     NotificacionesModule,
+    MercadoPagoModule,
   ],
   controllers: [TiendaController, TiendaPublicController],
   providers: [TiendaService, RolesGuard],

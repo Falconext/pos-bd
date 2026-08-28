@@ -170,12 +170,14 @@ export class ComprobanteService {
       }
       // El N° de operación/voucher es opcional: se puede emitir sin él y
       // registrarlo después (algunos clientes emiten la factura antes de pagar).
-      if (line.method === 'TRANSFERENCIA') {
-        if (!line.cuentaBancariaId) {
-          throw new BadRequestException(
-            'El pago por transferencia requiere cuenta bancaria destino',
-          );
-        }
+      if (line.method === 'TRANSFERENCIA' && !line.cuentaBancariaId) {
+        throw new BadRequestException(
+          'El pago por transferencia requiere cuenta bancaria destino',
+        );
+      }
+      // Cualquier medio que traiga cuenta destino (Yape/Plin/Transferencia):
+      // validar que la cuenta pertenezca a la empresa y esté activa.
+      if (line.cuentaBancariaId) {
         const cuenta = await this.prisma.cuentaBancaria.findFirst({
           where: { id: line.cuentaBancariaId, empresaId, activo: true },
           select: { id: true },
@@ -1339,7 +1341,7 @@ export class ComprobanteService {
     tipoDoc: string,
     tipDocAfectado: string | null,
     empresaId: number,
-    maxIntentos = 5,
+    maxIntentos = 20,
   ) {
     let intento = 0;
     while (intento < maxIntentos) {
@@ -1353,8 +1355,14 @@ export class ComprobanteService {
           data: { ...data, serie, correlativo },
         });
       } catch (err: any) {
+        // P2002 = otro proceso tomó este mismo (serie, correlativo) primero.
+        // El índice único @@unique([empresaId, tipoDoc, serie, correlativo]) es
+        // lo que hace que esta colisión sea detectable; reintentamos releyendo
+        // el último correlativo. Backoff aleatorio corto para no reintentar
+        // todos a la vez cuando varias sedes emiten en el mismo instante.
         if (err?.code === 'P2002' && intento < maxIntentos - 1) {
           intento++;
+          await new Promise((r) => setTimeout(r, 15 + Math.floor(Math.random() * 60)));
           continue;
         }
         throw err;
@@ -1369,8 +1377,9 @@ export class ComprobanteService {
    * Crea un comprobante IMPORTADO (ya emitido a SUNAT) respetando la serie y el
    * correlativo del documento original en vez de autogenerarlos.
    *
-   * La tabla Comprobante NO tiene una restricción única en
-   * (empresaId, serie, correlativo), así que el duplicado se valida en código.
+   * Se valida el duplicado en código (findFirst) para devolver un error claro al
+   * usuario. Además la BD tiene @@unique([empresaId, tipoDoc, serie, correlativo])
+   * como red de seguridad: si dos importaciones coinciden, la segunda recibe P2002.
    */
   private async crearComprobanteImportado(
     data: any,

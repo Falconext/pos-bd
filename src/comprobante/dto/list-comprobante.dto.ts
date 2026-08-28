@@ -75,4 +75,9 @@ export class ListComprobanteDto {
   @IsString()
   @IsIn(['zip', 'pdf', 'excel'])
   formato?: 'zip' | 'pdf' | 'excel';
+
+  @IsOptional()
+  @Type(() => String)
+  @IsString()
+  soloPendientesSunat?: string;
 }

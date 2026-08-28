@@ -371,4 +371,57 @@ Responde SOLO JSON válido (sin markdown):
       return null;
     }
   }
+
+  /**
+   * Lee una imagen de factura/boleta de compra peruana y extrae sus datos como
+   * JSON estructurado (proveedor, documento, items con cantidad y precio). No
+   * matchea productos — eso lo hace compras.service con el catálogo. Devuelve
+   * el JSON crudo extraído por la IA.
+   */
+  async extraerFacturaDesdeImagen(
+    base64: string,
+    mimeType: string,
+  ): Promise<any> {
+    if (!this.model) {
+      throw new Error('IA no configurada (GEMINI_API_KEY ausente)');
+    }
+    const prompt = `Eres un asistente que extrae datos de una FACTURA o BOLETA de compra peruana a partir de una imagen (foto o escaneo).
+Devuelve SOLO un JSON válido, sin markdown ni explicaciones, con EXACTAMENTE esta forma:
+{
+  "tipoDoc": "FACTURA" | "BOLETA" | "",
+  "serie": "",
+  "numero": "",
+  "fechaEmision": "YYYY-MM-DD",
+  "moneda": "PEN" | "USD",
+  "proveedorRuc": "",
+  "proveedorNombre": "",
+  "subtotal": 0,
+  "igv": 0,
+  "total": 0,
+  "items": [
+    { "descripcion": "", "codigo": "", "cantidad": 0, "precioUnitario": 0, "totalLinea": 0 }
+  ]
+}
+Reglas:
+- "precioUnitario" es el precio por UNA unidad tal como aparece impreso en la boleta.
+- "totalLinea" es el IMPORTE TOTAL de esa línea tal como aparece impreso (la columna "Total" o "Importe" de la fila). Es MUY IMPORTANTE que lo copies exacto como está impreso, aunque no sea igual a precioUnitario × cantidad (las boletas redondean).
+- "codigo" es el código del producto si aparece en la boleta; si no, déjalo "".
+- Si un dato no aparece, usa "" para texto o 0 para números. NO inventes productos ni valores.
+- Los montos son números sin símbolo de moneda ni comas de miles (usa punto decimal).`;
+    const result = await this.model.generateContent([
+      prompt,
+      { inlineData: { mimeType, data: base64 } },
+    ]);
+    const text = result.response.text().trim();
+    const jsonText = text
+      .replace(/```json\n?/gi, '')
+      .replace(/```\n?/g, '')
+      .trim();
+    try {
+      return JSON.parse(jsonText);
+    } catch {
+      this.logger.error(`No se pudo parsear la respuesta de Gemini: ${jsonText}`);
+      throw new Error('La IA no devolvió un formato válido. Intenta con una foto más nítida.');
+    }
+  }
 }

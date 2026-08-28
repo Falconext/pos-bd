@@ -584,6 +584,108 @@ export class ProductoService {
     return this.obtenerPorId(nuevo.id, empresaId);
   }
 
+  /**
+   * Carga los items de la lista de precio que aplica al usuario/sede, en un
+   * Map keyed por `${productoId}|${presentacionCodigo}` ('' = unidad base).
+   *
+   * Modelo pensado para el empresario (intuitivo):
+   *   1) Lista ESPECÍFICA del usuario  (precio especial de ese cajero/cliente)
+   *   2) Lista ESPECÍFICA de la sede    (la excepción de ese local)
+   *   3) Lista "por defecto" de la empresa (los precios normales del negocio)
+   *   4) (si no hay) → precio base del producto, lo resuelve resolverPrecioConLista
+   *
+   * La lista "por defecto" NO compite en los pasos 1 y 2: es solo el fallback
+   * general. Así, asignar al dueño/local a la lista general no lo "clava", y una
+   * lista específica de un local SIEMPRE gana sobre la default.
+   * Una sola query por listado (no por producto). Map vacío si no hay lista.
+   */
+  private async cargarItemsListaPrecio(
+    empresaId: number,
+    usuarioId?: number,
+    sedeId?: number,
+  ): Promise<
+    Map<string, { precioUnitario: number; precioOferta: number | null }>
+  > {
+    const map = new Map<
+      string,
+      { precioUnitario: number; precioOferta: number | null }
+    >();
+
+    let lista: { items: any[] } | null = null;
+    // 1) Lista específica del usuario (excluye la default: no debe "clavar").
+    if (usuarioId) {
+      lista = await this.prisma.listaPrecio.findFirst({
+        where: {
+          empresaId,
+          activo: true,
+          esPorDefecto: false,
+          usuarios: { some: { usuarioId } },
+        },
+        orderBy: { id: 'asc' },
+        include: { items: true },
+      });
+    }
+    // 2) Lista específica de la sede (excluye la default).
+    if (!lista && sedeId) {
+      lista = await this.prisma.listaPrecio.findFirst({
+        where: {
+          empresaId,
+          activo: true,
+          esPorDefecto: false,
+          sedes: { some: { sedeId } },
+        },
+        orderBy: { id: 'asc' },
+        include: { items: true },
+      });
+    }
+    // 3) Lista "por defecto" de la empresa: fallback general (precios normales).
+    if (!lista) {
+      lista = await this.prisma.listaPrecio.findFirst({
+        where: { empresaId, activo: true, esPorDefecto: true },
+        include: { items: true },
+      });
+    }
+    if (lista) {
+      for (const it of lista.items) {
+        map.set(`${it.productoId}|${it.presentacionCodigo || ''}`, {
+          precioUnitario: Number(it.precioUnitario),
+          precioOferta:
+            it.precioOferta != null ? Number(it.precioOferta) : null,
+        });
+      }
+    }
+    return map;
+  }
+
+  /**
+   * Precio efectivo de venta con la precedencia completa:
+   * lista de precio (usuario/sede) > override legado de ProductoStock >
+   * precio base del producto. `itemsLista` ya viene filtrado por usuario/sede.
+   */
+  private resolverPrecioConLista(
+    itemsLista: Map<
+      string,
+      { precioUnitario: number; precioOferta: number | null }
+    >,
+    productoId: number,
+    presentacionCodigo: string,
+    usarPrecioSede: boolean,
+    overrideUnit: any,
+    overrideOferta: any,
+    baseUnit: number,
+    baseOferta: number | null,
+  ): { precioUnitario: number; precioOferta: number | null } {
+    const desdeLista = itemsLista.get(`${productoId}|${presentacionCodigo}`);
+    if (desdeLista) return desdeLista;
+    const precioUnitario =
+      usarPrecioSede && overrideUnit != null ? Number(overrideUnit) : baseUnit;
+    const precioOferta =
+      usarPrecioSede && overrideOferta != null
+        ? Number(overrideOferta)
+        : baseOferta;
+    return { precioUnitario, precioOferta };
+  }
+
   async listar(params: {
     empresaId: number;
     sedeId?: number;
@@ -597,6 +699,7 @@ export class ProductoService {
     incluirVariantes?: string | boolean;
     soloVendibles?: boolean;
     usarPrecioSede?: boolean;
+    usuarioId?: number;
     soloStockBajo?: boolean;
   }) {
     const {
@@ -845,6 +948,19 @@ export class ProductoService {
       reservasAgrupadas.map((r) => [r.productoId, r._sum.cantidad ?? 0]),
     );
 
+    // Lista de precios que aplica al usuario/sede (solo en contexto de venta,
+    // igual que el override por sede). Una sola query para todo el listado.
+    const itemsLista = params.usarPrecioSede
+      ? await this.cargarItemsListaPrecio(
+          empresaId,
+          params.usuarioId,
+          params.sedeId,
+        )
+      : new Map<
+          string,
+          { precioUnitario: number; precioOferta: number | null }
+        >();
+
     // Firmar imagenes si son de S3
     const normalizePersistentImageUrl = (url?: string | null) => {
       if (!url) return url as any;
@@ -894,16 +1010,17 @@ export class ProductoService {
         const stockSede = params.sedeId
           ? (p.stocks[0] as any | undefined)
           : undefined;
-        const precioUnitarioEfectivo =
-          params.usarPrecioSede && stockSede?.precioUnitarioOverride != null
-            ? Number(stockSede.precioUnitarioOverride)
-            : Number(p.precioUnitario);
-        const precioOfertaEfectivo =
-          params.usarPrecioSede && stockSede?.precioOfertaOverride != null
-            ? Number(stockSede.precioOfertaOverride)
-            : p.precioOferta != null
-              ? Number(p.precioOferta)
-              : null;
+        const { precioUnitario: precioUnitarioEfectivo, precioOferta: precioOfertaEfectivo } =
+          this.resolverPrecioConLista(
+            itemsLista,
+            p.id,
+            '',
+            !!params.usarPrecioSede,
+            stockSede?.precioUnitarioOverride,
+            stockSede?.precioOfertaOverride,
+            Number(p.precioUnitario),
+            p.precioOferta != null ? Number(p.precioOferta) : null,
+          );
         const reservado = reservadoPorProducto.get(p.id) ?? 0;
         const cupoProvision = Math.floor(
           (stockTotal * (p.porcentajeProvision ?? 0)) / 100,
@@ -934,18 +1051,17 @@ export class ProductoService {
             const varianteStockSede = params.sedeId
               ? variante.stocks?.[0]
               : undefined;
-            const variantePrecioUnitario =
-              params.usarPrecioSede &&
-              varianteStockSede?.precioUnitarioOverride != null
-                ? Number(varianteStockSede.precioUnitarioOverride)
-                : Number(variante.precioUnitario);
-            const variantePrecioOferta =
-              params.usarPrecioSede &&
-              varianteStockSede?.precioOfertaOverride != null
-                ? Number(varianteStockSede.precioOfertaOverride)
-                : variante.precioOferta != null
-                  ? Number(variante.precioOferta)
-                  : null;
+            const { precioUnitario: variantePrecioUnitario, precioOferta: variantePrecioOferta } =
+              this.resolverPrecioConLista(
+                itemsLista,
+                variante.id,
+                '',
+                !!params.usarPrecioSede,
+                varianteStockSede?.precioUnitarioOverride,
+                varianteStockSede?.precioOfertaOverride,
+                Number(variante.precioUnitario),
+                variante.precioOferta != null ? Number(variante.precioOferta) : null,
+              );
 
             return {
               ...variante,
@@ -1017,17 +1133,26 @@ export class ProductoService {
           // Paquetes (códigos alternos con unidadesPorPaquete > 1), con la
           // imagen firmada para que el POS pueda pintar la tarjeta del pack.
           paquetes: await Promise.all(
-            (((p as any).codigosBarras as any[]) || []).map(async (c: any) => ({
-              codigo: c.codigo,
-              unidadesPorPaquete: Number(c.unidadesPorPaquete) || 1,
-              precioPaquete:
-                c.precioPaquete != null ? Number(c.precioPaquete) : null,
-              alias: c.alias || null,
-              imagenUrl: c.imagenUrl || null,
-              imagenUrlDisplay: await signIfS3(
-                normalizePersistentImageUrl(c.imagenUrl),
-              ),
-            })),
+            (((p as any).codigosBarras as any[]) || []).map(async (c: any) => {
+              // Precio del paquete: si la lista de precio define un precio para
+              // esta presentación (código), gana sobre el precioPaquete base.
+              const desdeLista = itemsLista.get(`${p.id}|${c.codigo}`);
+              const precioPaquete = desdeLista
+                ? desdeLista.precioUnitario
+                : c.precioPaquete != null
+                  ? Number(c.precioPaquete)
+                  : null;
+              return {
+                codigo: c.codigo,
+                unidadesPorPaquete: Number(c.unidadesPorPaquete) || 1,
+                precioPaquete,
+                alias: c.alias || null,
+                imagenUrl: c.imagenUrl || null,
+                imagenUrlDisplay: await signIfS3(
+                  normalizePersistentImageUrl(c.imagenUrl),
+                ),
+              };
+            }),
           ),
         };
       }),
@@ -1145,6 +1270,7 @@ export class ProductoService {
     limit?: number;
     search?: string;
     categoriaId?: number;
+    usuarioId?: number;
   }) {
     const { empresaId, sedeId, categoriaId } = params;
     const page = Number(params.page) || 1;
@@ -1258,6 +1384,14 @@ export class ProductoService {
       reservasAgrupadas.map((r) => [r.productoId, r._sum.cantidad ?? 0]),
     );
 
+    // Lista de precio que aplica al usuario/sede en el catálogo de farmacia
+    // (siempre contexto de venta).
+    const itemsLista = await this.cargarItemsListaPrecio(
+      empresaId,
+      params.usuarioId,
+      sedeId,
+    );
+
     const hoy = new Date();
 
     // Lotes VENCIDOS con stock: se excluyen de la venta (p.lotes ya los filtra),
@@ -1299,10 +1433,16 @@ export class ProductoService {
       // Ya que en catalogoFarmacia siempre se filtra por sede, usamos estrictamente ProductoStock.
       const stockBase = num(p.stocks[0]?.stock);
       const stockSede = p.stocks[0] as any | undefined;
-      const precioUnitario =
-        stockSede?.precioUnitarioOverride != null
-          ? Number(stockSede.precioUnitarioOverride)
-          : Number(p.precioUnitario);
+      const { precioUnitario } = this.resolverPrecioConLista(
+        itemsLista,
+        p.id,
+        '',
+        true,
+        stockSede?.precioUnitarioOverride,
+        stockSede?.precioOfertaOverride,
+        Number(p.precioUnitario),
+        null,
+      );
       const reservado = reservadoPorProducto.get(p.id) ?? 0;
       const cupoProvision = Math.floor(
         (stockBase * (p.porcentajeProvision ?? 0)) / 100,
@@ -3323,6 +3463,21 @@ export class ProductoService {
       { wch: 20 }, // CATEGORIA
       { wch: 20 }, // MARCA
     ];
+
+    const instrucciones = [
+      { Columna: 'AFECT', Código: '10', Significado: 'Gravado (paga IGV) — el más común, úsalo si no estás seguro' },
+      { Columna: 'AFECT', Código: '20', Significado: 'Exonerado (no paga IGV)' },
+      { Columna: 'AFECT', Código: '30', Significado: 'Inafecto (no paga IGV por ley)' },
+      { Columna: 'AFECT', Código: '40', Significado: 'Exportación' },
+    ];
+    const hojaInstrucciones = XLSX.utils.json_to_sheet(instrucciones);
+    hojaInstrucciones['!cols'] = [
+      { wch: 10 }, // Columna
+      { wch: 8 }, // Código
+      { wch: 60 }, // Significado
+    ];
+    XLSX.utils.book_append_sheet(workbook, hojaInstrucciones, 'Instrucciones');
+
     return XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
   }
 

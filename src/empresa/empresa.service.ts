@@ -2461,6 +2461,195 @@ export class EmpresaService {
   }
 
   /**
+   * Saldo por cuenta bancaria = ingresos − egresos, derivado de:
+   *   + Pago (cobros de comprobantes; Yape/Plin abonan aquí automáticamente)
+   *   + MovimientoCaja CIERRE depositado (efectivo de caja depositado al banco)
+   *   − PagoCompra (pagos a proveedores por banco)
+   *   − GastoOperativo (gastos pagados por banco)
+   * No hay un campo `saldo` persistido: se calcula al vuelo (una query agregada
+   * por fuente). Es un saldo operativo simple, no un libro contable.
+   */
+  async saldosCuentasBancarias(empresaId: number) {
+    const cuentas = await this.prisma.cuentaBancaria.findMany({
+      where: { empresaId },
+      orderBy: { creadoEn: 'asc' },
+    });
+    const ids = cuentas.map((c) => c.id);
+    if (ids.length === 0) return [];
+
+    const [pagos, depositos, compras, gastos] = await Promise.all([
+      this.prisma.pago.groupBy({
+        by: ['cuentaBancariaId'],
+        where: { cuentaBancariaId: { in: ids } },
+        _sum: { monto: true },
+      }),
+      this.prisma.movimientoCaja.groupBy({
+        by: ['cuentaBancariaId'],
+        where: {
+          cuentaBancariaId: { in: ids },
+          tipoMovimiento: 'CIERRE',
+          depositado: true,
+        },
+        _sum: { montoEfectivo: true },
+      }),
+      this.prisma.pagoCompra.groupBy({
+        by: ['cuentaBancariaId'],
+        where: { cuentaBancariaId: { in: ids } },
+        _sum: { monto: true },
+      }),
+      this.prisma.gastoOperativo.groupBy({
+        by: ['cuentaBancariaId'],
+        where: { cuentaBancariaId: { in: ids } },
+        _sum: { monto: true },
+      }),
+    ]);
+
+    const toMap = (arr: any[], field: string) =>
+      new Map<number, number>(
+        arr
+          .filter((r) => r.cuentaBancariaId != null)
+          .map((r) => [r.cuentaBancariaId as number, Number(r._sum[field] || 0)]),
+      );
+    const mPagos = toMap(pagos, 'monto');
+    const mDep = toMap(depositos, 'montoEfectivo');
+    const mCompras = toMap(compras, 'monto');
+    const mGastos = toMap(gastos, 'monto');
+
+    return cuentas.map((c) => {
+      const ingresos = (mPagos.get(c.id) || 0) + (mDep.get(c.id) || 0);
+      const egresos = (mCompras.get(c.id) || 0) + (mGastos.get(c.id) || 0);
+      return {
+        ...c,
+        ingresos: Number(ingresos.toFixed(2)),
+        egresos: Number(egresos.toFixed(2)),
+        saldo: Number((ingresos - egresos).toFixed(2)),
+      };
+    });
+  }
+
+  /**
+   * Movimientos de una cuenta bancaria (ledger simple), unificando las 4
+   * fuentes en una lista normalizada ordenada por fecha desc.
+   */
+  async movimientosCuentaBancaria(
+    empresaId: number,
+    cuentaId: number,
+    desde?: string,
+    hasta?: string,
+  ) {
+    const cuenta = await this.prisma.cuentaBancaria.findFirst({
+      where: { id: cuentaId, empresaId },
+    });
+    if (!cuenta) throw new NotFoundException('Cuenta bancaria no encontrada');
+
+    const rango =
+      desde || hasta
+        ? {
+            gte: desde ? new Date(`${desde}T00:00:00.000-05:00`) : undefined,
+            lte: hasta ? new Date(`${hasta}T23:59:59.999-05:00`) : undefined,
+          }
+        : undefined;
+
+    const [pagos, depositos, compras, gastos] = await Promise.all([
+      this.prisma.pago.findMany({
+        where: { cuentaBancariaId: cuentaId, ...(rango ? { fecha: rango } : {}) },
+        select: {
+          id: true,
+          fecha: true,
+          monto: true,
+          referencia: true,
+          comprobante: { select: { serie: true, correlativo: true } },
+        },
+      }),
+      this.prisma.movimientoCaja.findMany({
+        where: {
+          cuentaBancariaId: cuentaId,
+          tipoMovimiento: 'CIERRE',
+          depositado: true,
+          ...(rango ? { fechaDeposito: rango } : {}),
+        },
+        select: {
+          id: true,
+          fechaDeposito: true,
+          montoEfectivo: true,
+          numeroOperacionDeposito: true,
+        },
+      }),
+      this.prisma.pagoCompra.findMany({
+        where: { cuentaBancariaId: cuentaId, ...(rango ? { fecha: rango } : {}) },
+        select: { id: true, fecha: true, monto: true, referencia: true },
+      }),
+      this.prisma.gastoOperativo.findMany({
+        where: { cuentaBancariaId: cuentaId, ...(rango ? { fecha: rango } : {}) },
+        select: {
+          id: true,
+          fecha: true,
+          creadoEn: true,
+          monto: true,
+          descripcion: true,
+          numeroOperacion: true,
+        },
+      }),
+    ]);
+
+    const movimientos = [
+      ...pagos.map((p) => ({
+        id: `pago-${p.id}`,
+        fecha: p.fecha,
+        tipo: 'INGRESO' as const,
+        origen: 'COBRO',
+        concepto: p.comprobante
+          ? `Cobro ${p.comprobante.serie}-${p.comprobante.correlativo}`
+          : 'Cobro',
+        referencia: p.referencia || null,
+        monto: Number(p.monto),
+      })),
+      ...depositos.map((d) => ({
+        id: `dep-${d.id}`,
+        fecha: d.fechaDeposito as Date,
+        tipo: 'INGRESO' as const,
+        origen: 'DEPOSITO',
+        concepto: 'Depósito de efectivo (cierre de caja)',
+        referencia: d.numeroOperacionDeposito || null,
+        monto: Number(d.montoEfectivo || 0),
+      })),
+      ...compras.map((c) => ({
+        id: `compra-${c.id}`,
+        fecha: c.fecha,
+        tipo: 'EGRESO' as const,
+        origen: 'COMPRA',
+        concepto: 'Pago a proveedor',
+        referencia: c.referencia || null,
+        monto: Number(c.monto),
+      })),
+      ...gastos.map((g) => ({
+        id: `gasto-${g.id}`,
+        fecha: (g.fecha || g.creadoEn) as Date,
+        tipo: 'EGRESO' as const,
+        origen: 'GASTO',
+        concepto: g.descripcion || 'Gasto operativo',
+        referencia: g.numeroOperacion || null,
+        monto: Number(g.monto),
+      })),
+    ].sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
+
+    const ingresos = movimientos
+      .filter((m) => m.tipo === 'INGRESO')
+      .reduce((s, m) => s + m.monto, 0);
+    const egresos = movimientos
+      .filter((m) => m.tipo === 'EGRESO')
+      .reduce((s, m) => s + m.monto, 0);
+
+    return {
+      cuenta,
+      ingresos: Number(ingresos.toFixed(2)),
+      egresos: Number(egresos.toFixed(2)),
+      saldo: Number((ingresos - egresos).toFixed(2)),
+      movimientos,
+    };
+  }
+
+  /**
    * Máximo una cuenta ACTIVA por medio digital (YAPE/PLIN) por empresa: es la
    * cuenta a la que ese medio abona automáticamente, tener dos sería ambiguo.
    */

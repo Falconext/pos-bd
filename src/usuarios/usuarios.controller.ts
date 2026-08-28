@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Param,
   ParseIntPipe,
@@ -17,6 +18,8 @@ import { UsersService } from './usuarios.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { RequiresPermission } from '../common/decorators/permission.decorator';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ListUsersDto } from './dto/list-users.dto';
@@ -30,22 +33,40 @@ import { User } from '../common/decorators/user.decorator';
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
-  @UseGuards(RolesGuard)
-  @Roles('ADMIN_EMPRESA')
+  /**
+   * Un ADMIN_EMPRESA/ADMIN_SISTEMA puede otorgar cualquier permiso. Un
+   * USUARIO_EMPRESA con permiso 'usuarios' gestiona usuarios, pero NO puede
+   * crear/editar uno con permisos totales ('*') — evita escalada de privilegios.
+   */
+  private bloquearEscaladaPermisos(user: any, permisos?: string[]) {
+    const esAdmin =
+      user?.rol === 'ADMIN_EMPRESA' || user?.rol === 'ADMIN_SISTEMA';
+    if (!esAdmin && Array.isArray(permisos) && permisos.includes('*')) {
+      throw new ForbiddenException(
+        'No puedes asignar permisos totales (*) a un usuario.',
+      );
+    }
+  }
+
+  @UseGuards(PermissionsGuard)
+  @RequiresPermission('usuarios')
   @Post()
   async crear(
     @Body() dto: CreateUserDto,
     @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
+    // Un usuario delegado (con permiso 'usuarios' pero no admin) no puede crear
+    // un usuario con permisos totales ('*'), para evitar escalada de privilegios.
+    this.bloquearEscaladaPermisos(user, dto.permisos);
     const empresaId = user.empresaId;
     const nuevo = await this.usersService.create(dto, empresaId);
     res.locals.message = 'Usuario creado exitosamente';
     return nuevo;
   }
 
-  @UseGuards(RolesGuard)
-  @Roles('ADMIN_EMPRESA')
+  @UseGuards(PermissionsGuard)
+  @RequiresPermission('usuarios')
   @Get()
   async listar(
     @User() user: any,
@@ -65,8 +86,8 @@ export class UsersController {
     return resultado;
   }
 
-  @UseGuards(RolesGuard)
-  @Roles('ADMIN_EMPRESA')
+  @UseGuards(PermissionsGuard)
+  @RequiresPermission('usuarios')
   @Patch(':id/estado')
   async cambiarEstado(
     @Param('id', ParseIntPipe) id: number,
@@ -83,8 +104,8 @@ export class UsersController {
     return result;
   }
 
-  @UseGuards(RolesGuard)
-  @Roles('ADMIN_EMPRESA')
+  @UseGuards(PermissionsGuard)
+  @RequiresPermission('usuarios')
   @Put(':id')
   async editar(
     @Param('id', ParseIntPipe) id: number,
@@ -92,6 +113,7 @@ export class UsersController {
     @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
+    this.bloquearEscaladaPermisos(user, (body as any)?.permisos);
     const empresaId = user.empresaId;
     const dto: UpdateUserDto = { id, ...body } as UpdateUserDto;
     const usuario = await this.usersService.update(dto, empresaId);

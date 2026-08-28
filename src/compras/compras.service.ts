@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { KardexService } from '../kardex/kardex.service';
 import { ProductoLoteService } from '../producto/producto-lote.service';
 import { CajaService } from '../caja/caja.service';
+import { GeminiService } from '../gemini/gemini.service';
 import { CrearCompraDto } from './dto/crear-compra.dto';
 import { Prisma } from '@prisma/client';
 import { XMLParser } from 'fast-xml-parser';
@@ -19,6 +20,7 @@ export class ComprasService {
     private kardexService: KardexService,
     private productoLoteService: ProductoLoteService,
     private cajaService: CajaService,
+    private geminiService: GeminiService,
   ) {}
 
   /**
@@ -1574,6 +1576,168 @@ export class ComprasService {
       subtotal: parseFloat(subtotal.toFixed(2)),
       igv: parseFloat(igv.toFixed(2)),
       total: parseFloat(total.toFixed(2)),
+      items,
+    };
+  }
+
+  /**
+   * Lee una FOTO de factura/boleta de compra con IA (Gemini) y devuelve la
+   * misma estructura que parseXmlSunat, para reutilizar el mismo pre-llenado
+   * del formulario de compra en el frontend. Matchea proveedor por RUC y cada
+   * ítem con el catálogo (por código o por descripción). Lo que no matchea
+   * queda con productoId null (se vincula a mano, igual que el XML).
+   */
+  async parseImagenFactura(
+    empresaId: number,
+    buffer: Buffer,
+    mimeType: string,
+  ) {
+    const base64 = buffer.toString('base64');
+    const data = await this.geminiService.extraerFacturaDesdeImagen(
+      base64,
+      mimeType,
+    );
+
+    // Proveedor: match por RUC contra los clientes tipo proveedor.
+    const proveedorRuc = String(data?.proveedorRuc ?? '').trim();
+    let proveedorId: number | null = null;
+    let proveedorNombre: string = String(data?.proveedorNombre ?? '').trim();
+    let proveedorCreado = false;
+    if (proveedorRuc) {
+      const found = await this.prisma.cliente.findFirst({
+        where: { empresaId, nroDoc: proveedorRuc, estado: 'ACTIVO' },
+        select: { id: true, nombre: true },
+      });
+      if (found) {
+        proveedorId = found.id;
+        proveedorNombre = found.nombre;
+      } else if (/^\d{11}$/.test(proveedorRuc) && proveedorNombre) {
+        // No existe y el RUC es válido (11 dígitos) → crear el proveedor
+        // automáticamente con los datos de la factura y dejarlo seteado.
+        const tipoDocRuc = await this.prisma.tipoDocumento.findFirst({
+          where: { codigo: '6' },
+          select: { id: true },
+        });
+        const nuevo = await this.prisma.cliente.create({
+          data: {
+            empresaId,
+            nombre: proveedorNombre,
+            nroDoc: proveedorRuc,
+            persona: 'PROVEEDOR',
+            estado: 'ACTIVO',
+            tipoDocumentoId: tipoDocRuc?.id ?? null,
+          },
+          select: { id: true, nombre: true },
+        });
+        proveedorId = nuevo.id;
+        proveedorNombre = nuevo.nombre;
+        proveedorCreado = true;
+      }
+    }
+
+    const itemsRaw: any[] = Array.isArray(data?.items) ? data.items : [];
+    const items = await Promise.all(
+      itemsRaw.map(async (it) => {
+        const descripcion = String(it?.descripcion ?? '').trim();
+        const codigo = String(it?.codigo ?? '').trim();
+        const cantidad = Number(it?.cantidad) || 0;
+        // El TOTAL de línea impreso es la fuente de verdad (la boleta lo calcula
+        // con el precio de más decimales y lo redondea). Si viene, el precio
+        // unitario se deriva de él (total/cantidad) para que precio×cantidad
+        // cuadre exacto con la boleta. Si no viene, se usa el precio impreso.
+        const totalLinea = Number(it?.totalLinea) || 0;
+        const precioImpreso = Number(it?.precioUnitario) || 0;
+        const precioUnitario =
+          totalLinea > 0 && cantidad > 0
+            ? parseFloat((totalLinea / cantidad).toFixed(4))
+            : parseFloat(precioImpreso.toFixed(4));
+        const subtotalLinea =
+          totalLinea > 0
+            ? parseFloat(totalLinea.toFixed(2))
+            : parseFloat((precioUnitario * cantidad).toFixed(2));
+
+        // Matcheo del producto: 1) por código exacto, 2) por descripción
+        // exacta (case-insensitive), 3) por descripción que contiene.
+        let productoId: number | null = null;
+        let productoDescripcion: string | null = null;
+        if (codigo && empresaId) {
+          const p = await this.prisma.producto.findFirst({
+            where: { empresaId, codigo, estado: 'ACTIVO' },
+            select: { id: true, descripcion: true },
+          });
+          if (p) {
+            productoId = p.id;
+            productoDescripcion = p.descripcion;
+          }
+        }
+        if (!productoId && descripcion && empresaId) {
+          const exacto = await this.prisma.producto.findFirst({
+            where: {
+              empresaId,
+              estado: 'ACTIVO',
+              descripcion: { equals: descripcion, mode: 'insensitive' },
+            },
+            select: { id: true, descripcion: true },
+          });
+          const aprox =
+            exacto ??
+            (await this.prisma.producto.findFirst({
+              where: {
+                empresaId,
+                estado: 'ACTIVO',
+                descripcion: { contains: descripcion, mode: 'insensitive' },
+              },
+              select: { id: true, descripcion: true },
+            }));
+          if (aprox) {
+            productoId = aprox.id;
+            productoDescripcion = aprox.descripcion;
+          }
+        }
+
+        return {
+          descripcion,
+          codigo,
+          cantidad,
+          unidad: '',
+          precioUnitario,
+          subtotal: subtotalLinea,
+          igv: 0,
+          esBonificacion: false,
+          freeOfCharge: false,
+          productoId,
+          productoDescripcion,
+        };
+      }),
+    );
+
+    // ¿Los precios ya incluyen IGV? Se detecta comparando el TOTAL de la boleta
+    // con la suma de las líneas: si el total ≈ suma de líneas, el precio mostrado
+    // ya es el final (boleta/nota de venta); si el total ≈ suma + 18%, son netos
+    // (factura con IGV desglosado). Sin total confiable, se asume precio final
+    // (el caso más común al fotografiar una boleta).
+    const sumLineas = items.reduce((s, it) => s + it.subtotal, 0);
+    const totalExtraido = Number(data?.total) || 0;
+    const incluyeIgv =
+      totalExtraido > 0 && sumLineas > 0
+        ? Math.abs(totalExtraido - sumLineas) <=
+          Math.abs(totalExtraido - sumLineas * 1.18)
+        : true;
+
+    return {
+      tipoDoc: String(data?.tipoDoc ?? '') || 'FACTURA',
+      serie: String(data?.serie ?? ''),
+      numero: String(data?.numero ?? ''),
+      fechaEmision: String(data?.fechaEmision ?? ''),
+      moneda: String(data?.moneda ?? 'PEN') === 'USD' ? 'USD' : 'PEN',
+      proveedorRuc,
+      proveedorNombre,
+      proveedorId,
+      proveedorCreado,
+      subtotal: parseFloat((Number(data?.subtotal) || 0).toFixed(2)),
+      igv: parseFloat((Number(data?.igv) || 0).toFixed(2)),
+      total: parseFloat((Number(data?.total) || 0).toFixed(2)),
+      incluyeIgv,
       items,
     };
   }

@@ -897,6 +897,7 @@ export class ProductoController {
       limit: limit ? Number(limit) : 20,
       search,
       categoriaId: categoriaId ? Number(categoriaId) : undefined,
+      usuarioId: user.id,
     });
   }
 
@@ -967,6 +968,7 @@ export class ProductoController {
       categoriaId: query.categoriaId,
       soloVendibles: query.soloVendibles,
       usarPrecioSede: query.usarPrecioSede,
+      usuarioId: user.id,
       soloStockBajo: query.soloStockBajo,
     });
     res.locals.message = 'Productos listados correctamente';

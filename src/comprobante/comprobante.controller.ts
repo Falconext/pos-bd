@@ -133,6 +133,7 @@ export class ComprobanteController {
       estado: query.estado as any,
       tipoDoc: query.tipoDoc,
       estadoPago: query.estadoPago,
+      soloPendientesSunat: query.soloPendientesSunat,
     });
     res.locals.message = 'Comprobantes listados correctamente';
     return resultado;
@@ -1022,11 +1023,19 @@ export class ComprobanteController {
 
   @Post(':id/generar-pdf')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
-  async generarPdf(@Param('id', ParseIntPipe) id: number, @User() user: any) {
-    const pdfUrl = await this.service.generarYSubirPdf(id, {
-      empresaId: user.empresaId,
-      rol: user.rol,
-    });
+  async generarPdf(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+    @Query('force') force?: string,
+  ) {
+    const pdfUrl = await this.service.generarYSubirPdf(
+      id,
+      {
+        empresaId: user.empresaId,
+        rol: user.rol,
+      },
+      force === 'true' || force === '1',
+    );
     return { pdfUrl };
   }
 
