@@ -177,6 +177,53 @@ export class FinanzasService {
       mapDatos.set(fecha, actual);
     });
 
+    // GASTOS OPERATIVOS (Egreso real) — antes NO se incluían en el flujo de caja,
+    // por eso los gastos no aparecían en Egresos. Son a nivel empresa (sin sede).
+    const gastosOperativos = await this.prisma.gastoOperativo.findMany({
+      where: {
+        empresaId,
+        OR: [
+          { fecha: rangoFecha },
+          {
+            recurrenteDiario: true,
+            fechaInicio: { lte: rangoFecha.lte },
+            OR: [{ fechaFin: null }, { fechaFin: { gte: rangoFecha.gte } }],
+          },
+        ],
+      },
+    });
+    const hoyGasto = new Date();
+    gastosOperativos.forEach((g) => {
+      const monto = Number(g.monto || 0);
+      const sumar = (fecha: string) => {
+        const actual = mapDatos.get(fecha) || { fecha, ingresos: 0, egresos: 0 };
+        actual.egresos += monto;
+        mapDatos.set(fecha, actual);
+      };
+      if (g.recurrenteDiario) {
+        // Recurrente diario: suma su monto por cada día ACTIVO del rango
+        // (igual que listarEgresos), acotado hasta hoy.
+        const inicio =
+          g.fechaInicio && g.fechaInicio > rangoFecha.gte
+            ? g.fechaInicio
+            : rangoFecha.gte;
+        const finClamp =
+          g.fechaFin && g.fechaFin < rangoFecha.lte
+            ? g.fechaFin
+            : rangoFecha.lte;
+        const fin = hoyGasto < finClamp ? hoyGasto : finClamp;
+        for (
+          const d = new Date(inicio);
+          d <= fin;
+          d.setDate(d.getDate() + 1)
+        ) {
+          sumar(d.toISOString().split('T')[0]);
+        }
+      } else if (g.fecha) {
+        sumar(g.fecha.toISOString().split('T')[0]);
+      }
+    });
+
     const chartData = Array.from(mapDatos.values()).sort((a, b) =>
       a.fecha.localeCompare(b.fecha),
     );
