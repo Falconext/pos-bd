@@ -2124,6 +2124,12 @@ model EnvioDespacho {
   claveEnvio             String?
   nroOrden               String?
   claveOrden             String?
+  // Estado de rastreo Shalom (persistido: read-through cache + scheduler)
+  shalomEstado           String? // etapa actual: registrado|origen|transito|destino|entregado
+  shalomEntregado        Boolean        @default(false)
+  shalomTrackingJson     Json? // último snapshot normalizado { search, statuses, ose_id }
+  shalomOseId            String? // ose_id resuelto (para descargar comprobante/etiqueta)
+  shalomSyncAt           DateTime? // última sincronización con Shalom
   establecimiento        String? // Local/sucursal desde donde despacha
   repartidorId           Int?
   repartidor             Repartidor?    @relation(fields: [repartidorId], references: [id], onDelete: SetNull)

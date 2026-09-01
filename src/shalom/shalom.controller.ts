@@ -27,10 +27,19 @@ export class ShalomController {
   @Post('track')
   @HttpCode(200)
   track(
-    @Body() body: { orderNumber: string; orderCode: string },
+    @Body() body: { orderNumber: string; orderCode: string; refresh?: boolean },
+    @Query('refresh') refreshQuery: string | undefined,
     @User() user: any,
   ) {
-    return this.service.track(body.orderNumber, body.orderCode, user?.empresaId);
+    // Read-through cache: responde al instante desde el snapshot persistido y
+    // solo golpea a Shalom si está viejo (>10 min) o se pide `refresh`.
+    const refresh = body?.refresh === true || refreshQuery === '1';
+    return this.service.trackConCache(
+      body.orderNumber,
+      body.orderCode,
+      user?.empresaId,
+      refresh,
+    );
   }
 
   @Post('quote')
