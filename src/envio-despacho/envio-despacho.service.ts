@@ -486,7 +486,7 @@ export class EnvioDespachoService {
     estado: EstadoDespacho,
     repartidorNombre: string | null,
   ): Promise<void> {
-    const [comprobante, empresa, config] = await Promise.all([
+    const [comprobante, config] = await Promise.all([
       this.prisma.comprobante.findFirst({
         where: { id: comprobanteId },
         select: {
@@ -494,10 +494,6 @@ export class EnvioDespachoService {
           correlativo: true,
           cliente: { select: { nombre: true, telefono: true } },
         },
-      }),
-      this.prisma.empresa.findUnique({
-        where: { id: empresaId },
-        select: { razonSocial: true },
       }),
       this.prisma.despachoMensajeTemplate.findUnique({ where: { empresaId } }),
     ]);
@@ -509,6 +505,8 @@ export class EnvioDespachoService {
     const esEnAgencia = estado === EstadoDespacho.EN_AGENCIA;
     const pedidoRef = `${comprobante.serie}-${String(comprobante.correlativo).padStart(8, '0')}`;
 
+    const nombre = comprobante?.cliente?.nombre ?? 'Cliente';
+
     if (esEnAgencia) {
       const saldo = Number((comprobante as any)?.saldo ?? 0);
       const agencia =
@@ -518,8 +516,26 @@ export class EnvioDespachoService {
             select: { agenciaDestino: true },
           })
         )?.agenciaDestino ?? 'la agencia';
-      const msg = `Hola ${comprobante?.cliente?.nombre ?? 'Cliente'}! 📦 Tu pedido ${pedidoRef} llegó a ${agencia}. Para retirarlo confirma el pago restante de S/ ${saldo.toFixed(2)}. Te avisamos cuando esté listo. — ${empresa?.razonSocial ?? ''}`;
-      await this.whatsapp.enviarTexto(telefono, msg);
+      // Plantilla aprobada por Meta: se entrega fuera de la ventana de 24h, sin bloqueo.
+      if (saldo > 0) {
+        // pedido_en_destino_cobro → {{1}} nombre, {{2}} pedido, {{3}} agencia, {{4}} saldo
+        await this.whatsapp.enviarPlantilla(
+          telefono,
+          'pedido_en_destino_cobro',
+          'es',
+          [nombre, pedidoRef, agencia, saldo.toFixed(2)],
+          empresaId,
+        );
+      } else {
+        // pedido_en_destino → {{1}} nombre, {{2}} pedido, {{3}} agencia
+        await this.whatsapp.enviarPlantilla(
+          telefono,
+          'pedido_en_destino',
+          'es',
+          [nombre, pedidoRef, agencia],
+          empresaId,
+        );
+      }
       return;
     }
 
@@ -528,17 +544,28 @@ export class EnvioDespachoService {
       : (config?.notificarEntregado ?? true);
     if (!habilitado) return;
 
-    const plantilla = esEnCamino
-      ? (config?.mensajeEnCamino ?? MENSAJES_DEFAULT.EN_CAMINO)
-      : (config?.mensajeEntregado ?? MENSAJES_DEFAULT.ENTREGADO);
-
-    const mensaje = plantilla
-      .replace(/\{\{nombre\}\}/g, comprobante.cliente?.nombre ?? 'Cliente')
-      .replace(/\{\{pedido\}\}/g, pedidoRef)
-      .replace(/\{\{repartidor\}\}/g, repartidorNombre ?? 'Sin asignar')
-      .replace(/\{\{empresa\}\}/g, empresa?.razonSocial ?? '');
-
-    await this.whatsapp.enviarTexto(telefono, mensaje);
+    // Plantilla aprobada por Meta (entrega garantizada fuera de 24h, sin bloqueo).
+    // El texto libre personalizable por empresa (config.mensaje*) ya no aplica aquí:
+    // Meta exige plantillas de contenido fijo aprobado.
+    if (esEnCamino) {
+      // pedido_en_camino → {{1}} nombre, {{2}} pedido, {{3}} repartidor
+      await this.whatsapp.enviarPlantilla(
+        telefono,
+        'pedido_en_camino',
+        'es',
+        [nombre, pedidoRef, repartidorNombre ?? 'Sin asignar'],
+        empresaId,
+      );
+    } else {
+      // pedido_entregado → {{1}} nombre, {{2}} pedido
+      await this.whatsapp.enviarPlantilla(
+        telefono,
+        'pedido_entregado',
+        'es',
+        [nombre, pedidoRef],
+        empresaId,
+      );
+    }
   }
 
   async actualizarSaldo(
@@ -582,14 +609,11 @@ export class EnvioDespachoService {
 
     const telefono = comprobante.cliente?.telefono;
     if (telefono) {
-      const empresa = await this.prisma.empresa.findUnique({
-        where: { id: empresaId },
-        select: { razonSocial: true },
-      });
       const pedidoRef = `${comprobante.serie}-${String(comprobante.correlativo).padStart(8, '0')}`;
-      const msg = `Hola ${comprobante.cliente?.nombre ?? 'Cliente'}! ✅ Tu pago fue confirmado. Ya puedes retirar tu pedido ${pedidoRef} de la agencia. ¡Gracias por tu compra! — ${empresa?.razonSocial ?? ''}`;
+      const nombre = comprobante.cliente?.nombre ?? 'Cliente';
+      // pago_confirmado → {{1}} nombre, {{2}} pedido
       this.whatsapp
-        .enviarTexto(telefono, msg)
+        .enviarPlantilla(telefono, 'pago_confirmado', 'es', [nombre, pedidoRef], empresaId)
         .catch((e) =>
           this.logger.warn(`WA pago completo fallido: ${e.message}`),
         );

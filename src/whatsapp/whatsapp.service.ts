@@ -172,6 +172,65 @@ export class WhatsAppService {
     }
   }
 
+  /**
+   * Envía una PLANTILLA aprobada por Meta. A diferencia de `enviarTexto`, funciona
+   * para mensajes que inicia el negocio FUERA de la ventana de 24h (postventa) sin
+   * riesgo de bloqueo. La plantilla debe estar creada y aprobada en WhatsApp Manager,
+   * con el mismo nombre, idioma y orden de variables ({{1}}, {{2}}, …).
+   */
+  async enviarPlantilla(
+    numero: string,
+    plantilla: string,
+    idioma: string,
+    parametros: string[],
+    empresaId?: number,
+  ): Promise<{ success: boolean; mensajeId?: string; error?: string }> {
+    const { token, phoneId } = empresaId
+      ? await this.getCredentialsForEmpresa(empresaId)
+      : this.getCredentials();
+    if (!token || !phoneId)
+      return { success: false, error: 'WhatsApp no configurado' };
+
+    const to = this.formatearNumero(numero);
+    const components = parametros.length
+      ? [
+          {
+            type: 'body',
+            parameters: parametros.map((texto) => ({ type: 'text', text: texto })),
+          },
+        ]
+      : undefined;
+
+    try {
+      const res = await axios.post(
+        `${this.apiUrl}/${phoneId}/messages`,
+        {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to,
+          type: 'template',
+          template: {
+            name: plantilla,
+            language: { code: idioma },
+            ...(components ? { components } : {}),
+          },
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+      const mensajeId = res.data?.messages?.[0]?.id;
+      return { success: true, mensajeId };
+    } catch (error) {
+      const msg = error.response?.data?.error?.message || error.message;
+      this.logger.warn(`WhatsApp plantilla ${plantilla} fallida a ${to}: ${msg}`);
+      return { success: false, error: msg };
+    }
+  }
+
   /** Envía un documento (PDF por URL) por WhatsApp usando las credenciales de plataforma. */
   async enviarDocumentoUrl(
     numero: string,
