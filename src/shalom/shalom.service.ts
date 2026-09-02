@@ -1,118 +1,67 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { ShalomLegacyService } from './shalom-legacy.service';
 import { ShalomLatService } from './shalom-lat.service';
 import { derivarEstadoShalom, ShalomDerivado } from './shalom.util';
 
 export type { ShalomAgencia, ShalomOrderInput } from './shalom-lat.service';
 
 /**
- * Dispatcher de proveedores Shalom. Selecciona el cliente según la empresa:
+ * Servicio Shalom de falconext-mype. Todas las empresas usan el proveedor
+ * api.shalom-api.lat (`ShalomLatService`), autenticado con una API key global:
+ * tracking, agencias, comprobante, etiqueta y cotización NO requieren cuenta
+ * Shalom Pro. El proveedor legacy (api.shalom-api-peru.com) quedó retirado.
  *
- *  - Empresas de un reseller (`empresa.resellerId != null`) → proveedor NUEVO
- *    (shalom-api.lat, `ShalomLatService`, auth por API key global).
- *  - Empresas directas de falconext-mype (`resellerId == null`) o sin empresa →
- *    proveedor ANTIGUO (api.shalom-api-peru.com, `ShalomLegacyService`, con
- *    credenciales Shalom Pro).
- *
- * Los documentos (comprobante/etiqueta) se normalizan a `{ buffer, contentType }`
- * (el legacy devuelve siempre PDF; el nuevo puede devolver PNG o PDF).
+ * Los documentos (comprobante/etiqueta) se devuelven como `{ buffer, contentType }`
+ * (la API nueva puede devolver PNG o PDF).
  */
 @Injectable()
 export class ShalomService {
   private readonly logger = new Logger(ShalomService.name);
-  // Caché de la relación empresa→reseller (rara vez cambia en runtime).
-  private esResellerCache = new Map<number, boolean>();
   // El snapshot de tracking persistido se considera fresco durante 10 min: en
   // ese lapso el modal responde al instante sin volver a golpear a Shalom.
   private readonly TRACK_CACHE_TTL_MS = 10 * 60 * 1000;
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly legacy: ShalomLegacyService,
     private readonly lat: ShalomLatService,
   ) {}
 
-  /** Invalida la caché empresa→reseller (llamar al cambiar el reseller de una empresa). */
-  invalidarResellerCache(empresaId?: number): void {
-    if (empresaId) this.esResellerCache.delete(empresaId);
-    else this.esResellerCache.clear();
-  }
-
-  /** True si la empresa pertenece a un reseller (usa el proveedor nuevo). */
-  private async esReseller(empresaId?: number): Promise<boolean> {
-    if (!empresaId) return false;
-    const cached = this.esResellerCache.get(empresaId);
-    if (cached !== undefined) return cached;
-    const emp = await this.prisma.empresa
-      .findUnique({ where: { id: empresaId }, select: { resellerId: true } })
-      .catch(() => null);
-    const esReseller = Boolean(emp?.resellerId);
-    this.esResellerCache.set(empresaId, esReseller);
-    this.logger.log(
-      `Empresa ${empresaId} → proveedor Shalom ${esReseller ? 'NUEVO (shalom-api.lat)' : 'ANTIGUO (shalom-api-peru)'}`,
-    );
-    return esReseller;
-  }
-
-  async getAgencias(empresaId?: number) {
-    return (await this.esReseller(empresaId))
-      ? this.lat.getAgencias()
-      : this.legacy.getAgencias();
+  // Toda falconext-mype usa el proveedor NUEVO (api.shalom-api.lat): tracking,
+  // agencias, comprobante, etiqueta y cotización solo requieren la API key global
+  // (sin cuenta Shalom Pro). El proveedor legacy (api.shalom-api-peru.com) quedó
+  // retirado; `oseId` ya no se usa (la nueva API indexa por orderNumber+orderCode).
+  async getAgencias(_empresaId?: number) {
+    return this.lat.getAgencias();
   }
 
   async track(orderNumber: string, orderCode: string, empresaId?: number) {
-    return (await this.esReseller(empresaId))
-      ? this.lat.track(orderNumber, orderCode, empresaId)
-      : this.legacy.track(orderNumber, orderCode, empresaId);
+    return this.lat.track(orderNumber, orderCode, empresaId);
   }
 
-  async quote(origin: number, destination: number, empresaId?: number) {
-    return (await this.esReseller(empresaId))
-      ? this.lat.quote(origin, destination)
-      : this.legacy.quote(origin, destination);
+  async quote(origin: number, destination: number, _empresaId?: number) {
+    return this.lat.quote(origin, destination);
   }
 
-  async createOrder(body: any, empresaId?: number) {
-    return (await this.esReseller(empresaId))
-      ? this.lat.createOrder(body)
-      : this.legacy.createOrder(body, empresaId);
+  async createOrder(body: any, _empresaId?: number) {
+    return this.lat.createOrder(body);
   }
 
   async ticketImage(
     orderNumber: string,
     orderCode: string,
-    empresaId?: number,
-    oseId?: number | string,
+    _empresaId?: number,
+    _oseId?: number | string,
   ): Promise<{ buffer: Buffer; contentType: string }> {
-    if (await this.esReseller(empresaId)) {
-      return this.lat.ticketImage(orderNumber, orderCode);
-    }
-    const buffer = await this.legacy.ticketImage(
-      orderNumber,
-      orderCode,
-      empresaId,
-      oseId,
-    );
-    return { buffer, contentType: 'application/pdf' };
+    return this.lat.ticketImage(orderNumber, orderCode);
   }
 
   async label(
     orderNumber: string,
     orderCode: string,
-    empresaId?: number,
-    oseId?: number | string,
+    _empresaId?: number,
+    _oseId?: number | string,
   ): Promise<{ buffer: Buffer; contentType: string }> {
-    if (await this.esReseller(empresaId)) {
-      return this.lat.label(orderNumber, orderCode);
-    }
-    const buffer = await this.legacy.label(
-      orderNumber,
-      orderCode,
-      empresaId,
-      oseId,
-    );
-    return { buffer, contentType: 'application/pdf' };
+    return this.lat.label(orderNumber, orderCode);
   }
 
   // ─── Persistencia / caché de tracking ────────────────────────────────────

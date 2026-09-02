@@ -1,11 +1,10 @@
 import { ShalomService } from './shalom.service';
 
 /**
- * QA del dispatcher: enruta por empresa.resellerId.
- *  - resellerId != null → proveedor NUEVO (shalom-api.lat)
- *  - resellerId == null / sin empresa → proveedor ANTIGUO (shalom-api-peru)
+ * QA del servicio Shalom: toda falconext-mype usa el proveedor api.shalom-api.lat
+ * (`ShalomLatService`). El proveedor legacy quedó retirado.
  */
-describe('ShalomService (dispatcher por reseller)', () => {
+describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
   const makeLat = () => ({
     getAgencias: jest.fn().mockResolvedValue({ success: true, data: [], total: 0 }),
     track: jest.fn().mockResolvedValue({ success: true, search: {}, statuses: {} }),
@@ -18,71 +17,42 @@ describe('ShalomService (dispatcher por reseller)', () => {
       .fn()
       .mockResolvedValue({ buffer: Buffer.from('pdf'), contentType: 'application/pdf' }),
   });
-  const makeLegacy = () => ({
-    getAgencias: jest.fn().mockResolvedValue({ success: true, data: [], total: 0 }),
-    track: jest.fn().mockResolvedValue({ success: true, search: {}, statuses: {} }),
-    quote: jest.fn().mockResolvedValue({ ok: true }),
-    createOrder: jest.fn().mockResolvedValue({ ok: true }),
-    ticketImage: jest.fn().mockResolvedValue(Buffer.from('legacy-pdf')),
-    label: jest.fn().mockResolvedValue(Buffer.from('legacy-pdf')),
-  });
-  const makePrisma = (resellerId: number | null) => ({
-    empresa: { findUnique: jest.fn().mockResolvedValue({ resellerId }) },
+  const makePrisma = () => ({
+    empresa: { findUnique: jest.fn() },
+    envioDespacho: { findFirst: jest.fn(), update: jest.fn(), findUnique: jest.fn() },
   });
 
-  const build = (resellerId: number | null) => {
+  const build = () => {
     const lat = makeLat();
-    const legacy = makeLegacy();
-    const prisma = makePrisma(resellerId);
-    const svc = new ShalomService(prisma as any, legacy as any, lat as any);
-    return { svc, lat, legacy, prisma };
+    const prisma = makePrisma();
+    const svc = new ShalomService(prisma as any, lat as any);
+    return { svc, lat, prisma };
   };
 
-  it('empresa de reseller → usa proveedor NUEVO (lat)', async () => {
-    const { svc, lat, legacy } = build(7);
+  it('getAgencias/track delegan en el proveedor lat', async () => {
+    const { svc, lat } = build();
     await svc.getAgencias(100);
     await svc.track('66479331', '3KTH', 100);
     expect(lat.getAgencias).toHaveBeenCalledTimes(1);
     expect(lat.track).toHaveBeenCalledWith('66479331', '3KTH', 100);
-    expect(legacy.getAgencias).not.toHaveBeenCalled();
-    expect(legacy.track).not.toHaveBeenCalled();
   });
 
-  it('empresa directa (resellerId null) → usa proveedor ANTIGUO (legacy)', async () => {
-    const { svc, lat, legacy } = build(null);
-    await svc.getAgencias(200);
-    await svc.track('66479331', '3KTH', 200);
-    expect(legacy.getAgencias).toHaveBeenCalledTimes(1);
-    expect(legacy.track).toHaveBeenCalledWith('66479331', '3KTH', 200);
-    expect(lat.getAgencias).not.toHaveBeenCalled();
-    expect(lat.track).not.toHaveBeenCalled();
-  });
-
-  it('sin empresaId → usa proveedor ANTIGUO (default falconext-mype)', async () => {
-    const { svc, lat, legacy } = build(null);
+  it('funciona sin empresaId', async () => {
+    const { svc, lat } = build();
     await svc.getAgencias(undefined);
-    expect(legacy.getAgencias).toHaveBeenCalledTimes(1);
-    expect(lat.getAgencias).not.toHaveBeenCalled();
+    expect(lat.getAgencias).toHaveBeenCalledTimes(1);
   });
 
-  it('comprobante: legacy devuelve Buffer → se normaliza a PDF', async () => {
-    const { svc } = build(null);
-    const r = await svc.ticketImage('66479331', '3KTH', 300, 999);
-    expect(Buffer.isBuffer(r.buffer)).toBe(true);
-    expect(r.contentType).toBe('application/pdf');
-  });
-
-  it('comprobante: nuevo (reseller) devuelve PNG passthrough', async () => {
-    const { svc } = build(7);
+  it('comprobante: passthrough de { buffer, contentType } del proveedor', async () => {
+    const { svc } = build();
     const r = await svc.ticketImage('66479331', '3KTH', 400);
+    expect(Buffer.isBuffer(r.buffer)).toBe(true);
     expect(r.contentType).toBe('image/png');
   });
 
-  it('cachea la relación empresa→reseller (una sola consulta por empresa)', async () => {
-    const { svc, prisma } = build(7);
-    await svc.getAgencias(500);
-    await svc.track('1', '2', 500);
-    await svc.getAgencias(500);
-    expect(prisma.empresa.findUnique).toHaveBeenCalledTimes(1);
+  it('etiqueta: passthrough de { buffer, contentType }', async () => {
+    const { svc } = build();
+    const r = await svc.label('66479331', '3KTH', 400);
+    expect(r.contentType).toBe('application/pdf');
   });
 });

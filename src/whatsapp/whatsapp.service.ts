@@ -114,6 +114,319 @@ export class WhatsAppService {
   }
 
   /**
+   * Descarga un archivo (media) de WhatsApp Cloud API por su `mediaId`, usando
+   * el token de la empresa. Flujo Meta: GET /{mediaId} → { url, mime_type };
+   * luego GET esa url (autenticada) → binario.
+   */
+  async descargarMedia(
+    mediaId: string,
+    empresaId: number,
+  ): Promise<{ buffer: Buffer; mimeType: string }> {
+    const { token } = await this.getCredentialsForEmpresa(empresaId);
+    const meta = await axios.get(`${this.apiUrl}/${mediaId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const url: string | undefined = meta.data?.url;
+    const mimeType: string = meta.data?.mime_type ?? 'audio/ogg';
+    if (!url) {
+      throw new Error(`No se pudo resolver la URL del media ${mediaId}`);
+    }
+    const bin = await axios.get(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      responseType: 'arraybuffer',
+    });
+    return { buffer: Buffer.from(bin.data), mimeType };
+  }
+
+  // ─── Embedded Signup (conectar el WhatsApp propio del empresario) ──────────
+  // Reutiliza la Meta App de la plataforma (FB_APP_ID / META_APP_SECRET). El
+  // empresario conecta su propio número/WABA en clics; guardamos su token en
+  // Empresa (provider=EMPRESA) y auto-creamos las plantillas de despacho.
+
+  private get fbAppId(): string {
+    return this.configService.get<string>('FB_APP_ID') || '';
+  }
+  private get metaAppSecret(): string {
+    return this.configService.get<string>('META_APP_SECRET') || '';
+  }
+
+  /** Intercambia el `code` del Embedded Signup por un token de larga duración. */
+  private async exchangeCode(code: string): Promise<string> {
+    const res = await axios.get(`${this.apiUrl}/oauth/access_token`, {
+      params: {
+        client_id: this.fbAppId,
+        client_secret: this.metaAppSecret,
+        code,
+      },
+    });
+    const token = res.data?.access_token;
+    if (!token) throw new Error('Meta no devolvió un access_token.');
+    return token;
+  }
+
+  /** Descubre wabaId + phoneNumberId a partir del token (cuando no llegan del signup). */
+  private async discoverPhoneFromToken(
+    token: string,
+  ): Promise<{ wabaId?: string; phoneNumberId?: string; displayNumber?: string }> {
+    const debug = await axios.get(`${this.apiUrl}/debug_token`, {
+      params: { input_token: token, access_token: `${this.fbAppId}|${this.metaAppSecret}` },
+    });
+    const scopes: any[] = debug.data?.data?.granular_scopes || [];
+    const waScope = scopes.find(
+      (s) => s?.scope === 'whatsapp_business_management',
+    );
+    const wabaIds: string[] = waScope?.target_ids || [];
+    for (const wabaId of wabaIds) {
+      try {
+        const phones = await axios.get(`${this.apiUrl}/${wabaId}/phone_numbers`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const first = phones.data?.data?.[0];
+        if (first?.id) {
+          return {
+            wabaId,
+            phoneNumberId: first.id,
+            displayNumber: first.display_phone_number,
+          };
+        }
+      } catch {
+        /* seguir con el siguiente wabaId */
+      }
+    }
+    return {};
+  }
+
+  /** Suscribe la Meta App al webhook de la WABA (no fatal si falla). */
+  private async subscribeApp(wabaId: string, token: string): Promise<void> {
+    try {
+      await axios.post(
+        `${this.apiUrl}/${wabaId}/subscribed_apps`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+    } catch (e: any) {
+      this.logger.warn(
+        `subscribed_apps falló para WABA ${wabaId}: ${e.response?.data?.error?.message || e.message}`,
+      );
+    }
+  }
+
+  private async fetchDisplayNumber(
+    phoneNumberId: string,
+    token: string,
+  ): Promise<string | undefined> {
+    try {
+      const res = await axios.get(`${this.apiUrl}/${phoneNumberId}`, {
+        params: { fields: 'display_phone_number' },
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return res.data?.display_phone_number;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Conecta el WhatsApp propio de una empresa vía Embedded Signup.
+   * Guarda token+phoneNumberId+wabaId en Empresa (provider=EMPRESA) y crea las
+   * plantillas de despacho en su WABA.
+   */
+  async conectarEmbeddedSignup(
+    empresaId: number,
+    input: { code?: string; accessToken?: string; phoneNumberId?: string; wabaId?: string },
+  ): Promise<{ phoneNumberId: string; wabaId: string; numeroVisible?: string; plantillas: any }> {
+    if (!this.fbAppId || !this.metaAppSecret) {
+      throw new BadRequestException(
+        'La Meta App no está configurada en el servidor (FB_APP_ID / META_APP_SECRET).',
+      );
+    }
+    // 1) Token de larga duración.
+    const token = input.code
+      ? await this.exchangeCode(input.code)
+      : input.accessToken;
+    if (!token)
+      throw new BadRequestException('Falta el code o accessToken de Meta.');
+
+    // 2) Resolver wabaId + phoneNumberId (del signup o descubriéndolos).
+    let { phoneNumberId, wabaId } = input;
+    let numeroVisible: string | undefined;
+    if (!phoneNumberId || !wabaId) {
+      const disc = await this.discoverPhoneFromToken(token);
+      phoneNumberId = phoneNumberId || disc.phoneNumberId;
+      wabaId = wabaId || disc.wabaId;
+      numeroVisible = disc.displayNumber;
+    }
+    if (!phoneNumberId || !wabaId) {
+      throw new BadRequestException(
+        'No se pudo resolver el número de WhatsApp. Reintenta la conexión.',
+      );
+    }
+
+    // 3) Anti cross-tenant: el número no puede pertenecer a otra empresa.
+    const enUso = await this.prisma.empresa.findFirst({
+      where: { whatsappPhoneNumberId: phoneNumberId, id: { not: empresaId } },
+      select: { id: true },
+    });
+    if (enUso)
+      throw new BadRequestException(
+        'Ese número de WhatsApp ya está conectado a otra cuenta.',
+      );
+
+    // 4) Suscribir la app al webhook de la WABA.
+    await this.subscribeApp(wabaId, token);
+    if (!numeroVisible)
+      numeroVisible = await this.fetchDisplayNumber(phoneNumberId, token);
+
+    // 5) Persistir en Empresa (provider=EMPRESA).
+    await this.prisma.empresa.update({
+      where: { id: empresaId },
+      data: {
+        whatsappProvider: 'EMPRESA' as any,
+        whatsappApiToken: token,
+        whatsappPhoneNumberId: phoneNumberId,
+        whatsappBusinessId: wabaId,
+        whatsappActivo: true,
+      },
+    });
+
+    // 6) Auto-crear plantillas de despacho en la WABA del empresario.
+    const plantillas = await this.crearPlantillasDespacho(wabaId, token);
+
+    this.logger.log(
+      `Empresa ${empresaId} conectó WhatsApp propio (${numeroVisible ?? phoneNumberId}).`,
+    );
+    return { phoneNumberId, wabaId, numeroVisible, plantillas };
+  }
+
+  /**
+   * Conexión MANUAL del WhatsApp propio (fallback mientras Meta aprueba el
+   * Embedded Signup). El empresario pega su Phone Number ID + WABA ID + token
+   * permanente. Validamos el token, guardamos y creamos las plantillas.
+   */
+  async conectarManual(
+    empresaId: number,
+    input: { phoneNumberId: string; wabaId: string; accessToken: string },
+  ): Promise<{ numeroVisible?: string; plantillas: any }> {
+    const { phoneNumberId, wabaId, accessToken } = input;
+    if (!phoneNumberId || !wabaId || !accessToken) {
+      throw new BadRequestException(
+        'Faltan datos: Phone Number ID, WABA ID y token son obligatorios.',
+      );
+    }
+    // Validar que el token + phoneNumberId funcionan (y de paso el número visible).
+    const numeroVisible = await this.fetchDisplayNumber(phoneNumberId, accessToken);
+    if (!numeroVisible) {
+      throw new BadRequestException(
+        'El token o el Phone Number ID no son válidos (Meta no reconoció el número).',
+      );
+    }
+    // Anti cross-tenant.
+    const enUso = await this.prisma.empresa.findFirst({
+      where: { whatsappPhoneNumberId: phoneNumberId, id: { not: empresaId } },
+      select: { id: true },
+    });
+    if (enUso)
+      throw new BadRequestException(
+        'Ese número de WhatsApp ya está conectado a otra cuenta.',
+      );
+
+    await this.prisma.empresa.update({
+      where: { id: empresaId },
+      data: {
+        whatsappProvider: 'EMPRESA' as any,
+        whatsappApiToken: accessToken,
+        whatsappPhoneNumberId: phoneNumberId,
+        whatsappBusinessId: wabaId,
+        whatsappActivo: true,
+      },
+    });
+    const plantillas = await this.crearPlantillasDespacho(wabaId, accessToken);
+    this.logger.log(`Empresa ${empresaId} conectó WhatsApp manual (${numeroVisible}).`);
+    return { numeroVisible, plantillas };
+  }
+
+  // Plantillas de despacho a crear en cada WABA (idioma es). Meta exige ejemplos.
+  private readonly PLANTILLAS_DESPACHO = [
+    {
+      name: 'pedido_en_camino',
+      // Meta rechaza textos con demasiadas variables por palabra o que terminan en
+      // variable → hay que dejar suficiente texto y cerrar con palabras.
+      body: 'Hola {{1}}, tu pedido {{2}} ya está en camino. Repartidor asignado: {{3}}. ¡Pronto llega!',
+      example: ['Juan', 'B001-00000123', 'Pedro'],
+    },
+    {
+      name: 'pedido_en_destino',
+      body: 'Hola {{1}}, tu pedido {{2}} llegó a {{3}} y está listo para recojo. 📦',
+      example: ['Juan', 'B001-00000123', 'Shalom Cusco Centro'],
+    },
+    {
+      name: 'pedido_en_destino_cobro',
+      body: 'Hola {{1}}, tu pedido {{2}} llegó a la agencia {{3}}. Para retirarlo, confirma el pago restante de S/ {{4}}. Te esperamos.',
+      example: ['Juan', 'B001-00000123', 'Shalom Cusco Centro', '25.00'],
+    },
+    {
+      name: 'pedido_entregado',
+      body: 'Hola {{1}}, tu pedido {{2}} fue entregado exitosamente ✅. ¡Gracias por tu compra!',
+      example: ['Juan', 'B001-00000123'],
+    },
+    {
+      name: 'pago_confirmado',
+      body: 'Hola {{1}}, tu pago fue confirmado. Ya puedes retirar tu pedido {{2}}. ¡Gracias! ✅',
+      example: ['Juan', 'B001-00000123'],
+    },
+  ];
+
+  /** Crea (idempotente) las plantillas de despacho en la WABA vía Message Template API. */
+  async crearPlantillasDespacho(
+    wabaId: string,
+    token: string,
+  ): Promise<{ creadas: string[]; existentes: string[]; errores: string[] }> {
+    const creadas: string[] = [];
+    const existentes: string[] = [];
+    const errores: string[] = [];
+    for (const p of this.PLANTILLAS_DESPACHO) {
+      try {
+        await axios.post(
+          `${this.apiUrl}/${wabaId}/message_templates`,
+          {
+            name: p.name,
+            language: 'es',
+            category: 'UTILITY',
+            components: [
+              {
+                type: 'BODY',
+                text: p.body,
+                example: { body_text: [p.example] },
+              },
+            ],
+          },
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        creadas.push(p.name);
+      } catch (e: any) {
+        const err = e.response?.data?.error;
+        // "Ya existe" → subcódigo 2388023/2388024, o el texto (es/en) en message /
+        // error_user_title / error_user_msg.
+        const txt = [err?.message, err?.error_user_title, err?.error_user_msg]
+          .filter(Boolean)
+          .join(' ');
+        if (
+          /already exists|ya existe/i.test(txt) ||
+          err?.error_subcode === 2388023 ||
+          err?.error_subcode === 2388024
+        ) {
+          existentes.push(p.name);
+        } else {
+          const detalle = err?.error_user_title || err?.message || e.message;
+          this.logger.warn(`Plantilla ${p.name} falló: ${detalle}`);
+          errores.push(`${p.name}: ${detalle}`);
+        }
+      }
+    }
+    return { creadas, existentes, errores };
+  }
+
+  /**
    * Verifica si WhatsApp está habilitado
    */
   isEnabled(): boolean {
@@ -136,13 +449,27 @@ export class WhatsAppService {
   }
 
   /**
-   * Envía un mensaje de texto libre (requiere ventana activa de 24h o template aprobado)
+   * Envía un mensaje de texto libre (requiere ventana activa de 24h o template aprobado).
+   * Si se pasa `empresaId`, envía desde el número WhatsApp propio de esa empresa
+   * (multi-tenant); si no, usa las credenciales de plataforma (comportamiento previo).
    */
   async enviarTexto(
     numero: string,
     mensaje: string,
+    empresaId?: number,
   ): Promise<{ success: boolean; error?: string }> {
-    const { token, phoneId } = this.getCredentials();
+    let token: string;
+    let phoneId: string;
+    if (empresaId) {
+      try {
+        ({ token, phoneId } = await this.getCredentialsForEmpresa(empresaId));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'WhatsApp no configurado';
+        return { success: false, error: msg };
+      }
+    } else {
+      ({ token, phoneId } = this.getCredentials());
+    }
     if (!token || !phoneId)
       return { success: false, error: 'WhatsApp no configurado' };
 

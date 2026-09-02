@@ -84,6 +84,11 @@ export class CrearCompraDto {
   @IsString()
   observaciones?: string;
 
+  // URL en S3 de la foto de la factura/boleta leída por IA (evidencia).
+  @IsOptional()
+  @IsString()
+  fotoUrl?: string;
+
   @IsOptional()
   @IsNumber()
   igv?: number;

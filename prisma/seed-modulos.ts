@@ -80,6 +80,13 @@ const modulosIniciales = [
     icono: 'solar:routing-2-bold-duotone',
     orden: 12,
   },
+  {
+    codigo: 'leads',
+    nombre: 'IA de Ventas',
+    descripcion: 'Asesor por WhatsApp que califica prospectos (BANT) y avisa leads calientes',
+    icono: 'solar:chat-round-dots-bold-duotone',
+    orden: 13,
+  },
 ];
 
 async function seedModulos() {
@@ -120,10 +127,18 @@ async function seedModulos() {
   const planes = await prisma.plan.findMany();
   const modulos = await prisma.modulo.findMany();
   
+  // Módulos que son add-on de pago: NO se auto-asignan a todos los planes.
+  // Se asignan manualmente al plan que los contrata (ej. 'leads' = IA de Ventas).
+  const MODULOS_NO_AUTOASIGNAR = ['leads'];
+
   // Asignar todos los módulos a cada plan existente (migración)
   for (const plan of planes) {
     const productoPlan = (plan as any).producto || 'facturacion';
-    const modulosDelProducto = modulos.filter((m: any) => ((m as any).producto || 'facturacion') === productoPlan);
+    const modulosDelProducto = modulos.filter(
+      (m: any) =>
+        ((m as any).producto || 'facturacion') === productoPlan &&
+        !MODULOS_NO_AUTOASIGNAR.includes(m.codigo),
+    );
     for (const modulo of modulosDelProducto) {
       const exists = await prisma.planModulo.findUnique({
         where: {

@@ -6,9 +6,16 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 import { ComprobanteModule } from '../comprobante/comprobante.module';
 import { S3Module } from '../s3/s3.module';
+import { SalesfilterModule } from '../integrations/salesfilter/salesfilter.module';
 
 @Module({
-  imports: [SedeModule, WhatsAppModule, S3Module, forwardRef(() => ComprobanteModule)],
+  imports: [
+    SedeModule,
+    WhatsAppModule,
+    S3Module,
+    SalesfilterModule,
+    forwardRef(() => ComprobanteModule),
+  ],
   controllers: [EmpresaController],
   providers: [EmpresaService, RolesGuard],
   exports: [EmpresaService],

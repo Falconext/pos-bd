@@ -249,18 +249,25 @@ export class EnvioDespachoService {
   }
 
   async getConfig(empresaId: number) {
-    const config = await this.prisma.despachoMensajeTemplate.findUnique({
-      where: { empresaId },
-    });
-    return (
-      config ?? {
-        empresaId,
-        mensajeEnCamino: MENSAJES_DEFAULT.EN_CAMINO,
-        mensajeEntregado: MENSAJES_DEFAULT.ENTREGADO,
-        notificarEnCamino: true,
-        notificarEntregado: true,
-      }
-    );
+    const [config, empresa] = await Promise.all([
+      this.prisma.despachoMensajeTemplate.findUnique({ where: { empresaId } }),
+      this.prisma.empresa.findUnique({
+        where: { id: empresaId },
+        select: { shalomAutoTrackingActivo: true },
+      }),
+    ]);
+    const base = config ?? {
+      empresaId,
+      mensajeEnCamino: MENSAJES_DEFAULT.EN_CAMINO,
+      mensajeEntregado: MENSAJES_DEFAULT.ENTREGADO,
+      notificarEnCamino: true,
+      notificarEntregado: true,
+    };
+    return {
+      ...base,
+      // Opt-in del rastreo automático Shalom (cron 30 min). Default false.
+      shalomAutoTrackingActivo: empresa?.shalomAutoTrackingActivo ?? false,
+    };
   }
 
   async upsertConfig(empresaId: number, dto: DespachoConfigDto) {
@@ -269,6 +276,20 @@ export class EnvioDespachoService {
       create: { empresaId, ...dto },
       update: dto,
     });
+  }
+
+  /**
+   * Activa/desactiva el rastreo automático Shalom para la empresa. Con `false`
+   * (default) el cron de 30 min no actualiza estados ni envía WhatsApp a sus
+   * clientes. Se activa recién cuando el empresario está avisado del automatismo.
+   */
+  async setAutoTracking(empresaId: number, activo: boolean) {
+    const empresa = await this.prisma.empresa.update({
+      where: { id: empresaId },
+      data: { shalomAutoTrackingActivo: activo },
+      select: { shalomAutoTrackingActivo: true },
+    });
+    return { shalomAutoTrackingActivo: empresa.shalomAutoTrackingActivo };
   }
 
   async remove(comprobanteId: number, empresaId: number) {

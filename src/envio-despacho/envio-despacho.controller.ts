@@ -53,6 +53,12 @@ export class EnvioDespachoController {
     return this.service.upsertConfig(user.empresaId, dto);
   }
 
+  // Activa/desactiva el rastreo automático Shalom (cron 30 min) para la empresa.
+  @Patch('auto-tracking')
+  setAutoTracking(@User() user: any, @Body() body: { activo: boolean }) {
+    return this.service.setAutoTracking(user.empresaId, Boolean(body?.activo));
+  }
+
   @Get('panel')
   panel(
     @User() user: any,

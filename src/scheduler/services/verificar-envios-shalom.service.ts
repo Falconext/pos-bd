@@ -60,6 +60,10 @@ export class VerificarEnviosShalomService {
         shalomEntregado: false,
         nroOrden: { not: null },
         claveOrden: { not: null },
+        // Opt-in por empresa: solo se auto-rastrea (y auto-notifica por WhatsApp)
+        // a los clientes de empresas que activaron el rastreo automático. Evita
+        // enviar mensajes a clientes sin que el empresario lo sepa al publicar.
+        comprobante: { empresa: { shalomAutoTrackingActivo: true } },
       },
       take: MAX_POR_CORRIDA,
       // Los nunca sincronizados (null) primero, luego los más antiguos.

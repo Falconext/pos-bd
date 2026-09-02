@@ -8,6 +8,7 @@ import { KardexService } from '../kardex/kardex.service';
 import { ProductoLoteService } from '../producto/producto-lote.service';
 import { CajaService } from '../caja/caja.service';
 import { GeminiService } from '../gemini/gemini.service';
+import { S3Service } from '../s3/s3.service';
 import { CrearCompraDto } from './dto/crear-compra.dto';
 import { Prisma } from '@prisma/client';
 import { XMLParser } from 'fast-xml-parser';
@@ -21,6 +22,7 @@ export class ComprasService {
     private productoLoteService: ProductoLoteService,
     private cajaService: CajaService,
     private geminiService: GeminiService,
+    private s3Service: S3Service,
   ) {}
 
   /**
@@ -319,6 +321,7 @@ export class ComprasService {
             : {}),
           estadoPago: estadoPagoInicial as any,
           observaciones: data.observaciones,
+          fotoUrl: data.fotoUrl || null,
           // Save installments
           cuotas: data.cuotas ? JSON.stringify(data.cuotas) : undefined,
           detalles: {
@@ -1066,6 +1069,9 @@ export class ComprasService {
           saldo: nuevoSaldo,
           estadoPago: nuevoEstadoPago as any,
           observaciones: data.observaciones,
+          // Solo se sobreescribe la foto si el payload trae una nueva (al re-leer
+          // por IA en edición); si no viene, se conserva la existente.
+          ...(data.fotoUrl !== undefined ? { fotoUrl: data.fotoUrl || null } : {}),
           cuotas: data.cuotas ? JSON.stringify(data.cuotas) : undefined,
           sedeId,
           detalles: { create: detallesData },
@@ -1587,6 +1593,22 @@ export class ComprasService {
    * ítem con el catálogo (por código o por descripción). Lo que no matchea
    * queda con productoId null (se vincula a mano, igual que el XML).
    */
+  /**
+   * Sube una foto de factura/boleta a S3 como evidencia y devuelve su URL, sin
+   * leerla con IA. Para adjuntar/cambiar la foto de una compra sin alterar sus
+   * datos. Aquí S3 SÍ es obligatorio: si falla, se informa el error (a
+   * diferencia del parseo por IA, donde la foto es best-effort).
+   */
+  async subirFotoEvidencia(
+    empresaId: number,
+    buffer: Buffer,
+    mimeType: string,
+  ): Promise<{ fotoUrl: string }> {
+    const key = this.s3Service.generateCompraFotoKey(empresaId, mimeType);
+    const fotoUrl = await this.s3Service.uploadImage(buffer, key, mimeType);
+    return { fotoUrl };
+  }
+
   async parseImagenFactura(
     empresaId: number,
     buffer: Buffer,
@@ -1597,6 +1619,17 @@ export class ComprasService {
       base64,
       mimeType,
     );
+
+    // Guardar la foto en S3 para que quede como evidencia y se muestre en el
+    // detalle de la compra. Best-effort: si S3 falla, se sigue sin foto (la
+    // lectura por IA no debe romperse por un problema de almacenamiento).
+    let fotoUrl: string | null = null;
+    try {
+      const key = this.s3Service.generateCompraFotoKey(empresaId, mimeType);
+      fotoUrl = await this.s3Service.uploadImage(buffer, key, mimeType);
+    } catch (e) {
+      fotoUrl = null;
+    }
 
     // Proveedor: match por RUC contra los clientes tipo proveedor.
     const proveedorRuc = String(data?.proveedorRuc ?? '').trim();
@@ -1738,6 +1771,7 @@ export class ComprasService {
       igv: parseFloat((Number(data?.igv) || 0).toFixed(2)),
       total: parseFloat((Number(data?.total) || 0).toFixed(2)),
       incluyeIgv,
+      fotoUrl,
       items,
     };
   }

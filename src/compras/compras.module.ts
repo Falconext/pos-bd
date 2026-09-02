@@ -7,11 +7,12 @@ import { ProductoModule } from '../producto/producto.module';
 import { CajaModule } from '../caja/caja.module';
 import { ComprobanteModule } from '../comprobante/comprobante.module';
 import { GeminiModule } from '../gemini/gemini.module';
+import { S3Module } from '../s3/s3.module';
 import { OrdenCompraController } from './orden-compra.controller';
 import { OrdenCompraService } from './orden-compra.service';
 
 @Module({
-  imports: [PrismaModule, KardexModule, ProductoModule, CajaModule, ComprobanteModule, GeminiModule],
+  imports: [PrismaModule, KardexModule, ProductoModule, CajaModule, ComprobanteModule, GeminiModule, S3Module],
   controllers: [OrdenCompraController, ComprasController],
   providers: [ComprasService, OrdenCompraService],
 })

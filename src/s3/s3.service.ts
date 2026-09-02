@@ -195,6 +195,12 @@ export class S3Service implements OnModuleInit {
     return `tiendas/empresa-${empresaId}/qr/${tipo}-${ts}.webp`;
   }
 
+  generateCompraFotoKey(empresaId: number, _contentType?: string): string {
+    const ts = Date.now();
+    // Guardamos siempre como WEBP (uploadImage convierte).
+    return `compras/empresa-${empresaId}/foto-${ts}.webp`;
+  }
+
   generateProductoImageKey(
     empresaId: number,
     productoId: number,

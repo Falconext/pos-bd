@@ -62,6 +62,11 @@ export class CreateEmpresaDto {
   @IsString()
   tipoEmpresa?: 'FORMAL' | 'INFORMAL';
 
+  // Producto contratado: decide si además se provisiona la cuenta en SalesFilter.
+  @IsOptional()
+  @IsIn(['SOLO_VENTAS', 'TODO_EN_UNO', 'AMBOS'])
+  productoContratado?: 'SOLO_VENTAS' | 'TODO_EN_UNO' | 'AMBOS';
+
   @IsString()
   departamento: string;
 

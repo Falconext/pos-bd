@@ -84,7 +84,15 @@ async function bootstrap() {
 
   // Configurar límites de payload y middleware de seguridad
   app.use(httpSecurityHeaders(isProduction));
-  app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '10mb' }));
+  app.use(
+    express.json({
+      limit: process.env.JSON_BODY_LIMIT || '10mb',
+      // Guarda el cuerpo crudo para validar la firma HMAC del webhook de WhatsApp.
+      verify: (req: any, _res, buf: Buffer) => {
+        req.rawBody = buf;
+      },
+    }),
+  );
   app.use(
     express.urlencoded({
       extended: true,

@@ -18,6 +18,7 @@ import {
 } from './dto/cuenta-bancaria.dto';
 import { SedeService } from '../sede/sede.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { SalesfilterBridgeService } from '../integrations/salesfilter/salesfilter-bridge.service';
 import axios from 'axios';
 import * as XLSX from 'xlsx';
 import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
@@ -214,6 +215,7 @@ export class EmpresaService {
     @Inject(forwardRef(() => PdfGeneratorService))
     private readonly pdfGenerator: PdfGeneratorService,
     private readonly s3Service: S3Service,
+    private readonly salesfilter: SalesfilterBridgeService,
   ) {}
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -667,6 +669,7 @@ export class EmpresaService {
         whatsappBusinessId: data.whatsappBusinessId || null,
         whatsappActivo: data.whatsappActivo ?? true,
         usaDemo: data.usaDemo ?? false,
+        productoContratado: data.productoContratado || 'TODO_EN_UNO',
         usuarios: {
           create: {
             nombre: data.usuario.nombre,
@@ -825,6 +828,22 @@ export class EmpresaService {
         } catch {}
         throw new ForbiddenException(
           error?.message || 'No se pudo crear la empresa en Falconext Hotel',
+        );
+      }
+    }
+
+    // Provisioning en SalesFilter si el producto contratado lo requiere
+    // (SOLO_VENTAS / AMBOS). Best-effort: no rompe la creación si SF falla.
+    if (this.salesfilter.debeProvisionar(data.productoContratado)) {
+      const res = await this.salesfilter.provisionarEmpresa(empresa.id);
+      if (adminUserId) {
+        await this.registrarLog(
+          empresa.id,
+          res.ok ? 'SALESFILTER_PROVISIONADO' : 'SALESFILTER_ERROR',
+          res.ok
+            ? `Cuenta espejo en SalesFilter (userId ${res.userId})`
+            : `No se pudo provisionar en SalesFilter: ${res.error}`,
+          adminUserId,
         );
       }
     }

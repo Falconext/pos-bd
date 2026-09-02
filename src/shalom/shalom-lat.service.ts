@@ -15,38 +15,28 @@ export interface ShalomAgencia {
   longitud?: string;
 }
 
-// Payload para registrar un envío individual en Shalom Pro.
-// Doc: POST /api/register-individual (requiere plan Pro + instanceId).
+// Payload para registrar un envío en Shalom (POST /account/register).
+// Requiere credenciales del cliente final vía instancias (/instances/*).
 export interface ShalomOrderInput {
-  instanceId?: string;
-  origen: number | string;
-  destino: number | string;
-  content: string;
-  cantidad: number;
-  documento: string;
-  name: string;
-  firstname?: string;
-  lastname?: string;
-  phone: number | string;
-  clave?: string;
-  declaracion_jurada?: string;
+  securityCode?: string;
+  shipments: any[];
 }
 
 /**
- * Cliente del proveedor Shalom API Perú (https://shalom-api.lat).
+ * Cliente del proveedor Shalom API (https://api.shalom-api.lat) — versión NUEVA.
  *
- * Autenticación: header `x-api-key` (una sola API key global, en
- * SHALOM_LAT_API_KEY). A diferencia del proveedor anterior, este NO requiere
- * credenciales Shalom Pro (email/password) ni tokens de sesión para consultar
- * tracking, agencias, comprobante, etiqueta ni cotización.
+ * Autenticación: header `x-api-key` (una sola API key global, en SHALOM_LAT_API_KEY).
+ * Para TRACKING, AGENCIAS, COMPROBANTE, ETIQUETA y COTIZACIÓN **no se necesita**
+ * cuenta de Shalom Pro ni credenciales del negocio: basta la API key. Solo crear
+ * envíos (POST /account/register) requiere credenciales del cliente vía /instances.
  *
  * Endpoints usados:
- *  - GET  /api/listar                         → lista completa de agencias
- *  - POST /api/track        { orderNumber, orderCode }  → tracking { search, statuses }
- *  - POST /api/ticket-image { orderNumber, orderCode }  → comprobante (PNG)
- *  - POST /api/label        { orderNumber, orderCode }  → etiqueta (PDF)
- *  - POST /api/quote        { origin, destination }     → cotización (JSON)
- *  - POST /api/register-individual { instanceId, ... }  → crear envío (plan Pro)
+ *  - GET  /agencies                              → lista de agencias
+ *  - POST /track            { orderNumber, orderCode }        → tracking + timeline
+ *  - GET  /track/voucher?orderNumber=&orderCode= → comprobante (PNG/PDF)
+ *  - GET  /track/label?orderNumber=&orderCode=   → etiqueta (PDF)
+ *  - POST /account/quote    { origin, destination }          → cotización
+ *  - POST /account/register { shipments[], securityCode }    → crear envío (Pro)
  */
 @Injectable()
 export class ShalomLatService {
@@ -54,21 +44,18 @@ export class ShalomLatService {
   private agenciasCache: ShalomAgencia[] | null = null;
   private lastCacheTime = 0;
   private readonly CACHE_TTL_MS = 12 * 60 * 60 * 1000;
-  // Consultas de /api/track en curso, por empresa+orden: track() y las
-  // descargas (ticket/label) piden lo mismo; deduplicar evita disparar varias
-  // cadenas de scraping contra un upstream ya degradado.
+  // Consultas de /track en curso, por empresa+orden: track() y las descargas
+  // piden lo mismo; deduplicar evita disparar varias cadenas contra un upstream
+  // ya degradado.
   private trackInFlight = new Map<string, Promise<any>>();
 
-  // Estados transitorios que vale la pena reintentar: el scraper de Shalom
-  // devuelve 500 "fetch failed" / 404 "No se pudieron cargar los datos" de
-  // forma intermitente cuando su upstream está saturado.
+  // Estados transitorios que vale la pena reintentar.
   private readonly RETRYABLE_STATUS = new Set([404, 429, 500, 502, 503, 504]);
 
   private get baseUrl(): string {
-    return (process.env.SHALOM_LAT_BASE_URL ?? 'https://shalom-api.lat').replace(
-      /\/$/,
-      '',
-    );
+    return (
+      process.env.SHALOM_LAT_BASE_URL ?? 'https://api.shalom-api.lat'
+    ).replace(/\/$/, '');
   }
   private get apiKey(): string {
     return process.env.SHALOM_LAT_API_KEY ?? '';
@@ -77,11 +64,6 @@ export class ShalomLatService {
   /** Headers base: API key + JSON. */
   private headers(): Record<string, string> {
     return { 'x-api-key': this.apiKey, 'Content-Type': 'application/json' };
-  }
-
-  /** Resuelve el instanceId de Shalom Pro (global, SHALOM_LAT_INSTANCE_ID). */
-  private resolverInstanceId(): string | undefined {
-    return process.env.SHALOM_LAT_INSTANCE_ID || undefined;
   }
 
   /** Petición cruda al proveedor. Lanza un Error con `.shalomStatus` en fallo. */
@@ -114,12 +96,7 @@ export class ShalomLatService {
     return res;
   }
 
-  /**
-   * Petición con reintento ante estados transitorios. El scraper de Shalom
-   * falla de forma intermitente (500 "fetch failed", 404 "No se pudieron
-   * cargar los datos") cuando su upstream está saturado; reintentar con backoff
-   * resuelve el clásico "la primera vez no consulta y la segunda sí".
-   */
+  /** Petición con reintento ante estados transitorios (backoff incremental). */
   private async requestConReintento(
     method: string,
     path: string,
@@ -150,14 +127,15 @@ export class ShalomLatService {
     if (s === 404) {
       return `No se pudo obtener ${doc}. Verifica el N° de orden y la clave, o intenta de nuevo en unos minutos.`;
     }
-    if (s === 401) {
+    if (s === 401 || s === 403) {
       return 'La API key de Shalom no es válida o no está configurada. Contacta al administrador.';
     }
     return err?.message || `No se pudo obtener ${doc} de Shalom.`;
   }
 
   // ─── Agencias ──────────────────────────────────────────────────────────────
-  // GET /api/listar → lista completa de agencias.
+  // GET /agencies → { success, total, data: [ { ter_id, lugar, zona, provincia,
+  //                   departamento, direccion, telefono, latitud, longitud } ] }
   async getAgencias(): Promise<{
     success: boolean;
     data: ShalomAgencia[];
@@ -171,19 +149,16 @@ export class ShalomLatService {
         total: this.agenciasCache.length,
       };
     }
-    if (!this.apiKey) {
-      this.logger.warn('SHALOM_LAT_API_KEY no configurada en .env');
-      return { success: false, data: [] };
-    }
+    // Sin key privada se puede usar el listado público (misma forma).
+    const path = this.apiKey ? '/agencies' : '/public/agencies';
     try {
-      const res = await this.requestConReintento('GET', '/api/listar');
+      const res = await this.requestConReintento('GET', path);
       const raw = await res.json();
       const items: any[] = Array.isArray(raw)
         ? raw
-        : (raw?.resultados ?? raw?.data ?? raw?.agencias ?? []);
+        : (raw?.data ?? raw?.resultados ?? raw?.agencias ?? []);
       this.agenciasCache = items.map((a): ShalomAgencia => {
-        // `lugar_over` es el nombre corto/legible de la agencia.
-        const nombre = String(a.lugar_over ?? a.nombre ?? a.lugar ?? '');
+        const nombre = String(a.lugar ?? a.lugar_over ?? a.nombre ?? '');
         const dep = String(a.departamento ?? '');
         const prov = String(a.provincia ?? '');
         const dist = String(a.zona ?? a.distrito ?? '');
@@ -210,7 +185,7 @@ export class ShalomLatService {
         total: this.agenciasCache.length,
       };
     } catch (error: any) {
-      this.logger.error('Error Shalom /api/listar', error?.message);
+      this.logger.error(`Error Shalom ${path}`, error?.message);
       if (this.agenciasCache)
         return { success: true, data: this.agenciasCache };
       return { success: false, data: [] };
@@ -218,7 +193,7 @@ export class ShalomLatService {
   }
 
   // ─── Tracking ────────────────────────────────────────────────────────────────
-  // POST /api/track { orderNumber, orderCode } → { search, statuses }
+  // POST /track { orderNumber, orderCode } → orden completa + timeline de estados.
   private async obtenerTrackingRaw(
     orderNumber: string,
     orderCode: string,
@@ -228,7 +203,7 @@ export class ShalomLatService {
     const enCurso = this.trackInFlight.get(dedupeKey);
     if (enCurso) return enCurso;
 
-    const promesa = this.requestConReintento('POST', '/api/track', {
+    const promesa = this.requestConReintento('POST', '/track', {
       body: { orderNumber, orderCode },
     }).then((res) => res.json());
     this.trackInFlight.set(dedupeKey, promesa);
@@ -245,62 +220,67 @@ export class ShalomLatService {
     empresaId?: number,
   ): Promise<any> {
     try {
-      const raw = await this.obtenerTrackingRaw(
-        orderNumber,
-        orderCode,
-        empresaId,
-      );
-      // El proveedor ya devuelve { search, statuses }; se pasa tal cual y se
-      // añade ose_id si viene (para las descargas de comprobante/etiqueta).
+      const raw = await this.obtenerTrackingRaw(orderNumber, orderCode, empresaId);
+      // Verificado con orden real: la API devuelve
+      //   { search: { success, message, data: { ose_id, contenido, origen, destino,
+      //     destinatario, entregado, ... } },
+      //     statuses: { success, message, data: { registrado, origen, transito,
+      //     destino, entregado, ... (cada uno { fecha }) } } }
+      // Tanto el frontend (ShalomTrackingModal) como derivarEstadoShalom ya
+      // desenvuelven `.data`, así que devolvemos la forma anidada tal cual y solo
+      // elevamos `ose_id` (que el frontend usa para descargar comprobante/etiqueta).
+      // `?? raw?.xxx` mantiene compatibilidad si el proveedor devolviera la forma plana.
+      const searchData = raw?.search?.data ?? raw?.search ?? {};
       const oseId =
-        raw?.ose_id ?? raw?.order?.ose_id ?? raw?.search?.ose_id ?? null;
-      return { success: true, ...raw, ose_id: oseId };
+        searchData?.ose_id ?? raw?.ose_id ?? raw?.order?.ose_id ?? null;
+      return {
+        success: true,
+        search: raw?.search ?? {},
+        statuses: raw?.statuses ?? {},
+        order: searchData,
+        ose_id: oseId,
+      };
     } catch (error: any) {
-      this.logger.error('Error Shalom /api/track', error?.message);
+      this.logger.error('Error Shalom /track', error?.message);
       if (error instanceof HttpException) throw error;
       throw new BadRequestException(this.mensajeShalom(error, 'el tracking'));
     }
   }
 
   // ─── Documentos ──────────────────────────────────────────────────────────────
-  // POST /api/ticket-image → comprobante (PNG). POST /api/label → etiqueta (PDF).
+  // GET /track/voucher → comprobante (PNG/PDF). GET /track/label → etiqueta (PDF).
   private async fetchDocumento(
     path: string,
     orderNumber: string,
     orderCode: string,
   ): Promise<{ buffer: Buffer; contentType: string }> {
-    const res = await this.requestConReintento('POST', path, {
-      body: { orderNumber, orderCode },
-    });
+    const qs = new URLSearchParams({ orderNumber, orderCode }).toString();
+    const res = await this.requestConReintento('GET', `${path}?${qs}`);
     const contentType = res.headers.get('content-type') || 'application/pdf';
     const buffer = Buffer.from(await res.arrayBuffer());
     return { buffer, contentType };
   }
 
-  // Comprobante del envío (POST /api/ticket-image → PNG).
+  // Comprobante del envío (GET /track/voucher → PNG/PDF).
   async ticketImage(
     orderNumber: string,
     orderCode: string,
   ): Promise<{ buffer: Buffer; contentType: string }> {
     try {
-      return await this.fetchDocumento(
-        '/api/ticket-image',
-        orderNumber,
-        orderCode,
-      );
+      return await this.fetchDocumento('/track/voucher', orderNumber, orderCode);
     } catch (err: any) {
       if (err instanceof HttpException) throw err;
       throw new BadRequestException(this.mensajeShalom(err, 'el comprobante'));
     }
   }
 
-  // Etiqueta / rótulo del envío (POST /api/label → PDF).
+  // Etiqueta / rótulo del envío (GET /track/label → PDF).
   async label(
     orderNumber: string,
     orderCode: string,
   ): Promise<{ buffer: Buffer; contentType: string }> {
     try {
-      return await this.fetchDocumento('/api/label', orderNumber, orderCode);
+      return await this.fetchDocumento('/track/label', orderNumber, orderCode);
     } catch (err: any) {
       if (err instanceof HttpException) throw err;
       throw new BadRequestException(this.mensajeShalom(err, 'la etiqueta'));
@@ -308,38 +288,31 @@ export class ShalomLatService {
   }
 
   // ─── Cotización de tarifa ──────────────────────────────────────────────────
-  // POST /api/quote { origin, destination }
+  // POST /account/quote { origin, destination }
   async quote(origin: number, destination: number): Promise<any> {
     try {
-      const res = await this.requestConReintento('POST', '/api/quote', {
+      const res = await this.requestConReintento('POST', '/account/quote', {
         body: { origin: Number(origin), destination: Number(destination) },
       });
       return await res.json();
     } catch (error: any) {
-      this.logger.error('Error Shalom /api/quote', error?.message);
+      this.logger.error('Error Shalom /account/quote', error?.message);
       if (error instanceof HttpException) throw error;
       throw new BadRequestException(this.mensajeShalom(error, 'la cotización'));
     }
   }
 
-  // ─── Crear envío (Shalom Pro) ────────────────────────────────────────────────
-  // POST /api/register-individual { instanceId, origen, destino, ... } → requiere plan Pro.
+  // ─── Crear envío ────────────────────────────────────────────────────────────
+  // POST /account/register { shipments[], securityCode } → requiere credenciales
+  // del cliente vía /instances (no cubierto por la API key global).
   async createOrder(input: ShalomOrderInput): Promise<any> {
-    const instanceId = input.instanceId ?? this.resolverInstanceId();
-    if (!instanceId) {
-      throw new BadRequestException(
-        'Para registrar envíos en Shalom necesitas conectar tu Instancia Pro (instanceId) en Configuración.',
-      );
-    }
     try {
-      const res = await this.requestConReintento(
-        'POST',
-        '/api/register-individual',
-        { body: { ...input, instanceId } },
-      );
+      const res = await this.requestConReintento('POST', '/account/register', {
+        body: { ...input },
+      });
       return await res.json();
     } catch (error: any) {
-      this.logger.error('Error Shalom /api/register-individual', error?.message);
+      this.logger.error('Error Shalom /account/register', error?.message);
       if (error instanceof HttpException) throw error;
       throw new BadRequestException(this.mensajeShalom(error, 'el registro del envío'));
     }

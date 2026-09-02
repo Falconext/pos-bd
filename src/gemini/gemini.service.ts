@@ -28,6 +28,41 @@ export class GeminiService {
   }
 
   /**
+   * Transcribe un audio (p.ej. nota de voz de WhatsApp) a texto usando Gemini.
+   * @param base64Audio audio codificado en base64
+   * @param mimeType    tipo MIME del audio (audio/ogg, audio/mpeg, audio/mp4…)
+   * @returns el texto transcrito (cadena vacía si no hay voz entendible)
+   */
+  async transcribirAudio(base64Audio: string, mimeType: string): Promise<string> {
+    if (!this.genAI) throw new Error('Gemini no configurado (falta GEMINI_API_KEY)');
+    // Modelo multimodal capaz de procesar audio (el lite del constructor puede no soportarlo).
+    const model = this.genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
+    const partes = [
+      { inlineData: { data: base64Audio, mimeType: mimeType || 'audio/ogg' } },
+      {
+        text: 'Transcribe este audio de WhatsApp al español (Perú). Devuelve SOLO el texto transcrito, sin comillas ni comentarios. Si no hay voz entendible, devuelve una cadena vacía.',
+      },
+    ];
+    // Reintentos ante errores transitorios (503 alta demanda / 429 rate-limit).
+    let lastErr: any;
+    for (let intento = 1; intento <= 3; intento++) {
+      try {
+        const result = await model.generateContent(partes);
+        return result.response.text().trim();
+      } catch (e: any) {
+        lastErr = e;
+        const status = e?.status ?? 0;
+        if (status !== 503 && status !== 429 && status !== 500) throw e;
+        this.logger.warn(
+          `Transcripción Gemini ${status} (intento ${intento}/3); reintentando…`,
+        );
+        await new Promise((r) => setTimeout(r, 1500 * intento));
+      }
+    }
+    throw lastErr;
+  }
+
+  /**
    * Categoriza una lista de productos, detecta marca y genera descripción
    * @param productos Lista de nombres de productos
    * @returns Mapa de id -> { categoria, marca, descripcion }
@@ -175,6 +210,57 @@ Responde SOLO con el array JSON, nada más.`;
     }
 
     return results;
+  }
+
+  /**
+   * Genera el embedding (vector) de un texto con `gemini-embedding-001`,
+   * reducido a 768 dimensiones (`outputDimensionality`) para pgvector.
+   * Lo usa el RAG del módulo de leads. Devuelve un array de 768 floats.
+   */
+  async generarEmbedding(text: string): Promise<number[]> {
+    if (!this.genAI) {
+      throw new Error('Gemini AI no está configurado (GEMINI_API_KEY ausente)');
+    }
+    const model = this.genAI.getGenerativeModel({
+      model: 'gemini-embedding-001',
+    });
+    // `outputDimensionality` no está tipado en el SDK 0.21 → cast.
+    const res: any = await (model as any).embedContent({
+      content: { role: 'user', parts: [{ text: text.slice(0, 8000) }] },
+      outputDimensionality: 768,
+    });
+    return res.embedding.values as number[];
+  }
+
+  /**
+   * Chat multi-turno con instrucción de sistema. Genérico: recibe un
+   * `systemInstruction` y el historial de la conversación (roles user/model) y
+   * devuelve el texto de la respuesta. Lo usa el módulo de leads (IA de ventas)
+   * para portar el motor BANT/SPIN de salesfilter-ai reutilizando este cliente.
+   *
+   * Roles Gemini: 'user' y 'model' (mapear 'assistant' → 'model' antes de llamar).
+   * El historial debe empezar con un turno 'user'.
+   */
+  async chatConHistorial(
+    systemInstruction: string,
+    messages: { role: 'user' | 'model'; content: string }[],
+    maxOutputTokens = 500,
+  ): Promise<string> {
+    if (!this.genAI) {
+      throw new Error('Gemini AI no está configurado (GEMINI_API_KEY ausente)');
+    }
+    const model = this.genAI.getGenerativeModel({
+      model: 'gemini-flash-lite-latest',
+      systemInstruction,
+    });
+    const result = await model.generateContent({
+      contents: messages.map((m) => ({
+        role: m.role,
+        parts: [{ text: m.content }],
+      })),
+      generationConfig: { maxOutputTokens },
+    });
+    return result.response.text().trim();
   }
 
   /**
@@ -420,8 +506,12 @@ Reglas:
     try {
       return JSON.parse(jsonText);
     } catch {
-      this.logger.error(`No se pudo parsear la respuesta de Gemini: ${jsonText}`);
-      throw new Error('La IA no devolvió un formato válido. Intenta con una foto más nítida.');
+      this.logger.error(
+        `No se pudo parsear la respuesta de Gemini: ${jsonText}`,
+      );
+      throw new Error(
+        'La IA no devolvió un formato válido. Intenta con una foto más nítida.',
+      );
     }
   }
 }

@@ -156,6 +156,22 @@ model Empresa {
   whatsappPhoneNumberId         String?
   whatsappBusinessId            String?
   whatsappActivo                Boolean                       @default(true)
+  // Rastreo automático Shalom (cron 30 min): opt-in por empresa. Con `false`
+  // (default) el cron NO actualiza estados ni envía WhatsApp a los clientes de
+  // esta empresa — se activa recién cuando el empresario está avisado.
+  shalomAutoTrackingActivo      Boolean                       @default(false)
+  // Módulo IA de Ventas / Filtro de Leads (portado de salesfilter-ai).
+  // Toggle multi-tenant: la IA sólo responde WhatsApp entrantes si está activa.
+  iaVentasActiva                Boolean                       @default(false)
+  // Contexto libre del negocio/oferta que la IA usa como conocimiento base
+  // (stand-in ligero de RAG hasta habilitar pgvector + documentos de entrenamiento).
+  iaVentasContexto              String?
+  // Producto contratado: MYPE es el master de creación. "SOLO_VENTAS" provisiona
+  // la cuenta en SalesFilter (el cliente inicia sesión allá); "TODO_EN_UNO" usa
+  // MYPE con el módulo `leads`; "AMBOS" hace las dos cosas.
+  productoContratado            ProductoContratado            @default(TODO_EN_UNO)
+  // ID del Usuario espejo en SalesFilter (si se provisionó). Idempotencia/updates.
+  salesfilterUserId             String?
   shalomEmail                   String?
   shalomPassword                String?
   yapeNumero                    String?
@@ -295,6 +311,9 @@ model Empresa {
   vehiculos            Vehiculo[]
   contratosVehiculares ContratoVehicular[]
   listasPrecio         ListaPrecio[]
+  leadConversaciones   LeadConversacion[]
+  leadProspectos       LeadProspecto[]
+  leadDocumentos       LeadDocumento[]
 
   @@index([providerToken])
   @@index([slugTienda])
@@ -1785,6 +1804,9 @@ model Compra {
   // se guardan aquí y recién se crean como ProductoSerie al aprobar.
   seriesPendientes Json?
   observaciones    String?
+  // Foto de la factura/boleta subida al registrar la compra por IA (URL en S3).
+  // Queda como evidencia y se muestra en el detalle de la compra.
+  fotoUrl          String?
   creadoEn         DateTime           @default(now())
   actualizadoEn    DateTime           @updatedAt
   cuotas           Json?
@@ -2016,6 +2038,13 @@ enum WhatsAppProvider {
   EMPRESA
   ZAVU
   DISABLED
+}
+
+// Producto contratado por la empresa (MYPE es el master de creación).
+enum ProductoContratado {
+  SOLO_VENTAS // solo IA de ventas → se provisiona/usa en SalesFilter
+  TODO_EN_UNO // MYPE completo (facturación, tienda, etc.) con módulo leads
+  AMBOS // MYPE + cuenta espejo en SalesFilter
 }
 
 // ─── Órdenes de Compra: pedido al proveedor previo a la Compra ───────────────
@@ -3641,4 +3670,134 @@ model WebhookEndpointLogistica {
   empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
 
   @@index([empresaId])
+}
+
+// ─── Módulo IA de Ventas / Filtro de Leads (portado de salesfilter-ai) ──────
+// Tenant = Empresa. La IA responde WhatsApp entrantes como vendedor y califica
+// leads (BANT). Reusa la conexión WhatsApp de Empresa (whatsappPhoneNumberId).
+
+enum EstadoLeadConversacion {
+  ACTIVA
+  CALIFICADA
+  CERRADA
+  TRANSFERIDA
+}
+
+enum EstadoLeadProspecto {
+  FRIO
+  TIBIO
+  CALIENTE
+  CONVERTIDO
+  PERDIDO
+}
+
+enum RolLeadMensaje {
+  USUARIO
+  ASISTENTE
+  SISTEMA
+}
+
+model LeadConversacion {
+  id                Int                    @id @default(autoincrement())
+  empresaId         Int
+  empresa           Empresa                @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  telefonoProspecto String
+  nombreProspecto   String?
+  estado            EstadoLeadConversacion @default(ACTIVA)
+  cantidadMensajes  Int                    @default(0)
+  numeroWhatsappId  String? // phoneNumberId por el que entró
+  mensajes          LeadMensaje[]
+  prospecto         LeadProspecto?
+  creadoEn          DateTime               @default(now())
+  actualizadoEn     DateTime               @updatedAt
+
+  @@unique([empresaId, telefonoProspecto])
+  @@index([empresaId, estado])
+}
+
+model LeadMensaje {
+  id             Int              @id @default(autoincrement())
+  conversacionId Int
+  conversacion   LeadConversacion @relation(fields: [conversacionId], references: [id], onDelete: Cascade)
+  rol            RolLeadMensaje
+  contenido      String
+  whatsappMsgId  String?          @unique // dedup de mensajes entrantes
+  esAudio        Boolean          @default(false)
+  creadoEn       DateTime         @default(now())
+
+  @@index([conversacionId])
+}
+
+model LeadProspecto {
+  id                Int                 @id @default(autoincrement())
+  empresaId         Int
+  empresa           Empresa             @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  telefonoProspecto String
+  nombreProspecto   String?
+  puntaje           Int                 @default(0)
+  estado            EstadoLeadProspecto @default(FRIO)
+  // BANT (0-30 / 0-20 / 0-25 / 0-25)
+  presupuesto       Int?
+  autoridad         Int?
+  necesidad         Int?
+  plazo             Int?
+  resumen           String?
+  puntosClave       String[]
+  proximaAccion     String?
+  botActivo         Boolean             @default(true)
+  notificadoEn      DateTime? // idempotencia de alerta lead caliente
+  clienteId         Int? // Cliente de MYPE creado al convertir el prospecto (Fase 3)
+  conversacionId    Int                 @unique
+  conversacion      LeadConversacion    @relation(fields: [conversacionId], references: [id], onDelete: Cascade)
+  creadoEn          DateTime            @default(now())
+  actualizadoEn     DateTime            @updatedAt
+
+  @@index([empresaId, estado])
+  @@index([empresaId, puntaje])
+}
+
+// ─── RAG: entrenamiento de la IA de ventas (pgvector) ──────────────────────
+// El empresario sube documentos/URLs/texto; se parten en fragmentos con su
+// embedding (Gemini, 768 dims) para dar contexto a las respuestas de la IA.
+
+enum TipoLeadDocumento {
+  TEXTO
+  URL
+  PDF
+}
+
+enum EstadoLeadDocumento {
+  PENDIENTE
+  INDEXADO
+  ERROR
+}
+
+model LeadDocumento {
+  id            Int                 @id @default(autoincrement())
+  empresaId     Int
+  empresa       Empresa             @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  tipo          TipoLeadDocumento
+  titulo        String
+  origen        String? // URL de origen (si tipo=URL)
+  contenido     String // texto completo extraído
+  estado        EstadoLeadDocumento @default(PENDIENTE)
+  error         String?
+  fragmentos    LeadFragmento[]
+  creadoEn      DateTime            @default(now())
+  actualizadoEn DateTime            @updatedAt
+
+  @@index([empresaId])
+}
+
+model LeadFragmento {
+  id           Int           @id @default(autoincrement())
+  documentoId  Int
+  documento    LeadDocumento @relation(fields: [documentoId], references: [id], onDelete: Cascade)
+  indice       Int
+  contenido    String
+  // Embedding de 768 dims (pgvector). Se lee/escribe con SQL crudo ($queryRaw).
+  embedding    Unsupported("vector(768)")?
+  creadoEn     DateTime      @default(now())
+
+  @@index([documentoId])
 }

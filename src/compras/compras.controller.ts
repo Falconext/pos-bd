@@ -50,6 +50,21 @@ export class ComprasController {
     );
   }
 
+  // Solo sube una foto de la factura/boleta a S3 (evidencia) y devuelve su URL,
+  // SIN leerla con IA ni tocar los datos. Se usa para adjuntar/cambiar la foto
+  // de una compra ya registrada (o de una que se está creando a mano).
+  @Post('subir-foto')
+  @UseInterceptors(FileInterceptor('file', imageUploadOptions))
+  async subirFoto(@Request() req, @UploadedFile() file: Express.Multer.File) {
+    if (!file)
+      throw new BadRequestException('No se proporcionó ninguna imagen');
+    return this.comprasService.subirFotoEvidencia(
+      req.user.empresaId,
+      file.buffer,
+      file.mimetype,
+    );
+  }
+
   @Post()
   async crear(@Request() req, @Body() body: CrearCompraDto) {
     return this.comprasService.crear(

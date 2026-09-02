@@ -25,6 +25,37 @@ export class WhatsAppController {
   ) {}
 
   /**
+   * Conectar el WhatsApp propio de la empresa (Meta Embedded Signup).
+   * POST /whatsapp/embedded-signup  { code, phoneNumberId, wabaId }
+   */
+  @Post('embedded-signup')
+  @Roles('ADMIN_EMPRESA')
+  async embeddedSignup(
+    @Body()
+    body: { code?: string; accessToken?: string; phoneNumberId?: string; wabaId?: string },
+    @User() user: any,
+  ) {
+    if (!user?.empresaId)
+      throw new BadRequestException('No hay empresa en la sesión.');
+    return this.whatsappService.conectarEmbeddedSignup(user.empresaId, body);
+  }
+
+  /**
+   * Conexión MANUAL del WhatsApp propio (pegar credenciales de Meta).
+   * POST /whatsapp/conectar-manual  { phoneNumberId, wabaId, accessToken }
+   */
+  @Post('conectar-manual')
+  @Roles('ADMIN_EMPRESA')
+  async conectarManual(
+    @Body() body: { phoneNumberId: string; wabaId: string; accessToken: string },
+    @User() user: any,
+  ) {
+    if (!user?.empresaId)
+      throw new BadRequestException('No hay empresa en la sesión.');
+    return this.whatsappService.conectarManual(user.empresaId, body);
+  }
+
+  /**
    * Enviar comprobante por WhatsApp
    * POST /whatsapp/enviar/:comprobanteId
    */
