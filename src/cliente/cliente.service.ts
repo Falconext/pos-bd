@@ -118,20 +118,26 @@ export class ClienteService {
     return { ok: true };
   }
 
-  async crear(data: {
-    nombre: string;
-    tipoDoc: 'DNI' | 'RUC' | 'CE' | 'PASAPORTE' | 'OTRO';
-    nroDoc: string;
-    direccion?: string;
-    email?: string;
-    telefono?: string;
-    empresaId: number;
-    ubigeo: string;
-    departamento: string;
-    provincia: string;
-    distrito: string;
-    persona?: string;
-  }) {
+  async crear(
+    data: {
+      nombre: string;
+      tipoDoc: 'DNI' | 'RUC' | 'CE' | 'PASAPORTE' | 'OTRO';
+      nroDoc: string;
+      direccion?: string;
+      email?: string;
+      telefono?: string;
+      empresaId: number;
+      ubigeo: string;
+      departamento: string;
+      provincia: string;
+      distrito: string;
+      persona?: string;
+    },
+    // upsert=true (importación masiva): si el documento ya existe, actualiza sus
+    // datos (dirección, correo, teléfono, nombre, ubigeo) en vez de lanzar error.
+    // Solo sobrescribe con valores no vacíos, para no borrar datos existentes.
+    opts?: { upsert?: boolean },
+  ) {
     const { tipoDoc } = data;
     const nroDoc = this.normalizarNumeroDocumento(tipoDoc, data.nroDoc);
 
@@ -148,10 +154,34 @@ export class ClienteService {
         });
     const nuevaPersona = (data.persona as PersonaType) || PersonaType.CLIENTE;
     if (existe) {
-      if (
+      // persona resultante: si cambia de tipo, se marca como CLIENTE_PROVEEDOR;
+      // si no, se conserva la existente.
+      const personaFinal =
         existe.persona !== nuevaPersona &&
         existe.persona !== 'CLIENTE_PROVEEDOR'
-      ) {
+          ? ('CLIENTE_PROVEEDOR' as PersonaType)
+          : (existe.persona as PersonaType);
+
+      if (opts?.upsert) {
+        // Importación: actualiza los campos provistos (no vacíos) del registro
+        // existente. Esto arregla el caso "no jaló las direcciones" al reimportar.
+        return this.prisma.cliente.update({
+          where: { id: existe.id },
+          data: {
+            persona: personaFinal,
+            ...(data.nombre ? { nombre: data.nombre } : {}),
+            ...(data.direccion ? { direccion: data.direccion } : {}),
+            ...(data.email ? { email: data.email } : {}),
+            ...(data.telefono ? { telefono: data.telefono } : {}),
+            ...(data.departamento ? { departamento: data.departamento } : {}),
+            ...(data.provincia ? { provincia: data.provincia } : {}),
+            ...(data.distrito ? { distrito: data.distrito } : {}),
+            ...(data.ubigeo ? { ubigeo: data.ubigeo } : {}),
+          },
+        });
+      }
+
+      if (personaFinal === 'CLIENTE_PROVEEDOR' && existe.persona !== 'CLIENTE_PROVEEDOR') {
         // Upgrading from CLIENTE to PROVEEDOR or vice-versa
         return this.prisma.cliente.update({
           where: { id: existe.id },
@@ -460,29 +490,53 @@ export class ClienteService {
       return personaFallback;
     };
 
+    // Búsqueda de columna tolerante a mayúsculas/minúsculas, tildes y espacios.
+    // Así "Dirección", "DIRECCIÓN", "direccion" (todas) mapean al mismo campo.
+    const normHeader = (s: any): string =>
+      String(s ?? '')
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+    const getCol = (row: any, ...nombres: string[]): any => {
+      const mapa: Record<string, any> = {};
+      for (const k of Object.keys(row)) mapa[normHeader(k)] = row[k];
+      for (const n of nombres) {
+        const v = mapa[normHeader(n)];
+        if (v != null && String(v).trim() !== '') return v;
+      }
+      return null;
+    };
+
     for (const [index, row] of rows.entries()) {
       try {
-        const nombre =
-          row['NOMBRE O RAZON SOCIAL'] ||
-          row['Nombre o Razon social'] ||
-          row['NOMBRE'] ||
-          row['Nombre'] ||
-          null;
-        const nroDoc =
-          row['NUM. DOC'] ||
-          row['Num. doc'] ||
-          row['Documento'] ||
-          row['NroDoc'] ||
-          row['nroDoc'] ||
-          null;
-        const direccion =
-          row['DIRECCION'] || row['Direccion'] || row['direccion'] || '';
-        const email = row['CORREO'] || row['Correo'] || row['correo'] || '';
-        const persona = normalizarPersona(
-          row['PERSONA'] || row['Persona'] || row['persona'],
+        const nombre = getCol(
+          row,
+          'NOMBRE O RAZON SOCIAL',
+          'NOMBRE O RAZÓN SOCIAL',
+          'RAZON SOCIAL',
+          'NOMBRE',
         );
+        const nroDoc = getCol(
+          row,
+          'NUM. DOC',
+          'NUMERO DE DOCUMENTO',
+          'N° DOC',
+          'DOCUMENTO',
+          'NRODOC',
+          'RUC',
+          'DNI',
+        );
+        const direccion = getCol(row, 'DIRECCION', 'DIRECCIÓN') || '';
+        const email = getCol(row, 'CORREO', 'EMAIL', 'E-MAIL') || '';
+        const persona = normalizarPersona(getCol(row, 'PERSONA', 'TIPO'));
         const telefono =
-          row['CELULAR'] || row['Celular'] || row['celular'] || '';
+          getCol(row, 'CELULAR', 'TELEFONO', 'TELÉFONO', 'MOVIL', 'MÓVIL') || '';
+        const departamento = getCol(row, 'DEPARTAMENTO') || '';
+        const provincia = getCol(row, 'PROVINCIA') || '';
+        const distrito = getCol(row, 'DISTRITO') || '';
+        const ubigeo = getCol(row, 'UBIGEO') || '';
 
         if (!nombre)
           throw new ForbiddenException(
@@ -505,20 +559,23 @@ export class ClienteService {
                   );
                 })();
 
-        const cliente = await this.crear({
-          nombre: nombre.toString(),
-          tipoDoc,
-          nroDoc: docStr,
-          direccion: direccion?.toString() || undefined,
-          email: email?.toString() || undefined,
-          telefono: telefono?.toString() || undefined,
-          empresaId,
-          ubigeo: '',
-          departamento: '',
-          provincia: '',
-          distrito: '',
-          persona,
-        });
+        const cliente = await this.crear(
+          {
+            nombre: nombre.toString(),
+            tipoDoc,
+            nroDoc: docStr,
+            direccion: direccion?.toString() || undefined,
+            email: email?.toString() || undefined,
+            telefono: telefono?.toString() || undefined,
+            empresaId,
+            ubigeo: ubigeo?.toString() || '',
+            departamento: departamento?.toString() || '',
+            provincia: provincia?.toString() || '',
+            distrito: distrito?.toString() || '',
+            persona,
+          },
+          { upsert: true },
+        );
         resultados.push({ cliente });
       } catch (e: any) {
         resultados.push({ error: e?.message || 'Error desconocido' });

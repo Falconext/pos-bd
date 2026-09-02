@@ -9,6 +9,7 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import * as express from 'express';
 import { PrismaService } from './prisma/prisma.service';
 import { initializeDatabase } from './common/utils/init-db';
+import { ensurePlanesVentas } from './common/utils/ensure-planes-ventas';
 import { httpSecurityHeaders } from './common/security/http-security.middleware';
 import { authRateLimit } from './common/security/rate-limit.middleware';
 
@@ -147,6 +148,17 @@ async function bootstrap() {
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     logger.warn(`Seed inicial omitido: ${message}`);
+  }
+
+  // Asegura los planes de IA de Ventas (idempotente) en cada arranque, ya que el
+  // deploy sincroniza el schema con `db push` (que no ejecuta migraciones de datos).
+  try {
+    const prismaService = app.get(PrismaService);
+    await ensurePlanesVentas(prismaService);
+    logger.log('Planes de IA de Ventas asegurados.');
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    logger.warn(`No se pudieron asegurar los planes de Ventas: ${message}`);
   }
 
   // Permite que Nest ejecute onModuleDestroy (incluido PrismaService.$disconnect)
