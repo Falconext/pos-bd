@@ -233,7 +233,16 @@ export class ClienteService {
 
     const where: any = {
       empresaId,
-      ...(persona ? { persona } : {}),
+      // Un CLIENTE_PROVEEDOR es a la vez cliente y proveedor, por eso debe salir
+      // en ambas listas: al filtrar por CLIENTE o PROVEEDOR se incluye también.
+      ...(persona
+        ? {
+            persona:
+              persona === PersonaType.CLIENTE_PROVEEDOR
+                ? PersonaType.CLIENTE_PROVEEDOR
+                : { in: [persona, PersonaType.CLIENTE_PROVEEDOR] },
+          }
+        : {}),
       ...(search
         ? {
             OR: [
