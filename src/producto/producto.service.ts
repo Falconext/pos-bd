@@ -3370,7 +3370,8 @@ export class ProductoService {
         .join(' | ');
 
       return {
-        CÓDIGO: p?.codigoBarras || producto.codigo,
+        CÓDIGO: producto.codigo,
+        'CÓDIGO DE BARRAS': p?.codigoBarras || '',
         PRODUCTO: producto.descripcion,
         'U.M': producto.unidadMedida?.nombre || '',
         AFECT: producto.tipoAfectacionIGV,
@@ -3391,6 +3392,7 @@ export class ProductoService {
       Math.round(datosExcel.reduce((sum, r) => sum + Number(r['VALOR INVENTARIO'] || 0), 0) * 100) / 100;
     datosExcel.push({
       CÓDIGO: '',
+      'CÓDIGO DE BARRAS': '',
       PRODUCTO: 'TOTAL',
       'U.M': '',
       AFECT: '',
@@ -3410,6 +3412,7 @@ export class ProductoService {
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Productos');
     worksheet['!cols'] = [
       { wch: 18 }, // CÓDIGO
+      { wch: 20 }, // CÓDIGO DE BARRAS
       { wch: 100 }, // PRODUCTO
       { wch: 20 }, // U.M
       { wch: 10 }, // AFECT
@@ -3432,6 +3435,7 @@ export class ProductoService {
     const filas = [
       {
         CÓDIGO: 'PR001',
+        'CÓDIGO DE BARRAS': '',
         PRODUCTO: 'Producto sin código de barras (SKU manual)',
         'U.M': 'Unidad (bienes)',
         AFECT: '10',
@@ -3444,7 +3448,8 @@ export class ProductoService {
         MARCA: '',
       },
       {
-        CÓDIGO: '7750243072366',
+        CÓDIGO: 'PR002',
+        'CÓDIGO DE BARRAS': '7750243072366',
         PRODUCTO: 'Producto con código de barras EAN-13',
         'U.M': 'Unidad (bienes)',
         AFECT: '10',
@@ -3462,6 +3467,7 @@ export class ProductoService {
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Productos');
     worksheet['!cols'] = [
       { wch: 18 }, // CÓDIGO
+      { wch: 20 }, // CÓDIGO DE BARRAS
       { wch: 50 }, // PRODUCTO
       { wch: 12 }, // U.M
       { wch: 8 }, // AFECT
@@ -3739,6 +3745,20 @@ export class ProductoService {
     for (const [index, row] of rows.entries()) {
       try {
         const codigo = row['CÓDIGO'] ?? row['Código'] ?? row['codigo'] ?? null;
+        // Columna nueva y separada para el código de barras (EAN/UPC). Si viene con
+        // valor, manda sobre la detección automática del CÓDIGO (retrocompatible:
+        // si está vacía, se usa la lógica antigua de detectar EAN en CÓDIGO).
+        const codigoBarrasColRaw =
+          row['CÓDIGO DE BARRAS'] ??
+          row['CODIGO DE BARRAS'] ??
+          row['Código de Barras'] ??
+          row['Codigo de Barras'] ??
+          row['codigoBarras'] ??
+          null;
+        const codigoBarrasExplicito =
+          codigoBarrasColRaw != null && String(codigoBarrasColRaw).trim() !== ''
+            ? String(codigoBarrasColRaw).trim()
+            : null;
         const descripcion =
           row['PRODUCTO'] ?? row['Producto'] ?? row['producto'] ?? null;
         const unidadNombre =
@@ -3893,7 +3913,13 @@ export class ProductoService {
           where: {
             empresaId,
             estado: { not: 'PLACEHOLDER' as any },
-            OR: [{ codigo: codigoRaw }, { codigoBarras: codigoRaw }],
+            OR: [
+              { codigo: codigoRaw },
+              { codigoBarras: codigoRaw },
+              ...(codigoBarrasExplicito
+                ? [{ codigoBarras: codigoBarrasExplicito }]
+                : []),
+            ],
           },
           select: {
             id: true,
@@ -3909,16 +3935,26 @@ export class ProductoService {
         if (existe) {
           // No regenerar el código de un producto existente.
           codigoFinal = existe.codigo;
-          // Solo asignar el barcode si el valor es un código de barras nuevo para
-          // este producto (no cuando el número numérico es su propio `codigo`).
-          codigoBarras =
-            esBarcode &&
-            existe.codigoBarras == null &&
-            existe.codigo !== codigoRaw
-              ? codigoRaw
-              : undefined;
+          if (codigoBarrasExplicito) {
+            // La columna nueva manda: se asigna/actualiza el barcode indicado.
+            codigoBarras = codigoBarrasExplicito;
+          } else {
+            // Legacy: solo asignar el barcode si el número del CÓDIGO es un EAN
+            // nuevo para este producto (no cuando es su propio `codigo`).
+            codigoBarras =
+              esBarcode &&
+              existe.codigoBarras == null &&
+              existe.codigo !== codigoRaw
+                ? codigoRaw
+                : undefined;
+          }
+        } else if (codigoBarrasExplicito) {
+          // Producto nuevo con columnas separadas: CÓDIGO = SKU, y el barcode viene
+          // en su propia columna. El CÓDIGO se respeta tal cual (no se trata como EAN).
+          codigoFinal = codigoRaw;
+          codigoBarras = codigoBarrasExplicito;
         } else if (esBarcode) {
-          // Producto nuevo identificado por código de barras.
+          // Legacy: producto nuevo identificado por un EAN puesto en la columna CÓDIGO.
           codigoBarras = codigoRaw;
           codigoFinal = await this.obtenerSiguienteCodigo(empresaId, 'PR');
         } else {
