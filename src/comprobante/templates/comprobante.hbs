@@ -70,6 +70,7 @@
     .col-cant { width: 10%; text-align: center; }
     .col-um   { width: 10%; text-align: center; }
     .col-desc { text-align: left; }
+    .desc-text { white-space: pre-line; line-height: 1.7; }
     .col-moneda { width: 9%; text-align: center; }
     .col-pu   { width: 11%; text-align: right; }
     .col-tot  { width: 11%; text-align: right; }
@@ -214,7 +215,7 @@
         <td class="col-cant">{{this.cantidad}}</td>
         <td class="col-um">{{this.unidadMedida}}</td>
         <td class="col-desc">
-          {{this.descripcion}}
+          <span class="desc-text">{{this.descripcion}}</span>
           {{#if this.lotes}}
           {{#each this.lotes}}
           <div class="lote-info">Lote: {{this.lote}} Venc: {{this.fechaVencimiento}}</div>

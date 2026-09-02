@@ -66,6 +66,7 @@ export class LeadsMessageProcessor extends WorkerHost {
         iaVentasActiva: true,
         iaVentasContexto: true,
         rubro: { select: { nombre: true } },
+        plan: { select: { maxLeadsMes: true } },
       },
     });
     if (!empresa) {
@@ -91,7 +92,7 @@ export class LeadsMessageProcessor extends WorkerHost {
         cantidadMensajes: 0,
       },
       update: d.nombre ? { nombreProspecto: d.nombre } : {},
-      select: { id: true },
+      select: { id: true, creadoEn: true },
     });
 
     // 3) Si es nota de voz, transcribir con Gemini (para responder y para el CRM).
@@ -161,6 +162,12 @@ export class LeadsMessageProcessor extends WorkerHost {
       },
     });
     if (yaRespondido > 0) return;
+
+    // Tope mensual de leads del plan (soft-block): el lead se captura igual, pero
+    // si esta conversación supera el tope, la IA no responde y se avisa al admin.
+    if (await this.superaTopeLeads(empresa.id, empresa.plan?.maxLeadsMes ?? null, conv.creadoEn)) {
+      return;
+    }
 
     // Historial completo de la conversación (incluye el mensaje recién guardado).
     const mensajes = await this.prisma.leadMensaje.findMany({
@@ -237,6 +244,43 @@ export class LeadsMessageProcessor extends WorkerHost {
    * existía Y ya fue respondido (nada que hacer). Si existía pero aún sin
    * respuesta (reintento tras fallo de IA), devuelve el id para reintentar.
    */
+  /**
+   * Soft-block por tope mensual de leads del plan. Cuenta la posición (rank) de
+   * ESTA conversación entre las creadas en el mes; si supera el tope, la IA no
+   * responde (el lead ya quedó capturado). Avisa al admin una sola vez (cuando
+   * es el primer lead que pasa el tope). `tope` null/≤0 = ilimitado.
+   */
+  private async superaTopeLeads(
+    empresaId: number,
+    tope: number | null,
+    convCreadoEn: Date,
+  ): Promise<boolean> {
+    if (!tope || tope <= 0) return false;
+    const ahora = new Date();
+    const inicioMes = new Date(ahora.getFullYear(), ahora.getMonth(), 1);
+    const rank = await this.prisma.leadConversacion.count({
+      where: { empresaId, creadoEn: { gte: inicioMes, lte: convCreadoEn } },
+    });
+    if (rank <= tope) return false;
+
+    this.logger.log(
+      `Lead sobre el tope del plan (${rank}/${tope}) en empresa ${empresaId}; IA no responde.`,
+    );
+    // Primer lead que supera el tope este mes → avisar al admin una sola vez.
+    if (rank === tope + 1) {
+      await this.notificaciones
+        .notificarAdminsEmpresa({
+          empresaId,
+          tipo: 'WARNING',
+          titulo: '📈 Alcanzaste el tope de leads de tu plan',
+          mensaje: `Tu plan atiende hasta ${tope} leads al mes con IA y llegaste al límite. Los nuevos leads se siguen guardando, pero la IA no responde automáticamente hasta que subas de plan.`,
+          metaData: { origen: 'ia-ventas-tope', tope, actual: rank },
+        })
+        .catch(() => {});
+    }
+    return true;
+  }
+
   private async persistirMensajeUsuario(
     conversacionId: number,
     whatsappMsgId: string,

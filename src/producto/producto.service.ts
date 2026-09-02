@@ -19,6 +19,10 @@ import {
   obtenerPlantillaComputo,
 } from './ficha-tecnica-computo';
 import {
+  esRubroMotos,
+  obtenerPlantillaMotos,
+} from './ficha-tecnica-vehiculo';
+import {
   getMaxImagenesProducto,
   getMaxImagenesExtra,
 } from '../common/utils/rubro-features';
@@ -4144,13 +4148,15 @@ export class ProductoService {
     const rubroDefault = candidates.find(
       (item) => item.rubroId === empresa.rubroId,
     );
-    const computedDefault = this.esRubroComputo(empresa.rubro?.nombre)
-      ? this.getFichaTecnicaComputoDefault({
-          categoriaNombre: categoria?.nombre,
-          descripcion: params.descripcion,
-          tipoProducto: params.tipoProducto,
-        })
-      : null;
+    const computedDefault = esRubroMotos(empresa.rubro?.nombre)
+      ? obtenerPlantillaMotos()
+      : this.esRubroComputo(empresa.rubro?.nombre)
+        ? this.getFichaTecnicaComputoDefault({
+            categoriaNombre: categoria?.nombre,
+            descripcion: params.descripcion,
+            tipoProducto: params.tipoProducto,
+          })
+        : null;
     const shouldPreferComputed =
       computedDefault && (computedDefault as any).familia !== 'general';
     const selected =

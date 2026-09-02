@@ -27,6 +27,9 @@ model Plan {
   tieneDeliveryGPS        Boolean         @default(false)
   tieneGaleria            Boolean         @default(false)
   maxComprobantes         Int?            @default(100)
+  // Tope mensual de leads/conversaciones que la IA de Ventas atiende (módulo leads).
+  // null = ilimitado o no aplica (planes sin IA de Ventas).
+  maxLeadsMes             Int?
   tieneTicketera          Boolean         @default(false)
   tieneGestionLotes       Boolean         @default(false)
   tieneGestionProvisiones Boolean         @default(false)

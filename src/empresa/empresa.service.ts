@@ -99,13 +99,24 @@ function normalizeBrand(value?: string | null): 'falconext' | 'krezka' {
 
 function normalizeProducto(
   value?: string | null,
-): 'facturacion' | 'hotel' | 'logistica' {
+): 'facturacion' | 'hotel' | 'logistica' | 'ventas' | 'full' {
   const v = String(value ?? '')
     .trim()
     .toLowerCase();
   if (v === 'hotel') return 'hotel';
   if (v === 'logistica') return 'logistica';
+  if (v === 'ventas') return 'ventas';
+  if (v === 'full') return 'full';
   return 'facturacion';
+}
+
+/** Deriva el producto contratado (provisioning) a partir del producto de destino. */
+function productoContratadoDesde(
+  producto: string,
+): 'SOLO_VENTAS' | 'TODO_EN_UNO' | 'AMBOS' {
+  if (producto === 'ventas') return 'SOLO_VENTAS';
+  if (producto === 'full') return 'AMBOS';
+  return 'TODO_EN_UNO';
 }
 
 function mapHotelPlanName(planNombre?: string | null): string {
@@ -538,6 +549,8 @@ export class EmpresaService {
     const productoEmpresa = adminSistemaProducto
       ? normalizeProducto(adminSistemaProducto)
       : normalizeProducto(data.producto || 'facturacion');
+    // El producto de destino define si además se provisiona SalesFilter.
+    const productoContratado = productoContratadoDesde(productoEmpresa);
 
     const exist = await this.prisma.empresa.findUnique({
       where: { ruc: data.ruc },
@@ -669,7 +682,7 @@ export class EmpresaService {
         whatsappBusinessId: data.whatsappBusinessId || null,
         whatsappActivo: data.whatsappActivo ?? true,
         usaDemo: data.usaDemo ?? false,
-        productoContratado: data.productoContratado || 'TODO_EN_UNO',
+        productoContratado,
         usuarios: {
           create: {
             nombre: data.usuario.nombre,
@@ -834,7 +847,7 @@ export class EmpresaService {
 
     // Provisioning en SalesFilter si el producto contratado lo requiere
     // (SOLO_VENTAS / AMBOS). Best-effort: no rompe la creación si SF falla.
-    if (this.salesfilter.debeProvisionar(data.productoContratado)) {
+    if (this.salesfilter.debeProvisionar(productoContratado)) {
       const res = await this.salesfilter.provisionarEmpresa(empresa.id);
       if (adminUserId) {
         await this.registrarLog(
