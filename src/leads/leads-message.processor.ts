@@ -95,6 +95,20 @@ export class LeadsMessageProcessor extends WorkerHost {
       select: { id: true, creadoEn: true },
     });
 
+    // 2b) Asegura el prospecto desde el PRIMER contacto (estado FRIO, puntaje 0),
+    // así el lead aparece en el panel aunque aún no haya calificación BANT. La
+    // calificación posterior (aplicarCalificacion) solo actualiza su score.
+    await this.prisma.leadProspecto.upsert({
+      where: { conversacionId: conv.id },
+      create: {
+        empresaId: empresa.id,
+        telefonoProspecto: d.from,
+        nombreProspecto: d.nombre ?? null,
+        conversacionId: conv.id,
+      },
+      update: d.nombre ? { nombreProspecto: d.nombre } : {},
+    });
+
     // 3) Si es nota de voz, transcribir con Gemini (para responder y para el CRM).
     let contenido = d.text;
     let audioTranscrito = false;
