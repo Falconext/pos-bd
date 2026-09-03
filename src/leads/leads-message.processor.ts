@@ -353,8 +353,8 @@ export class LeadsMessageProcessor extends WorkerHost {
         .notificarAdminsEmpresa({
           empresaId,
           tipo: 'WARNING',
-          titulo: '📈 Alcanzaste el tope de leads de tu plan',
-          mensaje: `Tu plan atiende hasta ${tope} leads al mes con IA y llegaste al límite. Los nuevos leads se siguen guardando, pero la IA no responde automáticamente hasta que subas de plan.`,
+          titulo: '📈 Alcanzaste el tope de conversaciones de tu plan',
+          mensaje: `Tu plan incluye hasta ${tope} conversaciones al mes con IA (todo incluido) y llegaste al límite. Los nuevos prospectos se siguen guardando, pero la IA no responde automáticamente hasta que subas de plan.`,
           metaData: { origen: 'ia-ventas-tope', tope, actual: rank },
         })
         .catch(() => {});

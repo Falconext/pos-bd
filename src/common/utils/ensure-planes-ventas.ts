@@ -21,10 +21,10 @@ interface DefPlan {
 }
 
 const PLANES: DefPlan[] = [
-  { nombre: 'Ventas Start', producto: 'ventas', costo: 149, maxLeadsMes: 500, modulos: 'solo-leads', descripcion: 'IA de Ventas por WhatsApp — hasta 500 leads/mes' },
-  { nombre: 'Ventas Pro', producto: 'ventas', costo: 249, maxLeadsMes: 1500, modulos: 'solo-leads', descripcion: 'IA de Ventas por WhatsApp — hasta 1,500 leads/mes' },
-  { nombre: 'Ventas Scale', producto: 'ventas', costo: 399, maxLeadsMes: 5000, modulos: 'solo-leads', descripcion: 'IA de Ventas por WhatsApp — hasta 5,000 leads/mes' },
-  { nombre: 'Full', producto: 'full', costo: 299, maxLeadsMes: 1500, modulos: 'todos', descripcion: 'Todo (facturación completa) + IA de Ventas (1,500 leads/mes)' },
+  { nombre: 'Ventas Start', producto: 'ventas', costo: 149, maxLeadsMes: 500, modulos: 'solo-leads', descripcion: 'IA de Ventas por WhatsApp — 500 conversaciones/mes · todo incluido' },
+  { nombre: 'Ventas Pro', producto: 'ventas', costo: 249, maxLeadsMes: 1500, modulos: 'solo-leads', descripcion: 'IA de Ventas por WhatsApp — 1,500 conversaciones/mes · todo incluido' },
+  { nombre: 'Ventas Scale', producto: 'ventas', costo: 399, maxLeadsMes: 5000, modulos: 'solo-leads', descripcion: 'IA de Ventas por WhatsApp — 5,000 conversaciones/mes · todo incluido' },
+  { nombre: 'Full', producto: 'full', costo: 299, maxLeadsMes: 1500, modulos: 'todos', descripcion: 'Todo el ERP (facturación completa) + IA de Ventas — 1,500 conversaciones/mes · todo incluido' },
 ];
 
 export async function ensurePlanesVentas(prisma: PrismaService): Promise<void> {
