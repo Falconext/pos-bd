@@ -49,6 +49,69 @@ export class SistemaFinanzasService {
     return { NOT: { OR: or } };
   }
 
+  // RUC de la empresa-negocio propia de Krezka (donde registra sus gastos reales).
+  private readonly RUC_KREZKA_NEGOCIO = '20616318773';
+
+  // ID de la empresa-negocio propia (si existe y su marca calza con el alcance del admin).
+  private async getEmpresaNegocioPropioId(
+    sistemaNegocio?: string | null,
+  ): Promise<number | null> {
+    const emp = await this.prisma.empresa.findFirst({
+      where: { ruc: this.RUC_KREZKA_NEGOCIO },
+      select: { id: true, brand: true },
+    });
+    if (!emp) return null;
+    if (sistemaNegocio && emp.brand !== sistemaNegocio.toLowerCase()) return null;
+    return emp.id;
+  }
+
+  // Suma los gastos operativos de una empresa en un rango (misma lógica que finanzas:
+  // los recurrentes-diarios cuentan su monto por cada día activo, acotado a hoy).
+  private async sumGastosOperativos(
+    empresaId: number,
+    gte: Date,
+    lte: Date,
+  ): Promise<number> {
+    const gastos = await this.prisma.gastoOperativo.findMany({
+      where: {
+        empresaId,
+        OR: [
+          { fecha: { gte, lte } },
+          {
+            recurrenteDiario: true,
+            fechaInicio: { lte },
+            OR: [{ fechaFin: null }, { fechaFin: { gte } }],
+          },
+        ],
+      },
+      select: {
+        monto: true,
+        recurrenteDiario: true,
+        fechaInicio: true,
+        fechaFin: true,
+      },
+    });
+    const hoy = new Date();
+    let total = 0;
+    for (const g of gastos) {
+      const monto = Number(g.monto || 0);
+      if (!g.recurrenteDiario) {
+        total += monto;
+        continue;
+      }
+      const inicio =
+        g.fechaInicio && g.fechaInicio > gte ? g.fechaInicio : gte;
+      let fin = g.fechaFin && g.fechaFin < lte ? g.fechaFin : lte;
+      if (hoy < fin) fin = hoy;
+      let dias = 0;
+      for (const d = new Date(inicio); d <= fin; d.setDate(d.getDate() + 1)) {
+        dias++;
+      }
+      total += monto * Math.max(0, dias);
+    }
+    return total;
+  }
+
   // ── DASHBOARD KPIs ─────────────────────────────────────────────────────────
 
   async getDashboard(
@@ -139,8 +202,21 @@ export class SistemaFinanzasService {
 
     const ingMes = Number(ingresosMes._sum.monto ?? 0);
     const ingAnio = Number(ingresosAnio._sum.monto ?? 0);
-    const gastMes = Number(gastosMes._sum.monto ?? 0);
-    const gastAnio = Number(gastosAnio._sum.monto ?? 0);
+
+    // Gastos reales del negocio propio de Krezka (los registra en su cuenta-empresa,
+    // no en GastoSistema): se suman a los gastos de la plataforma.
+    const empNegocioId = await this.getEmpresaNegocioPropioId(sistemaNegocio);
+    let gastosNegocioMes = 0;
+    let gastosNegocioAnio = 0;
+    if (empNegocioId) {
+      [gastosNegocioMes, gastosNegocioAnio] = await Promise.all([
+        this.sumGastosOperativos(empNegocioId, inicioMes, ahora),
+        this.sumGastosOperativos(empNegocioId, inicioAnio, ahora),
+      ]);
+    }
+
+    const gastMes = Number(gastosMes._sum.monto ?? 0) + gastosNegocioMes;
+    const gastAnio = Number(gastosAnio._sum.monto ?? 0) + gastosNegocioAnio;
 
     // Clientes: nuevos este mes vs mes anterior
     const inicioMesAnterior = new Date(
@@ -310,6 +386,9 @@ export class SistemaFinanzasService {
         ? { empresaId: { in: empresasDelSistema.map((e) => e.id) } }
         : {};
 
+    // Empresa-negocio propia de Krezka: sus gastos operativos también entran en el histórico.
+    const empNegocioId = await this.getEmpresaNegocioPropioId(sistemaNegocio);
+
     for (let i = meses - 1; i >= 0; i--) {
       const ini = new Date(ahora.getFullYear(), ahora.getMonth() - i, 1);
       const fin = new Date(
@@ -354,7 +433,10 @@ export class SistemaFinanzasService {
         ]);
 
       const ing = Number(ingresos._sum.monto ?? 0);
-      const gas = Number(gastos._sum.monto ?? 0);
+      const gasNegocio = empNegocioId
+        ? await this.sumGastosOperativos(empNegocioId, ini, fin)
+        : 0;
+      const gas = Number(gastos._sum.monto ?? 0) + gasNegocio;
       resultado.push({
         mes: ini.toLocaleDateString('es-PE', {
           month: 'short',
