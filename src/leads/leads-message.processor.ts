@@ -65,6 +65,7 @@ export class LeadsMessageProcessor extends WorkerHost {
         descripcionTienda: true,
         iaVentasActiva: true,
         iaVentasContexto: true,
+        iaVentasBrochureUrl: true,
         rubro: { select: { nombre: true } },
         plan: { select: { maxLeadsMes: true } },
       },
@@ -259,6 +260,32 @@ export class LeadsMessageProcessor extends WorkerHost {
         await this.whatsapp
           .enviarImagenUrl(d.from, p.imagenUrl as string, caption, empresa.id)
           .catch(() => {});
+      }
+    }
+
+    // Brochure/catálogo: si el prospecto pide más info y la empresa tiene un
+    // enlace configurado, se envía UNA vez por conversación (PDF o imagen).
+    if (empresa.iaVentasBrochureUrl && this.quiereBrochure(contenido)) {
+      const est = await this.prisma.leadConversacion.findUnique({
+        where: { id: conv.id },
+        select: { brochureEnviado: true },
+      });
+      if (!est?.brochureEnviado) {
+        const url = empresa.iaVentasBrochureUrl;
+        const esImagen = /\.(jpe?g|png|webp|gif)(\?|$)/i.test(url);
+        const res = esImagen
+          ? await this.whatsapp
+              .enviarImagenUrl(d.from, url, undefined, empresa.id)
+              .catch(() => ({ success: false }))
+          : await this.whatsapp
+              .enviarDocumentoUrl(d.from, url, 'Brochure.pdf', undefined, empresa.id)
+              .catch(() => ({ success: false }));
+        if (res.success) {
+          await this.prisma.leadConversacion.update({
+            where: { id: conv.id },
+            data: { brochureEnviado: true },
+          });
+        }
       }
     }
     // Solo +1: el mensaje del usuario ya se contó en persistirMensajeUsuario.
@@ -467,6 +494,13 @@ export class LeadsMessageProcessor extends WorkerHost {
       'NO inventes precios ni stock. Si el cliente pide algo que no está en esta lista, dilo:\n' +
       lineas.join('\n');
     return { contexto, productos };
+  }
+
+  // ¿El mensaje pide el brochure/catálogo o más información?
+  private quiereBrochure(texto: string): boolean {
+    return /\b(brochure|folleto|cat[aá]logo|pdf|presentaci[oó]n|m[aá]s info|mas info|m[aá]s informaci[oó]n|mas informaci[oó]n|m[aá]s detalles|mas detalles|inform[aá]ci[oó]n completa|mandame info|m[aá]ndame info|env[ií]ame|cu[eé]ntame m[aá]s)\b/i.test(
+      texto || '',
+    );
   }
 
   // ¿El mensaje del cliente pide VER los productos (fotos/imágenes/catálogo)?

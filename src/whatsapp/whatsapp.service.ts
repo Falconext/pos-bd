@@ -660,14 +660,29 @@ export class WhatsAppService {
     }
   }
 
-  /** Envía un documento (PDF por URL) por WhatsApp usando las credenciales de plataforma. */
+  /**
+   * Envía un documento (PDF por URL) por WhatsApp. Si se pasa `empresaId`, usa las
+   * credenciales de esa empresa (BYON); si no, las de plataforma.
+   */
   async enviarDocumentoUrl(
     numero: string,
     pdfUrl: string,
     filename: string,
     caption?: string,
+    empresaId?: number,
   ): Promise<{ success: boolean; error?: string }> {
-    const { token, phoneId } = this.getCredentials();
+    let token: string;
+    let phoneId: string;
+    if (empresaId) {
+      try {
+        ({ token, phoneId } = await this.getCredentialsForEmpresa(empresaId));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'WhatsApp no configurado';
+        return { success: false, error: msg };
+      }
+    } else {
+      ({ token, phoneId } = this.getCredentials());
+    }
     if (!token || !phoneId)
       return { success: false, error: 'WhatsApp no configurado' };
     const to = this.formatearNumero(numero);

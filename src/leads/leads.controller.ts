@@ -36,6 +36,7 @@ export class LeadsController {
       iaVentasActiva?: boolean;
       iaVentasContexto?: string;
       iaVentasSeguimiento?: boolean;
+      iaVentasBrochureUrl?: string;
     },
   ) {
     return this.service.actualizarConfig(user.empresaId, body);

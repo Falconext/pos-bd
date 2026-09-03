@@ -227,12 +227,14 @@ export class LeadsService {
         iaVentasActiva: true,
         iaVentasContexto: true,
         iaVentasSeguimiento: true,
+        iaVentasBrochureUrl: true,
       },
     });
     return {
       iaVentasActiva: empresa?.iaVentasActiva ?? false,
       iaVentasContexto: empresa?.iaVentasContexto ?? '',
       iaVentasSeguimiento: empresa?.iaVentasSeguimiento ?? true,
+      iaVentasBrochureUrl: empresa?.iaVentasBrochureUrl ?? '',
     };
   }
 
@@ -243,6 +245,7 @@ export class LeadsService {
       iaVentasActiva?: boolean;
       iaVentasContexto?: string;
       iaVentasSeguimiento?: boolean;
+      iaVentasBrochureUrl?: string;
     },
   ) {
     const empresa = await this.prisma.empresa.update({
@@ -257,17 +260,22 @@ export class LeadsService {
         ...(data.iaVentasSeguimiento !== undefined
           ? { iaVentasSeguimiento: data.iaVentasSeguimiento }
           : {}),
+        ...(data.iaVentasBrochureUrl !== undefined
+          ? { iaVentasBrochureUrl: data.iaVentasBrochureUrl.trim() || null }
+          : {}),
       },
       select: {
         iaVentasActiva: true,
         iaVentasContexto: true,
         iaVentasSeguimiento: true,
+        iaVentasBrochureUrl: true,
       },
     });
     return {
       iaVentasActiva: empresa.iaVentasActiva,
       iaVentasContexto: empresa.iaVentasContexto ?? '',
       iaVentasSeguimiento: empresa.iaVentasSeguimiento,
+      iaVentasBrochureUrl: empresa.iaVentasBrochureUrl ?? '',
     };
   }
 
