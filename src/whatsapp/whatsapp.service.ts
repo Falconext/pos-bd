@@ -152,25 +152,44 @@ export class WhatsAppService {
 
   /** Intercambia el `code` del Embedded Signup por un token de larga duración. */
   private async exchangeCode(code: string): Promise<string> {
-    const res = await axios.get(`${this.apiUrl}/oauth/access_token`, {
-      params: {
-        client_id: this.fbAppId,
-        client_secret: this.metaAppSecret,
-        code,
-      },
-    });
-    const token = res.data?.access_token;
-    if (!token) throw new Error('Meta no devolvió un access_token.');
-    return token;
+    try {
+      const res = await axios.get(`${this.apiUrl}/oauth/access_token`, {
+        params: {
+          client_id: this.fbAppId,
+          client_secret: this.metaAppSecret,
+          code,
+        },
+      });
+      const token = res.data?.access_token;
+      if (!token) throw new Error('Meta no devolvió un access_token.');
+      return token;
+    } catch (e: any) {
+      const gmsg =
+        e?.response?.data?.error?.message || e?.message || 'error desconocido';
+      this.logger.warn(`Embedded signup: intercambio de código falló: ${gmsg}`);
+      throw new BadRequestException(
+        `No se pudo conectar con Meta (intercambio de código): ${gmsg}`,
+      );
+    }
   }
 
   /** Descubre wabaId + phoneNumberId a partir del token (cuando no llegan del signup). */
   private async discoverPhoneFromToken(
     token: string,
   ): Promise<{ wabaId?: string; phoneNumberId?: string; displayNumber?: string }> {
-    const debug = await axios.get(`${this.apiUrl}/debug_token`, {
-      params: { input_token: token, access_token: `${this.fbAppId}|${this.metaAppSecret}` },
-    });
+    let debug: any;
+    try {
+      debug = await axios.get(`${this.apiUrl}/debug_token`, {
+        params: { input_token: token, access_token: `${this.fbAppId}|${this.metaAppSecret}` },
+      });
+    } catch (e: any) {
+      const gmsg =
+        e?.response?.data?.error?.message || e?.message || 'error desconocido';
+      this.logger.warn(`Embedded signup: debug_token falló: ${gmsg}`);
+      throw new BadRequestException(
+        `No se pudo leer el número de WhatsApp desde Meta: ${gmsg}`,
+      );
+    }
     const scopes: any[] = debug.data?.data?.granular_scopes || [];
     const waScope = scopes.find(
       (s) => s?.scope === 'whatsapp_business_management',
