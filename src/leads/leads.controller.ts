@@ -31,7 +31,12 @@ export class LeadsController {
   @Patch('config')
   actualizarConfig(
     @User() user: any,
-    @Body() body: { iaVentasActiva?: boolean; iaVentasContexto?: string },
+    @Body()
+    body: {
+      iaVentasActiva?: boolean;
+      iaVentasContexto?: string;
+      iaVentasSeguimiento?: boolean;
+    },
   ) {
     return this.service.actualizarConfig(user.empresaId, body);
   }

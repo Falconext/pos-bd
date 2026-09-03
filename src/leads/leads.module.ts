@@ -7,6 +7,7 @@ import { LeadsMessageProcessor } from './leads-message.processor';
 import { IaVentasService } from './leads-ia.service';
 import { RagVentasService } from './leads-rag.service';
 import { LeadsAlertaService } from './leads-alerta.service';
+import { LeadsSeguimientoService } from './leads-seguimiento.service';
 import { GeminiModule } from '../gemini/gemini.module';
 import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module';
@@ -38,6 +39,7 @@ import { LEADS_MESSAGES_QUEUE, redisConnection } from './leads.constants';
     IaVentasService,
     RagVentasService,
     LeadsAlertaService,
+    LeadsSeguimientoService,
   ],
   exports: [LeadsService],
 })

@@ -223,18 +223,27 @@ export class LeadsService {
   async obtenerConfig(empresaId: number) {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
-      select: { iaVentasActiva: true, iaVentasContexto: true },
+      select: {
+        iaVentasActiva: true,
+        iaVentasContexto: true,
+        iaVentasSeguimiento: true,
+      },
     });
     return {
       iaVentasActiva: empresa?.iaVentasActiva ?? false,
       iaVentasContexto: empresa?.iaVentasContexto ?? '',
+      iaVentasSeguimiento: empresa?.iaVentasSeguimiento ?? true,
     };
   }
 
   /** Actualiza el toggle y/o el contexto de negocio de la IA de ventas. */
   async actualizarConfig(
     empresaId: number,
-    data: { iaVentasActiva?: boolean; iaVentasContexto?: string },
+    data: {
+      iaVentasActiva?: boolean;
+      iaVentasContexto?: string;
+      iaVentasSeguimiento?: boolean;
+    },
   ) {
     const empresa = await this.prisma.empresa.update({
       where: { id: empresaId },
@@ -245,12 +254,20 @@ export class LeadsService {
         ...(data.iaVentasContexto !== undefined
           ? { iaVentasContexto: data.iaVentasContexto }
           : {}),
+        ...(data.iaVentasSeguimiento !== undefined
+          ? { iaVentasSeguimiento: data.iaVentasSeguimiento }
+          : {}),
       },
-      select: { iaVentasActiva: true, iaVentasContexto: true },
+      select: {
+        iaVentasActiva: true,
+        iaVentasContexto: true,
+        iaVentasSeguimiento: true,
+      },
     });
     return {
       iaVentasActiva: empresa.iaVentasActiva,
       iaVentasContexto: empresa.iaVentasContexto ?? '',
+      iaVentasSeguimiento: empresa.iaVentasSeguimiento,
     };
   }
 

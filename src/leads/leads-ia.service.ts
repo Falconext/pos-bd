@@ -127,6 +127,32 @@ export class IaVentasService {
     return { reply: reply.trim(), calificacion, debeAnalizar };
   }
 
+  /**
+   * Genera UN mensaje corto de seguimiento para reenganchar a un prospecto que
+   * dejó de responder. Cálido, no insistente, avanzando hacia el cierre.
+   */
+  async generarSeguimiento(
+    conversacion: MensajeConversacion[],
+    businessContext: string,
+  ): Promise<string> {
+    const systemPrompt =
+      BANT_SYSTEM_PROMPT.replace(
+        '{businessContext}',
+        businessContext ? `CONTEXTO DEL NEGOCIO:\n${businessContext}` : '',
+      ) +
+      `\n\nEl prospecto dejó de responder. Escribe UN solo mensaje de seguimiento, breve (máximo 2 frases), cálido y natural, sin sonar insistente ni robótico. Retoma su interés y ofrece ayuda o el siguiente paso (una duda, una promo, agendar). No saludes de nuevo como si fuera la primera vez. No repitas textualmente lo último que ya dijiste. Devuelve SOLO el mensaje, sin comillas.`;
+
+    const reply = await this.gemini.chatConHistorial(
+      systemPrompt,
+      conversacion.map((m) => ({
+        role: m.role === 'user' ? ('user' as const) : ('model' as const),
+        content: m.content,
+      })),
+      160,
+    );
+    return reply.trim();
+  }
+
   /** Analiza la conversación y devuelve la calificación BANT (con fallback heurístico). */
   async analizarConversacion(
     conversacion: MensajeConversacion[],

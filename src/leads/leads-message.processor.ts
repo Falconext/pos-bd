@@ -91,7 +91,8 @@ export class LeadsMessageProcessor extends WorkerHost {
         numeroWhatsappId: d.phoneNumberId,
         cantidadMensajes: 0,
       },
-      update: d.nombre ? { nombreProspecto: d.nombre } : {},
+      // El cliente escribió → reinicia el contador de seguimientos (silencio nuevo).
+      update: { seguimientos: 0, ...(d.nombre ? { nombreProspecto: d.nombre } : {}) },
       select: { id: true, creadoEn: true },
     });
 
@@ -408,6 +409,8 @@ export class LeadsMessageProcessor extends WorkerHost {
             { descripcion: { contains: tk, mode: 'insensitive' as any } },
             { codigo: { contains: tk, mode: 'insensitive' as any } },
             { codigoBarras: { contains: tk, mode: 'insensitive' as any } },
+            { categoria: { nombre: { contains: tk, mode: 'insensitive' as any } } },
+            { marca: { nombre: { contains: tk, mode: 'insensitive' as any } } },
           ],
         })),
       },
