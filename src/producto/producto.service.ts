@@ -2131,6 +2131,7 @@ export class ProductoService {
     data: {
       id: number;
       empresaId: number;
+      codigo?: string;
       descripcion?: string;
       categoriaId?: number | null;
       marcaId?: number | null;
@@ -2208,6 +2209,35 @@ export class ProductoService {
       data.stockMaximo = 0;
       data.porcentajeVenta = 100;
       data.porcentajeProvision = 0;
+    }
+
+    // Validar unicidad del Código de producto (SKU) si cambió: no puede repetirse
+    // dentro de la empresa. Normaliza vacío → conserva el actual (no lo borra).
+    if (data.codigo !== undefined) {
+      const nuevoCodigo = String(data.codigo).trim();
+      if (!nuevoCodigo) {
+        // No permitir dejar el código vacío: se mantiene el existente.
+        delete data.codigo;
+      } else if (nuevoCodigo !== producto.codigo) {
+        const existeCodigo = await this.prisma.producto.findFirst({
+          where: {
+            empresaId: data.empresaId,
+            codigo: nuevoCodigo,
+            id: { not: data.id },
+            estado: { not: 'PLACEHOLDER' as any },
+          },
+          select: { descripcion: true },
+        });
+        if (existeCodigo) {
+          throw new ForbiddenException(
+            `El código "${nuevoCodigo}" ya está asignado a otro producto: ${existeCodigo.descripcion}`,
+          );
+        }
+        data.codigo = nuevoCodigo;
+      } else {
+        // Igual al actual: nada que cambiar.
+        delete data.codigo;
+      }
     }
 
     // Validar unicidad de Código de Barras (si cambió) — contra el código PRINCIPAL
@@ -2492,6 +2522,7 @@ export class ProductoService {
     const actualizado = await this.prisma.producto.update({
       where: { id: data.id },
       data: {
+        codigo: data.codigo !== undefined ? data.codigo : undefined,
         descripcion: data.descripcion,
         categoriaId:
           data.categoriaId === null

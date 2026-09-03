@@ -21,6 +21,10 @@ export class UpdateProductoDto {
 
   @IsOptional()
   @IsString()
+  codigo?: string;
+
+  @IsOptional()
+  @IsString()
   descripcion?: string;
 
   @IsOptional()
