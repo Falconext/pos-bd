@@ -273,13 +273,28 @@ export class LeadsMessageProcessor extends WorkerHost {
       if (!est?.brochureEnviado) {
         const url = empresa.iaVentasBrochureUrl;
         const esImagen = /\.(jpe?g|png|webp|gif)(\?|$)/i.test(url);
-        const res = esImagen
-          ? await this.whatsapp
-              .enviarImagenUrl(d.from, url, undefined, empresa.id)
-              .catch(() => ({ success: false }))
-          : await this.whatsapp
-              .enviarDocumentoUrl(d.from, url, 'Brochure.pdf', undefined, empresa.id)
-              .catch(() => ({ success: false }));
+        const esPdf = /\.pdf(\?|$)/i.test(url);
+        let res: { success: boolean };
+        if (esImagen) {
+          // Imagen (foto/afiche del brochure).
+          res = await this.whatsapp
+            .enviarImagenUrl(d.from, url, undefined, empresa.id)
+            .catch(() => ({ success: false }));
+        } else if (esPdf) {
+          // Archivo PDF → documento.
+          res = await this.whatsapp
+            .enviarDocumentoUrl(d.from, url, 'Brochure.pdf', undefined, empresa.id)
+            .catch(() => ({ success: false }));
+        } else {
+          // Página web (no es archivo) → se comparte el enlace en un mensaje.
+          res = await this.whatsapp
+            .enviarTexto(
+              d.from,
+              `📄 Aquí tienes nuestra información completa:\n${url}`,
+              empresa.id,
+            )
+            .catch(() => ({ success: false }));
+        }
         if (res.success) {
           await this.prisma.leadConversacion.update({
             where: { id: conv.id },
