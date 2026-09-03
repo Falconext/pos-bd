@@ -2,6 +2,8 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import axios from 'axios';
+import sharp from 'sharp';
+import FormData from 'form-data';
 
 interface EnviarComprobanteParams {
   comprobanteId: number;
@@ -514,6 +516,87 @@ export class WhatsAppService {
     } catch (error) {
       const msg = error.response?.data?.error?.message || error.message;
       this.logger.warn(`WhatsApp texto fallido a ${to}: ${msg}`);
+      return { success: false, error: msg };
+    }
+  }
+
+  /**
+   * Envía una IMAGEN por URL (con caption opcional). Útil para mandar la foto del
+   * producto en la conversación de la IA de Ventas. Dentro de la ventana de 24h
+   * es un mensaje de servicio (libre, sin costo de plantilla).
+   */
+  async enviarImagenUrl(
+    numero: string,
+    imagenUrl: string,
+    caption: string | undefined,
+    empresaId?: number,
+  ): Promise<{ success: boolean; error?: string }> {
+    let token: string;
+    let phoneId: string;
+    if (empresaId) {
+      try {
+        ({ token, phoneId } = await this.getCredentialsForEmpresa(empresaId));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'WhatsApp no configurado';
+        return { success: false, error: msg };
+      }
+    } else {
+      ({ token, phoneId } = this.getCredentials());
+    }
+    if (!token || !phoneId)
+      return { success: false, error: 'WhatsApp no configurado' };
+
+    const to = this.formatearNumero(numero);
+    try {
+      // WhatsApp solo acepta jpeg/png en mensajes de imagen. Si la URL ya es
+      // jpg/png, se envía por link (rápido). Si no (webp, etc.), se descarga, se
+      // convierte a JPG con sharp, se sube a la Media API y se envía por id.
+      let image: any;
+      if (/\.(jpe?g|png)(\?|$)/i.test(imagenUrl)) {
+        image = { link: imagenUrl, ...(caption ? { caption } : {}) };
+      } else {
+        const resp = await axios.get<ArrayBuffer>(imagenUrl, {
+          responseType: 'arraybuffer',
+        });
+        const jpg = await sharp(Buffer.from(resp.data))
+          .jpeg({ quality: 82 })
+          .toBuffer();
+        const form = new FormData();
+        form.append('messaging_product', 'whatsapp');
+        form.append('file', jpg, {
+          filename: 'producto.jpg',
+          contentType: 'image/jpeg',
+        });
+        const up = await axios.post(
+          `${this.apiUrl}/${phoneId}/media`,
+          form,
+          {
+            headers: { Authorization: `Bearer ${token}`, ...form.getHeaders() },
+          },
+        );
+        image = { id: up.data?.id, ...(caption ? { caption } : {}) };
+      }
+
+      await axios.post(
+        `${this.apiUrl}/${phoneId}/messages`,
+        {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to,
+          type: 'image',
+          image,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+      return { success: true };
+    } catch (error) {
+      const msg = error.response?.data?.error?.message || error.message;
+      this.logger.warn(`WhatsApp imagen fallida a ${to}: ${msg}`);
       return { success: false, error: msg };
     }
   }

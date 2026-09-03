@@ -199,12 +199,12 @@ export class LeadsMessageProcessor extends WorkerHost {
     const contextoEmpresa = this.construirContexto(empresa);
     // Productos REALES del ERP que coinciden con lo que pregunta el cliente
     // (precio + stock en vivo). Lo que diferencia a la IA de un bot "ciego".
-    const contextoProductos = await this.buscarProductosRelevantes(
+    const relevantes = await this.buscarProductosRelevantes(
       empresa.id,
       contenido,
     );
     const contextoRag = await this.rag.buscarContexto(empresa.id, d.text, 5);
-    const businessContext = [contextoEmpresa, contextoProductos, contextoRag]
+    const businessContext = [contextoEmpresa, relevantes.contexto, contextoRag]
       .filter((s) => s && s.trim())
       .join('\n\n');
 
@@ -242,6 +242,24 @@ export class LeadsMessageProcessor extends WorkerHost {
       this.logger.warn(
         `Lead: envío WhatsApp falló a ${d.from}: ${envio.error}`,
       );
+    }
+
+    // Si el cliente pidió VER productos y hay coincidencias con foto, enviar
+    // hasta 3 imágenes (con precio en el caption). Dentro de la ventana de 24h
+    // es mensaje de servicio (sin costo). Best-effort: no bloquea la respuesta.
+    if (this.quiereVerProductos(contenido)) {
+      const conFoto = relevantes.productos
+        .filter((p) => p.imagenUrl)
+        .slice(0, 3);
+      for (const p of conFoto) {
+        const simbolo = p.moneda === 'USD' ? 'US$' : 'S/';
+        const caption = `${p.descripcion} — ${simbolo}${Number(
+          p.precioUnitario,
+        ).toFixed(2)}`;
+        await this.whatsapp
+          .enviarImagenUrl(d.from, p.imagenUrl as string, caption, empresa.id)
+          .catch(() => {});
+      }
     }
     // Solo +1: el mensaje del usuario ya se contó en persistirMensajeUsuario.
     await this.prisma.leadConversacion.update({
@@ -391,14 +409,24 @@ export class LeadsMessageProcessor extends WorkerHost {
   private async buscarProductosRelevantes(
     empresaId: number,
     texto: string,
-  ): Promise<string> {
+  ): Promise<{
+    contexto: string;
+    productos: {
+      descripcion: string;
+      precioUnitario: any;
+      stock: any;
+      moneda: string;
+      imagenUrl: string | null;
+    }[];
+  }> {
+    const vacio = { contexto: '', productos: [] };
     const tokens = (texto || '')
       .toLowerCase()
       .replace(/[¿?¡!.,;:()]/g, ' ')
       .split(/\s+/)
       .filter((w) => w.length >= 3 && !LeadsMessageProcessor.STOPWORDS_PRODUCTO.has(w))
       .slice(0, 5);
-    if (tokens.length === 0) return '';
+    if (tokens.length === 0) return vacio;
 
     const productos = await this.prisma.producto.findMany({
       where: {
@@ -419,11 +447,12 @@ export class LeadsMessageProcessor extends WorkerHost {
         precioUnitario: true,
         stock: true,
         moneda: true,
+        imagenUrl: true,
       },
       orderBy: { stock: 'desc' },
       take: 8,
     });
-    if (productos.length === 0) return '';
+    if (productos.length === 0) return vacio;
 
     const lineas = productos.map((p) => {
       const simbolo = p.moneda === 'USD' ? 'US$' : 'S/';
@@ -432,11 +461,18 @@ export class LeadsMessageProcessor extends WorkerHost {
       const disp = stk > 0 ? `stock ${stk}` : 'sin stock';
       return `- ${p.descripcion}: ${precio} (${disp})`;
     });
-    return (
+    const contexto =
       'PRODUCTOS DISPONIBLES (precio con IGV y stock actual del negocio). ' +
       'Usa SOLO estos datos para responder sobre productos, precios y disponibilidad; ' +
       'NO inventes precios ni stock. Si el cliente pide algo que no está en esta lista, dilo:\n' +
-      lineas.join('\n')
+      lineas.join('\n');
+    return { contexto, productos };
+  }
+
+  // ¿El mensaje del cliente pide VER los productos (fotos/imágenes/catálogo)?
+  private quiereVerProductos(texto: string): boolean {
+    return /\b(foto|fotos|imagen|imagenes|imágenes|muestr|muéstr|muestrame|muéstrame|mostrar|ver|cat[aá]logo|modelos?|dise[ñn]os?|opciones|colores?|presentaci[oó]n|c[uú]al|cu[aá]les|qu[eé] tienes|que tienes|qu[eé] hay|que hay)\b/i.test(
+      texto || '',
     );
   }
 
