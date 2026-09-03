@@ -33,8 +33,13 @@ export class DashboardService {
           },
         },
         {
-          // Excluir documentos de pre-venta que no son ventas cerradas
-          tipoDoc: { notIn: ['NP', 'COT', 'OT'] },
+          // Excluir SOLO cotizaciones (COT) y órdenes de trabajo (OT): son
+          // documentos previos que no representan una venta en ningún rubro.
+          // La Nota de Pedido (NP) SÍ cuenta como venta: para muchos negocios
+          // informales la NP es su comprobante de venta real. Si la NP se
+          // convierte luego en boleta/factura, la cláusula 1 (arriba) la excluye
+          // por comprobantesDerivados, evitando el doble conteo.
+          tipoDoc: { notIn: ['COT', 'OT'] },
         },
       ],
     };

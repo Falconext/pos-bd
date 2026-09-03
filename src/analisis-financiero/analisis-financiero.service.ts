@@ -141,7 +141,12 @@ export class AnalisisFinancieroService {
           },
         },
         {
-          tipoDoc: { notIn: ['NP', 'COT', 'OT'] },
+          // Excluir SOLO cotizaciones (COT) y órdenes de trabajo (OT): no son
+          // ventas en ningún rubro. La Nota de Pedido (NP) SÍ cuenta como venta
+          // (es el comprobante de venta real de muchos negocios informales); si
+          // se convierte en boleta/factura, la cláusula 1 la excluye por
+          // comprobantesDerivados y no hay doble conteo.
+          tipoDoc: { notIn: ['COT', 'OT'] },
         },
       ],
     };
