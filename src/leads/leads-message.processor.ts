@@ -196,8 +196,14 @@ export class LeadsMessageProcessor extends WorkerHost {
 
     // Contexto = datos de la empresa + fragmentos RAG relevantes al mensaje.
     const contextoEmpresa = this.construirContexto(empresa);
+    // Productos REALES del ERP que coinciden con lo que pregunta el cliente
+    // (precio + stock en vivo). Lo que diferencia a la IA de un bot "ciego".
+    const contextoProductos = await this.buscarProductosRelevantes(
+      empresa.id,
+      contenido,
+    );
     const contextoRag = await this.rag.buscarContexto(empresa.id, d.text, 5);
-    const businessContext = [contextoEmpresa, contextoRag]
+    const businessContext = [contextoEmpresa, contextoProductos, contextoRag]
       .filter((s) => s && s.trim())
       .join('\n\n');
 
@@ -361,6 +367,74 @@ export class LeadsMessageProcessor extends WorkerHost {
     if (empresa.descripcionTienda) partes.push(empresa.descripcionTienda);
     if (empresa.iaVentasContexto) partes.push(empresa.iaVentasContexto);
     return partes.join('\n');
+  }
+
+  // Palabras conversacionales/de consulta que NO son nombres de producto; se
+  // descartan para que la búsqueda se quede solo con los términos del producto.
+  private static readonly STOPWORDS_PRODUCTO = new Set([
+    'hola','buenas','buenos','dias','días','tardes','noches','quiero','quisiera','necesito','busco',
+    'tienes','tienen','tiene','hay','habra','habrá','me','puedes','podrias','podrías','porfa','porfavor',
+    'favor','cuanto','cuánto','cuestan','cuesta','precio','precios','vale','valen','costo','stock',
+    'disponible','disponibles','disponibilidad','info','informacion','información','sobre','del','de','la',
+    'el','los','las','un','una','unos','unas','y','o','a','en','para','con','que','qué','es','son','tu','tus',
+    'su','sus','mi','mis','gustaria','gustaría','saber','ver','comprar','producto','productos','venden','vende',
+    'cual','cuales','cuál','cuáles','ok','gracias','si','sí','no','al','lo','le','tienes','algun','algún','alguna',
+  ]);
+
+  /**
+   * Busca en el catálogo REAL del negocio los productos que coinciden con lo que
+   * escribe el cliente y devuelve un bloque de texto con precio + stock en vivo,
+   * para que la IA responda con datos reales (no inventados). Devuelve '' si el
+   * mensaje no menciona ningún producto o no hay coincidencias.
+   */
+  private async buscarProductosRelevantes(
+    empresaId: number,
+    texto: string,
+  ): Promise<string> {
+    const tokens = (texto || '')
+      .toLowerCase()
+      .replace(/[¿?¡!.,;:()]/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length >= 3 && !LeadsMessageProcessor.STOPWORDS_PRODUCTO.has(w))
+      .slice(0, 5);
+    if (tokens.length === 0) return '';
+
+    const productos = await this.prisma.producto.findMany({
+      where: {
+        empresaId,
+        estado: 'ACTIVO' as any,
+        AND: tokens.map((tk) => ({
+          OR: [
+            { descripcion: { contains: tk, mode: 'insensitive' as any } },
+            { codigo: { contains: tk, mode: 'insensitive' as any } },
+            { codigoBarras: { contains: tk, mode: 'insensitive' as any } },
+          ],
+        })),
+      },
+      select: {
+        descripcion: true,
+        precioUnitario: true,
+        stock: true,
+        moneda: true,
+      },
+      orderBy: { stock: 'desc' },
+      take: 8,
+    });
+    if (productos.length === 0) return '';
+
+    const lineas = productos.map((p) => {
+      const simbolo = p.moneda === 'USD' ? 'US$' : 'S/';
+      const precio = `${simbolo}${Number(p.precioUnitario).toFixed(2)}`;
+      const stk = Number(p.stock);
+      const disp = stk > 0 ? `stock ${stk}` : 'sin stock';
+      return `- ${p.descripcion}: ${precio} (${disp})`;
+    });
+    return (
+      'PRODUCTOS DISPONIBLES (precio con IGV y stock actual del negocio). ' +
+      'Usa SOLO estos datos para responder sobre productos, precios y disponibilidad; ' +
+      'NO inventes precios ni stock. Si el cliente pide algo que no está en esta lista, dilo:\n' +
+      lineas.join('\n')
+    );
   }
 
   /** Crea/actualiza el LeadProspecto con la calificación y alerta si es caliente. */
