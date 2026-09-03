@@ -26,6 +26,22 @@ export class SistemaFinanzasService {
     return { sn, sp };
   }
 
+  // Excluye clientes DEMO/prueba (no son clientes de pago) — mismo criterio que la
+  // pantalla de Empresas: plan.esPrueba OR empresa.usaDemo OR nombre de plan con
+  // "demo"/"prueba". Se usa en las métricas financieras (MRR, proyección, etc.).
+  private demoNotWhere() {
+    return {
+      NOT: {
+        OR: [
+          { usaDemo: true },
+          { plan: { esPrueba: true } },
+          { plan: { nombre: { contains: 'demo', mode: 'insensitive' as const } } },
+          { plan: { nombre: { contains: 'prueba', mode: 'insensitive' as const } } },
+        ],
+      },
+    };
+  }
+
   // ── DASHBOARD KPIs ─────────────────────────────────────────────────────────
 
   async getDashboard(
@@ -52,10 +68,12 @@ export class SistemaFinanzasService {
     if (sistemaNegocio) empresaScopeWhere.brand = sistemaNegocio.toLowerCase();
     if (sistemaProducto)
       empresaScopeWhere.producto = sistemaProducto.toLowerCase();
+    // Solo clientes de pago (excluye demos/prueba) para las métricas financieras.
+    const empresaPagaWhere: any = { ...empresaScopeWhere, ...this.demoNotWhere() };
 
     // Empresas activas con su plan
     const empresasParaMRR = await this.prisma.empresa.findMany({
-      where: { estado: 'ACTIVO', ...empresaScopeWhere },
+      where: { estado: 'ACTIVO', ...empresaPagaWhere },
       select: {
         id: true,
         fechaExpiracion: true,
@@ -123,19 +141,19 @@ export class SistemaFinanzasService {
     const [nuevosEsteMes, nuevosMesAnterior, totalActivos, totalInactivos] =
       await Promise.all([
         this.prisma.empresa.count({
-          where: { fechaActivacion: { gte: inicioMes }, ...empresaScopeWhere },
+          where: { fechaActivacion: { gte: inicioMes }, ...empresaPagaWhere },
         }),
         this.prisma.empresa.count({
           where: {
             fechaActivacion: { gte: inicioMesAnterior, lt: inicioMes },
-            ...empresaScopeWhere,
+            ...empresaPagaWhere,
           },
         }),
         this.prisma.empresa.count({
-          where: { estado: 'ACTIVO', ...empresaScopeWhere },
+          where: { estado: 'ACTIVO', ...empresaPagaWhere },
         }),
         this.prisma.empresa.count({
-          where: { estado: { not: 'ACTIVO' }, ...empresaScopeWhere },
+          where: { estado: { not: 'ACTIVO' }, ...empresaPagaWhere },
         }),
       ]);
 
@@ -146,14 +164,14 @@ export class SistemaFinanzasService {
       where: {
         estado: 'ACTIVO',
         fechaExpiracion: { lte: en7Dias, gte: ahora },
-        ...empresaScopeWhere,
+        ...empresaPagaWhere,
       },
     });
 
-    // Distribución de clientes por plan
+    // Distribución de clientes por plan (solo clientes de pago)
     const porPlan = await this.prisma.empresa.groupBy({
       by: ['planId'],
-      where: { estado: 'ACTIVO', ...empresaScopeWhere },
+      where: { estado: 'ACTIVO', ...empresaPagaWhere },
       _count: true,
     });
     const planes = await this.prisma.plan.findMany({
@@ -168,9 +186,9 @@ export class SistemaFinanzasService {
       };
     });
 
-    // Lista de empresas activas con su admin principal
+    // Lista de empresas activas con su admin principal (solo clientes de pago)
     const empresasActivas = await this.prisma.empresa.findMany({
-      where: { estado: 'ACTIVO', ...empresaScopeWhere },
+      where: { estado: 'ACTIVO', ...empresaPagaWhere },
       select: {
         id: true,
         razonSocial: true,
@@ -312,6 +330,7 @@ export class SistemaFinanzasService {
             where: {
               fechaActivacion: { gte: ini, lte: fin },
               ...empresaScopeWhere,
+              ...this.demoNotWhere(),
             },
           }),
           this.prisma.empresa.count({
@@ -319,6 +338,7 @@ export class SistemaFinanzasService {
               estado: 'INACTIVO',
               fechaExpiracion: { gte: ini, lte: fin },
               ...empresaScopeWhere,
+              ...this.demoNotWhere(),
             },
           }),
         ]);
@@ -364,9 +384,9 @@ export class SistemaFinanzasService {
     if (sn) scope.brand = sn.toLowerCase();
     if (sp) scope.producto = sp.toLowerCase();
 
-    // MRR actual + empresas activas + ticket promedio (ingreso mensual por cliente)
+    // MRR actual + empresas activas + ticket promedio (solo clientes de pago, sin demos)
     const activas = await this.prisma.empresa.findMany({
-      where: { estado: 'ACTIVO', ...scope },
+      where: { estado: 'ACTIVO', ...scope, ...this.demoNotWhere() },
       select: { plan: { select: { costo: true } } },
     });
     const empresasActivas = activas.length;
