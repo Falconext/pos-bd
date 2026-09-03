@@ -26,20 +26,27 @@ export class SistemaFinanzasService {
     return { sn, sp };
   }
 
-  // Excluye clientes DEMO/prueba (no son clientes de pago) — mismo criterio que la
-  // pantalla de Empresas: plan.esPrueba OR empresa.usaDemo OR nombre de plan con
-  // "demo"/"prueba". Se usa en las métricas financieras (MRR, proyección, etc.).
-  private demoNotWhere() {
-    return {
-      NOT: {
-        OR: [
-          { usaDemo: true },
-          { plan: { esPrueba: true } },
-          { plan: { nombre: { contains: 'demo', mode: 'insensitive' as const } } },
-          { plan: { nombre: { contains: 'prueba', mode: 'insensitive' as const } } },
-        ],
-      },
-    };
+  // RUCs excluidos de las métricas financieras (empresa propia de Krezka + internas).
+  private readonly RUCS_EXCLUIDOS = [
+    '10479465750',
+    '20524076307',
+    '20616318773',
+  ];
+
+  // Excluye de las métricas financieras: clientes DEMO/prueba (mismo criterio que la
+  // pantalla de Empresas: plan.esPrueba OR usaDemo OR nombre "demo/prueba"), RUCs
+  // internos, y —cuando vencidos=true— las suscripciones vencidas (fechaExpiracion
+  // ya pasada). Los inactivos ya se filtran aparte con estado='ACTIVO'.
+  private excluirWhere(ahora: Date, opts?: { vencidos?: boolean }) {
+    const or: any[] = [
+      { ruc: { in: this.RUCS_EXCLUIDOS } },
+      { usaDemo: true },
+      { plan: { esPrueba: true } },
+      { plan: { nombre: { contains: 'demo', mode: 'insensitive' as const } } },
+      { plan: { nombre: { contains: 'prueba', mode: 'insensitive' as const } } },
+    ];
+    if (opts?.vencidos) or.push({ fechaExpiracion: { lt: ahora } });
+    return { NOT: { OR: or } };
   }
 
   // ── DASHBOARD KPIs ─────────────────────────────────────────────────────────
@@ -68,8 +75,11 @@ export class SistemaFinanzasService {
     if (sistemaNegocio) empresaScopeWhere.brand = sistemaNegocio.toLowerCase();
     if (sistemaProducto)
       empresaScopeWhere.producto = sistemaProducto.toLowerCase();
-    // Solo clientes de pago (excluye demos/prueba) para las métricas financieras.
-    const empresaPagaWhere: any = { ...empresaScopeWhere, ...this.demoNotWhere() };
+    // Solo clientes de pago: excluye demos/prueba, RUCs internos y vencidos.
+    const empresaPagaWhere: any = {
+      ...empresaScopeWhere,
+      ...this.excluirWhere(ahora, { vencidos: true }),
+    };
 
     // Empresas activas con su plan
     const empresasParaMRR = await this.prisma.empresa.findMany({
@@ -330,7 +340,7 @@ export class SistemaFinanzasService {
             where: {
               fechaActivacion: { gte: ini, lte: fin },
               ...empresaScopeWhere,
-              ...this.demoNotWhere(),
+              ...this.excluirWhere(ahora, { vencidos: false }),
             },
           }),
           this.prisma.empresa.count({
@@ -338,7 +348,7 @@ export class SistemaFinanzasService {
               estado: 'INACTIVO',
               fechaExpiracion: { gte: ini, lte: fin },
               ...empresaScopeWhere,
-              ...this.demoNotWhere(),
+              ...this.excluirWhere(ahora, { vencidos: false }),
             },
           }),
         ]);
@@ -386,7 +396,11 @@ export class SistemaFinanzasService {
 
     // MRR actual + empresas activas + ticket promedio (solo clientes de pago, sin demos)
     const activas = await this.prisma.empresa.findMany({
-      where: { estado: 'ACTIVO', ...scope, ...this.demoNotWhere() },
+      where: {
+        estado: 'ACTIVO',
+        ...scope,
+        ...this.excluirWhere(new Date(), { vencidos: true }),
+      },
       select: { plan: { select: { costo: true } } },
     });
     const empresasActivas = activas.length;
