@@ -2609,7 +2609,13 @@ export class EmpresaService {
       }),
       this.prisma.pagoCompra.findMany({
         where: { cuentaBancariaId: cuentaId, ...(rango ? { fecha: rango } : {}) },
-        select: { id: true, fecha: true, monto: true, referencia: true },
+        select: {
+          id: true,
+          fecha: true,
+          monto: true,
+          referencia: true,
+          compra: { select: { proveedor: { select: { nombre: true } } } },
+        },
       }),
       this.prisma.gastoOperativo.findMany({
         where: { cuentaBancariaId: cuentaId, ...(rango ? { fecha: rango } : {}) },
@@ -2645,15 +2651,18 @@ export class EmpresaService {
         referencia: d.numeroOperacionDeposito || null,
         monto: Number(d.montoEfectivo || 0),
       })),
-      ...compras.map((c) => ({
-        id: `compra-${c.id}`,
-        fecha: c.fecha,
-        tipo: 'EGRESO' as const,
-        origen: 'COMPRA',
-        concepto: 'Pago a proveedor',
-        referencia: c.referencia || null,
-        monto: Number(c.monto),
-      })),
+      ...compras.map((c) => {
+        const proveedor = c.compra?.proveedor?.nombre?.trim();
+        return {
+          id: `compra-${c.id}`,
+          fecha: c.fecha,
+          tipo: 'EGRESO' as const,
+          origen: 'COMPRA',
+          concepto: proveedor ? `Pago a ${proveedor}` : 'Pago a proveedor',
+          referencia: c.referencia || null,
+          monto: Number(c.monto),
+        };
+      }),
       ...gastos.map((g) => ({
         id: `gasto-${g.id}`,
         fecha: (g.fecha || g.creadoEn) as Date,
