@@ -970,6 +970,7 @@ export class ProductoController {
       usarPrecioSede: query.usarPrecioSede,
       usuarioId: user.id,
       soloStockBajo: query.soloStockBajo,
+      priorizarStock: query.priorizarStock,
     });
     res.locals.message = 'Productos listados correctamente';
     return resultado;

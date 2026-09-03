@@ -58,4 +58,10 @@ export class ListProductoDto {
   @IsOptional()
   @Transform(({ value }) => value === true || value === 'true' || value === '1')
   soloStockBajo?: boolean;
+
+  // Prioriza en el listado los productos con stock (los muestra primero). Usado
+  // por el POS de facturación para que lo vendible aparezca arriba.
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === '1')
+  priorizarStock?: boolean;
 }

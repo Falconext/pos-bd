@@ -743,6 +743,7 @@ export class ProductoService {
     usarPrecioSede?: boolean;
     usuarioId?: number;
     soloStockBajo?: boolean;
+    priorizarStock?: boolean;
   }) {
     const {
       empresaId,
@@ -801,12 +802,19 @@ export class ProductoService {
       ];
     }
 
+    // Prioriza productos con stock: los con stock (producto.stock = suma de sedes,
+    // mantenida por kardex) van primero, y dentro de cada grupo se respeta el orden
+    // pedido. Se activa solo con priorizarStock (ej. POS de facturación).
+    const orderBy: any = params.priorizarStock
+      ? [{ stock: 'desc' }, { [sort]: order }]
+      : { [sort]: order };
+
     const [productosRaw, total] = await Promise.all([
       this.prisma.producto.findMany({
         where,
         skip,
         take: limitNumber,
-        orderBy: { [sort]: order },
+        orderBy,
         select: {
           id: true,
           codigo: true,
