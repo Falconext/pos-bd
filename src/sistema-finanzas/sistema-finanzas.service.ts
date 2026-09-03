@@ -342,6 +342,115 @@ export class SistemaFinanzasService {
     return resultado;
   }
 
+  // ── PROYECCIÓN DE INGRESO RECURRENTE (MRR) ─────────────────────────────────
+  // Proyecta la posible ganancia recurrente mes a mes hacia adelante, a partir
+  // del MRR actual (Σ costo del plan de empresas activas) y el crecimiento neto
+  // histórico (promedio de altas − bajas por mes). Es una ESTIMACIÓN, no cobros.
+  async getProyeccion(
+    mesesFuturos = 6,
+    histMeses = 6,
+    sistemaNegocio?: string | null,
+    sistemaProducto?: string | null,
+    empresaId?: number | null,
+    rol?: string,
+  ) {
+    const { sn, sp } = await this.resolveScope(
+      sistemaNegocio,
+      sistemaProducto,
+      empresaId,
+      rol,
+    );
+    const scope: any = {};
+    if (sn) scope.brand = sn.toLowerCase();
+    if (sp) scope.producto = sp.toLowerCase();
+
+    // MRR actual + empresas activas + ticket promedio (ingreso mensual por cliente)
+    const activas = await this.prisma.empresa.findMany({
+      where: { estado: 'ACTIVO', ...scope },
+      select: { plan: { select: { costo: true } } },
+    });
+    const empresasActivas = activas.length;
+    const mrrActual = activas.reduce(
+      (s, e) => s + Number(e.plan?.costo ?? 0),
+      0,
+    );
+    const ticketPromedio =
+      empresasActivas > 0 ? mrrActual / empresasActivas : 0;
+
+    // Historial de altas/bajas por mes → promedios
+    const hist = await this.getTendencia(histMeses, sn, sp, empresaId, rol);
+    const n = hist.length || 1;
+    const avgNuevos =
+      hist.reduce((s, m: any) => s + Number(m.nuevosClientes || 0), 0) / n;
+    const avgBajas =
+      hist.reduce((s, m: any) => s + Number(m.bajasClientes || 0), 0) / n;
+    const netoMensual = avgNuevos - avgBajas;
+    const churnRate = empresasActivas > 0 ? avgBajas / empresasActivas : 0;
+
+    const round2 = (x: number) => Math.round(x * 100) / 100;
+    const ahora = new Date();
+
+    let activos = empresasActivas;
+    let acumulado = 0;
+    const proyeccion: any[] = [];
+    for (let k = 1; k <= mesesFuturos; k++) {
+      const nuevos = Math.round(avgNuevos);
+      const bajas = Math.round(avgBajas);
+      activos = Math.max(0, activos + nuevos - bajas);
+      const mrrProyectado = round2(activos * ticketPromedio);
+      acumulado = round2(acumulado + mrrProyectado);
+      const fecha = new Date(ahora.getFullYear(), ahora.getMonth() + k, 1);
+      proyeccion.push({
+        mes: fecha.toLocaleDateString('es-PE', {
+          month: 'short',
+          year: '2-digit',
+        }),
+        mesIso: fecha.toISOString(),
+        mrrProyectado,
+        activos,
+        nuevos,
+        bajas,
+        acumulado,
+      });
+    }
+
+    // Punto 0 = mes actual (base), para que la curva arranque en el MRR real.
+    const base = {
+      mes: ahora.toLocaleDateString('es-PE', {
+        month: 'short',
+        year: '2-digit',
+      }),
+      mesIso: new Date(
+        ahora.getFullYear(),
+        ahora.getMonth(),
+        1,
+      ).toISOString(),
+      mrrProyectado: round2(mrrActual),
+      activos: empresasActivas,
+      nuevos: 0,
+      bajas: 0,
+      acumulado: 0,
+      esActual: true,
+    };
+
+    return {
+      mrrActual: round2(mrrActual),
+      empresasActivas,
+      ticketPromedio: round2(ticketPromedio),
+      avgNuevos: round2(avgNuevos),
+      avgBajas: round2(avgBajas),
+      netoMensual: round2(netoMensual),
+      churnRate: round2(churnRate * 100), // %
+      mesesFuturos,
+      mrrProyectadoFinal:
+        proyeccion.length > 0
+          ? proyeccion[proyeccion.length - 1].mrrProyectado
+          : round2(mrrActual),
+      gananciaAcumulada: acumulado,
+      serie: [base, ...proyeccion],
+    };
+  }
+
   // ── GASTOS CRUD ────────────────────────────────────────────────────────────
 
   async listarGastos(params: {

@@ -43,6 +43,22 @@ export class SistemaFinanzasController {
     );
   }
 
+  @Get('proyeccion')
+  getProyeccion(
+    @User() user: any,
+    @Query('meses') meses?: string,
+    @Query('hist') hist?: string,
+  ) {
+    return this.service.getProyeccion(
+      meses ? Number(meses) : 6,
+      hist ? Number(hist) : 6,
+      user.sistemaNegocio ?? null,
+      user.sistemaProducto ?? null,
+      user.empresaId ?? null,
+      user.rol,
+    );
+  }
+
   @Get('gastos')
   listarGastos(
     @Query('desde') desde?: string,
