@@ -957,9 +957,15 @@ export class GuiaRemisionService {
         serie: comprobante.serie,
         correlativo: comprobante.correlativo,
       },
-      detalles: comprobante.detalles.map((d) => ({
+      detalles: comprobante.detalles.map((d, index) => ({
         productoId: d.productoId ?? undefined,
-        codigoProducto: d.producto?.codigo || String(d.productoId ?? ''),
+        // codigoProducto es solo informativo (no viaja en el XML SUNAT, ver
+        // buildDespatchLines): si el ítem no tiene producto vinculado (ítem
+        // libre o producto eliminado), no puede quedar vacío porque el DTO
+        // de creación de guía lo exige @IsNotEmpty.
+        codigoProducto:
+          d.producto?.codigo ||
+          (d.productoId != null ? String(d.productoId) : `S/C-${index + 1}`),
         descripcion: d.descripcion,
         cantidad: Number(d.cantidad),
         unidadMedida: d.unidad || 'NIU',
