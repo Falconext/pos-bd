@@ -427,6 +427,7 @@ export class PdfGeneratorService {
     pagado?: string;
     vendedor?: string;
     observaciones?: string;
+    ordenCompraCliente?: string;
     qrCode?: string; // base64 o data URL
 
     // Detracción
@@ -597,6 +598,7 @@ export class PdfGeneratorService {
     formaPago: string;
     validez?: string;
     observaciones?: string;
+    ordenCompraCliente?: string;
     cotizTerminos?: string;
 
     // Datos bancarios

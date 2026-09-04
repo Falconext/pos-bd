@@ -391,6 +391,7 @@ export class SunatGuiaService {
           },
         },
         ...(guia.modoTransporte === '02' &&
+        !guia.vehiculoM1oL &&
         String(guia.vehiculoPlaca || '').trim()
           ? {
               'cac:TransportHandlingUnit':
@@ -504,6 +505,7 @@ export class SunatGuiaService {
 
     if (
       guia.modoTransporte === '02' &&
+      !guia.vehiculoM1oL &&
       String(guia.conductorNumDoc || '').trim()
     ) {
       stage['cac:DriverPerson'] = [this.buildDriverPerson(guia)];
@@ -666,6 +668,8 @@ export class SunatGuiaService {
       si.push({ _text: 'SUNAT_Envio_IndicadorRetornoVehiculoVacio' });
     if (guia.retornoEnvasesVacios)
       si.push({ _text: 'SUNAT_Envio_IndicadorRetornoEnvasesVacios' });
+    if (guia.vehiculoM1oL)
+      si.push({ _text: 'SUNAT_Envio_IndicadorTrasladoVehiculoM1L' });
     return si;
   }
 

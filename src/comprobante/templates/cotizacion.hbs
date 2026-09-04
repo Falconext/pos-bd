@@ -266,6 +266,9 @@
     <!-- ── FOOTER SECTION (observaciones + totales) ───────────────── -->
     <div class="footer-section">
         <div class="observaciones-box">
+            {{#if ordenCompraCliente}}
+            <div class="obs-title" style="font-size: {{fc.observaciones.size}}px;">N° ORDEN DE COMPRA: {{ordenCompraCliente}}</div>
+            {{/if}}
             {{#if fc.observaciones.visible}}
             <div class="obs-title" style="font-size: {{fc.observaciones.size}}px;">OBSERVACIONES:</div>
             <div style="font-size: {{fc.observaciones.size}}px;">{{observaciones}}</div>

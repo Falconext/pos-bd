@@ -768,8 +768,9 @@ export class GuiaRemisionService {
       }
     }
 
-    if (dto.modoTransporte === '02') {
-      // Transporte privado
+    if (dto.modoTransporte === '02' && !dto.vehiculoM1oL) {
+      // Transporte privado (excepto vehículos categoría M1 o L, exonerados
+      // por SUNAT de identificar conductor y vehículo)
       if (!dto.conductorNumDoc || !dto.vehiculoPlaca) {
         throw new BadRequestException(
           'Para transporte privado se requieren los datos del conductor y vehículo',
@@ -868,6 +869,7 @@ export class GuiaRemisionService {
 
       // Transporte
       esTransportePublico: guia.modoTransporte === '01',
+      esVehiculoM1oL: guia.modoTransporte === '02' && !!guia.vehiculoM1oL,
       transportistaRazonSocial: guia.transportistaRazonSocial,
       transportistaRuc: guia.transportistaRuc,
       vehiculoPlaca: guia.vehiculoPlaca,

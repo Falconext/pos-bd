@@ -159,6 +159,14 @@ export class ComprobanteService {
     empresaId: number,
   ) {
     const lines = this.normalizarDetallePago(input, medioPago, montoObjetivo);
+    // La cuenta destino solo se exige si la empresa registró alguna cuenta
+    // bancaria: si no lleva ese control (no quiere registrar ninguna), no la
+    // bloqueamos — no hay nada que seleccionar y el frontend tampoco lo pide.
+    const tieneCuentasBancarias =
+      lines.some((l) => l.method === 'TRANSFERENCIA') &&
+      (await this.prisma.cuentaBancaria.count({
+        where: { empresaId, activo: true },
+      })) > 0;
     for (const line of lines) {
       // Yape/Plin abonan directo a la cuenta bancaria vinculada de la empresa:
       // si el pago no trae cuenta, se asigna automáticamente la configurada.
@@ -171,7 +179,11 @@ export class ComprobanteService {
       }
       // El N° de operación/voucher es opcional: se puede emitir sin él y
       // registrarlo después (algunos clientes emiten la factura antes de pagar).
-      if (line.method === 'TRANSFERENCIA' && !line.cuentaBancariaId) {
+      if (
+        line.method === 'TRANSFERENCIA' &&
+        !line.cuentaBancariaId &&
+        tieneCuentasBancarias
+      ) {
         throw new BadRequestException(
           'El pago por transferencia requiere cuenta bancaria destino',
         );
@@ -2727,6 +2739,7 @@ export class ComprobanteService {
       leyenda,
       detalles,
       observaciones,
+      ordenCompraCliente,
       clienteName,
       tipDocAfectado,
       numDocAfectado,
@@ -3055,6 +3068,7 @@ export class ComprobanteService {
       tipoMoneda,
       tipoCambio: input.tipoCambio != null ? Number(input.tipoCambio) : 1,
       observaciones: observaciones ?? null,
+      ordenCompraCliente: ordenCompraCliente ?? null,
       clienteId: finalClienteId,
       empresaId,
       sedeId,
@@ -4088,6 +4102,7 @@ export class ComprobanteService {
       leyenda,
       detalles,
       observaciones,
+      ordenCompraCliente,
       clienteName,
       tipoDoc,
       tipoOperacionId,
@@ -4294,6 +4309,7 @@ export class ComprobanteService {
           : 1,
       cuotas: cuotasCredito ?? Prisma.JsonNull,
       observaciones: observaciones ?? null,
+      ordenCompraCliente: ordenCompraCliente ?? null,
       clienteId: finalClienteId,
       empresaId,
       sedeId: finalSedeId,
@@ -4442,6 +4458,7 @@ export class ComprobanteService {
       leyenda,
       detalles,
       observaciones,
+      ordenCompraCliente,
       clienteName,
       cotizVigencia,
       cotizTerminos,
@@ -4522,6 +4539,7 @@ export class ComprobanteService {
         data: {
           fechaEmision: fecha,
           observaciones: observaciones ?? null,
+          ordenCompraCliente: ordenCompraCliente ?? null,
           clienteId: finalClienteId,
           leyendas: {
             create: [
@@ -5693,6 +5711,7 @@ export class ComprobanteService {
       observaciones: full.observaciones
         ? full.observaciones.toUpperCase()
         : undefined,
+      ordenCompraCliente: (full as any).ordenCompraCliente || undefined,
       shouldShowRetention,
       retencionMonto: retencionMonto.toFixed(2),
       importeNeto: (mtoImpVenta - retencionMonto).toFixed(2),

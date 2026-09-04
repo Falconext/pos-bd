@@ -821,6 +821,8 @@ model Comprobante {
   tipoMoneda              String
   tipoCambio              Float?               @default(1) // TC del día cuando tipoMoneda = USD
   observaciones           String?
+  // N° de Orden de Compra que el cliente (comprador B2B) pide referenciar en la Factura
+  ordenCompraCliente      String?
   mtoOperGravadas         Float
   mtoIGV                  Float
   valorVenta              Float

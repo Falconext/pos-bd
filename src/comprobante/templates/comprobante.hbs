@@ -236,6 +236,9 @@
   <!-- ── OBSERVACIONES + TOTALES ────────────────────────────── -->
   <div class="footer-section">
     <div class="observaciones-box">
+      {{#if ordenCompraCliente}}
+      <div class="obs-title">N° ORDEN DE COMPRA: {{ordenCompraCliente}}</div>
+      {{/if}}
       <div class="obs-title">OBSERVACIONES:</div>
       <div class="obs-text">{{observaciones}}</div>
       <div class="legal-text">
