@@ -75,6 +75,7 @@
     .col-pu   { width: 11%; text-align: right; }
     .col-tot  { width: 11%; text-align: right; }
     .lote-info { font-size: 9px; color: #555; margin-top: 2px; }
+    .gratis-tag { display: inline-block; font-size: 8px; font-weight: 700; color: #059669; border: 1px solid #059669; border-radius: 3px; padding: 1px 4px; margin-left: 5px; vertical-align: middle; }
 
     /* ── SON ─────────────────────────────────────────────────── */
     .son-section {
@@ -216,6 +217,9 @@
         <td class="col-um">{{this.unidadMedida}}</td>
         <td class="col-desc">
           <span class="desc-text">{{this.descripcion}}</span>
+          {{#if this.gratis}}
+          <span class="gratis-tag">GRATIS</span>
+          {{/if}}
           {{#if this.lotes}}
           {{#each this.lotes}}
           <div class="lote-info">Lote: {{this.lote}} Venc: {{this.fechaVencimiento}}</div>

@@ -359,10 +359,15 @@ export class EnviarSunatService {
    * (valorVenta). Se deriva del valorVenta ya redondeado con precisión
    * suficiente (SUNAT admite hasta 10 decimales), de modo que la igualdad se
    * cumpla aun con cantidades altas y también al REEMITIR comprobantes antiguos
-   * cuyo `mtoValorUnitario` quedó redondeado a 2 decimales. En gratuitas
-   * (valorVenta 0) se conserva el valor referencial guardado.
+   * cuyo `mtoValorUnitario` quedó redondeado a 2 decimales.
+   *
+   * En líneas GRATUITAS, `mtoValorVenta` guarda el valor REFERENCIAL (no cero;
+   * ese va aparte en cac:PricingReference), pero cac:Price/cbc:PriceAmount debe
+   * ser 0 — es el precio de venta real de la línea (S/0, es un regalo). SUNAT
+   * rechaza (código 2640) si aquí se manda el valor referencial.
    */
   private priceAmountSunat(d: any): number {
+    if (this.esGratuitoAfe(Number(d.tipAfeIgv ?? 10))) return 0;
     const cantidad = Number(d.cantidad) || 0;
     const valorVenta = Number(d.mtoValorVenta) || 0;
     if (cantidad > 0 && valorVenta > 0) {

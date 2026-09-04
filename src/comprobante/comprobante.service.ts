@@ -2033,9 +2033,17 @@ export class ComprobanteService {
         item.nuevoValorUnitario != null
           ? Number(item.nuevoValorUnitario)
           : Number((prod as any).precioUnitario);
+      // Prioriza el override por línea (ej. "Marcar como gratuito" en el POS: 11-16
+      // Premio/Donación/Retiro/Publicidad/Bonificación, 21/31-37) sobre la afectación
+      // por defecto del producto en catálogo. Sin esto, una línea marcada como
+      // gratuita en el carrito se facturaba igual como venta normal (bug: el total
+      // no bajaba al emitir, aunque en pantalla sí se veía descontado).
       const tipAfeIgv = esExportacion
         ? 40
-        : parseInt((prod as any).tipoAfectacionIGV ?? '10', 10);
+        : parseInt(
+            String(item.tipoAfectacionIGV ?? (prod as any).tipoAfectacionIGV ?? '10'),
+            10,
+          );
 
       let valorUnitario: number;
       let igvMonto: number;
@@ -5595,13 +5603,18 @@ export class ComprobanteService {
         cantidad > 0
           ? Number(d.mtoPrecioUnitario || 0) + descLinea / cantidad
           : Number(d.mtoPrecioUnitario || 0);
+      // Operación gratuita (Catálogo 07: 11-16/21/31-37): el P.UNIT. impreso sigue
+      // siendo el valor referencial (informativo), pero el TOTAL de la línea debe
+      // salir en 0.00 — es lo que realmente se cobra, igual que en el XML a SUNAT.
+      const esGrat = this.esGratuito(Number(d.tipAfeIgv ?? 10));
       return {
       index: i + 1,
       cantidad: formatCantidad(d.cantidad),
       unidadMedida: (d.unidad || 'NIU').toUpperCase(),
       descripcion: (d.descripcion || '').toUpperCase(),
       precioUnitario: precioLista.toFixed(2),
-      total: Number((d.mtoPrecioUnitario || 0) * d.cantidad).toFixed(2),
+      total: esGrat ? '0.00' : Number((d.mtoPrecioUnitario || 0) * d.cantidad).toFixed(2),
+      gratis: esGrat,
       imagenUrl: buildLogoDataUrl(d.producto?.imagenUrl || d.imagenUrl),
       lotes:
         d.lotes?.map((l: any) => ({
