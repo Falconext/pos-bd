@@ -626,7 +626,10 @@ export class CajaService {
         estadoEnvioSunat: {
           in: ['EMITIDO', 'PENDIENTE', 'REGISTRADO', 'ENVIADO'] as any,
         },
-        formaPagoTipo: 'Contado',
+        // La web guarda "Contado" y la app móvil "CONTADO" — comparación
+        // insensible a mayúsculas para no perder las ventas de un lado u otro
+        // en el resumen de Ventas del turno / cierre de caja.
+        formaPagoTipo: { equals: 'Contado', mode: 'insensitive' },
         pagos: { none: {} },
       },
       select: { mtoImpVenta: true, medioPago: true, tipoMoneda: true, tipoCambio: true },

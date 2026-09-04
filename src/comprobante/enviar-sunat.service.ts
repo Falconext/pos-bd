@@ -2389,7 +2389,7 @@ export class EnviarSunatService {
 
               // Otros
               formaPago:
-                comp.formaPagoTipo === 'Contado' ? 'CONTADO' : 'CRÉDITO',
+                String(comp.formaPagoTipo).toUpperCase() === 'CONTADO' ? 'CONTADO' : 'CRÉDITO',
               medioPago: (comp.medioPago || 'EFECTIVO').toUpperCase(),
               observaciones: comp.observaciones
                 ? comp.observaciones.toUpperCase()
@@ -2937,7 +2937,7 @@ export class EnviarSunatService {
         correo_electronico: comp.cliente?.email || null,
         telefono: comp.cliente?.celular || null,
       },
-      codigo_condicion_de_pago: comp.formaPagoTipo === 'Credito' ? '02' : '01',
+      codigo_condicion_de_pago: String(comp.formaPagoTipo).toUpperCase() === 'CREDITO' ? '02' : '01',
       totales: {
         total_exportacion: Number(comp.mtoOperExportacion || 0),
         total_operaciones_gravadas: Number(comp.mtoOperGravadas || 0),
@@ -3517,7 +3517,7 @@ export class EnviarSunatService {
             : undefined,
         mtoImpVenta: Number(comp.mtoImpVenta).toFixed(2),
         totalEnLetras: numeroALetras(Number(comp.mtoImpVenta)).toUpperCase(),
-        formaPago: comp.formaPagoTipo === 'Contado' ? 'CONTADO' : 'CRÉDITO',
+        formaPago: String(comp.formaPagoTipo).toUpperCase() === 'CONTADO' ? 'CONTADO' : 'CRÉDITO',
         medioPago: (comp.medioPago || 'EFECTIVO').toUpperCase(),
         observaciones: comp.observaciones
           ? comp.observaciones.toUpperCase()
