@@ -31,6 +31,19 @@ import { User } from '../common/decorators/user.decorator';
 export class EmpresaController {
   constructor(private readonly empresaService: EmpresaService) {}
 
+  /**
+   * Público (sin auth): lista de clientes destacados para la landing.
+   * Solo empresas de pago (no demo), activas y con logo, filtradas por marca.
+   * Devuelve únicamente datos públicos: nombre + logo.
+   */
+  @Get('public/clientes')
+  clientesPublicos(
+    @Query('brand') brand?: string,
+    @Query('producto') producto?: string,
+  ) {
+    return this.empresaService.findClientesPublicos(brand, producto);
+  }
+
   @Post('crear')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN_SISTEMA')

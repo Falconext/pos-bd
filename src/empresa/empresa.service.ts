@@ -229,6 +229,42 @@ export class EmpresaService {
     private readonly salesfilter: SalesfilterBridgeService,
   ) {}
 
+  /**
+   * Clientes destacados para la landing pública (sin auth).
+   * Solo empresas de pago (no demo), activas y con logo, filtradas por marca.
+   * Devuelve únicamente datos públicos (nombre visible + logo).
+   */
+  async findClientesPublicos(brand?: string, producto?: string) {
+    const brandFiltro = normalizeBrand(brand);
+    const productoFiltro = normalizeProducto(producto);
+
+    const empresas = await this.prisma.empresa.findMany({
+      where: {
+        brand: { equals: brandFiltro, mode: 'insensitive' },
+        producto: { equals: productoFiltro, mode: 'insensitive' },
+        estado: 'ACTIVO',
+        usaDemo: false,
+        logo: { not: null },
+      },
+      select: {
+        id: true,
+        razonSocial: true,
+        nombreComercial: true,
+        logo: true,
+      },
+      orderBy: { fechaActivacion: 'desc' },
+      take: 40,
+    });
+
+    return empresas
+      .filter((e) => typeof e.logo === 'string' && e.logo.trim().length > 0)
+      .map((e) => ({
+        id: e.id,
+        nombre: (e.nombreComercial || e.razonSocial || '').trim(),
+        logo: e.logo as string,
+      }));
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Contrato de servicios (PDF autollenado) — descarga / envío por correo o WhatsApp
   // ─────────────────────────────────────────────────────────────────────────
