@@ -685,6 +685,45 @@ export class ContabilidadController {
     return { mes: m, anio: a };
   }
 
+  /**
+   * Totales del período antes de exportar: permite cuadrar en pantalla
+   * (cantidad de comprobantes, bases, IGV y total) contra lo que saldrá
+   * en el TXT/Excel, sin tener que descargar el archivo.
+   */
+  @Get('sire/ventas-resumen')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async sireVentasResumen(
+    @User() user: any,
+    @Query('mes') mes: string,
+    @Query('anio') anio: string,
+    @Query('empresarial') empresarial?: string,
+  ) {
+    const { mes: m, anio: a } = this.parseSireParams(mes, anio);
+    return this.sireService.obtenerResumenVentas(
+      user.empresaId,
+      m,
+      a,
+      empresarial === 'true',
+      user.sedeId,
+    );
+  }
+
+  @Get('sire/compras-resumen')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async sireComprasResumen(
+    @User() user: any,
+    @Query('mes') mes: string,
+    @Query('anio') anio: string,
+  ) {
+    const { mes: m, anio: a } = this.parseSireParams(mes, anio);
+    return this.sireService.obtenerResumenCompras(
+      user.empresaId,
+      m,
+      a,
+      user.sedeId,
+    );
+  }
+
   @Get('sire/ventas-txt')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async sireVentasTxt(

@@ -342,6 +342,10 @@ export class SireService {
         empresaId,
         ...(sedeId ? { sedeId } : {}),
         fechaEmision,
+        // Excluir compras que nunca aplicaron efectos reales: ANULADA,
+        // RECHAZADA (el admin la rechazó) y PENDIENTE_APROBACION (aún sin
+        // visto bueno, sin stock ni pago). Solo REGISTRADO va al RCE.
+        estado: 'REGISTRADO' as any,
       },
       orderBy: { fechaEmision: 'asc' },
       include: {
@@ -541,6 +545,116 @@ export class SireService {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Registro Compras');
     return XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' });
+  }
+
+  // ──────────────── RESÚMENES (previsualización) ────────────────
+
+  private r2(n: number): number {
+    return Number((n || 0).toFixed(2));
+  }
+
+  /**
+   * Totales del Libro de Ventas del período. Se calcula con la MISMA consulta
+   * (fetchVentas) y los mismos criterios de signo que el TXT/Excel, para que
+   * el usuario pueda cuadrar en pantalla antes de exportar a SUNAT.
+   */
+  async obtenerResumenVentas(
+    empresaId: number,
+    mes: number,
+    anio: number,
+    empresarial: boolean,
+    sedeId?: number,
+  ) {
+    const comprobantes = await this.fetchVentas(
+      empresaId,
+      mes,
+      anio,
+      empresarial,
+      sedeId,
+    );
+
+    let gravadas = 0;
+    let igv = 0;
+    let exoneradas = 0;
+    let inafectas = 0;
+    let exportacion = 0;
+    let total = 0;
+    let anulados = 0;
+    let notasCredito = 0;
+    const porTipoDoc: Record<string, { cantidad: number; total: number }> = {};
+
+    for (const c of comprobantes) {
+      // Mismo criterio que el TXT: las notas de crédito (07) restan.
+      const signo = c.tipoDoc === '07' ? -1 : 1;
+      if (signo === -1) notasCredito++;
+      if ((c.estadoEnvioSunat as any) === 'ANULADO') anulados++;
+
+      gravadas += Number(c.mtoOperGravadas ?? 0) * signo;
+      igv += Number(c.mtoIGV ?? 0) * signo;
+      exoneradas += Number(c.mtoOperExoneradas ?? 0) * signo;
+      inafectas += Number(c.mtoOperInafectas ?? 0) * signo;
+      exportacion += Number(c.mtoOperExportacion ?? 0) * signo;
+      const importe = Number(c.mtoImpVenta ?? 0) * signo;
+      total += importe;
+
+      const tipo = c.tipoDoc ?? '';
+      if (!porTipoDoc[tipo]) porTipoDoc[tipo] = { cantidad: 0, total: 0 };
+      porTipoDoc[tipo].cantidad++;
+      porTipoDoc[tipo].total = this.r2(porTipoDoc[tipo].total + importe);
+    }
+
+    return {
+      periodo: `${anio}${String(mes).padStart(2, '0')}`,
+      cantidad: comprobantes.length,
+      gravadas: this.r2(gravadas),
+      igv: this.r2(igv),
+      exoneradas: this.r2(exoneradas),
+      inafectas: this.r2(inafectas),
+      exportacion: this.r2(exportacion),
+      total: this.r2(total),
+      anulados,
+      notasCredito,
+      porTipoDoc,
+    };
+  }
+
+  /**
+   * Totales del Registro de Compras del período, con la misma consulta
+   * (fetchCompras) que alimenta el TXT/Excel — solo compras REGISTRADO.
+   */
+  async obtenerResumenCompras(
+    empresaId: number,
+    mes: number,
+    anio: number,
+    sedeId?: number,
+  ) {
+    const compras = await this.fetchCompras(empresaId, mes, anio, sedeId);
+
+    let base = 0;
+    let igv = 0;
+    let total = 0;
+    const porTipoDoc: Record<string, { cantidad: number; total: number }> = {};
+
+    for (const c of compras) {
+      base += Number(c.subtotal ?? 0);
+      igv += Number(c.igv ?? 0);
+      const importe = Number(c.total ?? 0);
+      total += importe;
+
+      const tipo = TIPO_DOC_COMPRA_MAP[c.tipoDoc] ?? '01';
+      if (!porTipoDoc[tipo]) porTipoDoc[tipo] = { cantidad: 0, total: 0 };
+      porTipoDoc[tipo].cantidad++;
+      porTipoDoc[tipo].total = this.r2(porTipoDoc[tipo].total + importe);
+    }
+
+    return {
+      periodo: `${anio}${String(mes).padStart(2, '0')}`,
+      cantidad: compras.length,
+      base: this.r2(base),
+      igv: this.r2(igv),
+      total: this.r2(total),
+      porTipoDoc,
+    };
   }
 
   // ──────────────── EMAIL ────────────────
