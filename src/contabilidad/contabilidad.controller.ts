@@ -705,7 +705,8 @@ export class ContabilidadController {
       user.sedeId,
     );
     const periodo = `${a}${String(m).padStart(2, '0')}`;
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    // El buffer viaja en ISO-8859-1 (ver sire.service.ts): SUNAT rechaza UTF-8.
+    res.setHeader('Content-Type', 'text/plain; charset=iso-8859-1');
     res.setHeader(
       'Content-Disposition',
       `attachment; filename="SIRE_RVIE_${periodo}.txt"`,
@@ -793,7 +794,8 @@ export class ContabilidadController {
       user.sedeId,
     );
     const periodo = `${a}${String(m).padStart(2, '0')}`;
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    // El buffer viaja en ISO-8859-1 (ver sire.service.ts): SUNAT rechaza UTF-8.
+    res.setHeader('Content-Type', 'text/plain; charset=iso-8859-1');
     res.setHeader(
       'Content-Disposition',
       `attachment; filename="SIRE_RCE_${periodo}.txt"`,
