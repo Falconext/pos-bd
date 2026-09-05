@@ -378,6 +378,8 @@ RESPUESTA (Texto plano, sin markdown de código a menos que sea necesario):`;
     nombre: string;
     marca?: string;
     categoria?: string;
+    /** Color exigido (variantes): si ninguna candidata lo cumple, no elige. */
+    color?: string;
     candidatas: Array<{
       url: string;
       title?: string;
@@ -394,13 +396,23 @@ RESPUESTA (Texto plano, sin markdown de código a menos que sea necesario):`;
 
     if (candidatas.length === 0) return null;
 
+    const color = String(params.color || '').trim();
+    const reglaColor = color
+      ? `
+REQUISITO OBLIGATORIO DE COLOR: el producto debe ser de color "${color}".
+- Descarta cualquier candidata que sea del mismo modelo pero de otro color.
+- Si NINGUNA candidata es de color "${color}", responde {"index": -1, "confidence": 0, "reason": "sin coincidencia de color"}.
+`
+      : '';
+
     const prompt = `
 Eres un asistente experto en selección de imágenes de producto para ecommerce.
 Producto objetivo:
 - Nombre: "${params.nombre}"
 - Marca: "${params.marca || 'No especificada'}"
 - Categoría: "${params.categoria || 'No especificada'}"
-
+- Color requerido: "${color || 'No especificado'}"
+${reglaColor}
 Tu tarea:
 1) Elegir SOLO una candidata (por índice) que represente mejor el producto.
 2) Evitar logos, banners, fanart, ilustraciones no relacionadas o imágenes ambiguas.

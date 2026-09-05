@@ -37,6 +37,12 @@ import { ProductoLoteService } from './producto-lote.service';
 import { CrearLoteDto } from './dto/lote.dto';
 import { KardexService } from '../kardex/kardex.service';
 import { parseFechaSoloDia } from '../common/utils/fecha';
+import {
+  buildColorMatcher,
+  evaluateColorMatch,
+  normalizeColorText,
+  type ColorVerdict,
+} from './color-match.util';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('productos')
@@ -102,7 +108,15 @@ export class ProductoController {
   @Post('ia/generar-imagen')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async generarImagenIA(
-    @Body() body: { nombre: string; marca?: string; categoria?: string; codigoBarras?: string },
+    @Body()
+    body: {
+      nombre: string;
+      marca?: string;
+      categoria?: string;
+      codigoBarras?: string;
+      /** Color de la variante: se exige coincidencia, no es un token más. */
+      color?: string;
+    },
     @User() user: any,
   ) {
     const nombre = String(body?.nombre || '').trim();
@@ -113,6 +127,8 @@ export class ProductoController {
     const marca = String(body?.marca || '').trim();
     const categoria = String(body?.categoria || '').trim();
     const codigoBarras = String(body?.codigoBarras || '').trim();
+    const color = String(body?.color || '').trim();
+    const colorMatcher = buildColorMatcher(color);
 
     // 0) Tabla Maestra global (por código de barras) — antes que nada.
     if (codigoBarras) {
@@ -149,7 +165,9 @@ export class ProductoController {
     }
 
     // Cache en memoria (evita llamadas duplicadas a Serper en la misma sesión)
-    const cacheKey = `${nombre}|${marca}|${categoria}`.toLowerCase().trim();
+    const cacheKey = `${nombre}|${marca}|${categoria}|${color}`
+      .toLowerCase()
+      .trim();
     const cached = this.imageSearchCache.get(cacheKey);
     if (cached && Date.now() - cached.cachedAt < this.IMAGE_CACHE_TTL) {
       void this.service
@@ -275,11 +293,11 @@ export class ProductoController {
 
     const scoreImage = (
       img: ImageResult,
-    ): { score: number; tokenMatches: number } => {
-      const sourceText = normalize(
-        `${img.title || ''} ${img.alt || ''} ${img.url || ''}`,
-      );
-      if (!sourceText) return { score: -1000, tokenMatches: 0 };
+    ): { score: number; tokenMatches: number; color: ColorVerdict } => {
+      const rawText = `${img.title || ''} ${img.alt || ''} ${img.url || ''}`;
+      const sourceText = normalize(rawText);
+      if (!sourceText)
+        return { score: -1000, tokenMatches: 0, color: 'neutral' };
       const words = sourceText.split(' ').filter(Boolean);
 
       let score = 0;
@@ -314,7 +332,13 @@ export class ProductoController {
         score += 2;
       if (tokenSet.has('oatey') && sourceText.includes('oatey')) score += 4;
 
-      return { score, tokenMatches };
+      // El color pedido manda: acertarlo pesa más que cualquier token suelto y
+      // declarar otro color descalifica la imagen aunque el modelo sea el correcto.
+      const colorVerdict = evaluateColorMatch(rawText, colorMatcher);
+      if (colorVerdict === 'match') score += 14;
+      if (colorVerdict === 'conflict') score -= 30;
+
+      return { score, tokenMatches, color: colorVerdict };
     };
 
     // Helper: normaliza resultados de cualquier proveedor y los acumula
@@ -323,7 +347,12 @@ export class ProductoController {
       rankedByUrl: Map<string, any>,
       curatedGlobal: Set<string>,
     ): {
-      bestLocal: { url: string; score: number; tokenMatches: number } | null;
+      bestLocal: {
+        url: string;
+        score: number;
+        tokenMatches: number;
+        color: ColorVerdict;
+      } | null;
       curated: string[];
     } => {
       const candidates = rawImages
@@ -334,6 +363,7 @@ export class ProductoController {
             img,
             score: ranking.score,
             tokenMatches: ranking.tokenMatches,
+            color: ranking.color,
           };
         })
         .sort((a, b) => b.score - a.score);
@@ -351,12 +381,26 @@ export class ProductoController {
             height: c.img.height,
             score: c.score,
             tokenMatches: c.tokenMatches,
+            color: c.color,
           });
         }
       }
 
-      const curatedList = candidates
-        .filter((c) => c.score > 0 && c.tokenMatches >= 1 && c.img.url)
+      // Con color pedido: fuera las de otro color, y las que lo aciertan van primero.
+      const relevantes = candidates.filter(
+        (c) =>
+          c.score > 0 &&
+          c.tokenMatches >= 1 &&
+          c.img.url &&
+          !(colorMatcher.active && c.color === 'conflict'),
+      );
+      const ordenadas = colorMatcher.active
+        ? [
+            ...relevantes.filter((c) => c.color === 'match'),
+            ...relevantes.filter((c) => c.color !== 'match'),
+          ]
+        : relevantes;
+      const curatedList = ordenadas
         .slice(0, 4)
         .map((c) => String(c.img.url))
         .filter((url) => !url.toLowerCase().endsWith('.svg'));
@@ -369,6 +413,7 @@ export class ProductoController {
               url: String(best.img.url),
               score: best.score,
               tokenMatches: best.tokenMatches,
+              color: best.color,
             }
           : null,
         curated: curatedList,
@@ -388,18 +433,33 @@ export class ProductoController {
         .split(' ')
         .map(canonicalToken)
         .join(' ');
-      const queryContext = [canonicalName, canonicalBrand, canonicalCategory]
-        .filter(Boolean)
-        .join(' ')
-        .trim();
+      const canonicalColor = normalizeColorText(color);
+      const contextParts = [canonicalName, canonicalBrand, canonicalCategory];
+      // Si el llamador no enriqueció el nombre con el color, lo agregamos aquí.
+      if (
+        canonicalColor &&
+        !contextParts.join(' ').includes(canonicalColor)
+      ) {
+        contextParts.push(canonicalColor);
+      }
+      const queryContext = contextParts.filter(Boolean).join(' ').trim();
 
+      // Con color, la consulta limpia va primero: "producto"/"packshot" diluyen
+      // el color y devuelven el mismo modelo en cualquier acabado.
       const queries = Array.from(
         new Set(
-          [
-            `${queryContext} producto`,
-            `${queryContext} foto producto`,
-            `${queryContext} packshot`,
-          ].filter((q) => q.trim().length > 0),
+          (canonicalColor
+            ? [
+                queryContext,
+                `${queryContext} color ${canonicalColor}`,
+                `${queryContext} foto producto`,
+              ]
+            : [
+                `${queryContext} producto`,
+                `${queryContext} foto producto`,
+                `${queryContext} packshot`,
+              ]
+          ).filter((q) => q.trim().length > 0),
         ),
       );
 
@@ -407,6 +467,7 @@ export class ProductoController {
         url: string;
         score: number;
         tokenMatches: number;
+        color: ColorVerdict;
       } | null = null;
       const curatedGlobal = new Set<string>();
       const rankedByUrl = new Map<
@@ -419,6 +480,7 @@ export class ProductoController {
           height?: number;
           score: number;
           tokenMatches: number;
+          color: ColorVerdict;
         }
       >();
 
@@ -460,7 +522,8 @@ export class ProductoController {
             if (
               bestLocal &&
               bestLocal.score >= 6 &&
-              bestLocal.tokenMatches >= 1
+              bestLocal.tokenMatches >= 1 &&
+              (!colorMatcher.active || bestLocal.color === 'match')
             )
               break;
           } catch {
@@ -513,7 +576,8 @@ export class ProductoController {
             if (
               bestLocal &&
               bestLocal.score >= 6 &&
-              bestLocal.tokenMatches >= 1
+              bestLocal.tokenMatches >= 1 &&
+              (!colorMatcher.active || bestLocal.color === 'match')
             )
               break;
           } catch {
@@ -643,15 +707,16 @@ export class ProductoController {
       };
 
       // Gemini decide la mejor candidata (si está disponible), usando las mejores heurísticas.
-      const rankedGlobalList = Array.from(rankedByUrl.values()).sort(
-        (a, b) => b.score - a.score,
-      );
+      const rankedGlobalList = Array.from(rankedByUrl.values())
+        .filter((c) => !(colorMatcher.active && c.color === 'conflict'))
+        .sort((a, b) => b.score - a.score);
       if (this.geminiService?.isEnabled() && rankedGlobalList.length > 0) {
         const geminiChoice =
           await this.geminiService.seleccionarMejorImagenProducto({
             nombre,
             marca,
             categoria,
+            color,
             candidatas: rankedGlobalList.slice(0, 10).map((c) => ({
               url: c.url,
               title: c.title,
@@ -677,7 +742,9 @@ export class ProductoController {
       }
 
       const globalCandidates = Array.from(curatedGlobal).slice(0, 5);
-      if (bestGlobal?.url && bestGlobal.score >= 6) {
+      const bestRespetaColor =
+        !colorMatcher.active || bestGlobal?.color === 'match';
+      if (bestGlobal?.url && bestGlobal.score >= 6 && bestRespetaColor) {
         const candidates =
           globalCandidates.length > 0 ? globalCandidates : [bestGlobal.url];
         guardarEnCache(bestGlobal.url, candidates);
@@ -702,8 +769,9 @@ export class ProductoController {
 
       return {
         success: false,
-        message:
-          'No se encontraron imágenes suficientemente relacionadas para este producto.',
+        message: colorMatcher.active
+          ? `No encontré imágenes del color "${color}" para este producto. Prueba un nombre más específico o sube la foto manualmente.`
+          : 'No se encontraron imágenes suficientemente relacionadas para este producto.',
         candidates: [],
       };
     } catch (e: any) {
