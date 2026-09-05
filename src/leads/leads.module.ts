@@ -12,6 +12,7 @@ import { GeminiModule } from '../gemini/gemini.module';
 import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 import { ClienteModule } from '../cliente/cliente.module';
+import { ComprobanteModule } from '../comprobante/comprobante.module';
 import { LEADS_MESSAGES_QUEUE, redisConnection } from './leads.constants';
 
 /**
@@ -31,6 +32,7 @@ import { LEADS_MESSAGES_QUEUE, redisConnection } from './leads.constants';
     WhatsAppModule,
     NotificacionesModule,
     ClienteModule,
+    ComprobanteModule,
   ],
   controllers: [LeadsController, LeadsWebhookController],
   providers: [

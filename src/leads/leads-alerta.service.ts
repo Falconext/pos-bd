@@ -11,6 +11,8 @@ export interface AlertaLeadParams {
   nombreProspecto: string;
   telefonoProspecto: string;
   cal: CalificacionBant;
+  /** Cotización (COT) que la IA generó desde el chat, si aplica. */
+  cotizacion?: { codigo: string } | null;
 }
 
 /**
@@ -93,6 +95,8 @@ export class LeadsAlertaService {
       `📱 ${waProspecto}`,
       `⭐ Score *${s.total}/100* (B${s.budget} A${s.authority} N${s.need} T${s.timeline})`,
       '',
+      p.cal.interes ? `🛒 *Interés:* ${p.cal.interes}` : null,
+      p.cotizacion ? `📄 *Cotización lista:* ${p.cotizacion.codigo} (borrador en el panel)` : null,
       p.cal.resumen ? `📋 ${p.cal.resumen}` : null,
       p.cal.proximaAccion ? `👉 ${p.cal.proximaAccion}` : null,
       '',
@@ -135,6 +139,8 @@ export class LeadsAlertaService {
         necesidad: p.cal.score.need,
         plazo: p.cal.score.timeline,
         resumen: p.cal.resumen,
+        interes: p.cal.interes,
+        cotizacionCodigo: p.cotizacion?.codigo ?? null,
         puntosClave: p.cal.puntosClave,
         proximaAccion: p.cal.proximaAccion,
         panelUrl,

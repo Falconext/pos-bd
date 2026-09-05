@@ -21,6 +21,8 @@ export interface LeadCalienteEmailProps {
   necesidad?: number | null;
   plazo?: number | null;
   resumen?: string | null;
+  interes?: string | null;
+  cotizacionCodigo?: string | null;
   puntosClave?: string[];
   proximaAccion?: string | null;
   panelUrl: string;
@@ -89,6 +91,35 @@ const prospectPhone: React.CSSProperties = {
   color: '#6b7280',
   fontSize: '14px',
 };
+const interesBox: React.CSSProperties = {
+  backgroundColor: '#ecfdf5',
+  borderLeft: '4px solid #10b981',
+  padding: '12px 16px',
+  borderRadius: '0 8px 8px 0',
+  margin: '0 0 20px 0',
+};
+const interesLabel: React.CSSProperties = {
+  margin: '0 0 4px 0',
+  color: '#047857',
+  fontSize: '12px',
+  fontWeight: 700,
+  textTransform: 'uppercase',
+  letterSpacing: '0.05em',
+};
+const interesText: React.CSSProperties = {
+  margin: 0,
+  color: '#065f46',
+  fontSize: '15px',
+  fontWeight: 600,
+  lineHeight: '1.5',
+};
+const cotizBox: React.CSSProperties = {
+  backgroundColor: '#eff6ff',
+  borderLeft: '4px solid #3b82f6',
+  padding: '12px 16px',
+  borderRadius: '0 8px 8px 0',
+  margin: '0 0 20px 0',
+};
 const sectionLabel: React.CSSProperties = {
   margin: '0 0 6px 0',
   color: '#374151',
@@ -136,6 +167,8 @@ export function LeadCalienteEmail(props: LeadCalienteEmailProps) {
     necesidad,
     plazo,
     resumen,
+    interes,
+    cotizacionCodigo,
     puntosClave = [],
     proximaAccion,
     panelUrl,
@@ -163,6 +196,22 @@ export function LeadCalienteEmail(props: LeadCalienteEmailProps) {
                 <Text style={prospectName}>{nombreProspecto}</Text>
                 <Text style={prospectPhone}>📱 {telefonoProspecto}</Text>
               </Section>
+
+              {interes ? (
+                <Section style={interesBox}>
+                  <Text style={interesLabel}>🛒 Interés concreto</Text>
+                  <Text style={interesText}>{interes}</Text>
+                </Section>
+              ) : null}
+
+              {cotizacionCodigo ? (
+                <Section style={cotizBox}>
+                  <Text style={interesLabel}>📄 Cotización lista</Text>
+                  <Text style={interesText}>
+                    {cotizacionCodigo} — borrador generado por la IA, revísalo en el panel.
+                  </Text>
+                </Section>
+              ) : null}
 
               {resumen ? (
                 <>

@@ -164,7 +164,7 @@ export class LeadsService {
     empresaId: number,
     opts: { estado?: EstadoLeadProspecto; search?: string } = {},
   ) {
-    return this.prisma.leadProspecto.findMany({
+    const prospectos = await this.prisma.leadProspecto.findMany({
       where: {
         empresaId,
         ...(opts.estado ? { estado: opts.estado } : {}),
@@ -180,6 +180,33 @@ export class LeadsService {
       orderBy: [{ puntaje: 'desc' }, { actualizadoEn: 'desc' }],
       take: 200,
     });
+
+    // Adjunta el código de la cotización (COT que la IA generó desde el chat),
+    // si existe, para mostrarla en el panel. cotizacionId es un Int suelto (sin
+    // relación Prisma), así que se resuelve con una consulta secundaria.
+    const cotizacionIds = prospectos
+      .map((p) => p.cotizacionId)
+      .filter((id): id is number => id != null);
+    const cotizaciones = cotizacionIds.length
+      ? await this.prisma.comprobante.findMany({
+          where: { id: { in: cotizacionIds }, empresaId },
+          select: { id: true, serie: true, correlativo: true },
+        })
+      : [];
+    const codigoPorId = new Map(
+      cotizaciones.map((c) => [
+        c.id,
+        `${c.serie}-${String(c.correlativo).padStart(8, '0')}`,
+      ]),
+    );
+
+    return prospectos.map((p) => ({
+      ...p,
+      cotizacion:
+        p.cotizacionId && codigoPorId.has(p.cotizacionId)
+          ? { id: p.cotizacionId, codigo: codigoPorId.get(p.cotizacionId)! }
+          : null,
+    }));
   }
 
   /** Resumen por estado (para las tarjetas del dashboard). */
@@ -227,6 +254,7 @@ export class LeadsService {
         iaVentasActiva: true,
         iaVentasContexto: true,
         iaVentasSeguimiento: true,
+        iaVentasCotizacion: true,
         iaVentasBrochureUrl: true,
       },
     });
@@ -234,6 +262,7 @@ export class LeadsService {
       iaVentasActiva: empresa?.iaVentasActiva ?? false,
       iaVentasContexto: empresa?.iaVentasContexto ?? '',
       iaVentasSeguimiento: empresa?.iaVentasSeguimiento ?? true,
+      iaVentasCotizacion: empresa?.iaVentasCotizacion ?? false,
       iaVentasBrochureUrl: empresa?.iaVentasBrochureUrl ?? '',
     };
   }
@@ -245,6 +274,7 @@ export class LeadsService {
       iaVentasActiva?: boolean;
       iaVentasContexto?: string;
       iaVentasSeguimiento?: boolean;
+      iaVentasCotizacion?: boolean;
       iaVentasBrochureUrl?: string;
     },
   ) {
@@ -260,6 +290,9 @@ export class LeadsService {
         ...(data.iaVentasSeguimiento !== undefined
           ? { iaVentasSeguimiento: data.iaVentasSeguimiento }
           : {}),
+        ...(data.iaVentasCotizacion !== undefined
+          ? { iaVentasCotizacion: data.iaVentasCotizacion }
+          : {}),
         ...(data.iaVentasBrochureUrl !== undefined
           ? { iaVentasBrochureUrl: data.iaVentasBrochureUrl.trim() || null }
           : {}),
@@ -268,6 +301,7 @@ export class LeadsService {
         iaVentasActiva: true,
         iaVentasContexto: true,
         iaVentasSeguimiento: true,
+        iaVentasCotizacion: true,
         iaVentasBrochureUrl: true,
       },
     });
@@ -275,6 +309,7 @@ export class LeadsService {
       iaVentasActiva: empresa.iaVentasActiva,
       iaVentasContexto: empresa.iaVentasContexto ?? '',
       iaVentasSeguimiento: empresa.iaVentasSeguimiento,
+      iaVentasCotizacion: empresa.iaVentasCotizacion,
       iaVentasBrochureUrl: empresa.iaVentasBrochureUrl ?? '',
     };
   }

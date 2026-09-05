@@ -22,6 +22,8 @@ export interface CalificacionBant {
   score: ScoreBant;
   status: 'FRIO' | 'TIBIO' | 'CALIENTE';
   resumen: string;
+  /** Interés concreto para el handoff: producto/cantidad, presupuesto y urgencia si los mencionó ('' si no aplica). */
+  interes: string;
   puntosClave: string[];
   proximaAccion: string;
   debeTransferir: boolean;
@@ -50,6 +52,18 @@ REGLAS DE ORO:
 6. Si es un curioso o no califica, dale información útil y cierra amablemente.
 7. Responde SIEMPRE en el idioma del prospecto.
 8. Sé conciso — máximo 2-3 oraciones por respuesta. Es WhatsApp, no un email.
+
+DATOS Y HONESTIDAD (críticas — nunca las rompas):
+- Solo puedes afirmar precios, stock, promociones, tiempos de entrega, formas de pago o características SI aparecen explícitamente en el CONTEXTO DEL NEGOCIO o en la lista de PRODUCTOS DISPONIBLES de abajo.
+- Si no tienes el dato, NO lo inventes: dile con naturalidad que lo confirmas y avanza (p. ej. "déjame confirmarte ese precio", o pide el dato que falta). Prefiere "no lo tengo a la mano" antes que inventar.
+- Nunca ofrezcas descuentos, regalos ni condiciones que no estén en el contexto.
+- Si un producto figura SIN STOCK o no está en la lista, no lo vendas: dilo con tacto y ofrece una alternativa que SÍ esté disponible.
+- No prometas plazos de entrega ni cobertura de zona que no estén confirmados en el contexto.
+
+CIERRE (tu objetivo real es concretar la venta):
+- Cuando haya interés en un producto, guía a capturar: qué producto y cantidad, nombre del cliente, y zona de entrega o si recoge, y forma de pago — de a poco, natural, no como formulario.
+- Termina cada mensaje de venta con UN siguiente paso concreto (confirmar el pedido, agendar, enviar el detalle) en vez de dejar la conversación abierta.
+- Si el prospecto es claramente un HOT LEAD, cierra el pedido o toma sus datos para que un asesor lo contacte de inmediato.
 
 SEÑALES DE HOT LEAD:
 - Menciona presupuesto específico o aprobado.
@@ -153,6 +167,67 @@ export class IaVentasService {
     return reply.trim();
   }
 
+  /**
+   * Extrae los ítems que el prospecto CONFIRMÓ querer comprar (producto del
+   * catálogo + cantidad explícita), para armar un borrador de cotización. Es
+   * conservador: solo devuelve ítems del catálogo dado y cantidades que el
+   * prospecto dijo; NUNCA inventa. Devuelve [] si no hay un pedido concreto.
+   */
+  async extraerItemsPedido(
+    conversacion: MensajeConversacion[],
+    catalogo: { id: number; descripcion: string; precioUnitario: number }[],
+  ): Promise<{ id: number; cantidad: number }[]> {
+    if (catalogo.length === 0) return [];
+    const idsValidos = new Set(catalogo.map((c) => c.id));
+
+    const texto = conversacion
+      .map((m) => `${m.role === 'user' ? 'PROSPECTO' : 'AGENTE'}: ${m.content}`)
+      .join('\n');
+    const listaCatalogo = catalogo
+      .map((c) => `- id ${c.id}: ${c.descripcion} (S/${c.precioUnitario.toFixed(2)})`)
+      .join('\n');
+
+    const prompt = `De esta conversación de ventas, extrae SOLO los productos que el prospecto confirmó o pidió comprar CON una cantidad concreta.
+
+CATÁLOGO (usa EXCLUSIVAMENTE estos id; no inventes productos ni cantidades):
+${listaCatalogo}
+
+CONVERSACIÓN:
+${texto}
+
+Reglas:
+- Solo incluye un ítem si el prospecto expresó querer comprarlo Y una cantidad clara.
+- Usa únicamente los id del catálogo. Si menciona algo que no está, omítelo.
+- Si aún no hay un pedido concreto (solo preguntas o dudas), devuelve items vacío.
+
+Responde ÚNICAMENTE con este JSON (sin markdown):
+{ "items": [ { "id": <id del catálogo>, "cantidad": <número> } ] }`;
+
+    try {
+      const text = await this.gemini.chatConHistorial(
+        'Eres un extractor preciso de pedidos. Devuelves SOLO JSON válido, sin inventar datos.',
+        [{ role: 'user', content: prompt }],
+        400,
+      );
+      const raw = extraerJson(text) as { items?: { id?: unknown; cantidad?: unknown }[] };
+      const items = Array.isArray(raw.items) ? raw.items : [];
+      const limpios: { id: number; cantidad: number }[] = [];
+      for (const it of items) {
+        const id = Number(it.id);
+        const cantidad = Number(it.cantidad);
+        if (idsValidos.has(id) && Number.isFinite(cantidad) && cantidad > 0) {
+          limpios.push({ id, cantidad });
+        }
+      }
+      return limpios;
+    } catch (e) {
+      this.logger.warn(
+        `Extracción de ítems: fallo (${e instanceof Error ? e.message : 'parse'}).`,
+      );
+      return [];
+    }
+  }
+
   /** Analiza la conversación y devuelve la calificación BANT (con fallback heurístico). */
   async analizarConversacion(
     conversacion: MensajeConversacion[],
@@ -180,6 +255,7 @@ Responde ÚNICAMENTE con este JSON (sin markdown, sin explicaciones):
   },
   "status": <"FRIO"|"TIBIO"|"CALIENTE" según total: FRIO=0-40, TIBIO=41-70, CALIENTE=71-100>,
   "summary": "<resumen de 2-3 oraciones para el vendedor humano>",
+  "interest": "<qué producto/servicio y qué cantidad le interesa, más presupuesto y urgencia SI el prospecto los mencionó; una línea corta; cadena vacía si aún no hay un interés concreto. No inventes datos que el prospecto no dijo>",
   "keyInsights": ["<insight 1>", "<insight 2>", "<insight 3>"],
   "nextAction": "<acción recomendada para el vendedor>"
 }`;
@@ -251,6 +327,7 @@ interface CalificacionCruda {
   score?: Partial<ScoreBant>;
   status?: string;
   summary?: string;
+  interest?: string;
   keyInsights?: string[];
   nextAction?: string;
 }
@@ -258,6 +335,7 @@ interface CalificacionCruda {
 function parseCalificacionJson(text: string): {
   score: Partial<ScoreBant>;
   resumen: string;
+  interes: string;
   puntosClave: string[];
   proximaAccion: string;
 } {
@@ -265,6 +343,7 @@ function parseCalificacionJson(text: string): {
   return {
     score: raw.score ?? {},
     resumen: raw.summary ?? '',
+    interes: typeof raw.interest === 'string' ? raw.interest.trim() : '',
     puntosClave: Array.isArray(raw.keyInsights) ? raw.keyInsights : [],
     proximaAccion: raw.nextAction ?? '',
   };
@@ -289,6 +368,7 @@ function aplicarBoostCierre(
   parsed: {
     score: ScoreBant;
     resumen: string;
+    interes: string;
     puntosClave: string[];
     proximaAccion: string;
   },
@@ -326,6 +406,7 @@ function aplicarBoostCierre(
     score,
     status: estadoDesdeScore(score.total),
     resumen: parsed.resumen,
+    interes: parsed.interes,
     puntosClave,
     proximaAccion: parsed.proximaAccion,
     debeTransferir: score.total >= 65,
@@ -376,6 +457,7 @@ function calificacionHeuristica(
       score.total >= 65
         ? 'Prospecto con alta intención de compra y datos de contacto compartidos.'
         : 'Prospecto en evaluación con interés activo.',
+    interes: '',
     puntosClave: [
       acepta ? 'Confirma intención de avanzar.' : 'Muestra interés comercial.',
       dioTelefono

@@ -36,6 +36,7 @@ export class LeadsController {
       iaVentasActiva?: boolean;
       iaVentasContexto?: string;
       iaVentasSeguimiento?: boolean;
+      iaVentasCotizacion?: boolean;
       iaVentasBrochureUrl?: string;
     },
   ) {

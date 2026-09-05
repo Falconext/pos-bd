@@ -6,6 +6,7 @@ import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { RagVentasService } from './leads-rag.service';
 import { LeadsAlertaService } from './leads-alerta.service';
+import { ComprobanteService } from '../comprobante/comprobante.service';
 import { LEADS_MESSAGES_QUEUE } from './leads.constants';
 import {
   IaVentasService,
@@ -48,6 +49,7 @@ export class LeadsMessageProcessor extends WorkerHost {
     private readonly whatsapp: WhatsAppService,
     private readonly notificaciones: NotificacionesService,
     private readonly alerta: LeadsAlertaService,
+    private readonly comprobante: ComprobanteService,
   ) {
     super();
   }
@@ -66,6 +68,7 @@ export class LeadsMessageProcessor extends WorkerHost {
         iaVentasActiva: true,
         iaVentasContexto: true,
         iaVentasBrochureUrl: true,
+        iaVentasCotizacion: true,
         rubro: { select: { nombre: true } },
         plan: { select: { maxLeadsMes: true } },
       },
@@ -316,6 +319,7 @@ export class LeadsMessageProcessor extends WorkerHost {
         conv.id,
         d,
         resultado.calificacion,
+        historial,
       );
     }
   }
@@ -454,6 +458,7 @@ export class LeadsMessageProcessor extends WorkerHost {
   ): Promise<{
     contexto: string;
     productos: {
+      id: number;
       descripcion: string;
       precioUnitario: any;
       stock: any;
@@ -485,6 +490,7 @@ export class LeadsMessageProcessor extends WorkerHost {
         })),
       },
       select: {
+        id: true,
         descripcion: true,
         precioUnitario: true,
         stock: true,
@@ -531,10 +537,12 @@ export class LeadsMessageProcessor extends WorkerHost {
       id: number;
       nombreComercial: string | null;
       razonSocial: string;
+      iaVentasCotizacion?: boolean;
     },
     conversacionId: number,
     d: MensajeEntrante,
     cal: CalificacionBant,
+    historial: MensajeConversacion[],
   ): Promise<void> {
     const data = {
       puntaje: cal.score.total,
@@ -564,6 +572,26 @@ export class LeadsMessageProcessor extends WorkerHost {
     // Alerta de lead CALIENTE al vendedor (una sola vez, reusa notificaciones de MYPE).
     if (cal.debeTransferir && !prospecto.notificadoEn) {
       const nombre = d.nombre || d.from;
+
+      // Cotización automática (opt-in): si el prospecto confirmó productos +
+      // cantidades, la IA arma un borrador COT (sin stock/caja/SUNAT). Best-effort.
+      let cotizacion: { serie: string; correlativo: number; id: number } | null =
+        null;
+      if (empresa.iaVentasCotizacion) {
+        cotizacion = await this.intentarCrearCotizacion(
+          empresa.id,
+          nombre,
+          d.from,
+          historial,
+        );
+        if (cotizacion) {
+          await this.prisma.leadProspecto.update({
+            where: { id: prospecto.id },
+            data: { cotizacionId: cotizacion.id },
+          });
+        }
+      }
+
       await this.notificaciones.notificarAdminsEmpresa({
         empresaId: empresa.id,
         tipo: 'INFO',
@@ -584,12 +612,89 @@ export class LeadsMessageProcessor extends WorkerHost {
         nombreProspecto: nombre,
         telefonoProspecto: d.from,
         cal,
+        cotizacion: cotizacion
+          ? {
+              codigo: `${cotizacion.serie}-${String(cotizacion.correlativo).padStart(8, '0')}`,
+            }
+          : null,
       });
 
       await this.prisma.leadProspecto.update({
         where: { id: prospecto.id },
         data: { notificadoEn: new Date() },
       });
+    }
+  }
+
+  /**
+   * Arma un borrador de cotización (COT) desde el chat: extrae los productos +
+   * cantidades que el prospecto confirmó y crea el comprobante COT (sin tocar
+   * stock, caja ni SUNAT; el precio sale del catálogo en vivo). Best-effort:
+   * ante cualquier fallo devuelve null y no interrumpe el flujo del mensaje.
+   */
+  private async intentarCrearCotizacion(
+    empresaId: number,
+    nombreProspecto: string,
+    telefono: string,
+    historial: MensajeConversacion[],
+  ): Promise<{ serie: string; correlativo: number; id: number } | null> {
+    try {
+      // Candidatos: productos mencionados a lo largo de todo el chat.
+      const textoUsuario = historial
+        .filter((m) => m.role === 'user')
+        .map((m) => m.content)
+        .join(' ');
+      const relevantes = await this.buscarProductosRelevantes(
+        empresaId,
+        textoUsuario,
+      );
+      if (relevantes.productos.length === 0) return null;
+
+      const catalogo = relevantes.productos.map((p) => ({
+        id: p.id,
+        descripcion: p.descripcion,
+        precioUnitario: Number(p.precioUnitario),
+      }));
+      const items = await this.ia.extraerItemsPedido(historial, catalogo);
+      if (items.length === 0) return null;
+
+      // Solo { productoId, cantidad }: el precio lo toma crearInformal del
+      // catálogo en vivo (prod.precioUnitario), evitando desalineaciones.
+      const detalles = items.map((it) => ({
+        productoId: it.id,
+        cantidad: it.cantidad,
+      }));
+
+      const infoCliente = `${nombreProspecto} (WhatsApp ${telefono})`;
+      const input = {
+        tipoDoc: 'COT',
+        fechaEmision: new Date().toISOString(),
+        formaPagoTipo: 'CONTADO',
+        formaPagoMoneda: 'PEN',
+        tipoMoneda: 'PEN',
+        clienteName: 'CLIENTES VARIOS',
+        leyenda: `Cotización generada por IA de Ventas para ${infoCliente}`,
+        observaciones: `Prospecto: ${infoCliente}. Borrador automático desde WhatsApp; revísalo y ajústalo antes de enviarlo.`,
+        detalles,
+      };
+
+      const comp = (await this.comprobante.crearInformal(input, empresaId)) as {
+        id?: number;
+        serie?: string;
+        correlativo?: number;
+      };
+      if (comp?.id && comp.serie != null && comp.correlativo != null) {
+        this.logger.log(
+          `IA cotización COT ${comp.serie}-${comp.correlativo} creada (empresa ${empresaId}, ${items.length} ítems).`,
+        );
+        return { serie: comp.serie, correlativo: comp.correlativo, id: comp.id };
+      }
+      return null;
+    } catch (e) {
+      this.logger.warn(
+        `IA cotización: no se pudo crear (${e instanceof Error ? e.message : String(e)}).`,
+      );
+      return null;
     }
   }
 }
