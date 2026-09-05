@@ -94,12 +94,16 @@ export async function sincronizarVariantes(
   variantesConfig: VarianteConfig[] = [],
   sedeConStockId?: number,
 ) {
-  if (!productoPadre.opcionesAtributos) return;
-
-  const combinaciones = generarCombinacionesVariantes(
-    productoPadre.opcionesAtributos as any[],
-  );
-  if (combinaciones.length === 0) return;
+  // No cortar temprano si opcionesAtributos/combinaciones viene vacío: eso es
+  // justo lo que pasa cuando el usuario borra toda la matriz de variantes
+  // desde el formulario, y en ese caso el bloque de más abajo
+  // (variantesFueraDeMatriz) debe seguir ejecutándose para desactivar las
+  // variantes existentes que quedaron huérfanas — si no, quedan ACTIVAS en
+  // la BD para siempre y el POS las sigue ofreciendo (con su stock viejo)
+  // aunque el producto ya no muestre ninguna variante en el formulario.
+  const combinaciones = productoPadre.opcionesAtributos
+    ? generarCombinacionesVariantes(productoPadre.opcionesAtributos as any[])
+    : [];
 
   // Buscar variantes existentes
   const variantesActuales = await prisma.producto.findMany({
@@ -114,7 +118,13 @@ export async function sincronizarVariantes(
   const combinacionesKeys = new Set(
     combinaciones.map((combo) => normalizedComboKey(combo)),
   );
+  const sedePrincipalId = sedes.find((s) => s.esPrincipal)?.id;
+  const stockSedeId = sedeConStockId ?? sedePrincipalId ?? sedes[0]?.id;
 
+  // Crear/actualizar variantes de la matriz actual — solo si queda alguna
+  // combinación; si la matriz está vacía, se salta directo a desactivar las
+  // variantes huérfanas más abajo.
+  if (combinaciones.length > 0) {
   // Mapa de códigos ya usados en la empresa (código en MAYÚSCULAS -> productoId)
   // para garantizar unicidad antes de crear/actualizar variantes y así evitar
   // el error de restricción única (empresaId, codigo) de forma definitiva.
@@ -141,9 +151,6 @@ export async function sincronizarVariantes(
       candidate = capCodigo(raw.slice(0, 60 - suffix.length)) + suffix;
     }
   };
-
-  const sedePrincipalId = sedes.find((s) => s.esPrincipal)?.id;
-  const stockSedeId = sedeConStockId ?? sedePrincipalId ?? sedes[0]?.id;
 
   for (const combo of combinaciones) {
     const currentKey = normalizedComboKey(combo);
@@ -260,6 +267,7 @@ export async function sincronizarVariantes(
         ),
       );
     }
+  }
   }
 
   const variantesFueraDeMatriz = variantesActuales.filter((variante) => {
