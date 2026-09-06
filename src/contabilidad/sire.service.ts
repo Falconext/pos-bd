@@ -646,6 +646,155 @@ export class SireService {
   }
 
   /**
+   * Revisión previa del período: lo que un contador necesita mirar ANTES de
+   * generar el archivo. Detecta lo que SUNAT observaría después.
+   */
+  async obtenerRevisionVentas(
+    empresaId: number,
+    mes: number,
+    anio: number,
+    empresarial: boolean,
+    sedeId?: number,
+  ) {
+    const rango = this.getDateRange(mes, anio);
+    const [incluidos, excluidos] = await Promise.all([
+      this.fetchVentas(empresaId, mes, anio, empresarial, sedeId),
+      // Comprobantes del período que NO entran al libro por su estado: son
+      // ventas emitidas que quedarían sin declarar.
+      this.prisma.comprobante.findMany({
+        where: {
+          empresaId,
+          ...(empresarial || !sedeId ? {} : { sedeId }),
+          tipoDoc: { in: ['01', '03', '07', '08'] },
+          fechaEmision: rango,
+          estadoEnvioSunat: {
+            in: ['PENDIENTE', 'RECHAZADO', 'FALLIDO_ENVIO'] as any,
+          },
+        },
+        orderBy: { fechaEmision: 'asc' },
+        select: {
+          tipoDoc: true,
+          serie: true,
+          correlativo: true,
+          estadoEnvioSunat: true,
+          mtoImpVenta: true,
+        },
+      }),
+    ]);
+
+    // ── Huecos de numeración ────────────────────────────────────────────
+    // Por cada serie del período se revisa el rango [min, max] y se marcan
+    // los correlativos que no existen en la empresa. Un correlativo emitido
+    // en otro mes no es hueco, por eso se busca en toda la empresa.
+    const porSerie = new Map<string, number[]>();
+    for (const c of incluidos) {
+      if (!porSerie.has(c.serie)) porSerie.set(c.serie, []);
+      porSerie.get(c.serie)!.push(c.correlativo);
+    }
+    const huecos: Array<{ serie: string; faltantes: number[] }> = [];
+    for (const [serie, nums] of porSerie) {
+      const min = Math.min(...nums);
+      const max = Math.max(...nums);
+      if (max - min > 5000) continue; // rango absurdo: no vale la pena revisar
+      const existentes = new Set(
+        (
+          await this.prisma.comprobante.findMany({
+            where: {
+              empresaId,
+              serie,
+              correlativo: { gte: min, lte: max },
+            },
+            select: { correlativo: true },
+          })
+        ).map((x) => x.correlativo),
+      );
+      const faltantes: number[] = [];
+      for (let n = min; n <= max; n++) if (!existentes.has(n)) faltantes.push(n);
+      if (faltantes.length) huecos.push({ serie, faltantes: faltantes.slice(0, 25) });
+    }
+
+    // ── Documentos de identidad inválidos ───────────────────────────────
+    const docsInvalidos: Array<{
+      comprobante: string;
+      cliente: string;
+      motivo: string;
+    }> = [];
+    for (const c of incluidos) {
+      const nro = (c.cliente?.nroDoc ?? '').trim();
+      const tipo = this.inferTipoDocIdentidad(
+        nro,
+        c.cliente?.tipoDocumento?.codigo,
+      );
+      const etiqueta = `${c.serie}-${c.correlativo}`;
+      const nombre = c.cliente?.nombre ?? '(sin cliente)';
+      // La factura (01) siempre exige RUC del adquirente.
+      if (c.tipoDoc === '01' && !/^\d{11}$/.test(nro)) {
+        docsInvalidos.push({
+          comprobante: etiqueta,
+          cliente: nombre,
+          motivo: nro
+            ? `Factura con RUC inválido: "${nro}"`
+            : 'Factura sin RUC del cliente',
+        });
+      } else if (tipo === '6' && nro && !/^\d{11}$/.test(nro)) {
+        docsInvalidos.push({
+          comprobante: etiqueta,
+          cliente: nombre,
+          motivo: `RUC con ${nro.length} dígitos (debe tener 11)`,
+        });
+      } else if (tipo === '1' && nro && !/^\d{8}$/.test(nro)) {
+        docsInvalidos.push({
+          comprobante: etiqueta,
+          cliente: nombre,
+          motivo: `DNI con ${nro.length} dígitos (debe tener 8)`,
+        });
+      }
+    }
+
+    // ── Notas de crédito sin documento afectado localizable ─────────────
+    const fechas = await this.fetchFechasDocModificado(
+      empresaId,
+      incluidos,
+      'ddmmyyyy',
+    );
+    const notasHuerfanas = incluidos
+      .filter(
+        (c) =>
+          (c.tipoDoc === '07' || c.tipoDoc === '08') && !fechas.get(c.id),
+      )
+      .map((c) => ({
+        comprobante: `${c.serie}-${c.correlativo}`,
+        referencia: c.numDocAfectado ?? '(vacío)',
+      }));
+
+    return {
+      excluidos: excluidos.map((c) => ({
+        comprobante: `${c.serie}-${c.correlativo}`,
+        tipoDoc: c.tipoDoc,
+        estado: c.estadoEnvioSunat,
+        total: this.r2(Number(c.mtoImpVenta ?? 0)),
+      })),
+      huecos,
+      docsInvalidos: docsInvalidos.slice(0, 25),
+      notasHuerfanas,
+      detalle: incluidos.map((c) => {
+        const signo = c.tipoDoc === '07' ? -1 : 1;
+        return {
+          tipoDoc: c.tipoDoc,
+          comprobante: `${c.serie}-${c.correlativo}`,
+          fecha: this.formatFecha(c.fechaEmision),
+          docCliente: c.cliente?.nroDoc ?? '',
+          cliente: c.cliente?.nombre ?? '',
+          base: this.r2(Number(c.mtoOperGravadas ?? 0) * signo),
+          igv: this.r2(Number(c.mtoIGV ?? 0) * signo),
+          total: this.r2(Number(c.mtoImpVenta ?? 0) * signo),
+          anulado: (c.estadoEnvioSunat as any) === 'ANULADO',
+        };
+      }),
+    };
+  }
+
+  /**
    * Totales del Libro de Ventas del período. Se calcula con la MISMA consulta
    * (fetchVentas) y los mismos criterios de signo que el TXT/Excel, para que
    * el usuario pueda cuadrar en pantalla antes de exportar a SUNAT.
@@ -746,6 +895,211 @@ export class SireService {
       igv: this.r2(igv),
       total: this.r2(total),
       porTipoDoc,
+    };
+  }
+
+  /**
+   * IGV resultante del período: débito fiscal (ventas) menos crédito fiscal
+   * (compras). Es el número que el empresario realmente quiere ver y que hoy
+   * tiene que sacar a mano cruzando los dos libros.
+   *
+   * Usa los mismos resúmenes que alimentan los archivos, así que lo que se ve
+   * acá es exactamente lo que se declararía.
+   */
+  async obtenerIgvPeriodo(
+    empresaId: number,
+    mes: number,
+    anio: number,
+    empresarial: boolean,
+    sedeId?: number,
+  ) {
+    const anterior =
+      mes === 1 ? { mes: 12, anio: anio - 1 } : { mes: mes - 1, anio };
+
+    const [ventas, compras, ventasPrev, comprasPrev] = await Promise.all([
+      this.obtenerResumenVentas(empresaId, mes, anio, empresarial, sedeId),
+      this.obtenerResumenCompras(empresaId, mes, anio, sedeId),
+      this.obtenerResumenVentas(
+        empresaId,
+        anterior.mes,
+        anterior.anio,
+        empresarial,
+        sedeId,
+      ),
+      this.obtenerResumenCompras(empresaId, anterior.mes, anterior.anio, sedeId),
+    ]);
+
+    const resultado = this.r2(ventas.igv - compras.igv);
+    const resultadoPrev = this.r2(ventasPrev.igv - comprasPrev.igv);
+    // Solo tiene sentido comparar si el mes anterior tuvo movimiento.
+    const variacion =
+      resultadoPrev !== 0
+        ? this.r2(((resultado - resultadoPrev) / Math.abs(resultadoPrev)) * 100)
+        : null;
+
+    return {
+      periodo: `${anio}${String(mes).padStart(2, '0')}`,
+      debito: ventas.igv,
+      credito: compras.igv,
+      resultado,
+      // Negativo = saldo a favor que se arrastra al mes siguiente.
+      esSaldoAFavor: resultado < 0,
+      comprobantesVentas: ventas.cantidad,
+      comprobantesCompras: compras.cantidad,
+      periodoAnterior: {
+        periodo: `${anterior.anio}${String(anterior.mes).padStart(2, '0')}`,
+        resultado: resultadoPrev,
+      },
+      variacion,
+    };
+  }
+
+  /**
+   * Compara la propuesta que publica SUNAT contra lo que tiene el sistema.
+   *
+   * La propuesta (anexo 2) trae los mismos campos que el archivo de reemplazo
+   * en las primeras 33 posiciones y agrega columnas referenciales despues, asi
+   * que se lee por POSICION y se tolera cualquier cantidad de campos >= 26.
+   * Tambien se tolera una fila de cabecera y el separador ; por si el archivo
+   * viene exportado desde Excel.
+   */
+  async compararConPropuesta(params: {
+    empresaId: number;
+    mes: number;
+    anio: number;
+    contenido: string;
+    empresarial: boolean;
+    sedeId?: number;
+  }) {
+    const { empresaId, mes, anio, contenido, empresarial, sedeId } = params;
+
+    const lineas = contenido
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    if (!lineas.length) {
+      throw new BadRequestException('El archivo está vacío.');
+    }
+
+    const sep = lineas[0].includes('|') ? '|' : ';';
+    const filas = lineas
+      .map((l) => l.split(sep))
+      .filter((f) => f.length >= 26)
+      // Descarta una posible fila de cabecera: la posición 7 (tipo CP) debe
+      // ser numérica en las filas de datos.
+      .filter((f) => /^\d{1,2}$/.test((f[6] ?? '').trim()));
+
+    if (!filas.length) {
+      throw new BadRequestException(
+        'No se reconocieron filas válidas. Se esperaba el archivo de la propuesta de SUNAT ' +
+          '(campos separados por "|", con el tipo de comprobante en la posición 7).',
+      );
+    }
+
+    const num = (v: string | undefined) => {
+      const n = Number(String(v ?? '').replace(/,/g, '').trim());
+      return Number.isFinite(n) ? this.r2(n) : 0;
+    };
+    // Serie y numero se normalizan (sin ceros a la izquierda) para que
+    // "F0A1"/"0310" y "F0A1"/"310" se reconozcan como el mismo comprobante.
+    const clave = (tipo: string, serie: string, numero: string) =>
+      `${tipo.trim().padStart(2, '0')}|${serie.trim().toUpperCase()}|${String(
+        numero,
+      )
+        .trim()
+        .replace(/^0+/, '')}`;
+
+    const sunat = new Map<
+      string,
+      { comprobante: string; base: number; igv: number; total: number }
+    >();
+    for (const f of filas) {
+      const tipo = (f[6] ?? '').trim().padStart(2, '0');
+      const serie = (f[7] ?? '').trim();
+      const numero = (f[8] ?? '').trim();
+      sunat.set(clave(tipo, serie, numero), {
+        comprobante: `${serie}-${numero.replace(/^0+/, '')}`,
+        base: num(f[14]), //  campo 15 BI gravada
+        igv: num(f[16]), //   campo 17 IGV / IPM
+        total: num(f[25]), // campo 26 Total CP
+      });
+    }
+
+    const propios = await this.fetchVentas(
+      empresaId,
+      mes,
+      anio,
+      empresarial,
+      sedeId,
+    );
+    const sistema = new Map<
+      string,
+      { comprobante: string; base: number; igv: number; total: number }
+    >();
+    for (const c of propios) {
+      const signo = c.tipoDoc === '07' ? -1 : 1;
+      sistema.set(clave(c.tipoDoc, c.serie, String(c.correlativo)), {
+        comprobante: `${c.serie}-${c.correlativo}`,
+        base: this.r2(Number(c.mtoOperGravadas ?? 0) * signo),
+        igv: this.r2(Number(c.mtoIGV ?? 0) * signo),
+        total: this.r2(Number(c.mtoImpVenta ?? 0) * signo),
+      });
+    }
+
+    const soloEnSunat: any[] = [];
+    const soloEnSistema: any[] = [];
+    const diferencias: any[] = [];
+    const tolerancia = 0.01;
+
+    for (const [k, v] of sunat) {
+      const mio = sistema.get(k);
+      if (!mio) {
+        soloEnSunat.push({ ...v, tipoDoc: k.split('|')[0] });
+        continue;
+      }
+      if (
+        Math.abs(mio.base - v.base) > tolerancia ||
+        Math.abs(mio.igv - v.igv) > tolerancia ||
+        Math.abs(mio.total - v.total) > tolerancia
+      ) {
+        diferencias.push({
+          comprobante: mio.comprobante,
+          tipoDoc: k.split('|')[0],
+          sunat: v,
+          sistema: mio,
+        });
+      }
+    }
+    for (const [k, v] of sistema) {
+      if (!sunat.has(k)) {
+        soloEnSistema.push({ ...v, tipoDoc: k.split('|')[0] });
+      }
+    }
+
+    const suma = (m: Map<string, { igv: number; total: number }>) => {
+      let igv = 0;
+      let total = 0;
+      for (const v of m.values()) {
+        igv += v.igv;
+        total += v.total;
+      }
+      return { igv: this.r2(igv), total: this.r2(total) };
+    };
+
+    return {
+      periodo: this.periodoSire(mes, anio),
+      totales: {
+        sunat: { cantidad: sunat.size, ...suma(sunat) },
+        sistema: { cantidad: sistema.size, ...suma(sistema) },
+      },
+      cuadra:
+        !soloEnSunat.length && !soloEnSistema.length && !diferencias.length,
+      soloEnSunat: soloEnSunat.slice(0, 100),
+      soloEnSistema: soloEnSistema.slice(0, 100),
+      diferencias: diferencias.slice(0, 100),
+      totalSoloEnSunat: soloEnSunat.length,
+      totalSoloEnSistema: soloEnSistema.length,
+      totalDiferencias: diferencias.length,
     };
   }
 

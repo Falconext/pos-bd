@@ -724,6 +724,80 @@ export class ContabilidadController {
     );
   }
 
+  /**
+   * Revisión previa del período: comprobantes que quedan fuera del libro,
+   * huecos de numeración, documentos de identidad inválidos y notas de
+   * crédito sin documento afectado, más el detalle fila por fila.
+   */
+  @Get('sire/ventas-revision')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async sireVentasRevision(
+    @User() user: any,
+    @Query('mes') mes: string,
+    @Query('anio') anio: string,
+    @Query('empresarial') empresarial?: string,
+  ) {
+    const { mes: m, anio: a } = this.parseSireParams(mes, anio);
+    return this.sireService.obtenerRevisionVentas(
+      user.empresaId,
+      m,
+      a,
+      empresarial === 'true',
+      user.sedeId,
+    );
+  }
+
+  /** IGV del período: débito (ventas) menos crédito fiscal (compras). */
+  @Get('sire/igv-periodo')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async sireIgvPeriodo(
+    @User() user: any,
+    @Query('mes') mes: string,
+    @Query('anio') anio: string,
+    @Query('empresarial') empresarial?: string,
+  ) {
+    const { mes: m, anio: a } = this.parseSireParams(mes, anio);
+    return this.sireService.obtenerIgvPeriodo(
+      user.empresaId,
+      m,
+      a,
+      empresarial === 'true',
+      user.sedeId,
+    );
+  }
+
+  /**
+   * Compara la propuesta de SUNAT contra lo del sistema. El contenido del
+   * archivo viaja como texto en el body: el navegador lo lee en ISO-8859-1
+   * (que es como SUNAT lo entrega) y lo envía, evitando multipart.
+   */
+  @Post('sire/ventas-comparar')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async sireVentasComparar(
+    @User() user: any,
+    @Body()
+    body: {
+      mes: number;
+      anio: number;
+      contenido: string;
+      empresarial?: boolean;
+    },
+  ) {
+    const { mes, anio, contenido, empresarial } = body;
+    if (!contenido || typeof contenido !== 'string') {
+      throw new BadRequestException('Falta el contenido del archivo.');
+    }
+    const { mes: m, anio: a } = this.parseSireParams(String(mes), String(anio));
+    return this.sireService.compararConPropuesta({
+      empresaId: user.empresaId,
+      mes: m,
+      anio: a,
+      contenido,
+      empresarial: empresarial ?? false,
+      sedeId: user.sedeId,
+    });
+  }
+
   @Get('sire/ventas-txt')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async sireVentasTxt(
