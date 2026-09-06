@@ -5768,11 +5768,21 @@ export class ComprobanteService {
     };
 
     let buffer: Buffer;
-    if (full.tipoDoc === 'COT') {
+    // La nota de venta comparte diseño con la cotización (igual que el web, que
+    // las resuelve en la misma rama de comprobanteImprimir.tsx): trae QR de pago,
+    // cuentas bancarias y su propio perfil de formato. El ticket 80mm manda sobre
+    // el tipo de documento, así que ahí no entra.
+    const esNotaVenta = full.tipoDoc === 'NV';
+    const usaDisenoCotizacion =
+      (full.tipoDoc === 'COT' || esNotaVenta) && formato !== 'ticket';
+
+    if (usaDisenoCotizacion) {
       const usuarioNombre = (full as any).usuario?.nombre || '';
-      // Moneda de la cotización (solo cotización, no afecta facturación SUNAT)
-      const cotizEsUSD =
-        String((full as any).cotizMoneda || 'PEN').toUpperCase() === 'USD';
+      // Moneda: la cotización tiene la suya (no afecta SUNAT); la nota de venta
+      // usa la del comprobante.
+      const cotizEsUSD = esNotaVenta
+        ? String((full as any).tipoMoneda || 'PEN').toUpperCase() === 'USD'
+        : String((full as any).cotizMoneda || 'PEN').toUpperCase() === 'USD';
 
       // Formato configurable de cotización (visibilidad + tamaño por elemento).
       // Debe reflejar EXACTAMENTE lo que respeta el componente de impresión del
@@ -5786,8 +5796,12 @@ export class ComprobanteService {
         opInafectas: 12, opGratuitas: 12, subTotal: 12, descuentos: 12,
         igv: 12, montoTotal: 18, cuentas: 10, gracias: 10,
       };
-      const rawFormatoCfg = ((full.empresa as any).cotizFormatoConfig ||
-        {}) as Record<string, { visible?: boolean; size?: number }>;
+      const rawFormatoCfg = ((esNotaVenta
+        ? (full.empresa as any).notaVentaFormatoConfig
+        : (full.empresa as any).cotizFormatoConfig) || {}) as Record<
+        string,
+        { visible?: boolean; size?: number }
+      >;
       const fc: Record<string, { visible: boolean; size: number }> = {};
       for (const [k, def] of Object.entries(cotizElemDefaults)) {
         const c = rawFormatoCfg[k] || {};
@@ -5817,10 +5831,18 @@ export class ComprobanteService {
         monedaNombre: cotizEsUSD ? 'DÓLARES' : 'SOLES',
         totalEnLetras: sonMoneda,
         descuentoValor: Number((full as any).mtoDescuentoGlobal || 0).toFixed(2),
-        descuentoPct: Number((full as any).cotizDescuento || 0),
-        celular: (full as any).usuario?.celular || '',
-        email: (full as any).usuario?.email || '',
+        descuentoPct: esNotaVenta ? 0 : Number((full as any).cotizDescuento || 0),
+        // La cotización muestra el contacto del vendedor; la nota de venta el de
+        // la empresa, igual que el web.
+        celular: esNotaVenta
+          ? (pdfData as any).celular
+          : (full as any).usuario?.celular || '',
+        email: esNotaVenta
+          ? (pdfData as any).email
+          : (full as any).usuario?.email || '',
         formaPago: (() => {
+          // La nota de venta usa la condición real del comprobante.
+          if (esNotaVenta) return formaPago;
           // Robusto: acepta el código (CREDITO_30, CREDITO_15/45/90) y también datos
           // legacy guardados como texto ("CREDITO 30 DÍAS").
           const raw = String((full as any).cotizTipoPago || 'CONTADO').toUpperCase();
@@ -5837,7 +5859,27 @@ export class ComprobanteService {
           ? Number(full.mtoDescuentoGlobal).toFixed(2)
           : undefined,
         validez: full.cotizVigencia ? `${full.cotizVigencia} días` : '7 días',
-        cotizTerminos: full.cotizTerminos || undefined,
+        cotizTerminos: esNotaVenta ? undefined : full.cotizTerminos || undefined,
+        // Bloque de pago de la nota de venta (la cotización usa CONDICIÓN/VALIDEZ).
+        esNotaVenta,
+        tituloDocumento: esNotaVenta ? 'NOTA DE VENTA' : 'COTIZACIÓN',
+        esCredito: esVentaCredito,
+        pagoInicial: montoPagado.toFixed(2),
+        saldoCredito: saldoPendiente > 0 ? saldoPendiente.toFixed(2) : '0.00',
+        vencimientoCredito: (full as any).fechaVencimientoCredito
+          ? new Date(
+              (full as any).fechaVencimientoCredito,
+            ).toLocaleDateString('es-PE')
+          : undefined,
+        cuotasNv:
+          esNotaVenta && Array.isArray((full as any).cuotas) && (full as any).cuotas.length > 1
+            ? (full as any).cuotas.map((c: any) => ({
+                monto: Number(c?.monto || 0).toFixed(2),
+                fechaVencimiento: c?.fechaVencimiento
+                  ? new Date(c.fechaVencimiento).toLocaleDateString('es-PE')
+                  : '',
+              }))
+            : undefined,
         clienteEmail: (full.cliente as any)?.email || '-',
         clienteTelefono: (full.cliente as any)?.telefono || '-',
         cuentasBancarias: (() => {
@@ -5880,7 +5922,10 @@ export class ComprobanteService {
           'https://falconext.pe',
         sistemaNombre: process.env.APP_NAME || 'Falconext',
       };
-      buffer = await this.pdfGenerator.generarPDFCotizacion(cotizacionData);
+      buffer = await this.pdfGenerator.generarPDFCotizacion(
+        cotizacionData,
+        formato === 'a5' ? 'a5' : 'a4',
+      );
     } else {
       // Formato configurable de comprobante fiscal (visibilidad por elemento).
       // Debe reflejar lo mismo que respeta el frontend (comprobanteImprimir.tsx)
@@ -5912,7 +5957,7 @@ export class ComprobanteService {
     // Cada tamaño se guarda con su propia key para no pisar el PDF A4, que es el
     // que queda referenciado en s3PdfUrl (correo, portal, contabilidad).
     const key =
-      full.tipoDoc === 'COT' || formato === 'a4'
+      formato === 'a4'
         ? keyBase
         : keyBase.replace(/\.pdf$/, `-${formato}.pdf`);
     return { buffer, key };

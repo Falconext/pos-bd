@@ -126,9 +126,13 @@
         .totales-box .row {
             display: flex;
             justify-content: space-between;
+            gap: 8px;
             margin-bottom: 3px;
         }
         .totales-box .row .lbl { font-weight: bold; }
+        /* En A5 el recuadro es angosto y etiquetas como "OP. EXONERADAS"
+           se partían en dos líneas. */
+        .totales-box .row span { white-space: nowrap; }
         .totales-box .row.total-final {
             font-weight: bold;
             border-top: 1px solid #000;
@@ -149,6 +153,14 @@
         }
         .bank-table th { font-weight: bold; background: #f3f4f6; }
         .bank-table .bank-td-name { font-weight: bold; }
+
+        /* ── CUOTAS (nota de venta al crédito) ─────────────────────── */
+        .cuotas-box { border: 1px solid #d1d5db; border-radius: 6px; padding: 8px; margin-bottom: 16px; }
+        .cuotas-title { font-size: 11px; font-weight: 700; margin-bottom: 4px; }
+        .cuotas-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+        .cuota-item { font-size: 10px; padding: 0 4px; }
+        .cuota-num { text-transform: uppercase; }
+        .cuota-row { display: flex; justify-content: space-between; gap: 12px; }
 
         /* ── QR DE PAGO (Yape / Plin) — dentro del recuadro de totales ── */
         .qr-pagos { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
@@ -194,7 +206,7 @@
         </div>
         <div class="documento">
             <div class="ruc">RUC: {{ruc}}</div>
-            <div class="tipo">COTIZACIÓN</div>
+            <div class="tipo">{{#if tituloDocumento}}{{tituloDocumento}}{{else}}COTIZACIÓN{{/if}}</div>
             <div class="numero">{{serie}}-{{correlativo}}</div>
         </div>
     </div>
@@ -217,12 +229,39 @@
         <div class="data-col cotiz {{#if fc.datosCliente.visible}}with-divider{{/if}}" style="font-size: {{fc.datosCotizacion.size}}px;">
             <table>
                 <tr><td>FECHA EMISIÓN:</td><td>{{fecha}}</td></tr>
+                {{#unless esNotaVenta}}
                 <tr><td>CONDICIÓN:</td><td>{{formaPago}}</td></tr>
                 <tr><td>VALIDEZ:</td><td>{{validez}}</td></tr>
+                {{/unless}}
                 <tr><td>MONEDA:</td><td>{{monedaNombre}}</td></tr>
+                {{#if esNotaVenta}}
+                <tr><td>FORMA PAGO:</td><td>{{formaPago}}</td></tr>
+                {{#if esCredito}}
+                    {{#if (pos pagoInicial)}}<tr><td>PAGO INICIAL:</td><td>{{medioPago}} {{monedaSimbolo}} {{pagoInicial}}</td></tr>{{/if}}
+                    <tr><td>SALDO CRÉDITO:</td><td>{{monedaSimbolo}} {{saldoCredito}}</td></tr>
+                    {{#if vencimientoCredito}}<tr><td>VENCIMIENTO:</td><td>{{vencimientoCredito}}</td></tr>{{/if}}
+                {{else}}
+                    <tr><td>MEDIO PAGO:</td><td>{{medioPago}}</td></tr>
+                {{/if}}
+                {{/if}}
             </table>
         </div>
         {{/if}}
+    </div>
+    {{/if}}
+
+    <!-- ── CUOTAS (nota de venta al crédito con cronograma) ────────── -->
+    {{#if cuotasNv}}
+    <div class="cuotas-box">
+        <div class="cuotas-title">CUOTAS:</div>
+        <div class="cuotas-grid">
+            {{#each cuotasNv}}
+            <div class="cuota-item">
+                <div class="cuota-num">CUOTA {{inc @index}}</div>
+                <div class="cuota-row"><span>{{this.fechaVencimiento}}</span><span>{{../monedaSimbolo}} {{this.monto}}</span></div>
+            </div>
+            {{/each}}
+        </div>
     </div>
     {{/if}}
 

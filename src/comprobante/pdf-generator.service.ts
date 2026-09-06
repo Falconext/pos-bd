@@ -22,17 +22,34 @@ export function normalizarFormatoPdf(valor?: string | null): FormatoPdf {
   return (FORMATOS_PDF as string[]).includes(v) ? (v as FormatoPdf) : 'a4';
 }
 
+/** Documentos informales que comparten el perfil de formato de nota de venta. */
+const TIPOS_INFORMALES = ['NV', 'NP', 'OT', 'TICKET', 'CP', 'RH'];
+
 export function buildFiscalFormatoFc(
   empresa: any,
   tipoDoc: string,
 ): Record<string, { visible: boolean; size: number }> {
+  // Catálogo completo de elementos configurables (mismo que
+  // frontend/src/features/admin/cotizaciones/cotizFormatoElementos.ts). El A4
+  // solo consulta las filas de totales, pero el ticket usa también cabecera,
+  // datos del cliente y pie, así que tienen que estar todos.
   const defaults: Record<string, number> = {
+    logo: 150, nombreComercial: 12, direccion: 12, rubro: 12, razonSocial: 12,
+    celular: 12, email: 12, web: 12, datosCliente: 12, datosCotizacion: 12,
+    productos: 12, sonTexto: 18, observaciones: 12, detraccion: 12,
     opGravadas: 12, opExoneradas: 12, opInafectas: 12, opGratuitas: 12,
-    icbper: 12, subTotal: 12, descuentos: 12, igv: 12,
+    icbper: 12, subTotal: 12, descuentos: 12, igv: 12, montoTotal: 14,
+    cuentas: 10, gracias: 10,
   };
+  // Cada tipo de documento tiene su propio perfil, igual que en el web: antes
+  // las notas de venta y las cotizaciones caían en el de factura.
   const raw = ((tipoDoc === '03'
     ? empresa?.boletaFormatoConfig
-    : empresa?.facturaFormatoConfig) || {}) as Record<
+    : tipoDoc === 'COT'
+      ? empresa?.cotizFormatoConfig
+      : TIPOS_INFORMALES.includes(tipoDoc)
+        ? empresa?.notaVentaFormatoConfig
+        : empresa?.facturaFormatoConfig) || {}) as Record<
     string,
     { visible?: boolean; size?: number }
   >;
@@ -41,6 +58,11 @@ export function buildFiscalFormatoFc(
     const c = raw[k] || {};
     fc[k] = { visible: c.visible !== false, size: Number(c.size) || def };
   }
+  // QR de pago: oculto salvo que se active explícitamente (igual que el web).
+  fc.qrPagos = {
+    visible: raw.qrPagos?.visible === true,
+    size: Number(raw.qrPagos?.size) || 90,
+  };
   return fc;
 }
 
@@ -666,7 +688,7 @@ export class PdfGeneratorService {
     usuario?: string;
     sistemaUrl?: string;
     sistemaNombre?: string;
-  }): Promise<Buffer> {
+  }, formato: Exclude<FormatoPdf, 'ticket'> = 'a4'): Promise<Buffer> {
     try {
       // Usar template de cotización si existe, sino el genérico
       const template = this.cotizacionTemplate || this.template;
@@ -680,14 +702,7 @@ export class PdfGeneratorService {
       return this.renderPdfBuffer(
         html,
         {
-          format: 'A4',
-          printBackground: true,
-          margin: {
-            top: '10mm',
-            right: '10mm',
-            bottom: '10mm',
-            left: '10mm',
-          },
+          ...PdfGeneratorService.PAGE_OPTIONS[formato],
         },
         '✅ PDF de cotización generado exitosamente',
       );
