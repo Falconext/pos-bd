@@ -731,7 +731,6 @@ export class ContabilidadController {
     @Res() res: Response,
     @Query('mes') mes: string,
     @Query('anio') anio: string,
-    @Query('simple') simple?: string,
     @Query('empresarial') empresarial?: string,
   ) {
     const { mes: m, anio: a } = this.parseSireParams(mes, anio);
@@ -739,17 +738,21 @@ export class ContabilidadController {
       user.empresaId,
       m,
       a,
-      simple === 'true',
       empresarial === 'true',
       user.sedeId,
     );
-    const periodo = `${a}${String(m).padStart(2, '0')}`;
+    // SUNAT valida el NOMBRE del archivo, no solo su contenido (tabla 6 del
+    // anexo 1): debe ser LE+RUC+periodo+libro+oportunidad+indicadores.
+    const nombre = await this.sireService.nombreArchivoTxtSire(
+      user.empresaId,
+      'ventas',
+      m,
+      a,
+      buffer.length > 0,
+    );
     // El buffer viaja en ISO-8859-1 (ver sire.service.ts): SUNAT rechaza UTF-8.
     res.setHeader('Content-Type', 'text/plain; charset=iso-8859-1');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="SIRE_RVIE_${periodo}.txt"`,
-    );
+    res.setHeader('Content-Disposition', `attachment; filename="${nombre}"`);
     res.setHeader('Content-Length', buffer.length.toString());
     return res.end(buffer);
   }
@@ -761,7 +764,6 @@ export class ContabilidadController {
     @Res() res: Response,
     @Query('mes') mes: string,
     @Query('anio') anio: string,
-    @Query('simple') simple?: string,
     @Query('empresarial') empresarial?: string,
   ) {
     const { mes: m, anio: a } = this.parseSireParams(mes, anio);
@@ -769,7 +771,6 @@ export class ContabilidadController {
       user.empresaId,
       m,
       a,
-      simple === 'true',
       empresarial === 'true',
       user.sedeId,
     );
@@ -794,19 +795,17 @@ export class ContabilidadController {
     body: {
       mes: number;
       anio: number;
-      simple?: boolean;
       empresarial?: boolean;
       destinatario: string;
     },
   ) {
-    const { mes, anio, simple, empresarial, destinatario } = body;
+    const { mes, anio, empresarial, destinatario } = body;
     if (!destinatario)
       throw new BadRequestException('destinatario es requerido');
     await this.sireService.enviarPorCorreo({
       tipo: 'ventas',
       mes,
       anio,
-      simple: simple ?? false,
       empresarial: empresarial ?? false,
       empresaId: user.empresaId,
       destinatario,
@@ -822,23 +821,24 @@ export class ContabilidadController {
     @Res() res: Response,
     @Query('mes') mes: string,
     @Query('anio') anio: string,
-    @Query('simple') simple?: string,
   ) {
     const { mes: m, anio: a } = this.parseSireParams(mes, anio);
     const buffer = await this.sireService.generarTxtCompras(
       user.empresaId,
       m,
       a,
-      simple === 'true',
       user.sedeId,
     );
-    const periodo = `${a}${String(m).padStart(2, '0')}`;
+    const nombre = await this.sireService.nombreArchivoTxtSire(
+      user.empresaId,
+      'compras',
+      m,
+      a,
+      buffer.length > 0,
+    );
     // El buffer viaja en ISO-8859-1 (ver sire.service.ts): SUNAT rechaza UTF-8.
     res.setHeader('Content-Type', 'text/plain; charset=iso-8859-1');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="SIRE_RCE_${periodo}.txt"`,
-    );
+    res.setHeader('Content-Disposition', `attachment; filename="${nombre}"`);
     res.setHeader('Content-Length', buffer.length.toString());
     return res.end(buffer);
   }
@@ -850,14 +850,12 @@ export class ContabilidadController {
     @Res() res: Response,
     @Query('mes') mes: string,
     @Query('anio') anio: string,
-    @Query('simple') simple?: string,
   ) {
     const { mes: m, anio: a } = this.parseSireParams(mes, anio);
     const buffer = await this.sireService.generarExcelCompras(
       user.empresaId,
       m,
       a,
-      simple === 'true',
       user.sedeId,
     );
     const periodo = `${a}${String(m).padStart(2, '0')}`;
@@ -878,16 +876,15 @@ export class ContabilidadController {
   async sireComprasCorreo(
     @User() user: any,
     @Body()
-    body: { mes: number; anio: number; simple?: boolean; destinatario: string },
+    body: { mes: number; anio: number; destinatario: string },
   ) {
-    const { mes, anio, simple, destinatario } = body;
+    const { mes, anio, destinatario } = body;
     if (!destinatario)
       throw new BadRequestException('destinatario es requerido');
     await this.sireService.enviarPorCorreo({
       tipo: 'compras',
       mes,
       anio,
-      simple: simple ?? false,
       empresaId: user.empresaId,
       destinatario,
       sedeId: user.sedeId,
