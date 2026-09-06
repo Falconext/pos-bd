@@ -49,6 +49,8 @@ export class PdfGeneratorService {
   private readonly logger = new Logger(PdfGeneratorService.name);
   private browser: puppeteer.Browser | null = null;
   private template: HandlebarsTemplateDelegate | null = null;
+  /** Ticket 80mm: diseño propio (réplica del web), no el A4 reescalado. */
+  private ticketTemplate: HandlebarsTemplateDelegate | null = null;
   private cotizacionTemplate: HandlebarsTemplateDelegate | null = null;
   private guiaTemplate: HandlebarsTemplateDelegate | null = null;
   private contratoTemplate: HandlebarsTemplateDelegate | null = null;
@@ -110,6 +112,29 @@ export class PdfGeneratorService {
     const templateSource = fs.readFileSync(foundPath, 'utf-8');
     this.template = Handlebars.compile(templateSource);
     this.logger.log(`✅ Template de comprobante cargado: ${foundPath}`);
+
+    // Template del ticket 80mm (diseño distinto al A4/A5, igual al del web).
+    const ticketCandidates = [
+      path.join(__dirname, 'templates', 'comprobante-ticket.hbs'),
+      path.join(
+        process.cwd(),
+        'src',
+        'comprobante',
+        'templates',
+        'comprobante-ticket.hbs',
+      ),
+    ];
+    const ticketPath = ticketCandidates.find((c) => fs.existsSync(c));
+    if (ticketPath) {
+      this.ticketTemplate = Handlebars.compile(
+        fs.readFileSync(ticketPath, 'utf-8'),
+      );
+      this.logger.log(`✅ Template de ticket 80mm cargado: ${ticketPath}`);
+    } else {
+      this.logger.warn(
+        '⚠️ No se encontró comprobante-ticket.hbs; el formato ticket usará el A4',
+      );
+    }
 
     // Cargar template de cotización
     const cotizacionCandidates = [
@@ -279,7 +304,9 @@ export class PdfGeneratorService {
     ticket: {
       width: '80mm',
       printBackground: true,
-      margin: { top: '5mm', right: '5mm', bottom: '5mm', left: '5mm' },
+      // El alto se calcula midiendo el contenido (ver autoHeight en
+      // renderPdfBuffer): rollo continuo, sin hoja fija.
+      margin: { top: 0, right: 0, bottom: 0, left: 0 },
     },
     a4: {
       format: 'A4',
@@ -297,6 +324,12 @@ export class PdfGeneratorService {
     html: string,
     options: Parameters<puppeteer.Page['pdf']>[0],
     successMessage: string,
+    /**
+     * Rollo continuo (ticket): el alto del papel se toma del contenido. Chrome
+     * ignora `@page { size: 80mm auto }` para el alto y cae a carta, así que hay
+     * que medir la página y pasarlo explícito.
+     */
+    autoHeight = false,
   ): Promise<Buffer> {
     let lastError: any;
 
@@ -322,7 +355,23 @@ export class PdfGeneratorService {
             );
           });
 
-        const pdfBuffer = await page.pdf(options);
+        // Las plantillas pueden traer fuentes web (el ticket usa VT323, igual
+        // que el web); sin esto el PDF puede salir con la fuente de respaldo.
+        await page
+          .evaluate(() => (document as any).fonts?.ready)
+          .catch(() => undefined);
+
+        const pdfOptions = { ...options };
+        if (autoHeight) {
+          // Medir con el viewport del ancho real del papel (80mm ≈ 302px a 96dpi),
+          // si no el contenido se maqueta a 800px y el alto sale inflado.
+          await page.setViewport({ width: 302, height: 600 });
+          const alto = await page.evaluate(
+            () => document.documentElement.scrollHeight,
+          );
+          pdfOptions.height = `${Math.ceil(alto) + 2}px`;
+        }
+        const pdfBuffer = await page.pdf(pdfOptions);
         this.logger.log(successMessage);
         return Buffer.from(pdfBuffer);
       } catch (error: any) {
@@ -483,9 +532,6 @@ export class PdfGeneratorService {
         throw new Error('Template no cargado');
       }
 
-      // La plantilla se arma en una sola columna cuando el destino es papel de 80mm.
-      (data as any).esTicket = formato === 'ticket';
-
       // Moneda para la plantilla (S/ / SOLES por defecto; US$ / DÓLARES en dólares).
       {
         const esUSD =
@@ -505,13 +551,32 @@ export class PdfGeneratorService {
         ).toFixed(2);
       }
 
-      // Generar HTML desde template
-      const html = this.template(data);
+      // El ticket 80mm tiene su propio diseño (el mismo que imprime el web),
+      // no es el A4 reescalado: usa otra plantilla y algunos campos extra.
+      const usaTicket = formato === 'ticket' && !!this.ticketTemplate;
+      if (usaTicket) {
+        const d = data as any;
+        const receipt = String(d.tipoDocumento || 'COMPROBANTE').toUpperCase();
+        d.tituloComprobante =
+          receipt === 'COTIZACIÓN'
+            ? 'COTIZACIÓN DE VENTA ELECTRÓNICA'
+            : /VENTA$/.test(receipt)
+              ? `${receipt} ELECTRÓNICA`
+              : `${receipt} DE VENTA ELECTRÓNICA`;
+        // SUBTOTAL del ticket = importe antes del descuento (igual que el web).
+        d.subTotalBruto = (
+          Number(d.mtoImpVenta || 0) + Number(d.descuento || 0)
+        ).toFixed(2);
+        d.esCredito = String(d.formaPago || '').toUpperCase().includes('CRÉDITO');
+      }
+
+      const html = usaTicket ? this.ticketTemplate!(data) : this.template(data);
 
       return this.renderPdfBuffer(
         html,
         PdfGeneratorService.PAGE_OPTIONS[formato],
         `✅ PDF ${formato.toUpperCase()} generado exitosamente`,
+        usaTicket,
       );
     } catch (error) {
       this.logger.error(

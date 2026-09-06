@@ -5693,6 +5693,16 @@ export class ComprobanteService {
         hour: '2-digit',
         minute: '2-digit',
       }),
+      // El ticket imprime FECHA/HORA en una sola línea DD/MM/AAAA HH:mm:ss,
+      // igual que el web (el A4 las muestra en filas separadas).
+      fechaHoraTicket: `${String(fecha.getDate()).padStart(2, '0')}/${String(
+        fecha.getMonth() + 1,
+      ).padStart(2, '0')}/${fecha.getFullYear()} ${String(
+        fecha.getHours(),
+      ).padStart(2, '0')}:${String(fecha.getMinutes()).padStart(
+        2,
+        '0',
+      )}:${String(fecha.getSeconds()).padStart(2, '0')}`,
       clienteNombre: (full.cliente?.nombre || 'CLIENTES VARIOS').toUpperCase(),
       clienteTipoDoc:
         full.cliente?.tipoDocumento?.codigo === '6' ? 'RUC' : 'DNI',

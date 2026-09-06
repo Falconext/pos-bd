@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <!-- Misma fuente que usa el web para 80mm (printStyles.ts). Si no hay red se
+       cae a monospace, que es el fallback del propio navegador. -->
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+  <style>
+    /* Ticket 80mm. Réplica del formato del web (comprobanteImprimir.tsx, rama
+       size === 'TICKET'): misma tipografía monoespaciada, mismos separadores
+       punteados, mismo orden de bloques y mismas etiquetas. NO es el A4
+       reescalado: es el otro diseño. */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    /* Rollo continuo: el alto lo define el contenido, no una hoja fija. Sin
+       esto el PDF sale de 80x279mm y la térmica corta ~15cm de papel en blanco
+       por cada ticket. Requiere preferCSSPageSize en puppeteer. */
+    @page { size: 80mm auto; margin: 0; }
+
+    body {
+      width: 80mm;
+      padding: 3mm 4mm 2mm 4mm;
+      background: #fff;
+      color: #111;
+      font-family: 'VT323', monospace;
+      font-size: 16px;
+      line-height: 1.05;
+      letter-spacing: 0.1px;
+    }
+
+    .center { text-align: center; }
+    .bold { font-weight: bold; }
+    .up { text-transform: uppercase; }
+    hr { border: none; border-top: 1px dashed #222; margin: 4px 0; }
+
+    /* Filas etiqueta/valor: el valor se alinea a la derecha, como en el web. */
+    .row { display: flex; justify-content: space-between; gap: 12px; }
+    .row > span:last-child { text-align: right; }
+
+    .titulo { font-size: 16px; font-weight: bold; text-align: center; }
+
+    /* Tabla de ítems con los mismos anchos del web: 16 / 44 / 20 / 20. */
+    .items .head, .items .item { display: flex; }
+    .items .c-cant { flex: 0 0 16%; text-align: center; }
+    .items .c-desc { flex: 0 0 44%; text-align: left; }
+    .items .c-pu   { flex: 0 0 20%; text-align: center; }
+    .items .c-imp  { flex: 0 0 20%; text-align: center; }
+    /* pre-line solo respeta los saltos que ya trae la descripción; el
+       interlineado se deja igual que el resto para no separar las líneas
+       que simplemente se envuelven. */
+    .items .desc-multi { white-space: pre-line; }
+    .items .gratis { font-weight: bold; font-size: 13px; margin-left: 4px; }
+    .items .sub { font-size: 12px; display: block; }
+
+    .cuota { margin-bottom: 2px; }
+    .pie { margin-top: 16px; font-size: 15px; text-align: center; text-transform: uppercase; }
+    .gracias { font-size: 15px; text-align: center; }
+  </style>
+</head>
+<body>
+
+  {{#if (vis fc 'logo')}}{{#if logo}}
+  <img src="{{logo}}" alt="logo" style="display:block;margin:0 auto 4px;max-width:{{logoSize}}px;max-height:{{logoSize}}px;width:100%;height:auto;object-fit:contain">
+  {{/if}}{{/if}}
+
+  {{#if (vis fc 'razonSocial')}}<p class="center bold">{{razonSocial}}</p>{{/if}}
+  <p class="center">
+    {{#if (vis fc 'nombreComercial')}}{{#if nombreComercial}}NOMBRE COMERCIAL: {{nombreComercial}}<br>{{/if}}{{/if}}
+    {{#if (vis fc 'direccion')}}DIRECCION: {{direccion}}<br>{{/if}}
+    {{#if (vis fc 'direccion')}}{{#if sedeDireccion}}SEDE: {{sedeDireccion}}<br>{{/if}}{{/if}}
+    {{#if (vis fc 'rubro')}}{{#if rubro}}RUBRO: {{rubro}}<br>{{/if}}{{/if}}
+    {{#if (vis fc 'celular')}}{{#if celular}}CELULAR: {{celular}}<br>{{/if}}{{/if}}
+    {{#if (vis fc 'email')}}{{#if email}}EMAIL: {{email}}<br>{{/if}}{{/if}}
+    {{#if (vis fc 'web')}}{{#if paginaWeb}}WEB: {{paginaWeb}}<br>{{/if}}{{/if}}
+    <span>RUC: {{ruc}}</span>
+  </p>
+
+  <hr>
+  <h2 class="titulo">{{tituloComprobante}}<br>{{serie}}-{{correlativo}}</h2>
+  <hr>
+
+  {{#if (vis fc 'datosCliente')}}
+  <div>
+    <p>FECHA/HORA: {{#if fechaHoraTicket}}{{fechaHoraTicket}}{{else}}{{fecha}} {{hora}}{{/if}}</p>
+    <p>RAZON SOCIAL: {{clienteNombre}}</p>
+    <p>NÚMERO DE DOCUMENTO: {{clienteNumDoc}}</p>
+    <p>DIRECCION: {{clienteDireccion}}</p>
+  </div>
+  {{/if}}
+
+  {{#if (vis fc 'detraccion')}}{{#if tipoDetraccion}}
+  <hr>
+  <div>
+    <p class="bold">OPERACIÓN SUJETA A DETRACCIÓN</p>
+    <p class="row"><span class="bold">Tipo Detracción:</span><span>{{tipoDetraccion}}</span></p>
+    <p class="row"><span class="bold">Monto Detracción:</span><span>{{simboloMoneda}} {{montoDetraccion}}</span></p>
+    <p class="row"><span class="bold">Cuenta BN:</span><span>{{#if cuentaBancoNacion}}{{cuentaBancoNacion}}{{else}}-{{/if}}</span></p>
+    {{#if medioPagoDetraccion}}<p class="row"><span class="bold">Medio de Pago:</span><span>{{medioPagoDetraccion}}</span></p>{{/if}}
+  </div>
+  {{/if}}{{/if}}
+
+  <hr>
+  <div class="items">
+    <div class="head">
+      <span class="c-cant">CANT.</span>
+      <span class="c-desc">DESCRIPCION</span>
+      <span class="c-pu">P.U.</span>
+      <span class="c-imp">IMP.</span>
+    </div>
+    {{#each productos}}
+    <div class="item">
+      <span class="c-cant">{{this.cantidad}}</span>
+      <span class="c-desc">
+        <span class="desc-multi">{{this.descripcion}}</span>{{#if this.gratis}}<span class="gratis">[GRATIS]</span>{{/if}}
+        {{#each this.lotes}}<span class="sub">Lote: {{this.lote}} Venc: {{this.fechaVencimiento}}</span>{{/each}}
+      </span>
+      <span class="c-pu">{{this.precioUnitario}}</span>
+      <span class="c-imp">{{this.total}}</span>
+    </div>
+    {{/each}}
+  </div>
+  <hr>
+
+  {{#if (vis fc 'sonTexto')}}<p>SON: {{totalEnLetras}}</p>{{/if}}
+  <hr>
+
+  {{#if (vis fc 'subTotal')}}{{#if (pos descuento)}}<p class="row"><span>SUBTOTAL:</span><span>{{subTotalBruto}}</span></p>{{/if}}{{/if}}
+  {{#if (vis fc 'descuentos')}}{{#if (pos descuento)}}<p class="row"><span>DESCUENTO:</span><span>- {{descuento}}</span></p>{{/if}}{{/if}}
+  {{#if (vis fc 'opGravadas')}}<p class="row"><span>TOTAL GRAVADAS:</span><span>{{mtoOperGravadas}}</span></p>{{/if}}
+  {{#if (vis fc 'opExoneradas')}}{{#if (pos mtoOperExoneradas)}}<p class="row"><span>OP. EXONERADAS:</span><span>{{mtoOperExoneradas}}</span></p>{{/if}}{{/if}}
+  {{#if (vis fc 'opInafectas')}}{{#if (pos mtoOperInafectas)}}<p class="row"><span>OP. INAFECTAS:</span><span>{{mtoOperInafectas}}</span></p>{{/if}}{{/if}}
+  {{#if (vis fc 'igv')}}<p class="row"><span>I.G.V 18.00 %:</span><span>{{mtoIGV}}</span></p>{{/if}}
+  {{#if (vis fc 'montoTotal')}}<p class="row"><span>IMPORTE TOTAL:</span><span>{{mtoImpVenta}}</span></p>{{/if}}
+  {{#if shouldShowRetention}}
+  <p class="row"><span>RETENCIÓN (3%):</span><span>{{retencionMonto}}</span></p>
+  <p class="row bold"><span>IMPORTE NETO:</span><span>{{importeNeto}}</span></p>
+  {{/if}}
+
+  <hr>
+  <p class="row"><span>CONDICIÓN DE PAGO:</span><span>{{formaPago}}</span></p>
+  {{#if esCredito}}
+    {{#if (pos pagado)}}<p class="row"><span>PAGO INICIAL:</span><span>{{medioPago}} {{simboloMoneda}} {{pagado}}</span></p>{{/if}}
+    {{#if saldoPendiente}}<p class="row"><span>SALDO CRÉDITO:</span><span>{{simboloMoneda}} {{saldoPendiente}}</span></p>{{/if}}
+  {{/if}}
+  {{#if cuotas}}
+  <div class="cuotas">
+    <p>CUOTAS:</p>
+    {{#each cuotas}}
+    <div class="cuota">
+      <p class="up">CUOTA {{inc @index}}</p>
+      <p class="row"><span>{{this.fechaVencimiento}}</span><span>{{../simboloMoneda}} {{this.monto}}</span></p>
+    </div>
+    {{/each}}
+  </div>
+  {{/if}}
+  {{#unless esCredito}}<p class="row"><span>MEDIO DE PAGO:</span><span>{{medioPago}}</span></p>{{/unless}}
+  <p class="row"><span>VUELTO:</span><span>{{simboloMoneda}} {{vuelto}}</span></p>
+  <p class="row"><span>PAGADO:</span><span>{{simboloMoneda}} {{pagado}}</span></p>
+  <p class="row"><span>VENDEDOR:</span><span>{{vendedor}}</span></p>
+  <hr>
+
+  {{#if ordenCompraCliente}}<p>N° ORDEN DE COMPRA : {{ordenCompraCliente}}</p>{{/if}}
+  {{#if (vis fc 'observaciones')}}<p>OBSERVACIONES : {{#if observaciones}}{{observaciones}}{{/if}}</p>{{/if}}
+
+  <div class="pie">
+    <p>Sistema punto de venta - {{sistemaNombre}}.</p>
+    <p>Desarrollado por {{sistemaNombre}}.</p>
+    <p>{{sistemaWeb}}.</p>
+  </div>
+
+  <hr>
+  {{#if (vis fc 'gracias')}}<p class="gracias">GRACIAS POR SU COMPRA, VUELVA PRONTO !</p><hr>{{/if}}
+
+</body>
+</html>
