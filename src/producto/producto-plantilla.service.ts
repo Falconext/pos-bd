@@ -53,10 +53,27 @@ export class ProductoPlantillaService {
     return productosConImagen;
   }
 
+  /**
+   * `google-img-scrap` fue retirado de npm (solo queda el placeholder
+   * 0.0.1-security), por eso ya no figura en package.json: un install limpio
+   * fallaba con 404. Se carga de forma opcional para no romper entornos que
+   * todavia lo tengan; si no esta, la busqueda por scraping simplemente no
+   * corre y el flujo usa el buscador del controlador (Serper/CSE/Brave).
+   */
+  private cargarGoogleImgScrap(): ((opts: any) => Promise<any>) | null {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      return require('google-img-scrap')?.GOOGLE_IMG_SCRAP || null;
+    } catch {
+      return null;
+    }
+  }
+
   // Helper rapido para buscar imagen sin guardar en S3 (solo URL externa)
   async buscarImagenWeb(nombre: string): Promise<string | null> {
     try {
-      const { GOOGLE_IMG_SCRAP } = require('google-img-scrap');
+      const GOOGLE_IMG_SCRAP = this.cargarGoogleImgScrap();
+      if (!GOOGLE_IMG_SCRAP) return null;
 
       const results = await GOOGLE_IMG_SCRAP({
         search: `${nombre} product`,
@@ -868,7 +885,13 @@ export class ProductoPlantillaService {
 
   async autoAsignarImagen(id: number, nombre: string) {
     try {
-      const { GOOGLE_IMG_SCRAP } = require('google-img-scrap');
+      const GOOGLE_IMG_SCRAP = this.cargarGoogleImgScrap();
+      if (!GOOGLE_IMG_SCRAP) {
+        return {
+          success: false,
+          message: 'Busqueda automatica de imagen no disponible.',
+        };
+      }
 
       const axios = require('axios');
 
