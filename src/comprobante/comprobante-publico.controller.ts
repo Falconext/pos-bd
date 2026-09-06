@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { ComprobanteService } from './comprobante.service';
+import { normalizarFormatoPdf } from './pdf-generator.service';
 
 /**
  * Endpoints públicos (sin JWT) para descargar PDFs de comprobantes informales.
@@ -23,12 +24,16 @@ export class ComprobantePublicoController {
     @Param('id', ParseIntPipe) id: number,
     @Query('token') token: string,
     @Res() res: Response,
+    @Query('formato') formato?: string,
   ) {
     if (!token || !this.service.validarTokenPdf(id, token)) {
       throw new UnauthorizedException('Enlace inválido o expirado');
     }
 
-    const { buffer } = await this.service.generarBufferPdf(id);
+    const { buffer } = await this.service.generarBufferPdf(
+      id,
+      normalizarFormatoPdf(formato),
+    );
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(

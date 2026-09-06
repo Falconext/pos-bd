@@ -12,6 +12,16 @@ import * as path from 'path';
  * Se usa en los 3 flujos que generan el PDF (impresión, emisión y reemisión)
  * para que el documento salga idéntico en todos lados.
  */
+/** Tamaño de impresión del comprobante. 'a4' es el histórico y sigue por defecto. */
+export type FormatoPdf = 'ticket' | 'a4' | 'a5';
+
+export const FORMATOS_PDF: FormatoPdf[] = ['ticket', 'a4', 'a5'];
+
+export function normalizarFormatoPdf(valor?: string | null): FormatoPdf {
+  const v = String(valor ?? '').toLowerCase();
+  return (FORMATOS_PDF as string[]).includes(v) ? (v as FormatoPdf) : 'a4';
+}
+
 export function buildFiscalFormatoFc(
   empresa: any,
   tipoDoc: string,
@@ -257,6 +267,32 @@ export class PdfGeneratorService {
     });
   }
 
+  /**
+   * Tamaños de impresión soportados. Son los mismos que ofrecen el web y la app,
+   * para que los tres botones (Ticket / A4 / A5) rindan la MISMA plantilla y no
+   * cada cliente la suya.
+   */
+  private static readonly PAGE_OPTIONS: Record<
+    FormatoPdf,
+    Parameters<puppeteer.Page['pdf']>[0]
+  > = {
+    ticket: {
+      width: '80mm',
+      printBackground: true,
+      margin: { top: '5mm', right: '5mm', bottom: '5mm', left: '5mm' },
+    },
+    a4: {
+      format: 'A4',
+      printBackground: true,
+      margin: { top: '10mm', right: '10mm', bottom: '10mm', left: '10mm' },
+    },
+    a5: {
+      format: 'A5',
+      printBackground: true,
+      margin: { top: '8mm', right: '8mm', bottom: '8mm', left: '8mm' },
+    },
+  };
+
   private async renderPdfBuffer(
     html: string,
     options: Parameters<puppeteer.Page['pdf']>[0],
@@ -441,11 +477,14 @@ export class PdfGeneratorService {
     yapeQrUrl?: string;
     plinNumero?: string;
     plinQrUrl?: string;
-  }): Promise<Buffer> {
+  }, formato: FormatoPdf = 'a4'): Promise<Buffer> {
     try {
       if (!this.template) {
         throw new Error('Template no cargado');
       }
+
+      // La plantilla se arma en una sola columna cuando el destino es papel de 80mm.
+      (data as any).esTicket = formato === 'ticket';
 
       // Moneda para la plantilla (S/ / SOLES por defecto; US$ / DÓLARES en dólares).
       {
@@ -471,17 +510,8 @@ export class PdfGeneratorService {
 
       return this.renderPdfBuffer(
         html,
-        {
-          format: 'A4',
-          printBackground: true,
-          margin: {
-            top: '10mm',
-            right: '10mm',
-            bottom: '10mm',
-            left: '10mm',
-          },
-        },
-        '✅ PDF generado exitosamente',
+        PdfGeneratorService.PAGE_OPTIONS[formato],
+        `✅ PDF ${formato.toUpperCase()} generado exitosamente`,
       );
     } catch (error) {
       this.logger.error(
@@ -493,51 +523,11 @@ export class PdfGeneratorService {
   }
 
   /**
-   * Genera PDF en formato ticket (80mm)
+   * Genera PDF en formato ticket (80mm). Alias de generarPDFComprobante para no
+   * mantener dos veces la preparación de datos de la misma plantilla.
    */
   async generarPDFTicket(data: any): Promise<Buffer> {
-    try {
-      if (!this.template) {
-        throw new Error('Template no cargado');
-      }
-
-      {
-        const esUSD = String(data?.tipoMoneda || 'PEN').toUpperCase() === 'USD';
-        data.simboloMoneda = esUSD ? 'US$' : 'S/';
-        data.monedaNombre = esUSD ? 'DÓLARES' : 'SOLES';
-      }
-
-      if (data.subTotal === undefined || data.subTotal === null) {
-        data.subTotal = (
-          Number(data.mtoOperGravadas || 0) +
-          Number(data.mtoOperExoneradas || 0) +
-          Number(data.mtoOperInafectas || 0)
-        ).toFixed(2);
-      }
-
-      const html = this.template(data);
-
-      return this.renderPdfBuffer(
-        html,
-        {
-          width: '80mm',
-          printBackground: true,
-          margin: {
-            top: '5mm',
-            right: '5mm',
-            bottom: '5mm',
-            left: '5mm',
-          },
-        },
-        '✅ PDF ticket generado exitosamente',
-      );
-    } catch (error) {
-      this.logger.error(
-        `❌ Error generando PDF ticket: ${error.message}`,
-        error.stack,
-      );
-      throw error;
-    }
+    return this.generarPDFComprobante(data, 'ticket');
   }
 
   /**

@@ -20,6 +20,7 @@ import {
   FilesInterceptor,
 } from '@nestjs/platform-express';
 import { ComprobanteService } from './comprobante.service';
+import { normalizarFormatoPdf } from './pdf-generator.service';
 import {
   EnviarSunatService,
   SunatPayloadException,
@@ -1021,12 +1022,19 @@ export class ComprobanteController {
     return this.service.crearOT(dto, user.empresaId, user.id, effectiveSedeId);
   }
 
+  /**
+   * Genera (o devuelve) el PDF del comprobante. `formato` acepta ticket | a4 | a5
+   * y renderiza la MISMA plantilla del servidor en los tres tamaños, para que la
+   * web y la app impriman exactamente el mismo documento. Por defecto a4, que es
+   * el que queda cacheado en s3PdfUrl.
+   */
   @Post(':id/generar-pdf')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
   async generarPdf(
     @Param('id', ParseIntPipe) id: number,
     @User() user: any,
     @Query('force') force?: string,
+    @Query('formato') formato?: string,
   ) {
     const pdfUrl = await this.service.generarYSubirPdf(
       id,
@@ -1035,6 +1043,7 @@ export class ComprobanteController {
         rol: user.rol,
       },
       force === 'true' || force === '1',
+      normalizarFormatoPdf(formato),
     );
     return { pdfUrl };
   }

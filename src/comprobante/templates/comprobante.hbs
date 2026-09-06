@@ -128,9 +128,51 @@
     .footer-bottom .usuario-label { font-size: 9px; color: #6b7280; font-family: monospace; }
     .footer-bottom .marca-label { font-size: 9px; color: #6b7280; text-align: right; }
     .footer-bottom .marca-label .marca-name { font-weight: bold; font-style: italic; }
+
+    /* ── TICKET 80mm ─────────────────────────────────────────────
+       Mismo contenido y misma configuración de formato que A4/A5; solo
+       cambia el armado para que entre en papel térmico: todo en una
+       columna, sin la columna MONEDA y con los totales en una línea. */
+    body.ticket { padding: 0; font-size: 10px; line-height: 1.3; }
+    body.ticket .header { display: block; text-align: center; margin-bottom: 10px; }
+    body.ticket .logo-empresa { display: block; }
+    body.ticket .logo-empresa img { display: block; margin: 0 auto 6px; max-width: 100%; }
+    body.ticket .empresa-info h1 { font-size: 13px; }
+    body.ticket .empresa-info .linea { font-size: 9px; line-height: 1.35; }
+    body.ticket .documento { margin: 8px 0 0 0; padding: 6px 8px; min-width: 0; border-width: 1px; }
+    body.ticket .documento .tipo { font-size: 13px; }
+    body.ticket .data-box { display: block; padding: 6px; margin-bottom: 8px; }
+    body.ticket .data-col.with-divider { border-left: none; padding-left: 0; border-top: 1px dashed #999; margin-top: 4px; padding-top: 4px; }
+    body.ticket .data-col table td { font-size: 9px; }
+    body.ticket .data-col table td:first-child,
+    body.ticket .data-col.comp table td:first-child { width: 74px; }
+    body.ticket .cuotas-grid { grid-template-columns: 1fr; }
+    body.ticket .productos-table th,
+    body.ticket .productos-table td { font-size: 9px; padding: 3px 2px; }
+    body.ticket .col-moneda { display: none; }
+    body.ticket .col-n { width: 7%; }
+    body.ticket .col-cant { width: 13%; }
+    body.ticket .col-um { width: 13%; }
+    body.ticket .col-pu, body.ticket .col-tot { width: 17%; }
+    body.ticket .son-section { font-size: 11px; padding: 6px 8px; }
+    /* column-reverse: en ticket los totales van antes de observaciones/legal,
+       como en cualquier voucher térmico. */
+    body.ticket .footer-section { display: flex; flex-direction: column-reverse; padding: 8px; }
+    body.ticket .observaciones-box,
+    body.ticket .totales-box { width: 100%; padding-right: 0; }
+    body.ticket .totales-box { text-align: left; margin-bottom: 8px; }
+    body.ticket .totales-box .row { font-size: 10px; }
+    body.ticket .totales-box .row .lbl { white-space: nowrap; margin-right: 8px; }
+    body.ticket .totales-box .row.total-final { font-size: 12px; }
+    body.ticket .observaciones-box { border-top: 1px dashed #999; padding-top: 6px; }
+    body.ticket .footer-thanks { margin-top: 10px; }
+    body.ticket .footer-thanks p { font-size: 9px; }
+    body.ticket .footer-thanks .vuelva { margin-bottom: 10px; }
+    body.ticket .footer-bottom { display: block; text-align: center; }
+    body.ticket .footer-bottom .marca-label { text-align: center; margin-top: 4px; }
   </style>
 </head>
-<body>
+<body class="{{#if esTicket}}ticket{{/if}}">
 
   <!-- ── HEADER: Logo | Empresa | Documento ─────────────────── -->
   <div class="header">
