@@ -360,8 +360,37 @@ export class ShalomLatService {
     } catch (error: any) {
       this.logger.error('Error Shalom /instances', error?.message);
       if (error instanceof HttpException) throw error;
+      // El cupo de instancias es de NUESTRO contrato con el proveedor, no del
+      // plan del empresario: mostrarle "Tu plan permite N instancias" lo manda a
+      // revisar su propio plan. El mensaje crudo queda en el log de arriba.
+      if (/instancias?/i.test(String(error?.message ?? '')) &&
+          /l[ií]mite|permite/i.test(String(error?.message ?? ''))) {
+        throw new BadRequestException(
+          'La generación de guías no está disponible en este momento. Contacta a soporte.',
+        );
+      }
       throw new BadRequestException(
         this.mensajeShalom(error, 'la conexión con tu cuenta Shalom Pro'),
+      );
+    }
+  }
+
+  /**
+   * DELETE /instances { instanceId } → elimina la instancia en el proveedor.
+   * Importante: el cupo de instancias del plan se cuenta por instancias vivas,
+   * así que sin esto desconectar en el panel dejaría el cupo ocupado para siempre.
+   */
+  async eliminarInstancia(instanceId: string): Promise<any> {
+    try {
+      const res = await this.requestConReintento('DELETE', '/instances', {
+        body: { instanceId },
+      });
+      return await res.json().catch(() => ({ success: true }));
+    } catch (error: any) {
+      this.logger.error('Error Shalom DELETE /instances', error?.message);
+      if (error instanceof HttpException) throw error;
+      throw new BadRequestException(
+        this.mensajeShalom(error, 'la desconexión de tu cuenta Shalom Pro'),
       );
     }
   }

@@ -15,6 +15,7 @@ describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
     crearInstancia: jest.fn().mockResolvedValue({ instanceId: 'inst-1' }),
     loginInstancia: jest.fn().mockResolvedValue({ ok: true }),
     pendingShipments: jest.fn().mockResolvedValue({ data: [] }),
+    eliminarInstancia: jest.fn().mockResolvedValue({ success: true }),
     ticketImage: jest
       .fn()
       .mockResolvedValue({ buffer: Buffer.from('png'), contentType: 'image/png' }),
@@ -185,5 +186,22 @@ describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
     });
     await expect(svc.crearGuiaDesdeDespacho(9, 100)).rejects.toThrow(/ya tiene la guía/);
     expect(lat.createOrder).not.toHaveBeenCalled();
+  });
+
+  it('desconectar elimina la instancia en el proveedor para liberar el cupo', async () => {
+    const { svc, prisma, lat } = build();
+    prisma.empresa.findUnique.mockResolvedValue(empresaCorporativa());
+    prisma.empresa.update.mockResolvedValue({});
+    await svc.desconectarInstancia(100);
+    expect(lat.eliminarInstancia).toHaveBeenCalledWith('inst-1');
+  });
+
+  it('si el proveedor falla al eliminar, la desconexión local igual ocurre', async () => {
+    const { svc, prisma, lat } = build();
+    prisma.empresa.findUnique.mockResolvedValue(empresaCorporativa());
+    prisma.empresa.update.mockResolvedValue({});
+    lat.eliminarInstancia.mockRejectedValue(new Error('proveedor caído'));
+    await expect(svc.desconectarInstancia(100)).resolves.toBeDefined();
+    expect(prisma.empresa.update).toHaveBeenCalled();
   });
 });

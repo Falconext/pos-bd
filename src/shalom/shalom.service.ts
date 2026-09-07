@@ -282,17 +282,30 @@ export class ShalomService {
       `Empresa ${empresaId}`;
 
     try {
-      const respuesta = await this.lat.crearInstancia({
-        name: nombre,
-        username,
-        password,
-      });
-      const instanceId = this.extraerInstanceId(respuesta);
+      // Si la empresa YA tiene instancia, reconectar = volver a loguear esa misma.
+      // Crear otra consumiría un cupo del plan del proveedor (que los cuenta por
+      // key, no por empresa) y devolvería 403 "Has alcanzado el límite",
+      // marcando como ERROR una conexión que en realidad seguía sana.
+      let instanceId = empresa.shalomInstanceId ?? null;
+      if (!instanceId) {
+        const respuesta = await this.lat.crearInstancia({
+          name: nombre,
+          username,
+          password,
+        });
+        instanceId = this.extraerInstanceId(respuesta);
+      }
       if (!instanceId) {
         throw new BadRequestException(
           'Shalom no devolvió el identificador de la instancia. Intenta de nuevo.',
         );
       }
+      // Crear la instancia NO abre la sesión: el proveedor la devuelve con
+      // isLoggedIn=false y username=null hasta que se llama /instances/login.
+      // Sin esto la empresa quedaba "Conectada" en el panel pero sin sesión real,
+      // y el primer intento de guía fallaba.
+      await this.lat.loginInstancia(instanceId, username, password);
+
       await this.prisma.empresa.update({
         where: { id: empresaId },
         data: {
@@ -393,9 +406,24 @@ export class ShalomService {
     return this.getInstancia(empresaId);
   }
 
-  /** Olvida la cuenta conectada (no borra nada del lado de Shalom). */
+  /**
+   * Desconecta la cuenta. Elimina también la instancia en el proveedor: el cupo
+   * del plan se cuenta por instancias vivas, así que borrarla solo de nuestra BD
+   * dejaría el cupo ocupado y ninguna otra empresa podría conectarse.
+   */
   async desconectarInstancia(empresaId: number) {
-    await this.empresaConShalomPro(empresaId);
+    const empresa = await this.empresaConShalomPro(empresaId);
+    if (empresa.shalomInstanceId) {
+      // Si el proveedor falla igual desconectamos localmente (el usuario lo pidió),
+      // pero queda el aviso porque el cupo seguiría tomado.
+      await this.lat
+        .eliminarInstancia(empresa.shalomInstanceId)
+        .catch((e) =>
+          this.logger.warn(
+            `No se pudo eliminar la instancia ${empresa.shalomInstanceId} en Shalom: ${e?.message}. El cupo del plan podría seguir ocupado.`,
+          ),
+        );
+    }
     await this.prisma.empresa.update({
       where: { id: empresaId },
       data: {
