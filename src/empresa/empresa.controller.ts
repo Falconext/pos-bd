@@ -16,7 +16,7 @@ import {
 import { EmpresaService } from './empresa.service';
 import { CreateEmpresaDto } from './dto/create-empresa.dto';
 import { ListEmpresaDto } from './dto/list-empresa.dto';
-import { UpdateEmpresaDto } from './dto/update-empresa.dto';
+import { UpdateEmpresaDto, OnboardingEmpresaDto } from './dto/update-empresa.dto';
 import {
   CreateCuentaBancariaDto,
   UpdateCuentaBancariaDto,
@@ -207,6 +207,23 @@ export class EmpresaController {
       user.id,
     );
     res.locals.message = `Empresa ${body.estado === 'ACTIVO' ? 'activada' : 'desactivada'} correctamente`;
+    return result;
+  }
+
+  @Patch(':id/onboarding')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  async marcarOnboarding(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: OnboardingEmpresaDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.empresaService.marcarOnboarding(
+      id,
+      body.campo,
+      body.valor,
+    );
+    res.locals.message = 'Seguimiento actualizado';
     return result;
   }
 

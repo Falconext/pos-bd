@@ -1235,6 +1235,13 @@ export class EmpresaService {
         updateData.facturaFormatoConfig = dto.facturaFormatoConfig as any;
       if (dto.boletaFormatoConfig !== undefined)
         updateData.boletaFormatoConfig = dto.boletaFormatoConfig as any;
+      // Impresión de comprobantes (Perfil → Configuración).
+      if (dto.mostrarQrSunat !== undefined)
+        updateData.mostrarQrSunat = dto.mostrarQrSunat;
+      if (dto.formatoImpresionDefault !== undefined)
+        updateData.formatoImpresionDefault = dto.formatoImpresionDefault;
+      if (dto.imprimirAutomatico !== undefined)
+        updateData.imprimirAutomatico = dto.imprimirAutomatico;
       if (dto.cotizTerminosDefault !== undefined)
         updateData.cotizTerminosDefault = dto.cotizTerminosDefault || null;
       if (dto.cotizObservacionesDefault !== undefined)
@@ -1447,6 +1454,34 @@ export class EmpresaService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Marca o desmarca un hito de onboarding (capacitación, alta SUNAT, contrato,
+   * bienvenida en redes) desde el listado, sin abrir el formulario de edición.
+   */
+  async marcarOnboarding(
+    id: number,
+    campo: 'capacitacion' | 'altaSunat' | 'contrato' | 'bienvenidaRedes',
+    valor: boolean,
+  ) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!empresa) throw new NotFoundException('Empresa no encontrada');
+
+    return this.prisma.empresa.update({
+      where: { id },
+      data: { [campo]: valor },
+      select: {
+        id: true,
+        capacitacion: true,
+        altaSunat: true,
+        contrato: true,
+        bienvenidaRedes: true,
+      },
+    });
   }
 
   async cambiarEstado(

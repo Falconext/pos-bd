@@ -1,3 +1,8 @@
+import {
+  planTieneFeature,
+  type PlanConFeatures,
+} from '../common/utils/plan-features';
+
 // Utilidades puras para normalizar el tracking de Shalom.
 // Ambos proveedores (legacy y lat) terminan devolviendo una forma
 // { search, statuses, ose_id }; aquí derivamos la etapa actual del envío.
@@ -73,17 +78,18 @@ export function etiquetaEtapaShalom(estado: ShalomEstado | null): string {
 }
 
 /**
- * Planes que habilitan CREAR guías en Shalom Pro desde el sistema.
+ * Gate de plan, leído de las características configuradas en Sistema → Planes
+ * (tabla `PlanFeature`) y ya no del nombre del plan, que se rompía al renombrar
+ * o al crear planes a medida.
  *
- * El rastreo (tracking, agencias, comprobante, etiqueta, cotización) funciona
- * para cualquier plan con la API key global. Crear guías, en cambio, consume la
- * cuenta Shalom Pro del propio negocio y se ofrece solo en el plan Corporativo.
+ * El rastreo (`tieneShalom`) va con la API key global; crear guías consume la
+ * cuenta Shalom Pro del negocio, por eso es una característica aparte.
  */
-export function planPermiteShalomPro(planNombre?: string | null): boolean {
-  const raw = String(planNombre ?? '')
-    .toUpperCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .trim();
-  return raw.includes('CORPORAT');
+export function planPermiteShalomPro(plan: PlanConFeatures): boolean {
+  return planTieneFeature(plan, 'tieneShalomGuias');
+}
+
+/** Habilita el módulo Shalom (rastreo, agencias, comprobante, etiqueta). */
+export function planPermiteShalom(plan: PlanConFeatures): boolean {
+  return planTieneFeature(plan, 'tieneShalom');
 }

@@ -12,13 +12,22 @@ export type PlanFeatureKey =
   | 'tieneAnalisisFinancieroAvanzado'
   | 'tieneMultiplesSedes'
   | 'tieneAutoGenerarImagen'
-  | 'tieneLocalizacion';
+  | 'tieneLocalizacion'
+  // ── Envíos y couriers ──────────────────────────────────────────────────────
+  // Separados por courier y por capacidad: el rastreo se cubre con la API key
+  // global de Falconext, mientras que crear guías consume el cupo del proveedor.
+  // Antes esto estaba clavado en código (`nombrePlan.includes('CORPORAT')`).
+  | 'tieneShalom'
+  | 'tieneShalomGuias'
+  | 'tieneOlva'
+  | 'tieneOlvaGuias'
+  | 'tienePlantillasWhatsApp';
 
 export interface PlanFeatureCatalogItem {
   key: PlanFeatureKey;
   label: string;
   description: string;
-  group: 'general' | 'tienda' | 'ventas' | 'operaciones' | 'inventario';
+  group: 'general' | 'tienda' | 'ventas' | 'operaciones' | 'inventario' | 'envios';
   icon: string;
   dependsOn?: PlanFeatureKey;
   limits?: Array<{
@@ -152,6 +161,49 @@ export const PLAN_FEATURE_CATALOG: PlanFeatureCatalogItem[] = [
       'Permite registrar pasillos, estantes u otras referencias físicas por producto.',
     group: 'inventario',
     icon: 'solar:map-point-bold-duotone',
+  },
+  // ── Envíos y couriers ──────────────────────────────────────────────────────
+  {
+    key: 'tieneShalom',
+    label: 'Shalom · rastreo de envíos',
+    description:
+      'Catálogo de agencias, rastreo del envío y cotización desde el panel, sin cuenta del negocio.',
+    group: 'envios',
+    icon: 'solar:delivery-bold-duotone',
+  },
+  {
+    key: 'tieneShalomGuias',
+    label: 'Shalom · crear guías (Pro)',
+    description:
+      'Conectar la cuenta Shalom Pro del negocio y emitir las guías desde el panel. Consume el cupo del proveedor.',
+    group: 'envios',
+    icon: 'solar:box-bold-duotone',
+    dependsOn: 'tieneShalom',
+  },
+  {
+    key: 'tieneOlva',
+    label: 'Olva · rastreo de envíos',
+    description:
+      'Catálogo de agencias Olva, rastreo del envío y cotización desde el panel.',
+    group: 'envios',
+    icon: 'solar:delivery-bold-duotone',
+  },
+  {
+    key: 'tieneOlvaGuias',
+    label: 'Olva · crear guías y pedidos',
+    description:
+      'Registrar la guía del envío en Olva desde el despacho. Consume el cupo de la cuenta Olva.',
+    group: 'envios',
+    icon: 'solar:box-bold-duotone',
+    dependsOn: 'tieneOlva',
+  },
+  {
+    key: 'tienePlantillasWhatsApp',
+    label: 'Plantillas de WhatsApp',
+    description:
+      'Conectar el WhatsApp del negocio y crear sus plantillas de despacho. Se contrata por separado.',
+    group: 'operaciones',
+    icon: 'solar:chat-round-line-bold-duotone',
   },
 ];
 

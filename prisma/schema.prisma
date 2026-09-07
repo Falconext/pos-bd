@@ -222,6 +222,17 @@ model Empresa {
   aceptaEnvio                   Boolean                       @default(true)
   aceptaRecojo                  Boolean                       @default(true)
   esAgenteRetencion             Boolean                       @default(false)
+  // ── Impresión de comprobantes ────────────────────────────────────────────
+  // QR de SUNAT al pie del comprobante (ticket / A4 / A5). Nada que ver con el
+  // QR de Yape/Plin (`qrPagos` del formato): este lleva el enlace al PDF del
+  // comprobante y, si aún no existe, la cadena normativa de SUNAT.
+  mostrarQrSunat                Boolean                       @default(false)
+  // Formato preseleccionado al imprimir un comprobante: TICKET | A4 | A5.
+  formatoImpresionDefault       String                        @default("TICKET")
+  // Abrir el diálogo de impresión apenas se emite el comprobante, sin que el
+  // cajero tenga que elegir formato. Opt-in: hay negocios que no imprimen todas
+  // las ventas (las mandan por WhatsApp) y el diálogo bloquea la pantalla.
+  imprimirAutomatico            Boolean                       @default(false)
   ticketLogoSize                Int?                          @default(96)
   usaCodigoBarrasManual         Boolean?
   usarPrecioLoteFefo            Boolean                       @default(false)

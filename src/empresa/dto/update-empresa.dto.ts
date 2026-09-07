@@ -143,6 +143,22 @@ export class UpdateEmpresaDto {
   @IsObject()
   boletaFormatoConfig?: Record<string, { visible?: boolean; size?: number }>;
 
+  // ── Impresión de comprobantes (Perfil → Configuración) ────────────────────
+  /** QR de SUNAT al pie del comprobante (ticket / A4 / A5). */
+  @IsOptional()
+  @IsBoolean()
+  mostrarQrSunat?: boolean;
+
+  /** Formato preseleccionado al imprimir: TICKET | A4 | A5. */
+  @IsOptional()
+  @IsIn(['TICKET', 'A4', 'A5'])
+  formatoImpresionDefault?: 'TICKET' | 'A4' | 'A5';
+
+  /** Abrir el diálogo de impresión apenas se emite el comprobante. */
+  @IsOptional()
+  @IsBoolean()
+  imprimirAutomatico?: boolean;
+
   @IsOptional()
   @IsBoolean()
   usaCodigoBarrasManual?: boolean;
@@ -329,4 +345,17 @@ export class UpdateEmpresaUsuarioDto {
   @IsOptional()
   @IsString()
   celular?: string;
+}
+
+/**
+ * Marcado de onboarding desde el listado de Empresas (ADMIN_SISTEMA).
+ * Es un DTO propio y no el `UpdateEmpresaDto` completo: así un clic en el check
+ * no puede tocar por accidente ningún otro campo de la empresa.
+ */
+export class OnboardingEmpresaDto {
+  @IsIn(['capacitacion', 'altaSunat', 'contrato', 'bienvenidaRedes'])
+  campo!: 'capacitacion' | 'altaSunat' | 'contrato' | 'bienvenidaRedes';
+
+  @IsBoolean()
+  valor!: boolean;
 }

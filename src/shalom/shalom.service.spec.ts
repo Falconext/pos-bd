@@ -57,7 +57,12 @@ describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
     shalomSecurityCode: null,
     shalomAgenciaOrigenId: '7',
     shalomAgenciaOrigenNombre: 'Lima Centro - LIMA - LIMA',
-    plan: { nombre: 'CORPORATIVO' },
+    // El gate ya no mira el NOMBRE del plan sino sus características
+    // (Sistema → Planes), así que el fixture trae la fila de PlanFeature.
+    plan: {
+      nombre: 'CORPORATIVO',
+      features: [{ featureKey: 'tieneShalomGuias', enabled: true }],
+    },
     ...extra,
   });
 
@@ -104,12 +109,19 @@ describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
     expect(prisma.empresa.findUnique).not.toHaveBeenCalled();
   });
 
-  it('un plan que no es Corporativo no puede conectar la cuenta Shalom Pro', async () => {
+  it('un plan sin la característica tieneShalomGuias no puede conectar la cuenta Shalom Pro', async () => {
     const { svc, prisma, lat } = build();
     prisma.empresa.findUnique.mockResolvedValue(
-      empresaCorporativa({ plan: { nombre: 'NEGOCIO_MENSUAL' } }),
+      empresaCorporativa({
+        plan: {
+          nombre: 'NEGOCIO_MENSUAL',
+          features: [{ featureKey: 'tieneShalomGuias', enabled: false }],
+        },
+      }),
     );
-    await expect(svc.conectarInstancia(100, {})).rejects.toThrow(/Corporativo/);
+    await expect(svc.conectarInstancia(100, {})).rejects.toThrow(
+      /no incluye la creación de guías/,
+    );
     expect(lat.crearInstancia).not.toHaveBeenCalled();
   });
 

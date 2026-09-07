@@ -56,6 +56,10 @@
     .cuota { margin-bottom: 2px; }
     .pie { margin-top: 16px; font-size: 15px; text-align: center; text-transform: uppercase; }
     .gracias { font-size: 15px; text-align: center; }
+    /* QR de SUNAT (opt-in por empresa). No confundir con el QR de pago Yape/Plin. */
+    .qr-sunat { text-align: center; margin: 6px 0; }
+    .qr-sunat img { width: 26mm; height: 26mm; }
+    .qr-sunat p { font-size: 11px; }
   </style>
 </head>
 <body>
@@ -162,6 +166,14 @@
 
   {{#if ordenCompraCliente}}<p>N° ORDEN DE COMPRA : {{ordenCompraCliente}}</p>{{/if}}
   {{#if (vis fc 'observaciones')}}<p>OBSERVACIONES : {{#if observaciones}}{{observaciones}}{{/if}}</p>{{/if}}
+
+  {{#if qrCode}}
+  <hr>
+  <div class="qr-sunat">
+    <img src="{{qrCode}}" alt="QR SUNAT">
+    <p>Escanea para ver tu comprobante en línea</p>
+  </div>
+  {{/if}}
 
   <div class="pie">
     <p>Sistema punto de venta - {{sistemaNombre}}.</p>

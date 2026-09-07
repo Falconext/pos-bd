@@ -1,3 +1,8 @@
+import {
+  planTieneFeature,
+  type PlanConFeatures,
+} from '../common/utils/plan-features';
+
 // Utilidades puras para normalizar el tracking de Olva.
 // Olva devuelve `{ success, data: { status, events[], … } }` con un `status`
 // en inglés; aquí lo traducimos a las mismas etapas que ya usa el despacho.
@@ -87,32 +92,22 @@ export function etiquetaEtapaOlva(estado: OlvaEstado | null): string {
 }
 
 /**
- * Planes que habilitan CREAR guías en Olva desde el sistema.
+ * Gates de plan. Se leen de las características configuradas en
+ * Sistema → Planes (tabla `PlanFeature`), no del nombre del plan: antes esto
+ * era `nombrePlan.includes('CORPORAT')` y se rompía al renombrar un plan o al
+ * crear uno a medida.
  *
- * Mismo corte que Shalom Pro: el rastreo, el catálogo de agencias y la
- * cotización funcionan para cualquier plan con la API key global; registrar
- * guías consume el cupo de la cuenta y se ofrece solo en el plan Corporativo.
+ * `tieneOlva` cubre agencias, rastreo y cotización (los resuelve la API key
+ * global). `tieneOlvaGuias` habilita registrar la guía, que consume el cupo de
+ * la cuenta Olva — por eso van separados.
  */
-export function planPermiteCrearGuiasOlva(planNombre?: string | null): boolean {
-  const raw = String(planNombre ?? '')
-    .toUpperCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .trim();
-  return raw.includes('CORPORAT');
+export function planPermiteCrearGuiasOlva(plan: PlanConFeatures): boolean {
+  return planTieneFeature(plan, 'tieneOlvaGuias');
 }
 
-/**
- * Planes que habilitan el módulo Olva (rastreo, agencias, cotización).
- * Igual que Shalom en Perfil: Negocio y Corporativo.
- */
-export function planPermiteOlva(planNombre?: string | null): boolean {
-  const raw = String(planNombre ?? '')
-    .toUpperCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .trim();
-  return raw.includes('NEGOCIO') || raw.includes('CORPORAT');
+/** Habilita el módulo Olva (rastreo, agencias, cotización). */
+export function planPermiteOlva(plan: PlanConFeatures): boolean {
+  return planTieneFeature(plan, 'tieneOlva');
 }
 
 /**

@@ -112,13 +112,13 @@ export class OlvaService {
         olvaAgenciaOrigenUbigeo: true,
         olvaAutoTrackingActivo: true,
         ubigeo: true,
-        plan: { select: { nombre: true } },
+        plan: { select: { nombre: true, features: { select: { featureKey: true, enabled: true } } } },
       },
     });
     if (!empresa) return this.configDeshabilitada();
     return {
-      habilitado: planPermiteOlva(empresa.plan?.nombre),
-      habilitadoPorPlan: planPermiteCrearGuiasOlva(empresa.plan?.nombre),
+      habilitado: planPermiteOlva(empresa.plan),
+      habilitadoPorPlan: planPermiteCrearGuiasOlva(empresa.plan),
       apiConfigurada: this.api.configurado,
       agenciaOrigenCodigo: empresa.olvaAgenciaOrigenCodigo,
       agenciaOrigenNombre: empresa.olvaAgenciaOrigenNombre,
@@ -293,7 +293,7 @@ export class OlvaService {
     }
   }
 
-  // ─── Registro de guías (plan Corporativo) ──────────────────────────────────
+  // ─── Registro de guías (característica `tieneOlvaGuias` del plan) ─────────
 
   /** Empresa + plan, validando que el plan habilite crear guías. */
   private async empresaConOlvaPro(empresaId: number) {
@@ -313,13 +313,13 @@ export class OlvaService {
         olvaAgenciaOrigenCodigo: true,
         olvaAgenciaOrigenNombre: true,
         olvaAgenciaOrigenUbigeo: true,
-        plan: { select: { nombre: true } },
+        plan: { select: { nombre: true, features: { select: { featureKey: true, enabled: true } } } },
       },
     });
     if (!empresa) throw new NotFoundException('Empresa no encontrada');
-    if (!planPermiteCrearGuiasOlva(empresa.plan?.nombre)) {
+    if (!planPermiteCrearGuiasOlva(empresa.plan)) {
       throw new ForbiddenException(
-        'Crear guías en Olva desde el sistema está disponible solo en el plan Corporativo.',
+        'Tu plan no incluye la creación de guías en Olva. Consulta con tu asesor para habilitarla.',
       );
     }
     if (!this.api.configurado) {

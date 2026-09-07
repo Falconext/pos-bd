@@ -23,27 +23,14 @@ export type { ShalomAgencia, ShalomOrderInput } from './shalom-lat.service';
  * El id es por cuenta de Shalom Pro: si otro negocio usa otros, se ajusta con
  * SHALOM_TIPO_PRODUCTO o mandando `tipoProducto` en la llamada.
  */
-const MEDIDAS_POR_PRODUCTO: Record<
-  number,
-  { alto: number; ancho: number; largo: number; peso: number }
-> = {
-  // MINI PAQUETERIA XS
-  10: { alto: 0.15, ancho: 0.12, largo: 0.2, peso: 0.5 },
-  12: { alto: 0.15, ancho: 0.12, largo: 0.2, peso: 0.5 },
-  // PAQUETERIA S
-  14: { alto: 0.2, ancho: 0.12, largo: 0.3, peso: 2 },
-};
 
-const NOMBRES_PRODUCTO: Record<number, string> = {
-  10: 'MINI PAQUETERIA XS',
-  12: 'MINI PAQUETERIA XS',
-  14: 'PAQUETERIA S',
-};
-
-const PRODUCTO_DEFECTO = {
-  id: 10,
-  medidas: MEDIDAS_POR_PRODUCTO[10],
-};
+/**
+ * Producto por defecto cuando el despacho no trae uno elegido. OJO: los ids son
+ * POR CUENTA de Shalom Pro — 1090 es "MINI PAQUETERIA XS" en la cuenta con la
+ * que se verificó. Cada empresa debería elegirlo en el despacho, o fijarlo con
+ * SHALOM_TIPO_PRODUCTO; el catálogo real se lista en GET /shalom/productos.
+ */
+const PRODUCTO_DEFECTO = { id: 1090 };
 
 /** Primer valor con contenido real. Trata '' y '   ' como ausentes. */
 function primeroNoVacio(...valores: Array<string | null | undefined>): string {
@@ -212,7 +199,7 @@ export class ShalomService {
 
   // ─── Cuenta Shalom Pro (instancia) ────────────────────────────────────────
   // Crear guías no lo cubre la API key global: el proveedor necesita la cuenta
-  // Shalom Pro del negocio registrada como instancia. Solo plan Corporativo.
+  // Shalom Pro del negocio registrada como instancia (`tieneShalomGuias`).
 
   /** Empresa + plan, validando que el plan habilite crear guías. */
   private async empresaConShalomPro(empresaId: number) {
@@ -233,13 +220,13 @@ export class ShalomService {
         shalomAgenciaOrigenId: true,
         shalomAgenciaOrigenNombre: true,
         shalomAutoGuiaActivo: true,
-        plan: { select: { nombre: true } },
+        plan: { select: { nombre: true, features: { select: { featureKey: true, enabled: true } } } },
       },
     });
     if (!empresa) throw new NotFoundException('Empresa no encontrada');
-    if (!planPermiteShalomPro(empresa.plan?.nombre)) {
+    if (!planPermiteShalomPro(empresa.plan)) {
       throw new ForbiddenException(
-        'Crear guías en Shalom desde el sistema está disponible solo en el plan Corporativo.',
+        'Tu plan no incluye la creación de guías en Shalom. Consulta con tu asesor para habilitarla.',
       );
     }
     return empresa;
@@ -263,13 +250,13 @@ export class ShalomService {
         shalomAgenciaOrigenId: true,
         shalomAgenciaOrigenNombre: true,
         shalomAutoGuiaActivo: true,
-        plan: { select: { nombre: true } },
+        plan: { select: { nombre: true, features: { select: { featureKey: true, enabled: true } } } },
       },
     });
     if (!empresa) throw new NotFoundException('Empresa no encontrada');
     return {
       // El frontend usa esto para mostrar u ocultar toda la sección.
-      habilitadoPorPlan: planPermiteShalomPro(empresa.plan?.nombre),
+      habilitadoPorPlan: planPermiteShalomPro(empresa.plan),
       conectada: Boolean(empresa.shalomInstanceId),
       instanceId: empresa.shalomInstanceId,
       nombre: empresa.shalomInstanceNombre,
@@ -496,38 +483,28 @@ export class ShalomService {
    */
   async productos(empresaId: number) {
     const empresa = await this.empresaConShalomPro(empresaId);
-    const conocidos = Object.entries(MEDIDAS_POR_PRODUCTO).map(([id, m]) => ({
-      id: Number(id),
-      nombre: NOMBRES_PRODUCTO[Number(id)] ?? `Producto ${id}`,
-      ...m,
-    }));
-    if (!empresa.shalomInstanceId) return conocidos;
+    if (!empresa.shalomInstanceId || !empresa.shalomAgenciaOrigenId) return [];
+
+    const origen = Number(empresa.shalomAgenciaOrigenId);
+    // El destino debe ser una agencia distinta y válida; cualquiera sirve porque
+    // la sonda falla antes de crear nada.
+    const agencias = (await this.lat.getAgencias()).data ?? [];
+    const otra = agencias.find((a) => Number(a.terId) && Number(a.terId) !== origen);
+    if (!otra) return [];
 
     try {
-      const pendientes = await this.lat.pendingShipments(
+      const catalogo = await this.lat.catalogoProductos(
         empresa.shalomInstanceId,
+        origen,
+        Number(otra.terId),
       );
-      const porId = new Map<number, any>();
-      for (const envio of Object.values(pendientes ?? {})) {
-        for (const det of (envio as any)?.detail_service ?? []) {
-          const tp = det?.type_product;
-          if (!tp?.value || porId.has(Number(tp.value))) continue;
-          porId.set(Number(tp.value), {
-            id: Number(tp.value),
-            nombre: String(tp.name ?? tp.detalle ?? `Producto ${tp.value}`),
-            alto: Number(det.high) || PRODUCTO_DEFECTO.medidas.alto,
-            ancho: Number(det.width) || PRODUCTO_DEFECTO.medidas.ancho,
-            largo: Number(det.length) || PRODUCTO_DEFECTO.medidas.largo,
-            peso: Number(det.weight) || PRODUCTO_DEFECTO.medidas.peso,
-          });
-        }
-      }
-      // Los del historial mandan; se completan con los conocidos que falten.
-      for (const c of conocidos) if (!porId.has(c.id)) porId.set(c.id, c);
-      return [...porId.values()].sort((a, b) => a.nombre.localeCompare(b.nombre));
+      return Object.entries(catalogo)
+        .map(([id, nombre]) => ({ id: Number(id), nombre: String(nombre) }))
+        .filter((p) => Number.isFinite(p.id))
+        .sort((a, b) => a.nombre.localeCompare(b.nombre));
     } catch (e: any) {
-      this.logger.warn(`No se pudieron leer los productos: ${e?.message}`);
-      return conocidos;
+      this.logger.warn(`No se pudo leer el catálogo de productos: ${e?.message}`);
+      return [];
     }
   }
 
@@ -686,7 +663,16 @@ export class ShalomService {
     // registro (p. ej. "Seleccione un producto"): sin esto se guardaba como éxito
     // una guía que nunca existió.
     if (respuesta?.success === false) {
-      const motivo = String(respuesta?.message ?? '').trim();
+      let motivo = String(respuesta?.message ?? '').trim();
+      // Cuando el producto no es de la cuenta, Shalom adjunta el catálogo válido:
+      // mostrarlo ahorra tener que adivinar cuál corresponde.
+      const catalogo = respuesta?.data;
+      if (catalogo && typeof catalogo === 'object' && !Array.isArray(catalogo)) {
+        const opciones = Object.entries(catalogo)
+          .map(([id, nombre]) => `${nombre} (${id})`)
+          .join(', ');
+        if (opciones) motivo += `. Opciones válidas: ${opciones}`;
+      }
       this.logger.error(
         `Shalom rechazó el registro del comprobante ${comprobanteId}: ${motivo}`,
       );

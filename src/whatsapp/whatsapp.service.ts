@@ -1,9 +1,18 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import axios from 'axios';
 import sharp from 'sharp';
 import FormData from 'form-data';
+import {
+  planTieneFeature,
+  SELECT_PLAN_FEATURES,
+} from '../common/utils/plan-features';
 
 interface EnviarComprobanteParams {
   comprobanteId: number;
@@ -251,10 +260,28 @@ export class WhatsAppService {
    * Guarda token+phoneNumberId+wabaId en Empresa (provider=EMPRESA) y crea las
    * plantillas de despacho en su WABA.
    */
+  /**
+   * Conectar el WhatsApp del negocio crea sus plantillas de despacho en la WABA,
+   * y eso se contrata aparte: se gatea con la característica del plan
+   * `tienePlantillasWhatsApp` (Sistema → Planes), no con el nombre del plan.
+   */
+  private async validarPlantillasWhatsApp(empresaId: number): Promise<void> {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { plan: { select: SELECT_PLAN_FEATURES } },
+    });
+    if (!planTieneFeature(empresa?.plan, 'tienePlantillasWhatsApp')) {
+      throw new ForbiddenException(
+        'Tu plan no incluye las plantillas de WhatsApp. Consulta con tu asesor para habilitarlas.',
+      );
+    }
+  }
+
   async conectarEmbeddedSignup(
     empresaId: number,
     input: { code?: string; accessToken?: string; phoneNumberId?: string; wabaId?: string },
   ): Promise<{ phoneNumberId: string; wabaId: string; numeroVisible?: string; plantillas: any }> {
+    await this.validarPlantillasWhatsApp(empresaId);
     if (!this.fbAppId || !this.metaAppSecret) {
       throw new BadRequestException(
         'La Meta App no está configurada en el servidor (FB_APP_ID / META_APP_SECRET).',
@@ -327,6 +354,7 @@ export class WhatsAppService {
     empresaId: number,
     input: { phoneNumberId: string; wabaId: string; accessToken: string },
   ): Promise<{ numeroVisible?: string; plantillas: any }> {
+    await this.validarPlantillasWhatsApp(empresaId);
     const { phoneNumberId, wabaId, accessToken } = input;
     if (!phoneNumberId || !wabaId || !accessToken) {
       throw new BadRequestException(

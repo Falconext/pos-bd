@@ -107,7 +107,7 @@ export class OlvaController {
     return this.service.actualizarConfig(user.empresaId, dto);
   }
 
-  // ─── Guías (plan Corporativo) ─────────────────────────────────────────────
+  // ─── Guías (característica `tieneOlvaGuias` del plan) ─────────────────────
 
   // Genera la guía en Olva desde el despacho del comprobante y guarda el N° de
   // guía devuelto (lo que el rastreo necesita después).

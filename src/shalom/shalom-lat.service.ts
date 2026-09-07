@@ -502,6 +502,40 @@ export class ShalomLatService {
     }
   }
 
+  /**
+   * Catálogo de productos de la cuenta. Shalom no tiene endpoint para esto (todas
+   * las rutas /products dan 404), pero al registrar con un id que existe en el
+   * sistema y NO en la cuenta responde "Ingrese un producto válido" y adjunta la
+   * lista completa. La sonda usa documento falso a propósito: falla la validación
+   * y por eso NO crea ninguna orden.
+   */
+  async catalogoProductos(
+    instanceId: string,
+    origen: number,
+    destino: number,
+  ): Promise<Record<string, string>> {
+    const res = await fetch(`${this.baseUrl}/account/register`, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify({
+        instanceId,
+        origen,
+        destino,
+        documento: '00000000',
+        name: 'X',
+        firstname: 'X',
+        lastname: 'X',
+        phone: 900000000,
+        // Id que existe en Shalom pero no en ninguna cuenta: dispara el listado.
+        tipo_producto: 4,
+        cantidad: 1,
+      }),
+    });
+    const body = await res.json().catch(() => ({}));
+    const data = body?.data;
+    return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+  }
+
   /** GET /account/dni/:dni → valida el documento del destinatario (RENIEC). */
   async consultarDni(dni: string): Promise<any> {
     try {

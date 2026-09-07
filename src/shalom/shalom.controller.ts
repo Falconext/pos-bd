@@ -59,7 +59,7 @@ export class ShalomController {
     return this.service.quote(body.origin, body.destination, user?.empresaId);
   }
 
-  // ─── Cuenta Shalom Pro (solo plan Corporativo) ────────────────────────────
+  // ─── Cuenta Shalom Pro (característica `tieneShalomGuias` del plan) ───────
   // El rastreo funciona para todos con la API key global; crear guías exige la
   // cuenta Shalom Pro del negocio conectada como instancia en el proveedor.
 

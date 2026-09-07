@@ -28,6 +28,7 @@ import {
   buildFiscalFormatoFc,
   type FormatoPdf,
 } from './pdf-generator.service';
+import { generarQrSunatDataUrl } from './qr-sunat.util';
 import { numeroALetras } from './utils/numero-a-letras';
 import { construirDescripcionVehiculo } from '../producto/ficha-tecnica-vehiculo';
 import { ProductoLoteService } from '../producto/producto-lote.service';
@@ -5630,6 +5631,10 @@ export class ComprobanteService {
 
     const mtoImpVenta = Number(full.mtoImpVenta || 0);
     const isDocumentoFiscal = ['01', '03', '07', '08'].includes(full.tipoDoc);
+
+    // QR de SUNAT al pie (opt-in por empresa). Apunta al PDF en línea si ya
+    // existe; si no, lleva la cadena normativa. Nunca rompe la generación.
+    const qrSunat = await generarQrSunatDataUrl(full, full.empresa);
     const descuento = (
       Number((full as any).mtoDescuentoGlobal || 0) + totalDescuentoItems
     ).toFixed(2);
@@ -5740,7 +5745,7 @@ export class ComprobanteService {
       shouldShowRetention,
       retencionMonto: retencionMonto.toFixed(2),
       importeNeto: (mtoImpVenta - retencionMonto).toFixed(2),
-      qrCode: undefined,
+      qrCode: qrSunat,
       tipoDetraccion: full.tipoDetraccion
         ? `${full.tipoDetraccion.codigo} - ${full.tipoDetraccion.descripcion} (${full.tipoDetraccion.porcentaje}%)`
         : undefined,

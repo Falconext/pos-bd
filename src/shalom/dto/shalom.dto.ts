@@ -1,7 +1,7 @@
 import { IsBoolean, IsNumber, IsOptional, IsString } from 'class-validator';
 
 /**
- * Conexión de la cuenta Shalom Pro del negocio (plan Corporativo).
+ * Conexión de la cuenta Shalom Pro del negocio (característica `tieneShalomGuias`).
  * `username`/`password` son las credenciales de pro.shalom.pe del cliente.
  */
 export class ConectarInstanciaDto {

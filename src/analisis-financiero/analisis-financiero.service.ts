@@ -98,6 +98,55 @@ export interface RentabilidadDia {
   costoPublicidadPorPedido: number | null;
 }
 
+export interface ProductoVendido {
+  productoId: number | null;
+  codigo: string | null;
+  nombre: string;
+  categoria: string;
+  unidadesVendidas: number;
+  precioPromedio: number;
+  costoUnitario: number;
+  ingresoTotal: number;
+  costoTotal: number;
+  gananciaTotal: number;
+  margen: number;
+  participacion: number;
+}
+
+export interface ProductosVendidosDia {
+  fecha: string;
+  unidades: number;
+  ingreso: number;
+  costo: number;
+  ganancia: number;
+  /** Ingreso del día por cada producto del top (clave = nombre del producto). */
+  productos: Record<string, number>;
+}
+
+export interface ProductosVendidosResponse {
+  periodo: {
+    mes: number;
+    anio: number;
+    fechaInicio: string | null;
+    fechaFin: string | null;
+    label: string;
+  };
+  resumen: {
+    ingresoTotal: number;
+    costoTotal: number;
+    gananciaTotal: number;
+    margenPromedio: number;
+    unidadesVendidas: number;
+    totalProductos: number;
+    documentos: number;
+    mejorProducto: string | null;
+  };
+  productos: ProductoVendido[];
+  /** Nombres de los 5 productos con mayor ingreso, para superponer en el gráfico. */
+  topProductos: string[];
+  serieDiaria: ProductosVendidosDia[];
+}
+
 interface GastoPnl {
   categoria: string;
   etiqueta: string | null;
@@ -1105,6 +1154,259 @@ export class AnalisisFinancieroService {
     };
   }
 
+  /**
+   * Ventas por producto del período, con acumulado por día.
+   *
+   * Comparte las reglas contables del P&L y de la vista por categorías: excluye
+   * anulados y cotizaciones, resta las notas de crédito (tipoDoc 07) y toma el
+   * costo como `costoPromedio + costoFijo`. A diferencia de categorías, el
+   * ingreso se normaliza a soles con el tipo de cambio del comprobante.
+   *
+   * Acepta mes/anio o un rango de fechas (fechaInicio/fechaFin manda).
+   */
+  async getProductosVendidos(
+    empresaId: number,
+    mes?: number,
+    anio?: number,
+    fechaInicio?: string,
+    fechaFin?: string,
+  ): Promise<ProductosVendidosResponse> {
+    const now = new Date();
+    const mesFinal = mes && mes >= 1 && mes <= 12 ? mes : now.getMonth() + 1;
+    const anioFinal =
+      anio && anio >= 2020 && anio <= 2100 ? anio : now.getFullYear();
+    const rangoFechas = this.fechasToRange(fechaInicio, fechaFin);
+    const range = rangoFechas ?? this.periodoToRange(mesFinal, anioFinal);
+    // Un solo día llega como rango de un día (lo manda el filtro "Día"): se
+    // etiqueta con la fecha sola, no "2026-09-04 al 2026-09-04", porque este
+    // label es el que sale impreso en el PDF del reporte.
+    const label = rangoFechas
+      ? fechaInicio === fechaFin
+        ? String(fechaInicio)
+        : `${fechaInicio} al ${fechaFin}`
+      : `${this.mesLabel(mesFinal)} ${anioFinal}`;
+
+    const comprobantes = await this.prisma.comprobante.findMany({
+      where: {
+        empresaId,
+        fechaEmision: { gte: range.gte, lte: range.lte },
+        ...this.filtroExcluirConvertidos,
+      },
+      select: {
+        tipoDoc: true,
+        estadoEnvioSunat: true,
+        fechaEmision: true,
+        tipoMoneda: true,
+        tipoCambio: true,
+        detalles: {
+          select: {
+            descripcion: true,
+            cantidad: true,
+            mtoPrecioUnitario: true,
+            productoId: true,
+            producto: {
+              select: {
+                codigo: true,
+                descripcion: true,
+                costoPromedio: true,
+                costoFijo: true,
+                categoria: { select: { nombre: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    interface AccProducto {
+      productoId: number | null;
+      codigo: string | null;
+      nombre: string;
+      categoria: string;
+      ingreso: number;
+      costo: number;
+      unidades: number;
+    }
+    interface AccDia {
+      ingreso: number;
+      costo: number;
+      unidades: number;
+      porProducto: Map<string, number>;
+    }
+
+    const prodMap = new Map<string, AccProducto>();
+    const diaMap = new Map<string, AccDia>();
+    let documentos = 0;
+
+    for (const comp of comprobantes) {
+      if (comp.estadoEnvioSunat === 'ANULADO' || comp.tipoDoc === 'COT')
+        continue;
+      const signo: 1 | -1 = comp.tipoDoc === '07' ? -1 : 1;
+      const diaKey = this.fechaLimaKey(comp.fechaEmision ?? undefined);
+      if (!diaKey) continue;
+      documentos += 1;
+
+      if (!diaMap.has(diaKey)) {
+        diaMap.set(diaKey, {
+          ingreso: 0,
+          costo: 0,
+          unidades: 0,
+          porProducto: new Map(),
+        });
+      }
+      const dia = diaMap.get(diaKey)!;
+
+      for (const det of comp.detalles) {
+        const nombre =
+          det.producto?.descripcion ?? det.descripcion ?? 'Producto';
+        const prodKey = String(det.productoId ?? `srv:${nombre}`);
+        const qty = (det.cantidad ?? 0) * signo;
+        const precioUnit = montoEnPen(
+          det.mtoPrecioUnitario ?? 0,
+          comp.tipoMoneda,
+          this.toNumber(comp.tipoCambio),
+        );
+        const costoUnit =
+          this.toNumber(det.producto?.costoPromedio) +
+          this.toNumber(det.producto?.costoFijo);
+        const ingreso = precioUnit * qty;
+        const costo = costoUnit * qty;
+
+        if (!prodMap.has(prodKey)) {
+          prodMap.set(prodKey, {
+            productoId: det.productoId ?? null,
+            codigo: det.producto?.codigo ?? null,
+            nombre,
+            categoria: det.producto?.categoria?.nombre ?? 'Sin categoría',
+            ingreso: 0,
+            costo: 0,
+            unidades: 0,
+          });
+        }
+        const acc = prodMap.get(prodKey)!;
+        acc.ingreso += ingreso;
+        acc.costo += costo;
+        acc.unidades += qty;
+
+        dia.ingreso += ingreso;
+        dia.costo += costo;
+        dia.unidades += qty;
+        dia.porProducto.set(
+          prodKey,
+          (dia.porProducto.get(prodKey) ?? 0) + ingreso,
+        );
+      }
+    }
+
+    const ingresoTotal = this.r2(
+      [...prodMap.values()].reduce((s, p) => s + p.ingreso, 0),
+    );
+
+    const ordenados = [...prodMap.entries()].sort(
+      (a, b) => b[1].ingreso - a[1].ingreso,
+    );
+
+    const productos: ProductoVendido[] = ordenados.map(([, p]) => {
+      const ingresoProd = this.r2(p.ingreso);
+      const costoProd = this.r2(p.costo);
+      const gananciaTotal = this.r2(p.ingreso - p.costo);
+      return {
+        productoId: p.productoId,
+        codigo: p.codigo,
+        nombre: p.nombre,
+        categoria: p.categoria,
+        unidadesVendidas: this.r2(p.unidades),
+        precioPromedio: this.r2(p.unidades !== 0 ? p.ingreso / p.unidades : 0),
+        costoUnitario: this.r2(p.unidades !== 0 ? p.costo / p.unidades : 0),
+        ingresoTotal: ingresoProd,
+        costoTotal: costoProd,
+        gananciaTotal,
+        margen: p.ingreso > 0 ? this.r2((gananciaTotal / p.ingreso) * 100) : 0,
+        participacion:
+          ingresoTotal > 0 ? this.r2((ingresoProd / ingresoTotal) * 100) : 0,
+      };
+    });
+
+    const topKeys = ordenados.slice(0, 5).map(([key]) => key);
+    const topNombres = ordenados.slice(0, 5).map(([, p]) => p.nombre);
+
+    const serieDiaria: ProductosVendidosDia[] = this.diasDelRango(
+      range,
+      diaMap,
+    ).map((fecha) => {
+      const dia = diaMap.get(fecha);
+      const porProducto: Record<string, number> = {};
+      topKeys.forEach((key, i) => {
+        porProducto[topNombres[i]] = this.r2(dia?.porProducto.get(key) ?? 0);
+      });
+      return {
+        fecha,
+        unidades: this.r2(dia?.unidades ?? 0),
+        ingreso: this.r2(dia?.ingreso ?? 0),
+        costo: this.r2(dia?.costo ?? 0),
+        ganancia: this.r2((dia?.ingreso ?? 0) - (dia?.costo ?? 0)),
+        productos: porProducto,
+      };
+    });
+
+    const costoTotal = this.r2(
+      productos.reduce((s, p) => s + p.costoTotal, 0),
+    );
+    const gananciaTotal = this.r2(ingresoTotal - costoTotal);
+
+    return {
+      periodo: {
+        mes: mesFinal,
+        anio: anioFinal,
+        fechaInicio: rangoFechas ? (fechaInicio ?? null) : null,
+        fechaFin: rangoFechas ? (fechaFin ?? null) : null,
+        label,
+      },
+      resumen: {
+        ingresoTotal,
+        costoTotal,
+        gananciaTotal,
+        margenPromedio:
+          ingresoTotal > 0 ? this.r2((gananciaTotal / ingresoTotal) * 100) : 0,
+        unidadesVendidas: this.r2(
+          productos.reduce((s, p) => s + p.unidadesVendidas, 0),
+        ),
+        totalProductos: productos.length,
+        documentos,
+        mejorProducto: productos[0]?.nombre ?? null,
+      },
+      productos,
+      topProductos: topNombres,
+      serieDiaria,
+    };
+  }
+
+  /**
+   * Días (YYYY-MM-DD, hora Lima) que cubre el rango, para que el acumulado no
+   * tenga huecos. Si el rango es enorme (> 370 días) solo devuelve los días con
+   * movimiento, para no inflar la respuesta.
+   */
+  private diasDelRango(
+    range: { gte: Date; lte: Date },
+    diaMap: Map<string, unknown>,
+  ): string[] {
+    const MS_DIA = 24 * 60 * 60 * 1000;
+    const totalDias = Math.floor((range.lte.getTime() - range.gte.getTime()) / MS_DIA) + 1;
+    if (totalDias > 370 || totalDias < 1) {
+      return [...diaMap.keys()].sort();
+    }
+    const finKey = this.fechaLimaKey(range.lte)!;
+    const dias: string[] = [];
+    let cursor = range.gte.getTime();
+    for (let i = 0; i < totalDias + 1; i++) {
+      const key = this.fechaLimaKey(new Date(cursor))!;
+      dias.push(key);
+      if (key >= finKey) break;
+      cursor += MS_DIA;
+    }
+    return dias;
+  }
+
   async getMetodosPago(
     empresaId: number,
     mes?: number,
@@ -1119,9 +1421,14 @@ export class AnalisisFinancieroService {
     const range =
       this.fechasToRange(fechaInicio, fechaFin) ??
       this.periodoToRange(mesFinal, anioFinal);
+    // Un solo día llega como rango de un día (lo manda el filtro "Día"): se
+    // etiqueta con la fecha sola, no "2026-09-04 al 2026-09-04", porque este
+    // label es el que sale impreso en el PDF del reporte.
     const periodoLabel =
       fechaInicio && fechaFin
-        ? `${fechaInicio} al ${fechaFin}`
+        ? fechaInicio === fechaFin
+          ? fechaInicio
+          : `${fechaInicio} al ${fechaFin}`
         : `${this.mesLabel(mesFinal)} ${anioFinal}`;
 
     const pagos = await this.prisma.pago.findMany({

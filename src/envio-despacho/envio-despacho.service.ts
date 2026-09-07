@@ -254,17 +254,17 @@ export class EnvioDespachoService {
 
   /**
    * La automatización de despacho (rastreo automático + plantillas de WhatsApp)
-   * es del plan Corporativo. El resto de planes ve la configuración, pero no la
+   * tiene la característica `tieneShalomGuias`. El resto ve la configuración, pero no la
    * puede modificar: el candado se aplica acá, no solo en la UI.
    */
   private async validarPlanAutomatizacion(empresaId: number) {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
-      select: { plan: { select: { nombre: true } } },
+      select: { plan: { select: { nombre: true, features: { select: { featureKey: true, enabled: true } } } } },
     });
-    if (!planPermiteShalomPro(empresa?.plan?.nombre)) {
+    if (!planPermiteShalomPro(empresa?.plan)) {
       throw new ForbiddenException(
-        'La automatización de despacho está disponible solo en el plan Corporativo.',
+        'Tu plan no incluye la automatización de despacho. Consulta con tu asesor para habilitarla.',
       );
     }
   }
@@ -276,7 +276,7 @@ export class EnvioDespachoService {
         where: { id: empresaId },
         select: {
           shalomAutoTrackingActivo: true,
-          plan: { select: { nombre: true } },
+          plan: { select: { nombre: true, features: { select: { featureKey: true, enabled: true } } } },
         },
       }),
     ]);
@@ -291,8 +291,8 @@ export class EnvioDespachoService {
       ...base,
       // Opt-in del rastreo automático Shalom (cron 30 min). Default false.
       shalomAutoTrackingActivo: empresa?.shalomAutoTrackingActivo ?? false,
-      // El plan permite editar esta configuración (solo Corporativo).
-      habilitadoPorPlan: planPermiteShalomPro(empresa?.plan?.nombre),
+      // El plan permite editar esta configuración (`tieneShalomGuias`).
+      habilitadoPorPlan: planPermiteShalomPro(empresa?.plan),
     };
   }
 

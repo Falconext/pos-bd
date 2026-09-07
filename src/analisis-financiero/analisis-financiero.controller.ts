@@ -103,6 +103,24 @@ export class AnalisisFinancieroController {
     );
   }
 
+  /** GET /analisis-financiero/productos?mes=&anio=&fechaInicio=&fechaFin= */
+  @Get('productos')
+  getProductosVendidos(
+    @User() user: any,
+    @Query('mes') mes?: string,
+    @Query('anio') anio?: string,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
+  ) {
+    return this.service.getProductosVendidos(
+      user.empresaId,
+      mes ? Number(mes) : undefined,
+      anio ? Number(anio) : undefined,
+      fechaInicio,
+      fechaFin,
+    );
+  }
+
   /** DELETE /analisis-financiero/gastos/:id */
   @Delete('gastos/:id')
   eliminarGasto(@User() user: any, @Param('id', ParseIntPipe) id: number) {

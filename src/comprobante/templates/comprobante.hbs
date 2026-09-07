@@ -113,6 +113,10 @@
     .totales-box .row.retencion .lbl { font-weight: bold; }
 
     /* ── GRACIAS ─────────────────────────────────────────────── */
+    /* QR de SUNAT (opt-in por empresa). No confundir con el QR de pago Yape/Plin. */
+    .qr-sunat { text-align: center; margin-top: 18px; }
+    .qr-sunat img { width: 110px; height: 110px; }
+    .qr-sunat p { font-size: 9px; color: #6b7280; margin-top: 4px; }
     .footer-thanks { text-align: center; margin-top: 24px; margin-bottom: 8px; }
     .footer-thanks p { font-weight: bold; line-height: 1.6; }
     .footer-thanks .vuelva { margin-bottom: 24px; }
@@ -284,6 +288,14 @@
       {{/if}}
     </div>
   </div>
+
+  <!-- ── QR DE SUNAT ────────────────────────────────────────── -->
+  {{#if qrCode}}
+  <div class="qr-sunat">
+    <img src="{{qrCode}}" alt="QR SUNAT">
+    <p>Escanea para ver tu comprobante en línea</p>
+  </div>
+  {{/if}}
 
   <!-- ── GRACIAS ────────────────────────────────────────────── -->
   <div class="footer-thanks">
