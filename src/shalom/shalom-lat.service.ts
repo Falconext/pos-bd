@@ -15,23 +15,29 @@ export interface ShalomAgencia {
   longitud?: string;
 }
 
-// Destinatario de una guía Shalom Pro.
-export interface ShalomDestinatario {
-  dni: string;
-  nombre: string;
-  telefono?: string;
-  direccion?: string;
-}
-
 // Payload para registrar UNA guía en Shalom Pro (POST /account/register).
 // Requiere una instancia (cuenta Shalom Pro del negocio) registrada vía /instances.
+//
+// OJO: la forma real NO es la del ejemplo de la documentación pública (que usa
+// `destinatario: {dni, nombre, ...}` y `productos: []`). Verificado contra el API:
+// los campos son planos, `origen`/`destino`/`phone` son enteros, y no hay lugar
+// para el contenido del paquete.
 export interface ShalomOrderInput {
   instanceId: string;
+  /** ter_id de la agencia de origen. */
   origen: number;
+  /** ter_id de la agencia de destino. */
   destino: number;
-  destinatario: ShalomDestinatario;
-  productos: Array<{ descripcion: string; cantidad: number }>;
-  [extra: string]: any;
+  /** DNI del destinatario. */
+  documento: string;
+  /** Nombre completo del destinatario. */
+  name: string;
+  /** Nombres (sin apellidos). */
+  firstname: string;
+  /** Apellidos. */
+  lastname: string;
+  /** Celular como entero. */
+  phone: number;
 }
 
 // Payload para el registro masivo (POST /account/register-bulk).
@@ -197,7 +203,11 @@ export class ShalomLatService {
         ? raw
         : (raw?.data ?? raw?.resultados ?? raw?.agencias ?? []);
       this.agenciasCache = items.map((a): ShalomAgencia => {
-        const nombre = String(a.lugar ?? a.lugar_over ?? a.nombre ?? '');
+        // 40 de 552 agencias traen `lugar` como cadena vacía (no null), así que
+        // `??` no alcanza: sin esto salen sin nombre en el selector.
+        const nombre = [a.lugar, a.lugar_over, a.nombre]
+          .map((v) => String(v ?? '').trim())
+          .find((v) => v !== '') ?? '';
         const dep = String(a.departamento ?? '');
         const prov = String(a.provincia ?? '');
         const dist = String(a.zona ?? a.distrito ?? '');

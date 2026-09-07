@@ -16,6 +16,15 @@ import { ConectarInstanciaDto, CrearGuiaDto } from './dto/shalom.dto';
 
 export type { ShalomAgencia, ShalomOrderInput } from './shalom-lat.service';
 
+/** Primer valor con contenido real. Trata '' y '   ' como ausentes. */
+function primeroNoVacio(...valores: Array<string | null | undefined>): string {
+  for (const v of valores) {
+    const t = String(v ?? '').trim();
+    if (t) return t;
+  }
+  return '';
+}
+
 /**
  * Servicio Shalom de falconext-mype. Todas las empresas usan el proveedor
  * api.shalom-api.lat (`ShalomLatService`), autenticado con una API key global:
@@ -535,39 +544,49 @@ export class ShalomService {
     }
 
     const cliente = envio.comprobante?.cliente;
-    const dni = (dto.dni ?? envio.dniDestinatario ?? cliente?.nroDoc ?? '').trim();
-    const nombre = (
-      dto.nombre ??
-      envio.nombreDestinatario ??
-      cliente?.nombre ??
-      ''
-    ).trim();
+    // El despacho guarda los campos del destinatario como cadena vacía cuando no
+    // se llenan, así que `??` no sirve para encadenar: hay que saltar los vacíos.
+    const dni = primeroNoVacio(
+      dto.dni,
+      envio.dniDestinatario,
+      cliente?.nroDoc,
+    );
+    const nombre = primeroNoVacio(
+      dto.nombre,
+      envio.nombreDestinatario,
+      cliente?.nombre,
+    );
     if (!dni || !nombre) {
       throw new BadRequestException(
         'Falta el nombre o el documento del destinatario para generar la guía.',
       );
     }
 
-    const productos = this.armarProductos(envio);
+    // Shalom pide nombres y apellidos por separado. RENIEC es la fuente exacta;
+    // si no responde, se parte el nombre guardado ("APELLIDOS, NOMBRES").
+    const { firstname, lastname } = await this.separarNombre(dni, nombre);
+
+    const telefono = primeroNoVacio(
+      dto.telefono,
+      envio.celularDest,
+      cliente?.telefono,
+    );
+    const phone = Number(String(telefono).replace(/\D/g, ''));
+    if (!phone) {
+      throw new BadRequestException(
+        'Falta el celular del destinatario para generar la guía.',
+      );
+    }
 
     const respuesta = await this.lat.createOrder({
       instanceId: empresa.shalomInstanceId,
       origen: Number(origen.terId),
       destino: Number(destino.terId),
-      destinatario: {
-        dni,
-        nombre,
-        telefono: (dto.telefono ?? envio.celularDest ?? cliente?.telefono ?? '').trim(),
-        direccion: (
-          dto.direccion ??
-          envio.direccionDestino ??
-          cliente?.direccion ??
-          destino.direccion ??
-          ''
-        ).trim(),
-      },
-      productos,
-      ...(envio.montoCOD ? { montoCOD: envio.montoCOD } : {}),
+      documento: dni,
+      name: nombre,
+      firstname,
+      lastname,
+      phone,
     });
 
     const guia = this.extraerGuia(respuesta);
@@ -596,6 +615,40 @@ export class ShalomService {
     });
 
     return { ...actualizado, respuesta };
+  }
+
+  /**
+   * Nombres y apellidos por separado, como los pide Shalom. Primero se consulta
+   * RENIEC por DNI (exacto); si falla, se parte el nombre guardado, que en el
+   * sistema viene como "APELLIDOS, NOMBRES".
+   */
+  private async separarNombre(
+    dni: string,
+    nombreCompleto: string,
+  ): Promise<{ firstname: string; lastname: string }> {
+    const reniec = await this.lat.consultarDni(dni).catch(() => null);
+    const d = reniec?.data ?? reniec;
+    const nombres = String(d?.nombres ?? '').trim();
+    const apellidos = [d?.apellidoPaterno, d?.apellidoMaterno]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    if (nombres && apellidos) return { firstname: nombres, lastname: apellidos };
+
+    const [ape, nom] = nombreCompleto.split(',');
+    if (nom?.trim()) {
+      return { firstname: nom.trim(), lastname: (ape ?? '').trim() };
+    }
+    // Sin coma: se asume "NOMBRES APELLIDOS" y se parte por la mitad.
+    const partes = nombreCompleto.split(/\s+/).filter(Boolean);
+    if (partes.length < 2) {
+      return { firstname: nombreCompleto, lastname: nombreCompleto };
+    }
+    const corte = Math.ceil(partes.length / 2);
+    return {
+      firstname: partes.slice(0, corte).join(' '),
+      lastname: partes.slice(corte).join(' '),
+    };
   }
 
   /** Descripción del contenido para Shalom (fallback: los ítems del comprobante). */

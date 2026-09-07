@@ -16,6 +16,9 @@ describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
     loginInstancia: jest.fn().mockResolvedValue({ ok: true }),
     pendingShipments: jest.fn().mockResolvedValue({ data: [] }),
     eliminarInstancia: jest.fn().mockResolvedValue({ success: true }),
+    consultarDni: jest.fn().mockResolvedValue({
+      data: { nombres: 'JOSE CARLOS', apellidoPaterno: 'MENDOZA', apellidoMaterno: 'BUSTAMANTE' },
+    }),
     ticketImage: jest
       .fn()
       .mockResolvedValue({ buffer: Buffer.from('png'), contentType: 'image/png' }),
@@ -148,8 +151,9 @@ describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
         instanceId: 'inst-1',
         origen: 7,
         destino: 582,
-        destinatario: expect.objectContaining({ dni: '44273815', nombre: 'María Quispe' }),
-        productos: [{ descripcion: '1 Caja', cantidad: 1 }],
+        documento: '44273815',
+        name: 'María Quispe',
+        phone: 999888777,
       }),
     );
     expect(prisma.envioDespacho.update).toHaveBeenCalledWith(
@@ -203,5 +207,46 @@ describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
     lat.eliminarInstancia.mockRejectedValue(new Error('proveedor caído'));
     await expect(svc.desconectarInstancia(100)).resolves.toBeDefined();
     expect(prisma.empresa.update).toHaveBeenCalled();
+  });
+
+  it('cae al cliente del comprobante cuando el despacho guardó cadenas vacías', async () => {
+    const { svc, prisma, lat } = build();
+    lat.getAgencias.mockResolvedValue({
+      success: true,
+      data: [agencia('7', 'Lima Centro'), agencia('582', 'Cusco Centro')],
+    });
+    prisma.empresa.findUnique.mockResolvedValue(empresaCorporativa());
+    prisma.envioDespacho.findFirst.mockResolvedValue({
+      id: 55,
+      agenciaDestino: 'Cusco Centro - CUSCO - CUSCO',
+      // El modal de coordinación guarda '' (no null) cuando no se llenan.
+      nombreDestinatario: '',
+      dniDestinatario: '',
+      celularDest: '',
+      contenidoPaquete: '',
+      nroPaquetes: 1,
+      comprobante: {
+        cliente: {
+          nombre: 'ROJAS MALLQUI, ELSON ALFREDO',
+          nroDoc: '48455339',
+          telefono: '999888777',
+          direccion: 'Av. Siempre Viva 123',
+        },
+        detalles: [{ descripcion: 'Zapatillas', cantidad: 2 }],
+      },
+    });
+    prisma.envioDespacho.update.mockResolvedValue({ id: 55, nroOrden: '1', claveOrden: 'A' });
+
+    await svc.crearGuiaDesdeDespacho(9, 100);
+
+    expect(lat.createOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        documento: '48455339',
+        name: 'ROJAS MALLQUI, ELSON ALFREDO',
+        firstname: 'JOSE CARLOS',
+        lastname: 'MENDOZA BUSTAMANTE',
+        phone: 999888777,
+      }),
+    );
   });
 });

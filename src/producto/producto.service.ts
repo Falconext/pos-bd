@@ -15,6 +15,11 @@ import { KardexService } from '../kardex/kardex.service';
 import { DigemidService } from '../digemid/digemid.service';
 import { sincronizarVariantes, type VarianteConfig } from './variantes.util';
 import {
+  esEan13Valido,
+  generarEan13Alternativo,
+  generarEan13DesdeProductoId,
+} from './ean13.util';
+import {
   esRubroComputo,
   obtenerPlantillaComputo,
 } from './ficha-tecnica-computo';
@@ -1939,6 +1944,181 @@ export class ProductoService {
       imagenPaquete,
       codigoEscaneado: codigoBarras,
     };
+  }
+
+  // ─── Códigos de barra internos (EAN-13 prefijo 2) ──────────────────────────
+
+  /**
+   * Códigos ya ocupados en la empresa, para no pisar uno existente. Mira tanto
+   * el código principal del producto como los alternos de ProductoCodigoBarras.
+   */
+  private async codigosBarrasOcupados(
+    empresaId: number,
+    excluirProductoIds: number[] = [],
+  ): Promise<Set<string>> {
+    const [principales, alternos] = await Promise.all([
+      this.prisma.producto.findMany({
+        where: {
+          empresaId,
+          codigoBarras: { not: null },
+          ...(excluirProductoIds.length
+            ? { id: { notIn: excluirProductoIds } }
+            : {}),
+        },
+        select: { codigoBarras: true },
+      }),
+      this.prisma.productoCodigoBarras.findMany({
+        where: { empresaId },
+        select: { codigo: true },
+      }),
+    ]);
+    const set = new Set<string>();
+    for (const p of principales) if (p.codigoBarras) set.add(p.codigoBarras);
+    for (const a of alternos) set.add(a.codigo);
+    return set;
+  }
+
+  /**
+   * Asigna códigos EAN-13 internos a los productos indicados.
+   *
+   * - `forzar` en false (default) respeta el código que el producto ya tenga:
+   *   nunca se pisa un EAN de fábrica escaneado por el usuario.
+   * - `incluirVariantes` alcanza a los Producto hijos, que es lo que se etiqueta
+   *   en ropa (cada talla×color lleva su propia etiqueta).
+   */
+  async generarCodigosBarras(
+    empresaId: number,
+    productoIds: number[],
+    opts: { forzar?: boolean; incluirVariantes?: boolean } = {},
+  ): Promise<{
+    generados: { id: number; codigoBarras: string }[];
+    omitidos: { id: number; motivo: string }[];
+  }> {
+    const ids = [...new Set(productoIds.map(Number).filter(Number.isInteger))];
+    if (!ids.length) {
+      throw new BadRequestException('Indica al menos un producto.');
+    }
+
+    // Padres pedidos + (opcional) sus variantes, siempre acotado a la empresa.
+    const productos = await this.prisma.producto.findMany({
+      where: {
+        empresaId,
+        estado: { not: 'ELIMINADO' as any },
+        OR: [
+          { id: { in: ids } },
+          ...(opts.incluirVariantes ? [{ productoPadreId: { in: ids } }] : []),
+        ],
+      },
+      select: { id: true, codigoBarras: true, descripcion: true },
+      orderBy: { id: 'asc' },
+    });
+    if (!productos.length) {
+      throw new NotFoundException('No se encontraron productos para generar.');
+    }
+
+    const ocupados = await this.codigosBarrasOcupados(
+      empresaId,
+      productos.map((p) => p.id),
+    );
+    const generados: { id: number; codigoBarras: string }[] = [];
+    const omitidos: { id: number; motivo: string }[] = [];
+
+    for (const producto of productos) {
+      const actual = String(producto.codigoBarras ?? '').trim();
+      if (actual && !opts.forzar) {
+        omitidos.push({ id: producto.id, motivo: 'ya tiene código' });
+        continue;
+      }
+
+      // El código es determinista por id; si estuviera ocupado por otro producto
+      // (p. ej. alguien lo tecleó a mano) se desplaza dentro del espacio interno.
+      let codigo = generarEan13DesdeProductoId(producto.id);
+      let intento = 0;
+      while (ocupados.has(codigo) && intento < 20) {
+        intento++;
+        codigo = generarEan13Alternativo(producto.id, intento);
+      }
+      if (ocupados.has(codigo)) {
+        omitidos.push({ id: producto.id, motivo: 'no se encontró un código libre' });
+        continue;
+      }
+
+      ocupados.add(codigo);
+      generados.push({ id: producto.id, codigoBarras: codigo });
+    }
+
+    if (generados.length) {
+      await this.prisma.$transaction(
+        generados.map((g) =>
+          this.prisma.producto.update({
+            where: { id: g.id },
+            data: { codigoBarras: g.codigoBarras },
+          }),
+        ),
+      );
+    }
+
+    return { generados, omitidos };
+  }
+
+  /**
+   * Datos mínimos para imprimir etiquetas: el código de barras más lo que el
+   * usuario puede decidir mostrar (nombre, variante, precio).
+   */
+  async datosEtiquetas(empresaId: number, productoIds: number[]) {
+    const ids = [...new Set(productoIds.map(Number).filter(Number.isInteger))];
+    if (!ids.length) throw new BadRequestException('Indica al menos un producto.');
+
+    // Se etiqueta lo que existe físicamente: si un producto tiene variantes, la
+    // etiqueta va en cada talla×color, no en el padre (que es solo el agrupador).
+    const productos = await this.prisma.producto.findMany({
+      where: {
+        empresaId,
+        estado: { not: 'ELIMINADO' as any },
+        OR: [{ id: { in: ids } }, { productoPadreId: { in: ids } }],
+      },
+      select: {
+        id: true,
+        codigo: true,
+        descripcion: true,
+        codigoBarras: true,
+        precioUnitario: true,
+        precioOferta: true,
+        valoresAtributos: true,
+        productoPadreId: true,
+        productoPadre: { select: { descripcion: true } },
+        _count: { select: { variantes: true } },
+      },
+      orderBy: { id: 'asc' },
+    });
+
+    return productos
+      .filter((p) => p._count.variantes === 0)
+      .map((p) => ({
+        id: p.id,
+        codigo: p.codigo,
+        // En una variante, `descripcion` ya viene compuesta; el padre sirve de
+        // respaldo cuando la variante no trae nombre propio.
+        nombre: p.productoPadre?.descripcion ?? p.descripcion,
+        descripcion: p.descripcion,
+        codigoBarras: p.codigoBarras,
+        valido: esEan13Valido(String(p.codigoBarras ?? '')),
+        // El precio de la etiqueta es el que paga el cliente: la oferta manda.
+        precio: Number(p.precioOferta ?? p.precioUnitario ?? 0),
+        variante: this.etiquetaVariante(p.valoresAtributos),
+        esVariante: p.productoPadreId != null,
+      }));
+  }
+
+  /** "Azul Persa · M" a partir de `valoresAtributos` ({ Color: 'Azul Persa' }). */
+  private etiquetaVariante(valores: any): string | null {
+    if (!valores || typeof valores !== 'object' || Array.isArray(valores)) {
+      return null;
+    }
+    const partes = Object.values(valores)
+      .map((v) => String(v ?? '').trim())
+      .filter(Boolean);
+    return partes.length ? partes.join(' · ') : null;
   }
 
   async getByBarcode(empresaId: number, codigoBarras: string, sedeId?: number) {
