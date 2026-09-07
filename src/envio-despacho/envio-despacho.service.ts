@@ -48,6 +48,7 @@ const DESPACHO_FIELDS = [
   'nombreDestinatario',
   'dniDestinatario',
   'contenidoPaquete',
+  'pesoKg',
   'montoCOD',
   'costoEnvio',
   'pagarFlete',

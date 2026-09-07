@@ -56,6 +56,8 @@ export class CreateEnvioDespachoDto {
   @IsOptional() @IsString() nombreDestinatario?: string;
   @IsOptional() @IsString() dniDestinatario?: string;
   @IsOptional() @IsString() contenidoPaquete?: string;
+  // Peso del paquete en kg: Olva lo exige para registrar la guía y cotizar.
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0.1) pesoKg?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) montoCOD?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) costoEnvio?: number;
   @IsOptional() @IsIn(['CLIENTE', 'NEGOCIO']) pagarFlete?:

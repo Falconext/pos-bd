@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { VerificarPendientesSunatService } from './services/verificar-pendientes-sunat.service';
 import { VerificarEnviosShalomService } from './services/verificar-envios-shalom.service';
+import { VerificarEnviosOlvaService } from './services/verificar-envios-olva.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { InventarioNotificacionesService } from '../notificaciones/inventario-notificaciones.service';
 import { ResellerService } from '../reseller/reseller.service';
@@ -15,9 +16,12 @@ export class SchedulerService {
 
   private shalomJobsDisabledLogged = false;
 
+  private olvaJobsDisabledLogged = false;
+
   constructor(
     private readonly verificarSunat: VerificarPendientesSunatService,
     private readonly verificarEnviosShalom: VerificarEnviosShalomService,
+    private readonly verificarEnviosOlva: VerificarEnviosOlvaService,
     private readonly notificacionesService: NotificacionesService,
     private readonly inventarioNotificacionesService: InventarioNotificacionesService,
     private readonly resellerService: ResellerService,
@@ -54,6 +58,38 @@ export class SchedulerService {
     } catch (error: any) {
       this.logger.error(
         `[Shalom] Error al verificar envíos: ${error?.message || 'Error desconocido'}`,
+      );
+    }
+  }
+
+  /**
+   * El rastreo automático de Olva se puede apagar por entorno con
+   * OLVA_JOBS_ENABLED=false, por el mismo motivo que el de Shalom.
+   */
+  private olvaJobsEnabled(): boolean {
+    const enabled = process.env.OLVA_JOBS_ENABLED !== 'false';
+    if (!enabled && !this.olvaJobsDisabledLogged) {
+      this.olvaJobsDisabledLogged = true;
+      this.logger.warn(
+        '⏸️ Rastreo automático de Olva deshabilitado (OLVA_JOBS_ENABLED=false).',
+      );
+    }
+    return enabled;
+  }
+
+  // Rastreo automático de envíos Olva no entregados (cada 30 min, desfasado 15
+  // min del de Shalom para no disparar ambas corridas a la vez).
+  @Cron('15,45 * * * *', {
+    name: 'verificar-envios-olva',
+    timeZone: 'America/Lima',
+  })
+  async verificarEnviosOlvaCron(): Promise<void> {
+    if (!this.olvaJobsEnabled()) return;
+    try {
+      await this.verificarEnviosOlva.execute();
+    } catch (error: any) {
+      this.logger.error(
+        `[Olva] Error al verificar envíos: ${error?.message || 'Error desconocido'}`,
       );
     }
   }

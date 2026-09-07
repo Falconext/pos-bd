@@ -178,6 +178,16 @@ model Empresa {
   // Agencia de origen por defecto desde donde el negocio despacha (ter_id).
   shalomAgenciaOrigenId         String?
   shalomAgenciaOrigenNombre     String?
+  // ── Olva Courier (api.olva-api.lat) ──────────────────────────────────────
+  // El proveedor autentica TODO con una API key global (OLVA_API_KEY): no hay
+  // cuenta por negocio que conectar como en Shalom Pro. Lo único propio de cada
+  // empresa es desde qué agencia despacha y el opt-in del rastreo automático.
+  olvaAgenciaOrigenCodigo       String?
+  olvaAgenciaOrigenNombre       String?
+  // Ubigeo de esa agencia: lo pide la calculadora de precio de Olva.
+  olvaAgenciaOrigenUbigeo       String?
+  // Rastreo automático Olva (cron): opt-in por empresa, igual que Shalom.
+  olvaAutoTrackingActivo        Boolean                       @default(false)
   // Módulo IA de Ventas / Filtro de Leads (portado de salesfilter-ai).
   // Toggle multi-tenant: la IA sólo responde WhatsApp entrantes si está activa.
   iaVentasActiva                Boolean                       @default(false)
@@ -2192,6 +2202,17 @@ model EnvioDespacho {
   shalomSyncAt           DateTime? // última sincronización con Shalom
   shalomAgenciaDestinoId String? // ter_id de la agencia destino (para crear la guía)
   shalomGuiaCreadaEn     DateTime? // cuándo se generó la guía en Shalom Pro desde el sistema
+  // Estado de rastreo Olva (persistido: read-through cache + scheduler).
+  // El N° de guía Olva vive en `nroOrden` (Olva no usa clave, solo el número).
+  olvaEstado               String? // etapa actual: registrado|transito|reparto|destino|entregado
+  olvaEntregado            Boolean        @default(false)
+  olvaTrackingJson         Json? // último snapshot { success, data: { status, events[] } }
+  olvaSyncAt               DateTime? // última sincronización con Olva
+  olvaAgenciaDestinoCodigo String? // code de la agencia destino (para crear la guía)
+  olvaGuiaCreadaEn         DateTime? // cuándo se generó la guía en Olva desde el sistema
+  olvaRespuestaJson        Json? // respuesta cruda del registro (guía, etiqueta, precio)
+  // Peso del paquete en kg: Olva lo exige para registrar la guía y cotizar.
+  pesoKg                   Float?
   establecimiento        String? // Local/sucursal desde donde despacha
   repartidorId           Int?
   repartidor             Repartidor?    @relation(fields: [repartidorId], references: [id], onDelete: SetNull)
