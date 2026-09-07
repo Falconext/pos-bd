@@ -624,16 +624,28 @@ export class ShalomService {
     }
     const buscado = this.normalizar(texto);
     if (!buscado) return null;
-    return (
+    const exacta =
       agencias.find((a) => this.normalizar(a.label) === buscado) ??
       agencias.find(
         (a) =>
           this.normalizar([a.nombre, a.provincia, a.departamento].join(' ')) ===
           buscado,
-      ) ??
-      agencias.find((a) => this.normalizar(a.label).includes(buscado)) ??
-      null
+      );
+    if (exacta) return exacta;
+    // Sin coincidencia exacta caemos a la parcial, pero SOLO si es única: hay
+    // agencias distintas con el mismo nombre (p. ej. dos "HUARAL - LIMA"), y
+    // elegir la primera mandaría el paquete de un cliente real al local
+    // equivocado. Ante ambigüedad es mejor fallar y pedir que la re-elijan.
+    const parciales = agencias.filter((a) =>
+      this.normalizar(a.label).includes(buscado),
     );
+    if (parciales.length === 1) return parciales[0];
+    if (parciales.length > 1) {
+      throw new BadRequestException(
+        `Hay ${parciales.length} agencias Shalom que coinciden con "${texto}". Vuelve a elegir la agencia de destino en el despacho para precisar cuál es.`,
+      );
+    }
+    return null;
   }
 
   private normalizar(v?: string | null): string {
