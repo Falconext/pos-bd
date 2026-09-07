@@ -152,7 +152,7 @@ describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
         origen: 7,
         destino: 582,
         documento: '44273815',
-        name: 'María Quispe',
+        name: 'JOSE CARLOS',
         phone: 999888777,
       }),
     );
@@ -242,11 +242,35 @@ describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
     expect(lat.createOrder).toHaveBeenCalledWith(
       expect.objectContaining({
         documento: '48455339',
-        name: 'ROJAS MALLQUI, ELSON ALFREDO',
-        firstname: 'JOSE CARLOS',
-        lastname: 'MENDOZA BUSTAMANTE',
+        name: 'JOSE CARLOS',
+        firstname: 'MENDOZA',
+        lastname: 'BUSTAMANTE',
         phone: 999888777,
       }),
     );
+  });
+
+  it('un 200 con success:false NO se guarda como guía creada', async () => {
+    const { svc, prisma, lat } = build();
+    lat.getAgencias.mockResolvedValue({
+      success: true,
+      data: [agencia('7', 'Lima Centro'), agencia('582', 'Cusco Centro')],
+    });
+    // Shalom responde HTTP 200 pero rechaza el registro.
+    lat.createOrder.mockResolvedValue({ success: false, message: 'Seleccione un producto' });
+    prisma.empresa.findUnique.mockResolvedValue(empresaCorporativa());
+    prisma.envioDespacho.findFirst.mockResolvedValue({
+      id: 55,
+      agenciaDestino: 'Cusco Centro - CUSCO - CUSCO',
+      nombreDestinatario: 'María Quispe',
+      dniDestinatario: '44273815',
+      celularDest: '999888777',
+      nroPaquetes: 1,
+      comprobante: { cliente: null, detalles: [] },
+    });
+
+    await expect(svc.crearGuiaDesdeDespacho(9, 100)).rejects.toThrow(/Seleccione un producto/);
+    // Lo crítico: no debe quedar marcado como generado.
+    expect(prisma.envioDespacho.update).not.toHaveBeenCalled();
   });
 });

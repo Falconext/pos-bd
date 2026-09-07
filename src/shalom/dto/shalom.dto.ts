@@ -38,6 +38,8 @@ export class CrearGuiaDto {
   @IsOptional() @IsString() nombre?: string;
   @IsOptional() @IsString() telefono?: string;
   @IsOptional() @IsString() direccion?: string;
+  /** Id del tipo de producto/paquete de Shalom (obligatorio para ellos). */
+  @IsOptional() @IsNumber() tipoProducto?: number;
   /** Regenerar aunque el despacho ya tenga N° de orden. */
   @IsOptional() @IsBoolean() forzar?: boolean;
 }

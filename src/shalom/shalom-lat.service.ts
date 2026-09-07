@@ -38,6 +38,23 @@ export interface ShalomOrderInput {
   lastname: string;
   /** Celular como entero. */
   phone: number;
+  /**
+   * Id del tipo de producto/paquete de Shalom. Es OBLIGATORIO por lógica de
+   * negocio aunque el esquema no lo exija: sin él responde 200 con
+   * {success:false, message:"Seleccione un producto"} y no crea nada.
+   * El proveedor no publica catálogo; el valor se configura por empresa.
+   */
+  tipo_producto?: number;
+  /** Peso en kg, como string. */
+  peso?: string;
+  /** Cantidad de bultos. */
+  cantidad?: number;
+  alto?: string;
+  ancho?: string;
+  largo?: string;
+  /** Quién paga el flete (p. ej. "DESTINATARIO"). */
+  tipo_pago?: string;
+  remitente?: string;
 }
 
 // Payload para el registro masivo (POST /account/register-bulk).

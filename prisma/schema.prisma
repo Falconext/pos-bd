@@ -2205,6 +2205,7 @@ model EnvioDespacho {
   shalomOseId            String? // ose_id resuelto (para descargar comprobante/etiqueta)
   shalomSyncAt           DateTime? // última sincronización con Shalom
   shalomAgenciaDestinoId String? // ter_id de la agencia destino (para crear la guía)
+  shalomTipoProducto     Int? // type_product de Shalom (MINI PAQUETERIA XS, etc.)
   shalomGuiaCreadaEn     DateTime? // cuándo se generó la guía en Shalom Pro desde el sistema
   // Estado de rastreo Olva (persistido: read-through cache + scheduler).
   // El N° de guía Olva vive en `nroOrden` (Olva no usa clave, solo el número).

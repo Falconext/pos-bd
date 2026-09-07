@@ -90,6 +90,12 @@ export class ShalomController {
     return this.service.desconectarInstancia(user.empresaId);
   }
 
+  // Productos disponibles para la empresa (derivados de su propia cuenta).
+  @Get('productos')
+  productos(@User() user: any) {
+    return this.service.productos(user.empresaId);
+  }
+
   @Get('pendientes')
   pendientes(@User() user: any) {
     return this.service.pendientes(user.empresaId);

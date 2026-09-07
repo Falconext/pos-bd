@@ -16,6 +16,35 @@ import { ConectarInstanciaDto, CrearGuiaDto } from './dto/shalom.dto';
 
 export type { ShalomAgencia, ShalomOrderInput } from './shalom-lat.service';
 
+/**
+ * Tipos de producto de Shalom con sus medidas por defecto. El proveedor no
+ * publica catálogo (todas las rutas /products dan 404); estos ids salen de las
+ * órdenes reales de la cuenta, en `detail_service.type_product.value`.
+ * El id es por cuenta de Shalom Pro: si otro negocio usa otros, se ajusta con
+ * SHALOM_TIPO_PRODUCTO o mandando `tipoProducto` en la llamada.
+ */
+const MEDIDAS_POR_PRODUCTO: Record<
+  number,
+  { alto: number; ancho: number; largo: number; peso: number }
+> = {
+  // MINI PAQUETERIA XS
+  10: { alto: 0.15, ancho: 0.12, largo: 0.2, peso: 0.5 },
+  12: { alto: 0.15, ancho: 0.12, largo: 0.2, peso: 0.5 },
+  // PAQUETERIA S
+  14: { alto: 0.2, ancho: 0.12, largo: 0.3, peso: 2 },
+};
+
+const NOMBRES_PRODUCTO: Record<number, string> = {
+  10: 'MINI PAQUETERIA XS',
+  12: 'MINI PAQUETERIA XS',
+  14: 'PAQUETERIA S',
+};
+
+const PRODUCTO_DEFECTO = {
+  id: 10,
+  medidas: MEDIDAS_POR_PRODUCTO[10],
+};
+
 /** Primer valor con contenido real. Trata '' y '   ' como ausentes. */
 function primeroNoVacio(...valores: Array<string | null | undefined>): string {
   for (const v of valores) {
@@ -459,6 +488,49 @@ export class ShalomService {
     return this.getInstancia(empresaId);
   }
 
+  /**
+   * Tipos de producto disponibles para la empresa. Shalom no expone catálogo
+   * (todas las rutas /products dan 404), así que se derivan de las órdenes reales
+   * de su propia cuenta — que además es lo correcto: el catálogo es por cuenta.
+   * Si la cuenta no tiene historial, se devuelven los conocidos.
+   */
+  async productos(empresaId: number) {
+    const empresa = await this.empresaConShalomPro(empresaId);
+    const conocidos = Object.entries(MEDIDAS_POR_PRODUCTO).map(([id, m]) => ({
+      id: Number(id),
+      nombre: NOMBRES_PRODUCTO[Number(id)] ?? `Producto ${id}`,
+      ...m,
+    }));
+    if (!empresa.shalomInstanceId) return conocidos;
+
+    try {
+      const pendientes = await this.lat.pendingShipments(
+        empresa.shalomInstanceId,
+      );
+      const porId = new Map<number, any>();
+      for (const envio of Object.values(pendientes ?? {})) {
+        for (const det of (envio as any)?.detail_service ?? []) {
+          const tp = det?.type_product;
+          if (!tp?.value || porId.has(Number(tp.value))) continue;
+          porId.set(Number(tp.value), {
+            id: Number(tp.value),
+            nombre: String(tp.name ?? tp.detalle ?? `Producto ${tp.value}`),
+            alto: Number(det.high) || PRODUCTO_DEFECTO.medidas.alto,
+            ancho: Number(det.width) || PRODUCTO_DEFECTO.medidas.ancho,
+            largo: Number(det.length) || PRODUCTO_DEFECTO.medidas.largo,
+            peso: Number(det.weight) || PRODUCTO_DEFECTO.medidas.peso,
+          });
+        }
+      }
+      // Los del historial mandan; se completan con los conocidos que falten.
+      for (const c of conocidos) if (!porId.has(c.id)) porId.set(c.id, c);
+      return [...porId.values()].sort((a, b) => a.nombre.localeCompare(b.nombre));
+    } catch (e: any) {
+      this.logger.warn(`No se pudieron leer los productos: ${e?.message}`);
+      return conocidos;
+    }
+  }
+
   /** Envíos pendientes de la cuenta conectada (espejo de Shalom Pro). */
   async pendientes(empresaId: number) {
     const empresa = await this.empresaConShalomPro(empresaId);
@@ -562,9 +634,10 @@ export class ShalomService {
       );
     }
 
-    // Shalom pide nombres y apellidos por separado. RENIEC es la fuente exacta;
-    // si no responde, se parte el nombre guardado ("APELLIDOS, NOMBRES").
-    const { firstname, lastname } = await this.separarNombre(dni, nombre);
+    // Shalom arma el nombre concatenando name + firstname + lastname, así que son
+    // las tres partes del documento (nombres / paterno / materno), NO el nombre
+    // completo: mandar el completo en `name` lo duplicaba en la guía.
+    const partes = await this.separarNombre(dni, nombre);
 
     const telefono = primeroNoVacio(
       dto.telefono,
@@ -578,22 +651,79 @@ export class ShalomService {
       );
     }
 
+    // El tipo de producto lo exige Shalom aunque su esquema lo marque opcional:
+    // sin él responde 200 con {success:false,"Seleccione un producto"}. Y un id
+    // que no está en el catálogo de la cuenta pasa igual, pero deja la guía con
+    // contenido "N/A" y monto S/ 0.00 — inservible para despachar.
+    // Los ids salen de las órdenes reales de la cuenta (detail_service.type_product).
+    const tipoProducto = Number(
+      dto.tipoProducto ??
+        envio.shalomTipoProducto ??
+        process.env.SHALOM_TIPO_PRODUCTO ??
+        PRODUCTO_DEFECTO.id,
+    );
+
     const respuesta = await this.lat.createOrder({
       instanceId: empresa.shalomInstanceId,
       origen: Number(origen.terId),
       destino: Number(destino.terId),
       documento: dni,
-      name: nombre,
-      firstname,
-      lastname,
+      name: partes.nombres,
+      firstname: partes.apellidoPaterno,
+      lastname: partes.apellidoMaterno,
       phone,
+      tipo_producto: tipoProducto,
+      cantidad: Number(envio.nroPaquetes) > 0 ? Number(envio.nroPaquetes) : 1,
+      // Las medidas NO se envían cuando se usa un producto del catálogo: Shalom
+      // toma las suyas. Mandarlas hacía que validara como medida personalizada y
+      // rechazara con "Supera las dimensiones de la categoría de la agencia",
+      // incluso hacia agencias donde ese mismo producto sí se usa a diario.
+      // Solo se manda el peso si el despacho declara uno real.
+      ...(Number(envio.pesoKg) > 0 ? { peso: String(Number(envio.pesoKg)) } : {}),
     });
+
+    // Shalom responde 200 con { success:false, message } cuando rechaza el
+    // registro (p. ej. "Seleccione un producto"): sin esto se guardaba como éxito
+    // una guía que nunca existió.
+    if (respuesta?.success === false) {
+      const motivo = String(respuesta?.message ?? '').trim();
+      this.logger.error(
+        `Shalom rechazó el registro del comprobante ${comprobanteId}: ${motivo}`,
+      );
+      throw new BadRequestException(
+        motivo
+          ? `Shalom rechazó el envío: ${motivo}`
+          : 'Shalom rechazó el envío sin indicar el motivo.',
+      );
+    }
 
     const guia = this.extraerGuia(respuesta);
     if (!guia.nroOrden) {
+      // Sin el N° de orden no hay rastreo posible, así que hay que poder ver qué
+      // devolvió realmente el proveedor en vez de adivinar.
       this.logger.warn(
-        `Shalom registró el envío del comprobante ${comprobanteId} pero no devolvió N° de orden reconocible`,
+        `Shalom no devolvió N° de orden para el comprobante ${comprobanteId}. Respuesta cruda: ${JSON.stringify(
+          respuesta,
+        ).slice(0, 1000)}`,
       );
+    }
+
+    // El registro devuelve el N° de guía pero no siempre la clave, y sin clave no
+    // hay rastreo posible. Se completa desde los pendientes de la cuenta, donde
+    // la orden recién creada ya aparece con su código.
+    if (guia.nroOrden && !guia.claveOrden) {
+      const desdePendientes = await this.buscarClaveEnPendientes(
+        empresa.shalomInstanceId,
+        guia.nroOrden,
+      );
+      if (desdePendientes) {
+        guia.claveOrden = desdePendientes.claveOrden;
+        guia.claveEnvio = guia.claveEnvio ?? desdePendientes.claveEnvio;
+      } else {
+        this.logger.warn(
+          `Shalom creó la guía ${guia.nroOrden} pero no se pudo obtener su clave; el rastreo quedará incompleto.`,
+        );
+      }
     }
 
     const actualizado = await this.prisma.envioDespacho.update({
@@ -625,29 +755,31 @@ export class ShalomService {
   private async separarNombre(
     dni: string,
     nombreCompleto: string,
-  ): Promise<{ firstname: string; lastname: string }> {
+  ): Promise<{
+    nombres: string;
+    apellidoPaterno: string;
+    apellidoMaterno: string;
+  }> {
     const reniec = await this.lat.consultarDni(dni).catch(() => null);
     const d = reniec?.data ?? reniec;
     const nombres = String(d?.nombres ?? '').trim();
-    const apellidos = [d?.apellidoPaterno, d?.apellidoMaterno]
-      .filter(Boolean)
-      .join(' ')
-      .trim();
-    if (nombres && apellidos) return { firstname: nombres, lastname: apellidos };
+    const paterno = String(d?.apellidoPaterno ?? '').trim();
+    if (nombres && paterno) {
+      return {
+        nombres,
+        apellidoPaterno: paterno,
+        apellidoMaterno: String(d?.apellidoMaterno ?? '').trim(),
+      };
+    }
 
-    const [ape, nom] = nombreCompleto.split(',');
-    if (nom?.trim()) {
-      return { firstname: nom.trim(), lastname: (ape ?? '').trim() };
-    }
-    // Sin coma: se asume "NOMBRES APELLIDOS" y se parte por la mitad.
-    const partes = nombreCompleto.split(/\s+/).filter(Boolean);
-    if (partes.length < 2) {
-      return { firstname: nombreCompleto, lastname: nombreCompleto };
-    }
-    const corte = Math.ceil(partes.length / 2);
+    // Fallback sin RENIEC: el sistema guarda "APELLIDOS, NOMBRES".
+    const [apeRaw, nomRaw] = nombreCompleto.split(',');
+    const apellidos = (nomRaw ? apeRaw : '').trim().split(/\s+/).filter(Boolean);
+    const soloNombres = (nomRaw ?? apeRaw ?? '').trim();
     return {
-      firstname: partes.slice(0, corte).join(' '),
-      lastname: partes.slice(corte).join(' '),
+      nombres: soloNombres,
+      apellidoPaterno: apellidos[0] ?? '',
+      apellidoMaterno: apellidos.slice(1).join(' '),
     };
   }
 
@@ -735,6 +867,36 @@ export class ShalomService {
     return v != null ? String(v) : null;
   }
 
+  /**
+   * Busca en los envíos pendientes de la cuenta la orden recién creada, para
+   * recuperar su clave (`code_service_order_empresarial`), que es la mitad que
+   * falta para poder rastrear.
+   */
+  private async buscarClaveEnPendientes(
+    instanceId: string,
+    nroOrden: string,
+  ): Promise<{ claveOrden: string | null; claveEnvio: string | null } | null> {
+    try {
+      const pendientes = await this.lat.pendingShipments(instanceId);
+      const envios = Object.values(pendientes ?? {}).filter(
+        (v): v is Record<string, any> => Boolean(v) && typeof v === 'object',
+      );
+      const match = envios.find(
+        (e) => String(e.service_order_guia_empresarial ?? '') === String(nroOrden),
+      );
+      if (!match) return null;
+      return {
+        claveOrden: match.code_service_order_empresarial
+          ? String(match.code_service_order_empresarial)
+          : null,
+        claveEnvio: match.code_val ? String(match.code_val) : null,
+      };
+    } catch (e: any) {
+      this.logger.warn(`No se pudo leer pendientes para la clave: ${e?.message}`);
+      return null;
+    }
+  }
+
   /** Extrae N° de orden / claves de la respuesta de /account/register. */
   private extraerGuia(respuesta: any): {
     nroOrden: string | null;
@@ -751,9 +913,28 @@ export class ShalomService {
       return null;
     };
     return {
-      nroOrden: pick('orderNumber', 'order_number', 'nroOrden', 'numero', 'guia'),
-      claveOrden: pick('orderCode', 'order_code', 'claveOrden', 'clave'),
-      claveEnvio: pick('shipmentCode', 'claveEnvio', 'clave_envio'),
+      // Forma real verificada de /account/register al crear con éxito:
+      // { success:true, data:{ codigo:"DHND", guia:94883904, serie:"V947", ose_id } }
+      nroOrden: pick(
+        'guia',
+        'orderNumber',
+        'order_number',
+        'nroOrden',
+        'numero',
+        'service_order_guia_empresarial',
+      ),
+      claveOrden: pick(
+        'codigo',
+        'orderCode',
+        'order_code',
+        'claveOrden',
+        'clave',
+        'code_service_order_empresarial',
+      ),
+      // "Clave de envío" es el código de retiro de 4 dígitos (así lo usan en el
+      // panel: 2056, 0105…), que en Shalom viaja como `code_val`. NO es la serie
+      // (V947), que es otra cosa.
+      claveEnvio: pick('shipmentCode', 'claveEnvio', 'clave_envio', 'code_val'),
     };
   }
 
