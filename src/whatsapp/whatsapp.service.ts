@@ -25,7 +25,6 @@ interface EnviarGuiaParams {
   empresaId: number;
   usuarioId: number;
   numeroDestino: string;
-  pdfUrl: string;
   empresaNombre: string;
   serie: string;
   correlativo: number;
@@ -825,7 +824,6 @@ export class WhatsAppService {
       empresaId,
       usuarioId,
       numeroDestino,
-      pdfUrl,
       serie,
       correlativo,
       destinatario,

@@ -180,7 +180,6 @@ export class WhatsAppController {
         id: true,
         serie: true,
         correlativo: true,
-        s3PdfUrl: true,
         empresa: {
           select: {
             razonSocial: true,
@@ -197,15 +196,11 @@ export class WhatsAppController {
       );
     }
 
-    const baseUrl = process.env.BACKEND_URL || 'http://localhost:4000';
-    const pdfUrl = guia.s3PdfUrl || `${baseUrl}/guia-remision/${guiaId}/pdf`;
-
     const resultado = await this.whatsappService.enviarGuia({
       guiaRemisionId: guiaId,
       empresaId: user.empresaId,
       usuarioId: user.id,
       numeroDestino,
-      pdfUrl,
       empresaNombre: guia.empresa.nombreComercial || guia.empresa.razonSocial,
       serie: guia.serie,
       correlativo: guia.correlativo,
