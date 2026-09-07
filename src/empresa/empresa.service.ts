@@ -1804,7 +1804,16 @@ export class EmpresaService {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id },
       include: {
-        plan: true,
+        plan: {
+          include: {
+            features: {
+              select: {
+                featureKey: true,
+                enabled: true,
+              },
+            },
+          },
+        },
         rubro: {
           include: {
             features: {
@@ -1837,6 +1846,16 @@ export class EmpresaService {
       },
     });
     if (!empresa) throw new NotFoundException('Empresa no encontrada');
+    // featureKey[] → { [key]: boolean }, el mismo shape que devuelve auth y que
+    // esperan hasPlanFeature() del web y del móvil.
+    if (Array.isArray((empresa as any).plan?.features)) {
+      (empresa as any).plan.features = Object.fromEntries(
+        (empresa as any).plan.features.map((feature: any) => [
+          feature.featureKey,
+          feature.enabled,
+        ]),
+      );
+    }
     if ((empresa as any).rubro?.features) {
       (empresa as any).rubro.features = Object.fromEntries(
         (empresa as any).rubro.features.map((feature: any) => [

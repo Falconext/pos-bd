@@ -395,6 +395,12 @@ export class WhatsAppService {
       body: 'Hola {{1}}, tu pago fue confirmado. Ya puedes retirar tu pedido {{2}}. ¡Gracias! ✅',
       example: ['Juan', 'B001-00000123'],
     },
+    {
+      // La usa enviarGuia(): {{1}} destinatario, {{2}} serie-correlativo.
+      name: 'guia_enviada',
+      body: 'Hola {{1}}, te compartimos tu guía de remisión {{2}}. Gracias por tu compra. 📄',
+      example: ['Juan Pérez', 'T001-00000123'],
+    },
   ];
 
   /** Crea (idempotente) las plantillas de despacho en la WABA vía Message Template API. */
@@ -814,21 +820,40 @@ export class WhatsAppService {
   async enviarGuia(
     params: EnviarGuiaParams,
   ): Promise<{ success: boolean; mensajeId?: string; error?: string }> {
-    const { guiaRemisionId, empresaId, usuarioId, numeroDestino, pdfUrl } =
-      params;
+    const {
+      guiaRemisionId,
+      empresaId,
+      usuarioId,
+      numeroDestino,
+      pdfUrl,
+      serie,
+      correlativo,
+      destinatario,
+    } = params;
 
     try {
       const { token, phoneId } = await this.getCredentialsForEmpresa(empresaId);
       const to = this.formatearNumero(numeroDestino);
 
+      // guia_enviada -> {{1}} destinatario, {{2}} numero de guia (serie-correlativo)
+      const guiaRef = `${serie}-${String(correlativo).padStart(8, '0')}`;
       const payload = {
         messaging_product: 'whatsapp',
         recipient_type: 'individual',
         to,
         type: 'template',
         template: {
-          name: 'hello_world',
-          language: { code: 'en_US' },
+          name: 'guia_enviada',
+          language: { code: 'es' },
+          components: [
+            {
+              type: 'body',
+              parameters: [
+                { type: 'text', text: destinatario },
+                { type: 'text', text: guiaRef },
+              ],
+            },
+          ],
         },
       };
 
