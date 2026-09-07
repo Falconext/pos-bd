@@ -2,8 +2,11 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
+  Delete,
   Body,
   Param,
+  ParseIntPipe,
   Query,
   UseGuards,
   HttpCode,
@@ -13,6 +16,11 @@ import { Response } from 'express';
 import { ShalomService } from './shalom.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { User } from '../common/decorators/user.decorator';
+import {
+  ConectarInstanciaDto,
+  ConfigInstanciaDto,
+  CrearGuiaDto,
+} from './dto/shalom.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('shalom')
@@ -51,10 +59,56 @@ export class ShalomController {
     return this.service.quote(body.origin, body.destination, user?.empresaId);
   }
 
-  @Post('orders')
+  // ─── Cuenta Shalom Pro (solo plan Corporativo) ────────────────────────────
+  // El rastreo funciona para todos con la API key global; crear guías exige la
+  // cuenta Shalom Pro del negocio conectada como instancia en el proveedor.
+
+  @Get('instancia')
+  getInstancia(@User() user: any) {
+    return this.service.getInstancia(user.empresaId);
+  }
+
+  @Post('instancia')
   @HttpCode(200)
-  createOrder(@Body() body: any, @User() user: any) {
-    return this.service.createOrder(body, user?.empresaId);
+  conectarInstancia(@Body() dto: ConectarInstanciaDto, @User() user: any) {
+    return this.service.conectarInstancia(user.empresaId, dto);
+  }
+
+  @Patch('instancia')
+  actualizarInstancia(@Body() dto: ConfigInstanciaDto, @User() user: any) {
+    return this.service.actualizarConfigInstancia(user.empresaId, dto);
+  }
+
+  @Post('instancia/reconectar')
+  @HttpCode(200)
+  reconectarInstancia(@User() user: any) {
+    return this.service.reconectarInstancia(user.empresaId);
+  }
+
+  @Delete('instancia')
+  desconectarInstancia(@User() user: any) {
+    return this.service.desconectarInstancia(user.empresaId);
+  }
+
+  @Get('pendientes')
+  pendientes(@User() user: any) {
+    return this.service.pendientes(user.empresaId);
+  }
+
+  // Genera la guía en Shalom Pro desde el despacho del comprobante y guarda el
+  // N° de orden / clave devueltos (lo que el rastreo necesita después).
+  @Post('guia/:comprobanteId')
+  @HttpCode(200)
+  crearGuia(
+    @Param('comprobanteId', ParseIntPipe) comprobanteId: number,
+    @Body() dto: CrearGuiaDto,
+    @User() user: any,
+  ) {
+    return this.service.crearGuiaDesdeDespacho(
+      comprobanteId,
+      user.empresaId,
+      dto,
+    );
   }
 
   // Comprobante del envío. El proveedor selecciona el formato: el antiguo

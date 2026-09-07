@@ -1,7 +1,18 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { ShalomLatService } from './shalom-lat.service';
-import { derivarEstadoShalom, ShalomDerivado } from './shalom.util';
+import { ShalomAgencia, ShalomLatService } from './shalom-lat.service';
+import {
+  derivarEstadoShalom,
+  planPermiteShalomPro,
+  ShalomDerivado,
+} from './shalom.util';
+import { ConectarInstanciaDto, CrearGuiaDto } from './dto/shalom.dto';
 
 export type { ShalomAgencia, ShalomOrderInput } from './shalom-lat.service';
 
@@ -42,9 +53,6 @@ export class ShalomService {
     return this.lat.quote(origin, destination);
   }
 
-  async createOrder(body: any, _empresaId?: number) {
-    return this.lat.createOrder(body);
-  }
 
   async ticketImage(
     orderNumber: string,
@@ -162,6 +170,487 @@ export class ShalomService {
       }
       throw err;
     }
+  }
+
+  // ─── Cuenta Shalom Pro (instancia) ────────────────────────────────────────
+  // Crear guías no lo cubre la API key global: el proveedor necesita la cuenta
+  // Shalom Pro del negocio registrada como instancia. Solo plan Corporativo.
+
+  /** Empresa + plan, validando que el plan habilite crear guías. */
+  private async empresaConShalomPro(empresaId: number) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: {
+        id: true,
+        nombreComercial: true,
+        razonSocial: true,
+        shalomEmail: true,
+        shalomPassword: true,
+        shalomInstanceId: true,
+        shalomInstanceNombre: true,
+        shalomInstanceEstado: true,
+        shalomInstanceError: true,
+        shalomInstanceSyncAt: true,
+        shalomSecurityCode: true,
+        shalomAgenciaOrigenId: true,
+        shalomAgenciaOrigenNombre: true,
+        plan: { select: { nombre: true } },
+      },
+    });
+    if (!empresa) throw new NotFoundException('Empresa no encontrada');
+    if (!planPermiteShalomPro(empresa.plan?.nombre)) {
+      throw new ForbiddenException(
+        'Crear guías en Shalom desde el sistema está disponible solo en el plan Corporativo.',
+      );
+    }
+    return empresa;
+  }
+
+  /** Estado de la conexión, sin exponer nunca la contraseña. */
+  async getInstancia(empresaId?: number) {
+    // ADMIN_SISTEMA y sesiones sin empresa: la sección simplemente no aplica.
+    if (!empresaId) return this.instanciaDeshabilitada();
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: {
+        shalomEmail: true,
+        shalomPassword: true,
+        shalomInstanceId: true,
+        shalomInstanceNombre: true,
+        shalomInstanceEstado: true,
+        shalomInstanceError: true,
+        shalomInstanceSyncAt: true,
+        shalomSecurityCode: true,
+        shalomAgenciaOrigenId: true,
+        shalomAgenciaOrigenNombre: true,
+        plan: { select: { nombre: true } },
+      },
+    });
+    if (!empresa) throw new NotFoundException('Empresa no encontrada');
+    return {
+      // El frontend usa esto para mostrar u ocultar toda la sección.
+      habilitadoPorPlan: planPermiteShalomPro(empresa.plan?.nombre),
+      conectada: Boolean(empresa.shalomInstanceId),
+      instanceId: empresa.shalomInstanceId,
+      nombre: empresa.shalomInstanceNombre,
+      estado: empresa.shalomInstanceEstado,
+      error: empresa.shalomInstanceError,
+      sincronizadoEn: empresa.shalomInstanceSyncAt,
+      email: empresa.shalomEmail,
+      credencialesGuardadas: Boolean(empresa.shalomPassword),
+      securityCodeGuardado: Boolean(empresa.shalomSecurityCode),
+      agenciaOrigenId: empresa.shalomAgenciaOrigenId,
+      agenciaOrigenNombre: empresa.shalomAgenciaOrigenNombre,
+    };
+  }
+
+  private instanciaDeshabilitada() {
+    return {
+      habilitadoPorPlan: false,
+      conectada: false,
+      instanceId: null,
+      nombre: null,
+      estado: null,
+      error: null,
+      sincronizadoEn: null,
+      email: null,
+      credencialesGuardadas: false,
+      securityCodeGuardado: false,
+      agenciaOrigenId: null,
+      agenciaOrigenNombre: null,
+    };
+  }
+
+  /**
+   * Registra la cuenta Shalom Pro del negocio como instancia en el proveedor y
+   * guarda el instanceId. Las credenciales se persisten para que el proveedor
+   * pueda reabrir la sesión cuando expire.
+   */
+  async conectarInstancia(empresaId: number, dto: ConectarInstanciaDto) {
+    const empresa = await this.empresaConShalomPro(empresaId);
+    const username = dto.username?.trim() || empresa.shalomEmail || '';
+    const password = dto.password?.trim() || empresa.shalomPassword || '';
+    if (!username || !password) {
+      throw new BadRequestException(
+        'Ingresa el correo y la contraseña de tu cuenta Shalom Pro.',
+      );
+    }
+    const nombre =
+      dto.nombre?.trim() ||
+      empresa.nombreComercial ||
+      empresa.razonSocial ||
+      `Empresa ${empresaId}`;
+
+    try {
+      const respuesta = await this.lat.crearInstancia({
+        name: nombre,
+        username,
+        password,
+      });
+      const instanceId = this.extraerInstanceId(respuesta);
+      if (!instanceId) {
+        throw new BadRequestException(
+          'Shalom no devolvió el identificador de la instancia. Intenta de nuevo.',
+        );
+      }
+      await this.prisma.empresa.update({
+        where: { id: empresaId },
+        data: {
+          shalomEmail: username,
+          shalomPassword: password,
+          shalomInstanceId: instanceId,
+          shalomInstanceNombre: nombre,
+          shalomInstanceEstado: 'CONECTADA',
+          shalomInstanceError: null,
+          shalomInstanceSyncAt: new Date(),
+          ...(dto.securityCode !== undefined
+            ? { shalomSecurityCode: dto.securityCode?.trim() || null }
+            : {}),
+          ...(dto.agenciaOrigenId !== undefined
+            ? {
+                shalomAgenciaOrigenId: dto.agenciaOrigenId?.trim() || null,
+                shalomAgenciaOrigenNombre:
+                  dto.agenciaOrigenNombre?.trim() || null,
+              }
+            : {}),
+        },
+      });
+      return this.getInstancia(empresaId);
+    } catch (error: any) {
+      await this.prisma.empresa
+        .update({
+          where: { id: empresaId },
+          data: {
+            shalomInstanceEstado: 'ERROR',
+            shalomInstanceError: String(error?.message ?? '').slice(0, 300),
+          },
+        })
+        .catch(() => undefined);
+      throw error;
+    }
+  }
+
+  /** Fuerza el login en Shalom Pro (botón "reconectar"). */
+  async reconectarInstancia(empresaId: number) {
+    const empresa = await this.empresaConShalomPro(empresaId);
+    if (!empresa.shalomInstanceId) {
+      throw new BadRequestException(
+        'Todavía no has conectado tu cuenta Shalom Pro.',
+      );
+    }
+    try {
+      await this.lat.loginInstancia(
+        empresa.shalomInstanceId,
+        empresa.shalomEmail ?? undefined,
+        empresa.shalomPassword ?? undefined,
+      );
+      await this.prisma.empresa.update({
+        where: { id: empresaId },
+        data: {
+          shalomInstanceEstado: 'CONECTADA',
+          shalomInstanceError: null,
+          shalomInstanceSyncAt: new Date(),
+        },
+      });
+    } catch (error: any) {
+      await this.prisma.empresa
+        .update({
+          where: { id: empresaId },
+          data: {
+            shalomInstanceEstado: 'ERROR',
+            shalomInstanceError: String(error?.message ?? '').slice(0, 300),
+          },
+        })
+        .catch(() => undefined);
+      throw error;
+    }
+    return this.getInstancia(empresaId);
+  }
+
+  /** Actualiza agencia de origen y código de seguridad sin volver a loguear. */
+  async actualizarConfigInstancia(
+    empresaId: number,
+    dto: Pick<
+      ConectarInstanciaDto,
+      'agenciaOrigenId' | 'agenciaOrigenNombre' | 'securityCode'
+    >,
+  ) {
+    await this.empresaConShalomPro(empresaId);
+    await this.prisma.empresa.update({
+      where: { id: empresaId },
+      data: {
+        ...(dto.agenciaOrigenId !== undefined
+          ? {
+              shalomAgenciaOrigenId: dto.agenciaOrigenId?.trim() || null,
+              shalomAgenciaOrigenNombre: dto.agenciaOrigenNombre?.trim() || null,
+            }
+          : {}),
+        ...(dto.securityCode !== undefined
+          ? { shalomSecurityCode: dto.securityCode?.trim() || null }
+          : {}),
+      },
+    });
+    return this.getInstancia(empresaId);
+  }
+
+  /** Olvida la cuenta conectada (no borra nada del lado de Shalom). */
+  async desconectarInstancia(empresaId: number) {
+    await this.empresaConShalomPro(empresaId);
+    await this.prisma.empresa.update({
+      where: { id: empresaId },
+      data: {
+        shalomInstanceId: null,
+        shalomInstanceNombre: null,
+        shalomInstanceEstado: null,
+        shalomInstanceError: null,
+        shalomInstanceSyncAt: null,
+        shalomPassword: null,
+        shalomSecurityCode: null,
+      },
+    });
+    return this.getInstancia(empresaId);
+  }
+
+  /** Envíos pendientes de la cuenta conectada (espejo de Shalom Pro). */
+  async pendientes(empresaId: number) {
+    const empresa = await this.empresaConShalomPro(empresaId);
+    if (!empresa.shalomInstanceId) {
+      throw new BadRequestException(
+        'Todavía no has conectado tu cuenta Shalom Pro.',
+      );
+    }
+    return this.lat.pendingShipments(empresa.shalomInstanceId);
+  }
+
+  // ─── Crear guía desde un despacho ─────────────────────────────────────────
+
+  /**
+   * Crea la guía en Shalom Pro a partir de un despacho ya registrado y guarda el
+   * N° de orden / clave devueltos en el EnvioDespacho, que es justo lo que el
+   * rastreo (y el cron) necesitan para seguir el envío.
+   */
+  async crearGuiaDesdeDespacho(
+    comprobanteId: number,
+    empresaId: number,
+    dto: CrearGuiaDto = {},
+  ) {
+    const empresa = await this.empresaConShalomPro(empresaId);
+    if (!empresa.shalomInstanceId) {
+      throw new BadRequestException(
+        'Conecta tu cuenta Shalom Pro antes de generar guías.',
+      );
+    }
+
+    const envio = await this.prisma.envioDespacho.findFirst({
+      where: { comprobanteId, comprobante: { empresaId } },
+      include: {
+        comprobante: {
+          select: {
+            id: true,
+            serie: true,
+            correlativo: true,
+            cliente: {
+              select: {
+                nombre: true,
+                nroDoc: true,
+                telefono: true,
+                direccion: true,
+              },
+            },
+            detalles: { select: { descripcion: true, cantidad: true } },
+          },
+        },
+      },
+    });
+    if (!envio) {
+      throw new NotFoundException(
+        'Este comprobante no tiene un despacho registrado.',
+      );
+    }
+    if (envio.nroOrden && envio.claveOrden && !dto.forzar) {
+      throw new BadRequestException(
+        `Este despacho ya tiene la guía ${envio.nroOrden} registrada.`,
+      );
+    }
+
+    const agencias = (await this.lat.getAgencias()).data ?? [];
+    const origen = this.resolverAgencia(
+      agencias,
+      dto.origenId ?? empresa.shalomAgenciaOrigenId,
+      dto.origenNombre ?? empresa.shalomAgenciaOrigenNombre,
+    );
+    if (!origen) {
+      throw new BadRequestException(
+        'Configura la agencia Shalom de origen de tu negocio antes de generar guías.',
+      );
+    }
+    const destino = this.resolverAgencia(
+      agencias,
+      dto.destinoId ?? envio.shalomAgenciaDestinoId,
+      dto.destinoNombre ?? envio.agenciaDestino,
+    );
+    if (!destino) {
+      throw new BadRequestException(
+        'No se pudo identificar la agencia Shalom de destino. Vuelve a elegirla en el despacho.',
+      );
+    }
+
+    const cliente = envio.comprobante?.cliente;
+    const dni = (dto.dni ?? envio.dniDestinatario ?? cliente?.nroDoc ?? '').trim();
+    const nombre = (
+      dto.nombre ??
+      envio.nombreDestinatario ??
+      cliente?.nombre ??
+      ''
+    ).trim();
+    if (!dni || !nombre) {
+      throw new BadRequestException(
+        'Falta el nombre o el documento del destinatario para generar la guía.',
+      );
+    }
+
+    const productos = this.armarProductos(envio);
+
+    const respuesta = await this.lat.createOrder({
+      instanceId: empresa.shalomInstanceId,
+      origen: Number(origen.terId),
+      destino: Number(destino.terId),
+      destinatario: {
+        dni,
+        nombre,
+        telefono: (dto.telefono ?? envio.celularDest ?? cliente?.telefono ?? '').trim(),
+        direccion: (
+          dto.direccion ??
+          envio.direccionDestino ??
+          cliente?.direccion ??
+          destino.direccion ??
+          ''
+        ).trim(),
+      },
+      productos,
+      ...(envio.montoCOD ? { montoCOD: envio.montoCOD } : {}),
+    });
+
+    const guia = this.extraerGuia(respuesta);
+    if (!guia.nroOrden) {
+      this.logger.warn(
+        `Shalom registró el envío del comprobante ${comprobanteId} pero no devolvió N° de orden reconocible`,
+      );
+    }
+
+    const actualizado = await this.prisma.envioDespacho.update({
+      where: { id: envio.id },
+      data: {
+        ...(guia.nroOrden ? { nroOrden: guia.nroOrden } : {}),
+        ...(guia.claveOrden ? { claveOrden: guia.claveOrden } : {}),
+        ...(guia.claveEnvio ? { claveEnvio: guia.claveEnvio } : {}),
+        shalomAgenciaDestinoId: destino.terId,
+        shalomGuiaCreadaEn: new Date(),
+      },
+      select: {
+        id: true,
+        nroOrden: true,
+        claveOrden: true,
+        claveEnvio: true,
+        shalomGuiaCreadaEn: true,
+      },
+    });
+
+    return { ...actualizado, respuesta };
+  }
+
+  /** Descripción del contenido para Shalom (fallback: los ítems del comprobante). */
+  private armarProductos(envio: any): Array<{
+    descripcion: string;
+    cantidad: number;
+  }> {
+    const contenido = String(envio.contenidoPaquete ?? '').trim();
+    if (contenido) {
+      return [{ descripcion: contenido, cantidad: Number(envio.nroPaquetes) || 1 }];
+    }
+    const detalles: Array<{ descripcion: string; cantidad: number }> = (
+      envio.comprobante?.detalles ?? []
+    ).map((d: any) => ({
+      descripcion: String(d.descripcion ?? '').slice(0, 120),
+      cantidad: Math.max(1, Math.round(Number(d.cantidad) || 1)),
+    }));
+    if (detalles.length) return detalles;
+    return [
+      { descripcion: 'Mercadería', cantidad: Number(envio.nroPaquetes) || 1 },
+    ];
+  }
+
+  /**
+   * Resuelve una agencia por ter_id o, si solo hay texto (lo que guarda hoy el
+   * despacho: "Nombre - Provincia - Departamento"), por coincidencia normalizada.
+   */
+  private resolverAgencia(
+    agencias: ShalomAgencia[],
+    terId?: string | null,
+    texto?: string | null,
+  ): ShalomAgencia | null {
+    const id = String(terId ?? '').trim();
+    if (id) {
+      const porId = agencias.find((a) => a.terId === id);
+      if (porId) return porId;
+    }
+    const buscado = this.normalizar(texto);
+    if (!buscado) return null;
+    return (
+      agencias.find((a) => this.normalizar(a.label) === buscado) ??
+      agencias.find(
+        (a) =>
+          this.normalizar([a.nombre, a.provincia, a.departamento].join(' ')) ===
+          buscado,
+      ) ??
+      agencias.find((a) => this.normalizar(a.label).includes(buscado)) ??
+      null
+    );
+  }
+
+  private normalizar(v?: string | null): string {
+    return String(v ?? '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+  }
+
+  /** El proveedor puede devolver el id de instancia con distintos nombres. */
+  private extraerInstanceId(respuesta: any): string | null {
+    const v =
+      respuesta?.instanceId ??
+      respuesta?.instance_id ??
+      respuesta?.id ??
+      respuesta?.data?.instanceId ??
+      respuesta?.data?.instance_id ??
+      respuesta?.data?.id ??
+      respuesta?.instance?.id ??
+      null;
+    return v != null ? String(v) : null;
+  }
+
+  /** Extrae N° de orden / claves de la respuesta de /account/register. */
+  private extraerGuia(respuesta: any): {
+    nroOrden: string | null;
+    claveOrden: string | null;
+    claveEnvio: string | null;
+  } {
+    const d = respuesta?.data ?? respuesta ?? {};
+    const orden = d?.order ?? d?.orden ?? d;
+    const pick = (...claves: string[]): string | null => {
+      for (const c of claves) {
+        const v = orden?.[c] ?? d?.[c];
+        if (v != null && String(v).trim() !== '') return String(v).trim();
+      }
+      return null;
+    };
+    return {
+      nroOrden: pick('orderNumber', 'order_number', 'nroOrden', 'numero', 'guia'),
+      claveOrden: pick('orderCode', 'order_code', 'claveOrden', 'clave'),
+      claveEnvio: pick('shipmentCode', 'claveEnvio', 'clave_envio'),
+    };
   }
 
   /**

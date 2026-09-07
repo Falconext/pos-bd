@@ -71,3 +71,19 @@ export function etiquetaEtapaShalom(estado: ShalomEstado | null): string {
       return 'Sin información';
   }
 }
+
+/**
+ * Planes que habilitan CREAR guías en Shalom Pro desde el sistema.
+ *
+ * El rastreo (tracking, agencias, comprobante, etiqueta, cotización) funciona
+ * para cualquier plan con la API key global. Crear guías, en cambio, consume la
+ * cuenta Shalom Pro del propio negocio y se ofrece solo en el plan Corporativo.
+ */
+export function planPermiteShalomPro(planNombre?: string | null): boolean {
+  const raw = String(planNombre ?? '')
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+  return raw.includes('CORPORAT');
+}

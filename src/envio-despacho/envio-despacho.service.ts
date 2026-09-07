@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -13,6 +14,7 @@ import {
 import { DespachoConfigDto } from './dto/despacho-config.dto';
 import { RepartidorService } from '../repartidor/repartidor.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { planPermiteShalomPro } from '../shalom/shalom.util';
 
 const ESTADOS_NOTIFICABLES = new Set([
   EstadoDespacho.EN_CAMINO,
@@ -248,12 +250,32 @@ export class EnvioDespachoService {
     return this.withLegacyRepartidor(updated);
   }
 
+  /**
+   * La automatización de despacho (rastreo automático + plantillas de WhatsApp)
+   * es del plan Corporativo. El resto de planes ve la configuración, pero no la
+   * puede modificar: el candado se aplica acá, no solo en la UI.
+   */
+  private async validarPlanAutomatizacion(empresaId: number) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { plan: { select: { nombre: true } } },
+    });
+    if (!planPermiteShalomPro(empresa?.plan?.nombre)) {
+      throw new ForbiddenException(
+        'La automatización de despacho está disponible solo en el plan Corporativo.',
+      );
+    }
+  }
+
   async getConfig(empresaId: number) {
     const [config, empresa] = await Promise.all([
       this.prisma.despachoMensajeTemplate.findUnique({ where: { empresaId } }),
       this.prisma.empresa.findUnique({
         where: { id: empresaId },
-        select: { shalomAutoTrackingActivo: true },
+        select: {
+          shalomAutoTrackingActivo: true,
+          plan: { select: { nombre: true } },
+        },
       }),
     ]);
     const base = config ?? {
@@ -267,10 +289,13 @@ export class EnvioDespachoService {
       ...base,
       // Opt-in del rastreo automático Shalom (cron 30 min). Default false.
       shalomAutoTrackingActivo: empresa?.shalomAutoTrackingActivo ?? false,
+      // El plan permite editar esta configuración (solo Corporativo).
+      habilitadoPorPlan: planPermiteShalomPro(empresa?.plan?.nombre),
     };
   }
 
   async upsertConfig(empresaId: number, dto: DespachoConfigDto) {
+    await this.validarPlanAutomatizacion(empresaId);
     return this.prisma.despachoMensajeTemplate.upsert({
       where: { empresaId },
       create: { empresaId, ...dto },
@@ -284,6 +309,7 @@ export class EnvioDespachoService {
    * clientes. Se activa recién cuando el empresario está avisado del automatismo.
    */
   async setAutoTracking(empresaId: number, activo: boolean) {
+    await this.validarPlanAutomatizacion(empresaId);
     const empresa = await this.prisma.empresa.update({
       where: { id: empresaId },
       data: { shalomAutoTrackingActivo: activo },

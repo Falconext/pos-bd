@@ -163,6 +163,21 @@ model Empresa {
   // (default) el cron NO actualiza estados ni envía WhatsApp a los clientes de
   // esta empresa — se activa recién cuando el empresario está avisado.
   shalomAutoTrackingActivo      Boolean                       @default(false)
+  // ── Cuenta Shalom Pro conectada (solo planes Corporativo) ────────────────
+  // El rastreo funciona con la API key global y NO necesita cuenta. Para CREAR
+  // guías, el proveedor exige registrar la cuenta Shalom Pro del negocio como
+  // "instancia" (POST /instances) y luego enviar las órdenes con ese instanceId.
+  shalomInstanceId              String?
+  shalomInstanceNombre          String?
+  // CONECTADA | ERROR (null = nunca se conectó)
+  shalomInstanceEstado          String?
+  shalomInstanceError           String?
+  shalomInstanceSyncAt          DateTime?
+  // Código de seguridad de la cuenta Shalom Pro (lo pide el registro masivo).
+  shalomSecurityCode            String?
+  // Agencia de origen por defecto desde donde el negocio despacha (ter_id).
+  shalomAgenciaOrigenId         String?
+  shalomAgenciaOrigenNombre     String?
   // Módulo IA de Ventas / Filtro de Leads (portado de salesfilter-ai).
   // Toggle multi-tenant: la IA sólo responde WhatsApp entrantes si está activa.
   iaVentasActiva                Boolean                       @default(false)
@@ -2175,6 +2190,8 @@ model EnvioDespacho {
   shalomTrackingJson     Json? // último snapshot normalizado { search, statuses, ose_id }
   shalomOseId            String? // ose_id resuelto (para descargar comprobante/etiqueta)
   shalomSyncAt           DateTime? // última sincronización con Shalom
+  shalomAgenciaDestinoId String? // ter_id de la agencia destino (para crear la guía)
+  shalomGuiaCreadaEn     DateTime? // cuándo se generó la guía en Shalom Pro desde el sistema
   establecimiento        String? // Local/sucursal desde donde despacha
   repartidorId           Int?
   repartidor             Repartidor?    @relation(fields: [repartidorId], references: [id], onDelete: SetNull)

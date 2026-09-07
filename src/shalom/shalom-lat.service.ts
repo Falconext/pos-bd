@@ -15,11 +15,37 @@ export interface ShalomAgencia {
   longitud?: string;
 }
 
-// Payload para registrar un envío en Shalom (POST /account/register).
-// Requiere credenciales del cliente final vía instancias (/instances/*).
+// Destinatario de una guía Shalom Pro.
+export interface ShalomDestinatario {
+  dni: string;
+  nombre: string;
+  telefono?: string;
+  direccion?: string;
+}
+
+// Payload para registrar UNA guía en Shalom Pro (POST /account/register).
+// Requiere una instancia (cuenta Shalom Pro del negocio) registrada vía /instances.
 export interface ShalomOrderInput {
+  instanceId: string;
+  origen: number;
+  destino: number;
+  destinatario: ShalomDestinatario;
+  productos: Array<{ descripcion: string; cantidad: number }>;
+  [extra: string]: any;
+}
+
+// Payload para el registro masivo (POST /account/register-bulk).
+export interface ShalomBulkInput {
+  instanceId: string;
   securityCode?: string;
   shipments: any[];
+}
+
+// Datos para registrar la cuenta Shalom Pro del negocio como instancia.
+export interface ShalomInstanciaInput {
+  name: string;
+  username: string;
+  password: string;
 }
 
 /**
@@ -36,7 +62,12 @@ export interface ShalomOrderInput {
  *  - GET  /track/voucher?orderNumber=&orderCode= → comprobante (PNG/PDF)
  *  - GET  /track/label?orderNumber=&orderCode=   → etiqueta (PDF)
  *  - POST /account/quote    { origin, destination }          → cotización
- *  - POST /account/register { shipments[], securityCode }    → crear envío (Pro)
+ *  - POST /instances        { name, username, password }     → conectar cuenta Pro
+ *  - POST /instances/login  { instanceId }                    → reabrir sesión Pro
+ *  - POST /account/register { instanceId, origen, destino, … } → crear guía (Pro)
+ *  - POST /account/register-bulk                              → crear guías en lote
+ *  - POST /account/pending-shipments { instanceId }           → pendientes de la cuenta
+ *  - GET  /account/dni/:dni                                   → validar destinatario
  */
 @Injectable()
 export class ShalomLatService {
@@ -127,7 +158,15 @@ export class ShalomLatService {
     if (s === 404) {
       return `No se pudo obtener ${doc}. Verifica el N° de orden y la clave, o intenta de nuevo en unos minutos.`;
     }
-    if (s === 401 || s === 403) {
+    if (s === 403) {
+      // 403 casi siempre es un límite del plan contratado con el proveedor
+      // (p. ej. "Tu plan permite 0 instancias"): su texto es más útil que el nuestro.
+      return (
+        err?.message ||
+        'Tu plan de Shalom API no permite esta operación. Contacta al administrador.'
+      );
+    }
+    if (s === 401) {
       return 'La API key de Shalom no es válida o no está configurada. Contacta al administrador.';
     }
     return err?.message || `No se pudo obtener ${doc} de Shalom.`;
@@ -302,9 +341,62 @@ export class ShalomLatService {
     }
   }
 
+  // ─── Instancias (cuenta Shalom Pro del negocio) ────────────────────────────
+  // Crear guías NO está cubierto por la API key global: el proveedor necesita la
+  // cuenta Shalom Pro del negocio registrada como "instancia" (mantiene la sesión
+  // con navegador headless). Solo se usa en planes que lo habilitan.
+
+  /** POST /instances → registra la cuenta Shalom Pro y devuelve el instanceId. */
+  async crearInstancia(input: ShalomInstanciaInput): Promise<any> {
+    try {
+      const res = await this.requestConReintento('POST', '/instances', {
+        body: {
+          name: input.name,
+          username: input.username,
+          password: input.password,
+        },
+      });
+      return await res.json();
+    } catch (error: any) {
+      this.logger.error('Error Shalom /instances', error?.message);
+      if (error instanceof HttpException) throw error;
+      throw new BadRequestException(
+        this.mensajeShalom(error, 'la conexión con tu cuenta Shalom Pro'),
+      );
+    }
+  }
+
+  /**
+   * POST /instances/login → fuerza el login y regraba la sesión. No hace falta
+   * en el flujo normal (el proveedor auto-recupera la sesión si guardó las
+   * credenciales); se usa para el botón "reconectar".
+   */
+  async loginInstancia(
+    instanceId: string,
+    username?: string,
+    password?: string,
+  ): Promise<any> {
+    try {
+      const res = await this.requestConReintento('POST', '/instances/login', {
+        body: {
+          instanceId,
+          ...(username ? { username } : {}),
+          ...(password ? { password } : {}),
+        },
+      });
+      return await res.json();
+    } catch (error: any) {
+      this.logger.error('Error Shalom /instances/login', error?.message);
+      if (error instanceof HttpException) throw error;
+      throw new BadRequestException(
+        this.mensajeShalom(error, 'el inicio de sesión en Shalom Pro'),
+      );
+    }
+  }
+
   // ─── Crear envío ────────────────────────────────────────────────────────────
-  // POST /account/register { shipments[], securityCode } → requiere credenciales
-  // del cliente vía /instances (no cubierto por la API key global).
+  // POST /account/register { instanceId, origen, destino, destinatario, productos }
+  // Resuelve destinatario por DNI, calcula la tarifa y confirma la orden.
   async createOrder(input: ShalomOrderInput): Promise<any> {
     try {
       const res = await this.requestConReintento('POST', '/account/register', {
@@ -315,6 +407,57 @@ export class ShalomLatService {
       this.logger.error('Error Shalom /account/register', error?.message);
       if (error instanceof HttpException) throw error;
       throw new BadRequestException(this.mensajeShalom(error, 'el registro del envío'));
+    }
+  }
+
+  // POST /account/register-bulk { instanceId, securityCode, shipments[] }
+  async createOrderBulk(input: ShalomBulkInput): Promise<any> {
+    try {
+      const res = await this.requestConReintento(
+        'POST',
+        '/account/register-bulk',
+        { body: { ...input } },
+      );
+      return await res.json();
+    } catch (error: any) {
+      this.logger.error('Error Shalom /account/register-bulk', error?.message);
+      if (error instanceof HttpException) throw error;
+      throw new BadRequestException(
+        this.mensajeShalom(error, 'el registro masivo de envíos'),
+      );
+    }
+  }
+
+  /** POST /account/pending-shipments → envíos pendientes de la cuenta conectada. */
+  async pendingShipments(instanceId: string): Promise<any> {
+    try {
+      const res = await this.requestConReintento(
+        'POST',
+        '/account/pending-shipments',
+        { body: { instanceId } },
+      );
+      return await res.json();
+    } catch (error: any) {
+      this.logger.error('Error Shalom /account/pending-shipments', error?.message);
+      if (error instanceof HttpException) throw error;
+      throw new BadRequestException(
+        this.mensajeShalom(error, 'los envíos pendientes'),
+      );
+    }
+  }
+
+  /** GET /account/dni/:dni → valida el documento del destinatario (RENIEC). */
+  async consultarDni(dni: string): Promise<any> {
+    try {
+      const res = await this.requestConReintento(
+        'GET',
+        `/account/dni/${encodeURIComponent(dni)}`,
+      );
+      return await res.json();
+    } catch (error: any) {
+      this.logger.error('Error Shalom /account/dni', error?.message);
+      if (error instanceof HttpException) throw error;
+      throw new BadRequestException(this.mensajeShalom(error, 'el DNI'));
     }
   }
 }
