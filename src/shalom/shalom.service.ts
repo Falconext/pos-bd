@@ -194,6 +194,7 @@ export class ShalomService {
         shalomSecurityCode: true,
         shalomAgenciaOrigenId: true,
         shalomAgenciaOrigenNombre: true,
+        shalomAutoGuiaActivo: true,
         plan: { select: { nombre: true } },
       },
     });
@@ -223,6 +224,7 @@ export class ShalomService {
         shalomSecurityCode: true,
         shalomAgenciaOrigenId: true,
         shalomAgenciaOrigenNombre: true,
+        shalomAutoGuiaActivo: true,
         plan: { select: { nombre: true } },
       },
     });
@@ -241,6 +243,8 @@ export class ShalomService {
       securityCodeGuardado: Boolean(empresa.shalomSecurityCode),
       agenciaOrigenId: empresa.shalomAgenciaOrigenId,
       agenciaOrigenNombre: empresa.shalomAgenciaOrigenNombre,
+      // La venta genera la guía sola (opt-in por empresa).
+      autoGuiaActivo: empresa.shalomAutoGuiaActivo,
     };
   }
 
@@ -258,6 +262,7 @@ export class ShalomService {
       securityCodeGuardado: false,
       agenciaOrigenId: null,
       agenciaOrigenNombre: null,
+      autoGuiaActivo: false,
     };
   }
 
@@ -385,7 +390,10 @@ export class ShalomService {
     empresaId: number,
     dto: Pick<
       ConectarInstanciaDto,
-      'agenciaOrigenId' | 'agenciaOrigenNombre' | 'securityCode'
+      | 'agenciaOrigenId'
+      | 'agenciaOrigenNombre'
+      | 'securityCode'
+      | 'autoGuiaActivo'
     >,
   ) {
     await this.empresaConShalomPro(empresaId);
@@ -400,6 +408,9 @@ export class ShalomService {
           : {}),
         ...(dto.securityCode !== undefined
           ? { shalomSecurityCode: dto.securityCode?.trim() || null }
+          : {}),
+        ...(dto.autoGuiaActivo !== undefined
+          ? { shalomAutoGuiaActivo: Boolean(dto.autoGuiaActivo) }
           : {}),
       },
     });

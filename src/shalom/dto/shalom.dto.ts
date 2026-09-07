@@ -13,6 +13,8 @@ export class ConectarInstanciaDto {
   /** Agencia por defecto desde donde despacha el negocio. */
   @IsOptional() @IsString() agenciaOrigenId?: string;
   @IsOptional() @IsString() agenciaOrigenNombre?: string;
+  /** Generar la guía sola al cerrar una venta con courier Shalom. */
+  @IsOptional() @IsBoolean() autoGuiaActivo?: boolean;
 }
 
 /** Ajustes de la instancia que no requieren volver a loguear. */
@@ -20,6 +22,7 @@ export class ConfigInstanciaDto {
   @IsOptional() @IsString() securityCode?: string;
   @IsOptional() @IsString() agenciaOrigenId?: string;
   @IsOptional() @IsString() agenciaOrigenNombre?: string;
+  @IsOptional() @IsBoolean() autoGuiaActivo?: boolean;
 }
 
 /**

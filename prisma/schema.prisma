@@ -178,6 +178,10 @@ model Empresa {
   // Agencia de origen por defecto desde donde el negocio despacha (ter_id).
   shalomAgenciaOrigenId         String?
   shalomAgenciaOrigenNombre     String?
+  // Generar la guía sola al cerrar una venta con courier Shalom. Opt-in por
+  // empresa (default false): crea envíos REALES en la cuenta Shalom Pro, así que
+  // nadie debe descubrirlo sin haberlo pedido.
+  shalomAutoGuiaActivo          Boolean                       @default(false)
   // ── Olva Courier (api.olva-api.lat) ──────────────────────────────────────
   // El proveedor autentica TODO con una API key global (OLVA_API_KEY): no hay
   // cuenta por negocio que conectar como en Shalom Pro. Lo único propio de cada
