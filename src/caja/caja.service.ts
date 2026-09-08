@@ -42,6 +42,62 @@ export class CajaService {
     return { gte: inicio, lte: fin } as const;
   }
 
+  /**
+   * Turnos de días ANTERIORES que se abrieron y nunca se cerraron.
+   *
+   * `verificarCajaAbierta` solo mira el día de hoy, así que una caja que
+   * quedó abierta ayer no bloquea nada y queda huérfana en silencio: sus
+   * gastos y ventas sí se contabilizan, pero NADIE contó el cajón — no hay
+   * arqueo ni diferencia registrada. Esto lo hace visible.
+   */
+  private async turnosSinCerrar(
+    empresaId: number,
+    sedeId?: number,
+    diasAtras = 60,
+  ) {
+    const { gte: hoyInicio } = this.parseRangeDates();
+    const desde = new Date(hoyInicio.getTime() - diasAtras * 86400000);
+
+    const movs = await this.prisma.movimientoCaja.findMany({
+      where: {
+        empresaId,
+        ...(sedeId ? { sedeId } : {}),
+        estado: 'ACTIVO',
+        tipoMovimiento: { in: ['APERTURA', 'CIERRE'] },
+        fecha: { gte: desde, lt: hoyInicio },
+      },
+      orderBy: { fecha: 'asc' },
+      select: {
+        id: true,
+        fecha: true,
+        tipoMovimiento: true,
+        sedeId: true,
+        turno: true,
+        usuario: { select: { nombre: true } },
+        sede: { select: { nombre: true } },
+      },
+    });
+
+    // Se agrupa por (día de Lima + sede): un día con apertura y sin cierre
+    // en esa sede es un turno que quedó sin cuadrar.
+    const clave = (m: (typeof movs)[number]) =>
+      `${m.fecha.toLocaleDateString('en-CA', { timeZone: 'America/Lima' })}|${m.sedeId ?? 0}`;
+    const conCierre = new Set(
+      movs.filter((m) => m.tipoMovimiento === 'CIERRE').map(clave),
+    );
+
+    return movs
+      .filter((m) => m.tipoMovimiento === 'APERTURA' && !conCierre.has(clave(m)))
+      .map((m) => ({
+        id: m.id,
+        fecha: m.fecha,
+        turno: m.turno,
+        sedeId: m.sedeId,
+        sede: m.sede?.nombre ?? null,
+        usuario: m.usuario?.nombre ?? null,
+      }));
+  }
+
   // Verificar si la caja está abierta para el usuario
   async verificarCajaAbierta(
     usuarioId: number,
@@ -436,10 +492,14 @@ export class CajaService {
     );
     const egresosRecientes = recientes;
 
+    // Aviso de turnos anteriores sin cerrar (ver turnosSinCerrar).
+    const pendientesDeCierre = await this.turnosSinCerrar(empresaId, sedeId);
+
     return {
       estado,
       movimiento,
       ventasDelDia,
+      pendientesDeCierre,
       totalEgresos,
       totalTransferenciasEnviadas,
       totalTransferenciasRecibidas,
@@ -1203,11 +1263,70 @@ export class CajaService {
     };
   }
 
-  async eliminarEgreso(empresaId: number, id: number) {
+  async eliminarEgreso(
+    empresaId: number,
+    id: number,
+    usuarioRol?: string,
+    usuarioId?: number,
+  ) {
     const egreso = await this.prisma.movimientoCaja.findFirst({
       where: { id, empresaId, tipoMovimiento: 'EGRESO', estado: 'ACTIVO' },
     });
     if (!egreso) throw new NotFoundException('Gasto no encontrado');
+
+    // Si el gasto ya entró en un cierre, borrarlo descuadra ESE arqueo de
+    // forma retroactiva y silenciosa: el efectivo esperado se calculó
+    // restándolo. Se busca un CIERRE posterior en la misma sede.
+    const cierrePosterior = await this.prisma.movimientoCaja.findFirst({
+      where: {
+        empresaId,
+        ...(egreso.sedeId ? { sedeId: egreso.sedeId } : {}),
+        tipoMovimiento: 'CIERRE',
+        estado: 'ACTIVO',
+        fecha: { gte: egreso.fecha },
+      },
+      orderBy: { fecha: 'asc' },
+      select: { id: true, fecha: true },
+    });
+
+    if (cierrePosterior) {
+      const esAdmin = ['ADMIN_EMPRESA', 'ADMIN_SISTEMA'].includes(
+        String(usuarioRol || '').toUpperCase(),
+      );
+      const cuando = cierrePosterior.fecha.toLocaleString('es-PE', {
+        timeZone: 'America/Lima',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      if (!esAdmin) {
+        throw new BadRequestException(
+          `Este gasto ya fue incluido en el cierre de caja del ${cuando}. ` +
+            'Eliminarlo descuadraría ese arqueo: pídeselo a un administrador.',
+        );
+      }
+      // El admin sí puede corregir, pero queda registrado en el propio
+      // movimiento por qué el arqueo de ese día dejó de cuadrar.
+      const traza =
+        `[${new Date().toISOString()}] Eliminado por admin` +
+        (usuarioId ? ` (usuarioId ${usuarioId})` : '') +
+        ` pese a estar incluido en el cierre del ${cuando}.`;
+      await this.prisma.movimientoCaja.update({
+        where: { id },
+        data: {
+          estado: 'INACTIVO',
+          observaciones: [egreso.observaciones, traza]
+            .filter(Boolean)
+            .join(' | '),
+        },
+      });
+      return {
+        code: 1,
+        message: `Gasto eliminado. OJO: el cierre del ${cuando} ya no cuadra con este movimiento.`,
+      };
+    }
 
     await this.prisma.movimientoCaja.update({
       where: { id },

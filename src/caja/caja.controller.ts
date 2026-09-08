@@ -322,7 +322,13 @@ export class CajaController {
     @User() user: any,
     @Param('id', ParseIntPipe) id: number,
   ) {
-    return await this.cajaService.eliminarEgreso(user.empresaId, id);
+    // El rol decide si puede borrar un gasto ya incluido en un cierre.
+    return await this.cajaService.eliminarEgreso(
+      user.empresaId,
+      id,
+      user.rol,
+      user.id,
+    );
   }
 
   // ── Depósito bancario del efectivo de caja ── solo ADMIN_EMPRESA ──────
