@@ -41,6 +41,11 @@ import { ComisionesService } from '../comisiones/comisiones.service';
 import archiver = require('archiver');
 import { PDFDocument } from 'pdf-lib';
 import * as XLSX from 'xlsx';
+// Fork drop-in de SheetJS 0.18.5 que SÍ escribe estilos de celda (la edición
+// community de `xlsx` los ignora al escribir). Se usa solo en el export del
+// panel de ventas, para que la columna Productos salga con salto de línea
+// dentro de una sola celda (wrapText).
+import * as XLSXStyle from 'xlsx-js-style';
 import { XMLParser } from 'fast-xml-parser';
 
 @Injectable()
@@ -3456,6 +3461,20 @@ export class ComprobanteService {
           },
         });
         conciliado = true;
+
+        // Mismo caso que la conciliación manual: SUNAT confirma que el
+        // comprobante está ACEPTADO, así que aquí también hay que generar la
+        // comisión del vendedor. Las tres rutas conciliables
+        // (PENDIENTE_CONCILIACION, PENDIENTE, FALLIDO_ENVIO) nunca pasaron por
+        // el punto de aceptación de `EnviarSunatService.execute`, de modo que
+        // sin esto la venta quedaba EMITIDA y el vendedor no cobraba nunca.
+        const conDetalles = await this.prisma.comprobante.findUnique({
+          where: { id: comp.id },
+          include: { detalles: true },
+        });
+        if (conDetalles) {
+          await this.enviarSunatService.registrarComisionesAlAceptar(conDetalles);
+        }
       }
     }
 
@@ -3520,7 +3539,7 @@ export class ComprobanteService {
         `Solo se pueden conciliar comprobantes en estado PENDIENTE_CONCILIACION (estado actual: ${comp.estadoEnvioSunat}).`,
       );
     }
-    return this.prisma.comprobante.update({
+    const actualizado = await this.prisma.comprobante.update({
       where: { id: comp.id },
       data: {
         estadoEnvioSunat: 'EMITIDO' as any,
@@ -3529,6 +3548,20 @@ export class ComprobanteService {
           'Conciliado manualmente: SUNAT confirmó registro previo (1033). CDR no disponible vía QPSE.',
       },
     });
+
+    // Conciliar equivale a aceptar: SUNAT ya tenía el documento registrado. La
+    // rama de PENDIENTE_CONCILIACION retorna antes del punto donde se generan
+    // las comisiones, así que sin esto la venta quedaba EMITIDA y el vendedor
+    // nunca cobraba. El helper es idempotente y no bloqueante.
+    const conDetalles = await this.prisma.comprobante.findUnique({
+      where: { id: comp.id },
+      include: { detalles: true },
+    });
+    if (conDetalles) {
+      await this.enviarSunatService.registrarComisionesAlAceptar(conDetalles);
+    }
+
+    return actualizado;
   }
 
   async descartarComprobante(id: number, empresaId: number) {
@@ -6400,9 +6433,11 @@ export class ComprobanteService {
         agencia: tieneDespacho ? (c.envioDespacho!.agenciaDestino ?? '—') : '—',
         paquetes: tieneDespacho ? (c.envioDespacho!.nroPaquetes ?? '—') : '—',
         repartidor: tieneDespacho ? (c.envioDespacho!.repartidor?.nombre ?? '—') : '—',
+        // Un producto por línea DENTRO de la misma celda (el Excel las muestra
+        // gracias al wrapText que se aplica más abajo; el PDF las convierte a <br>).
         productos: (c.detalles ?? [])
           .map((d) => `${Number(d.cantidad)}x ${d.descripcion}`)
-          .join(', '),
+          .join('\n'),
         estadoPago: anulado
           ? 'Anulado'
           : (ESTADO_PAGO_LABEL[String(c.estadoPago)] ?? String(c.estadoPago ?? '')),
@@ -6426,7 +6461,15 @@ export class ComprobanteService {
     // Registro de columnas del export. Las FIJAS siempre salen; las OPCIONALES
     // solo si el usuario las dejó visibles en la tabla (parámetro `columnas`).
     // `key` debe coincidir con las keys del configurador de columnas del panel.
-    type ColDef = { header: string; wch: number; get: (f: (typeof filas)[number]) => any; total?: boolean };
+    type ColDef = {
+      header: string;
+      wch: number;
+      get: (f: (typeof filas)[number]) => any;
+      total?: boolean;
+      // Celda multilínea: se exporta con wrapText para que los saltos de línea
+      // se vean dentro de una sola celda.
+      wrap?: boolean;
+    };
     const columnasExport: ColDef[] = [
       { header: 'Fecha', wch: 17, get: (f) => f.fecha },
       { header: 'Tipo', wch: 14, get: (f) => f.tipo },
@@ -6445,7 +6488,10 @@ export class ComprobanteService {
       ...(verCol('agencia') ? [{ header: 'Agencia', wch: 22, get: (f: any) => f.agencia }] : []),
       ...(verCol('paq') ? [{ header: 'Paquetes', wch: 10, get: (f: any) => f.paquetes }] : []),
       ...(verCol('repartidor') ? [{ header: 'Repartidor', wch: 20, get: (f: any) => f.repartidor }] : []),
-      ...(verCol('productos') ? [{ header: 'Productos', wch: 40, get: (f: any) => f.productos }] : []),
+      // Ancho generoso: los nombres reales rondan los 55 caracteres, y con una
+      // columna angosta cada producto se parte en dos líneas y se pierde la
+      // lectura de "un producto por línea".
+      ...(verCol('productos') ? [{ header: 'Productos', wch: 55, get: (f: any) => f.productos, wrap: true }] : []),
       { header: 'Total S/', wch: 12, get: (f) => f.total, total: true },
     ];
 
@@ -6466,11 +6512,38 @@ export class ComprobanteService {
         [],
         totalRow,
       ];
-      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      // Se usa XLSXStyle (no XLSX) porque la edición community descarta `cell.s`
+      // al escribir y necesitamos wrapText en la columna Productos.
+      const ws = XLSXStyle.utils.aoa_to_sheet(aoa);
       ws['!cols'] = columnasExport.map((c) => ({ wch: c.wch }));
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, tituloTipo.slice(0, 31));
-      const buffer = XLSX.write(wb, {
+
+      // Las filas de datos arrancan después de [título, línea vacía, cabeceras].
+      const PRIMERA_FILA_DATOS = 3;
+
+      // OJO: no se fija alto de fila a propósito. Un alto explícito se escribe
+      // como customHeight="1", lo que DESACTIVA el autoajuste de Excel y recorta
+      // el contenido: los nombres largos de producto ocupan varias líneas
+      // visuales por el ajuste de palabra, no solo una por cada '\n'. Sin alto,
+      // Excel calcula solo cuántas líneas necesita y se ve el producto completo.
+      filas.forEach((_fila, i) => {
+        const r = PRIMERA_FILA_DATOS + i;
+        columnasExport.forEach((colDef, c) => {
+          const celda = ws[XLSXStyle.utils.encode_cell({ r, c })];
+          if (!celda) return;
+          // Alineación arriba en toda la fila: si una celda crece por el wrap,
+          // el resto no queda flotando abajo.
+          celda.s = {
+            alignment: {
+              vertical: 'top',
+              ...(colDef.wrap ? { wrapText: true } : {}),
+            },
+          };
+        });
+      });
+
+      const wb = XLSXStyle.utils.book_new();
+      XLSXStyle.utils.book_append_sheet(wb, ws, tituloTipo.slice(0, 31));
+      const buffer = XLSXStyle.write(wb, {
         type: 'buffer',
         bookType: 'xlsx',
       }) as Buffer;
@@ -6497,7 +6570,7 @@ export class ComprobanteService {
             .map((c) =>
               c.total
                 ? `<td class="num">${Number(c.get(f)).toFixed(2)}</td>`
-                : `<td>${esc(String(c.get(f) ?? ''))}</td>`,
+                : `<td>${esc(String(c.get(f) ?? '')).replace(/\n/g, '<br>')}</td>`,
             )
             .join('')}
         </tr>`,

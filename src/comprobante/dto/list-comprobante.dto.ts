@@ -76,6 +76,15 @@ export class ListComprobanteDto {
   @IsIn(['zip', 'pdf', 'excel'])
   formato?: 'zip' | 'pdf' | 'excel';
 
+  // Solo para exportar-resumen: CSV con las keys de las columnas opcionales que
+  // el usuario dejó visibles en el panel de ventas (saldo, mpago, productos...).
+  // Sin esto el ValidationPipe (whitelist) descartaba el parámetro y el export
+  // salía siempre con todas las columnas.
+  @IsOptional()
+  @Type(() => String)
+  @IsString()
+  columnas?: string;
+
   @IsOptional()
   @Type(() => String)
   @IsString()
