@@ -243,6 +243,7 @@ export class KardexController {
     @Param('tipo') tipo: 'excel' | 'csv',
     @Query(ValidationPipe) filtros: FiltrosKardexDto,
     @Request() req,
+    @Res() res: Response,
   ) {
     const empresaId = req.user.empresaId;
     if (!empresaId) {
@@ -255,24 +256,41 @@ export class KardexController {
       );
     }
 
-    // Obtener todos los movimientos (sin paginación para exportación)
-    const kardexCompleto = await this.kardexService.obtenerKardexGeneral(
+    // Mismo criterio de alcance que `obtenerKardexGeneral`: el admin ve todas
+    // las sedes (para que un traslado muestre SALIDA e INGRESO) y el usuario
+    // normal queda acotado a la suya. Sin esto el Excel traería menos filas
+    // que la tabla que el admin tiene en pantalla.
+    const isAdmin = ['ADMIN_EMPRESA', 'ADMIN_SISTEMA'].includes(req.user.rol);
+    const sedeId = isAdmin ? undefined : req.user.sedeId;
+
+    const buffer = await this.kardexService.exportarMovimientos(
       empresaId,
-      {
-        ...filtros,
-        page: 1,
-        limit: 10000, // Límite alto para exportación
-      },
-      req.user.sedeId,
+      filtros,
+      sedeId,
+      tipo,
     );
 
-    return {
-      tipo,
-      totalRegistros: kardexCompleto.paginacion.total,
-      movimientos: kardexCompleto.movimientos,
-      fechaExportacion: new Date(),
-      mensaje: `Datos listos para exportación en formato ${tipo.toUpperCase()}`,
-    };
+    const fecha = new Date()
+      .toLocaleDateString('es-PE', {
+        timeZone: 'America/Lima',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      })
+      .replace(/\//g, '-');
+
+    const esCsv = tipo === 'csv';
+    res.setHeader(
+      'Content-Type',
+      esCsv
+        ? 'text/csv; charset=utf-8'
+        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename=kardex_movimientos_${fecha}.${esCsv ? 'csv' : 'xlsx'}`,
+    );
+    res.status(200).send(buffer);
   }
 
   /**

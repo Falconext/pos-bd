@@ -29,6 +29,7 @@ import {
 import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
 import { parseFechaSoloDia } from '../common/utils/fecha';
 import { num, round3 } from '../common/utils/stock';
+import * as XLSX from 'xlsx';
 
 @Injectable()
 export class KardexService {
@@ -36,6 +37,30 @@ export class KardexService {
     private prisma: PrismaService,
     private pdfGenerator: PdfGeneratorService,
   ) {}
+
+  /** Cabecera del reporte de movimientos; se usa también cuando no hay filas. */
+  private static readonly COLUMNAS_EXPORTACION = [
+    'FECHA',
+    'CÓDIGO',
+    'PRODUCTO',
+    'U.M',
+    'CATEGORÍA',
+    'SEDE',
+    'TIPO',
+    'CONCEPTO',
+    'CANTIDAD',
+    'STOCK ANTERIOR',
+    'STOCK ACTUAL',
+    'COSTO UNITARIO',
+    'VALOR TOTAL',
+    'PRECIO UNITARIO',
+    'GANANCIA UNIDAD',
+    'LOTE',
+    'VENCIMIENTO',
+    'DOCUMENTO',
+    'USUARIO',
+    'OBSERVACIÓN',
+  ];
 
   private readonly estadosSerieValidos = new Set([
     'DISPONIBLE',
@@ -2397,4 +2422,192 @@ export class KardexService {
       ),
     };
   }
+
+  /**
+   * Exporta los movimientos del kardex a un archivo Excel (.xlsx) o CSV.
+   *
+   * Respeta exactamente los mismos filtros que `obtenerKardexGeneral` pero sin
+   * paginar: se exporta todo lo que el usuario está viendo en pantalla, no solo
+   * la página actual. `LIMITE_EXPORTACION` evita que un rango de fechas muy
+   * amplio tumbe el proceso por memoria.
+   *
+   * Los signos de cantidad y el formateo del concepto replican los de
+   * `useMovementsViewModel` en el frontend para que el Excel cuadre con la tabla.
+   */
+  async exportarMovimientos(
+    empresaId: number,
+    filtros?: FiltrosKardexDto,
+    sedeId?: number,
+    formato: 'excel' | 'csv' = 'excel',
+  ): Promise<Buffer> {
+    const LIMITE_EXPORTACION = 50000;
+
+    const { movimientos } = await this.obtenerKardexGeneral(
+      empresaId,
+      { ...filtros, page: 1, limit: LIMITE_EXPORTACION },
+      sedeId,
+    );
+
+    const fmtFecha = (fecha: any) => {
+      if (!fecha) return '';
+      const d = fecha instanceof Date ? fecha : new Date(fecha);
+      if (isNaN(d.getTime())) return '';
+      return d.toLocaleString('es-PE', {
+        timeZone: 'America/Lima',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      });
+    };
+
+    const fmtSoloDia = (fecha: any) => {
+      if (!fecha) return '';
+      const d = fecha instanceof Date ? fecha : new Date(fecha);
+      if (isNaN(d.getTime())) return '';
+      return d.toLocaleDateString('es-PE', {
+        timeZone: 'America/Lima',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      });
+    };
+
+    // Mismo criterio de signo que la tabla: el ingreso suma, la salida y el
+    // traslado restan, y el ajuste muestra el delta real de stock.
+    const cantidadConSigno = (mov: any) => {
+      const cantidad = num(mov.cantidad);
+      switch (mov.tipoMovimiento) {
+        case 'INGRESO':
+          return Math.abs(cantidad);
+        case 'SALIDA':
+        case 'TRANSFERENCIA':
+          return -Math.abs(cantidad);
+        case 'AJUSTE':
+          return num(mov.stockActual) - num(mov.stockAnterior);
+        default:
+          return cantidad;
+      }
+    };
+
+    const filas = movimientos.map((mov: any) => {
+      const costoUnitario = round3(num(mov.costoUnitario));
+      const gananciaUnidad = round3(num(mov.gananciaUnidad));
+      const precioUnitario = round3(
+        num(mov.producto?.precioUnitario) || costoUnitario + gananciaUnidad,
+      );
+      const cantidad = round3(cantidadConSigno(mov));
+      const comprobante = mov.comprobante
+        ? `${mov.comprobante.serie}-${String(mov.comprobante.correlativo).padStart(8, '0')}`
+        : '';
+
+      return {
+        FECHA: fmtFecha(mov.fecha),
+        CÓDIGO: mov.producto?.codigo ?? '',
+        PRODUCTO: mov.producto?.descripcion ?? '',
+        'U.M': mov.producto?.unidadMedida?.nombre ?? '',
+        CATEGORÍA: mov.producto?.categoria?.nombre ?? '',
+        SEDE: mov.sede?.nombre ?? '',
+        TIPO: mov.tipoMovimiento ?? '',
+        // Recorta el drift de punto flotante incrustado en el texto
+        // (ej. "+3.8000000000000003" -> "+3.8"), igual que en la tabla.
+        CONCEPTO: String(mov.concepto ?? '').replace(
+          /(\d+\.\d{1,3})\d+/g,
+          '$1',
+        ),
+        CANTIDAD: cantidad,
+        'STOCK ANTERIOR': round3(num(mov.stockAnterior)),
+        'STOCK ACTUAL': round3(num(mov.stockActual)),
+        'COSTO UNITARIO': costoUnitario,
+        'VALOR TOTAL': round3(num(mov.valorTotal)),
+        'PRECIO UNITARIO': precioUnitario,
+        'GANANCIA UNIDAD': gananciaUnidad,
+        LOTE: mov.lote ?? '',
+        VENCIMIENTO: fmtSoloDia(mov.fechaVencimiento),
+        DOCUMENTO: comprobante,
+        USUARIO: mov.usuario?.nombre ?? '',
+        OBSERVACIÓN: mov.observacion ?? '',
+      };
+    });
+
+    // Fila de totales: solo tienen sentido las columnas aditivas.
+    const totalCantidad = round3(
+      filas.reduce((acc, f) => acc + num(f.CANTIDAD), 0),
+    );
+    const totalValor = round3(
+      filas.reduce((acc, f) => acc + num(f['VALOR TOTAL']), 0),
+    );
+
+    if (filas.length > 0) {
+      filas.push({
+        FECHA: '',
+        CÓDIGO: '',
+        PRODUCTO: 'TOTAL',
+        'U.M': '',
+        CATEGORÍA: '',
+        SEDE: '',
+        TIPO: '',
+        CONCEPTO: '',
+        CANTIDAD: totalCantidad,
+        'STOCK ANTERIOR': '' as any,
+        'STOCK ACTUAL': '' as any,
+        'COSTO UNITARIO': '' as any,
+        'VALOR TOTAL': totalValor,
+        'PRECIO UNITARIO': '' as any,
+        'GANANCIA UNIDAD': '' as any,
+        LOTE: '',
+        VENCIMIENTO: '',
+        DOCUMENTO: '',
+        USUARIO: '',
+        OBSERVACIÓN: '',
+      });
+    }
+
+    // `json_to_sheet([])` devuelve una hoja sin `!ref` ni encabezados: un
+    // archivo totalmente en blanco. Cuando el filtro no arroja movimientos
+    // igual escribimos la cabecera para que el usuario vea la estructura.
+    const worksheet =
+      filas.length > 0
+        ? XLSX.utils.json_to_sheet(filas)
+        : XLSX.utils.aoa_to_sheet([KardexService.COLUMNAS_EXPORTACION]);
+    worksheet['!cols'] = [
+      { wch: 18 }, // FECHA
+      { wch: 16 }, // CÓDIGO
+      { wch: 55 }, // PRODUCTO
+      { wch: 18 }, // U.M
+      { wch: 20 }, // CATEGORÍA
+      { wch: 20 }, // SEDE
+      { wch: 15 }, // TIPO
+      { wch: 45 }, // CONCEPTO
+      { wch: 12 }, // CANTIDAD
+      { wch: 15 }, // STOCK ANTERIOR
+      { wch: 14 }, // STOCK ACTUAL
+      { wch: 16 }, // COSTO UNITARIO
+      { wch: 14 }, // VALOR TOTAL
+      { wch: 17 }, // PRECIO UNITARIO
+      { wch: 17 }, // GANANCIA UNIDAD
+      { wch: 16 }, // LOTE
+      { wch: 14 }, // VENCIMIENTO
+      { wch: 18 }, // DOCUMENTO
+      { wch: 25 }, // USUARIO
+      { wch: 45 }, // OBSERVACIÓN
+    ];
+    // Congela la fila de encabezados para que no se pierda al desplazarse.
+    worksheet['!freeze'] = { xSplit: 0, ySplit: 1 };
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Movimientos');
+
+    if (formato === 'csv') {
+      // `type: 'string'` es lo que soporta el writer de CSV; el BOM permite que
+      // Excel en Windows abra las tildes correctamente.
+      const csv = XLSX.utils.sheet_to_csv(worksheet);
+      return Buffer.from('\ufeff' + csv, 'utf8');
+    }
+
+    return XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
+  }
+
 }
