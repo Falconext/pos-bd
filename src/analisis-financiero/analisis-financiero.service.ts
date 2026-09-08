@@ -4,6 +4,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { montoEnPen } from '../common/utils/moneda.util';
 import { CrearGastoDto } from './dto/crear-gasto.dto';
 import { ActualizarGastoDto } from './dto/actualizar-gasto.dto';
+import {
+  egresosCajaWhere,
+  normalizarEgresoCaja,
+  mapCategoriaCaja,
+  EGRESO_CAJA_SELECT,
+} from '../common/utils/egresos-caja.util';
 
 export interface GastoPorCategoria {
   categoria: string;
@@ -625,7 +631,7 @@ export class AnalisisFinancieroService {
   private async fetchPeriodData(empresaId: number, mes: number, anio: number) {
     const range = this.periodoToRange(mes, anio);
     const gastoWhere = this.buildGastoPeriodoWhere(empresaId, mes, anio);
-    const [comprobantes, gastos, campanas, ingresosManuales] =
+    const [comprobantes, gastos, campanas, ingresosManuales, egresosCaja] =
       await Promise.all([
         this.prisma.comprobante.findMany({
           where: {
@@ -687,6 +693,13 @@ export class AnalisisFinancieroService {
           select: { concepto: true, tipo: true, monto: true },
           orderBy: { creadoEn: 'desc' },
         }),
+        // Gastos de caja chica: son egresos reales del negocio y deben restar
+        // en la utilidad igual que los gastos operativos. Viven en otra tabla
+        // (MovimientoCaja), por eso se leen aparte.
+        this.prisma.movimientoCaja.findMany({
+          where: egresosCajaWhere(empresaId, range.gte, range.lte),
+          select: { fecha: true, monto: true, categoriaGasto: true },
+        }),
       ]);
 
     const otrosIngresos = ingresosManuales.reduce(
@@ -706,6 +719,27 @@ export class AnalisisFinancieroService {
     const finReal = hoy < finMes ? hoy : finMes;
 
     const gastosConCampanas: GastoPnl[] = [...gastos];
+    // Cada gasto de caja aplica a un solo día (no hay recurrencia). La
+    // categoría de caja es texto libre y se mapea al enum; el texto original
+    // queda en `etiqueta` para que se vea de dónde salió.
+    for (const e of egresosCaja) {
+      // `monto` se envuelve como DecimalLike igual que las campañas, porque el
+      // tipo GastoPnl espera un Decimal de Prisma, no un number plano.
+      const montoCaja = Number(e.monto ?? 0);
+      gastosConCampanas.push({
+        categoria: mapCategoriaCaja(e.categoriaGasto),
+        etiqueta: e.categoriaGasto?.trim()
+          ? `Caja - ${e.categoriaGasto.trim()}`
+          : 'Caja chica',
+        monto: { toNumber: () => montoCaja },
+        moneda: 'PEN',
+        tipoCambio: null,
+        fecha: e.fecha,
+        recurrenteDiario: false,
+        fechaInicio: null,
+        fechaFin: null,
+      });
+    }
     for (const c of campanas) {
       if (c.estado === 'PAUSADA') continue;
       const inicio = c.fechaInicio > inicioMes ? c.fechaInicio : inicioMes;
@@ -975,10 +1009,23 @@ export class AnalisisFinancieroService {
     anio: number,
   ): Promise<GastoOperativo[]> {
     const gastoWhere = this.buildGastoPeriodoWhere(empresaId, mes, anio);
-    return this.prisma.gastoOperativo.findMany({
-      where: gastoWhere,
-      orderBy: [{ fecha: 'desc' }, { creadoEn: 'desc' }],
-    });
+    const range = this.periodoToRange(mes, anio);
+    const [operativos, movsCaja] = await Promise.all([
+      this.prisma.gastoOperativo.findMany({
+        where: gastoWhere,
+        orderBy: [{ fecha: 'desc' }, { creadoEn: 'desc' }],
+      }),
+      this.prisma.movimientoCaja.findMany({
+        where: egresosCajaWhere(empresaId, range.gte, range.lte),
+        select: EGRESO_CAJA_SELECT,
+        orderBy: { fecha: 'desc' },
+      }),
+    ]);
+    // Los de caja van marcados `editable: false`: se corrigen en Caja, no acá.
+    return [
+      ...operativos.map((g) => ({ ...g, origen: 'OPERATIVO', editable: true })),
+      ...movsCaja.map(normalizarEgresoCaja),
+    ] as any;
   }
 
   /** GET /gastos/historial — list all operative expenses optionally by date range. */

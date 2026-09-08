@@ -1,6 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { montoEnPen } from '../common/utils/moneda.util';
+import {
+  egresosCajaWhere,
+  normalizarEgresoCaja,
+  fechaKeyLima,
+  EGRESO_CAJA_SELECT,
+} from '../common/utils/egresos-caja.util';
 
 @Injectable()
 export class FinanzasService {
@@ -222,6 +228,20 @@ export class FinanzasService {
       } else if (g.fecha) {
         sumar(g.fecha.toISOString().split('T')[0]);
       }
+    });
+
+    // GASTOS DE CAJA (MovimientoCaja EGRESO) — misma naturaleza que los gastos
+    // operativos: plata que salió del negocio. Antes no se leían acá y el P&L
+    // reportaba egresos en 0 aunque el efectivo hubiera salido del cajón.
+    const egresosCaja = await this.prisma.movimientoCaja.findMany({
+      where: egresosCajaWhere(empresaId, rangoFecha.gte, rangoFecha.lte),
+      select: { fecha: true, monto: true },
+    });
+    egresosCaja.forEach((e) => {
+      const fecha = fechaKeyLima(e.fecha);
+      const actual = mapDatos.get(fecha) || { fecha, ingresos: 0, egresos: 0 };
+      actual.egresos += Number(e.monto || 0);
+      mapDatos.set(fecha, actual);
     });
 
     const chartData = Array.from(mapDatos.values()).sort((a, b) =>
@@ -580,7 +600,33 @@ export class FinanzasService {
       return { ...i, dias, montoPeriodo: Number(i.monto) * dias };
     });
     const total = itemsConPeriodo.reduce((s, i) => s + i.montoPeriodo, 0);
-    return { items: itemsConPeriodo, total };
+
+    // Gastos de caja chica: se listan en su propio bloque y en SOLO LECTURA
+    // (se editan en Caja, donde se registraron). Van aparte de `items` para que
+    // la UI muestre cada origen por separado y nadie los recargue a mano.
+    const movsCaja = await this.prisma.movimientoCaja.findMany({
+      where: egresosCajaWhere(empresaId, rango.gte, rango.lte),
+      select: EGRESO_CAJA_SELECT,
+      orderBy: { fecha: 'desc' },
+    });
+    const itemsCaja = movsCaja
+      .map(normalizarEgresoCaja)
+      .filter(
+        (i) =>
+          !categoria || categoria === 'TODOS' || i.categoria === categoria,
+      );
+    const totalCaja = itemsCaja.reduce((s, i) => s + i.montoPeriodo, 0);
+
+    // `items` y `total` se mantienen con el significado de siempre (solo los
+    // operativos) para no romper consumidores; el total real del periodo es
+    // `totalGeneral`.
+    return {
+      items: itemsConPeriodo,
+      total,
+      itemsCaja,
+      totalCaja,
+      totalGeneral: total + totalCaja,
+    };
   }
 
   async crearEgreso(
