@@ -265,14 +265,20 @@ export class EnviarSunatService {
   ) {}
 
   /**
-   * Registra las comisiones del vendedor cuando un comprobante FORMAL es aceptado
-   * por SUNAT. Se llama desde el punto de aceptación (cubre emisión directa y
-   * reintentos). Es idempotente (no duplica si ya se registró) y respeta el
-   * anti-doble cobro cuando el comprobante proviene de un informal (NV/TICKET)
-   * que ya generó comisión. Atribuye al vendedor apuntado (vendedorCampoId) o,
-   * en su defecto, al emisor (usuarioId). No bloqueante.
+   * Registra las comisiones del vendedor cuando un comprobante FORMAL queda
+   * aceptado por SUNAT. Se llama desde el punto de aceptación (cubre emisión
+   * directa y reintentos del scheduler) y también desde la CONCILIACIÓN MANUAL
+   * (`ComprobanteService.conciliarComprobante`): cuando SUNAT ya tenía el
+   * documento registrado pero el CDR no llegó, el comprobante se quedaba en
+   * PENDIENTE_CONCILIACION, esa rama retorna antes de este punto y la venta
+   * terminaba EMITIDA sin pagarle nunca la comisión al vendedor.
+   *
+   * Es idempotente (no duplica si ya se registró) y respeta el anti-doble cobro
+   * cuando el comprobante proviene de un informal (NV/TICKET) que ya generó
+   * comisión. Atribuye al vendedor apuntado (vendedorCampoId) o, en su defecto,
+   * al emisor (usuarioId). No bloqueante: nunca tumba la operación que la llama.
    */
-  private async registrarComisionesAlAceptar(comp: any): Promise<void> {
+  async registrarComisionesAlAceptar(comp: any): Promise<void> {
     if (!this.comisionesService) return;
     // Solo generan comisión los comprobantes de VENTA: factura (01) y boleta (03).
     // Notas de crédito (07) y débito (08) no generan comisión positiva; la nota
