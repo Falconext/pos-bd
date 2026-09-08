@@ -364,74 +364,77 @@ export class CajaService {
       );
     }
 
-    // Calcular total de egresos y obtener recientes
-    let totalEgresos = 0;
-    let totalTransferenciasEnviadas = 0;
-    let totalTransferenciasRecibidas = 0;
-    let egresosRecientes: any[] = [];
-    if (estado === 'ABIERTA' && cajaAbierta) {
-      const [resumen, transferEnviadas, transferRecibidas, recientes] =
-        await Promise.all([
-          this.prisma.movimientoCaja.aggregate({
-            where: {
-              empresaId,
-              ...(sedeId ? { sedeId } : {}),
-              tipoMovimiento: 'EGRESO',
-              esTransferencia: false,
-              fecha: { gte: cajaAbierta.fecha },
-              estado: 'ACTIVO',
-              // Pendientes/rechazados no cuentan en el total (sí se listan
-              // en egresosRecientes para que se vean con su badge). Lista
-              // blanca explícita: NOT { in } excluiría también los null.
-              OR: [{ estadoAprobacion: null }, { estadoAprobacion: 'APROBADO' }],
-            },
-            _sum: { monto: true },
-          }),
-          this.prisma.movimientoCaja.aggregate({
-            where: {
-              empresaId,
-              ...(sedeId ? { sedeId } : {}),
-              tipoMovimiento: 'EGRESO',
-              esTransferencia: true,
-              fecha: { gte: cajaAbierta.fecha },
-              estado: 'ACTIVO',
-            },
-            _sum: { monto: true },
-          }),
-          this.prisma.movimientoCaja.aggregate({
-            where: {
-              empresaId,
-              ...(sedeId ? { sedeId } : {}),
-              tipoMovimiento: 'INGRESO',
-              esTransferencia: true,
-              fecha: { gte: cajaAbierta.fecha },
-              estado: 'ACTIVO',
-            },
-            _sum: { monto: true },
-          }),
-          this.prisma.movimientoCaja.findMany({
-            where: {
-              empresaId,
-              ...(sedeId ? { sedeId } : {}),
-              tipoMovimiento: 'EGRESO',
-              esTransferencia: false,
-              fecha: { gte: cajaAbierta.fecha },
-              estado: 'ACTIVO',
-            },
-            orderBy: { fecha: 'desc' },
-            take: 10,
-            include: { usuario: { select: { nombre: true } } },
-          }),
-        ]);
-      totalEgresos = Number(resumen._sum.monto || 0);
-      totalTransferenciasEnviadas = Number(
-        transferEnviadas._sum.monto || 0,
-      );
-      totalTransferenciasRecibidas = Number(
-        transferRecibidas._sum.monto || 0,
-      );
-      egresosRecientes = recientes;
-    }
+    // Ventana de los egresos: con el turno abierto, desde su apertura; con la
+    // caja cerrada, el día completo — la MISMA ventana que ya usa ventasDelDia.
+    // Antes esto solo se calculaba si la caja estaba ABIERTA, así que al cerrar
+    // el turno los gastos desaparecían de la pantalla aunque seguían
+    // registrados: se veían las ventas del día pero los gastos salían en 0.
+    const rangoEgresos =
+      estado === 'ABIERTA' && cajaAbierta
+        ? { gte: cajaAbierta.fecha }
+        : this.parseRangeDates();
+
+    const [resumen, transferEnviadas, transferRecibidas, recientes] =
+      await Promise.all([
+        this.prisma.movimientoCaja.aggregate({
+          where: {
+            empresaId,
+            ...(sedeId ? { sedeId } : {}),
+            tipoMovimiento: 'EGRESO',
+            esTransferencia: false,
+            fecha: rangoEgresos,
+            estado: 'ACTIVO',
+            // Pendientes/rechazados no cuentan en el total (sí se listan
+            // en egresosRecientes para que se vean con su badge). Lista
+            // blanca explícita: NOT { in } excluiría también los null.
+            OR: [{ estadoAprobacion: null }, { estadoAprobacion: 'APROBADO' }],
+          },
+          _sum: { monto: true },
+        }),
+        this.prisma.movimientoCaja.aggregate({
+          where: {
+            empresaId,
+            ...(sedeId ? { sedeId } : {}),
+            tipoMovimiento: 'EGRESO',
+            esTransferencia: true,
+            fecha: rangoEgresos,
+            estado: 'ACTIVO',
+          },
+          _sum: { monto: true },
+        }),
+        this.prisma.movimientoCaja.aggregate({
+          where: {
+            empresaId,
+            ...(sedeId ? { sedeId } : {}),
+            tipoMovimiento: 'INGRESO',
+            esTransferencia: true,
+            fecha: rangoEgresos,
+            estado: 'ACTIVO',
+          },
+          _sum: { monto: true },
+        }),
+        this.prisma.movimientoCaja.findMany({
+          where: {
+            empresaId,
+            ...(sedeId ? { sedeId } : {}),
+            tipoMovimiento: 'EGRESO',
+            esTransferencia: false,
+            fecha: rangoEgresos,
+            estado: 'ACTIVO',
+          },
+          orderBy: { fecha: 'desc' },
+          take: 10,
+          include: { usuario: { select: { nombre: true } } },
+        }),
+      ]);
+    const totalEgresos = Number(resumen._sum.monto || 0);
+    const totalTransferenciasEnviadas = Number(
+      transferEnviadas._sum.monto || 0,
+    );
+    const totalTransferenciasRecibidas = Number(
+      transferRecibidas._sum.monto || 0,
+    );
+    const egresosRecientes = recientes;
 
     return {
       estado,
@@ -613,7 +616,12 @@ export class CajaService {
         OR: [{ adelanto: null }, { adelanto: 0 }],
         pagos: { none: {} },
       },
-      select: { mtoImpVenta: true, medioPago: true, tipoMoneda: true, tipoCambio: true },
+      select: {
+        mtoImpVenta: true,
+        medioPago: true,
+        tipoMoneda: true,
+        tipoCambio: true,
+      },
     });
 
     // Comprobantes formales de contado
@@ -632,7 +640,12 @@ export class CajaService {
         formaPagoTipo: { equals: 'Contado', mode: 'insensitive' },
         pagos: { none: {} },
       },
-      select: { mtoImpVenta: true, medioPago: true, tipoMoneda: true, tipoCambio: true },
+      select: {
+        mtoImpVenta: true,
+        medioPago: true,
+        tipoMoneda: true,
+        tipoCambio: true,
+      },
     });
 
     // Pagos del período
@@ -659,7 +672,11 @@ export class CajaService {
         .toString()
         .toUpperCase()
         .trim();
-      const monto = montoEnPen(comp.mtoImpVenta, comp.tipoMoneda, comp.tipoCambio);
+      const monto = montoEnPen(
+        comp.mtoImpVenta,
+        comp.tipoMoneda,
+        comp.tipoCambio,
+      );
 
       // Normalizar nombres de medios de pago
       if (medio === 'EFECTIVO' || medio === 'CASH') {
@@ -1113,7 +1130,8 @@ export class CajaService {
           monto: dto.monto,
           categoriaGasto: 'Transferencia entre Cajas',
           descripcionGasto:
-            dto.observaciones || `Transferencia recibida de ${sedeOrigen.nombre}`,
+            dto.observaciones ||
+            `Transferencia recibida de ${sedeOrigen.nombre}`,
           metodoPago: 'Efectivo',
           esTransferencia: true,
           sedeContraparteId: sedeOrigenId,
@@ -1278,8 +1296,12 @@ export class CajaService {
       ...(fechaInicio || fechaFin
         ? {
             fechaDeposito: {
-              ...(fechaInicio ? { gte: new Date(`${fechaInicio}T00:00:00.000-05:00`) } : {}),
-              ...(fechaFin ? { lte: new Date(`${fechaFin}T23:59:59.999-05:00`) } : {}),
+              ...(fechaInicio
+                ? { gte: new Date(`${fechaInicio}T00:00:00.000-05:00`) }
+                : {}),
+              ...(fechaFin
+                ? { lte: new Date(`${fechaFin}T23:59:59.999-05:00`) }
+                : {}),
             },
           }
         : {}),
@@ -1290,7 +1312,9 @@ export class CajaService {
       include: {
         usuario: { select: { nombre: true, email: true } },
         sede: { select: { nombre: true } },
-        cuentaBancaria: { select: { banco: true, numeroCuenta: true, alias: true } },
+        cuentaBancaria: {
+          select: { banco: true, numeroCuenta: true, alias: true },
+        },
         depositadoPor: { select: { nombre: true, email: true } },
       },
     });
@@ -1381,6 +1405,9 @@ export class CajaService {
       },
     });
 
-    return { code: 1, message: 'Depósito revertido, el cierre vuelve a estar pendiente.' };
+    return {
+      code: 1,
+      message: 'Depósito revertido, el cierre vuelve a estar pendiente.',
+    };
   }
 }
