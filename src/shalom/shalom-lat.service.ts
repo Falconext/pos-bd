@@ -55,7 +55,21 @@ export interface ShalomOrderInput {
   /** Quién paga el flete (p. ej. "DESTINATARIO"). */
   tipo_pago?: string;
   remitente?: string;
+  /**
+   * Tipo de contenido declarado. Shalom lo exige en toda orden. Solo acepta
+   * estos cuatro literales, con tilde y capitalización exactas — los alias
+   * cortos del proveedor legacy (docs/ropa/art/electro) los rechaza.
+   */
+  declaracion_jurada?: ShalomDeclaracion;
+  /** Clave de retiro de 4 dígitos que presenta el destinatario en agencia. */
+  clave?: string;
 }
+
+export type ShalomDeclaracion =
+  | 'Documentos'
+  | 'Ropa'
+  | 'Artículos de uso personal'
+  | 'Electrodomésticos';
 
 // Payload para el registro masivo (POST /account/register-bulk).
 export interface ShalomBulkInput {

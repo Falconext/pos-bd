@@ -6,7 +6,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { ShalomAgencia, ShalomLatService } from './shalom-lat.service';
+import {
+  ShalomAgencia,
+  ShalomDeclaracion,
+  ShalomLatService,
+} from './shalom-lat.service';
 import {
   derivarEstadoShalom,
   planPermiteShalomPro,
@@ -30,7 +34,34 @@ export type { ShalomAgencia, ShalomOrderInput } from './shalom-lat.service';
  * que se verificó. Cada empresa debería elegirlo en el despacho, o fijarlo con
  * SHALOM_TIPO_PRODUCTO; el catálogo real se lista en GET /shalom/productos.
  */
+/**
+ * Medidas por producto, indexadas por el id que acepta /account/register (NO por
+ * el `type_product.value` que Shalom guarda después: son numeraciones distintas
+ * — MINI PAQUETERIA XS es 1090 al registrar y 10 al consultar).
+ * Salen de las órdenes reales de la cuenta.
+ */
+const MEDIDAS_POR_PRODUCTO: Record<
+  number,
+  { alto: number; ancho: number; largo: number; peso: number }
+> = {
+  1090: { alto: 0.15, ancho: 0.12, largo: 0.2, peso: 0.5 }, // MINI PAQUETERIA XS
+  5: { alto: 0.2, ancho: 0.12, largo: 0.3, peso: 2 }, // PAQUETERIA S
+};
+
 const PRODUCTO_DEFECTO = { id: 1090 };
+
+/**
+ * Tipo de contenido declarado que exige Shalom. Solo acepta estos cuatro
+ * literales exactos; se deduce de lo que el despacho ya describe y, si no
+ * calza con ninguno, cae en el genérico.
+ */
+function declararContenido(...textos: Array<string | null | undefined>): ShalomDeclaracion {
+  const t = textos.map((v) => String(v ?? '').toLowerCase()).join(' ');
+  if (/documento|sobre|papel/.test(t)) return 'Documentos';
+  if (/ropa|prenda|textil|polo|zapat/.test(t)) return 'Ropa';
+  if (/electro|equipo|artefacto|tv|laptop|celular/.test(t)) return 'Electrodomésticos';
+  return 'Artículos de uso personal';
+}
 
 /** Primer valor con contenido real. Trata '' y '   ' como ausentes. */
 function primeroNoVacio(...valores: Array<string | null | undefined>): string {
@@ -639,6 +670,7 @@ export class ShalomService {
         process.env.SHALOM_TIPO_PRODUCTO ??
         PRODUCTO_DEFECTO.id,
     );
+    const medidas = MEDIDAS_POR_PRODUCTO[tipoProducto];
 
     const respuesta = await this.lat.createOrder({
       instanceId: empresa.shalomInstanceId,
@@ -651,12 +683,22 @@ export class ShalomService {
       phone,
       tipo_producto: tipoProducto,
       cantidad: Number(envio.nroPaquetes) > 0 ? Number(envio.nroPaquetes) : 1,
-      // Las medidas NO se envían cuando se usa un producto del catálogo: Shalom
-      // toma las suyas. Mandarlas hacía que validara como medida personalizada y
-      // rechazara con "Supera las dimensiones de la categoría de la agencia",
-      // incluso hacia agencias donde ese mismo producto sí se usa a diario.
-      // Solo se manda el peso si el despacho declara uno real.
-      ...(Number(envio.pesoKg) > 0 ? { peso: String(Number(envio.pesoKg)) } : {}),
+      declaracion_jurada: declararContenido(envio.tipoMercaderia, envio.contenidoPaquete),
+      // Sin medidas, Shalom crea la orden pero no resuelve el producto: queda con
+      // contenido "N/A" y monto S/ 0.00. Se mandan las del producto elegido, y el
+      // peso real del despacho si lo declara.
+      ...(medidas
+        ? {
+            alto: String(medidas.alto),
+            ancho: String(medidas.ancho),
+            largo: String(medidas.largo),
+            peso: String(
+              Number(envio.pesoKg) > 0 ? Number(envio.pesoKg) : medidas.peso,
+            ),
+          }
+        : Number(envio.pesoKg) > 0
+          ? { peso: String(Number(envio.pesoKg)) }
+          : {}),
     });
 
     // Shalom responde 200 con { success:false, message } cuando rechaza el
