@@ -52,9 +52,28 @@ export async function ensureTiposOperacion(
   });
   const codigos = new Set(existentes.map((t) => t.codigo));
 
+  const faltantes = TIPOS_OPERACION.filter((t) => !codigos.has(t.codigo));
+  if (!faltantes.length) return 0;
+
+  // En Postgres la secuencia de IDs quedó desincronizada en bases que se
+  // sembraron con IDs explícitos: sin este setval, el primer `create` revienta
+  // con "Unique constraint failed on the fields: (id)". Mismo arreglo que usa
+  // prisma/seeds/seed-detracciones.ts.
+  if (!(process.env.DATABASE_URL || '').startsWith('file:')) {
+    try {
+      await prisma.$executeRawUnsafe(
+        `SELECT setval(pg_get_serial_sequence('"TipoOperacion"', 'id'), coalesce(max(id), 0) + 1, false) FROM "TipoOperacion";`,
+      );
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.warn(
+        `   ⚠️ No se pudo sincronizar la secuencia de TipoOperacion: ${message}`,
+      );
+    }
+  }
+
   let creados = 0;
-  for (const tipo of TIPOS_OPERACION) {
-    if (codigos.has(tipo.codigo)) continue;
+  for (const tipo of faltantes) {
     try {
       await prisma.tipoOperacion.create({ data: tipo });
       creados++;
