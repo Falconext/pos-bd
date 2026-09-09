@@ -10,6 +10,7 @@ import * as express from 'express';
 import { PrismaService } from './prisma/prisma.service';
 import { initializeDatabase } from './common/utils/init-db';
 import { ensurePlanesVentas } from './common/utils/ensure-planes-ventas';
+import { ensureTiposOperacion } from './common/utils/ensure-tipos-operacion';
 import { httpSecurityHeaders } from './common/security/http-security.middleware';
 import { authRateLimit } from './common/security/rate-limit.middleware';
 
@@ -159,6 +160,20 @@ async function bootstrap() {
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     logger.warn(`No se pudieron asegurar los planes de Ventas: ${message}`);
+  }
+
+  // Asegura el Catálogo 51 (tipos de operación SUNAT) en cada arranque: en bases
+  // creadas antes de que existiera un código (ej. 0113 EXPORTACIÓN - ANTICIPOS)
+  // la opción no aparecía en el POS hasta correr el seed a mano.
+  try {
+    const prismaService = app.get(PrismaService);
+    const creados = await ensureTiposOperacion(prismaService);
+    logger.log(
+      `Tipos de operación (Catálogo 51) asegurados${creados ? ` (${creados} nuevos)` : ''}.`,
+    );
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    logger.warn(`No se pudieron asegurar los tipos de operación: ${message}`);
   }
 
   // Permite que Nest ejecute onModuleDestroy (incluido PrismaService.$disconnect)
