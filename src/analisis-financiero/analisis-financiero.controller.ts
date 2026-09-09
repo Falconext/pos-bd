@@ -22,10 +22,29 @@ import { ActualizarGastoDto } from './dto/actualizar-gasto.dto';
 export class AnalisisFinancieroController {
   constructor(private readonly service: AnalisisFinancieroService) {}
 
+  /**
+   * Sede por la que se filtra el análisis. Sin valor (o 0) = todas las sedes,
+   * que es el comportamiento histórico. El `where` de cada consulta siempre lleva
+   * `empresaId`, así que una sede de otra empresa simplemente no devuelve nada.
+   */
+  private resolverSedeId(sedeIdQuery?: string): number | null {
+    const n = Number(sedeIdQuery);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
   /** GET /analisis-financiero/pnl?mes=&anio= */
   @Get('pnl')
-  getPnl(@User() user: any, @Query() query: QueryPeriodoDto) {
-    return this.service.getPnl(user.empresaId, query.mes, query.anio);
+  getPnl(
+    @User() user: any,
+    @Query() query: QueryPeriodoDto,
+    @Query('sedeId') sedeIdQuery?: string,
+  ) {
+    return this.service.getPnl(
+      user.empresaId,
+      query.mes,
+      query.anio,
+      this.resolverSedeId(sedeIdQuery),
+    );
   }
 
   /**
@@ -33,11 +52,19 @@ export class AnalisisFinancieroController {
    * meses defaults to 6 if not provided.
    */
   @Get('evolucion')
-  getEvolucion(@User() user: any, @Query('meses') mesesQuery?: string) {
+  getEvolucion(
+    @User() user: any,
+    @Query('meses') mesesQuery?: string,
+    @Query('sedeId') sedeIdQuery?: string,
+  ) {
     const meses = mesesQuery
       ? Math.min(Math.max(parseInt(mesesQuery, 10) || 6, 1), 24)
       : 6;
-    return this.service.getEvolucion(user.empresaId, meses);
+    return this.service.getEvolucion(
+      user.empresaId,
+      meses,
+      this.resolverSedeId(sedeIdQuery),
+    );
   }
 
   /** GET /analisis-financiero/gastos?mes=&anio= */
@@ -77,11 +104,13 @@ export class AnalisisFinancieroController {
   getRentabilidadCategorias(
     @User() user: any,
     @Query() query: QueryPeriodoDto,
+    @Query('sedeId') sedeIdQuery?: string,
   ) {
     return this.service.getRentabilidadCategorias(
       user.empresaId,
       query.mes,
       query.anio,
+      this.resolverSedeId(sedeIdQuery),
     );
   }
 
@@ -93,6 +122,7 @@ export class AnalisisFinancieroController {
     @Query('anio') anio?: string,
     @Query('fechaInicio') fechaInicio?: string,
     @Query('fechaFin') fechaFin?: string,
+    @Query('sedeId') sedeIdQuery?: string,
   ) {
     return this.service.getMetodosPago(
       user.empresaId,
@@ -100,6 +130,7 @@ export class AnalisisFinancieroController {
       anio ? Number(anio) : undefined,
       fechaInicio,
       fechaFin,
+      this.resolverSedeId(sedeIdQuery),
     );
   }
 
@@ -111,6 +142,7 @@ export class AnalisisFinancieroController {
     @Query('anio') anio?: string,
     @Query('fechaInicio') fechaInicio?: string,
     @Query('fechaFin') fechaFin?: string,
+    @Query('sedeId') sedeIdQuery?: string,
   ) {
     return this.service.getProductosVendidos(
       user.empresaId,
@@ -118,6 +150,7 @@ export class AnalisisFinancieroController {
       anio ? Number(anio) : undefined,
       fechaInicio,
       fechaFin,
+      this.resolverSedeId(sedeIdQuery),
     );
   }
 

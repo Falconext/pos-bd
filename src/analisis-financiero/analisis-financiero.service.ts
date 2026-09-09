@@ -628,7 +628,17 @@ export class AnalisisFinancieroService {
   // ─── Public methods ──────────────────────────────────────────────────────────
 
   /** Fetches raw data for one period and returns calculated P&L. */
-  private async fetchPeriodData(empresaId: number, mes: number, anio: number) {
+  private async fetchPeriodData(
+    empresaId: number,
+    mes: number,
+    anio: number,
+    sedeId?: number | null,
+  ) {
+    // Filtro por sede. Solo aplica a las tablas que tienen la columna: las ventas
+    // (Comprobante) y los movimientos de caja. Los gastos operativos, ingresos
+    // manuales y campañas se registran a nivel EMPRESA (no tienen sedeId), así que
+    // siguen entrando completos aunque se filtre por sede.
+    const porSede = sedeId ? { sedeId } : {};
     const range = this.periodoToRange(mes, anio);
     const gastoWhere = this.buildGastoPeriodoWhere(empresaId, mes, anio);
     const [comprobantes, gastos, campanas, ingresosManuales, egresosCaja] =
@@ -636,6 +646,7 @@ export class AnalisisFinancieroService {
         this.prisma.comprobante.findMany({
           where: {
             empresaId,
+            ...porSede,
             fechaEmision: { gte: range.gte, lte: range.lte },
             ...this.filtroExcluirConvertidos,
           },
@@ -697,7 +708,10 @@ export class AnalisisFinancieroService {
         // en la utilidad igual que los gastos operativos. Viven en otra tabla
         // (MovimientoCaja), por eso se leen aparte.
         this.prisma.movimientoCaja.findMany({
-          where: egresosCajaWhere(empresaId, range.gte, range.lte),
+          where: {
+            ...egresosCajaWhere(empresaId, range.gte, range.lte),
+            ...porSede,
+          },
           select: { fecha: true, monto: true, categoriaGasto: true },
         }),
       ]);
@@ -775,12 +789,13 @@ export class AnalisisFinancieroService {
     empresaId: number,
     mes: number,
     anio: number,
+    sedeId?: number | null,
   ): Promise<PnlResponse> {
     const prev = this.restarMeses(mes, anio, 1);
 
     const [pnl, pnlAnterior] = await Promise.all([
-      this.fetchPeriodData(empresaId, mes, anio),
-      this.fetchPeriodData(empresaId, prev.mes, prev.anio),
+      this.fetchPeriodData(empresaId, mes, anio, sedeId),
+      this.fetchPeriodData(empresaId, prev.mes, prev.anio, sedeId),
     ]);
 
     const tieneAnterior =
@@ -823,7 +838,9 @@ export class AnalisisFinancieroService {
   async getEvolucion(
     empresaId: number,
     meses: number,
+    sedeId?: number | null,
   ): Promise<EvolucionPoint[]> {
+    const porSede = sedeId ? { sedeId } : {};
     // Determine the N-month window
     const now = new Date();
     const mesActual = now.getMonth() + 1;
@@ -838,6 +855,7 @@ export class AnalisisFinancieroService {
       this.prisma.comprobante.findMany({
         where: {
           empresaId,
+          ...porSede,
           fechaEmision: { gte: rangeGte, lte: rangeLte },
           ...this.filtroExcluirConvertidos,
         },
@@ -1053,12 +1071,14 @@ export class AnalisisFinancieroService {
     empresaId: number,
     mes: number,
     anio: number,
+    sedeId?: number | null,
   ) {
     const range = this.periodoToRange(mes, anio);
 
     const comprobantes = await this.prisma.comprobante.findMany({
       where: {
         empresaId,
+        ...(sedeId ? { sedeId } : {}),
         fechaEmision: { gte: range.gte, lte: range.lte },
         ...this.filtroExcluirConvertidos,
       },
@@ -1217,6 +1237,7 @@ export class AnalisisFinancieroService {
     anio?: number,
     fechaInicio?: string,
     fechaFin?: string,
+    sedeId?: number | null,
   ): Promise<ProductosVendidosResponse> {
     const now = new Date();
     const mesFinal = mes && mes >= 1 && mes <= 12 ? mes : now.getMonth() + 1;
@@ -1236,6 +1257,7 @@ export class AnalisisFinancieroService {
     const comprobantes = await this.prisma.comprobante.findMany({
       where: {
         empresaId,
+        ...(sedeId ? { sedeId } : {}),
         fechaEmision: { gte: range.gte, lte: range.lte },
         ...this.filtroExcluirConvertidos,
       },
@@ -1460,6 +1482,7 @@ export class AnalisisFinancieroService {
     anio?: number,
     fechaInicio?: string,
     fechaFin?: string,
+    sedeId?: number | null,
   ) {
     const now = new Date();
     const mesFinal = mes && mes >= 1 && mes <= 12 ? mes : now.getMonth() + 1;
@@ -1485,6 +1508,8 @@ export class AnalisisFinancieroService {
         comprobante: {
           estadoEnvioSunat: { not: EstadoSunat.ANULADO },
           ...this.filtroExcluirConvertidos,
+          // Pago no tiene sedeId propio: la sede es la del comprobante que cobra.
+          ...(sedeId ? { sedeId } : {}),
         },
       },
       orderBy: { fecha: 'desc' },
