@@ -275,8 +275,8 @@
                 {{#if includeProductImages}}<th class="col-img">IMAGEN</th>{{/if}}
                 <th class="col-desc">DESCRIPCIÓN</th>
                 <th class="col-moneda">MONEDA</th>
-                <th class="col-pu">P.UNIT.</th>
-                <th class="col-tot">TOTAL</th>
+                <th class="col-pu">{{#if fc.preciosSinIgv.visible}}V.UNIT.{{else}}P.UNIT.{{/if}}</th>
+                <th class="col-tot">{{#if fc.preciosSinIgv.visible}}V.VENTA{{else}}TOTAL{{/if}}</th>
             </tr>
         </thead>
         <tbody>

@@ -5853,6 +5853,32 @@ export class ComprobanteService {
         visible: rawFormatoCfg.qrPagos?.visible === true,
         size: Number(rawFormatoCfg.qrPagos?.size) || 90,
       };
+      // Precios unitarios SIN IGV (valor unitario / valor de venta). Opt-in, igual
+      // que en el frontend: por defecto la cotización sigue mostrando el precio
+      // con IGV incluido.
+      fc.preciosSinIgv = {
+        visible: rawFormatoCfg.preciosSinIgv?.visible === true,
+        size: 12,
+      };
+
+      // Cuando el formato pide precios sin IGV, la columna P.UNIT pasa a ser el
+      // VALOR unitario y el importe de línea el VALOR de venta. El factor se saca
+      // de la propia línea (mtoValorUnitario / mtoPrecioUnitario), así respeta la
+      // afectación real de cada ítem (gravado 18%, exonerado/inafecto sin cambio)
+      // sin asumir una tasa fija.
+      const productosCotiz = fc.preciosSinIgv.visible
+        ? productos.map((prod, i) => {
+            const d: any = full.detalles[i];
+            const pu = Number(d?.mtoPrecioUnitario || 0);
+            const vu = Number(d?.mtoValorUnitario || 0);
+            const factor = pu > 0 && vu > 0 ? vu / pu : 1;
+            return {
+              ...prod,
+              precioUnitario: (Number(prod.precioUnitario) * factor).toFixed(2),
+              total: (Number(prod.total) * factor).toFixed(2),
+            };
+          })
+        : productos;
 
       // SON: en letras alineado al frontend (decimales con "CON" + moneda).
       const sonBase = numeroALetras(mtoImpVenta)
@@ -5864,6 +5890,7 @@ export class ComprobanteService {
 
       const cotizacionData = {
         ...pdfData,
+        productos: productosCotiz,
         fc,
         monedaSimbolo: cotizEsUSD ? 'US$' : 'S/',
         monedaNombre: cotizEsUSD ? 'DÓLARES' : 'SOLES',
