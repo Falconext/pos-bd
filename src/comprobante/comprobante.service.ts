@@ -5840,11 +5840,28 @@ export class ComprobanteService {
         string,
         { visible?: boolean; size?: number }
       >;
-      const fc: Record<string, { visible: boolean; size: number }> = {};
+      const fc: Record<
+        string,
+        { visible: boolean; size: number; texto?: string }
+      > = {};
       for (const [k, def] of Object.entries(cotizElemDefaults)) {
         const c = rawFormatoCfg[k] || {};
         fc[k] = { visible: c.visible !== false, size: Number(c.size) || def };
       }
+      // Cada línea del texto libre se imprime como un punto aparte (el HTML colapsa
+      // los saltos). Se usa tanto para las observaciones como para el pie.
+      const enLineas = (t: any): string[] =>
+        String(t ?? '')
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter(Boolean);
+      // Mensaje del pie configurable por empresa; vacío = el texto por defecto que
+      // arma la propia plantilla con nombre comercial + rubro.
+      fc.gracias.texto = String((rawFormatoCfg as any).gracias?.texto ?? '').trim();
+      const graciasLineas = enLineas(fc.gracias.texto).map((l) => l.toUpperCase());
+      const observacionesLineas = enLineas(full.observaciones).map((l) =>
+        l.toUpperCase(),
+      );
       // QR de pago (Yape/Plin): OCULTO por defecto (igual que el frontend, donde
       // defaultVisible es false). Solo se muestra si se activó explícitamente en el
       // formato de la cotización. Antes el PDF del backend (el que se comparte por
@@ -5892,6 +5909,8 @@ export class ComprobanteService {
         ...pdfData,
         productos: productosCotiz,
         fc,
+        graciasLineas,
+        observacionesLineas,
         monedaSimbolo: cotizEsUSD ? 'US$' : 'S/',
         monedaNombre: cotizEsUSD ? 'DÓLARES' : 'SOLES',
         totalEnLetras: sonMoneda,

@@ -118,6 +118,7 @@
             margin-bottom: 16px;
         }
         .observaciones-box { width: 66%; padding-right: 16px; }
+        .obs-linea { margin-bottom: 2px; }
         .obs-title { font-weight: bold; margin-bottom: 4px; }
         .detraccion-block { margin-top: 14px; line-height: 1.5; }
         .detraccion-block p:first-child { font-weight: bold; }
@@ -310,7 +311,11 @@
             {{/if}}
             {{#if fc.observaciones.visible}}
             <div class="obs-title" style="font-size: {{fc.observaciones.size}}px;">OBSERVACIONES:</div>
+            {{#if observacionesLineas.length}}
+            {{#each observacionesLineas}}<div class="obs-linea" style="font-size: {{../fc.observaciones.size}}px;">{{this}}</div>{{/each}}
+            {{else}}
             <div style="font-size: {{fc.observaciones.size}}px;">{{observaciones}}</div>
+            {{/if}}
             {{/if}}
             {{#if cotizTerminos}}
             <p style="margin-top:8px;"><strong>TÉRMINOS:</strong> {{cotizTerminos}}</p>
@@ -399,8 +404,12 @@
     <!-- ── GRACIAS ─────────────────────────────────────────────────── -->
     {{#if fc.gracias.visible}}
     <div class="footer-thanks">
-        <p style="font-size: {{fc.gracias.size}}px;">GRACIAS POR ELEGIR {{nombreComercial}} PARA CUBRIR SUS REQUERIMIENTOS DE {{rubro}}</p>
+        {{#if graciasLineas.length}}
+        {{#each graciasLineas}}<p style="font-size: {{../fc.gracias.size}}px;">{{this}}</p>{{/each}}
+        {{else}}
+        <p style="font-size: {{fc.gracias.size}}px;">GRACIAS POR ELEGIR {{nombreComercial}} PARA CUBRIR SUS REQUERIMIENTOS</p>
         <p class="vuelva" style="font-size: {{fc.gracias.size}}px;">VUELVA PRONTO</p>
+        {{/if}}
     </div>
     {{/if}}
 
