@@ -20,6 +20,7 @@
     "sync:plans": "npx ts-node prisma/seeds/update-planes-v2.ts",
     "backfill:comision-motivo": "npx ts-node src/scripts/backfill-comision-motivo.ts",
     "migrate:sedes": "npx ts-node src/scripts/migrate-sedes.ts",
+    "backfill:sede-comprobantes": "npx ts-node src/scripts/backfill-sede-comprobantes.ts",
     "reset:stock": "npx ts-node src/scripts/reset-stock-50.ts",
     "diagnose:empresa-scope": "npx ts-node src/scripts/diagnose-empresa-scope.ts",
     "openapi:logistica": "npx ts-node -r tsconfig-paths/register scripts/emit-logistica-openapi.ts",

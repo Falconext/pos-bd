@@ -23,11 +23,19 @@ export class AnalisisFinancieroController {
   constructor(private readonly service: AnalisisFinancieroService) {}
 
   /**
-   * Sede por la que se filtra el análisis. Sin valor (o 0) = todas las sedes,
-   * que es el comportamiento histórico. El `where` de cada consulta siempre lleva
-   * `empresaId`, así que una sede de otra empresa simplemente no devuelve nada.
+   * Sede por la que se filtra el análisis.
+   *
+   * · ADMIN_EMPRESA / ADMIN_SISTEMA: elige con el selector. Sin valor (o 0) =
+   *   todas las sedes, que es el comportamiento histórico.
+   * · USUARIO_EMPRESA: SIEMPRE su sede, la del JWT. El `?sedeId=` de la URL se
+   *   ignora, así que no puede pedir el análisis de otra sede a mano.
+   *
+   * Mismo criterio que ya aplica Flujo de Caja (finanzas.controller.ts).
    */
-  private resolverSedeId(sedeIdQuery?: string): number | null {
+  private resolverSedeId(user: any, sedeIdQuery?: string): number | null {
+    const isAdmin =
+      user?.rol === 'ADMIN_EMPRESA' || user?.rol === 'ADMIN_SISTEMA';
+    if (!isAdmin) return user?.sedeId ?? null;
     const n = Number(sedeIdQuery);
     return Number.isFinite(n) && n > 0 ? n : null;
   }
@@ -43,7 +51,7 @@ export class AnalisisFinancieroController {
       user.empresaId,
       query.mes,
       query.anio,
-      this.resolverSedeId(sedeIdQuery),
+      this.resolverSedeId(user, sedeIdQuery),
     );
   }
 
@@ -63,14 +71,23 @@ export class AnalisisFinancieroController {
     return this.service.getEvolucion(
       user.empresaId,
       meses,
-      this.resolverSedeId(sedeIdQuery),
+      this.resolverSedeId(user, sedeIdQuery),
     );
   }
 
   /** GET /analisis-financiero/gastos?mes=&anio= */
   @Get('gastos')
-  listarGastos(@User() user: any, @Query() query: QueryPeriodoDto) {
-    return this.service.listarGastos(user.empresaId, query.mes, query.anio);
+  listarGastos(
+    @User() user: any,
+    @Query() query: QueryPeriodoDto,
+    @Query('sedeId') sedeIdQuery?: string,
+  ) {
+    return this.service.listarGastos(
+      user.empresaId,
+      query.mes,
+      query.anio,
+      this.resolverSedeId(user, sedeIdQuery),
+    );
   }
 
   /** GET /analisis-financiero/gastos/historial */
@@ -110,7 +127,7 @@ export class AnalisisFinancieroController {
       user.empresaId,
       query.mes,
       query.anio,
-      this.resolverSedeId(sedeIdQuery),
+      this.resolverSedeId(user, sedeIdQuery),
     );
   }
 
@@ -130,7 +147,7 @@ export class AnalisisFinancieroController {
       anio ? Number(anio) : undefined,
       fechaInicio,
       fechaFin,
-      this.resolverSedeId(sedeIdQuery),
+      this.resolverSedeId(user, sedeIdQuery),
     );
   }
 
@@ -150,7 +167,7 @@ export class AnalisisFinancieroController {
       anio ? Number(anio) : undefined,
       fechaInicio,
       fechaFin,
-      this.resolverSedeId(sedeIdQuery),
+      this.resolverSedeId(user, sedeIdQuery),
     );
   }
 

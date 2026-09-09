@@ -40,6 +40,14 @@ export class CrearGastoDto {
   @IsISO8601()
   fechaFin?: string;
 
+  /**
+   * Sede a la que se carga el gasto. Omitir (o null) = gasto de TODA la
+   * empresa: no se le carga a ninguna sede y solo suma en el consolidado.
+   */
+  @IsOptional()
+  @IsInt()
+  sedeId?: number | null;
+
   @IsEnum(CategoriaGasto)
   categoria: CategoriaGasto;
 

@@ -14,6 +14,11 @@ import {
 import { CategoriaGasto } from '@prisma/client';
 
 export class ActualizarGastoDto {
+  /** null = pasa a ser gasto de toda la empresa. */
+  @IsOptional()
+  @IsInt()
+  sedeId?: number | null;
+
   @IsOptional()
   @IsISO8601()
   fecha?: string;

@@ -39,6 +39,12 @@ export interface PnlResponse {
   gastosTotales: number;
   gastoPublicidad: number;
   gastosPorCategoria: GastoPorCategoria[];
+  /**
+   * Gastos marcados como "de toda la empresa" (sin sede) que NO están sumados
+   * en `gastosTotales` porque se está viendo una sede concreta. En la vista
+   * consolidada siempre es 0, porque ahí ya van incluidos.
+   */
+  gastosEmpresa: number;
   gananciaNeta: number;
   margenNeto: number;
   resumenDiario: RentabilidadDia[];
@@ -443,7 +449,8 @@ export class AnalisisFinancieroService {
       .filter((c) => c.tipoDoc !== '07')
       .reduce(
         (acc, c) =>
-          acc + montoEnPen(c.mtoImpVenta, c.tipoMoneda, this.toNumber(c.tipoCambio)),
+          acc +
+          montoEnPen(c.mtoImpVenta, c.tipoMoneda, this.toNumber(c.tipoCambio)),
         0,
       );
 
@@ -451,7 +458,8 @@ export class AnalisisFinancieroService {
       .filter((c) => c.tipoDoc === '07')
       .reduce(
         (acc, c) =>
-          acc + montoEnPen(c.mtoImpVenta, c.tipoMoneda, this.toNumber(c.tipoCambio)),
+          acc +
+          montoEnPen(c.mtoImpVenta, c.tipoMoneda, this.toNumber(c.tipoCambio)),
         0,
       );
 
@@ -634,13 +642,19 @@ export class AnalisisFinancieroService {
     anio: number,
     sedeId?: number | null,
   ) {
-    // Filtro por sede. Solo aplica a las tablas que tienen la columna: las ventas
-    // (Comprobante) y los movimientos de caja. Los gastos operativos, ingresos
-    // manuales y campañas se registran a nivel EMPRESA (no tienen sedeId), así que
-    // siguen entrando completos aunque se filtre por sede.
+    // Filtro por sede. Al pedir una sede concreta se traen solo sus ventas, sus
+    // gastos de caja, sus gastos operativos, sus ingresos manuales y sus
+    // campañas. Los registros con `sedeId` null son "de toda la empresa" y
+    // quedan fuera: se informan aparte (ver `gastosEmpresa`) para que la suma
+    // por sede más los de empresa cuadre con el consolidado.
     const porSede = sedeId ? { sedeId } : {};
     const range = this.periodoToRange(mes, anio);
-    const gastoWhere = this.buildGastoPeriodoWhere(empresaId, mes, anio);
+    const gastoWhere = this.buildGastoPeriodoWhere(
+      empresaId,
+      mes,
+      anio,
+      sedeId,
+    );
     const [comprobantes, gastos, campanas, ingresosManuales, egresosCaja] =
       await Promise.all([
         this.prisma.comprobante.findMany({
@@ -686,7 +700,7 @@ export class AnalisisFinancieroService {
           },
         }),
         this.prisma.campanaMarketing.findMany({
-          where: { empresaId },
+          where: { empresaId, ...porSede },
           select: {
             nombre: true,
             plataforma: true,
@@ -698,6 +712,7 @@ export class AnalisisFinancieroService {
         this.prisma.ingresoManual.findMany({
           where: {
             empresaId,
+            ...porSede,
             fecha: { gte: range.gte, lte: range.lte },
             tipo: { notIn: this.TIPOS_FINANCIAMIENTO },
           },
@@ -772,6 +787,44 @@ export class AnalisisFinancieroService {
       });
     }
 
+    // Gastos de toda la empresa (sin sede) que quedaron fuera por estar viendo
+    // una sede concreta. Informativos: no restan en la utilidad de la sede,
+    // pero el usuario tiene que saber que existen.
+    let gastosEmpresa = 0;
+    if (sedeId) {
+      const [gastosSinSede, campanasSinSede, cajaSinSede] = await Promise.all([
+        this.prisma.gastoOperativo.findMany({
+          where: {
+            ...this.buildGastoPeriodoWhere(empresaId, mes, anio),
+            sedeId: null,
+          },
+          select: { monto: true, moneda: true, tipoCambio: true },
+        }),
+        this.prisma.campanaMarketing.findMany({
+          where: { empresaId, sedeId: null },
+          select: { presupuestoDiario: true, fechaInicio: true, estado: true },
+        }),
+        this.prisma.movimientoCaja.findMany({
+          where: {
+            ...egresosCajaWhere(empresaId, range.gte, range.lte),
+            sedeId: null,
+          },
+          select: { monto: true },
+        }),
+      ]);
+      gastosEmpresa =
+        gastosSinSede.reduce((a, g) => a + this.toNumber(g.monto as any), 0) +
+        cajaSinSede.reduce((a, m) => a + Number(m.monto ?? 0), 0) +
+        campanasSinSede.reduce((a, c) => {
+          if (c.estado === 'PAUSADA') return a;
+          const ini = c.fechaInicio > inicioMes ? c.fechaInicio : inicioMes;
+          if (ini > finReal) return a;
+          const dias =
+            Math.floor((finReal.getTime() - ini.getTime()) / 86400000) + 1;
+          return a + Number(c.presupuestoDiario) * Math.max(dias, 0);
+        }, 0);
+    }
+
     return {
       ...this.calcularPnl(
         comprobantes,
@@ -781,6 +834,7 @@ export class AnalisisFinancieroService {
         otrosIngresos,
       ),
       otrosIngresosDetalle,
+      gastosEmpresa: this.r2(gastosEmpresa),
     };
   }
 
@@ -969,10 +1023,22 @@ export class AnalisisFinancieroService {
     return conditions;
   }
 
-  private buildGastoPeriodoWhere(empresaId: number, mes: number, anio: number) {
+  /**
+   * @param sedeId cuando se pide una sede concreta se traen SOLO los gastos de
+   *   esa sede. Los gastos con `sedeId` null son "de toda la empresa" y no se
+   *   le cargan a ninguna sede — se informan aparte. Así la suma de los gastos
+   *   por sede más los de empresa cuadra con el consolidado.
+   */
+  private buildGastoPeriodoWhere(
+    empresaId: number,
+    mes: number,
+    anio: number,
+    sedeId?: number | null,
+  ) {
     const range = this.periodoToRange(mes, anio);
     return {
       empresaId,
+      ...(sedeId ? { sedeId } : {}),
       OR: [
         { mes, anio },
         {
@@ -1025,8 +1091,14 @@ export class AnalisisFinancieroService {
     empresaId: number,
     mes: number,
     anio: number,
+    sedeId?: number | null,
   ): Promise<GastoOperativo[]> {
-    const gastoWhere = this.buildGastoPeriodoWhere(empresaId, mes, anio);
+    const gastoWhere = this.buildGastoPeriodoWhere(
+      empresaId,
+      mes,
+      anio,
+      sedeId,
+    );
     const range = this.periodoToRange(mes, anio);
     const [operativos, movsCaja] = await Promise.all([
       this.prisma.gastoOperativo.findMany({
@@ -1034,7 +1106,10 @@ export class AnalisisFinancieroService {
         orderBy: [{ fecha: 'desc' }, { creadoEn: 'desc' }],
       }),
       this.prisma.movimientoCaja.findMany({
-        where: egresosCajaWhere(empresaId, range.gte, range.lte),
+        where: {
+          ...egresosCajaWhere(empresaId, range.gte, range.lte),
+          ...(sedeId ? { sedeId } : {}),
+        },
         select: EGRESO_CAJA_SELECT,
         orderBy: { fecha: 'desc' },
       }),
@@ -1418,9 +1493,7 @@ export class AnalisisFinancieroService {
       };
     });
 
-    const costoTotal = this.r2(
-      productos.reduce((s, p) => s + p.costoTotal, 0),
-    );
+    const costoTotal = this.r2(productos.reduce((s, p) => s + p.costoTotal, 0));
     const gananciaTotal = this.r2(ingresoTotal - costoTotal);
 
     return {
@@ -1460,7 +1533,8 @@ export class AnalisisFinancieroService {
     diaMap: Map<string, unknown>,
   ): string[] {
     const MS_DIA = 24 * 60 * 60 * 1000;
-    const totalDias = Math.floor((range.lte.getTime() - range.gte.getTime()) / MS_DIA) + 1;
+    const totalDias =
+      Math.floor((range.lte.getTime() - range.gte.getTime()) / MS_DIA) + 1;
     if (totalDias > 370 || totalDias < 1) {
       return [...diaMap.keys()].sort();
     }
@@ -1729,12 +1803,16 @@ export class AnalisisFinancieroService {
         monto: dto.monto,
         moneda: dto.moneda ?? 'PEN',
         tipoCambio: dto.moneda === 'USD' ? (dto.tipoCambio ?? null) : null,
+        // null = gasto de toda la empresa (no se carga a ninguna sede).
+        sedeId: dto.sedeId ?? null,
         cuentaBancariaId: dto.cuentaBancariaId ?? null,
         medioPago: dto.medioPago ?? null,
         proveedor: dto.proveedor ?? null,
         numeroDocumento: dto.numeroDocumento ?? null,
         // El N° de operación solo aplica cuando el pago es con cuenta de banco.
-        numeroOperacion: dto.cuentaBancariaId ? (dto.numeroOperacion ?? null) : null,
+        numeroOperacion: dto.cuentaBancariaId
+          ? (dto.numeroOperacion ?? null)
+          : null,
         descripcion: dto.descripcion,
       },
     });
@@ -1759,6 +1837,8 @@ export class AnalisisFinancieroService {
     return this.prisma.gastoOperativo.update({
       where: { id },
       data: {
+        // `sedeId: null` explícito = pasa a ser gasto de toda la empresa.
+        ...(dto.sedeId !== undefined && { sedeId: dto.sedeId ?? null }),
         ...(dto.fecha !== undefined && {
           fecha: this.parseFechaGasto(dto.fecha) ?? null,
         }),
