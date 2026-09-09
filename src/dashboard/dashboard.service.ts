@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { EstadoSunat, EstadoPago } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { montoEnPen } from '../common/utils/moneda.util';
+import { egresosCajaWhere } from '../common/utils/egresos-caja.util';
 
 @Injectable()
 export class DashboardService {
@@ -908,8 +909,12 @@ export class DashboardService {
     const comprasCurr = Number(comprasRows._sum.total ?? 0);
     const comprasPrev = Number(comprasPrevRows._sum.total ?? 0);
 
-    // -- Gastos Operativos --
-    const [gastosOpCurrRows, gastosOpPrevRows] = await Promise.all([
+    // -- Gastos Operativos (+ gastos de caja chica) --
+    // Los gastos registrados en caja viven en MovimientoCaja, no en
+    // GastoOperativo, pero son plata que salio del negocio igual: sin esto el
+    // Resumen Financiero mostraba GASTOS 0 con el cajon descontado.
+    const [gastosOpCurrRows, gastosOpPrevRows, cajaCurrRows, cajaPrevRows] =
+      await Promise.all([
       this.prisma.gastoOperativo.findMany({
         where: {
           empresaId,
@@ -936,7 +941,17 @@ export class DashboardService {
           ],
         },
       }),
+      this.prisma.movimientoCaja.aggregate({
+        where: egresosCajaWhere(empresaId, currentRange.gte, currentRange.lte),
+        _sum: { monto: true },
+      }),
+      this.prisma.movimientoCaja.aggregate({
+        where: egresosCajaWhere(empresaId, prevRange.gte, prevRange.lte),
+        _sum: { monto: true },
+      }),
     ]);
+    const gastosCajaCurr = Number(cajaCurrRows._sum.monto ?? 0);
+    const gastosCajaPrev = Number(cajaPrevRows._sum.monto ?? 0);
 
     const calculateGastoOp = (rows: any[], gte: Date, lte: Date) => {
       let total = 0;
@@ -1019,8 +1034,8 @@ export class DashboardService {
     // GASTOS = solo gastos operativos + marketing. Las COMPRAS se muestran en su
     // propia línea, así que NO se suman aquí (antes gastos = compras + ... hacía que
     // GASTOS y COMPRAS mostraran el mismo valor cuando no había gastos operativos).
-    const gastosCurr = gastoOpCurr + marketingCurr;
-    const gastosPrev = gastoOpPrev + marketingPrev;
+    const gastosCurr = gastoOpCurr + marketingCurr + gastosCajaCurr;
+    const gastosPrev = gastoOpPrev + marketingPrev + gastosCajaPrev;
     // GANANCIAS = ingresos − compras − gastos operativos (el resultado es el mismo
     // que antes; solo se separa "compras" de "gastos" en la presentación).
     const gananciasCurr = ingresosCurr - comprasCurr - gastosCurr;

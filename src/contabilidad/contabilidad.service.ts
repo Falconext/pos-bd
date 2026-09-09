@@ -1,6 +1,11 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { montoEnPen } from '../common/utils/moneda.util';
+import {
+  egresosCajaWhere,
+  mapCategoriaCaja,
+  EGRESO_CAJA_SELECT,
+} from '../common/utils/egresos-caja.util';
 
 @Injectable()
 export class ContabilidadService {
@@ -408,7 +413,8 @@ export class ContabilidadService {
 
   /**
    * Reporte de GASTOS operativos del período (egresos).
-   * Fuente: modelo GastoOperativo. Incluye gastos con fecha en el rango y
+   * Fuente: GastoOperativo + los gastos registrados en caja
+   * (MovimientoCaja EGRESO), que son plata que salio del negocio igual. Incluye gastos con fecha en el rango y
    * los recurrentes diarios vigentes (misma lógica que finanzas.listarEgresos).
    * No se filtra por sede porque GastoOperativo no está asociado a una sede.
    */
@@ -464,8 +470,38 @@ export class ContabilidadService {
         monto,
         dias,
         montoPeriodo: monto * dias,
+        origen: 'OPERATIVO',
       };
     });
+
+    // Gastos de caja chica: mismas reglas que el resto de los reportes (sin
+    // transferencias entre sedes, solo aprobados). Nunca son recurrentes, asi
+    // que su montoPeriodo es el monto tal cual.
+    const cajaRaw = await this.prisma.movimientoCaja.findMany({
+      where: egresosCajaWhere(empresaId, rango.gte, rango.lte),
+      select: EGRESO_CAJA_SELECT,
+      orderBy: { fecha: 'desc' },
+    });
+    for (const mov of cajaRaw) {
+      const monto = Number(mov.monto || 0);
+      gastos.push({
+        id: mov.id,
+        fecha: mov.fecha,
+        categoria: mapCategoriaCaja(mov.categoriaGasto) as any,
+        etiqueta: mov.categoriaGasto?.trim()
+          ? `Caja - ${mov.categoriaGasto.trim()}`
+          : 'Caja chica',
+        descripcion: mov.descripcionGasto ?? '',
+        recurrenteDiario: false,
+        monto,
+        dias: 1,
+        montoPeriodo: monto,
+        origen: 'CAJA',
+      });
+    }
+    gastos.sort(
+      (a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime(),
+    );
 
     const porCategoria: Record<string, number> = {};
     let totalGastos = 0;
