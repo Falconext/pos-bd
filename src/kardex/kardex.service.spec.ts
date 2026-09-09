@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { KardexService } from './kardex.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 
 describe('KardexService', () => {
@@ -19,6 +20,10 @@ describe('KardexService', () => {
         .fn()
         .mockResolvedValue({ stock: 100, producto: { costoPromedio: 10.5 } }),
       update: jest.fn().mockResolvedValue({}),
+      // Descuento atómico de salidas: `count: 1` = habia stock suficiente, que
+      // es el camino normal. Con 0 el servicio cae al fallback que fuerza 0.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      upsert: jest.fn().mockResolvedValue({}),
       aggregate: jest.fn().mockResolvedValue({ _sum: { stock: 100 } }),
     },
     movimientoKardex: {
@@ -26,10 +31,19 @@ describe('KardexService', () => {
       findMany: jest.fn(),
       count: jest.fn(),
       groupBy: jest.fn(),
+      // Reconciliacion post-registro: si el stock real difiere del que quedo
+      // grabado en el movimiento, el servicio corrige la fila.
+      update: jest.fn().mockResolvedValue({}),
     },
     cliente: {
       findFirst: jest.fn(),
     },
+  };
+
+  // KardexService lo inyecta solo para la constancia de garantía; ninguna de
+  // estas pruebas la ejercita, pero Nest exige el provider para instanciar.
+  const mockPdfGeneratorService = {
+    generarPDFConstanciaGarantia: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -39,6 +53,10 @@ describe('KardexService', () => {
         {
           provide: PrismaService,
           useValue: mockPrismaService,
+        },
+        {
+          provide: PdfGeneratorService,
+          useValue: mockPdfGeneratorService,
         },
       ],
     }).compile();
@@ -97,9 +115,12 @@ describe('KardexService', () => {
         costoUnitario: 10.5,
       });
 
-      expect(mockPrismaService.producto.findUnique).toHaveBeenCalledWith({
-        where: { id: 1 },
-        select: { stock: true, costoPromedio: true },
+      // El stock dejo de vivir en Producto: ahora se lee de ProductoStock,
+      // que es por sede. `producto.findUnique` solo queda como fallback para
+      // cuando la fila de la sede todavia no existe.
+      expect(mockPrismaService.productoStock.findUnique).toHaveBeenCalledWith({
+        where: { productoId_sedeId: { productoId: 1, sedeId: 1 } },
+        include: { producto: { select: { costoPromedio: true } } },
       });
 
       expect(mockPrismaService.movimientoKardex.create).toHaveBeenCalledWith({
@@ -121,6 +142,11 @@ describe('KardexService', () => {
     });
 
     it('debería lanzar NotFoundException si el producto no existe', async () => {
+      // Sin fila en la sede el servicio intenta crearla desde Producto; si ese
+      // tampoco existe, el upsert no deja stock y debe abortar con NotFound.
+      mockPrismaService.productoStock.findUnique
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null);
       mockPrismaService.producto.findUnique.mockResolvedValue(null);
 
       await expect(
@@ -140,6 +166,13 @@ describe('KardexService', () => {
         stock: 50,
         costoPromedio: 8.0,
       };
+
+      // Este caso parte de 50, no de los 100 del mock compartido: el stock sale
+      // de ProductoStock (por sede), asi que hay que sobreescribirlo aqui.
+      mockPrismaService.productoStock.findUnique.mockResolvedValue({
+        stock: 50,
+        producto: { costoPromedio: 8.0 },
+      });
 
       const mockMovimiento = {
         id: 2,
