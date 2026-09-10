@@ -391,7 +391,9 @@ export class EnviarSunatService {
         empresa: { include: { ubicacion: true, rubro: true } },
         sede: { select: { nombre: true, direccion: true } },
         detalles: {
-          include: { producto: { select: { codigo: true, codProdSunat: true } } },
+          include: {
+            producto: { select: { codigo: true, codProdSunat: true } },
+          },
         },
         leyendas: true,
         tipoOperacion: true,
@@ -1100,7 +1102,9 @@ export class EnviarSunatService {
           const anticipoId = String(i + 1);
           // Normalizar el correlativo a 8 dígitos para que el ID de la referencia coincida
           // con el número real del comprobante de anticipo emitido (ej. F0A1-00000031).
-          const numeroAnticipo = String(a.numero).replace(/\D/g, '').padStart(8, '0');
+          const numeroAnticipo = String(a.numero)
+            .replace(/\D/g, '')
+            .padStart(8, '0');
           const serieNumero = `${a.serie}-${numeroAnticipo}`;
           // Catálogo 12: '02' Factura por anticipos, '03' Boleta por anticipos.
           const docTypeCode = String(a.tipoDoc) === '03' ? '03' : '02';
@@ -1136,7 +1140,10 @@ export class EnviarSunatService {
           const paidDate = String(a.fecha ?? '').substring(0, 10) || issueDate;
           prepaids.push({
             'cbc:ID': {
-              _attributes: { schemeAgencyName: 'PE:SUNAT', schemeName: 'Anticipo' },
+              _attributes: {
+                schemeAgencyName: 'PE:SUNAT',
+                schemeName: 'Anticipo',
+              },
               _text: anticipoId,
             },
             'cbc:PaidAmount': {
@@ -2396,7 +2403,9 @@ export class EnviarSunatService {
 
               // Otros
               formaPago:
-                String(comp.formaPagoTipo).toUpperCase() === 'CONTADO' ? 'CONTADO' : 'CRÉDITO',
+                String(comp.formaPagoTipo).toUpperCase() === 'CONTADO'
+                  ? 'CONTADO'
+                  : 'CRÉDITO',
               medioPago: (comp.medioPago || 'EFECTIVO').toUpperCase(),
               observaciones: comp.observaciones
                 ? comp.observaciones.toUpperCase()
@@ -2462,7 +2471,8 @@ export class EnviarSunatService {
             `⛔ Comprobante ${comprobanteId} ya está ${actual?.estadoEnvioSunat}; se ignora el resultado ${estadoFinal} de este envío.`,
           );
           return {
-            status: actual?.estadoEnvioSunat === 'EMITIDO' ? 'ACEPTADO' : 'ANULADO',
+            status:
+              actual?.estadoEnvioSunat === 'EMITIDO' ? 'ACEPTADO' : 'ANULADO',
             documentId,
             comprobanteId,
             serie: comp.serie,
@@ -2635,7 +2645,11 @@ export class EnviarSunatService {
 
         // Nunca degradar un comprobante que otro proceso ya dejó en estado final
         // (p. ej. aceptado por SUNAT mientras este reintento fallaba).
-        const ESTADOS_FINALES = ['EMITIDO', 'ANULADO', 'PENDIENTE_CONCILIACION'];
+        const ESTADOS_FINALES = [
+          'EMITIDO',
+          'ANULADO',
+          'PENDIENTE_CONCILIACION',
+        ];
         if (
           currentComp &&
           ESTADOS_FINALES.includes(String(currentComp.estadoEnvioSunat))
@@ -2767,6 +2781,17 @@ export class EnviarSunatService {
         sunatLastRetryAt: new Date(),
       },
     });
+
+    // Este estado se pone cuando SUNAT respondió que el documento YA ESTÁ
+    // REGISTRADO (código 1033): la venta es válida y aceptada, lo único que
+    // falta es el CDR. Antes la comisión solo se generaba al conciliar a mano y,
+    // como casi nadie concilia, el vendedor no cobraba nunca esas ventas.
+    // El helper es idempotente, así que si después se concilia no se duplica.
+    const conDetalles = await this.prisma.comprobante.findUnique({
+      where: { id: comprobanteId },
+      include: { detalles: true },
+    });
+    if (conDetalles) await this.registrarComisionesAlAceptar(conDetalles);
   }
 
   // Afectaciones gratuitas Catálogo 07 (11-16 gravado, 21 exonerado, 31-37 inafecto):
@@ -2944,7 +2969,8 @@ export class EnviarSunatService {
         correo_electronico: comp.cliente?.email || null,
         telefono: comp.cliente?.celular || null,
       },
-      codigo_condicion_de_pago: String(comp.formaPagoTipo).toUpperCase() === 'CREDITO' ? '02' : '01',
+      codigo_condicion_de_pago:
+        String(comp.formaPagoTipo).toUpperCase() === 'CREDITO' ? '02' : '01',
       totales: {
         total_exportacion: Number(comp.mtoOperExportacion || 0),
         total_operaciones_gravadas: Number(comp.mtoOperGravadas || 0),
@@ -3473,7 +3499,9 @@ export class EnviarSunatService {
 
       // Dirección de la sede emisora: solo se muestra si tiene una
       // dirección propia distinta a la fiscal del RUC.
-      const sedeDir = ((comp as any).sede?.direccion || '').trim().toUpperCase();
+      const sedeDir = ((comp as any).sede?.direccion || '')
+        .trim()
+        .toUpperCase();
       const fiscalDir = (comp.empresa.direccion || '').trim().toUpperCase();
       const sedeDireccionPdf = sedeDir && sedeDir !== fiscalDir ? sedeDir : '';
 
@@ -3526,7 +3554,10 @@ export class EnviarSunatService {
             : undefined,
         mtoImpVenta: Number(comp.mtoImpVenta).toFixed(2),
         totalEnLetras: numeroALetras(Number(comp.mtoImpVenta)).toUpperCase(),
-        formaPago: String(comp.formaPagoTipo).toUpperCase() === 'CONTADO' ? 'CONTADO' : 'CRÉDITO',
+        formaPago:
+          String(comp.formaPagoTipo).toUpperCase() === 'CONTADO'
+            ? 'CONTADO'
+            : 'CRÉDITO',
         medioPago: (comp.medioPago || 'EFECTIVO').toUpperCase(),
         observaciones: comp.observaciones
           ? comp.observaciones.toUpperCase()

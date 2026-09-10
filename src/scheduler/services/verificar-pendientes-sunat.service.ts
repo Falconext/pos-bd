@@ -167,6 +167,18 @@ export class VerificarPendientesSunatService {
                       'SUNAT 1033: comprobante registrado previamente; requiere conciliación.',
                   },
                 });
+                // SUNAT ya tiene el documento registrado: la venta es válida y le
+                // toca comisión al vendedor aunque falte el CDR. Sin esto la venta
+                // quedaba en conciliación y el vendedor nunca cobraba. Idempotente.
+                const conDetalles = await this.prisma.comprobante.findUnique({
+                  where: { id: comprobante.id },
+                  include: { detalles: true },
+                });
+                if (conDetalles) {
+                  await this.enviarSunat.registrarComisionesAlAceptar(
+                    conDetalles,
+                  );
+                }
               } else {
                 throw err;
               }

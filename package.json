@@ -22,6 +22,7 @@
     "migrate:sedes": "npx ts-node src/scripts/migrate-sedes.ts",
     "backfill:sede-comprobantes": "npx ts-node src/scripts/backfill-sede-comprobantes.ts",
     "limpiar:pagos-duplicados": "npx ts-node src/scripts/limpiar-pagos-duplicados-envio.ts",
+    "comisiones:conciliacion": "npx ts-node src/scripts/comisiones-pendiente-conciliacion.ts",
     "reset:stock": "npx ts-node src/scripts/reset-stock-50.ts",
     "diagnose:empresa-scope": "npx ts-node src/scripts/diagnose-empresa-scope.ts",
     "openapi:logistica": "npx ts-node -r tsconfig-paths/register scripts/emit-logistica-openapi.ts",
