@@ -260,7 +260,14 @@ export class EnvioDespachoService {
   private async validarPlanAutomatizacion(empresaId: number) {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
-      select: { plan: { select: { nombre: true, features: { select: { featureKey: true, enabled: true } } } } },
+      select: {
+        plan: {
+          select: {
+            nombre: true,
+            features: { select: { featureKey: true, enabled: true } },
+          },
+        },
+      },
     });
     if (!planPermiteShalomPro(empresa?.plan)) {
       throw new ForbiddenException(
@@ -276,7 +283,12 @@ export class EnvioDespachoService {
         where: { id: empresaId },
         select: {
           shalomAutoTrackingActivo: true,
-          plan: { select: { nombre: true, features: { select: { featureKey: true, enabled: true } } } },
+          plan: {
+            select: {
+              nombre: true,
+              features: { select: { featureKey: true, enabled: true } },
+            },
+          },
         },
       }),
     ]);
@@ -471,7 +483,10 @@ export class EnvioDespachoService {
         referencia: `${d.comprobante.serie}-${String(d.comprobante.correlativo).padStart(8, '0')}`,
         cliente: d.comprobante.cliente?.nombre ?? '—',
         telefono: d.comprobante.cliente?.telefono ?? '',
-        vendedor: (d.comprobante as any).vendedorCampoNombre ?? d.comprobante.usuario?.nombre ?? '—',
+        vendedor:
+          (d.comprobante as any).vendedorCampoNombre ??
+          d.comprobante.usuario?.nombre ??
+          '—',
         total,
         montoPagado,
         saldoPendiente: saldo,
@@ -662,7 +677,13 @@ export class EnvioDespachoService {
       const nombre = comprobante.cliente?.nombre ?? 'Cliente';
       // pago_confirmado → {{1}} nombre, {{2}} pedido
       this.whatsapp
-        .enviarPlantilla(telefono, 'pago_confirmado', 'es', [nombre, pedidoRef], empresaId)
+        .enviarPlantilla(
+          telefono,
+          'pago_confirmado',
+          'es',
+          [nombre, pedidoRef],
+          empresaId,
+        )
         .catch((e) =>
           this.logger.warn(`WA pago completo fallido: ${e.message}`),
         );
@@ -731,31 +752,52 @@ export class EnvioDespachoService {
       data: { adelanto, saldo, estadoPago: estadoPago as any },
     });
 
-    // Limpiar AMBOS tipos de pago de adelanto para evitar duplicados:
-    // el que crea comprobante.service al guardar la NV y el que crea este método.
+    // Limpiar SOLO los pagos que genera este método, para poder recalcularlos si
+    // el envío se edita. Se identifican por su referencia determinista; las dos
+    // observaciones son el formato antiguo, se mantienen para limpiar los que ya
+    // existían antes de que hubiera referencia.
+    const refEnvio = `${comprobante.tipoDoc}-ENVIO-${comprobanteId}`;
     await this.prisma.pago.deleteMany({
       where: {
         comprobanteId,
-        observacion: {
-          in: [
-            'Adelanto registrado desde coordinación de envío',
-            'Pago adelantado registrado automáticamente',
-          ],
-        },
+        OR: [
+          { referencia: refEnvio },
+          {
+            observacion: {
+              in: [
+                'Adelanto registrado desde coordinación de envío',
+                'Pago adelantado registrado automáticamente',
+              ],
+            },
+          },
+        ],
       },
     });
 
     if (esAdelanto) {
-      await this.prisma.pago.create({
-        data: {
-          comprobanteId,
-          empresaId,
-          monto: adelanto,
-          medioPago: 'EFECTIVO',
-          observacion: 'Adelanto registrado desde coordinación de envío',
-          referencia: `${comprobante.tipoDoc}-ENVIO-${comprobanteId}`,
-        },
+      // Cuando el adelanto ya se cobró al emitir el comprobante, el pago existe
+      // desde `registrarPagosDeEmision` con el medio real (Yape, tarjeta...). No
+      // se debe crear otro: antes se duplicaba porque el limpiador de arriba solo
+      // buscaba por observación y la de emisión es distinta, así que el historial
+      // mostraba dos pagos y el total pagado salía al doble.
+      const { _sum } = await this.prisma.pago.aggregate({
+        where: { comprobanteId },
+        _sum: { monto: true },
       });
+      const yaPagado = this.round2(Number(_sum.monto ?? 0));
+      const falta = this.round2(adelanto - yaPagado);
+      if (falta > 0) {
+        await this.prisma.pago.create({
+          data: {
+            comprobanteId,
+            empresaId,
+            monto: falta,
+            medioPago: 'EFECTIVO',
+            observacion: 'Adelanto registrado desde coordinación de envío',
+            referencia: refEnvio,
+          },
+        });
+      }
     }
   }
 

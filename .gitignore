@@ -58,3 +58,6 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 # backups de entorno (no subir credenciales)
 .env.bak*
 *.env.bak
+
+# Respaldos que generan los scripts de limpieza (datos de producción)
+pagos-duplicados-respaldo-*.json
