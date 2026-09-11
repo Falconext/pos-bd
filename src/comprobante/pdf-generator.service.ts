@@ -490,6 +490,7 @@ export class PdfGeneratorService {
     ruc: string;
     direccion: string;
     sedeDireccion?: string; // dirección de la sede emisora (si difiere de la fiscal)
+    sedeNombre?: string; // nombre de la sede emisora (solo empresas con 2+ sedes)
     rubro?: string;
     celular?: string;
     email?: string;

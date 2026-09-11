@@ -157,7 +157,8 @@
       <div class="empresa-info">
         {{#if (vis fc 'razonSocial')}}<h1 style="font-size: {{fsz fc 'razonSocial' 20}}px;">{{razonSocial}}</h1>{{/if}}
         {{#if (vis fc 'direccion')}}<div class="linea" style="font-size: {{fsz fc 'direccion' 12}}px;">{{direccion}}</div>
-        {{#if sedeDireccion}}<div class="linea" style="font-size: {{fsz fc 'direccion' 12}}px;">SEDE: {{sedeDireccion}}</div>{{/if}}{{/if}}
+        {{#if sedeNombre}}<div class="linea" style="font-size: {{fsz fc 'direccion' 12}}px;">SEDE: {{sedeNombre}}</div>{{/if}}
+        {{#if sedeDireccion}}<div class="linea" style="font-size: {{fsz fc 'direccion' 12}}px;">DIRECCION SEDE: {{sedeDireccion}}</div>{{/if}}{{/if}}
         {{#if (vis fc 'rubro')}}{{#if rubro}}<div class="linea" style="font-size: {{fsz fc 'rubro' 12}}px;">{{rubro}}</div>{{/if}}{{/if}}
         {{#if (vis fc 'nombreComercial')}}{{#unless (eq nombreComercial razonSocial)}}<div class="linea" style="font-size: {{fsz fc 'nombreComercial' 12}}px;">NOMBRE COMERCIAL: {{nombreComercial}}</div>{{/unless}}{{/if}}
         {{#if (vis fc 'celular')}}{{#if celular}}<div class="linea" style="font-size: {{fsz fc 'celular' 12}}px;">CELULAR: {{celular}}</div>{{/if}}{{/if}}

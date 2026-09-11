@@ -135,6 +135,23 @@ function getTipoDocumentoLabel(
 
 @Injectable()
 export class EnviarSunatService {
+  /**
+   * Nombre de la sede que emitió el comprobante, para imprimirlo como
+   * "SEDE: X". Solo aporta si la empresa tiene 2+ sedes activas; con una
+   * sola sería ruido ("SEDE: SEDE PRINCIPAL").
+   */
+  private async nombreSedeParaImpresion(
+    empresaId: number,
+    nombreSede?: string | null,
+  ): Promise<string> {
+    const nombre = (nombreSede || '').trim().toUpperCase();
+    if (!nombre) return '';
+    const sedes = await this.prisma.sede.count({
+      where: { empresaId, activo: true },
+    });
+    return sedes > 1 ? nombre : '';
+  }
+
   private readonly logger = new Logger(EnviarSunatService.name);
   private readonly maxRetries = 12; // 12 intentos × 5s = 60s máximo esperando SUNAT
   private readonly retryInterval = 5000;
@@ -2337,6 +2354,11 @@ export class EnviarSunatService {
               .toUpperCase();
             const sedeDireccionPdf =
               sedeDir && sedeDir !== fiscalDir ? sedeDir : '';
+            // Nombre de la sede emisora: solo aporta si la empresa tiene 2+ sedes.
+            const sedeNombrePdf = await this.nombreSedeParaImpresion(
+              comp.empresa.id,
+              (comp as any).sede?.nombre,
+            );
 
             const pdfData = {
               tipoMoneda: (comp as any)?.tipoMoneda || 'PEN',
@@ -2349,6 +2371,7 @@ export class EnviarSunatService {
               ruc: comp.empresa.ruc,
               direccion: (comp.empresa.direccion || '').toUpperCase(),
               sedeDireccion: sedeDireccionPdf,
+              sedeNombre: sedeNombrePdf,
               rubro:
                 comp.empresa.rubro?.nombre?.toUpperCase() ||
                 'VENTA DE MATERIALES DE CONSTRUCCIÓN',
@@ -2424,7 +2447,8 @@ export class EnviarSunatService {
                 : undefined,
               // Formato configurable por empresa (visibilidad por elemento).
               fc: buildFiscalFormatoFc(comp.empresa, comp.tipoDoc),
-              ocultarMarcaSistema: (comp.empresa as any).mostrarMarcaSistema === false,
+              ocultarMarcaSistema:
+                (comp.empresa as any).mostrarMarcaSistema === false,
             };
 
             const pdfBuffer =
@@ -3505,6 +3529,10 @@ export class EnviarSunatService {
         .toUpperCase();
       const fiscalDir = (comp.empresa.direccion || '').trim().toUpperCase();
       const sedeDireccionPdf = sedeDir && sedeDir !== fiscalDir ? sedeDir : '';
+      const sedeNombrePdf = await this.nombreSedeParaImpresion(
+        comp.empresa.id,
+        (comp as any).sede?.nombre,
+      );
 
       const pdfData = {
         tipoMoneda: (comp as any)?.tipoMoneda || 'PEN',
@@ -3516,6 +3544,7 @@ export class EnviarSunatService {
         ruc: comp.empresa.ruc,
         direccion: (comp.empresa.direccion || '').toUpperCase(),
         sedeDireccion: sedeDireccionPdf,
+        sedeNombre: sedeNombrePdf,
         rubro:
           comp.empresa.rubro?.nombre?.toUpperCase() ||
           'VENTA DE MATERIALES DE CONSTRUCCIÓN',
@@ -3579,7 +3608,8 @@ export class EnviarSunatService {
           : undefined,
         // Formato configurable por empresa (visibilidad por elemento).
         fc: buildFiscalFormatoFc((comp as any).empresa, comp.tipoDoc),
-        ocultarMarcaSistema: (comp as any).empresa?.mostrarMarcaSistema === false,
+        ocultarMarcaSistema:
+          (comp as any).empresa?.mostrarMarcaSistema === false,
       };
 
       const pdfBuffer = await this.pdfGenerator.generarPDFComprobante(pdfData);
