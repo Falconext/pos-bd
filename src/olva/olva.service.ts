@@ -274,6 +274,23 @@ export class OlvaService {
         fresh: refresh,
         empresaId,
       });
+      // Una respuesta sin estado ni eventos (guía no encontrada / success:false)
+      // no debe pisar un snapshot con datos: se conserva el previo como stale.
+      const derivado = derivarEstadoOlva(fresco);
+      const eventos = (fresco as any)?.data?.events ?? (fresco as any)?.events;
+      const vacio = !derivado.estado && !(Array.isArray(eventos) && eventos.length);
+      if (vacio && envio?.olvaTrackingJson) {
+        this.logger.warn(
+          `Olva no encontró la guía ${numero}; se conserva el snapshot previo del envío ${envio.id}`,
+        );
+        return {
+          ...envio.olvaTrackingJson,
+          cached: true,
+          stale: true,
+          noEncontrado: true,
+          syncAt: envio.olvaSyncAt,
+        };
+      }
       if (envio) await this.persistir(envio.id, fresco);
       return { ...fresco, cached: false, syncAt: new Date() };
     } catch (err) {

@@ -171,6 +171,46 @@ export class AnalisisFinancieroController {
     );
   }
 
+  /** GET /analisis-financiero/clientes?mes=&anio=&fechaInicio=&fechaFin= — ciudades, clientes, fidelidad y envíos */
+  @Get('clientes')
+  getAnalisisClientes(
+    @User() user: any,
+    @Query('mes') mes?: string,
+    @Query('anio') anio?: string,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
+    @Query('sedeId') sedeIdQuery?: string,
+  ) {
+    return this.service.getAnalisisClientes(
+      user.empresaId,
+      mes ? Number(mes) : undefined,
+      anio ? Number(anio) : undefined,
+      fechaInicio,
+      fechaFin,
+      this.resolverSedeId(user, sedeIdQuery),
+    );
+  }
+
+  /** GET /analisis-financiero/couriers?mes=&anio=&fechaInicio=&fechaFin= — tablero Shalom / Olva / propios */
+  @Get('couriers')
+  getAnalisisCouriers(
+    @User() user: any,
+    @Query('mes') mes?: string,
+    @Query('anio') anio?: string,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
+    @Query('sedeId') sedeIdQuery?: string,
+  ) {
+    return this.service.getAnalisisCouriers(
+      user.empresaId,
+      mes ? Number(mes) : undefined,
+      anio ? Number(anio) : undefined,
+      fechaInicio,
+      fechaFin,
+      this.resolverSedeId(user, sedeIdQuery),
+    );
+  }
+
   /** DELETE /analisis-financiero/gastos/:id */
   @Delete('gastos/:id')
   eliminarGasto(@User() user: any, @Param('id', ParseIntPipe) id: number) {

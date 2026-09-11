@@ -160,6 +160,13 @@ export class ShalomService {
       .catch(() => null) as any;
   }
 
+  /** Snapshot sin ninguna etapa con fecha ni datos de búsqueda (orden no encontrada). */
+  private esSnapshotVacio(trackData: any): boolean {
+    const d = derivarEstadoShalom(trackData);
+    const search = trackData?.search?.data ?? trackData?.search ?? null;
+    return !d.estado && !d.entregado && !search?.contenido && !search?.destino;
+  }
+
   /** Deriva el estado del snapshot y lo persiste en el EnvioDespacho. */
   private async persistir(envioId: number, trackData: any): Promise<ShalomDerivado> {
     const d = derivarEstadoShalom(trackData);
@@ -209,6 +216,22 @@ export class ShalomService {
 
     try {
       const fresco = await this.track(orderNumber, orderCode, empresaId);
+      // "No se encontró la orden" llega con success:true y sin etapas. Si ya
+      // tenemos un snapshot con datos, no lo pisamos con ese vacío (el scraper
+      // de Shalom a veces no encuentra órdenes reales por unos minutos): se
+      // devuelve el snapshot previo marcado como stale.
+      if (this.esSnapshotVacio(fresco) && envio?.shalomTrackingJson && !this.esSnapshotVacio(envio.shalomTrackingJson)) {
+        this.logger.warn(
+          `Shalom no encontró la orden ${orderNumber}; se conserva el snapshot previo del envío ${envio.id}`,
+        );
+        return {
+          ...(envio.shalomTrackingJson as any),
+          cached: true,
+          stale: true,
+          noEncontrado: true,
+          syncAt: envio.shalomSyncAt,
+        };
+      }
       if (envio) await this.persistir(envio.id, fresco);
       return { ...fresco, cached: false, syncAt: new Date() };
     } catch (err) {
