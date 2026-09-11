@@ -6337,9 +6337,10 @@ export class ComprobanteService {
 
   /**
    * Exporta un RESUMEN (listado tipo reporte) de los comprobantes filtrados,
-   * en Excel o PDF imprimible — pensado para el cierre de mes: una fila por
-   * comprobante con cliente, vendedor, medio/estado de pago y total, más la
-   * suma final (excluyendo anulados).
+   * en Excel o PDF imprimible — pensado para el cierre de mes: cliente,
+   * vendedor, medio/estado de pago y total, más la suma final (excluyendo
+   * anulados). El PDF lleva una fila por comprobante; el Excel, una fila por
+   * producto con los datos y totales de la venta repetidos en cada una.
    */
   async exportarResumenComprobantes(params: {
     empresaId: number;
@@ -6503,6 +6504,14 @@ export class ComprobanteService {
         productos: (c.detalles ?? [])
           .map((d) => `${Number(d.cantidad)}x ${d.descripcion}`)
           .join('\n'),
+        // Excel: una fila por producto (ver abajo). El PDF sigue usando `productos`.
+        lineasProducto: (c.detalles ?? []).map(
+          (d) => `${Number(d.cantidad)}x ${d.descripcion}`,
+        ),
+        totalUnidades: (c.detalles ?? []).reduce(
+          (s, d) => s + Number(d.cantidad ?? 0),
+          0,
+        ),
         estadoPago: anulado
           ? 'Anulado'
           : (ESTADO_PAGO_LABEL[String(c.estadoPago)] ?? String(c.estadoPago ?? '')),
@@ -6561,11 +6570,48 @@ export class ComprobanteService {
     ];
 
     if (formato === 'excel') {
-      const headers = columnasExport.map((c) => c.header);
-      const rows = filas.map((f) => columnasExport.map((c) => c.get(f)));
-      // Fila TOTAL alineada bajo la columna de total.
-      const totalRow = columnasExport.map((c, i) =>
-        c.total ? totalGeneral : i === columnasExport.length - 2 ? 'TOTAL (sin anulados)' : '',
+      // Pedido del cliente: en el Excel cada producto va en su propia fila. Los
+      // datos de la venta (fecha, documento, cliente, etc.) se repiten en cada
+      // fila del producto, y "Total Unid." / "Total S/" muestran los totales de
+      // la venta completa, también repetidos. El TOTAL al pie sigue sumando una
+      // sola vez por venta, así que no se infla por la repetición.
+      // Si el usuario ocultó la columna Productos, se mantiene una fila por venta.
+      type Fila = (typeof filas)[number];
+      type ColExcel = Omit<ColDef, 'get'> & {
+        get: (f: Fila, producto: string) => any;
+      };
+      const explotarPorProducto = columnasExport.some(
+        (c) => c.header === 'Productos',
+      );
+      const columnasExcel: ColExcel[] = [];
+      for (const col of columnasExport) {
+        if (col.header === 'Productos') {
+          columnasExcel.push({ ...col, get: (_f, producto) => producto });
+          continue;
+        }
+        if (col.total) {
+          columnasExcel.push({
+            header: 'Total Unid.',
+            wch: 12,
+            get: (f) => f.totalUnidades,
+          });
+        }
+        columnasExcel.push({ ...col, get: (f) => col.get(f) });
+      }
+
+      const headers = columnasExcel.map((c) => c.header);
+      const rows = filas.flatMap((f) => {
+        const productos =
+          explotarPorProducto && f.lineasProducto.length
+            ? f.lineasProducto
+            : [f.productos];
+        return productos.map((p) => columnasExcel.map((c) => c.get(f, p)));
+      });
+      // Fila TOTAL alineada bajo la columna de total; la etiqueta va a la
+      // izquierda de "Total Unid." para no confundirla con las unidades.
+      const idxTotal = columnasExcel.findIndex((c) => c.total);
+      const totalRow = columnasExcel.map((c, i) =>
+        c.total ? totalGeneral : i === idxTotal - 2 ? 'TOTAL (sin anulados)' : '',
       );
       const aoa = [
         [
@@ -6580,7 +6626,7 @@ export class ComprobanteService {
       // Se usa XLSXStyle (no XLSX) porque la edición community descarta `cell.s`
       // al escribir y necesitamos wrapText en la columna Productos.
       const ws = XLSXStyle.utils.aoa_to_sheet(aoa);
-      ws['!cols'] = columnasExport.map((c) => ({ wch: c.wch }));
+      ws['!cols'] = columnasExcel.map((c) => ({ wch: c.wch }));
 
       // Las filas de datos arrancan después de [título, línea vacía, cabeceras].
       const PRIMERA_FILA_DATOS = 3;
@@ -6590,9 +6636,9 @@ export class ComprobanteService {
       // el contenido: los nombres largos de producto ocupan varias líneas
       // visuales por el ajuste de palabra, no solo una por cada '\n'. Sin alto,
       // Excel calcula solo cuántas líneas necesita y se ve el producto completo.
-      filas.forEach((_fila, i) => {
+      rows.forEach((_fila, i) => {
         const r = PRIMERA_FILA_DATOS + i;
-        columnasExport.forEach((colDef, c) => {
+        columnasExcel.forEach((colDef, c) => {
           const celda = ws[XLSXStyle.utils.encode_cell({ r, c })];
           if (!celda) return;
           // Alineación arriba en toda la fila: si una celda crece por el wrap,
