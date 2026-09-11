@@ -539,6 +539,8 @@ export class PdfGeneratorService {
     // Cuentas bancarias y mensaje del pie propio (solo si el formato los activa).
     cuentasBancarias?: Array<{ banco: string; moneda: string; numeroCuenta: string; cci: string }>;
     graciasLineas?: string[];
+    // Perfil → Configuración → "Mostrar la marca del sistema" apagado.
+    ocultarMarcaSistema?: boolean;
 
     // Otros
     formaPago: string;

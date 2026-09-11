@@ -416,10 +416,12 @@
     <!-- ── BOTTOM STRIP ────────────────────────────────────────────── -->
     <div class="footer-bottom">
         <div class="usuario-label">USUARIO: {{usuario}}</div>
+        {{#unless ocultarMarcaSistema}}
         <div class="marca-label">
             <span class="marca-name">{{sistemaNombre}} ™</span><br>
             Comprobante emitido a través de {{sistemaUrl}}
         </div>
+        {{/unless}}
     </div>
 
 </body>

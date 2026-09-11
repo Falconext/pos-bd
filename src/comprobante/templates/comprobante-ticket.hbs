@@ -175,11 +175,13 @@
   </div>
   {{/if}}
 
+  {{#unless ocultarMarcaSistema}}
   <div class="pie">
     <p>Sistema punto de venta - {{sistemaNombre}}.</p>
     <p>Desarrollado por {{sistemaNombre}}.</p>
     <p>{{sistemaWeb}}.</p>
   </div>
+  {{/unless}}
 
   <hr>
   {{#if (vis fc 'gracias')}}<p class="gracias">GRACIAS POR SU COMPRA, VUELVA PRONTO !</p><hr>{{/if}}

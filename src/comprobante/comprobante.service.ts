@@ -5794,6 +5794,9 @@ export class ComprobanteService {
       plinNumero: (full.empresa as any).plinNumero || undefined,
       plinQrUrl: buildLogoDataUrl(plinQrSigned),
       usuario: 'ADMIN',
+      // Perfil → Configuración → "Mostrar la marca del sistema": apaga el pie de
+      // marca en ticket, A4/A5 y cotización.
+      ocultarMarcaSistema: (full.empresa as any).mostrarMarcaSistema === false,
       sistemaNombre: process.env.APP_NAME || 'Falconext',
       sistemaWeb: (
         process.env.APP_URL ||

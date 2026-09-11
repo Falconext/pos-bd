@@ -2424,6 +2424,7 @@ export class EnviarSunatService {
                 : undefined,
               // Formato configurable por empresa (visibilidad por elemento).
               fc: buildFiscalFormatoFc(comp.empresa, comp.tipoDoc),
+              ocultarMarcaSistema: (comp.empresa as any).mostrarMarcaSistema === false,
             };
 
             const pdfBuffer =
@@ -3578,6 +3579,7 @@ export class EnviarSunatService {
           : undefined,
         // Formato configurable por empresa (visibilidad por elemento).
         fc: buildFiscalFormatoFc((comp as any).empresa, comp.tipoDoc),
+        ocultarMarcaSistema: (comp as any).empresa?.mostrarMarcaSistema === false,
       };
 
       const pdfBuffer = await this.pdfGenerator.generarPDFComprobante(pdfData);
