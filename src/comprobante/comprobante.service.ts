@@ -5805,6 +5805,39 @@ export class ComprobanteService {
       fechaImpresion,
     };
 
+    // Cuentas bancarias para el PDF (cotización/nota de venta y, si el formato
+    // las activa, factura/boleta). Fuente primaria: tabla multi-cuenta; fallback: legacy.
+    const cuentasBancariasPdf = (() => {
+      const cuentas = (
+        ((full.empresa as any).cuentasBancarias || []) as any[]
+      ).filter((c) => c.mostrarEnCotizacion !== false);
+      // Fuente primaria: tabla multi-cuenta (Perfil → Cuentas Bancarias)
+      if (cuentas.length > 0) {
+        return cuentas.map((c) => ({
+          banco: (c.banco || '').toUpperCase(),
+          moneda: c.moneda === 'USD' ? 'DÓLARES' : 'SOLES',
+          numeroCuenta: c.numeroCuenta || '',
+          cci: c.cci || '',
+          // Titular de la cuenta; si no se configuró, usa la razón social
+          titular: (c.titular || razonSocialEmpresa || '').toUpperCase(),
+        }));
+      }
+      // Fallback: columnas legacy de Empresa (Editar Empresa)
+      const legacyBanco = (full.empresa as any).bancoNombre;
+      if (legacyBanco) {
+        return [
+          {
+            banco: String(legacyBanco).toUpperCase(),
+            moneda: (full.empresa as any).monedaCuenta || 'SOLES',
+            numeroCuenta: (full.empresa as any).numeroCuenta || '',
+            cci: (full.empresa as any).cci || '',
+            titular: razonSocialEmpresa || '',
+          },
+        ];
+      }
+      return [];
+    })();
+
     let buffer: Buffer;
     // La nota de venta comparte diseño con la cotización (igual que el web, que
     // las resuelve en la misma rama de comprobanteImprimir.tsx): trae QR de pago,
@@ -5966,36 +5999,7 @@ export class ComprobanteService {
             : undefined,
         clienteEmail: (full.cliente as any)?.email || '-',
         clienteTelefono: (full.cliente as any)?.telefono || '-',
-        cuentasBancarias: (() => {
-          const cuentas = (
-            ((full.empresa as any).cuentasBancarias || []) as any[]
-          ).filter((c) => c.mostrarEnCotizacion !== false);
-          // Fuente primaria: tabla multi-cuenta (Perfil → Cuentas Bancarias)
-          if (cuentas.length > 0) {
-            return cuentas.map((c) => ({
-              banco: (c.banco || '').toUpperCase(),
-              moneda: c.moneda === 'USD' ? 'DÓLARES' : 'SOLES',
-              numeroCuenta: c.numeroCuenta || '',
-              cci: c.cci || '',
-              // Titular de la cuenta; si no se configuró, usa la razón social
-              titular: (c.titular || razonSocialEmpresa || '').toUpperCase(),
-            }));
-          }
-          // Fallback: columnas legacy de Empresa (Editar Empresa)
-          const legacyBanco = (full.empresa as any).bancoNombre;
-          if (legacyBanco) {
-            return [
-              {
-                banco: String(legacyBanco).toUpperCase(),
-                moneda: (full.empresa as any).monedaCuenta || 'SOLES',
-                numeroCuenta: (full.empresa as any).numeroCuenta || '',
-                cci: (full.empresa as any).cci || '',
-                titular: razonSocialEmpresa || '',
-              },
-            ];
-          }
-          return [];
-        })(),
+        cuentasBancarias: cuentasBancariasPdf,
         includeProductImages: !!(full as any).cotizIncluirImagenes,
         usuario: usuarioNombre
           ? `${usuarioNombre} ${fechaImpresion}`
@@ -6015,6 +6019,16 @@ export class ComprobanteService {
       // Debe reflejar lo mismo que respeta el frontend (comprobanteImprimir.tsx)
       // para que "Ver PDF" e "Imprimir" coincidan.
       const fcFiscal = buildFiscalFormatoFc(full.empresa, full.tipoDoc);
+      // Mensaje del pie propio (Configurar formato → Mensaje de agradecimiento);
+      // vacío = el texto por defecto de la plantilla. Mismo criterio que el web.
+      const rawFiscalCfg = ((full.tipoDoc === '03'
+        ? (full.empresa as any).boletaFormatoConfig
+        : (full.empresa as any).facturaFormatoConfig) || {}) as any;
+      const graciasLineasFiscal = String(rawFiscalCfg.gracias?.texto ?? '')
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .map((l) => l.toUpperCase());
       // Sub total = suma de operaciones (gravadas + exoneradas + inafectas).
       const subTotalFiscal = (
         Number(full.mtoOperGravadas || 0) +
@@ -6026,6 +6040,8 @@ export class ComprobanteService {
           ...pdfData,
           fc: fcFiscal,
           subTotal: subTotalFiscal,
+          cuentasBancarias: cuentasBancariasPdf,
+          graciasLineas: graciasLineasFiscal,
         },
         formato,
       );

@@ -53,6 +53,10 @@ export function buildFiscalFormatoFc(
     string,
     { visible?: boolean; size?: number }
   >;
+  // En factura/boleta la razón social es el título del documento (20px, igual
+  // que `defaultSizeFiscal` en el frontend); en cotización/nota es una línea más.
+  const esFiscal = tipoDoc !== 'COT' && !TIPOS_INFORMALES.includes(tipoDoc);
+  if (esFiscal) defaults.razonSocial = 20;
   const fc: Record<string, { visible: boolean; size: number }> = {};
   for (const [k, def] of Object.entries(defaults)) {
     const c = raw[k] || {};
@@ -130,6 +134,12 @@ export class PdfGeneratorService {
     });
     // Número positivo (para mostrar filas solo cuando el monto es > 0).
     Handlebars.registerHelper('pos', (v: any) => Number(v) > 0);
+    // Tamaño (px) de un elemento del formato configurable, con fallback para
+    // PDFs generados sin `fc`.
+    Handlebars.registerHelper('fsz', (fc: any, key: string, def: any) => {
+      const n = Number(fc?.[key]?.size);
+      return n > 0 ? n : Number(def) || 12;
+    });
 
     const templateSource = fs.readFileSync(foundPath, 'utf-8');
     this.template = Handlebars.compile(templateSource);
@@ -526,6 +536,9 @@ export class PdfGeneratorService {
     // Formato configurable (visibilidad por elemento de totales). Opcional:
     // si no se envía, todas las filas se muestran (ver helper `vis`).
     fc?: Record<string, { visible: boolean; size: number }>;
+    // Cuentas bancarias y mensaje del pie propio (solo si el formato los activa).
+    cuentasBancarias?: Array<{ banco: string; moneda: string; numeroCuenta: string; cci: string }>;
+    graciasLineas?: string[];
 
     // Otros
     formaPago: string;
