@@ -167,8 +167,7 @@ export class AuthService {
       // entre sus sedes activas, se usa directo y se evita el selector aunque
       // tenga 2+ sedes asignadas.
       const sedeDefaultValida =
-        user.sedeId != null &&
-        sedesActivas.some((s) => s.id === user.sedeId);
+        user.sedeId != null && sedesActivas.some((s) => s.id === user.sedeId);
 
       if (sedesActivas.length === 1) {
         sedeIdFinal = sedesActivas[0].id;
@@ -590,6 +589,8 @@ export class AuthService {
             facturaFormatoConfig: true,
             boletaFormatoConfig: true,
             mostrarQrSunat: true,
+            mostrarMarcaSistema: true,
+            catalogoPorSede: true,
             formatoImpresionDefault: true,
             imprimirAutomatico: true,
             tipoEmpresa: true,
@@ -689,8 +690,12 @@ export class AuthService {
     // QR de pago (Yape/Plin): el bucket es privado; se entregan firmados para
     // poder mostrarse (p. ej. en el formato de cotización).
     if (usuario.empresa) {
-      usuario.empresa.yapeQrUrl = await this.signIfS3(usuario.empresa.yapeQrUrl);
-      usuario.empresa.plinQrUrl = await this.signIfS3(usuario.empresa.plinQrUrl);
+      usuario.empresa.yapeQrUrl = await this.signIfS3(
+        usuario.empresa.yapeQrUrl,
+      );
+      usuario.empresa.plinQrUrl = await this.signIfS3(
+        usuario.empresa.plinQrUrl,
+      );
     }
 
     if (usuario.empresa?.plan?.features) {
@@ -792,6 +797,8 @@ export class AuthService {
             facturaFormatoConfig: true,
             boletaFormatoConfig: true,
             mostrarQrSunat: true,
+            mostrarMarcaSistema: true,
+            catalogoPorSede: true,
             formatoImpresionDefault: true,
             imprimirAutomatico: true,
             directorTecnico: true,
@@ -935,8 +942,12 @@ export class AuthService {
 
       // QR de pago (Yape/Plin): el bucket es privado, así que se entregan
       // firmados para que puedan mostrarse (p. ej. en el formato de cotización).
-      usuario.empresa.yapeQrUrl = await this.signIfS3(usuario.empresa.yapeQrUrl);
-      usuario.empresa.plinQrUrl = await this.signIfS3(usuario.empresa.plinQrUrl);
+      usuario.empresa.yapeQrUrl = await this.signIfS3(
+        usuario.empresa.yapeQrUrl,
+      );
+      usuario.empresa.plinQrUrl = await this.signIfS3(
+        usuario.empresa.plinQrUrl,
+      );
     }
 
     return usuario;

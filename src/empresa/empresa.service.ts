@@ -288,7 +288,20 @@ export class EmpresaService {
     const esEmprendedor = pn.includes('emprendedor');
     const esNegocio = pn.includes('negocio');
     const esCorporativo = pn.includes('corporativo');
-    const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    const MESES = [
+      'Enero',
+      'Febrero',
+      'Marzo',
+      'Abril',
+      'Mayo',
+      'Junio',
+      'Julio',
+      'Agosto',
+      'Septiembre',
+      'Octubre',
+      'Noviembre',
+      'Diciembre',
+    ];
     const hoy = new Date();
     const data = {
       cliente: empresa.razonSocial,
@@ -312,25 +325,36 @@ export class EmpresaService {
     return { empresa, admin, data, filename };
   }
 
-  async generarContratoPdf(empresaId: number): Promise<{ buffer: Buffer; filename: string }> {
+  async generarContratoPdf(
+    empresaId: number,
+  ): Promise<{ buffer: Buffer; filename: string }> {
     const { data, filename } = await this.construirDatosContrato(empresaId);
     const buffer = await this.pdfGenerator.generarContrato(data);
     return { buffer, filename };
   }
 
   async enviarContrato(empresaId: number, canal: 'email' | 'whatsapp') {
-    const { empresa, admin, data, filename } = await this.construirDatosContrato(empresaId);
+    const { empresa, admin, data, filename } =
+      await this.construirDatosContrato(empresaId);
     const buffer = await this.pdfGenerator.generarContrato(data);
 
     if (canal === 'email') {
       const correo = admin?.email;
-      if (!correo) throw new BadRequestException('El cliente no tiene un correo registrado');
+      if (!correo)
+        throw new BadRequestException(
+          'El cliente no tiene un correo registrado',
+        );
       const resendKey = process.env.RESEND_API_KEY;
-      if (!resendKey) throw new BadRequestException('Envío de correo no configurado (RESEND_API_KEY)');
+      if (!resendKey)
+        throw new BadRequestException(
+          'Envío de correo no configurado (RESEND_API_KEY)',
+        );
       const { Resend } = await import('resend');
       const resend = new Resend(resendKey);
       const fromEmail =
-        process.env.RESEND_FROM_EMAIL || process.env.MAIL_FROM || 'noreply@falconext.pe';
+        process.env.RESEND_FROM_EMAIL ||
+        process.env.MAIL_FROM ||
+        'noreply@falconext.pe';
       const { error } = await resend.emails.send({
         from: `KREZKA <${fromEmail}>`,
         to: correo,
@@ -344,13 +368,24 @@ export class EmpresaService {
 
     // WhatsApp: se sube el PDF a S3 y se envía como documento (con la firma incluida).
     const telefono = admin?.celular;
-    if (!telefono) throw new BadRequestException('El cliente no tiene un teléfono registrado');
+    if (!telefono)
+      throw new BadRequestException(
+        'El cliente no tiene un teléfono registrado',
+      );
     const key = `contratos/empresa-${empresaId}/${Date.now()}-${filename}`;
     await this.s3Service.uploadPDF(buffer, key);
     const url = await this.s3Service.getSignedGetUrl(key, 7 * 24 * 3600);
     const caption = `📄 *KREZKA*\nHola ${empresa.razonSocial}, te compartimos tu *Contrato de Prestación de Servicios* (Plan ${data.planNombre || '—'}). Revísalo, fírmalo y devuélvelo. ¡Gracias por tu confianza!`;
-    const res = await this.whatsappService.enviarDocumentoUrl(telefono, url, filename, caption);
-    if (!res.success) throw new BadRequestException(res.error || 'No se pudo enviar por WhatsApp');
+    const res = await this.whatsappService.enviarDocumentoUrl(
+      telefono,
+      url,
+      filename,
+      caption,
+    );
+    if (!res.success)
+      throw new BadRequestException(
+        res.error || 'No se pudo enviar por WhatsApp',
+      );
     return { canal, destino: telefono };
   }
 
@@ -1071,7 +1106,10 @@ export class EmpresaService {
         }),
         this.prisma.comprobante.groupBy({
           by: ['empresaId'],
-          where: { empresaId: { in: empresaIds }, fechaEmision: { gte: hace7 } },
+          where: {
+            empresaId: { in: empresaIds },
+            fechaEmision: { gte: hace7 },
+          },
           _count: { _all: true },
         }),
         this.prisma.comprobante.groupBy({
@@ -1101,9 +1139,7 @@ export class EmpresaService {
       }
     }
 
-    const resolverSalud = (
-      e: { id: number; fechaActivacion: Date | null },
-    ) => {
+    const resolverSalud = (e: { id: number; fechaActivacion: Date | null }) => {
       const s = saludMap.get(e.id) ?? {
         ultimaVenta: null,
         ventas7: 0,
@@ -1238,6 +1274,11 @@ export class EmpresaService {
       // Impresión de comprobantes (Perfil → Configuración).
       if (dto.mostrarQrSunat !== undefined)
         updateData.mostrarQrSunat = dto.mostrarQrSunat;
+      if (dto.mostrarMarcaSistema !== undefined)
+        updateData.mostrarMarcaSistema = dto.mostrarMarcaSistema;
+      // Catálogo por sede (Perfil → Configuración → Sedes y catálogo).
+      if (dto.catalogoPorSede !== undefined)
+        updateData.catalogoPorSede = dto.catalogoPorSede;
       if (dto.formatoImpresionDefault !== undefined)
         updateData.formatoImpresionDefault = dto.formatoImpresionDefault;
       if (dto.imprimirAutomatico !== undefined)
@@ -1245,7 +1286,8 @@ export class EmpresaService {
       if (dto.cotizTerminosDefault !== undefined)
         updateData.cotizTerminosDefault = dto.cotizTerminosDefault || null;
       if (dto.cotizObservacionesDefault !== undefined)
-        updateData.cotizObservacionesDefault = dto.cotizObservacionesDefault || null;
+        updateData.cotizObservacionesDefault =
+          dto.cotizObservacionesDefault || null;
       if (dto.cuentaDetraccionBN !== undefined)
         updateData.cuentaDetraccionBN = dto.cuentaDetraccionBN;
       if (dto.fechaActivacion !== undefined)
@@ -1589,7 +1631,6 @@ export class EmpresaService {
     }
   }
 
-
   /**
    * Exporta el listado de empresas (con los mismos filtros del listado) en
    * Excel o PDF imprimible — para el admin de sistema.
@@ -1606,7 +1647,12 @@ export class EmpresaService {
     adminSistemaNegocio?: string | null,
     adminSistemaProducto?: string | null,
   ): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
-    const { search, estado = 'TODOS', tipoEmpresa = '', formato = 'excel' } = params;
+    const {
+      search,
+      estado = 'TODOS',
+      tipoEmpresa = '',
+      formato = 'excel',
+    } = params;
 
     const brandFiltro = adminSistemaNegocio
       ? normalizeBrand(adminSistemaNegocio)
@@ -1625,7 +1671,14 @@ export class EmpresaService {
       ...(brandFiltro ? [{ brand: brandFiltro }] : []),
       ...(productoFiltro ? [{ producto: productoFiltro }] : []),
       ...(search
-        ? [{ OR: [{ ruc: { contains: search } }, { razonSocial: { contains: search } }] }]
+        ? [
+            {
+              OR: [
+                { ruc: { contains: search } },
+                { razonSocial: { contains: search } },
+              ],
+            },
+          ]
         : []),
     ];
     const where = filtros.length ? { AND: filtros } : {};
@@ -1655,11 +1708,15 @@ export class EmpresaService {
         !e.usaDemo &&
         !e.plan?.esPrueba &&
         !RUCS_EXCLUIDOS_EXPORT.includes(e.ruc) &&
-        !String(e.razonSocial ?? '').toUpperCase().includes('DEMO'),
+        !String(e.razonSocial ?? '')
+          .toUpperCase()
+          .includes('DEMO'),
     );
 
     if (empresas.length === 0) {
-      throw new NotFoundException('No se encontraron empresas con los filtros seleccionados');
+      throw new NotFoundException(
+        'No se encontraron empresas con los filtros seleccionados',
+      );
     }
 
     const fmtFecha = (d?: Date | null) =>
@@ -1702,30 +1759,77 @@ export class EmpresaService {
       estado: e.estado === 'ACTIVO' ? 'Activo' : 'Inactivo',
     }));
     const activas = filas.filter((f) => f.estado === 'Activo').length;
-    const genFecha = new Date().toLocaleString('es-PE', { timeZone: 'America/Lima' });
+    const genFecha = new Date().toLocaleString('es-PE', {
+      timeZone: 'America/Lima',
+    });
 
     if (formato === 'excel') {
-      const headers = ['RUC', 'Razón Social', 'Nombre Comercial', 'Ambiente', 'Rubro', 'Plan', 'Mes de Inicio', 'Activación', 'Expiración', 'Vence en', 'Estado'];
+      const headers = [
+        'RUC',
+        'Razón Social',
+        'Nombre Comercial',
+        'Ambiente',
+        'Rubro',
+        'Plan',
+        'Mes de Inicio',
+        'Activación',
+        'Expiración',
+        'Vence en',
+        'Estado',
+      ];
       const aoa = [
-        [`Empresas registradas — ${filas.length} en total (${activas} activas) · Generado: ${genFecha}`],
+        [
+          `Empresas registradas — ${filas.length} en total (${activas} activas) · Generado: ${genFecha}`,
+        ],
         [],
         headers,
-        ...filas.map((f) => [f.ruc, f.razonSocial, f.comercial, f.ambiente, f.rubro, f.plan, f.inicio, f.activacion, f.expiracion, f.vence, f.estado]),
+        ...filas.map((f) => [
+          f.ruc,
+          f.razonSocial,
+          f.comercial,
+          f.ambiente,
+          f.rubro,
+          f.plan,
+          f.inicio,
+          f.activacion,
+          f.expiracion,
+          f.vence,
+          f.estado,
+        ]),
       ];
       const ws = XLSX.utils.aoa_to_sheet(aoa);
-      ws['!cols'] = [{ wch: 13 }, { wch: 38 }, { wch: 24 }, { wch: 11 }, { wch: 22 }, { wch: 18 }, { wch: 13 }, { wch: 12 }, { wch: 12 }, { wch: 18 }, { wch: 10 }];
+      ws['!cols'] = [
+        { wch: 13 },
+        { wch: 38 },
+        { wch: 24 },
+        { wch: 11 },
+        { wch: 22 },
+        { wch: 18 },
+        { wch: 13 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 18 },
+        { wch: 10 },
+      ];
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Empresas');
-      const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+      const buffer = XLSX.write(wb, {
+        type: 'buffer',
+        bookType: 'xlsx',
+      }) as Buffer;
       return {
         buffer,
         filename: 'empresas.xlsx',
-        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        contentType:
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       };
     }
 
     const esc = (v: string) =>
-      String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      String(v ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
     const filasHtml = filas
       .map(
         (f) => `
@@ -2473,7 +2577,9 @@ export class EmpresaService {
   ) {
     const nota = (dto.nota ?? '').trim();
     if (!nota) {
-      throw new BadRequestException('La nota de seguimiento no puede estar vacía');
+      throw new BadRequestException(
+        'La nota de seguimiento no puede estar vacía',
+      );
     }
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
@@ -2540,7 +2646,9 @@ export class EmpresaService {
       this.prisma.seguimientoEmpresa.create({
         data: {
           empresaId,
-          nota: nota || `Estado de gestión cambiado a ${estadoGestion ?? 'Sin gestión'}`,
+          nota:
+            nota ||
+            `Estado de gestión cambiado a ${estadoGestion ?? 'Sin gestión'}`,
           canal: null,
           estadoGestion,
           autorNombre: autor.nombre,
@@ -2630,7 +2738,10 @@ export class EmpresaService {
       new Map<number, number>(
         arr
           .filter((r) => r.cuentaBancariaId != null)
-          .map((r) => [r.cuentaBancariaId as number, Number(r._sum[field] || 0)]),
+          .map((r) => [
+            r.cuentaBancariaId as number,
+            Number(r._sum[field] || 0),
+          ]),
       );
     const mPagos = toMap(pagos, 'monto');
     const mDep = toMap(depositos, 'montoEfectivo');
@@ -2674,7 +2785,10 @@ export class EmpresaService {
 
     const [pagos, depositos, compras, gastos] = await Promise.all([
       this.prisma.pago.findMany({
-        where: { cuentaBancariaId: cuentaId, ...(rango ? { fecha: rango } : {}) },
+        where: {
+          cuentaBancariaId: cuentaId,
+          ...(rango ? { fecha: rango } : {}),
+        },
         select: {
           id: true,
           fecha: true,
@@ -2698,7 +2812,10 @@ export class EmpresaService {
         },
       }),
       this.prisma.pagoCompra.findMany({
-        where: { cuentaBancariaId: cuentaId, ...(rango ? { fecha: rango } : {}) },
+        where: {
+          cuentaBancariaId: cuentaId,
+          ...(rango ? { fecha: rango } : {}),
+        },
         select: {
           id: true,
           fecha: true,
@@ -2708,7 +2825,10 @@ export class EmpresaService {
         },
       }),
       this.prisma.gastoOperativo.findMany({
-        where: { cuentaBancariaId: cuentaId, ...(rango ? { fecha: rango } : {}) },
+        where: {
+          cuentaBancariaId: cuentaId,
+          ...(rango ? { fecha: rango } : {}),
+        },
         select: {
           id: true,
           fecha: true,

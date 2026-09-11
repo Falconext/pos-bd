@@ -179,6 +179,15 @@ export class UpdateEmpresaDto {
   @IsBoolean()
   mostrarQrSunat?: boolean;
 
+  @IsOptional()
+  @IsBoolean()
+  mostrarMarcaSistema?: boolean;
+
+  /** Catálogo independiente por sede: un producto nuevo solo queda disponible en la sede que lo crea. */
+  @IsOptional()
+  @IsBoolean()
+  catalogoPorSede?: boolean;
+
   /** Formato preseleccionado al imprimir: TICKET | A4 | A5. */
   @IsOptional()
   @IsIn(['TICKET', 'A4', 'A5'])

@@ -227,6 +227,16 @@ model Empresa {
   // QR de Yape/Plin (`qrPagos` del formato): este lleva el enlace al PDF del
   // comprobante y, si aún no existe, la cadena normativa de SUNAT.
   mostrarQrSunat                Boolean                       @default(false)
+  // Pie con la marca del sistema ("Sistema punto de venta - X / Desarrollado por X /
+  // web" en ticket; "X ™ / Comprobante emitido a través de web" en A4/A5/cotización).
+  // Default true = se imprime; el negocio puede apagarlo desde Perfil → Configuración.
+  mostrarMarcaSistema           Boolean                       @default(true)
+  // ── Catálogo por sede ────────────────────────────────────────────────────
+  // false (default) = catálogo COMPARTIDO: un producto nuevo queda disponible en
+  // todas las sedes (comportamiento histórico). true = catálogo INDEPENDIENTE:
+  // un producto nuevo queda disponible SOLO en la sede que lo crea/importa y se
+  // asigna a las demás a mano (ProductoStock.visibleEnSede). Ver ProductoService.
+  catalogoPorSede               Boolean                       @default(false)
   // Formato preseleccionado al imprimir un comprobante: TICKET | A4 | A5.
   formatoImpresionDefault       String                        @default("TICKET")
   // Abrir el diálogo de impresión apenas se emite el comprobante, sin que el

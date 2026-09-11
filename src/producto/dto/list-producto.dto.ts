@@ -64,4 +64,9 @@ export class ListProductoDto {
   @IsOptional()
   @Transform(({ value }) => value === true || value === 'true' || value === '1')
   priorizarStock?: boolean;
+
+  // Incluye los productos NO disponibles en la sede consultada (para asignarlos).
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === '1')
+  incluirOcultos?: boolean;
 }

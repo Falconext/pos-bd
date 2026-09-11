@@ -23,10 +23,7 @@ import {
   esRubroComputo,
   obtenerPlantillaComputo,
 } from './ficha-tecnica-computo';
-import {
-  esRubroMotos,
-  obtenerPlantillaMotos,
-} from './ficha-tecnica-vehiculo';
+import { esRubroMotos, obtenerPlantillaMotos } from './ficha-tecnica-vehiculo';
 import {
   getMaxImagenesProducto,
   getMaxImagenesExtra,
@@ -48,6 +45,168 @@ export class ProductoService {
     return (
       String(atributosTecnicos?.tipoProducto || '').toUpperCase() === 'SERVICIO'
     );
+  }
+
+  // ==================== DISPONIBILIDAD POR SEDE ====================
+  //
+  // El catálogo (Producto) es uno por empresa; `ProductoStock.visibleEnSede`
+  // dice si el producto está DISPONIBLE en cada sede (aparece en su inventario
+  // y en su POS). Dos modos por empresa (Empresa.catalogoPorSede):
+  //   - compartido (default): un producto nuevo queda disponible en todas las
+  //     sedes → comportamiento histórico, nada cambia para clientes actuales.
+  //   - por sede: un producto nuevo queda disponible SOLO en la sede que lo
+  //     crea/importa; a las demás se asigna a mano o al recibir stock (traslado,
+  //     compra, ingreso de kardex).
+  // Regla transversal: un producto sin fila ProductoStock para una sede (datos
+  // legado) se considera disponible, igual que hoy.
+
+  /** Catálogo independiente por sede (Empresa.catalogoPorSede). */
+  private async usaCatalogoPorSede(empresaId: number): Promise<boolean> {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { catalogoPorSede: true },
+    });
+    return Boolean(empresa?.catalogoPorSede);
+  }
+
+  /**
+   * Resuelve en qué sedes queda disponible un producto recién creado.
+   *   1) `sedesDisponibles` explícito del formulario. La sede que recibe stock
+   *      inicial > 0 siempre queda incluida (no puede haber stock "invisible").
+   *   2) Catálogo por sede → solo la sede que lo crea (o la principal).
+   *   3) Catálogo compartido → todas.
+   */
+  resolverSedesDisponiblesIniciales(params: {
+    sedes: { id: number }[];
+    sedeConStock?: number | null;
+    stockInicial: number;
+    sedesDisponibles?: number[] | null;
+    catalogoPorSede: boolean;
+  }): Set<number> {
+    const ids = params.sedes.map((s) => s.id);
+    const disponibles = new Set<number>();
+    if (Array.isArray(params.sedesDisponibles)) {
+      for (const id of params.sedesDisponibles) {
+        const n = Number(id);
+        if (ids.includes(n)) disponibles.add(n);
+      }
+      if (
+        params.sedeConStock != null &&
+        params.stockInicial > 0 &&
+        ids.includes(params.sedeConStock)
+      ) {
+        disponibles.add(params.sedeConStock);
+      }
+      // Sin ninguna sede marcada no tiene sentido: cae al criterio automático.
+      if (disponibles.size > 0) return disponibles;
+    }
+    if (params.catalogoPorSede && params.sedeConStock != null) {
+      if (ids.includes(params.sedeConStock)) {
+        disponibles.add(params.sedeConStock);
+        return disponibles;
+      }
+    }
+    ids.forEach((id) => disponibles.add(id));
+    return disponibles;
+  }
+
+  /**
+   * Crea las filas ProductoStock de un producto nuevo (una por sede activa).
+   * Solo la sede que crea el producto (o la principal) recibe el stock inicial;
+   * las demás arrancan en 0 para que los traslados partan de valores reales.
+   */
+  private async inicializarStockPorSede(params: {
+    productoId: number;
+    empresaId: number;
+    sedeId?: number | null;
+    esServicio: boolean;
+    stock?: number | null;
+    stockMinimo?: number | null;
+    stockMaximo?: number | null;
+    visibleEnSede?: boolean;
+    vendibleEnSede?: boolean;
+    precioUnitarioSede?: number | null;
+    precioOfertaSede?: number | null;
+    ubicacionSede?: string | null;
+    sedesDisponibles?: number[] | null;
+  }) {
+    const sedes = await this.prisma.sede.findMany({
+      where: { empresaId: params.empresaId, activo: true },
+    });
+    if (sedes.length === 0) return;
+    const sedePrincipalId = sedes.find((s) => s.esPrincipal)?.id;
+    // La sede que recibe el stock inicial: la del usuario actual, o la principal.
+    const sedeConStock = params.sedeId ?? sedePrincipalId ?? null;
+    const stockInicial = params.esServicio ? 0 : num(params.stock ?? 0);
+    const disponibles = this.resolverSedesDisponiblesIniciales({
+      sedes,
+      sedeConStock,
+      stockInicial,
+      sedesDisponibles: params.sedesDisponibles,
+      catalogoPorSede: await this.usaCatalogoPorSede(params.empresaId),
+    });
+    await this.prisma.productoStock.createMany({
+      data: sedes.map((s) => {
+        const esSedeCreadora = s.id === sedeConStock;
+        return {
+          productoId: params.productoId,
+          sedeId: s.id,
+          stock: esSedeCreadora ? stockInicial : 0,
+          stockMinimo: params.stockMinimo ?? 0,
+          stockMaximo: params.stockMaximo ?? null,
+          visibleEnSede:
+            disponibles.has(s.id) &&
+            (esSedeCreadora ? (params.visibleEnSede ?? true) : true),
+          vendibleEnSede: esSedeCreadora
+            ? (params.vendibleEnSede ?? true)
+            : true,
+          precioUnitarioOverride:
+            esSedeCreadora && params.precioUnitarioSede != null
+              ? new Decimal(params.precioUnitarioSede)
+              : null,
+          precioOfertaOverride:
+            esSedeCreadora && params.precioOfertaSede != null
+              ? new Decimal(params.precioOfertaSede)
+              : null,
+          ubicacion: esSedeCreadora ? params.ubicacionSede || null : null,
+        };
+      }),
+    });
+  }
+
+  /** Las variantes heredan la disponibilidad por sede del producto padre. */
+  private async sincronizarDisponibilidadVariantes(padreId: number) {
+    const variantes = await this.prisma.producto.findMany({
+      where: { productoPadreId: padreId },
+      select: { id: true },
+    });
+    if (variantes.length === 0) return;
+    const stocksPadre = await this.prisma.productoStock.findMany({
+      where: { productoId: padreId },
+      select: { sedeId: true, visibleEnSede: true },
+    });
+    const ids = variantes.map((v) => v.id);
+    for (const sp of stocksPadre) {
+      await this.prisma.productoStock.updateMany({
+        where: { productoId: { in: ids }, sedeId: sp.sedeId },
+        data: { visibleEnSede: sp.visibleEnSede },
+      });
+    }
+  }
+
+  /** Marca el producto como disponible en la sede (crea la fila si no existe). */
+  private async marcarDisponibleEnSede(productoId: number, sedeId: number) {
+    await this.prisma.productoStock.upsert({
+      where: { productoId_sedeId: { productoId, sedeId } },
+      update: { visibleEnSede: true },
+      create: {
+        productoId,
+        sedeId,
+        stock: 0,
+        stockMinimo: 0,
+        visibleEnSede: true,
+      },
+    });
   }
 
   private parseImagenesExtra(value: unknown): string[] {
@@ -196,6 +355,8 @@ export class ProductoService {
       precioUnitarioSede?: number | null;
       precioOfertaSede?: number | null;
       ubicacionSede?: string | null;
+      /** Sedes donde queda disponible (ids). Si no viene, aplica el modo de la empresa. */
+      sedesDisponibles?: number[] | null;
     },
     empresaId: number,
     sedeId?: number,
@@ -272,7 +433,10 @@ export class ProductoService {
 
     // Validar si existe y no está eliminado
     if (existe && existe.estado !== 'PLACEHOLDER') {
-      throw new ForbiddenException('Ya existe un producto con ese código');
+      throw new ForbiddenException(
+        `Ya existe un producto con ese código: "${existe.descripcion}". ` +
+          'Si lo que quieres es venderlo en esta sede, asígnalo desde Inventario → Asignar a sede.',
+      );
     }
 
     // 2. Validar unicidad de Código de Barras (si se proporciona) — contra el
@@ -427,35 +591,21 @@ export class ProductoService {
       await this.prisma.productoStock.deleteMany({
         where: { productoId: existe.id },
       });
-      const sedesRevive = await this.prisma.sede.findMany({
-        where: { empresaId, activo: true },
+      await this.inicializarStockPorSede({
+        productoId: existe.id,
+        empresaId,
+        sedeId,
+        esServicio,
+        stock,
+        stockMinimo,
+        stockMaximo,
+        visibleEnSede,
+        vendibleEnSede,
+        precioUnitarioSede,
+        precioOfertaSede,
+        ubicacionSede,
+        sedesDisponibles: data.sedesDisponibles,
       });
-      if (sedesRevive.length > 0) {
-        const sedePrincipalIdRev = sedesRevive.find((s) => s.esPrincipal)?.id;
-        const sedeConStockRev = sedeId ?? sedePrincipalIdRev;
-        await this.prisma.productoStock.createMany({
-          data: sedesRevive.map((s) => ({
-            productoId: existe.id,
-            sedeId: s.id,
-            stock: !esServicio && s.id === sedeConStockRev ? (stock ?? 0) : 0,
-            stockMinimo: stockMinimo ?? 0,
-            stockMaximo: stockMaximo ?? null,
-            visibleEnSede:
-              s.id === sedeConStockRev ? (visibleEnSede ?? true) : true,
-            vendibleEnSede:
-              s.id === sedeConStockRev ? (vendibleEnSede ?? true) : true,
-            precioUnitarioOverride:
-              s.id === sedeConStockRev && precioUnitarioSede != null
-                ? new Decimal(precioUnitarioSede)
-                : null,
-            precioOfertaOverride:
-              s.id === sedeConStockRev && precioOfertaSede != null
-                ? new Decimal(precioOfertaSede)
-                : null,
-            ubicacion: s.id === sedeConStockRev ? ubicacionSede || null : null,
-          })),
-        });
-      }
     } else {
       // Crear nuevo
       nuevo = await this.prisma.producto.create({
@@ -535,39 +685,23 @@ export class ProductoService {
         },
       });
 
-      // Inicializar el registro de stock por sede. Solo la sede que crea el producto
-      // (o la principal si no se conoce la sede) recibe el stock inicial. Las demás
-      // arrancan en 0 para que los traslados partan de valores reales y no inflados.
-      const sedes = await this.prisma.sede.findMany({
-        where: { empresaId, activo: true },
+      // Inicializar el registro de stock por sede (stock inicial solo en la sede
+      // que crea el producto; disponibilidad según el modo de catálogo).
+      await this.inicializarStockPorSede({
+        productoId: nuevo.id,
+        empresaId,
+        sedeId,
+        esServicio,
+        stock,
+        stockMinimo,
+        stockMaximo,
+        visibleEnSede,
+        vendibleEnSede,
+        precioUnitarioSede,
+        precioOfertaSede,
+        ubicacionSede,
+        sedesDisponibles: data.sedesDisponibles,
       });
-      if (sedes.length > 0) {
-        const sedePrincipalId = sedes.find((s) => s.esPrincipal)?.id;
-        // La sede que recibe el stock inicial: la del usuario actual, o la principal como fallback.
-        const sedeConStock = sedeId ?? sedePrincipalId;
-        await this.prisma.productoStock.createMany({
-          data: sedes.map((s) => ({
-            productoId: nuevo.id,
-            sedeId: s.id,
-            stock: !esServicio && s.id === sedeConStock ? (stock ?? 0) : 0,
-            stockMinimo: stockMinimo ?? 0,
-            stockMaximo: stockMaximo ?? null,
-            visibleEnSede:
-              s.id === sedeConStock ? (visibleEnSede ?? true) : true,
-            vendibleEnSede:
-              s.id === sedeConStock ? (vendibleEnSede ?? true) : true,
-            precioUnitarioOverride:
-              s.id === sedeConStock && precioUnitarioSede != null
-                ? new Decimal(precioUnitarioSede)
-                : null,
-            precioOfertaOverride:
-              s.id === sedeConStock && precioOfertaSede != null
-                ? new Decimal(precioOfertaSede)
-                : null,
-            ubicacion: s.id === sedeConStock ? ubicacionSede || null : null,
-          })),
-        });
-      }
     }
 
     if (nuevo.opcionesAtributos) {
@@ -581,6 +715,7 @@ export class ProductoService {
         data.variantesConfig || [],
         sedeId,
       );
+      await this.sincronizarDisponibilidadVariantes(nuevo.id);
     }
 
     await this.sincronizarCodigosBarrasExtra(
@@ -749,6 +884,8 @@ export class ProductoService {
     usuarioId?: number;
     soloStockBajo?: boolean;
     priorizarStock?: boolean;
+    /** Incluir productos NO disponibles en la sede (para asignarlos). */
+    incluirOcultos?: boolean;
   }) {
     const {
       empresaId,
@@ -794,6 +931,13 @@ export class ProductoService {
           vendibleEnSede: true,
         },
       };
+    } else if (params.sedeId && !params.incluirOcultos) {
+      // Disponibilidad por sede: en el contexto de una sede se excluyen los
+      // productos marcados como NO disponibles en ella. Un producto sin fila
+      // ProductoStock para la sede (legado) sigue apareciendo, igual que antes.
+      where.NOT = {
+        stocks: { some: { sedeId: params.sedeId, visibleEnSede: false } },
+      };
     }
 
     if (params.soloStockBajo) {
@@ -801,10 +945,7 @@ export class ProductoService {
       // (products without stockMinimo can never be "low stock").
       // Field-to-field comparison (stock <= stockMinimo) is not supported by Prisma,
       // so a JS post-filter is applied after computing effective stock values.
-      where.AND = [
-        ...(where.AND ?? []),
-        { stockMinimo: { gt: 0 } },
-      ];
+      where.AND = [...(where.AND ?? []), { stockMinimo: { gt: 0 } }];
     }
 
     // Prioriza productos con stock: los con stock (producto.stock = suma de sedes,
@@ -1047,17 +1188,19 @@ export class ProductoService {
         const stockSede = params.sedeId
           ? (p.stocks[0] as any | undefined)
           : undefined;
-        const { precioUnitario: precioUnitarioEfectivo, precioOferta: precioOfertaEfectivo } =
-          this.resolverPrecioConLista(
-            itemsLista,
-            p.id,
-            '',
-            !!params.usarPrecioSede,
-            stockSede?.precioUnitarioOverride,
-            stockSede?.precioOfertaOverride,
-            Number(p.precioUnitario),
-            p.precioOferta != null ? Number(p.precioOferta) : null,
-          );
+        const {
+          precioUnitario: precioUnitarioEfectivo,
+          precioOferta: precioOfertaEfectivo,
+        } = this.resolverPrecioConLista(
+          itemsLista,
+          p.id,
+          '',
+          !!params.usarPrecioSede,
+          stockSede?.precioUnitarioOverride,
+          stockSede?.precioOfertaOverride,
+          Number(p.precioUnitario),
+          p.precioOferta != null ? Number(p.precioOferta) : null,
+        );
         const reservado = reservadoPorProducto.get(p.id) ?? 0;
         const cupoProvision = Math.floor(
           (stockTotal * (p.porcentajeProvision ?? 0)) / 100,
@@ -1088,17 +1231,21 @@ export class ProductoService {
             const varianteStockSede = params.sedeId
               ? variante.stocks?.[0]
               : undefined;
-            const { precioUnitario: variantePrecioUnitario, precioOferta: variantePrecioOferta } =
-              this.resolverPrecioConLista(
-                itemsLista,
-                variante.id,
-                '',
-                !!params.usarPrecioSede,
-                varianteStockSede?.precioUnitarioOverride,
-                varianteStockSede?.precioOfertaOverride,
-                Number(variante.precioUnitario),
-                variante.precioOferta != null ? Number(variante.precioOferta) : null,
-              );
+            const {
+              precioUnitario: variantePrecioUnitario,
+              precioOferta: variantePrecioOferta,
+            } = this.resolverPrecioConLista(
+              itemsLista,
+              variante.id,
+              '',
+              !!params.usarPrecioSede,
+              varianteStockSede?.precioUnitarioOverride,
+              varianteStockSede?.precioOfertaOverride,
+              Number(variante.precioUnitario),
+              variante.precioOferta != null
+                ? Number(variante.precioOferta)
+                : null,
+            );
 
             return {
               ...variante,
@@ -1137,6 +1284,10 @@ export class ProductoService {
           stockDisponibleVenta,
           stockMinimo: stockMinimo,
           stockMaximo: stockSede?.stockMaximo ?? (p as any).stockMaximo ?? null,
+          // Disponible en la sede consultada (sin sede = catálogo completo).
+          disponibleEnSede: stockSede
+            ? stockSede.visibleEnSede !== false
+            : true,
           sedeStockConfig: stockSede
             ? {
                 sedeId: stockSede.sedeId,
@@ -1206,7 +1357,12 @@ export class ProductoService {
         })
       : productos;
 
-    return { productos: productosFinales, total: params.soloStockBajo ? productosFinales.length : total, page, limit };
+    return {
+      productos: productosFinales,
+      total: params.soloStockBajo ? productosFinales.length : total,
+      page,
+      limit,
+    };
   }
 
   async resumen(params: {
@@ -1232,6 +1388,12 @@ export class ProductoService {
     // Búsqueda flexible por palabras (misma lógica que `listar`).
     const searchAnd = this.busquedaPorPalabras(searchTerm);
     if (searchAnd) where.AND = searchAnd;
+    // Misma regla de disponibilidad por sede que `listar`.
+    if (params.sedeId) {
+      where.NOT = {
+        stocks: { some: { sedeId: params.sedeId, visibleEnSede: false } },
+      };
+    }
 
     const [totalProductos, productos] = await Promise.all([
       this.prisma.producto.count({ where }),
@@ -1558,7 +1720,13 @@ export class ProductoService {
           },
         },
         codigosBarras: {
-          select: { codigo: true, unidadesPorPaquete: true, precioPaquete: true, alias: true, imagenUrl: true },
+          select: {
+            codigo: true,
+            unidadesPorPaquete: true,
+            precioPaquete: true,
+            alias: true,
+            imagenUrl: true,
+          },
           orderBy: { id: 'asc' },
         },
       },
@@ -1729,7 +1897,9 @@ export class ProductoService {
         where: {
           empresaId,
           codigo,
-          ...(excludeProductoId ? { productoId: { not: excludeProductoId } } : {}),
+          ...(excludeProductoId
+            ? { productoId: { not: excludeProductoId } }
+            : {}),
         },
         select: { producto: { select: { descripcion: true } } },
       });
@@ -1770,7 +1940,9 @@ export class ProductoService {
     for (const item of limpios) {
       if (item.imagenUrl?.startsWith('data:image')) {
         try {
-          const match = item.imagenUrl.match(/^data:(image\/[\w.+-]+);base64,(.+)$/);
+          const match = item.imagenUrl.match(
+            /^data:(image\/[\w.+-]+);base64,(.+)$/,
+          );
           if (!match) {
             item.imagenUrl = null;
             continue;
@@ -1797,7 +1969,13 @@ export class ProductoService {
         ? [
             this.prisma.productoCodigoBarras.createMany({
               data: limpios.map(
-                ({ codigo, unidadesPorPaquete, precioPaquete, alias, imagenUrl }) => ({
+                ({
+                  codigo,
+                  unidadesPorPaquete,
+                  precioPaquete,
+                  alias,
+                  imagenUrl,
+                }) => ({
                   productoId,
                   empresaId,
                   codigo,
@@ -1846,6 +2024,7 @@ export class ProductoService {
           select: {
             stock: true,
             sedeId: true,
+            visibleEnSede: true,
           },
         },
         lotes: {
@@ -1865,7 +2044,13 @@ export class ProductoService {
         },
         codigoBarras: true,
         codigosBarras: {
-          select: { codigo: true, unidadesPorPaquete: true, precioPaquete: true, alias: true, imagenUrl: true },
+          select: {
+            codigo: true,
+            unidadesPorPaquete: true,
+            precioPaquete: true,
+            alias: true,
+            imagenUrl: true,
+          },
         },
         imagenUrl: true,
         tipoAfectacionIGV: true,
@@ -1896,9 +2081,9 @@ export class ProductoService {
 
     // El código escaneado puede ser el principal (siempre 1 unidad) o un
     // código alterno registrado con `unidadesPorPaquete` (ej. el six-pack).
-    const codigoAlternoMatch = (
-      (producto.codigosBarras as any[]) || []
-    ).find((c) => c.codigo === codigoBarras);
+    const codigoAlternoMatch = ((producto.codigosBarras as any[]) || []).find(
+      (c) => c.codigo === codigoBarras,
+    );
     const unidadesPorPaquete = codigoAlternoMatch
       ? Number(codigoAlternoMatch.unidadesPorPaquete) || 1
       : 1;
@@ -1930,6 +2115,11 @@ export class ProductoService {
       ...producto,
       stock: stockTotal,
       stockBase: stockTotal,
+      // false = el producto existe pero NO está asignado a la sede consultada;
+      // el POS lo avisa en vez de venderlo.
+      disponibleEnSede: sedeId
+        ? producto.stocks[0]?.visibleEnSede !== false
+        : true,
       loteFefoCodigo: loteFefoActual?.lote || null,
       loteFefoVencimiento: loteFefoActual?.fechaVencimiento || null,
       loteFefoCostoUnitario: loteFefoActual?.costoUnitario
@@ -2039,7 +2229,10 @@ export class ProductoService {
         codigo = generarEan13Alternativo(producto.id, intento);
       }
       if (ocupados.has(codigo)) {
-        omitidos.push({ id: producto.id, motivo: 'no se encontró un código libre' });
+        omitidos.push({
+          id: producto.id,
+          motivo: 'no se encontró un código libre',
+        });
         continue;
       }
 
@@ -2067,7 +2260,8 @@ export class ProductoService {
    */
   async datosEtiquetas(empresaId: number, productoIds: number[]) {
     const ids = [...new Set(productoIds.map(Number).filter(Number.isInteger))];
-    if (!ids.length) throw new BadRequestException('Indica al menos un producto.');
+    if (!ids.length)
+      throw new BadRequestException('Indica al menos un producto.');
 
     // Se etiqueta lo que existe físicamente: si un producto tiene variantes, la
     // etiqueta va en cada talla×color, no en el padre (que es solo el agrupador).
@@ -2371,6 +2565,8 @@ export class ProductoService {
       precioUnitarioSede?: number | null;
       precioOfertaSede?: number | null;
       ubicacionSede?: string | null;
+      /** Sedes donde queda disponible (ids). Reemplaza la disponibilidad actual. */
+      sedesDisponibles?: number[] | null;
 
       sedeId?: number; // Nueva propiedad opcional para identificar dónde se ajusta el stock
     },
@@ -2684,6 +2880,16 @@ export class ProductoService {
       });
     }
 
+    // "Disponible en": se aplica DESPUÉS de la política puntual de la sede
+    // activa para que el listado explícito de sedes sea el que manda.
+    if (Array.isArray(data.sedesDisponibles)) {
+      await this.aplicarSedesDisponibles(
+        data.id,
+        data.empresaId,
+        data.sedesDisponibles,
+      );
+    }
+
     const normalizePersistentImageUrl = (url: string) =>
       url.includes('amazonaws.com/') ? url.split('?')[0] : url;
 
@@ -2845,6 +3051,7 @@ export class ProductoService {
         data.variantesConfig || [],
         data.sedeId,
       );
+      await this.sincronizarDisponibilidadVariantes(actualizado.id);
     }
 
     await this.sincronizarCodigosBarrasExtra(
@@ -2855,6 +3062,263 @@ export class ProductoService {
     );
 
     return this.obtenerPorId(actualizado.id, data.empresaId);
+  }
+
+  // ==================== ASIGNACIÓN DE PRODUCTOS A SEDES ====================
+
+  /**
+   * Define en qué sedes está disponible un producto (visibleEnSede por sede).
+   * No se puede quitar de una sede con stock > 0: primero trasladar/ajustar.
+   */
+  async aplicarSedesDisponibles(
+    productoId: number,
+    empresaId: number,
+    sedesDisponibles: number[],
+  ) {
+    const sedes = await this.prisma.sede.findMany({
+      where: { empresaId, activo: true },
+      select: { id: true, nombre: true },
+    });
+    if (sedes.length === 0) return;
+    const marcadas = new Set(sedesDisponibles.map((id) => Number(id)));
+    if (!sedes.some((s) => marcadas.has(s.id))) {
+      throw new BadRequestException(
+        'El producto debe estar disponible en al menos una sede.',
+      );
+    }
+    const stocks = await this.prisma.productoStock.findMany({
+      where: { productoId },
+      select: { sedeId: true, stock: true },
+    });
+    const stockPorSede = new Map(stocks.map((s) => [s.sedeId, num(s.stock)]));
+    for (const sede of sedes) {
+      const stockSede = stockPorSede.get(sede.id) ?? 0;
+      if (!marcadas.has(sede.id) && stockSede > 0) {
+        throw new BadRequestException(
+          `No puedes quitar el producto de ${sede.nombre}: aún tiene ${stockSede} en stock. Traslada o ajusta el stock primero.`,
+        );
+      }
+    }
+    for (const sede of sedes) {
+      const disponible = marcadas.has(sede.id);
+      await this.prisma.productoStock.upsert({
+        where: { productoId_sedeId: { productoId, sedeId: sede.id } },
+        update: { visibleEnSede: disponible },
+        create: {
+          productoId,
+          sedeId: sede.id,
+          stock: 0,
+          stockMinimo: 0,
+          visibleEnSede: disponible,
+        },
+      });
+    }
+    await this.sincronizarDisponibilidadVariantes(productoId);
+  }
+
+  /** Sedes activas de la empresa con la disponibilidad y el stock del producto. */
+  async sedesDeProducto(productoId: number, empresaId: number) {
+    const producto = await this.prisma.producto.findFirst({
+      where: { id: productoId, empresaId },
+      select: { id: true },
+    });
+    if (!producto) throw new NotFoundException('Producto no encontrado');
+    const [sedes, stocks] = await Promise.all([
+      this.prisma.sede.findMany({
+        where: { empresaId, activo: true },
+        orderBy: [{ esPrincipal: 'desc' }, { id: 'asc' }],
+        select: { id: true, nombre: true, esPrincipal: true, tipo: true },
+      }),
+      this.prisma.productoStock.findMany({
+        where: { productoId },
+        select: { sedeId: true, stock: true, visibleEnSede: true },
+      }),
+    ]);
+    const porSede = new Map(stocks.map((s) => [s.sedeId, s]));
+    return sedes.map((s) => {
+      const st = porSede.get(s.id);
+      return {
+        sedeId: s.id,
+        nombre: s.nombre,
+        esPrincipal: s.esPrincipal,
+        tipo: s.tipo,
+        disponible: st ? st.visibleEnSede !== false : true,
+        stock: num(st?.stock),
+      };
+    });
+  }
+
+  /**
+   * Asigna (o quita) varios productos de una sede de golpe. Los que tienen
+   * stock en la sede no se pueden quitar: se devuelven en `omitidos`.
+   */
+  async asignarSedeMasivo(
+    empresaId: number,
+    sedeId: number,
+    productoIds: number[],
+    disponible: boolean,
+  ) {
+    const sede = await this.prisma.sede.findFirst({
+      where: { id: sedeId, empresaId, activo: true },
+      select: { id: true, nombre: true },
+    });
+    if (!sede) {
+      throw new BadRequestException(
+        'La sede indicada no pertenece a la empresa o no está activa',
+      );
+    }
+    const ids = Array.from(new Set(productoIds.map((id) => Number(id)))).filter(
+      (id) => Number.isInteger(id) && id > 0,
+    );
+    if (ids.length === 0)
+      return { actualizados: 0, omitidos: [], sede: sede.nombre };
+    const productos = await this.prisma.producto.findMany({
+      where: {
+        id: { in: ids },
+        empresaId,
+        estado: { not: 'PLACEHOLDER' as any },
+      },
+      select: {
+        id: true,
+        descripcion: true,
+        stocks: { where: { sedeId }, select: { stock: true } },
+      },
+    });
+    const omitidos: { id: number; descripcion: string; stock: number }[] = [];
+    const aplicar: number[] = [];
+    for (const p of productos) {
+      const stockSede = num(p.stocks[0]?.stock);
+      if (!disponible && stockSede > 0) {
+        omitidos.push({
+          id: p.id,
+          descripcion: p.descripcion,
+          stock: stockSede,
+        });
+      } else {
+        aplicar.push(p.id);
+      }
+    }
+    for (const productoId of aplicar) {
+      await this.prisma.productoStock.upsert({
+        where: { productoId_sedeId: { productoId, sedeId } },
+        update: { visibleEnSede: disponible },
+        create: {
+          productoId,
+          sedeId,
+          stock: 0,
+          stockMinimo: 0,
+          visibleEnSede: disponible,
+        },
+      });
+    }
+    // Las variantes siguen al padre en esa sede.
+    if (aplicar.length > 0) {
+      await this.prisma.productoStock.updateMany({
+        where: { sedeId, producto: { productoPadreId: { in: aplicar } } },
+        data: { visibleEnSede: disponible },
+      });
+    }
+    return { actualizados: aplicar.length, omitidos, sede: sede.nombre };
+  }
+
+  /**
+   * Asigna un producto existente a una sede, opcionalmente con stock inicial
+   * (ingreso registrado en Kardex). Es el camino para "ya existe en Ancón,
+   * quiero venderlo también en Zapallal".
+   */
+  async asignarProductoASede(
+    empresaId: number,
+    productoId: number,
+    sedeId: number,
+    stockInicial?: number | null,
+    usuarioId?: number,
+  ) {
+    const producto = await this.prisma.producto.findFirst({
+      where: {
+        id: productoId,
+        empresaId,
+        estado: { not: 'PLACEHOLDER' as any },
+      },
+      select: { id: true, costoPromedio: true, atributosTecnicos: true },
+    });
+    if (!producto) throw new NotFoundException('Producto no encontrado');
+    const sede = await this.prisma.sede.findFirst({
+      where: { id: sedeId, empresaId, activo: true },
+      select: { id: true, nombre: true },
+    });
+    if (!sede) {
+      throw new BadRequestException(
+        'La sede indicada no pertenece a la empresa o no está activa',
+      );
+    }
+    await this.marcarDisponibleEnSede(producto.id, sede.id);
+    await this.sincronizarDisponibilidadVariantes(producto.id);
+    const esServicio = this.esProductoServicio(
+      producto.atributosTecnicos as any,
+    );
+    const cantidad = round3(Math.max(0, num(stockInicial ?? 0)));
+    if (!esServicio && cantidad > 0) {
+      await this.kardexService.registrarMovimiento({
+        productoId: producto.id,
+        empresaId,
+        sedeId: sede.id,
+        tipoMovimiento: 'INGRESO',
+        concepto: `Asignación a ${sede.nombre} (stock inicial +${cantidad})`,
+        cantidad,
+        costoUnitario: Number(producto.costoPromedio) || 0,
+        usuarioId,
+      });
+    }
+    return this.obtenerPorId(producto.id, empresaId);
+  }
+
+  /**
+   * Antes de crear: ¿ya existe un producto con ese código/código de barras?
+   * Devuelve dónde está disponible para ofrecer "asignar a esta sede" en vez
+   * de un error de duplicado.
+   */
+  async verificarCodigo(
+    empresaId: number,
+    codigo?: string,
+    codigoBarras?: string,
+    sedeId?: number,
+  ) {
+    const cod = (codigo ?? '').trim();
+    const barras = (codigoBarras ?? '').trim();
+    if (!cod && !barras) return { existe: false as const };
+    const or: any[] = [];
+    if (cod) or.push({ codigo: cod });
+    if (barras) {
+      or.push({ codigoBarras: barras });
+      or.push({ codigosBarras: { some: { codigo: barras } } });
+    }
+    const producto = await this.prisma.producto.findFirst({
+      where: { empresaId, estado: { not: 'PLACEHOLDER' as any }, OR: or },
+      select: {
+        id: true,
+        codigo: true,
+        codigoBarras: true,
+        descripcion: true,
+        precioUnitario: true,
+        imagenUrl: true,
+        estado: true,
+      },
+    });
+    if (!producto) return { existe: false as const };
+    const sedes = await this.sedesDeProducto(producto.id, empresaId);
+    const enSede = sedeId
+      ? sedes.find((s) => s.sedeId === Number(sedeId))
+      : null;
+    return {
+      existe: true as const,
+      producto: {
+        ...producto,
+        precioUnitario: Number(producto.precioUnitario),
+        disponibleEnSede: enSede ? enSede.disponible : true,
+        stockSede: enSede ? enSede.stock : null,
+        sedes,
+      },
+    };
   }
 
   // ==================== IMÁGENES (S3) ====================
@@ -2992,10 +3456,7 @@ export class ProductoService {
       buffer = Buffer.from(response.data);
       contentType = response.headers['content-type'] || 'image/jpeg';
     } catch (error: any) {
-      console.error(
-        'Error downloading color image from URL:',
-        error?.message,
-      );
+      console.error('Error downloading color image from URL:', error?.message);
       throw new ForbiddenException(
         'Error al procesar la imagen desde la URL: ' + error?.message,
       );
@@ -3529,6 +3990,16 @@ export class ProductoService {
             { codigo: { contains: search, mode: 'insensitive' } },
           ]
         : undefined,
+      // Por sede: solo lo disponible en ella (misma regla que `listar`).
+      ...(sedeId
+        ? {
+            NOT: {
+              stocks: {
+                some: { sedeId: Number(sedeId), visibleEnSede: false },
+              },
+            },
+          }
+        : {}),
     };
 
     const productos = await this.prisma.producto.findMany({
@@ -3569,13 +4040,15 @@ export class ProductoService {
       const stockMinimo = sedeId
         ? (p.stocks?.[0]?.stockMinimo ?? 0)
         : p.stocks?.length > 0
-          ? p.stocks.reduce((sum: number, s: any) => sum + (s.stockMinimo || 0), 0)
+          ? p.stocks.reduce(
+              (sum: number, s: any) => sum + (s.stockMinimo || 0),
+              0,
+            )
           : (p.stockMinimo ?? 0);
       // Costo "de bolsillo" (CON IGV) — misma regla que la tabla de productos y
       // el KPI de resumen: lo que el empresario pagó, no el neto contable.
       const costoNeto = Number(p.costoPromedio ?? 0);
-      const esGravadoExport =
-        String(p.tipoAfectacionIGV ?? '10') === '10';
+      const esGravadoExport = String(p.tipoAfectacionIGV ?? '10') === '10';
       const costo = esGravadoExport
         ? Math.round(costoNeto * 1.18 * 100) / 100
         : costoNeto;
@@ -3606,9 +4079,17 @@ export class ProductoService {
       };
     });
 
-    const totalStock = datosExcel.reduce((sum, r) => sum + Number(r.STOCK || 0), 0);
+    const totalStock = datosExcel.reduce(
+      (sum, r) => sum + Number(r.STOCK || 0),
+      0,
+    );
     const totalValorInventario =
-      Math.round(datosExcel.reduce((sum, r) => sum + Number(r['VALOR INVENTARIO'] || 0), 0) * 100) / 100;
+      Math.round(
+        datosExcel.reduce(
+          (sum, r) => sum + Number(r['VALOR INVENTARIO'] || 0),
+          0,
+        ) * 100,
+      ) / 100;
     datosExcel.push({
       CÓDIGO: '',
       'CÓDIGO DE BARRAS': '',
@@ -3700,9 +4181,22 @@ export class ProductoService {
     ];
 
     const instrucciones = [
-      { Columna: 'AFECT', Código: '10', Significado: 'Gravado (paga IGV) — el más común, úsalo si no estás seguro' },
-      { Columna: 'AFECT', Código: '20', Significado: 'Exonerado (no paga IGV)' },
-      { Columna: 'AFECT', Código: '30', Significado: 'Inafecto (no paga IGV por ley)' },
+      {
+        Columna: 'AFECT',
+        Código: '10',
+        Significado:
+          'Gravado (paga IGV) — el más común, úsalo si no estás seguro',
+      },
+      {
+        Columna: 'AFECT',
+        Código: '20',
+        Significado: 'Exonerado (no paga IGV)',
+      },
+      {
+        Columna: 'AFECT',
+        Código: '30',
+        Significado: 'Inafecto (no paga IGV por ley)',
+      },
       { Columna: 'AFECT', Código: '40', Significado: 'Exportación' },
     ];
     const hojaInstrucciones = XLSX.utils.json_to_sheet(instrucciones);
@@ -3935,7 +4429,9 @@ export class ProductoService {
       where: { empresaId },
       select: { id: true, nombre: true },
     });
-    const marcaMap = new Map(marcas.map((m) => [this.normClave(m.nombre), m.id]));
+    const marcaMap = new Map(
+      marcas.map((m) => [this.normClave(m.nombre), m.id]),
+    );
 
     const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
 
@@ -3996,7 +4492,10 @@ export class ProductoService {
         // Columna nueva (round-trip con el export): el costo viene CON IGV, tal
         // como lo piensa el empresario; se convierte a neto al guardar.
         const costoConIgvRaw =
-          row['COSTO CON IGV'] ?? row['Costo con IGV'] ?? row['costoConIgv'] ?? null;
+          row['COSTO CON IGV'] ??
+          row['Costo con IGV'] ??
+          row['costoConIgv'] ??
+          null;
         // Columnas legacy: el costo viene NETO (sin IGV), se guarda tal cual.
         const precioCostoRaw =
           row['COSTO COMPRA SIN IGV'] ??
@@ -4223,6 +4722,13 @@ export class ProductoService {
               ...(codigoBarras != null ? { codigoBarras } : {}),
             },
           });
+
+          // El Excel de una sede asigna el producto a esa sede (catálogo por
+          // sede): si ya existía en otra, ahora también está disponible aquí.
+          await this.marcarDisponibleEnSede(existe.id, sedeDestinoId);
+          if (esProductoPadre) {
+            await this.sincronizarDisponibilidadVariantes(existe.id);
+          }
 
           // Reemplazar el stock de la sede destino con el valor del Excel,
           // registrando el ajuste en el Kardex (auditable).

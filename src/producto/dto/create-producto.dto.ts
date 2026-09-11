@@ -120,6 +120,13 @@ export class CreateProductoDto {
   @IsBoolean()
   vendibleEnSede?: boolean;
 
+  /** Sedes (ids) donde el producto queda disponible. Si no viene, aplica el modo de la empresa. */
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  @Type(() => Number)
+  sedesDisponibles?: number[];
+
   @IsOptional()
   @IsNumber()
   @Type(() => Number)

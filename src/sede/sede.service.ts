@@ -60,12 +60,16 @@ export class SedeService {
     });
 
     if (productos.length > 0) {
+      // Catálogo por sede: la sede nueva arranca SIN productos asignados (se
+      // asignan a mano o al recibir stock). Compartido: hereda todo el catálogo.
+      const disponible = !empresa.catalogoPorSede;
       const stocksData = productos.map((p) => ({
         productoId: p.id,
         sedeId: sede.id,
         stock: 0, // Nuevo: siempre cero
         stockMinimo: p.stockMinimo ?? 0,
         stockMaximo: p.stockMaximo,
+        visibleEnSede: disponible,
       }));
       await this.prisma.productoStock.createMany({ data: stocksData });
     }

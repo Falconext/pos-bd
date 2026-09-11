@@ -988,7 +988,12 @@ export class KardexService {
     } else {
       await this.prisma.productoStock.update({
         where: { productoId_sedeId: { productoId, sedeId } },
-        data: { stock: round3(Math.max(0, nuevoStock)) },
+        data: {
+          stock: round3(Math.max(0, nuevoStock)),
+          // Un ingreso de stock en la sede la deja DISPONIBLE ahí (catálogo por
+          // sede): nunca puede haber stock de un producto "invisible".
+          ...(tipoMovimiento === 'INGRESO' ? { visibleEnSede: true } : {}),
+        },
       });
     }
 
@@ -1604,7 +1609,8 @@ export class KardexService {
               sedeId: sedeDestinoId,
             },
           },
-          data: { stock: { increment: item.cantidad } },
+          // Recibir stock por traslado asigna el producto a la sede destino.
+          data: { stock: { increment: item.cantidad }, visibleEnSede: true },
         });
 
         resultados.push({ productoId: item.productoId, movSalida, movIngreso });
@@ -2609,5 +2615,4 @@ export class KardexService {
 
     return XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
   }
-
 }
