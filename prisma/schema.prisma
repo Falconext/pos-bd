@@ -136,6 +136,10 @@ model Empresa {
   // (Términos y Condiciones / Observaciones). Se autocompletan al crear una cotización.
   cotizTerminosDefault          String?
   cotizObservacionesDefault     String?
+  // Observaciones por defecto de la VENTA (ticket/boleta/factura): se precargan
+  // en "Configurar venta → Observaciones" para todas las cajas y sedes; cada
+  // venta puede editarlas. Null = sin texto por defecto.
+  ventaObservacionesDefault     String?
   rubroId                       Int?
   providerId                    String?
   tipoEmpresa                   TipoEmpresa                   @default(FORMAL)

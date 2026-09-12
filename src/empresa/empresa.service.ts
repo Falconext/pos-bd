@@ -1276,6 +1276,9 @@ export class EmpresaService {
         updateData.mostrarQrSunat = dto.mostrarQrSunat;
       if (dto.mostrarMarcaSistema !== undefined)
         updateData.mostrarMarcaSistema = dto.mostrarMarcaSistema;
+      if (dto.ventaObservacionesDefault !== undefined)
+        updateData.ventaObservacionesDefault =
+          dto.ventaObservacionesDefault?.trim() || null;
       // Catálogo por sede (Perfil → Configuración → Sedes y catálogo).
       if (dto.catalogoPorSede !== undefined)
         updateData.catalogoPorSede = dto.catalogoPorSede;

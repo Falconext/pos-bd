@@ -161,6 +161,11 @@ export class UpdateEmpresaDto {
   @IsString()
   cotizObservacionesDefault?: string;
 
+  /** Observaciones por defecto de la venta (se precargan en el POS para todas las cajas). */
+  @IsOptional()
+  @IsString()
+  ventaObservacionesDefault?: string;
+
   @IsOptional()
   @IsObject()
   notaVentaFormatoConfig?: Record<string, { visible?: boolean; size?: number }>;
