@@ -17,6 +17,13 @@ class DetalleDto {
   @IsInt()
   productoId?: number | null;
 
+  // Kit vendido como UNA línea (Empresa.kitsComoUnaLinea): sin productoId, con el
+  // combo del que se descuenta el stock de cada componente.
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  comboId?: number | null;
+
   @Transform(({ value }) => Math.round(Number(value) * 1000) / 1000)
   @Type(() => Number)
   @IsNumber()

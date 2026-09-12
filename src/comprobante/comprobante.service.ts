@@ -1997,6 +1997,9 @@ export class ComprobanteService {
         );
         return {
           productoId: null,
+          // Kit como una sola línea: se persiste el combo para descontar/reponer
+          // el stock de sus componentes (ver expandirKitsParaStock).
+          ...(item.comboId != null ? { comboId: Number(item.comboId) } : {}),
           unidad: unidadLibre || 'ZZ',
           descripcion: String(item.descripcion).trim(),
           cantidad,
@@ -2252,9 +2255,51 @@ export class ComprobanteService {
     return sedeId;
   }
 
+  /**
+   * Kits vendidos como UNA línea (sin productoId, con comboId): para el stock se
+   * reemplazan por sus componentes (cantidad del kit × cantidad del componente),
+   * así el kardex descuenta y repone cada producto real aunque el comprobante
+   * muestre una sola línea "KIT: X". Las líneas con producto pasan tal cual.
+   */
+  private async expandirKitsParaStock<T extends { productoId?: number | null; comboId?: number | null; cantidad: number }>(
+    detalles: T[],
+    empresaId: number,
+  ): Promise<Array<T | { productoId: number; cantidad: number; deKitId: number }>> {
+    const kits = detalles.filter((d) => d.productoId == null && d.comboId != null);
+    if (!kits.length) return detalles;
+    const combos = await this.prisma.combo.findMany({
+      where: { id: { in: kits.map((k) => Number(k.comboId)) }, empresaId },
+      select: { id: true, nombre: true, items: { select: { productoId: true, cantidad: true } } },
+    });
+    const porId = new Map(combos.map((c) => [c.id, c]));
+    const resultado: Array<T | { productoId: number; cantidad: number; deKitId: number }> = [];
+    for (const d of detalles) {
+      if (!(d.productoId == null && d.comboId != null)) {
+        resultado.push(d);
+        continue;
+      }
+      const combo = porId.get(Number(d.comboId));
+      if (!combo) {
+        throw new BadRequestException(`El kit #${d.comboId} no existe o no pertenece a la empresa`);
+      }
+      if (!combo.items.length) {
+        throw new BadRequestException(`El kit "${combo.nombre}" no tiene productos configurados`);
+      }
+      for (const it of combo.items) {
+        resultado.push({
+          productoId: it.productoId,
+          cantidad: Number(d.cantidad) * Number(it.cantidad || 1),
+          deKitId: combo.id,
+        });
+      }
+    }
+    return resultado;
+  }
+
   private async validarStockDisponibleParaVenta(
     detalles: Array<{
       productoId: number | null;
+      comboId?: number | null;
       cantidad: number;
       loteId?: number | null;
     }>,
@@ -2265,6 +2310,7 @@ export class ComprobanteService {
     },
   ): Promise<number> {
     const sedeId = await this.resolverSedeParaStock(data);
+    detalles = await this.expandirKitsParaStock(detalles, data.empresaId);
 
     // Sobreventa configurable: si la empresa habilitó "permitirVentaSinStock",
     // NO se bloquea la venta por falta de stock (la salida se registra igual y el
@@ -2412,6 +2458,7 @@ export class ComprobanteService {
     }
 
     const sedeId = await this.validarStockDisponibleParaVenta(detalles, data);
+    detalles = await this.expandirKitsParaStock(detalles, data.empresaId);
 
     for (const item of detalles) {
       const productoId = Number(item.productoId);
@@ -2522,6 +2569,11 @@ export class ComprobanteService {
     // devolver stock aquí inflaría el inventario. No hacemos nada.
     if (movimientosOriginales.length === 0) {
       return;
+    }
+
+    // Los kits vendidos como una línea se reponen componente por componente.
+    if (data?.empresaId) {
+      detalles = await this.expandirKitsParaStock(detalles, data.empresaId);
     }
 
     for (const item of detalles) {
@@ -4630,6 +4682,7 @@ export class ComprobanteService {
             createMany: {
               data: detalleFinal.map((d: any) => ({
                 productoId: d.productoId,
+                comboId: d.comboId ?? null,
                 unidad: d.unidad,
                 descripcion: d.descripcion,
                 cantidad: d.cantidad,

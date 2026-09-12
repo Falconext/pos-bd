@@ -1276,6 +1276,8 @@ export class EmpresaService {
         updateData.mostrarQrSunat = dto.mostrarQrSunat;
       if (dto.mostrarMarcaSistema !== undefined)
         updateData.mostrarMarcaSistema = dto.mostrarMarcaSistema;
+      if (dto.kitsComoUnaLinea !== undefined)
+        updateData.kitsComoUnaLinea = dto.kitsComoUnaLinea;
       if (dto.ventaObservacionesDefault !== undefined)
         updateData.ventaObservacionesDefault =
           dto.ventaObservacionesDefault?.trim() || null;

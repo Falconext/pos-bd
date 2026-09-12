@@ -591,6 +591,7 @@ export class AuthService {
             boletaFormatoConfig: true,
             mostrarQrSunat: true,
             mostrarMarcaSistema: true,
+            kitsComoUnaLinea: true,
             catalogoPorSede: true,
             formatoImpresionDefault: true,
             imprimirAutomatico: true,
@@ -752,6 +753,25 @@ export class AuthService {
     );
     delete usuario.subModulosAsignados;
 
+    // Contacto principal del negocio para la cabecera de los comprobantes:
+    // el email y celular del ADMIN_EMPRESA (las credenciales principales), no
+    // los del usuario que emite. Mismo criterio que el PDF del servidor.
+    if (usuario.empresa && usuario.empresaId) {
+      const admin = await this.prisma.usuario.findFirst({
+        where: { empresaId: usuario.empresaId, rol: 'ADMIN_EMPRESA' },
+        select: { email: true, celular: true, telefono: true },
+        orderBy: { id: 'asc' },
+      });
+      usuario.empresa.contactoPrincipal = {
+        email: admin?.email ?? usuario.email ?? null,
+        celular:
+          usuario.empresa.whatsappTienda ||
+          admin?.celular ||
+          admin?.telefono ||
+          null,
+      };
+    }
+
     return usuario;
   }
 
@@ -800,6 +820,7 @@ export class AuthService {
             boletaFormatoConfig: true,
             mostrarQrSunat: true,
             mostrarMarcaSistema: true,
+            kitsComoUnaLinea: true,
             catalogoPorSede: true,
             formatoImpresionDefault: true,
             imprimirAutomatico: true,
