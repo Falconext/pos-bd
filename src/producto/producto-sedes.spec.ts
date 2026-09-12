@@ -187,6 +187,34 @@ describe('ProductoService — disponibilidad por sede', () => {
       const r = await service.asignarSedeMasivo(1, 2, [1], true);
       expect(r).toMatchObject({ actualizados: 1, omitidos: [] });
     });
+    it('quitar con ajustarStockACero: registra SALIDA en kardex y quita igual', async () => {
+      prisma.sede.findFirst.mockResolvedValue({ id: 2, nombre: 'Zapallal' });
+      prisma.producto.findMany.mockResolvedValue([
+        {
+          id: 1,
+          descripcion: 'Con stock',
+          costoPromedio: 3,
+          stocks: [{ stock: 39 }],
+        },
+      ]);
+      const r = await service.asignarSedeMasivo(1, 2, [1], false, {
+        ajustarStockACero: true,
+        usuarioId: 9,
+      });
+      expect(r).toMatchObject({ actualizados: 1, ajustados: 1, omitidos: [] });
+      expect(kardex.registrarMovimiento).toHaveBeenCalledWith(
+        expect.objectContaining({
+          productoId: 1,
+          sedeId: 2,
+          tipoMovimiento: 'SALIDA',
+          cantidad: 39,
+          usuarioId: 9,
+        }),
+      );
+      expect(prisma.productoStock.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ update: { visibleEnSede: false } }),
+      );
+    });
     it('sede ajena → error', async () => {
       prisma.sede.findFirst.mockResolvedValue(null);
       await expect(

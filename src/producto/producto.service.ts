@@ -3228,6 +3228,15 @@ export class ProductoService {
     sedeId: number,
     productoIds: number[],
     disponible: boolean,
+    opciones?: {
+      /**
+       * Al quitar: si el producto tiene stock en la sede, registrar una SALIDA
+       * en kardex que lo deja en 0 y quitarlo igual. Pensado para el caso "se
+       * cargó stock en la sede equivocada" — requiere confirmación explícita.
+       */
+      ajustarStockACero?: boolean;
+      usuarioId?: number;
+    },
   ) {
     const sede = await this.prisma.sede.findFirst({
       where: { id: sedeId, empresaId, activo: true },
@@ -3242,7 +3251,7 @@ export class ProductoService {
       (id) => Number.isInteger(id) && id > 0,
     );
     if (ids.length === 0)
-      return { actualizados: 0, omitidos: [], sede: sede.nombre };
+      return { actualizados: 0, ajustados: 0, omitidos: [], sede: sede.nombre };
     const productos = await this.prisma.producto.findMany({
       where: {
         id: { in: ids },
@@ -3252,19 +3261,38 @@ export class ProductoService {
       select: {
         id: true,
         descripcion: true,
+        costoPromedio: true,
         stocks: { where: { sedeId }, select: { stock: true } },
       },
     });
     const omitidos: { id: number; descripcion: string; stock: number }[] = [];
     const aplicar: number[] = [];
+    let ajustados = 0;
     for (const p of productos) {
       const stockSede = num(p.stocks[0]?.stock);
       if (!disponible && stockSede > 0) {
-        omitidos.push({
-          id: p.id,
-          descripcion: p.descripcion,
-          stock: stockSede,
-        });
+        if (opciones?.ajustarStockACero) {
+          // Salida auditable en kardex: el stock de esa sede queda en 0.
+          await this.kardexService.registrarMovimiento({
+            productoId: p.id,
+            empresaId,
+            sedeId,
+            tipoMovimiento: 'SALIDA',
+            concepto: `Retiro de ${sede.nombre}: producto quitado de la sede (stock a 0)`,
+            cantidad: round3(stockSede),
+            costoUnitario: Number(p.costoPromedio) || 0,
+            usuarioId: opciones.usuarioId,
+            observacion: `Stock anterior: ${stockSede}, Stock nuevo: 0`,
+          });
+          ajustados += 1;
+          aplicar.push(p.id);
+        } else {
+          omitidos.push({
+            id: p.id,
+            descripcion: p.descripcion,
+            stock: stockSede,
+          });
+        }
       } else {
         aplicar.push(p.id);
       }
@@ -3289,7 +3317,12 @@ export class ProductoService {
         data: { visibleEnSede: disponible },
       });
     }
-    return { actualizados: aplicar.length, omitidos, sede: sede.nombre };
+    return {
+      actualizados: aplicar.length,
+      ajustados,
+      omitidos,
+      sede: sede.nombre,
+    };
   }
 
   /**

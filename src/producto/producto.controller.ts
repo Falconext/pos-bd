@@ -1091,6 +1091,7 @@ export class ProductoController {
       dto.sedeId,
       dto.productoIds,
       dto.disponible,
+      { ajustarStockACero: dto.ajustarStockACero === true, usuarioId: user.id },
     );
     res.locals.message = dto.disponible
       ? `${resultado.actualizados} producto(s) asignados a ${resultado.sede}`
