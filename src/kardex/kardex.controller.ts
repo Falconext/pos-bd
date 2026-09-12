@@ -48,8 +48,14 @@ export class KardexController {
 
     // Admins see all sedes by default so traslados show both SALIDA and INGRESO.
     // Regular users are always scoped to their sede.
+    // El admin elige la sede (o todas, sin sedeId); el usuario de sede fija
+    // siempre queda acotado a la suya.
     const isAdmin = ['ADMIN_EMPRESA', 'ADMIN_SISTEMA'].includes(req.user.rol);
-    const sedeId = isAdmin ? undefined : req.user.sedeId;
+    const sedeId = isAdmin
+      ? filtros.sedeId
+        ? Number(filtros.sedeId)
+        : undefined
+      : req.user.sedeId;
 
     return this.kardexService.obtenerKardexGeneral(empresaId, filtros, sedeId);
   }
@@ -260,8 +266,14 @@ export class KardexController {
     // las sedes (para que un traslado muestre SALIDA e INGRESO) y el usuario
     // normal queda acotado a la suya. Sin esto el Excel traería menos filas
     // que la tabla que el admin tiene en pantalla.
+    // El admin elige la sede (o todas, sin sedeId); el usuario de sede fija
+    // siempre queda acotado a la suya.
     const isAdmin = ['ADMIN_EMPRESA', 'ADMIN_SISTEMA'].includes(req.user.rol);
-    const sedeId = isAdmin ? undefined : req.user.sedeId;
+    const sedeId = isAdmin
+      ? filtros.sedeId
+        ? Number(filtros.sedeId)
+        : undefined
+      : req.user.sedeId;
 
     const buffer = await this.kardexService.exportarMovimientos(
       empresaId,

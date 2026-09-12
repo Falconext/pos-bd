@@ -44,6 +44,14 @@ export class FiltrosKardexDto {
   @IsString()
   concepto?: string;
 
+  // Sede a consultar. Solo la respeta el admin/supervisor; el usuario de sede
+  // fija siempre ve la suya (lo fuerza el controller).
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  sedeId?: number;
+
   @IsOptional()
   @Type(() => Number)
   @IsInt()
