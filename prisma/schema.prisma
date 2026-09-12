@@ -235,6 +235,11 @@ model Empresa {
   // web" en ticket; "X ™ / Comprobante emitido a través de web" en A4/A5/cotización).
   // Default true = se imprime; el negocio puede apagarlo desde Perfil → Configuración.
   mostrarMarcaSistema           Boolean                       @default(true)
+  // Kits (combos) en el punto de venta: true = entran al carrito y al comprobante
+  // como UNA sola línea "KIT: X" al precio del kit (el stock de cada componente se
+  // descuenta igual, por debajo). false = comportamiento histórico: se desarma en
+  // sus productos con el precio prorrateado.
+  kitsComoUnaLinea              Boolean                       @default(false)
   // ── Catálogo por sede ────────────────────────────────────────────────────
   // false (default) = catálogo COMPARTIDO: un producto nuevo queda disponible en
   // todas las sedes (comportamiento histórico). true = catálogo INDEPENDIENTE:
@@ -1003,6 +1008,9 @@ model DetalleComprobante {
   mtoDescuento      Float?          @default(0)
   // Farmacia: trazabilidad de lote dispensado
   loteId            Int?
+  // Kit vendido como una sola línea (Empresa.kitsComoUnaLinea): referencia al combo
+  // para descontar/reponer el stock de sus componentes.
+  comboId           Int?
   // Farmacia: datos de receta médica y medicamentos controlados
   numeroReceta      String?
   dniPaciente       String?
@@ -1014,6 +1022,7 @@ model DetalleComprobante {
   comprobante       Comprobante     @relation(fields: [comprobanteId], references: [id])
   producto          Producto?       @relation(fields: [productoId], references: [id])
   lote              ProductoLote?   @relation(fields: [loteId], references: [id])
+  combo             Combo?          @relation(fields: [comboId], references: [id], onDelete: SetNull)
   medico            Doctor?         @relation("MedicoDetalle", fields: [medicoId], references: [id])
   paciente          Cliente?        @relation("PacienteDetalle", fields: [pacienteId], references: [id])
   seriesVendidas    ProductoSerie[]
@@ -1021,6 +1030,7 @@ model DetalleComprobante {
   // FK usada en todo include/join de ventas, dashboard, finanzas y kardex
   @@index([comprobanteId])
   @@index([productoId])
+  @@index([comboId])
 }
 
 enum EstadoProductoSerie {
@@ -1361,6 +1371,7 @@ model Combo {
   actualizadoEn       DateTime           @updatedAt
   pedidoItems         ItemPedidoTienda[]
   items               ComboItem[]
+  detallesComprobante DetalleComprobante[]
   empresa             Empresa            @relation(fields: [empresaId], references: [id], onDelete: Cascade)
 
   @@index([empresaId, activo])
@@ -1621,6 +1632,9 @@ model ProductoCodigoBarras {
   /// código del six-pack de cervezas vale 6; el código individual de la cerveza
   /// suelta usa el default 1). Todos los códigos comparten el MISMO stock.
   unidadesPorPaquete Int      @default(1)
+  /// Código interno del negocio para esta presentación (ej. "22005-CJ" para la
+  /// caja). Se busca y se escanea/tipea en el POS igual que el código de barras.
+  codigoInterno String?
   /// Precio TOTAL del paquete cuando se vende por este código (suele ser más
   /// barato que unidades × precio unitario). null = sin precio propio: se
   /// cobra precioUnitario × unidadesPorPaquete.

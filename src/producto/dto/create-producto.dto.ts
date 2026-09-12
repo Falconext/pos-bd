@@ -48,6 +48,11 @@ export class CodigoBarraExtraDto {
   @IsString()
   alias?: string;
 
+  // Código interno del negocio para esta presentación (ej. "22005-CJ").
+  @IsOptional()
+  @IsString()
+  codigoInterno?: string;
+
   // Imagen del paquete: URL S3 existente o data-URI base64 (se sube a S3).
   @IsOptional()
   @IsString()

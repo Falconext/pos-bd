@@ -328,6 +328,7 @@ export class ProductoService {
             unidadesPorPaquete?: number;
             precioPaquete?: number;
             alias?: string;
+            codigoInterno?: string;
             imagenUrl?: string;
           }
       >;
@@ -845,6 +846,7 @@ export class ProductoService {
             OR: [
               { codigo: { contains: term, mode: 'insensitive' } },
               { alias: { contains: term, mode: 'insensitive' } },
+              { codigoInterno: { contains: term, mode: 'insensitive' } },
             ],
           },
         },
@@ -1018,6 +1020,7 @@ export class ProductoService {
               unidadesPorPaquete: true,
               precioPaquete: true,
               alias: true,
+              codigoInterno: true,
               imagenUrl: true,
             },
           },
@@ -1332,6 +1335,7 @@ export class ProductoService {
                   : null;
               return {
                 codigo: c.codigo,
+                codigoInterno: c.codigoInterno || null,
                 unidadesPorPaquete: Number(c.unidadesPorPaquete) || 1,
                 precioPaquete,
                 alias: c.alias || null,
@@ -1725,6 +1729,7 @@ export class ProductoService {
             unidadesPorPaquete: true,
             precioPaquete: true,
             alias: true,
+            codigoInterno: true,
             imagenUrl: true,
           },
           orderBy: { id: 'asc' },
@@ -1793,6 +1798,7 @@ export class ProductoService {
           precioPaquete:
             c.precioPaquete != null ? Number(c.precioPaquete) : null,
           alias: c.alias ?? null,
+          codigoInterno: c.codigoInterno ?? null,
           imagenUrl: c.imagenUrl ?? null,
           imagenUrlDisplay: await signIfS3(c.imagenUrl),
         })),
@@ -1823,6 +1829,7 @@ export class ProductoService {
           unidadesPorPaquete?: number;
           precioPaquete?: number;
           alias?: string;
+          codigoInterno?: string;
           imagenUrl?: string;
         }
     >,
@@ -1832,6 +1839,7 @@ export class ProductoService {
     unidadesPorPaquete: number;
     precioPaquete: number | null;
     alias: string | null;
+    codigoInterno: string | null;
     imagenUrl: string | null;
   }> {
     const principal = (codigoBarrasPrincipal || '').trim().toUpperCase();
@@ -1841,6 +1849,7 @@ export class ProductoService {
         unidadesPorPaquete: number;
         precioPaquete: number | null;
         alias: string | null;
+        codigoInterno: string | null;
         imagenUrl: string | null;
       }
     >();
@@ -1857,12 +1866,19 @@ export class ProductoService {
       const precioPaquete =
         Number.isFinite(precioRaw) && precioRaw > 0 ? precioRaw : null;
       const alias = (esObjeto ? String(raw.alias || '').trim() : '') || null;
+      const codigoInterno =
+        (esObjeto
+          ? String(raw.codigoInterno || '')
+              .trim()
+              .toUpperCase()
+          : '') || null;
       const imagenUrl =
         (esObjeto ? String(raw.imagenUrl || '').trim() : '') || null;
       vistos.set(codigo, {
         unidadesPorPaquete: unidades,
         precioPaquete,
         alias,
+        codigoInterno,
         imagenUrl,
       });
     }
@@ -1875,9 +1891,49 @@ export class ProductoService {
    */
   private async validarColisionCodigosExtra(
     empresaId: number,
-    codigos: Array<{ codigo: string }>,
+    codigos: Array<{ codigo: string; codigoInterno?: string | null }>,
     excludeProductoId?: number,
   ) {
+    // El código interno de una presentación no puede repetir el SKU, el código
+    // de barras ni el código interno de OTRO producto (se busca/escanea igual).
+    for (const { codigoInterno } of codigos) {
+      if (!codigoInterno) continue;
+      const chocaSku = await this.prisma.producto.findFirst({
+        where: {
+          empresaId,
+          estado: { not: 'PLACEHOLDER' as any },
+          ...(excludeProductoId ? { id: { not: excludeProductoId } } : {}),
+          OR: [
+            { codigo: { equals: codigoInterno, mode: 'insensitive' } },
+            { codigoBarras: { equals: codigoInterno, mode: 'insensitive' } },
+          ],
+        },
+        select: { descripcion: true },
+      });
+      if (chocaSku) {
+        throw new ForbiddenException(
+          `El código interno "${codigoInterno}" ya es el código de otro producto: ${chocaSku.descripcion}`,
+        );
+      }
+      const chocaInterno = await this.prisma.productoCodigoBarras.findFirst({
+        where: {
+          empresaId,
+          ...(excludeProductoId
+            ? { productoId: { not: excludeProductoId } }
+            : {}),
+          OR: [
+            { codigoInterno: { equals: codigoInterno, mode: 'insensitive' } },
+            { codigo: { equals: codigoInterno, mode: 'insensitive' } },
+          ],
+        },
+        select: { producto: { select: { descripcion: true } } },
+      });
+      if (chocaInterno) {
+        throw new ForbiddenException(
+          `El código interno "${codigoInterno}" ya está asignado a otro producto: ${chocaInterno.producto?.descripcion}`,
+        );
+      }
+    }
     for (const { codigo } of codigos) {
       const chocaPrincipal = await this.prisma.producto.findFirst({
         where: {
@@ -1974,6 +2030,7 @@ export class ProductoService {
                   unidadesPorPaquete,
                   precioPaquete,
                   alias,
+                  codigoInterno,
                   imagenUrl,
                 }) => ({
                   productoId,
@@ -1982,6 +2039,7 @@ export class ProductoService {
                   unidadesPorPaquete,
                   precioPaquete,
                   alias,
+                  codigoInterno,
                   imagenUrl,
                 }),
               ),
@@ -2010,6 +2068,14 @@ export class ProductoService {
         OR: [
           { codigoBarras },
           { codigosBarras: { some: { codigo: codigoBarras } } },
+          // Código interno del negocio para una presentación (ej. "22005-CJ").
+          {
+            codigosBarras: {
+              some: {
+                codigoInterno: { equals: codigoBarras, mode: 'insensitive' },
+              },
+            },
+          },
         ],
       },
       select: {
@@ -2049,6 +2115,7 @@ export class ProductoService {
             unidadesPorPaquete: true,
             precioPaquete: true,
             alias: true,
+            codigoInterno: true,
             imagenUrl: true,
           },
         },
@@ -2081,8 +2148,11 @@ export class ProductoService {
 
     // El código escaneado puede ser el principal (siempre 1 unidad) o un
     // código alterno registrado con `unidadesPorPaquete` (ej. el six-pack).
+    const buscado = String(codigoBarras).trim().toUpperCase();
     const codigoAlternoMatch = ((producto.codigosBarras as any[]) || []).find(
-      (c) => c.codigo === codigoBarras,
+      (c) =>
+        c.codigo === codigoBarras ||
+        String(c.codigoInterno || '').toUpperCase() === buscado,
     );
     const unidadesPorPaquete = codigoAlternoMatch
       ? Number(codigoAlternoMatch.unidadesPorPaquete) || 1
@@ -2543,6 +2613,7 @@ export class ProductoService {
             unidadesPorPaquete?: number;
             precioPaquete?: number;
             alias?: string;
+            codigoInterno?: string;
             imagenUrl?: string;
           }
       >;
