@@ -129,6 +129,46 @@ export class DashboardService {
   }
 
   // Lima es siempre UTC-5 (sin DST). Extrae "YYYY-MM-DD" en hora Lima.
+  /**
+   * Utilidad bruta de las ventas del rango, en PEN: valor de venta (sin IGV)
+   * menos el costo promedio actual del producto por las unidades vendidas.
+   * Es el mismo criterio que la "ganancia" por producto de topProductos, así
+   * el KPI del dashboard y el ranking cuadran entre sí. Las líneas sin
+   * producto (servicios, ítems manuales) cuentan con costo 0.
+   *
+   * Distinto de financiero.ganancias (ingresos − compras − gastos), que es
+   * flujo de caja: si el negocio compró mercadería ese día, "ganancias" sale
+   * bajo o negativo aunque las ventas hayan dejado margen. Esto responde a
+   * "¿cuánto gané con lo que vendí hoy?".
+   */
+  private async utilidadBrutaPen(
+    comprobanteWhere: any,
+  ): Promise<{ venta: number; costo: number; utilidad: number }> {
+    const detalles = await this.prisma.detalleComprobante.findMany({
+      where: { comprobante: comprobanteWhere },
+      select: {
+        cantidad: true,
+        mtoValorVenta: true,
+        producto: { select: { costoPromedio: true } },
+        comprobante: { select: { tipoMoneda: true, tipoCambio: true } },
+      },
+    });
+    let venta = 0;
+    let costo = 0;
+    for (const d of detalles) {
+      venta += montoEnPen(
+        d.mtoValorVenta,
+        d.comprobante.tipoMoneda,
+        d.comprobante.tipoCambio,
+      );
+      costo +=
+        Number(d.producto?.costoPromedio ?? 0) * Number(d.cantidad ?? 0);
+    }
+    venta = Number(venta.toFixed(2));
+    costo = Number(costo.toFixed(2));
+    return { venta, costo, utilidad: Number((venta - costo).toFixed(2)) };
+  }
+
   private toFechaLima(d: Date): string {
     return new Date(d.getTime() - 5 * 60 * 60 * 1000)
       .toISOString()
@@ -652,6 +692,30 @@ export class DashboardService {
         ? 100
         : ((pedidosCurr - pedidosPrev) / pedidosPrev) * 100;
 
+    // Utilidad bruta de las ventas (KPI "Utilidad" del dashboard).
+    const [utilidadCurr, utilidadPrev] = await Promise.all([
+      this.utilidadBrutaPen({
+        ...baseComprobanteWhere,
+        fechaEmision: currentRange,
+        tipoDoc: { notIn: ['07'] },
+      }),
+      this.utilidadBrutaPen({
+        ...baseComprobanteWhere,
+        fechaEmision: prevRange,
+        tipoDoc: { notIn: ['07'] },
+      }),
+    ]);
+    const utilidadTrend =
+      utilidadPrev.utilidad === 0
+        ? 100
+        : ((utilidadCurr.utilidad - utilidadPrev.utilidad) /
+            Math.abs(utilidadPrev.utilidad)) *
+          100;
+    const utilidadMargen =
+      utilidadCurr.venta > 0
+        ? (utilidadCurr.utilidad / utilidadCurr.venta) * 100
+        : 0;
+
     const clientesNuevosCurrRows = await this.clientesNuevos(
       empresaId,
       fechaInicio,
@@ -1064,6 +1128,14 @@ export class DashboardService {
         pedidos: { value: pedidosCurr, trend: pedidosTrend },
         clientes: { value: clientesNuevosCurr, trend: clientesTrend },
         conversion: { value: conversionCurr, trend: conversionTrend },
+        // Utilidad bruta del periodo: venta neta (sin IGV) − costo de lo vendido.
+        utilidad: {
+          value: utilidadCurr.utilidad,
+          trend: utilidadTrend,
+          ventaNeta: utilidadCurr.venta,
+          costo: utilidadCurr.costo,
+          margen: utilidadMargen,
+        },
       },
       chartVentas,
       chartCanales,
