@@ -275,13 +275,16 @@ export class MercadoPagoService {
         pending: successUrl,
         failure: `${this.frontendUrl}/tienda/${params.slug}/checkout`,
       },
-      auto_return: 'approved',
       notification_url: notificationUrl,
       metadata: {
         pedidoId: params.pedidoId,
         empresaId: params.empresaId,
       },
     };
+    // MP rechaza auto_return si la back_url no es pública HTTPS (p. ej. localhost en dev).
+    if (/^https:\/\//i.test(successUrl)) {
+      body.auto_return = 'approved';
+    }
     if (params.clienteEmail) {
       body.payer = { email: params.clienteEmail };
     }
