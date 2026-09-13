@@ -40,19 +40,27 @@ export class AnalisisFinancieroController {
     return Number.isFinite(n) && n > 0 ? n : null;
   }
 
-  /** GET /analisis-financiero/pnl?mes=&anio= */
+  /**
+   * GET /analisis-financiero/pnl?mes=&anio=&fechaInicio=&fechaFin=
+   * Mes (mes/anio), un día (fechaInicio = fechaFin) o un rango. Si vienen
+   * fechas, mandan sobre mes/anio.
+   */
   @Get('pnl')
   getPnl(
     @User() user: any,
-    @Query() query: QueryPeriodoDto,
+    @Query('mes') mes?: string,
+    @Query('anio') anio?: string,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
     @Query('sedeId') sedeIdQuery?: string,
   ) {
-    return this.service.getPnl(
-      user.empresaId,
-      query.mes,
-      query.anio,
-      this.resolverSedeId(user, sedeIdQuery),
-    );
+    return this.service.getPnl(user.empresaId, {
+      mes: mes ? Number(mes) : undefined,
+      anio: anio ? Number(anio) : undefined,
+      fechaInicio,
+      fechaFin,
+      sedeId: this.resolverSedeId(user, sedeIdQuery),
+    });
   }
 
   /**

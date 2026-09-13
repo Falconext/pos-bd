@@ -25,7 +25,14 @@ export interface OtroIngreso {
 }
 
 export interface PnlResponse {
-  periodo: { mes: number; anio: number; label: string };
+  periodo: {
+    mes: number;
+    anio: number;
+    label: string;
+    tipo: 'mes' | 'dia' | 'rango';
+    fechaInicio: string;
+    fechaFin: string;
+  };
   ventasNetas: number;
   costoBaseProductos: number;
   costosFijosProducto: number;
@@ -88,11 +95,29 @@ interface DetalleComprobantePnl {
 interface ComprobantePnl {
   tipoDoc: string;
   estadoEnvioSunat: EstadoSunat;
+  numDocAfectado?: string | null;
   mtoImpVenta: number;
   tipoMoneda?: string | null;
   tipoCambio?: number | null;
   fechaEmision?: Date;
   detalles: DetalleComprobantePnl[];
+}
+
+/**
+ * Período que analiza el P&L. Nació mensual (mes/anio) y ahora también puede
+ * ser un día o un rango de fechas, para que el usuario cuadre el sistema con
+ * su arqueo diario. `mes`/`anio` son los del inicio del período: los gastos
+ * operativos "no recurrentes" viejos se guardan solo con mes/anio.
+ */
+interface PeriodoPnl {
+  tipo: 'mes' | 'dia' | 'rango';
+  mes: number;
+  anio: number;
+  /** YYYY-MM-DD en hora Lima (inclusive). */
+  startKey: string;
+  endKey: string;
+  gte: Date;
+  lte: Date;
 }
 
 export interface RentabilidadDia {
@@ -385,6 +410,79 @@ export class AnalisisFinancieroService {
     };
   }
 
+  private periodoMes(mes: number, anio: number): PeriodoPnl {
+    const { gte, lte } = this.periodoToRange(mes, anio);
+    return {
+      tipo: 'mes',
+      mes,
+      anio,
+      startKey: `${anio}-${String(mes).padStart(2, '0')}-01`,
+      endKey: this.monthEndKey(mes, anio),
+      gte,
+      lte,
+    };
+  }
+
+  /** Día (inicio = fin) o rango de fechas YYYY-MM-DD. `null` si no es válido. */
+  private periodoRango(
+    fechaInicio?: string,
+    fechaFin?: string,
+  ): PeriodoPnl | null {
+    const range = this.fechasToRange(fechaInicio, fechaFin);
+    if (!range || !fechaInicio || !fechaFin || fechaInicio > fechaFin) {
+      return null;
+    }
+    const [anio, mes] = fechaInicio.split('-').map(Number);
+    return {
+      tipo: fechaInicio === fechaFin ? 'dia' : 'rango',
+      mes,
+      anio,
+      startKey: fechaInicio,
+      endKey: fechaFin,
+      gte: range.gte,
+      lte: range.lte,
+    };
+  }
+
+  /**
+   * Período inmediatamente anterior, para la comparación: el mes previo, el
+   * día previo, o un rango de la misma cantidad de días pegado al inicio.
+   */
+  private periodoAnterior(periodo: PeriodoPnl): PeriodoPnl {
+    if (periodo.tipo === 'mes') {
+      const prev = this.restarMeses(periodo.mes, periodo.anio, 1);
+      return this.periodoMes(prev.mes, prev.anio);
+    }
+    const dias = this.diasEntre(periodo.startKey, periodo.endKey);
+    const endKey = this.sumarDias(periodo.startKey, -1);
+    const startKey = this.sumarDias(endKey, -(dias - 1));
+    return this.periodoRango(startKey, endKey) ?? periodo;
+  }
+
+  private labelPeriodo(periodo: PeriodoPnl): string {
+    const ddmmyyyy = (k: string) => k.split('-').reverse().join('/');
+    if (periodo.tipo === 'mes') return this.mesLabel(periodo.mes);
+    if (periodo.tipo === 'dia') return ddmmyyyy(periodo.startKey);
+    return `${ddmmyyyy(periodo.startKey)} al ${ddmmyyyy(periodo.endKey)}`;
+  }
+
+  /** Suma días a una clave YYYY-MM-DD (en UTC para no correr el día). */
+  private sumarDias(key: string, n: number): string {
+    const [y, m, d] = key.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    dt.setUTCDate(dt.getUTCDate() + n);
+    return dt.toISOString().slice(0, 10);
+  }
+
+  /** Cantidad de días entre dos claves YYYY-MM-DD, ambas inclusive. */
+  private diasEntre(startKey: string, endKey: string): number {
+    const [y1, m1, d1] = startKey.split('-').map(Number);
+    const [y2, m2, d2] = endKey.split('-').map(Number);
+    const a = Date.UTC(y1, m1 - 1, d1);
+    const b = Date.UTC(y2, m2 - 1, d2);
+    return Math.max(1, Math.round((b - a) / 86400000) + 1);
+  }
+
   private readonly MESES_LARGO = [
     'Enero',
     'Febrero',
@@ -472,8 +570,15 @@ export class AnalisisFinancieroService {
   }
 
   private listarDiasPeriodo(mes: number, anio: number): string[] {
-    const startKey = `${anio}-${String(mes).padStart(2, '0')}-01`;
-    let endKey = this.monthEndKey(mes, anio);
+    return this.listarDiasRango(
+      `${anio}-${String(mes).padStart(2, '0')}-01`,
+      this.monthEndKey(mes, anio),
+    );
+  }
+
+  /** Días YYYY-MM-DD del rango (inclusive), sin pasar de hoy. */
+  private listarDiasRango(startKey: string, endKeyIn: string): string[] {
+    let endKey = endKeyIn;
     const todayKey = this.todayLimaKey();
     if (startKey > todayKey) return [];
     if (endKey > todayKey) endKey = todayKey;
@@ -494,12 +599,10 @@ export class AnalisisFinancieroService {
 
   private expandirGastosPeriodo(
     gastosRaw: GastoPnl[],
-    mes: number,
-    anio: number,
+    periodo: PeriodoPnl,
   ): GastoAplicadoPnl[] {
-    const diasPeriodo = this.listarDiasPeriodo(mes, anio);
-    const startKey = `${anio}-${String(mes).padStart(2, '0')}-01`;
-    const endKey = this.monthEndKey(mes, anio);
+    const { startKey, endKey } = periodo;
+    const diasPeriodo = this.listarDiasRango(startKey, endKey);
     const gastosAplicados: GastoAplicadoPnl[] = [];
 
     for (const gasto of gastosRaw) {
@@ -510,11 +613,21 @@ export class AnalisisFinancieroService {
       const monto =
         gasto.moneda === 'USD' && tc > 0 ? montoBase * tc : montoBase;
       if (!gasto.recurrenteDiario) {
+        const fechaKey = this.fechaLimaKey(gasto.fecha ?? undefined);
+        // En un día/rango solo entran los gastos fechados dentro del período.
+        // En el mes se mantiene el criterio histórico (vienen por mes/anio,
+        // aunque el gasto no tenga fecha).
+        if (
+          periodo.tipo !== 'mes' &&
+          (!fechaKey || fechaKey < startKey || fechaKey > endKey)
+        ) {
+          continue;
+        }
         gastosAplicados.push({
           categoria: gasto.categoria,
           etiqueta: gasto.etiqueta,
           monto,
-          fecha: this.fechaLimaKey(gasto.fecha ?? undefined),
+          fecha: fechaKey,
         });
         continue;
       }
@@ -540,6 +653,52 @@ export class AnalisisFinancieroService {
 
   private esDocumentoVenta(c: ComprobantePnl): boolean {
     return c.tipoDoc !== 'COT' && c.estadoEnvioSunat !== EstadoSunat.ANULADO;
+  }
+
+  /**
+   * Quita las notas de crédito "de anulación": las que afectan a un
+   * comprobante que ya está ANULADO. Ese comprobante ya no suma en ninguna
+   * cifra (todos los cálculos descartan ANULADO), así que restar además su NC
+   * descontaba la misma venta dos veces (ventas netas, costo, unidades y la
+   * serie diaria salían más bajas que lo realmente vendido). Solo se conservan
+   * las NC que corrigen un documento vigente (devolución parcial, descuento
+   * posterior, etc.), que sí restan de verdad.
+   */
+  private async excluirNotasCreditoDeAnulacion<
+    T extends { tipoDoc: string; numDocAfectado?: string | null },
+  >(empresaId: number, comprobantes: T[]): Promise<T[]> {
+    const claves = new Map<string, { serie: string; correlativo: number }>();
+    for (const c of comprobantes) {
+      if (c.tipoDoc !== '07') continue;
+      const ref = (c.numDocAfectado || '').trim();
+      const idx = ref.lastIndexOf('-');
+      if (idx <= 0) continue;
+      const correlativo = Number(ref.slice(idx + 1));
+      if (!Number.isFinite(correlativo)) continue;
+      claves.set(ref, { serie: ref.slice(0, idx), correlativo });
+    }
+    if (claves.size === 0) return comprobantes;
+
+    const anulados = await this.prisma.comprobante.findMany({
+      where: {
+        empresaId,
+        estadoEnvioSunat: EstadoSunat.ANULADO,
+        OR: Array.from(claves.values()).map((k) => ({
+          serie: k.serie,
+          correlativo: k.correlativo,
+        })),
+      },
+      select: { serie: true, correlativo: true },
+    });
+    if (anulados.length === 0) return comprobantes;
+    const setAnulados = new Set(
+      anulados.map((a) => `${a.serie}-${a.correlativo}`),
+    );
+    return comprobantes.filter(
+      (c) =>
+        c.tipoDoc !== '07' ||
+        !setAnulados.has((c.numDocAfectado || '').trim()),
+    );
   }
 
   private signoDocumento(tipoDoc: string): 1 | -1 {
@@ -586,11 +745,10 @@ export class AnalisisFinancieroService {
   private calcularPnl(
     comprobantes: ComprobantePnl[],
     gastosRaw: GastoPnl[],
-    mes: number,
-    anio: number,
+    periodo: PeriodoPnl,
     otrosIngresos: number = 0,
   ) {
-    const gastosAplicados = this.expandirGastosPeriodo(gastosRaw, mes, anio);
+    const gastosAplicados = this.expandirGastosPeriodo(gastosRaw, periodo);
     const documentosVenta = comprobantes.filter((c) =>
       this.esDocumentoVenta(c),
     );
@@ -787,8 +945,7 @@ export class AnalisisFinancieroService {
   /** Fetches raw data for one period and returns calculated P&L. */
   private async fetchPeriodData(
     empresaId: number,
-    mes: number,
-    anio: number,
+    periodo: PeriodoPnl,
     sedeId?: number | null,
   ) {
     // Filtro por sede. Al pedir una sede concreta se traen solo sus ventas, sus
@@ -797,14 +954,9 @@ export class AnalisisFinancieroService {
     // quedan fuera: se informan aparte (ver `gastosEmpresa`) para que la suma
     // por sede más los de empresa cuadre con el consolidado.
     const porSede = sedeId ? { sedeId } : {};
-    const range = this.periodoToRange(mes, anio);
-    const gastoWhere = this.buildGastoPeriodoWhere(
-      empresaId,
-      mes,
-      anio,
-      sedeId,
-    );
-    const [comprobantes, gastos, campanas, ingresosManuales, egresosCaja] =
+    const range = { gte: periodo.gte, lte: periodo.lte };
+    const gastoWhere = this.buildGastoRangoWhere(empresaId, periodo, sedeId);
+    const [comprobantesRaw, gastos, campanas, ingresosManuales, egresosCaja] =
       await Promise.all([
         this.prisma.comprobante.findMany({
           where: {
@@ -816,6 +968,7 @@ export class AnalisisFinancieroService {
           select: {
             tipoDoc: true,
             estadoEnvioSunat: true,
+            numDocAfectado: true,
             mtoImpVenta: true,
             tipoMoneda: true,
             tipoCambio: true,
@@ -879,6 +1032,10 @@ export class AnalisisFinancieroService {
           select: { fecha: true, monto: true, categoriaGasto: true },
         }),
       ]);
+    const comprobantes = await this.excluirNotasCreditoDeAnulacion(
+      empresaId,
+      comprobantesRaw,
+    );
 
     const otrosIngresos = ingresosManuales.reduce(
       (sum, i) => sum + this.toNumber(i.monto as any),
@@ -891,8 +1048,8 @@ export class AnalisisFinancieroService {
     }));
 
     // Inject active campaign spend as virtual daily PUBLICIDAD gastos
-    const inicioMes = new Date(anio, mes - 1, 1);
-    const finMes = new Date(anio, mes, 0, 23, 59, 59);
+    const inicioMes = periodo.gte;
+    const finMes = periodo.lte;
     const hoy = new Date();
     const finReal = hoy < finMes ? hoy : finMes;
 
@@ -944,7 +1101,7 @@ export class AnalisisFinancieroService {
       const [gastosSinSede, campanasSinSede, cajaSinSede] = await Promise.all([
         this.prisma.gastoOperativo.findMany({
           where: {
-            ...this.buildGastoPeriodoWhere(empresaId, mes, anio),
+            ...this.buildGastoRangoWhere(empresaId, periodo),
             sedeId: null,
           },
           select: { monto: true, moneda: true, tipoCambio: true },
@@ -978,8 +1135,7 @@ export class AnalisisFinancieroService {
       ...this.calcularPnl(
         comprobantes,
         gastosConCampanas,
-        mes,
-        anio,
+        periodo,
         otrosIngresos,
       ),
       otrosIngresosDetalle,
@@ -990,15 +1146,28 @@ export class AnalisisFinancieroService {
   /** GET /pnl — P&L for a single mes/anio period. */
   async getPnl(
     empresaId: number,
-    mes: number,
-    anio: number,
-    sedeId?: number | null,
+    opts: {
+      mes?: number;
+      anio?: number;
+      /** Día (inicio = fin) o rango YYYY-MM-DD. Si viene, manda sobre mes/anio. */
+      fechaInicio?: string;
+      fechaFin?: string;
+      sedeId?: number | null;
+    },
   ): Promise<PnlResponse> {
-    const prev = this.restarMeses(mes, anio, 1);
+    const now = new Date();
+    const mes =
+      opts.mes && opts.mes >= 1 && opts.mes <= 12 ? opts.mes : now.getMonth() + 1;
+    const anio = opts.anio && opts.anio >= 2020 ? opts.anio : now.getFullYear();
+    const periodo =
+      this.periodoRango(opts.fechaInicio, opts.fechaFin) ??
+      this.periodoMes(mes, anio);
+    const anterior = this.periodoAnterior(periodo);
+    const sedeId = opts.sedeId;
 
     const [pnl, pnlAnterior] = await Promise.all([
-      this.fetchPeriodData(empresaId, mes, anio, sedeId),
-      this.fetchPeriodData(empresaId, prev.mes, prev.anio, sedeId),
+      this.fetchPeriodData(empresaId, periodo, sedeId),
+      this.fetchPeriodData(empresaId, anterior, sedeId),
     ]);
 
     const tieneAnterior =
@@ -1018,7 +1187,14 @@ export class AnalisisFinancieroService {
         : null;
 
     return {
-      periodo: { mes, anio, label: this.mesLabel(mes) },
+      periodo: {
+        mes: periodo.mes,
+        anio: periodo.anio,
+        label: this.labelPeriodo(periodo),
+        tipo: periodo.tipo,
+        fechaInicio: periodo.startKey,
+        fechaFin: periodo.endKey,
+      },
       ...pnl,
       comparacion: {
         mesAnterior: tieneAnterior
@@ -1054,7 +1230,7 @@ export class AnalisisFinancieroService {
     const rangeLte = this.periodoToRange(mesActual, anioActual).lte;
 
     // Single query per entity covering the full window
-    const [comprobantes, gastos, todosIngresosManuales] = await Promise.all([
+    const [comprobantesRaw, gastos, todosIngresosManuales] = await Promise.all([
       this.prisma.comprobante.findMany({
         where: {
           empresaId,
@@ -1065,6 +1241,7 @@ export class AnalisisFinancieroService {
         select: {
           tipoDoc: true,
           estadoEnvioSunat: true,
+          numDocAfectado: true,
           mtoImpVenta: true,
           fechaEmision: true,
           detalles: {
@@ -1111,6 +1288,10 @@ export class AnalisisFinancieroService {
         select: { fecha: true, monto: true },
       }),
     ]);
+    const comprobantes = await this.excluirNotasCreditoDeAnulacion(
+      empresaId,
+      comprobantesRaw,
+    );
 
     // Build result iterating backwards from current month
     const resultado: EvolucionPoint[] = [];
@@ -1140,8 +1321,7 @@ export class AnalisisFinancieroService {
       const pnl = this.calcularPnl(
         comprobantesDelMes,
         gastosDelMes,
-        mes,
-        anio,
+        this.periodoMes(mes, anio),
         otrosIngresosDelMes,
       );
 
@@ -1194,6 +1374,38 @@ export class AnalisisFinancieroService {
           recurrenteDiario: true,
           fechaInicio: { lte: range.lte },
           OR: [{ fechaFin: null }, { fechaFin: { gte: range.gte } }],
+        },
+      ],
+    };
+  }
+
+  /**
+   * Gastos operativos del período. Mes: criterio histórico (mes/anio o
+   * recurrente que lo cubre). Día/rango: gastos fechados dentro del rango o
+   * recurrentes que lo cubren.
+   */
+  private buildGastoRangoWhere(
+    empresaId: number,
+    periodo: PeriodoPnl,
+    sedeId?: number | null,
+  ) {
+    if (periodo.tipo === 'mes') {
+      return this.buildGastoPeriodoWhere(
+        empresaId,
+        periodo.mes,
+        periodo.anio,
+        sedeId,
+      );
+    }
+    return {
+      empresaId,
+      ...(sedeId ? { sedeId } : {}),
+      OR: [
+        { recurrenteDiario: false, fecha: { gte: periodo.gte, lte: periodo.lte } },
+        {
+          recurrenteDiario: true,
+          fechaInicio: { lte: periodo.lte },
+          OR: [{ fechaFin: null }, { fechaFin: { gte: periodo.gte } }],
         },
       ],
     };
@@ -1299,7 +1511,7 @@ export class AnalisisFinancieroService {
   ) {
     const range = this.periodoToRange(mes, anio);
 
-    const comprobantes = await this.prisma.comprobante.findMany({
+    const comprobantesRaw = await this.prisma.comprobante.findMany({
       where: {
         empresaId,
         ...(sedeId ? { sedeId } : {}),
@@ -1309,6 +1521,7 @@ export class AnalisisFinancieroService {
       select: {
         tipoDoc: true,
         estadoEnvioSunat: true,
+        numDocAfectado: true,
         detalles: {
           select: {
             descripcion: true,
@@ -1327,6 +1540,10 @@ export class AnalisisFinancieroService {
         },
       },
     });
+    const comprobantes = await this.excluirNotasCreditoDeAnulacion(
+      empresaId,
+      comprobantesRaw,
+    );
 
     // catKey → { prodKey → accumulator }
     const catMap = new Map<
@@ -1491,7 +1708,7 @@ export class AnalisisFinancieroService {
         : `${fechaInicio} al ${fechaFin}`
       : `${this.mesLabel(mesFinal)} ${anioFinal}`;
 
-    const comprobantes = await this.prisma.comprobante.findMany({
+    const comprobantesRaw = await this.prisma.comprobante.findMany({
       where: {
         empresaId,
         ...(sedeId ? { sedeId } : {}),
@@ -1502,6 +1719,7 @@ export class AnalisisFinancieroService {
         id: true,
         tipoDoc: true,
         estadoEnvioSunat: true,
+        numDocAfectado: true,
         fechaEmision: true,
         tipoMoneda: true,
         tipoCambio: true,
@@ -1535,6 +1753,10 @@ export class AnalisisFinancieroService {
         },
       },
     });
+    const comprobantes = await this.excluirNotasCreditoDeAnulacion(
+      empresaId,
+      comprobantesRaw,
+    );
 
     const limpiar = (v?: string | null) =>
       String(v ?? '').replace(/\s+/g, ' ').trim().toUpperCase();
@@ -2146,7 +2368,7 @@ export class AnalisisFinancieroService {
         : `${fechaInicio} al ${fechaFin}`
       : `${this.mesLabel(mesFinal)} ${anioFinal}`;
 
-    const comprobantes = await this.prisma.comprobante.findMany({
+    const comprobantesRaw = await this.prisma.comprobante.findMany({
       where: {
         empresaId,
         ...(sedeId ? { sedeId } : {}),
@@ -2156,6 +2378,7 @@ export class AnalisisFinancieroService {
       select: {
         tipoDoc: true,
         estadoEnvioSunat: true,
+        numDocAfectado: true,
         fechaEmision: true,
         tipoMoneda: true,
         tipoCambio: true,
@@ -2178,6 +2401,10 @@ export class AnalisisFinancieroService {
         },
       },
     });
+    const comprobantes = await this.excluirNotasCreditoDeAnulacion(
+      empresaId,
+      comprobantesRaw,
+    );
 
     interface AccProducto {
       productoId: number | null;
