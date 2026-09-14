@@ -221,14 +221,17 @@ export class DashboardService {
             codigo: { notIn: ['DGD', 'IPM', 'PLD'] },
           },
         }),
-        sedeId
-          ? Promise.resolve([] as any[])
-          : this.prisma.ingresoManual.findMany({
-              where: {
-                empresaId,
-                ...(fechaEmision ? { fecha: fechaEmision } : {}),
-              },
-            }),
+        // Mismo criterio que overview() más abajo: los ingresos manuales son
+        // casi siempre de toda la empresa (sedeId null); con sede activa se
+        // incluyen los de esa sede + los de toda la empresa, en vez de
+        // descartarlos por completo.
+        this.prisma.ingresoManual.findMany({
+          where: {
+            empresaId,
+            ...(fechaEmision ? { fecha: fechaEmision } : {}),
+            ...(sedeId ? { OR: [{ sedeId }, { sedeId: null }] } : {}),
+          },
+        }),
       ]);
 
       const elapsed = Date.now() - startTime;
