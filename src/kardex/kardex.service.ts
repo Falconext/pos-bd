@@ -260,13 +260,17 @@ export class KardexService {
     }
     stockActual = round3(stockActual);
 
-    // Calcular costo unitario si no se proporciona
+    // Calcular costo unitario si no se proporciona. OJO: costo 0 es un valor
+    // válido (p.ej. bonificación de proveedor) y NO debe confundirse con "no
+    // se proporcionó" — antes `!costoUnitario` trataba 0 como ausente y lo
+    // reemplazaba por el costoPromedio, así que un ingreso gratis terminaba
+    // registrado (y promediado) con el costo viejo del producto.
     let costoUnitario = data.costoUnitario;
-    if (!costoUnitario && data.tipoMovimiento === 'INGRESO') {
+    if (costoUnitario == null && data.tipoMovimiento === 'INGRESO') {
       costoUnitario = costoPromedio;
     }
 
-    const valorTotal = costoUnitario ? costoUnitario * cantidadNum : null;
+    const valorTotal = costoUnitario != null ? costoUnitario * cantidadNum : null;
 
     // Crear el movimiento
     const movimiento = await this.prisma.movimientoKardex.create({
@@ -278,8 +282,8 @@ export class KardexService {
         cantidad: cantidadNum,
         stockAnterior: round3(stockAnterior),
         stockActual,
-        costoUnitario: costoUnitario || null,
-        valorTotal: valorTotal || null,
+        costoUnitario: costoUnitario ?? null,
+        valorTotal: valorTotal ?? null,
         sedeId: data.sedeId, // Guardar la sede en el movimiento
         comprobanteId: data.comprobanteId,
         compraId: data.compraId,
@@ -1013,8 +1017,11 @@ export class KardexService {
     // padre queda desactualizado tras una venta/salida por variante.
     await this.sincronizarStockPadre(productoId);
 
-    // Actualizar costo promedio solo para ingresos (afecta al producto globalmente)
-    if (tipoMovimiento === 'INGRESO' && costoUnitario && cantidad) {
+    // Actualizar costo promedio solo para ingresos (afecta al producto globalmente).
+    // costo 0 es válido (bonificación de proveedor): antes `&& costoUnitario`
+    // lo trataba como "sin costo" y se saltaba el recálculo, así que las
+    // unidades gratis nunca bajaban el costo promedio del producto.
+    if (tipoMovimiento === 'INGRESO' && costoUnitario != null && cantidad) {
       // Recalcular costo promedio global
       const producto = await this.prisma.producto.findUnique({
         where: { id: productoId },
