@@ -635,16 +635,24 @@ export class DashboardService {
         { ...baseComprobanteWhere, fechaEmision: prevRange },
         empresaId,
       ),
-      sedeId
-        ? Promise.resolve([] as any[])
-        : this.prisma.ingresoManual.findMany({
-            where: { empresaId, fecha: currentRange },
-          }),
-      sedeId
-        ? Promise.resolve([] as any[])
-        : this.prisma.ingresoManual.findMany({
-            where: { empresaId, fecha: prevRange },
-          }),
+      // Los ingresos manuales son casi siempre de toda la empresa (sedeId
+      // null); antes, si había una sede activa, se descartaban por completo
+      // en vez de filtrarse por ella. Igual que compraSedeFilter arriba:
+      // con sede activa se incluyen los de esa sede + los de toda la empresa.
+      this.prisma.ingresoManual.findMany({
+        where: {
+          empresaId,
+          fecha: currentRange,
+          ...(sedeId ? { OR: [{ sedeId }, { sedeId: null }] } : {}),
+        },
+      }),
+      this.prisma.ingresoManual.findMany({
+        where: {
+          empresaId,
+          fecha: prevRange,
+          ...(sedeId ? { OR: [{ sedeId }, { sedeId: null }] } : {}),
+        },
+      }),
     ]);
 
     const otrosIngresosCurr = ingresosManualesCurr.reduce(
