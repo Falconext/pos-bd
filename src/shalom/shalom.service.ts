@@ -21,34 +21,49 @@ import { ConectarInstanciaDto, CrearGuiaDto } from './dto/shalom.dto';
 export type { ShalomAgencia, ShalomOrderInput } from './shalom-lat.service';
 
 /**
- * Tipos de producto de Shalom con sus medidas por defecto. El proveedor no
- * publica catálogo (todas las rutas /products dan 404); estos ids salen de las
- * órdenes reales de la cuenta, en `detail_service.type_product.value`.
- * El id es por cuenta de Shalom Pro: si otro negocio usa otros, se ajusta con
- * SHALOM_TIPO_PRODUCTO o mandando `tipoProducto` en la llamada.
- */
-
-/**
- * Producto por defecto cuando el despacho no trae uno elegido. OJO: los ids son
+ * Producto por defecto cuando el despacho no trae uno elegido. OJO: el id es
  * POR CUENTA de Shalom Pro — 1090 es "MINI PAQUETERIA XS" en la cuenta con la
- * que se verificó. Cada empresa debería elegirlo en el despacho, o fijarlo con
- * SHALOM_TIPO_PRODUCTO; el catálogo real se lista en GET /shalom/productos.
+ * que se verificó. Cada empresa debería elegirlo en el despacho (selector
+ * alimentado por GET /shalom/productos, el catálogo real de su cuenta), o
+ * fijarlo con SHALOM_TIPO_PRODUCTO.
  */
-/**
- * Medidas por producto, indexadas por el id que acepta /account/register (NO por
- * el `type_product.value` que Shalom guarda después: son numeraciones distintas
- * — MINI PAQUETERIA XS es 1090 al registrar y 10 al consultar).
- * Salen de las órdenes reales de la cuenta.
- */
-const MEDIDAS_POR_PRODUCTO: Record<
-  number,
-  { alto: number; ancho: number; largo: number; peso: number }
-> = {
-  1090: { alto: 0.15, ancho: 0.12, largo: 0.2, peso: 0.5 }, // MINI PAQUETERIA XS
-  5: { alto: 0.2, ancho: 0.12, largo: 0.3, peso: 2 }, // PAQUETERIA S
-};
+const PRODUCTO_DEFECTO_ID = 1090;
 
-const PRODUCTO_DEFECTO = { id: 1090 };
+/**
+ * Tamaños estándar que Shalom reconoce por texto libre en `content` al crear
+ * el envío — sirven de nombre de respaldo (si no se pudo leer el catálogo de
+ * la cuenta) y para mapear el nombre de un producto a la columna de tarifa
+ * que corresponde en la cotización (`POST /account/quote`). Verificado contra
+ * la API real (2026-09-14): mandar SOLO `tipo_producto` (el id de catálogo)
+ * crea la orden con el contenido correcto pero el monto queda en S/0.00, sin
+ * importar las medidas — Shalom no calcula tarifa con ese campo. La cotización
+ * SÍ trae el precio real por tamaño, así que se manda como `costo` explícito
+ * junto con `tipo_producto`, conservando el nombre real de catálogo
+ * ("MINI PAQUETERIA XS") en vez de un texto genérico.
+ */
+const TARIFA_POR_TAMANO: Record<
+  string,
+  { patron: RegExp; tarifaKey: string; content: string }
+> = {
+  SOBRE: { patron: /SOBRE/, tarifaKey: 'sobre', content: 'SOBRE' },
+  XXS: { patron: /\bXXS\b/, tarifaKey: 'cajapaquetexxs', content: 'PAQUETE XXS' },
+  XS: { patron: /\bXS\b/, tarifaKey: 'cajapaquetexs', content: 'PAQUETE XS' },
+  S: { patron: /\bS\b/, tarifaKey: 'cajapaquetes', content: 'PAQUETE S' },
+  M: { patron: /\bM\b/, tarifaKey: 'cajapaquetem', content: 'PAQUETE M' },
+  L: { patron: /\bL\b/, tarifaKey: 'cajapaquetel', content: 'PAQUETE L' },
+};
+const TAMANO_DEFECTO = TARIFA_POR_TAMANO.XS;
+
+/** Clasifica el nombre de un producto de catálogo (ej. "MINI PAQUETERIA XS")
+ * en uno de los tamaños de tarifa de Shalom. El orden importa: XXS antes que
+ * XS, porque "XXS" contiene "XS" como subcadena. */
+function tamanoDesdeNombre(nombre: string): (typeof TARIFA_POR_TAMANO)[string] {
+  const n = nombre.toUpperCase();
+  for (const key of ['SOBRE', 'XXS', 'XS', 'S', 'M', 'L']) {
+    if (TARIFA_POR_TAMANO[key].patron.test(n)) return TARIFA_POR_TAMANO[key];
+  }
+  return TAMANO_DEFECTO;
+}
 
 /**
  * Tipo de contenido declarado que exige Shalom. Solo acepta estos cuatro
@@ -535,6 +550,13 @@ export class ShalomService {
    * de su propia cuenta — que además es lo correcto: el catálogo es por cuenta.
    * Si la cuenta no tiene historial, se devuelven los conocidos.
    */
+  /**
+   * Lista de tamaños para el selector del despacho. Antes esto sondeaba el
+   * catálogo numérico de la cuenta contra Shalom (una llamada real a
+   * /account/register con un id inválido a propósito); ya no hace falta:
+   * los tamaños de TAMANOS_SHALOM son universales y no requieren red.
+   */
+  /** Catálogo real de productos de la cuenta, para el selector del despacho. */
   async productos(empresaId: number) {
     const empresa = await this.empresaConShalomPro(empresaId);
     if (!empresa.shalomInstanceId || !empresa.shalomAgenciaOrigenId) return [];
@@ -682,18 +704,45 @@ export class ShalomService {
       );
     }
 
-    // El tipo de producto lo exige Shalom aunque su esquema lo marque opcional:
-    // sin él responde 200 con {success:false,"Seleccione un producto"}. Y un id
-    // que no está en el catálogo de la cuenta pasa igual, pero deja la guía con
-    // contenido "N/A" y monto S/ 0.00 — inservible para despachar.
-    // Los ids salen de las órdenes reales de la cuenta (detail_service.type_product).
     const tipoProducto = Number(
       dto.tipoProducto ??
         envio.shalomTipoProducto ??
         process.env.SHALOM_TIPO_PRODUCTO ??
-        PRODUCTO_DEFECTO.id,
+        PRODUCTO_DEFECTO_ID,
     );
-    const medidas = MEDIDAS_POR_PRODUCTO[tipoProducto];
+
+    // El id de catálogo (tipo_producto) fija el contenido con el nombre real de
+    // la cuenta (ej. "MINI PAQUETERIA XS"), pero Shalom no calcula tarifa con
+    // ese campo — el monto queda en S/0.00 sin importar las medidas que se
+    // manden (verificado contra la API real). Por eso se resuelve el tamaño del
+    // producto elegido y se cotiza la ruta para mandar el costo real explícito.
+    // Si el catálogo o la cotización fallan, se cae al texto libre (`content`)
+    // como respaldo: pierde el nombre de marca de la cuenta, pero nunca deja el
+    // envío en S/0.00.
+    let costo: number | undefined;
+    let contenidoRespaldo: string | undefined;
+    try {
+      const catalogo = await this.lat.catalogoProductos(
+        empresa.shalomInstanceId,
+        Number(origen.terId),
+        Number(destino.terId),
+      );
+      const nombreProducto = catalogo[String(tipoProducto)];
+      const tamano = tamanoDesdeNombre(nombreProducto ?? '');
+      const cotizacion = await this.lat.quote(
+        Number(origen.terId),
+        Number(destino.terId),
+      );
+      const tarifa = cotizacion?.data?.tariff;
+      const valor = Number(tarifa?.[tamano.tarifaKey]);
+      if (Number.isFinite(valor) && valor > 0) costo = valor;
+      if (!nombreProducto) contenidoRespaldo = TAMANO_DEFECTO.content;
+    } catch (e: any) {
+      this.logger.warn(
+        `No se pudo calcular el costo real para el comprobante ${comprobanteId}, se usará contenido genérico: ${e?.message}`,
+      );
+      contenidoRespaldo = TAMANO_DEFECTO.content;
+    }
 
     const respuesta = await this.lat.createOrder({
       instanceId: empresa.shalomInstanceId,
@@ -704,24 +753,12 @@ export class ShalomService {
       firstname: partes.apellidoPaterno,
       lastname: partes.apellidoMaterno,
       phone,
-      tipo_producto: tipoProducto,
+      ...(contenidoRespaldo
+        ? { content: contenidoRespaldo }
+        : { tipo_producto: tipoProducto, ...(costo != null ? { costo } : {}) }),
       cantidad: Number(envio.nroPaquetes) > 0 ? Number(envio.nroPaquetes) : 1,
       declaracion_jurada: declararContenido(envio.tipoMercaderia, envio.contenidoPaquete),
-      // Sin medidas, Shalom crea la orden pero no resuelve el producto: queda con
-      // contenido "N/A" y monto S/ 0.00. Se mandan las del producto elegido, y el
-      // peso real del despacho si lo declara.
-      ...(medidas
-        ? {
-            alto: String(medidas.alto),
-            ancho: String(medidas.ancho),
-            largo: String(medidas.largo),
-            peso: String(
-              Number(envio.pesoKg) > 0 ? Number(envio.pesoKg) : medidas.peso,
-            ),
-          }
-        : Number(envio.pesoKg) > 0
-          ? { peso: String(Number(envio.pesoKg)) }
-          : {}),
+      ...(Number(envio.pesoKg) > 0 ? { peso: String(Number(envio.pesoKg)) } : {}),
     });
 
     // Shalom responde 200 con { success:false, message } cuando rechaza el

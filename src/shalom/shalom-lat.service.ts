@@ -20,8 +20,7 @@ export interface ShalomAgencia {
 //
 // OJO: la forma real NO es la del ejemplo de la documentación pública (que usa
 // `destinatario: {dni, nombre, ...}` y `productos: []`). Verificado contra el API:
-// los campos son planos, `origen`/`destino`/`phone` son enteros, y no hay lugar
-// para el contenido del paquete.
+// los campos son planos, `origen`/`destino`/`phone` son enteros.
 export interface ShalomOrderInput {
   instanceId: string;
   /** ter_id de la agencia de origen. */
@@ -39,10 +38,20 @@ export interface ShalomOrderInput {
   /** Celular como entero. */
   phone: number;
   /**
-   * Id del tipo de producto/paquete de Shalom. Es OBLIGATORIO por lógica de
-   * negocio aunque el esquema no lo exija: sin él responde 200 con
-   * {success:false, message:"Seleccione un producto"} y no crea nada.
-   * El proveedor no publica catálogo; el valor se configura por empresa.
+   * Descripción del paquete en texto libre (p. ej. "PAQUETE XS", "SOBRE").
+   * OBLIGATORIO en la práctica: sin contenido (ni este ni `tipo_producto`)
+   * responde 200 con {success:false, message:"Seleccione un producto"} y no
+   * crea nada. A diferencia de `tipo_producto`, este SÍ dispara el cálculo
+   * automático de tarifa de Shalom — usar este campo, no `tipo_producto`.
+   * Vocabulario verificado: SOBRE, PAQUETE XXS/XS/S/M/L (universal, no
+   * depende del catálogo interno de cada cuenta).
+   */
+  content?: string;
+  /**
+   * Id numérico de producto/paquete de Shalom. NO USAR para cobrar: fija el
+   * contenido de la orden, pero Shalom nunca calcula el monto con este campo
+   * (queda en S/ 0.00 sin importar las medidas que se manden, verificado
+   * contra la API real). Se mantiene solo por compatibilidad.
    */
   tipo_producto?: number;
   /** Peso en kg, como string. */
@@ -516,18 +525,30 @@ export class ShalomLatService {
     }
   }
 
+  private catalogoCache = new Map<
+    string,
+    { data: Record<string, string>; time: number }
+  >();
+  private readonly CATALOGO_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
   /**
-   * Catálogo de productos de la cuenta. Shalom no tiene endpoint para esto (todas
-   * las rutas /products dan 404), pero al registrar con un id que existe en el
-   * sistema y NO en la cuenta responde "Ingrese un producto válido" y adjunta la
-   * lista completa. La sonda usa documento falso a propósito: falla la validación
-   * y por eso NO crea ninguna orden.
+   * Catálogo de productos de la cuenta (nombres reales, ej. "MINI PAQUETERIA
+   * XS"). Shalom no tiene endpoint para esto (todas las rutas /products dan
+   * 404), pero al registrar con un id que existe en el sistema y NO en la
+   * cuenta responde "Ingrese un producto válido" y adjunta la lista completa.
+   * La sonda usa documento falso a propósito: falla la validación y por eso
+   * NO crea ninguna orden. Es propia de la cuenta (no de la ruta), así que se
+   * cachea por instancia.
    */
   async catalogoProductos(
     instanceId: string,
     origen: number,
     destino: number,
   ): Promise<Record<string, string>> {
+    const cacheado = this.catalogoCache.get(instanceId);
+    if (cacheado && Date.now() - cacheado.time < this.CATALOGO_CACHE_TTL_MS) {
+      return cacheado.data;
+    }
     const res = await fetch(`${this.baseUrl}/account/register`, {
       method: 'POST',
       headers: this.headers(),
@@ -547,7 +568,12 @@ export class ShalomLatService {
     });
     const body = await res.json().catch(() => ({}));
     const data = body?.data;
-    return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+    const catalogo =
+      data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+    if (Object.keys(catalogo).length) {
+      this.catalogoCache.set(instanceId, { data: catalogo, time: Date.now() });
+    }
+    return catalogo;
   }
 
   /** GET /account/dni/:dni → valida el documento del destinatario (RENIEC). */
