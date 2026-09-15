@@ -192,6 +192,10 @@ export class UpdateEmpresaDto {
   @IsBoolean()
   kitsComoUnaLinea?: boolean;
 
+  @IsOptional()
+  @IsBoolean()
+  paquetesComoUnaLinea?: boolean;
+
   /** Catálogo independiente por sede: un producto nuevo solo queda disponible en la sede que lo crea. */
   @IsOptional()
   @IsBoolean()

@@ -240,6 +240,13 @@ model Empresa {
   // descuenta igual, por debajo). false = comportamiento histórico: se desarma en
   // sus productos con el precio prorrateado.
   kitsComoUnaLinea              Boolean                       @default(false)
+  // Igual que kitsComoUnaLinea, pero para "paquetes" (ProductoCodigoBarras con
+  // unidadesPorPaquete > 1, ej. una caja escaneable con su propio código de
+  // barras): true = la venta queda como UNA línea a cantidad=1 y al precio
+  // completo del paquete; el stock real (unidadesPorPaquete) se descuenta igual
+  // por debajo. false (default) = comportamiento histórico: se factura como N
+  // unidades sueltas con el precio prorrateado entre ellas.
+  paquetesComoUnaLinea          Boolean                       @default(false)
   // ── Catálogo por sede ────────────────────────────────────────────────────
   // false (default) = catálogo COMPARTIDO: un producto nuevo queda disponible en
   // todas las sedes (comportamiento histórico). true = catálogo INDEPENDIENTE:
@@ -1011,6 +1018,11 @@ model DetalleComprobante {
   // Kit vendido como una sola línea (Empresa.kitsComoUnaLinea): referencia al combo
   // para descontar/reponer el stock de sus componentes.
   comboId           Int?
+  // Paquete vendido como una sola línea (Empresa.paquetesComoUnaLinea): unidades
+  // reales por paquete (ej. 10) para descontar/reponer el stock del MISMO
+  // producto (cantidad de esta línea × unidadesPorPaquete), aunque la línea
+  // facture cantidad=1 al precio completo del paquete.
+  unidadesPorPaquete Int?
   // Farmacia: datos de receta médica y medicamentos controlados
   numeroReceta      String?
   dniPaciente       String?

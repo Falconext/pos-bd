@@ -2149,6 +2149,12 @@ export class ComprobanteService {
         ...(item.medicoNombre && { medicoNombre: item.medicoNombre }),
         ...(numerosSerie.length > 0 ? { numerosSerie } : {}),
         ...(requiereSerie ? { requiereSerie: true } : {}),
+        // Paquete vendido como UNA línea (Empresa.paquetesComoUnaLinea): se
+        // persiste para poder descontar/reponer el stock real (ver
+        // expandirKitsParaStock) aunque la línea facture cantidad=1.
+        ...(item.unidadesPorPaquete != null && Number(item.unidadesPorPaquete) > 1
+          ? { unidadesPorPaquete: Number(item.unidadesPorPaquete) }
+          : {}),
       };
     });
     return {
@@ -2259,39 +2265,58 @@ export class ComprobanteService {
    * Kits vendidos como UNA línea (sin productoId, con comboId): para el stock se
    * reemplazan por sus componentes (cantidad del kit × cantidad del componente),
    * así el kardex descuenta y repone cada producto real aunque el comprobante
-   * muestre una sola línea "KIT: X". Las líneas con producto pasan tal cual.
+   * muestre una sola línea "KIT: X".
+   *
+   * Paquetes vendidos como UNA línea (Empresa.paquetesComoUnaLinea, con
+   * productoId y unidadesPorPaquete > 1): la cantidad facturada (p.ej. 1 caja)
+   * no es la cantidad real de stock a descontar/reponer — eso es
+   * cantidad × unidadesPorPaquete, del MISMO producto.
+   *
+   * El resto de líneas pasan tal cual.
    */
-  private async expandirKitsParaStock<T extends { productoId?: number | null; comboId?: number | null; cantidad: number }>(
+  private async expandirKitsParaStock<T extends { productoId?: number | null; comboId?: number | null; cantidad: number; unidadesPorPaquete?: number | null }>(
     detalles: T[],
     empresaId: number,
   ): Promise<Array<T | { productoId: number; cantidad: number; deKitId: number }>> {
     const kits = detalles.filter((d) => d.productoId == null && d.comboId != null);
-    if (!kits.length) return detalles;
-    const combos = await this.prisma.combo.findMany({
-      where: { id: { in: kits.map((k) => Number(k.comboId)) }, empresaId },
-      select: { id: true, nombre: true, items: { select: { productoId: true, cantidad: true } } },
-    });
+    const tienePaquetes = detalles.some(
+      (d) => d.productoId != null && Number(d.unidadesPorPaquete) > 1,
+    );
+    if (!kits.length && !tienePaquetes) return detalles;
+    const combos = kits.length
+      ? await this.prisma.combo.findMany({
+          where: { id: { in: kits.map((k) => Number(k.comboId)) }, empresaId },
+          select: { id: true, nombre: true, items: { select: { productoId: true, cantidad: true } } },
+        })
+      : [];
     const porId = new Map(combos.map((c) => [c.id, c]));
     const resultado: Array<T | { productoId: number; cantidad: number; deKitId: number }> = [];
     for (const d of detalles) {
-      if (!(d.productoId == null && d.comboId != null)) {
-        resultado.push(d);
+      if (d.productoId == null && d.comboId != null) {
+        const combo = porId.get(Number(d.comboId));
+        if (!combo) {
+          throw new BadRequestException(`El kit #${d.comboId} no existe o no pertenece a la empresa`);
+        }
+        if (!combo.items.length) {
+          throw new BadRequestException(`El kit "${combo.nombre}" no tiene productos configurados`);
+        }
+        for (const it of combo.items) {
+          resultado.push({
+            productoId: it.productoId,
+            cantidad: Number(d.cantidad) * Number(it.cantidad || 1),
+            deKitId: combo.id,
+          });
+        }
         continue;
       }
-      const combo = porId.get(Number(d.comboId));
-      if (!combo) {
-        throw new BadRequestException(`El kit #${d.comboId} no existe o no pertenece a la empresa`);
-      }
-      if (!combo.items.length) {
-        throw new BadRequestException(`El kit "${combo.nombre}" no tiene productos configurados`);
-      }
-      for (const it of combo.items) {
+      if (d.productoId != null && Number(d.unidadesPorPaquete) > 1) {
         resultado.push({
-          productoId: it.productoId,
-          cantidad: Number(d.cantidad) * Number(it.cantidad || 1),
-          deKitId: combo.id,
+          ...d,
+          cantidad: Number(d.cantidad) * Number(d.unidadesPorPaquete),
         });
+        continue;
       }
+      resultado.push(d);
     }
     return resultado;
   }

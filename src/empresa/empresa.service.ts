@@ -1278,6 +1278,8 @@ export class EmpresaService {
         updateData.mostrarMarcaSistema = dto.mostrarMarcaSistema;
       if (dto.kitsComoUnaLinea !== undefined)
         updateData.kitsComoUnaLinea = dto.kitsComoUnaLinea;
+      if (dto.paquetesComoUnaLinea !== undefined)
+        updateData.paquetesComoUnaLinea = dto.paquetesComoUnaLinea;
       if (dto.ventaObservacionesDefault !== undefined)
         updateData.ventaObservacionesDefault =
           dto.ventaObservacionesDefault?.trim() || null;

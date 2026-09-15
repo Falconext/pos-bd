@@ -24,6 +24,16 @@ class DetalleDto {
   @IsInt()
   comboId?: number | null;
 
+  // Paquete vendido como UNA línea (Empresa.paquetesComoUnaLinea): con
+  // productoId (el mismo producto suelto), cantidad=1 (o N paquetes) al precio
+  // completo del paquete; unidadesPorPaquete indica cuántas unidades reales
+  // hay que descontar/reponer de stock por cada paquete facturado.
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  unidadesPorPaquete?: number;
+
   @Transform(({ value }) => Math.round(Number(value) * 1000) / 1000)
   @Type(() => Number)
   @IsNumber()
