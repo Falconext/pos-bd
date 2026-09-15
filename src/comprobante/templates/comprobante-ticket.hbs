@@ -68,16 +68,17 @@
   <img src="{{logo}}" alt="logo" style="display:block;margin:0 auto 4px;max-width:{{logoSize}}px;max-height:{{logoSize}}px;width:100%;height:auto;object-fit:contain">
   {{/if}}{{/if}}
 
-  {{#if (vis fc 'razonSocial')}}<p class="center bold">{{razonSocial}}</p>{{/if}}
+  {{!-- Tamaños por elemento (tpx): los del formato configurable escalados al térmico, igual que la impresión web --}}
+  {{#if (vis fc 'razonSocial')}}<p class="center bold" style="font-size:{{tpx tpx 'razonSocial'}}px">{{razonSocial}}</p>{{/if}}
   <p class="center">
-    {{#if (vis fc 'nombreComercial')}}{{#if nombreComercial}}NOMBRE COMERCIAL: {{nombreComercial}}<br>{{/if}}{{/if}}
-    {{#if (vis fc 'direccion')}}DIRECCION: {{direccion}}<br>{{/if}}
-    {{#if (vis fc 'direccion')}}{{#if sedeNombre}}SEDE: {{sedeNombre}}<br>{{/if}}{{/if}}
-    {{#if (vis fc 'direccion')}}{{#if sedeDireccion}}DIRECCION SEDE: {{sedeDireccion}}<br>{{/if}}{{/if}}
-    {{#if (vis fc 'rubro')}}{{#if rubro}}RUBRO: {{rubro}}<br>{{/if}}{{/if}}
-    {{#if (vis fc 'celular')}}{{#if celular}}CELULAR: {{celular}}<br>{{/if}}{{/if}}
-    {{#if (vis fc 'email')}}{{#if email}}EMAIL: {{email}}<br>{{/if}}{{/if}}
-    {{#if (vis fc 'web')}}{{#if paginaWeb}}WEB: {{paginaWeb}}<br>{{/if}}{{/if}}
+    {{#if (vis fc 'nombreComercial')}}{{#if nombreComercial}}<span style="font-size:{{tpx tpx 'nombreComercial'}}px">NOMBRE COMERCIAL: {{nombreComercial}}<br></span>{{/if}}{{/if}}
+    {{#if (vis fc 'direccion')}}<span style="font-size:{{tpx tpx 'direccion'}}px">DIRECCION: {{direccion}}<br></span>{{/if}}
+    {{#if (vis fc 'direccion')}}{{#if sedeNombre}}<span style="font-size:{{tpx tpx 'direccion'}}px">SEDE: {{sedeNombre}}<br></span>{{/if}}{{/if}}
+    {{#if (vis fc 'direccion')}}{{#if sedeDireccion}}<span style="font-size:{{tpx tpx 'direccion'}}px">DIRECCION SEDE: {{sedeDireccion}}<br></span>{{/if}}{{/if}}
+    {{#if (vis fc 'rubro')}}{{#if rubro}}<span style="font-size:{{tpx tpx 'rubro'}}px">RUBRO: {{rubro}}<br></span>{{/if}}{{/if}}
+    {{#if (vis fc 'celular')}}{{#if celular}}<span style="font-size:{{tpx tpx 'celular'}}px">CELULAR: {{celular}}<br></span>{{/if}}{{/if}}
+    {{#if (vis fc 'email')}}{{#if email}}<span style="font-size:{{tpx tpx 'email'}}px">EMAIL: {{email}}<br></span>{{/if}}{{/if}}
+    {{#if (vis fc 'web')}}{{#if paginaWeb}}<span style="font-size:{{tpx tpx 'web'}}px">WEB: {{paginaWeb}}<br></span>{{/if}}{{/if}}
     <span>RUC: {{ruc}}</span>
   </p>
 
@@ -86,7 +87,7 @@
   <hr>
 
   {{#if (vis fc 'datosCliente')}}
-  <div>
+  <div style="font-size:{{tpx tpx 'datosCliente'}}px">
     <p>FECHA/HORA: {{#if fechaHoraTicket}}{{fechaHoraTicket}}{{else}}{{fecha}} {{hora}}{{/if}}</p>
     <p>RAZON SOCIAL: {{clienteNombre}}</p>
     <p>NÚMERO DE DOCUMENTO: {{clienteNumDoc}}</p>
@@ -96,7 +97,7 @@
 
   {{#if (vis fc 'detraccion')}}{{#if tipoDetraccion}}
   <hr>
-  <div>
+  <div style="font-size:{{tpx tpx 'detraccion'}}px">
     <p class="bold">OPERACIÓN SUJETA A DETRACCIÓN</p>
     <p class="row"><span class="bold">Tipo Detracción:</span><span>{{tipoDetraccion}}</span></p>
     <p class="row"><span class="bold">Monto Detracción:</span><span>{{simboloMoneda}} {{montoDetraccion}}</span></p>
@@ -106,7 +107,7 @@
   {{/if}}{{/if}}
 
   <hr>
-  <div class="items">
+  <div class="items" style="font-size:{{tpx tpx 'productos'}}px">
     <div class="head">
       <span class="c-cant">CANT.</span>
       <span class="c-desc">DESCRIPCION</span>
@@ -117,8 +118,8 @@
     <div class="item">
       <span class="c-cant">{{this.cantidad}}</span>
       <span class="c-desc">
-        <span class="desc-multi">{{this.descripcion}}</span>{{#if this.gratis}}<span class="gratis">[GRATIS]</span>{{/if}}
-        {{#each this.lotes}}<span class="sub">Lote: {{this.lote}} Venc: {{this.fechaVencimiento}}</span>{{/each}}
+        <span class="desc-multi">{{this.descripcion}}</span>{{#if this.gratis}}<span class="gratis" style="font-size:{{tpx ../tpx 'productos' 13}}px">[GRATIS]</span>{{/if}}
+        {{#each this.lotes}}<span class="sub" style="font-size:{{tpx ../../tpx 'productos' 12}}px">Lote: {{this.lote}} Venc: {{this.fechaVencimiento}}</span>{{/each}}
       </span>
       <span class="c-pu">{{this.precioUnitario}}</span>
       <span class="c-imp">{{this.total}}</span>
@@ -127,16 +128,16 @@
   </div>
   <hr>
 
-  {{#if (vis fc 'sonTexto')}}<p>SON: {{totalEnLetras}}</p>{{/if}}
+  {{#if (vis fc 'sonTexto')}}<p style="font-size:{{tpx tpx 'sonTexto'}}px">SON: {{totalEnLetras}}</p>{{/if}}
   <hr>
 
-  {{#if (vis fc 'subTotal')}}{{#if (pos descuento)}}<p class="row"><span>SUBTOTAL:</span><span>{{subTotalBruto}}</span></p>{{/if}}{{/if}}
-  {{#if (vis fc 'descuentos')}}{{#if (pos descuento)}}<p class="row"><span>DESCUENTO:</span><span>- {{descuento}}</span></p>{{/if}}{{/if}}
-  {{#if (vis fc 'opGravadas')}}<p class="row"><span>TOTAL GRAVADAS:</span><span>{{mtoOperGravadas}}</span></p>{{/if}}
-  {{#if (vis fc 'opExoneradas')}}{{#if (pos mtoOperExoneradas)}}<p class="row"><span>OP. EXONERADAS:</span><span>{{mtoOperExoneradas}}</span></p>{{/if}}{{/if}}
-  {{#if (vis fc 'opInafectas')}}{{#if (pos mtoOperInafectas)}}<p class="row"><span>OP. INAFECTAS:</span><span>{{mtoOperInafectas}}</span></p>{{/if}}{{/if}}
-  {{#if (vis fc 'igv')}}<p class="row"><span>I.G.V 18.00 %:</span><span>{{mtoIGV}}</span></p>{{/if}}
-  {{#if (vis fc 'montoTotal')}}<p class="row"><span>IMPORTE TOTAL:</span><span>{{mtoImpVenta}}</span></p>{{/if}}
+  {{#if (vis fc 'subTotal')}}{{#if (pos descuento)}}<p class="row" style="font-size:{{tpx tpx 'subTotal'}}px"><span>SUBTOTAL:</span><span>{{subTotalBruto}}</span></p>{{/if}}{{/if}}
+  {{#if (vis fc 'descuentos')}}{{#if (pos descuento)}}<p class="row" style="font-size:{{tpx tpx 'descuentos'}}px"><span>DESCUENTO:</span><span>- {{descuento}}</span></p>{{/if}}{{/if}}
+  {{#if (vis fc 'opGravadas')}}<p class="row" style="font-size:{{tpx tpx 'opGravadas'}}px"><span>TOTAL GRAVADAS:</span><span>{{mtoOperGravadas}}</span></p>{{/if}}
+  {{#if (vis fc 'opExoneradas')}}{{#if (pos mtoOperExoneradas)}}<p class="row" style="font-size:{{tpx tpx 'opExoneradas'}}px"><span>OP. EXONERADAS:</span><span>{{mtoOperExoneradas}}</span></p>{{/if}}{{/if}}
+  {{#if (vis fc 'opInafectas')}}{{#if (pos mtoOperInafectas)}}<p class="row" style="font-size:{{tpx tpx 'opInafectas'}}px"><span>OP. INAFECTAS:</span><span>{{mtoOperInafectas}}</span></p>{{/if}}{{/if}}
+  {{#if (vis fc 'igv')}}<p class="row" style="font-size:{{tpx tpx 'igv'}}px"><span>I.G.V 18.00 %:</span><span>{{mtoIGV}}</span></p>{{/if}}
+  {{#if (vis fc 'montoTotal')}}<p class="row" style="font-size:{{tpx tpx 'montoTotal'}}px"><span>IMPORTE TOTAL:</span><span>{{mtoImpVenta}}</span></p>{{/if}}
   {{#if shouldShowRetention}}
   <p class="row"><span>RETENCIÓN (3%):</span><span>{{retencionMonto}}</span></p>
   <p class="row bold"><span>IMPORTE NETO:</span><span>{{importeNeto}}</span></p>
@@ -166,7 +167,7 @@
   <hr>
 
   {{#if ordenCompraCliente}}<p>N° ORDEN DE COMPRA : {{ordenCompraCliente}}</p>{{/if}}
-  {{#if (vis fc 'observaciones')}}<p>OBSERVACIONES : {{#if observaciones}}{{observaciones}}{{/if}}</p>{{/if}}
+  {{#if (vis fc 'observaciones')}}<p style="font-size:{{tpx tpx 'observaciones'}}px">OBSERVACIONES : {{#if observaciones}}{{observaciones}}{{/if}}</p>{{/if}}
 
   {{#if qrCode}}
   <hr>
@@ -185,7 +186,8 @@
   {{/unless}}
 
   <hr>
-  {{#if (vis fc 'gracias')}}<p class="gracias">GRACIAS POR SU COMPRA, VUELVA PRONTO !</p><hr>{{/if}}
+  {{!-- Mensaje del pie configurable (Configurar formato → Mensaje de agradecimiento); vacío = el de siempre --}}
+  {{#if (vis fc 'gracias')}}{{#if graciasLineas.length}}{{#each graciasLineas}}<p class="gracias" style="font-size:{{tpx ../tpx 'gracias'}}px">{{this}}</p>{{/each}}{{else}}<p class="gracias" style="font-size:{{tpx tpx 'gracias'}}px">GRACIAS POR SU COMPRA, VUELVA PRONTO !</p>{{/if}}<hr>{{/if}}
 
 </body>
 </html>

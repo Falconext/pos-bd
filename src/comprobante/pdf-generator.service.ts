@@ -23,11 +23,13 @@ export function normalizarFormatoPdf(valor?: string | null): FormatoPdf {
 }
 
 /** Documentos informales que comparten el perfil de formato de nota de venta. */
-const TIPOS_INFORMALES = ['NV', 'NP', 'OT', 'TICKET', 'CP', 'RH'];
+export const TIPOS_INFORMALES = ['NV', 'NP', 'OT', 'TICKET', 'CP', 'RH'];
 
 export function buildFiscalFormatoFc(
   empresa: any,
   tipoDoc: string,
+  /** 'a5' aplica el tamaño propio de A5 si la empresa lo desvinculó del general. */
+  formato?: 'a4' | 'a5' | 'ticket',
 ): Record<string, { visible: boolean; size: number }> {
   // Catálogo completo de elementos configurables (mismo que
   // frontend/src/features/admin/cotizaciones/cotizFormatoElementos.ts). El A4
@@ -59,8 +61,14 @@ export function buildFiscalFormatoFc(
   if (esFiscal) defaults.razonSocial = 20;
   const fc: Record<string, { visible: boolean; size: number }> = {};
   for (const [k, def] of Object.entries(defaults)) {
-    const c = raw[k] || {};
-    fc[k] = { visible: c.visible !== false, size: Number(c.size) || def };
+    const c = (raw[k] || {}) as any;
+    // A5 con tamaño propio (Configurar formato → candado del elemento), igual
+    // que elemCfg(..., 'A5') en el web.
+    const propioA5 = formato === 'a5' ? Number(c.a5?.size) : 0;
+    fc[k] = {
+      visible: c.visible !== false,
+      size: (propioA5 > 0 ? propioA5 : Number(c.size)) || def,
+    };
   }
   // QR de pago: oculto salvo que se active explícitamente (igual que el web).
   fc.qrPagos = {
@@ -68,6 +76,40 @@ export function buildFiscalFormatoFc(
     size: Number(raw.qrPagos?.size) || 90,
   };
   return fc;
+}
+
+/**
+ * Tamaños (px) de cada elemento en el TICKET de 80mm, réplica exacta de
+ * `ticketPx()` del web (cotizFormatoElementos.ts): el ticket usa VT323 a 16px
+ * de base y el tamaño configurado (pensado para A4) se escala respecto a su
+ * default; si la empresa desvinculó el elemento (`<key>.ticket.size`) se toma
+ * ese valor tal cual. `factor` sirve para las líneas secundarias (gratis/lote).
+ */
+export function buildTicketPx(
+  raw: Record<string, any> | null | undefined,
+  fiscal: boolean,
+): Record<string, { px: number; factor: number }> {
+  // Mismos defaults del catálogo del web (COTIZ_ELEMENTOS).
+  const defaults: Record<string, number> = {
+    logo: 150, nombreComercial: 12, direccion: 12, rubro: 12, razonSocial: fiscal ? 20 : 12,
+    celular: 12, email: 12, web: 12, datosCliente: 12, datosCotizacion: 12,
+    productos: 12, sonTexto: 18, observaciones: 12, detraccion: 12,
+    opGravadas: 12, opExoneradas: 12, opInafectas: 12, opGratuitas: 12,
+    icbper: 12, subTotal: 12, descuentos: 12, igv: 12, montoTotal: 14,
+    cuentas: 10, gracias: 10,
+  };
+  const ticketBase: Record<string, number> = { gracias: 15 };
+  const out: Record<string, { px: number; factor: number }> = {};
+  for (const [k, def] of Object.entries(defaults)) {
+    const c = (raw || {})[k] || {};
+    const tb = ticketBase[k] ?? 16;
+    const propio = Number(c?.ticket?.size);
+    const px = propio > 0
+      ? Math.max(8, Math.round(propio))
+      : Math.max(8, Math.round((tb * (Number(c.size) || def)) / def));
+    out[k] = { px, factor: px / tb };
+  }
+  return out;
 }
 
 @Injectable()
@@ -139,6 +181,15 @@ export class PdfGeneratorService {
     Handlebars.registerHelper('fsz', (fc: any, key: string, def: any) => {
       const n = Number(fc?.[key]?.size);
       return n > 0 ? n : Number(def) || 12;
+    });
+    // Tamaño (px) de un elemento en el ticket (ver buildTicketPx). Con `base`
+    // devuelve esa base escalada en la misma proporción que el elemento (para
+    // sub-líneas como [GRATIS] o el lote), igual que tpx(key, base) en el web.
+    Handlebars.registerHelper('tpx', (m: any, key: string, base?: any) => {
+      const e = m?.[key];
+      const b = Number(base);
+      if (!e) return b > 0 ? b : 16;
+      return b > 0 ? Math.max(8, Math.round(b * e.factor)) : e.px;
     });
 
     const templateSource = fs.readFileSync(foundPath, 'utf-8');
@@ -540,6 +591,8 @@ export class PdfGeneratorService {
     // Cuentas bancarias y mensaje del pie propio (solo si el formato los activa).
     cuentasBancarias?: Array<{ banco: string; moneda: string; numeroCuenta: string; cci: string }>;
     graciasLineas?: string[];
+    /** Tamaños por elemento para el ticket 80mm (ver buildTicketPx). */
+    tpx?: Record<string, { px: number; factor: number }>;
     // Perfil → Configuración → "Mostrar la marca del sistema" apagado.
     ocultarMarcaSistema?: boolean;
 

@@ -1,4 +1,5 @@
 import { num, round3 } from '../common/utils/stock';
+import { excluirNotasCreditoDeAnulacion } from '../common/utils/notas-credito.util';
 import { SunatValidezClient } from '../common/utils/sunat-validez.client';
 import { resolverCuentaVinculada } from '../common/utils/cuenta-vinculada.util';
 import {
@@ -26,6 +27,8 @@ import { S3Service } from '../s3/s3.service';
 import {
   PdfGeneratorService,
   buildFiscalFormatoFc,
+  buildTicketPx,
+  TIPOS_INFORMALES,
   type FormatoPdf,
 } from './pdf-generator.service';
 import { generarQrSunatDataUrl } from './qr-sunat.util';
@@ -3574,6 +3577,75 @@ export class ComprobanteService {
    * Devuelve los datos del comprobante; el reenvío real lo hace
    * EnviarSunatService.execute() desde el controller.
    */
+  /**
+   * Respuesta HONESTA de una reemisión manual. `enviarSunat.execute` devuelve
+   * mensajes pensados para el mostrador ("Comprobante registrado correctamente…")
+   * aunque el envío haya fallado (RED/CONFIG), porque en una venta lo importante
+   * es no bloquear al cliente. Al REEMITIR el que mira es el administrador y
+   * necesita saber qué pasó de verdad: se relee el estado persistido y se arma
+   * el resultado a partir de él, nunca del texto del flujo de venta.
+   */
+  async resultadoReemision(id: number, sunatResp: any) {
+    const comp = await this.prisma.comprobante.findUnique({
+      where: { id },
+      select: {
+        serie: true,
+        correlativo: true,
+        estadoEnvioSunat: true,
+        sunatErrorMsg: true,
+        sunatNextRetryAt: true,
+      },
+    });
+    const estado = String(comp?.estadoEnvioSunat || sunatResp?.status || '');
+    // "[RED] (intento 3/30): QPSE: …" → "QPSE: …"
+    const detalle = String(comp?.sunatErrorMsg || '')
+      .replace(/^\[(DATOS|RED|CONFIG)\]\s*(\(intento \d+\/\d+\):\s*)?/i, '')
+      .trim();
+    const proximo = comp?.sunatNextRetryAt
+      ? ` El sistema volverá a intentarlo automáticamente (próximo intento: ${new Date(comp.sunatNextRetryAt).toLocaleString('es-PE', { timeZone: 'America/Lima' })}).`
+      : '';
+    let status: string;
+    let message: string;
+    switch (estado) {
+      case 'EMITIDO':
+        status = 'ACEPTADO';
+        message = 'Comprobante reemitido y aceptado por SUNAT.';
+        break;
+      case 'PENDIENTE':
+        status = 'PENDIENTE';
+        message =
+          'El comprobante fue enviado pero SUNAT aún no devuelve su respuesta (CDR). Queda "En procesamiento"; el sistema seguirá consultando el estado automáticamente.';
+        break;
+      case 'PENDIENTE_CONCILIACION':
+        status = 'PENDIENTE_CONCILIACION';
+        message =
+          sunatResp?.message ||
+          'SUNAT informa que este comprobante ya fue registrado antes; requiere conciliación.';
+        break;
+      case 'FALLIDO_ENVIO':
+        status = 'FALLIDO_ENVIO';
+        message = `No se pudo reemitir: ${detalle || 'error al enviar a SUNAT'}.${proximo}`;
+        break;
+      case 'RECHAZADO':
+        status = 'RECHAZADO';
+        message = `SUNAT rechazó el comprobante: ${detalle || 'revisa los datos e intenta de nuevo'}.`;
+        break;
+      default:
+        status = estado || 'DESCONOCIDO';
+        message = sunatResp?.message || 'Reemisión procesada.';
+    }
+    return {
+      status,
+      estadoEnvioSunat: estado,
+      message,
+      errorMsg: detalle || null,
+      comprobanteId: id,
+      serie: comp?.serie ?? sunatResp?.serie,
+      correlativo: comp?.correlativo ?? sunatResp?.correlativo,
+      reemitido: true,
+    };
+  }
+
   async prepararReemision(id: number, empresaId: number) {
     const comp = await this.prisma.comprobante.findFirst({
       where: { id, empresaId },
@@ -5959,8 +6031,13 @@ export class ComprobanteService {
         { visible: boolean; size: number; texto?: string }
       > = {};
       for (const [k, def] of Object.entries(cotizElemDefaults)) {
-        const c = rawFormatoCfg[k] || {};
-        fc[k] = { visible: c.visible !== false, size: Number(c.size) || def };
+        const c = (rawFormatoCfg[k] || {}) as any;
+        // A5 con tamaño propio (desvinculado del general), igual que en el web.
+        const propioA5 = formato === 'a5' ? Number(c.a5?.size) : 0;
+        fc[k] = {
+          visible: c.visible !== false,
+          size: (propioA5 > 0 ? propioA5 : Number(c.size)) || def,
+        };
       }
       // Cada línea del texto libre se imprime como un punto aparte (el HTML colapsa
       // los saltos). Se usa tanto para las observaciones como para el pie.
@@ -6099,12 +6176,19 @@ export class ComprobanteService {
       // Formato configurable de comprobante fiscal (visibilidad por elemento).
       // Debe reflejar lo mismo que respeta el frontend (comprobanteImprimir.tsx)
       // para que "Ver PDF" e "Imprimir" coincidan.
-      const fcFiscal = buildFiscalFormatoFc(full.empresa, full.tipoDoc);
+      const fcFiscal = buildFiscalFormatoFc(full.empresa, full.tipoDoc, formato);
       // Mensaje del pie propio (Configurar formato → Mensaje de agradecimiento);
       // vacío = el texto por defecto de la plantilla. Mismo criterio que el web.
+      // Perfil de formato según el documento (el ticket de nota de venta entra
+      // por acá y antes tomaba el de factura).
+      const esInformalPdf = TIPOS_INFORMALES.includes(full.tipoDoc);
       const rawFiscalCfg = ((full.tipoDoc === '03'
         ? (full.empresa as any).boletaFormatoConfig
-        : (full.empresa as any).facturaFormatoConfig) || {}) as any;
+        : full.tipoDoc === 'COT'
+          ? (full.empresa as any).cotizFormatoConfig
+          : esInformalPdf
+            ? (full.empresa as any).notaVentaFormatoConfig
+            : (full.empresa as any).facturaFormatoConfig) || {}) as any;
       const graciasLineasFiscal = String(rawFiscalCfg.gracias?.texto ?? '')
         .split(/\r?\n/)
         .map((l) => l.trim())
@@ -6123,6 +6207,9 @@ export class ComprobanteService {
           subTotal: subTotalFiscal,
           cuentasBancarias: cuentasBancariasPdf,
           graciasLineas: graciasLineasFiscal,
+          // Ticket: tamaños configurados escalados a la fuente del térmico,
+          // igual que la impresión web (antes el PDF del ticket los ignoraba).
+          tpx: formato === 'ticket' ? buildTicketPx(rawFiscalCfg, !esInformalPdf && full.tipoDoc !== 'COT') : undefined,
         },
         formato,
       );
@@ -6445,7 +6532,7 @@ export class ComprobanteService {
         : null;
     const verCol = (key: string) => (colsVisibles ? colsVisibles.has(key) : true);
 
-    const comprobantes = await this.prisma.comprobante.findMany({
+    const comprobantesExport = await this.prisma.comprobante.findMany({
       where,
       orderBy: [{ fechaEmision: 'asc' }, { id: 'asc' }],
       select: {
@@ -6453,6 +6540,7 @@ export class ComprobanteService {
         tipoDoc: true,
         serie: true,
         correlativo: true,
+        numDocAfectado: true,
         medioPago: true,
         estadoPago: true,
         estadoEnvioSunat: true,
@@ -6483,7 +6571,7 @@ export class ComprobanteService {
       },
     });
 
-    if (comprobantes.length === 0) {
+    if (comprobantesExport.length === 0) {
       throw new NotFoundException(
         'No se encontraron comprobantes en el rango y filtros seleccionados',
       );
@@ -6550,8 +6638,19 @@ export class ComprobanteService {
     };
     const TIPOS_SUNAT_EXPORT = ['01', '03', '07', '08'];
 
+    // Las NC que anularon una boleta no se listan ni restan: la boleta ya sale
+    // como "Anulado" y no suma. Solo quedan las NC que corrigen un documento
+    // vigente, y esas van en NEGATIVO para que el total general sea la venta
+    // neta real.
+    const comprobantes = await excluirNotasCreditoDeAnulacion(
+      this.prisma,
+      params.empresaId,
+      comprobantesExport,
+    );
+
     const filas = comprobantes.map((c) => {
       const anulado = String(c.estadoEnvioSunat) === 'ANULADO';
+      const signo = c.tipoDoc === '07' ? -1 : 1;
       const dirigidos: string[] = [];
       for (const p of c.pagos ?? []) {
         const et = etiquetaDirigido(p.dirigidoA, p.vendedorNombre);
@@ -6593,7 +6692,7 @@ export class ComprobanteService {
         estadoPago: anulado
           ? 'Anulado'
           : (ESTADO_PAGO_LABEL[String(c.estadoPago)] ?? String(c.estadoPago ?? '')),
-        total: Number(c.mtoImpVenta ?? 0),
+        total: Number(c.mtoImpVenta ?? 0) * signo,
         anulado,
       };
     });
