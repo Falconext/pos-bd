@@ -185,6 +185,19 @@ export async function sincronizarVariantes(
         : existe
           ? Number((existe as any).stock ?? 0)
           : 0;
+    // El costo NO viene en variantesConfig (VarianteConfig no tiene ese campo):
+    // al crear una variante nueva se heredaba SIEMPRE en 0 (default de Prisma),
+    // aunque el padre tuviera costo real — el Excel de inventario mostraba
+    // "Costo" y "Valor Inventario" en S/0 para esas variantes hasta que se les
+    // registrara una compra propia. Igual que precioUnitario/stock arriba, se
+    // preserva el costo de la variante existente y solo se hereda del padre al
+    // crearla por primera vez, para no pisar un costo ya calculado por compras.
+    const costoPromedio = existe
+      ? Number((existe as any).costoPromedio ?? productoPadre.costoPromedio ?? 0)
+      : Number(productoPadre.costoPromedio ?? 0);
+    const costoFijo = existe
+      ? Number((existe as any).costoFijo ?? productoPadre.costoFijo ?? 0)
+      : Number(productoPadre.costoFijo ?? 0);
     const codigoSugerido = `${productoPadre.codigo}-${Object.values(combo)
       .map((value) => normalizeCodeToken(String(value)))
       .filter(Boolean)
@@ -204,6 +217,8 @@ export async function sincronizarVariantes(
       tipoAfectacionIGV: productoPadre.tipoAfectacionIGV,
       precioUnitario: new Decimal(precioUnitario),
       valorUnitario: new Decimal(valorUnitario),
+      costoPromedio: new Decimal(costoPromedio),
+      costoFijo: new Decimal(costoFijo),
       igvPorcentaje: productoPadre.igvPorcentaje,
       categoriaId: productoPadre.categoriaId,
       marcaId: productoPadre.marcaId,
