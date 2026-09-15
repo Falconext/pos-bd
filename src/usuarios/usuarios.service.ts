@@ -79,7 +79,9 @@ export class UsersService {
     const productoIds = [
       ...new Set(
         comprobantes.flatMap((c) =>
-          c.detalles.map((d) => d.productoId).filter((x): x is number => x != null),
+          c.detalles
+            .map((d) => d.productoId)
+            .filter((x): x is number => x != null),
         ),
       ),
     ];
@@ -264,6 +266,7 @@ export class UsersService {
           dto.noPermitirVentaProductosGratuitos ?? false,
         restringirTransferenciasASuSede:
           dto.restringirTransferenciasASuSede ?? false,
+        puedeAnularComprobantes: dto.puedeAnularComprobantes ?? false,
       },
       select: {
         id: true,
@@ -285,6 +288,7 @@ export class UsersService {
         convertirEnSupervisor: true,
         noPermitirVentaProductosGratuitos: true,
         restringirTransferenciasASuSede: true,
+        puedeAnularComprobantes: true,
       },
     });
 
@@ -372,6 +376,7 @@ export class UsersService {
           convertirEnSupervisor: true,
           noPermitirVentaProductosGratuitos: true,
           restringirTransferenciasASuSede: true,
+          puedeAnularComprobantes: true,
           sedesAsignadas: {
             select: {
               sede: {
@@ -469,9 +474,11 @@ export class UsersService {
       (comisionGlobal !== undefined &&
         Number(comisionGlobal) !== Number(usuario.comisionGlobal ?? 0)) ||
       (comisionGlobalFija !== undefined &&
-        Number(comisionGlobalFija) !== Number(usuario.comisionGlobalFija ?? 0)) ||
+        Number(comisionGlobalFija) !==
+          Number(usuario.comisionGlobalFija ?? 0)) ||
       (comisionGlobalVenta !== undefined &&
-        Number(comisionGlobalVenta) !== Number(usuario.comisionGlobalVenta ?? 0));
+        Number(comisionGlobalVenta) !==
+          Number(usuario.comisionGlobalVenta ?? 0));
 
     // Solo se cambia la contraseña si viene una nueva no vacía; si no, se deja igual.
     const nuevaPasswordHash =
@@ -499,8 +506,10 @@ export class UsersService {
         ocultarPrecioCosto: dto.ocultarPrecioCosto,
         ocultarPedidosEcommerce: dto.ocultarPedidosEcommerce,
         convertirEnSupervisor: dto.convertirEnSupervisor,
-        noPermitirVentaProductosGratuitos: dto.noPermitirVentaProductosGratuitos,
+        noPermitirVentaProductosGratuitos:
+          dto.noPermitirVentaProductosGratuitos,
         restringirTransferenciasASuSede: dto.restringirTransferenciasASuSede,
+        puedeAnularComprobantes: dto.puedeAnularComprobantes,
       },
       select: {
         id: true,
@@ -522,6 +531,7 @@ export class UsersService {
         convertirEnSupervisor: true,
         noPermitirVentaProductosGratuitos: true,
         restringirTransferenciasASuSede: true,
+        puedeAnularComprobantes: true,
       },
     });
 
@@ -598,6 +608,7 @@ export class UsersService {
         convertirEnSupervisor: true,
         noPermitirVentaProductosGratuitos: true,
         restringirTransferenciasASuSede: true,
+        puedeAnularComprobantes: true,
         sedesAsignadas: {
           select: {
             sede: {

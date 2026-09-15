@@ -80,6 +80,10 @@ export class CreateUserDto {
   @IsOptional()
   restringirTransferenciasASuSede?: boolean;
 
+  @IsBoolean()
+  @IsOptional()
+  puedeAnularComprobantes?: boolean;
+
   @IsOptional()
   @IsString()
   @IsIn(['FALCONEXT', 'KREZKA'])

@@ -45,6 +45,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         convertirEnSupervisor: true,
         noPermitirVentaProductosGratuitos: true,
         restringirTransferenciasASuSede: true,
+        puedeAnularComprobantes: true,
         empresa: {
           select: {
             estado: true,
@@ -100,6 +101,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       convertirEnSupervisor: user.convertirEnSupervisor,
       noPermitirVentaProductosGratuitos: user.noPermitirVentaProductosGratuitos,
       restringirTransferenciasASuSede: user.restringirTransferenciasASuSede,
+      puedeAnularComprobantes: user.puedeAnularComprobantes,
       // Token temporal de selección de sede: el guard lo rechaza en todos los
       // endpoints salvo /auth/select-sede (marcado con @AllowPendingSede).
       pendingSedeSelection: payload.pendingSedeSelection === true,

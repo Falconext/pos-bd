@@ -83,6 +83,10 @@ export class UpdateUserDto {
   @IsOptional()
   restringirTransferenciasASuSede?: boolean;
 
+  @IsBoolean()
+  @IsOptional()
+  puedeAnularComprobantes?: boolean;
+
   @IsOptional()
   @IsString()
   @IsIn(['FALCONEXT', 'KREZKA'])

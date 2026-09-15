@@ -477,6 +477,10 @@ model Usuario {
   convertirEnSupervisor             Boolean                            @default(false)
   noPermitirVentaProductosGratuitos Boolean                            @default(false)
   restringirTransferenciasASuSede   Boolean                            @default(false)
+  // Único permiso opt-in en el sentido contrario (default false = SIN el
+  // permiso, igual que el comportamiento actual): anular/eliminar
+  // comprobantes queda reservado a ADMIN_EMPRESA salvo que se active aquí.
+  puedeAnularComprobantes           Boolean                            @default(false)
   actasInspeccion                   ActaInspeccion[]
   historialEstadosPedidoLogistica   HistorialEstadoPedidoLogistica[]
   historialEstadosDespachoLogistica HistorialEstadoDespachoLogistica[]
