@@ -158,6 +158,11 @@ export class EnvioDespachoService {
     });
     await this.syncAdelantoDesdeEnvio(comprobanteId, empresaId, dto);
     await this.syncPedidoTiendaByComprobante(comprobanteId, estadoInicial);
+    await this.backfillTelefonoCliente(
+      comprobante.clienteId,
+      comprobante.cliente?.telefono,
+      dto.celularDest,
+    );
     return this.withLegacyRepartidor(envio);
   }
 
@@ -180,7 +185,7 @@ export class EnvioDespachoService {
     dto: UpdateEnvioDespachoDto,
     usuarioId?: number,
   ) {
-    await this.validateComprobante(comprobanteId, empresaId);
+    const comprobante = await this.validateComprobante(comprobanteId, empresaId);
     const envio = await this.prisma.envioDespacho.findUnique({
       where: { comprobanteId },
     });
@@ -229,6 +234,11 @@ export class EnvioDespachoService {
     });
 
     await this.syncAdelantoDesdeEnvio(comprobanteId, empresaId, dto);
+    await this.backfillTelefonoCliente(
+      comprobante.clienteId,
+      comprobante.cliente?.telefono,
+      dto.celularDest,
+    );
 
     if (
       estadoCambia &&
@@ -812,6 +822,30 @@ export class EnvioDespachoService {
     });
     if (!comprobante) throw new NotFoundException('Comprobante no encontrado.');
     return comprobante;
+  }
+
+  /**
+   * Completa el teléfono del cliente con el celular del destinatario del
+   * despacho, SOLO si el cliente todavía no tiene uno guardado. Sin esto, un
+   * cliente recurrente nunca queda con celular registrado (el que se tipea
+   * en "Celular destinatario" solo vivía en el despacho puntual) y el
+   * siguiente despacho para el mismo cliente vuelve a pedirlo desde cero.
+   */
+  private async backfillTelefonoCliente(
+    clienteId: number | null | undefined,
+    telefonoActual: string | null | undefined,
+    celularDest: string | null | undefined,
+  ) {
+    if (!clienteId || telefonoActual) return;
+    const celular = String(celularDest ?? '').replace(/\D/g, '');
+    if (celular.length !== 9 || !celular.startsWith('9')) return;
+    await this.prisma.cliente
+      .update({ where: { id: clienteId }, data: { telefono: celular } })
+      .catch((e) =>
+        this.logger.warn(
+          `No se pudo completar el teléfono del cliente ${clienteId}: ${e?.message}`,
+        ),
+      );
   }
 
   private async syncPedidoTiendaByComprobante(

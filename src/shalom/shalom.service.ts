@@ -31,15 +31,23 @@ const PRODUCTO_DEFECTO_ID = 1090;
 
 /**
  * Tamaños estándar que Shalom reconoce por texto libre en `content` al crear
- * el envío — sirven de nombre de respaldo (si no se pudo leer el catálogo de
- * la cuenta) y para mapear el nombre de un producto a la columna de tarifa
- * que corresponde en la cotización (`POST /account/quote`). Verificado contra
- * la API real (2026-09-14): mandar SOLO `tipo_producto` (el id de catálogo)
- * crea la orden con el contenido correcto pero el monto queda en S/0.00, sin
- * importar las medidas — Shalom no calcula tarifa con ese campo. La cotización
- * SÍ trae el precio real por tamaño, así que se manda como `costo` explícito
- * junto con `tipo_producto`, conservando el nombre real de catálogo
- * ("MINI PAQUETERIA XS") en vez de un texto genérico.
+ * el envío. Mapean el nombre de un producto del catálogo de la cuenta (ej.
+ * "MINI PAQUETERIA XS") al literal universal que hay que mandar.
+ *
+ * IMPORTANTE — verificado 2026-09-14 contra el PANEL REAL de Shalom Pro
+ * (pro.shalom.pe/enviospendientes/list, no contra nuestro propio /track ni
+ * contra el /track del proveedor: ambos "hacen eco" de lo que nosotros
+ * pedimos y NO reflejan si Shalom realmente lo confirmó):
+ *   - Mandar `tipo_producto` (el id numérico de catálogo), con o sin `costo`
+ *     explícito, deja la orden en el sistema real de Shalom con contenido
+ *     "N/A" y monto S/0.00 — sin importar el id, el costo o la validez del
+ *     DNI/celular del destinatario. Confirmado con más de 10 órdenes reales.
+ *   - Mandar `content` (texto libre, EXACTAMENTE uno de estos literales)
+ *     SÍ dispara el cálculo automático de tarifa de Shalom y el contenido
+ *     queda correcto en su panel real. Único campo verificado que funciona.
+ * Por eso `crearGuiaDesdeDespacho` manda siempre `content`, nunca
+ * `tipo_producto`. Se pierde el nombre de marca del catálogo de la cuenta
+ * (ej. "MINI PAQUETERIA XS") a cambio de que el envío exista de verdad.
  */
 const TARIFA_POR_TAMANO: Record<
   string,
@@ -137,10 +145,88 @@ export class ShalomService {
   async label(
     orderNumber: string,
     orderCode: string,
-    _empresaId?: number,
+    empresaId?: number,
     _oseId?: number | string,
   ): Promise<{ buffer: Buffer; contentType: string }> {
-    return this.lat.label(orderNumber, orderCode);
+    // A diferencia del comprobante (/track/voucher), el rótulo (/track/label)
+    // SÍ exige `instanceId` en el querystring — verificado contra la API real:
+    // sin él responde 400 "querystring must have required property 'instanceId'".
+    const empresa = empresaId
+      ? await this.prisma.empresa.findUnique({
+          where: { id: empresaId },
+          select: { shalomInstanceId: true },
+        })
+      : null;
+    if (!empresa?.shalomInstanceId) {
+      throw new BadRequestException(
+        'Conecta tu cuenta Shalom Pro para descargar el rótulo.',
+      );
+    }
+    return this.lat.label(orderNumber, orderCode, empresa.shalomInstanceId);
+  }
+
+  /**
+   * Datos del rótulo (destinatario + destino) para imprimir con el formato
+   * propio de la empresa, en vez del PDF oficial de Shalom (con su marca,
+   * mascota, etc.). El despacho solo guarda el destino como texto plano
+   * ("EL CRUCE LA JOYA - AREQUIPA - AREQUIPA"); el desglose departamento /
+   * provincia / distrito y la dirección física de la agencia salen del
+   * catálogo de agencias de Shalom (cacheado 12h), cruzando por
+   * `shalomAgenciaDestinoId` (el ter_id que se guardó al crear la guía).
+   */
+  async datosRotulo(comprobanteId: number, empresaId: number) {
+    const envio = await this.prisma.envioDespacho.findFirst({
+      where: { comprobanteId, comprobante: { empresaId } },
+      select: {
+        nroOrden: true,
+        claveOrden: true,
+        nombreDestinatario: true,
+        dniDestinatario: true,
+        tipoEnvio: true,
+        agenciaDestino: true,
+        direccionDestino: true,
+        shalomAgenciaDestinoId: true,
+        comprobante: { select: { cliente: { select: { nombre: true, nroDoc: true } } } },
+      },
+    });
+    if (!envio) {
+      throw new NotFoundException(
+        'Este comprobante no tiene un despacho registrado.',
+      );
+    }
+
+    let ubicacion = '';
+    let agenciaNombre = envio.agenciaDestino ?? '';
+    let direccion = envio.direccionDestino ?? '';
+    if (envio.tipoEnvio !== 'DOMICILIO' && envio.shalomAgenciaDestinoId) {
+      const agencias = (await this.lat.getAgencias()).data ?? [];
+      const agencia = agencias.find(
+        (a) => a.terId === envio.shalomAgenciaDestinoId,
+      );
+      if (agencia) {
+        ubicacion = [agencia.departamento, agencia.provincia, agencia.distrito]
+          .filter(Boolean)
+          .join(' - ');
+        agenciaNombre = agencia.nombre || agenciaNombre;
+        direccion = agencia.direccion || direccion;
+      }
+    }
+
+    return {
+      nroOrden: envio.nroOrden,
+      claveOrden: envio.claveOrden,
+      nombreDestinatario: primeroNoVacio(
+        envio.nombreDestinatario,
+        envio.comprobante?.cliente?.nombre,
+      ),
+      dniDestinatario: primeroNoVacio(
+        envio.dniDestinatario,
+        envio.comprobante?.cliente?.nroDoc,
+      ),
+      ubicacion,
+      agenciaNombre,
+      direccion,
+    };
   }
 
   // ─── Persistencia / caché de tracking ────────────────────────────────────
@@ -711,38 +797,24 @@ export class ShalomService {
         PRODUCTO_DEFECTO_ID,
     );
 
-    // El id de catálogo (tipo_producto) fija el contenido con el nombre real de
-    // la cuenta (ej. "MINI PAQUETERIA XS"), pero Shalom no calcula tarifa con
-    // ese campo — el monto queda en S/0.00 sin importar las medidas que se
-    // manden (verificado contra la API real). Por eso se resuelve el tamaño del
-    // producto elegido y se cotiza la ruta para mandar el costo real explícito.
-    // Si el catálogo o la cotización fallan, se cae al texto libre (`content`)
-    // como respaldo: pierde el nombre de marca de la cuenta, pero nunca deja el
-    // envío en S/0.00.
-    let costo: number | undefined;
-    let contenidoRespaldo: string | undefined;
+    // Se usa el catálogo de la cuenta solo para saber a qué tamaño corresponde
+    // el producto elegido (y así mandar el literal de `content` correcto);
+    // ya no se manda `tipo_producto` a Shalom (ver comentario en
+    // TARIFA_POR_TAMANO más arriba — deja el envío en N/A / S/0.00).
+    let nombreCatalogo: string | undefined;
     try {
       const catalogo = await this.lat.catalogoProductos(
         empresa.shalomInstanceId,
         Number(origen.terId),
         Number(destino.terId),
       );
-      const nombreProducto = catalogo[String(tipoProducto)];
-      const tamano = tamanoDesdeNombre(nombreProducto ?? '');
-      const cotizacion = await this.lat.quote(
-        Number(origen.terId),
-        Number(destino.terId),
-      );
-      const tarifa = cotizacion?.data?.tariff;
-      const valor = Number(tarifa?.[tamano.tarifaKey]);
-      if (Number.isFinite(valor) && valor > 0) costo = valor;
-      if (!nombreProducto) contenidoRespaldo = TAMANO_DEFECTO.content;
+      nombreCatalogo = catalogo[String(tipoProducto)];
     } catch (e: any) {
       this.logger.warn(
-        `No se pudo calcular el costo real para el comprobante ${comprobanteId}, se usará contenido genérico: ${e?.message}`,
+        `No se pudo leer el catálogo de productos para el comprobante ${comprobanteId}, se usará el tamaño por defecto: ${e?.message}`,
       );
-      contenidoRespaldo = TAMANO_DEFECTO.content;
     }
+    const tamano = tamanoDesdeNombre(nombreCatalogo ?? '');
 
     const respuesta = await this.lat.createOrder({
       instanceId: empresa.shalomInstanceId,
@@ -753,9 +825,7 @@ export class ShalomService {
       firstname: partes.apellidoPaterno,
       lastname: partes.apellidoMaterno,
       phone,
-      ...(contenidoRespaldo
-        ? { content: contenidoRespaldo }
-        : { tipo_producto: tipoProducto, ...(costo != null ? { costo } : {}) }),
+      content: tamano.content,
       cantidad: Number(envio.nroPaquetes) > 0 ? Number(envio.nroPaquetes) : 1,
       declaracion_jurada: declararContenido(envio.tipoMercaderia, envio.contenidoPaquete),
       ...(Number(envio.pesoKg) > 0 ? { peso: String(Number(envio.pesoKg)) } : {}),
@@ -796,18 +866,20 @@ export class ShalomService {
       );
     }
 
-    // El registro devuelve el N° de guía pero no siempre la clave, y sin clave no
-    // hay rastreo posible. Se completa desde los pendientes de la cuenta, donde
-    // la orden recién creada ya aparece con su código.
-    if (guia.nroOrden && !guia.claveOrden) {
+    // El registro devuelve el N° de guía y, casi siempre, el código de rastreo
+    // (claveOrden) directo en `/account/register` — pero NUNCA trae ahí la
+    // clave de envío (código de retiro de 4 dígitos, `code_val`), que solo
+    // aparece en los pendientes de la cuenta. Por eso se consulta pendientes
+    // en cuanto falte cualquiera de las dos, no solo cuando falte claveOrden.
+    if (guia.nroOrden && (!guia.claveOrden || !guia.claveEnvio)) {
       const desdePendientes = await this.buscarClaveEnPendientes(
         empresa.shalomInstanceId,
         guia.nroOrden,
       );
       if (desdePendientes) {
-        guia.claveOrden = desdePendientes.claveOrden;
+        guia.claveOrden = guia.claveOrden ?? desdePendientes.claveOrden;
         guia.claveEnvio = guia.claveEnvio ?? desdePendientes.claveEnvio;
-      } else {
+      } else if (!guia.claveOrden) {
         this.logger.warn(
           `Shalom creó la guía ${guia.nroOrden} pero no se pudo obtener su clave; el rastreo quedará incompleto.`,
         );

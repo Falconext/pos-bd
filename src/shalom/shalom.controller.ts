@@ -164,4 +164,14 @@ export class ShalomController {
     });
     res.send(buffer);
   }
+
+  // Datos del destinatario/destino para imprimir un rótulo propio (sin el
+  // PDF con la marca de Shalom).
+  @Get('rotulo/:comprobanteId')
+  datosRotulo(
+    @Param('comprobanteId', ParseIntPipe) comprobanteId: number,
+    @User() user: any,
+  ) {
+    return this.service.datosRotulo(comprobanteId, user.empresaId);
+  }
 }

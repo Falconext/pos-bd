@@ -95,9 +95,20 @@ describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
   });
 
   it('etiqueta: passthrough de { buffer, contentType }', async () => {
-    const { svc } = build();
+    const { svc, prisma, lat } = build();
+    prisma.empresa.findUnique.mockResolvedValue({ shalomInstanceId: 'inst-1' });
     const r = await svc.label('66479331', '3KTH', 400);
+    expect(lat.label).toHaveBeenCalledWith('66479331', '3KTH', 'inst-1');
     expect(r.contentType).toBe('application/pdf');
+  });
+
+  it('etiqueta: sin cuenta Shalom Pro conectada, rechaza antes de pedirla al proveedor', async () => {
+    const { svc, prisma, lat } = build();
+    prisma.empresa.findUnique.mockResolvedValue({ shalomInstanceId: null });
+    await expect(svc.label('66479331', '3KTH', 400)).rejects.toThrow(
+      /Conecta tu cuenta Shalom Pro/,
+    );
+    expect(lat.label).not.toHaveBeenCalled();
   });
 
   // ─── Cuenta Shalom Pro (crear guías) ──────────────────────────────────────

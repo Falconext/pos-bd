@@ -98,15 +98,18 @@ export interface ShalomInstanciaInput {
  * Cliente del proveedor Shalom API (https://api.shalom-api.lat) — versión NUEVA.
  *
  * Autenticación: header `x-api-key` (una sola API key global, en SHALOM_LAT_API_KEY).
- * Para TRACKING, AGENCIAS, COMPROBANTE, ETIQUETA y COTIZACIÓN **no se necesita**
- * cuenta de Shalom Pro ni credenciales del negocio: basta la API key. Solo crear
- * envíos (POST /account/register) requiere credenciales del cliente vía /instances.
+ * Para TRACKING, AGENCIAS, COMPROBANTE y COTIZACIÓN **no se necesita** cuenta de
+ * Shalom Pro ni credenciales del negocio: basta la API key. Crear envíos
+ * (POST /account/register) requiere credenciales del cliente vía /instances, y
+ * el RÓTULO (`/track/label`) exige el `instanceId` de esa cuenta en el
+ * querystring (verificado: sin él responde 400 "querystring must have required
+ * property 'instanceId'") — a diferencia del comprobante, que no lo necesita.
  *
  * Endpoints usados:
  *  - GET  /agencies                              → lista de agencias
  *  - POST /track            { orderNumber, orderCode }        → tracking + timeline
  *  - GET  /track/voucher?orderNumber=&orderCode= → comprobante (PNG/PDF)
- *  - GET  /track/label?orderNumber=&orderCode=   → etiqueta (PDF)
+ *  - GET  /track/label?orderNumber=&orderCode=&instanceId=    → etiqueta (PDF)
  *  - POST /account/quote    { origin, destination }          → cotización
  *  - POST /instances        { name, username, password }     → conectar cuenta Pro
  *  - POST /instances/login  { instanceId }                    → reabrir sesión Pro
@@ -342,8 +345,13 @@ export class ShalomLatService {
     path: string,
     orderNumber: string,
     orderCode: string,
+    instanceId?: string,
   ): Promise<{ buffer: Buffer; contentType: string }> {
-    const qs = new URLSearchParams({ orderNumber, orderCode }).toString();
+    const qs = new URLSearchParams({
+      orderNumber,
+      orderCode,
+      ...(instanceId ? { instanceId } : {}),
+    }).toString();
     const res = await this.requestConReintento('GET', `${path}?${qs}`);
     const contentType = res.headers.get('content-type') || 'application/pdf';
     const buffer = Buffer.from(await res.arrayBuffer());
@@ -363,13 +371,17 @@ export class ShalomLatService {
     }
   }
 
-  // Etiqueta / rótulo del envío (GET /track/label → PDF).
+  // Etiqueta / rótulo del envío (GET /track/label?instanceId=... → PDF).
+  // A diferencia de /track/voucher, este endpoint exige `instanceId` en el
+  // querystring (400 "querystring must have required property 'instanceId'"
+  // si se omite) — verificado contra la API real.
   async label(
     orderNumber: string,
     orderCode: string,
+    instanceId?: string,
   ): Promise<{ buffer: Buffer; contentType: string }> {
     try {
-      return await this.fetchDocumento('/track/label', orderNumber, orderCode);
+      return await this.fetchDocumento('/track/label', orderNumber, orderCode, instanceId);
     } catch (err: any) {
       if (err instanceof HttpException) throw err;
       throw new BadRequestException(this.mensajeShalom(err, 'la etiqueta'));
