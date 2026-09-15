@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ComisionesService } from '../comisiones/comisiones.service';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { S3Service } from '../s3/s3.service';
 import {
   PdfGeneratorService,
@@ -279,6 +280,7 @@ export class EnviarSunatService {
     private readonly apisPeruClient: ApisPeruClient,
     private readonly jambleClient: JambleClient,
     @Optional() private readonly comisionesService?: ComisionesService,
+    @Optional() private readonly notificaciones?: NotificacionesService,
   ) {}
 
   /**
@@ -2594,6 +2596,23 @@ export class EnviarSunatService {
           );
         }
 
+        // "No tiene el perfil..."/"Rejected by policy": rechazo de plan/política
+        // del proveedor, no un dato de este comprobante — se avisa claro desde el
+        // primer intento (no solo cuando el usuario revisa el error más tarde) en
+        // vez de la frase cruda de QPSE, que hace pensar que la venta está mal.
+        // El texto original de `detail` se mantiene dentro del mensaje: classifyError()
+        // sigue reconociéndolo por esas mismas palabras para no reintentar en vano.
+        const detalleLower = String(detail || '').toLowerCase();
+        if (
+          detalleLower.includes('no tiene el perfil') ||
+          detalleLower.includes('rejected by policy')
+        ) {
+          throw new HttpException(
+            `${provider} rechazó este comprobante por una restricción de su plan/política (no es un error de esta venta). No sigas presionando "Emitir": contacta a soporte para verificarlo. Detalle: ${detail}`,
+            502,
+          );
+        }
+
         throw new HttpException(
           `${provider} rechazó el documento: ${detail || 'Error desconocido'}`,
           502,
@@ -2665,7 +2684,11 @@ export class EnviarSunatService {
       try {
         const currentComp = await this.prisma.comprobante.findUnique({
           where: { id: comprobanteId },
-          select: { sunatRetriesCount: true, estadoEnvioSunat: true },
+          select: {
+            sunatRetriesCount: true,
+            estadoEnvioSunat: true,
+            empresaId: true,
+          },
         });
 
         // Nunca degradar un comprobante que otro proceso ya dejó en estado final
@@ -2683,19 +2706,45 @@ export class EnviarSunatService {
             `⛔ Comprobante ${comprobanteId} ya está en estado final (${currentComp.estadoEnvioSunat}); no se sobrescribe con el fallo: ${err.message}`,
           );
         } else if (currentComp && this.classifyError(err) === 'CONFIG') {
-          // Error de configuración (entorno demo/producción cruzado): sin reintentos automáticos.
+          // Error de configuración: sin reintentos automáticos (reintentar jamás lo
+          // arregla). Dos causas distintas comparten este balde:
+          const msgLower = err.message.toLowerCase();
+          const esPerfilQpse =
+            msgLower.includes('no tiene el perfil') ||
+            msgLower.includes('rejected by policy');
+          const hint = esPerfilQpse
+            ? 'Tu proveedor de facturación electrónica (QPSE) rechazó este comprobante por una restricción de su plan o política (no es un error de esta venta ni de tus datos). Suele pasar con boletas cuando se llega a un límite o cupo del plan contratado. Seguir presionando "Emitir" no lo va a resolver: contacta a soporte para verificarlo con el proveedor.'
+            : `Revisa el entorno de la empresa (usaDemo) y el QPSE_BASE_URL del servidor; corrige la configuración y reenvía manualmente.`;
           await this.prisma.comprobante.update({
             where: { id: comprobanteId },
             data: {
               estadoEnvioSunat: 'FALLIDO_ENVIO',
               sunatLastRetryAt: new Date(),
               sunatNextRetryAt: null,
-              sunatErrorMsg: `[CONFIG] ${err.message}. Revisa el entorno de la empresa (usaDemo) y el QPSE_BASE_URL del servidor; corrige la configuración y reenvía manualmente.`,
+              sunatErrorMsg: `[CONFIG] ${err.message}. ${hint}`,
             },
           });
           console.error(
-            `🛑 Comprobante ${comprobanteId} → error de CONFIGURACIÓN (entorno demo/producción cruzado). Sin reintentos automáticos.`,
+            `🛑 Comprobante ${comprobanteId} → error de CONFIGURACIÓN (${esPerfilQpse ? 'cuenta QPSE sin perfil de comprobantes' : 'entorno demo/producción cruzado'}). Sin reintentos automáticos.`,
           );
+          if (esPerfilQpse && currentComp.empresaId) {
+            // Esto lo tiene que resolver un humano con el proveedor QPSE, no un
+            // reintento: se notifica de una vez en vez de esperar el ciclo del
+            // scheduler (que de todas formas nunca lo volvería a tomar, porque
+            // sunatNextRetryAt queda null).
+            this.notificaciones
+              ?.notificarFallaSunat({
+                empresaId: currentComp.empresaId,
+                tipo: 'CRITICAL',
+                titulo: 'Comprobante rechazado por el proveedor de facturación',
+                mensaje:
+                  'QPSE rechazó este comprobante por una restricción de su plan/política (no es un error de esta venta). Contacta a soporte para verificarlo; no sigas intentando emitir el mismo comprobante.',
+                meta: { comprobanteId, errorMsg: err.message },
+              })
+              .catch((e: any) =>
+                console.error('No se pudo notificar bloqueo QPSE:', e?.message),
+              );
+          }
         } else if (currentComp) {
           const newRetryCount = (currentComp.sunatRetriesCount || 0) + 1;
           const errorType = this.classifyError(err);
@@ -3851,6 +3900,17 @@ export class EnviarSunatService {
     // Reintentar jamás lo va a arreglar y el comprobante puede estar ya aceptado
     // por el otro entorno: no debe consumir reintentos ni terminar en RECHAZADO.
     if (msg.includes('tipo soap no coincide')) return 'CONFIG';
+
+    // La cuenta QPSE de la empresa no está autorizada para emitir comprobantes
+    // electrónicos (perfil/plan contratado con QPSE, no un dato del comprobante).
+    // El comprobante en sí es válido: reintentar no lo va a arreglar, y borrarlo
+    // (como con SUNAT_FATAL_CODES) perdería una venta real por un problema de
+    // cuenta. Necesita que alguien active el perfil en QPSE, no un reintento.
+    if (
+      msg.includes('no tiene el perfil') ||
+      msg.includes('rejected by policy')
+    )
+      return 'CONFIG';
 
     // HttpException lanzada por nosotros al detectar rechazo explícito de SUNAT/QPSE
     if (

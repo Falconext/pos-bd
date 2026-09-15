@@ -563,7 +563,22 @@ export class GuiaRemisionService {
           select: { sunatRetriesCount: true },
         });
 
-        if (current) {
+        if (current && this.classifyError(error) === 'CONFIG') {
+          // Sin reintentos automáticos: la guía queda válida, solo bloqueada
+          // para enviarse hasta que se active el perfil de comprobantes en QPSE.
+          await this.prisma.guiaRemision.update({
+            where: { id },
+            data: {
+              estadoSunat: 'FALLIDO_ENVIO' as any,
+              sunatLastRetryAt: new Date(),
+              sunatNextRetryAt: null,
+              sunatErrorMsg: `[CONFIG] ${error.message}. El proveedor de facturación electrónica (QPSE) rechazó esta guía por una restricción de su plan/política (no es un error de esta guía). Contacta a soporte para verificarlo; no sigas reintentando.`,
+            },
+          });
+          this.logger.error(
+            `🛑 Guía ${id} → cuenta QPSE sin perfil de comprobantes. Sin reintentos automáticos.`,
+          );
+        } else if (current) {
           const newRetryCount = (current.sunatRetriesCount || 0) + 1;
           const errorType = this.classifyError(error);
           const maxRetries =
@@ -632,9 +647,18 @@ export class GuiaRemisionService {
     }
   }
 
-  private classifyError(err: any): 'DATOS' | 'RED' {
+  private classifyError(err: any): 'DATOS' | 'RED' | 'CONFIG' {
     const msg = String(err?.message || '').toLowerCase();
     const httpStatus = err?.status || err?.response?.status;
+
+    // La cuenta QPSE de la empresa no está autorizada para emitir comprobantes
+    // (perfil/plan contratado), no es un dato de esta guía: reintentar no lo
+    // arregla (ver misma casuística en enviar-sunat.service.ts).
+    if (
+      msg.includes('no tiene el perfil') ||
+      msg.includes('rejected by policy')
+    )
+      return 'CONFIG';
 
     if (
       msg.includes('qpse rechaz') ||
