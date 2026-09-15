@@ -231,6 +231,31 @@ export class ShalomService {
 
   // ─── Persistencia / caché de tracking ────────────────────────────────────
 
+  /**
+   * Clave de retiro de 4 dígitos para una guía nueva. Shalom no permite repetir
+   * la clave usada el día anterior en la misma cuenta, así que se evita cualquier
+   * clave que la empresa haya usado en las últimas 48 h (y las triviales).
+   */
+  private async generarClaveRetiro(empresaId: number): Promise<string> {
+    const desde = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    const usadas = await this.prisma.envioDespacho.findMany({
+      where: {
+        claveEnvio: { not: null },
+        creadoEn: { gte: desde },
+        comprobante: { empresaId },
+      },
+      select: { claveEnvio: true },
+    });
+    const prohibidas = new Set(
+      usadas.map((u) => String(u.claveEnvio)).concat(['0000', '1234']),
+    );
+    for (let i = 0; i < 50; i += 1) {
+      const candidata = String(1000 + Math.floor(Math.random() * 9000));
+      if (!prohibidas.has(candidata)) return candidata;
+    }
+    return String(1000 + Math.floor(Math.random() * 9000));
+  }
+
   /** Busca el EnvioDespacho asociado a una orden Shalom (por nº + clave). */
   private async buscarEnvio(
     orderNumber: string,
@@ -816,6 +841,13 @@ export class ShalomService {
     }
     const tamano = tamanoDesdeNombre(nombreCatalogo ?? '');
 
+    // Clave de retiro (4 dígitos que presenta el destinatario en agencia). Si no
+    // se manda, el proveedor reutiliza la última clave de la cuenta Shalom Pro y
+    // Shalom la rechaza con "No puede usar la clave del día anterior" — así se
+    // caían TODAS las guías del día siguiente a la última. Se genera una propia
+    // por envío, distinta a las usadas por esta empresa en las últimas 48 h.
+    const clave = await this.generarClaveRetiro(empresa.id);
+
     const respuesta = await this.lat.createOrder({
       instanceId: empresa.shalomInstanceId,
       origen: Number(origen.terId),
@@ -826,6 +858,7 @@ export class ShalomService {
       lastname: partes.apellidoMaterno,
       phone,
       content: tamano.content,
+      clave,
       cantidad: Number(envio.nroPaquetes) > 0 ? Number(envio.nroPaquetes) : 1,
       declaracion_jurada: declararContenido(envio.tipoMercaderia, envio.contenidoPaquete),
       ...(Number(envio.pesoKg) > 0 ? { peso: String(Number(envio.pesoKg)) } : {}),
@@ -856,6 +889,8 @@ export class ShalomService {
     }
 
     const guia = this.extraerGuia(respuesta);
+    // /account/register no devuelve la clave de retiro: es la que mandamos.
+    if (guia.nroOrden && !guia.claveEnvio) guia.claveEnvio = clave;
     if (!guia.nroOrden) {
       // Sin el N° de orden no hay rastreo posible, así que hay que poder ver qué
       // devolvió realmente el proveedor en vez de adivinar.
