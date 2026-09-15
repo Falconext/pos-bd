@@ -2805,14 +2805,25 @@ export class EnviarSunatService {
         };
       }
 
-      // Errores de CONFIG: entorno demo/producción cruzado; debe corregirse la configuración.
+      // Errores de CONFIG: el comprobante es válido y ya quedó guardado (nunca se
+      // borra, a diferencia de DATOS) — lo que falla es la cuenta/configuración
+      // del proveedor, no esta venta. No tiene sentido hacer esperar al cliente
+      // en el mostrador por algo que el negocio no puede arreglar ahí mismo: se
+      // entrega el comprobante igual (ya se armó con datos 100% propios, sin
+      // depender del CDR) y se reenvía a SUNAT cuando alguien resuelva la causa
+      // con el proveedor — por eso ya se disparó una notificación CRITICAL arriba.
       const rawMsg =
         err.response?.data?.message || err.message || 'Error al enviar a SUNAT';
       if (finalErrorType === 'CONFIG') {
-        throw new HttpException(
-          `Error de configuración de facturación: ${rawMsg}. Verifica que el entorno de la empresa (demo/producción) coincida con el del servidor QPSE.`,
-          502,
-        );
+        return {
+          status: 'PENDIENTE',
+          documentId: comprobanteId,
+          comprobanteId,
+          serie: comp?.serie,
+          correlativo: comp?.correlativo,
+          message:
+            'Comprobante registrado correctamente. Tu proveedor de facturación electrónica rechazó el envío por un problema de cuenta/configuración (no de esta venta); ya se avisó para que se resuelva y el comprobante se reenviará a SUNAT en cuanto se corrija.',
+        };
       }
 
       // Errores de DATOS: el usuario debe corregir algo.

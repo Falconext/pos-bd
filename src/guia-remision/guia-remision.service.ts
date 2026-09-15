@@ -636,6 +636,20 @@ export class GuiaRemisionService {
         };
       }
 
+      // Errores de CONFIG: la guía es válida y ya quedó guardada (nunca se borra,
+      // a diferencia de DATOS) — lo que falla es la cuenta/configuración del
+      // proveedor, no esta guía. No tiene sentido bloquear la entrega por algo
+      // que el negocio no puede arreglar ahí mismo; ya se reintentará cuando se
+      // resuelva la causa con el proveedor.
+      if (finalErrorType === 'CONFIG') {
+        return {
+          success: true,
+          message:
+            'Guía guardada correctamente. Tu proveedor de facturación electrónica rechazó el envío por un problema de cuenta/configuración (no de esta guía); ya se avisó para que se resuelva y se reenviará a SUNAT en cuanto se corrija.',
+          estado: 'PENDIENTE',
+        };
+      }
+
       const rawMsg =
         error.response?.data?.message ||
         error.message ||
