@@ -166,6 +166,41 @@ export class EnviarSunatService {
 
   public simulateSunatFailure = false;
 
+  /** Errores CONFIG (cuenta/política del proveedor): reintento cada 6 h, máx. 3 días. */
+  private readonly CONFIG_RETRY_HOURS = 6;
+  private readonly MAX_CONFIG_RETRIES = 12;
+
+  /**
+   * Cuando un comprobante de la empresa es ACEPTADO, la cuenta ya funciona:
+   * los que quedaron FALLIDO_ENVIO por CONFIG se programan para reintentarse
+   * de inmediato (los recoge el scheduler de reintentos, no esta petición).
+   * Devuelve cuántos se reprogramaron.
+   */
+  async reprogramarConfigPendientes(
+    empresaId: number,
+    excluirId?: number,
+  ): Promise<number> {
+    if (!empresaId) return 0;
+    const res = await this.prisma.comprobante.updateMany({
+      where: {
+        empresaId,
+        estadoEnvioSunat: 'FALLIDO_ENVIO',
+        sunatErrorMsg: { startsWith: '[CONFIG]' },
+        ...(excluirId ? { id: { not: excluirId } } : {}),
+        // Solo los que aún no estén ya programados para dentro de un momento.
+        OR: [{ sunatNextRetryAt: null }, { sunatNextRetryAt: { gt: new Date() } }],
+      },
+      // El contador vuelve a 0: arranca una tanda nueva de reintentos.
+      data: { sunatNextRetryAt: new Date(), sunatRetriesCount: 0 },
+    });
+    if (res.count > 0) {
+      console.log(
+        `🔁 Empresa ${empresaId} volvió a emitir: ${res.count} comprobante(s) con error CONFIG reprogramados para reenvío inmediato.`,
+      );
+    }
+    return res.count;
+  }
+
   // Importe (S/) a partir del cual SUNAT exige identificar al adquirente en una
   // Boleta de Venta. Hasta este monto se acepta consumidor final sin documento.
   private static readonly BOLETA_LIMITE_IDENTIFICACION = 700;
@@ -2629,6 +2664,14 @@ export class EnviarSunatService {
       // (idempotente; cubre emisión directa y reintentos del scheduler).
       await this.registrarComisionesAlAceptar(comp);
 
+      // La cuenta de esta empresa acaba de emitir bien: si tenía comprobantes
+      // trabados por CONFIG (p. ej. QPSE "sin perfil"), ya se pueden reenviar.
+      // Se reprograman para el scheduler (no se reenvían acá, en la venta).
+      this.reprogramarConfigPendientes(comp.empresaId, comprobanteId).catch(
+        (e: any) =>
+          console.error('No se pudo reprogramar comprobantes CONFIG:', e?.message),
+      );
+
       // Actualizar estado del comprobante afectado si es nota de crédito/débito
       await this.procesarEfectoEnComprobanteAfectado(comp, status);
 
@@ -2713,21 +2756,32 @@ export class EnviarSunatService {
             msgLower.includes('no tiene el perfil') ||
             msgLower.includes('rejected by policy');
           const hint = esPerfilQpse
-            ? 'Tu proveedor de facturación electrónica (QPSE) rechazó este comprobante por una restricción de su plan o política (no es un error de esta venta ni de tus datos). Suele pasar con boletas cuando se llega a un límite o cupo del plan contratado. Seguir presionando "Emitir" no lo va a resolver: contacta a soporte para verificarlo con el proveedor.'
+            ? 'Tu proveedor de facturación electrónica (QPSE) rechazó este comprobante por una restricción de su plan o política (no es un error de esta venta ni de tus datos). Suele pasar con boletas cuando se llega a un límite o cupo del plan contratado. Seguir presionando "Emitir" no lo va a resolver: contacta a soporte para verificarlo con el proveedor. El sistema lo reenviará solo cuando la cuenta vuelva a emitir.'
             : `Revisa el entorno de la empresa (usaDemo) y el QPSE_BASE_URL del servidor; corrige la configuración y reenvía manualmente.`;
+          // Reintento "suave": no cada pocos minutos (contra un rechazo de política
+          // es inútil), sino cada 6 h hasta 3 días (12 intentos). Además, apenas
+          // otro comprobante de la empresa sea aceptado se reprograma de inmediato
+          // (ver reprogramarConfigPendientes). Pasado el tope queda manual.
+          const intentosConfig = (currentComp.sunatRetriesCount || 0) + 1;
+          const agotado = intentosConfig >= this.MAX_CONFIG_RETRIES;
           await this.prisma.comprobante.update({
             where: { id: comprobanteId },
             data: {
               estadoEnvioSunat: 'FALLIDO_ENVIO',
+              sunatRetriesCount: intentosConfig,
               sunatLastRetryAt: new Date(),
-              sunatNextRetryAt: null,
-              sunatErrorMsg: `[CONFIG] ${err.message}. ${hint}`,
+              sunatNextRetryAt: agotado
+                ? null
+                : new Date(Date.now() + this.CONFIG_RETRY_HOURS * 60 * 60 * 1000),
+              sunatErrorMsg: `[CONFIG] ${err.message}. ${hint}${agotado ? ' (Se agotaron los reintentos automáticos: reenvíalo desde la lista de comprobantes cuando el proveedor lo haya corregido.)' : ''}`,
             },
           });
           console.error(
-            `🛑 Comprobante ${comprobanteId} → error de CONFIGURACIÓN (${esPerfilQpse ? 'cuenta QPSE sin perfil de comprobantes' : 'entorno demo/producción cruzado'}). Sin reintentos automáticos.`,
+            `🛑 Comprobante ${comprobanteId} → error de CONFIGURACIÓN (${esPerfilQpse ? 'cuenta QPSE sin perfil de comprobantes' : 'entorno demo/producción cruzado'}). Intento ${intentosConfig}/${this.MAX_CONFIG_RETRIES}; ${agotado ? 'sin más reintentos automáticos' : `próximo reintento en ${this.CONFIG_RETRY_HOURS} h`}.`,
           );
-          if (esPerfilQpse && currentComp.empresaId) {
+          // Se avisa en el primer intento (dedupe 24 h en notificarFallaSunat) y
+          // otra vez al agotar los automáticos.
+          if (esPerfilQpse && currentComp.empresaId && (intentosConfig === 1 || agotado)) {
             // Esto lo tiene que resolver un humano con el proveedor QPSE, no un
             // reintento: se notifica de una vez en vez de esperar el ciclo del
             // scheduler (que de todas formas nunca lo volvería a tomar, porque

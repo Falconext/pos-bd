@@ -255,6 +255,12 @@ export class VerificarPendientesSunatService {
               where: { id: comprobante.id },
               data: dataUpdate,
             });
+            // La cuenta ya emite: reprogramar los que quedaron trabados por CONFIG.
+            this.enviarSunat
+              .reprogramarConfigPendientes(comprobante.empresaId, comprobante.id)
+              .catch((e: any) =>
+                this.logger.warn(`No se pudo reprogramar CONFIG: ${e?.message}`),
+              );
           } else {
             // Guard atómico: solo escribir si sigue PENDIENTE, para no pisar un
             // EMITIDO/ANULADO/PENDIENTE_CONCILIACION escrito por otro proceso.

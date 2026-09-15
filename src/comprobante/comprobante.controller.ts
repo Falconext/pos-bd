@@ -15,10 +15,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import {
-  FileInterceptor,
-  FilesInterceptor,
-} from '@nestjs/platform-express';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { ComprobanteService } from './comprobante.service';
 import { normalizarFormatoPdf } from './pdf-generator.service';
 import {
@@ -41,6 +38,7 @@ import {
   xmlUploadOptions,
 } from '../common/utils/multer.config';
 import { numeroALetras } from './utils/numero-a-letras';
+import { verificarPuedeAnularComprobante } from './puede-anular-comprobante.util';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('comprobante')
@@ -411,11 +409,12 @@ export class ComprobanteController {
 
   // Estado y pagos
   @Patch(':id/descartar')
-  @Roles('ADMIN_EMPRESA')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async descartarComprobante(
     @Param('id', ParseIntPipe) id: number,
     @User() user: any,
   ) {
+    verificarPuedeAnularComprobante(user);
     return this.service.descartarComprobante(id, user.empresaId);
   }
 
@@ -454,7 +453,10 @@ export class ComprobanteController {
     const comp = await this.service.prepararReemision(id, user.empresaId);
     try {
       const sunatResp = await this.enviarSunat.execute(comp.id);
-      return { ...sunatResp, comprobanteId: comp.id, reemitido: true };
+      // execute() responde con textos de mostrador aunque el envío haya fallado
+      // (RED/CONFIG quedan PENDIENTE "registrado correctamente"): acá manda el
+      // estado real persistido, para no hacerle creer al admin que se aceptó.
+      return this.service.resultadoReemision(comp.id, sunatResp);
     } catch (error: any) {
       // A diferencia de la creación, NUNCA eliminamos el comprobante al reemitir:
       // se deja como FALLIDO_ENVIO para poder reintentar de nuevo.
@@ -477,12 +479,13 @@ export class ComprobanteController {
   }
 
   @Patch(':comprobanteId/anular')
-  @Roles('ADMIN_EMPRESA')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async anularComprobante(
     @Param('comprobanteId', ParseIntPipe) comprobanteId: number,
     @Body() input: any,
     @User() user: any,
   ) {
+    verificarPuedeAnularComprobante(user);
     return this.service.anularComprobante(
       comprobanteId,
       input?.motivo,
@@ -521,7 +524,11 @@ export class ComprobanteController {
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async actualizarVendedorCampo(
     @Param('id', ParseIntPipe) id: number,
-    @Body() input: { vendedorCampoId?: number | null; vendedorCampoNombre?: string | null },
+    @Body()
+    input: {
+      vendedorCampoId?: number | null;
+      vendedorCampoNombre?: string | null;
+    },
     @User() user: any,
   ) {
     return this.service.actualizarVendedorCampo(
@@ -819,7 +826,11 @@ export class ComprobanteController {
         afectarCaja: dto.afectarCaja,
       },
     );
-    return { comprobanteId: comp.id, serie: comp.serie, correlativo: comp.correlativo };
+    return {
+      comprobanteId: comp.id,
+      serie: comp.serie,
+      correlativo: comp.correlativo,
+    };
   }
 
   /**
