@@ -147,11 +147,48 @@ export class ComisionesService {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
+  // Período: por defecto mes/año (columnas propias de la comisión). Si llega un
+  // rango de fechas (filtro "Día"/"Rango" de Análisis Financiero) se filtra por
+  // la fecha de emisión del comprobante, en hora de Lima, igual que el resto de
+  // pestañas — así un rango puede cruzar meses sin cambiar el modelo.
+  // ─────────────────────────────────────────────────────────────────────────────
+  private wherePeriodo(
+    mes?: number,
+    anio?: number,
+    fechaInicio?: string,
+    fechaFin?: string,
+  ) {
+    const fechaValida = (f?: string) => !!f && /^\d{4}-\d{2}-\d{2}$/.test(f);
+    if (fechaValida(fechaInicio) && fechaValida(fechaFin)) {
+      return {
+        comprobante: {
+          fechaEmision: {
+            gte: new Date(`${fechaInicio}T00:00:00.000-05:00`),
+            lte: new Date(`${fechaFin}T23:59:59.999-05:00`),
+          },
+        },
+      };
+    }
+    const now = new Date();
+    return {
+      mes: mes && mes >= 1 && mes <= 12 ? mes : now.getMonth() + 1,
+      anio: anio && anio >= 2020 ? anio : now.getFullYear(),
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
   // REPORTE DUEÑO: Lista comisiones de todos los vendedores en un período
   // ─────────────────────────────────────────────────────────────────────────────
-  async listarResumenMensual(empresaId: number, mes: number, anio: number) {
+  async listarResumenMensual(
+    empresaId: number,
+    mes?: number,
+    anio?: number,
+    fechaInicio?: string,
+    fechaFin?: string,
+  ) {
+    const periodo = this.wherePeriodo(mes, anio, fechaInicio, fechaFin);
     const comisiones = await this.prisma.comisionVendedor.findMany({
-      where: { empresaId, mes, anio },
+      where: { empresaId, ...periodo },
       include: {
         vendedor: { select: { id: true, nombre: true, rol: true, dni: true } },
         comprobante: {
@@ -203,8 +240,10 @@ export class ComisionesService {
     }
 
     return {
-      mes,
-      anio,
+      mes: 'mes' in periodo ? periodo.mes : (mes ?? null),
+      anio: 'anio' in periodo ? periodo.anio : (anio ?? null),
+      fechaInicio: 'comprobante' in periodo ? fechaInicio : null,
+      fechaFin: 'comprobante' in periodo ? fechaFin : null,
       vendedores: [...vendedorMap.values()].map((v) => ({
         ...v,
         totalComision: Math.round(v.totalComision * 100) / 100,
@@ -265,15 +304,18 @@ export class ComisionesService {
   async marcarComisionesPagadas(
     empresaId: number,
     vendedorId: number,
-    mes: number,
-    anio: number,
+    mes?: number,
+    anio?: number,
+    fechaInicio?: string,
+    fechaFin?: string,
   ) {
+    // Se liquida exactamente lo que el dueño está viendo: el mes, o el
+    // día/rango elegido en el filtro (por fecha de emisión del comprobante).
     const result = await this.prisma.comisionVendedor.updateMany({
       where: {
         empresaId,
         vendedorId,
-        mes,
-        anio,
+        ...this.wherePeriodo(mes, anio, fechaInicio, fechaFin),
         estado: EstadoComision.PENDIENTE,
       },
       data: { estado: EstadoComision.PAGADO },
@@ -288,9 +330,15 @@ export class ComisionesService {
   // ─────────────────────────────────────────────────────────────────────────────
   // EXPORT: Datos para Excel (reporte por mes/año)
   // ─────────────────────────────────────────────────────────────────────────────
-  async exportarComisionesMes(empresaId: number, mes: number, anio: number) {
+  async exportarComisionesMes(
+    empresaId: number,
+    mes?: number,
+    anio?: number,
+    fechaInicio?: string,
+    fechaFin?: string,
+  ) {
     const comisiones = await this.prisma.comisionVendedor.findMany({
-      where: { empresaId, mes, anio },
+      where: { empresaId, ...this.wherePeriodo(mes, anio, fechaInicio, fechaFin) },
       include: {
         vendedor: { select: { nombre: true, dni: true, rol: true } },
         comprobante: {

@@ -124,18 +124,23 @@ export class AnalisisFinancieroController {
     return this.service.actualizarGasto(user.empresaId, id, dto);
   }
 
-  /** GET /analisis-financiero/categorias?mes=&anio= */
+  /** GET /analisis-financiero/categorias?mes=&anio=&fechaInicio=&fechaFin= */
   @Get('categorias')
   getRentabilidadCategorias(
     @User() user: any,
-    @Query() query: QueryPeriodoDto,
+    @Query('mes') mes?: string,
+    @Query('anio') anio?: string,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
     @Query('sedeId') sedeIdQuery?: string,
   ) {
     return this.service.getRentabilidadCategorias(
       user.empresaId,
-      query.mes,
-      query.anio,
+      mes ? Number(mes) : undefined,
+      anio ? Number(anio) : undefined,
       this.resolverSedeId(user, sedeIdQuery),
+      fechaInicio,
+      fechaFin,
     );
   }
 

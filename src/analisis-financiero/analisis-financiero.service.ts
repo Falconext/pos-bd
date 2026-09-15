@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { EstadoSunat, GastoOperativo } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { montoEnPen } from '../common/utils/moneda.util';
+import { excluirNotasCreditoDeAnulacion } from '../common/utils/notas-credito.util';
 import { coordenadasDeDestino } from './peru-coordenadas';
 import { CrearGastoDto } from './dto/crear-gasto.dto';
 import { ActualizarGastoDto } from './dto/actualizar-gasto.dto';
@@ -672,38 +673,7 @@ export class AnalisisFinancieroService {
   private async excluirNotasCreditoDeAnulacion<
     T extends { tipoDoc: string; numDocAfectado?: string | null },
   >(empresaId: number, comprobantes: T[]): Promise<T[]> {
-    const claves = new Map<string, { serie: string; correlativo: number }>();
-    for (const c of comprobantes) {
-      if (c.tipoDoc !== '07') continue;
-      const ref = (c.numDocAfectado || '').trim();
-      const idx = ref.lastIndexOf('-');
-      if (idx <= 0) continue;
-      const correlativo = Number(ref.slice(idx + 1));
-      if (!Number.isFinite(correlativo)) continue;
-      claves.set(ref, { serie: ref.slice(0, idx), correlativo });
-    }
-    if (claves.size === 0) return comprobantes;
-
-    const anulados = await this.prisma.comprobante.findMany({
-      where: {
-        empresaId,
-        estadoEnvioSunat: EstadoSunat.ANULADO,
-        OR: Array.from(claves.values()).map((k) => ({
-          serie: k.serie,
-          correlativo: k.correlativo,
-        })),
-      },
-      select: { serie: true, correlativo: true },
-    });
-    if (anulados.length === 0) return comprobantes;
-    const setAnulados = new Set(
-      anulados.map((a) => `${a.serie}-${a.correlativo}`),
-    );
-    return comprobantes.filter(
-      (c) =>
-        c.tipoDoc !== '07' ||
-        !setAnulados.has((c.numDocAfectado || '').trim()),
-    );
+    return excluirNotasCreditoDeAnulacion(this.prisma, empresaId, comprobantes);
   }
 
   private signoDocumento(tipoDoc: string): 1 | -1 {
@@ -1516,11 +1486,28 @@ export class AnalisisFinancieroService {
 
   async getRentabilidadCategorias(
     empresaId: number,
-    mes: number,
-    anio: number,
+    mes?: number,
+    anio?: number,
     sedeId?: number | null,
+    fechaInicio?: string,
+    fechaFin?: string,
   ) {
-    const range = this.periodoToRange(mes, anio);
+    // Mismo criterio que getMetodosPago/getProductosVendidos: si llega un
+    // rango explícito (filtro "Día" o "Rango") manda; si no, el mes/año.
+    const now = new Date();
+    const mesFinal = mes && mes >= 1 && mes <= 12 ? mes : now.getMonth() + 1;
+    const anioFinal =
+      anio && anio >= 2020 && anio <= 2100 ? anio : now.getFullYear();
+    const range =
+      this.fechasToRange(fechaInicio, fechaFin) ??
+      this.periodoToRange(mesFinal, anioFinal);
+    // Un solo día se etiqueta con la fecha sola (este label sale en el PDF).
+    const periodoLabel =
+      fechaInicio && fechaFin
+        ? fechaInicio === fechaFin
+          ? fechaInicio
+          : `${fechaInicio} al ${fechaFin}`
+        : `${this.mesLabel(mesFinal)} ${anioFinal}`;
 
     const comprobantesRaw = await this.prisma.comprobante.findMany({
       where: {
@@ -1670,7 +1657,13 @@ export class AnalisisFinancieroService {
       ingresoTotal > 0 ? this.r2((gananciaTotal / ingresoTotal) * 100) : 0;
 
     return {
-      periodo: { mes, anio, label: `${this.mesLabel(mes)} ${anio}` },
+      periodo: {
+        mes: mesFinal,
+        anio: anioFinal,
+        fechaInicio: fechaInicio ?? null,
+        fechaFin: fechaFin ?? null,
+        label: periodoLabel,
+      },
       ingresoTotal,
       gananciaTotal,
       margenPromedio,

@@ -27,11 +27,19 @@ export class ComisionesController {
   @Roles('ADMIN_EMPRESA', 'SUPERADMIN')
   async getResumenMensual(
     @Req() req: any,
-    @Query('mes', ParseIntPipe) mes: number,
-    @Query('anio', ParseIntPipe) anio: number,
+    @Query('mes') mes?: string,
+    @Query('anio') anio?: string,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
   ) {
     const empresaId = req.user.empresaId;
-    return this.comisionesService.listarResumenMensual(empresaId, mes, anio);
+    return this.comisionesService.listarResumenMensual(
+      empresaId,
+      mes ? Number(mes) : undefined,
+      anio ? Number(anio) : undefined,
+      fechaInicio,
+      fechaFin,
+    );
   }
 
   /**
@@ -83,15 +91,19 @@ export class ComisionesController {
   async marcarPagadas(
     @Req() req: any,
     @Param('vendedorId', ParseIntPipe) vendedorId: number,
-    @Query('mes', ParseIntPipe) mes: number,
-    @Query('anio', ParseIntPipe) anio: number,
+    @Query('mes') mes?: string,
+    @Query('anio') anio?: string,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
   ) {
     const empresaId = req.user.empresaId;
     return this.comisionesService.marcarComisionesPagadas(
       empresaId,
       vendedorId,
-      mes,
-      anio,
+      mes ? Number(mes) : undefined,
+      anio ? Number(anio) : undefined,
+      fechaInicio,
+      fechaFin,
     );
   }
 
@@ -103,10 +115,18 @@ export class ComisionesController {
   @Roles('ADMIN_EMPRESA', 'SUPERADMIN')
   async exportar(
     @Req() req: any,
-    @Query('mes', ParseIntPipe) mes: number,
-    @Query('anio', ParseIntPipe) anio: number,
+    @Query('mes') mes?: string,
+    @Query('anio') anio?: string,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
   ) {
     const empresaId = req.user.empresaId;
-    return this.comisionesService.exportarComisionesMes(empresaId, mes, anio);
+    return this.comisionesService.exportarComisionesMes(
+      empresaId,
+      mes ? Number(mes) : undefined,
+      anio ? Number(anio) : undefined,
+      fechaInicio,
+      fechaFin,
+    );
   }
 }
