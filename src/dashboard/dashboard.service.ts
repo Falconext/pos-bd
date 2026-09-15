@@ -148,6 +148,7 @@ export class DashboardService {
       where: { comprobante: comprobanteWhere },
       select: {
         cantidad: true,
+        unidadesPorPaquete: true,
         mtoValorVenta: true,
         producto: { select: { costoPromedio: true } },
         comprobante: { select: { tipoMoneda: true, tipoCambio: true } },
@@ -161,8 +162,14 @@ export class DashboardService {
         d.comprobante.tipoMoneda,
         d.comprobante.tipoCambio,
       );
+      // Paquete vendido como UNA línea (Empresa.paquetesComoUnaLinea): el
+      // costo real son las unidades físicas = cantidad × unidadesPorPaquete,
+      // no la cantidad facturada (p.ej. 1 caja).
+      const uPaquete = Number(d.unidadesPorPaquete) || 1;
       costo +=
-        Number(d.producto?.costoPromedio ?? 0) * Number(d.cantidad ?? 0);
+        Number(d.producto?.costoPromedio ?? 0) *
+        Number(d.cantidad ?? 0) *
+        uPaquete;
     }
     venta = Number(venta.toFixed(2));
     costo = Number(costo.toFixed(2));
@@ -389,28 +396,48 @@ export class DashboardService {
       take: limit,
     });
     if (detalles.length === 0) return [];
-    const productos = await this.prisma.producto.findMany({
-      where: {
-        id: {
-          in: detalles
-            .map((d) => d.productoId)
-            .filter((id): id is number => id !== null),
+    const productoIds = detalles
+      .map((d) => d.productoId)
+      .filter((id): id is number => id !== null);
+    const [productos, lineasPaquete] = await Promise.all([
+      this.prisma.producto.findMany({
+        where: { id: { in: productoIds } },
+        select: {
+          id: true,
+          descripcion: true,
+          codigo: true,
+          stock: true,
+          costoPromedio: true,
+          precioUnitario: true,
         },
-      },
-      select: {
-        id: true,
-        descripcion: true,
-        codigo: true,
-        stock: true,
-        costoPromedio: true,
-        precioUnitario: true,
-      },
-    });
+      }),
+      // Paquete vendido como UNA línea (Empresa.paquetesComoUnaLinea): el
+      // _sum.cantidad del groupBy de arriba son "paquetes" (p.ej. 1 caja), no
+      // unidades reales. Se recalculan aparte —solo para los productos del
+      // ranking— multiplicando por unidadesPorPaquete cuando aplica.
+      this.prisma.detalleComprobante.findMany({
+        where: { comprobanteId: { in: compIds }, productoId: { in: productoIds } },
+        select: { productoId: true, cantidad: true, unidadesPorPaquete: true },
+      }),
+    ]);
+    const unidadesRealesPorProducto = new Map<number, number>();
+    for (const d of lineasPaquete) {
+      if (d.productoId == null) continue;
+      const u = Number(d.unidadesPorPaquete) || 1;
+      unidadesRealesPorProducto.set(
+        d.productoId,
+        (unidadesRealesPorProducto.get(d.productoId) ?? 0) +
+          Number(d.cantidad ?? 0) * u,
+      );
+    }
     const mapProd = new Map(productos.map((p) => [p.id, p] as const));
     return detalles.map((d) => {
       const prod = d.productoId ? mapProd.get(d.productoId) || null : null;
       const stock = prod ? (prod as any).stock : 0;
-      const cantidad = Number(d._sum.cantidad ?? 0);
+      const cantidad =
+        d.productoId != null
+          ? (unidadesRealesPorProducto.get(d.productoId) ?? 0)
+          : Number(d._sum.cantidad ?? 0);
       const total = Number(d._sum.mtoValorVenta ?? 0);
       // Rentabilidad por producto: valor de venta (sin IGV) menos el costo
       // promedio por las unidades vendidas en el periodo.
@@ -490,21 +517,40 @@ export class DashboardService {
       .map((d) => d.productoId)
       .filter((id): id is number => id !== null);
 
-    const productos = await this.prisma.producto.findMany({
-      where: {
-        id: { in: productoIds },
-        ...(categoriaId ? { categoriaId } : {}),
-      },
-      select: {
-        id: true,
-        descripcion: true,
-        codigo: true,
-        stock: true,
-        categoriaId: true,
-        categoria: { select: { id: true, nombre: true } },
-      },
-    });
+    const [productos, lineasPaquete] = await Promise.all([
+      this.prisma.producto.findMany({
+        where: {
+          id: { in: productoIds },
+          ...(categoriaId ? { categoriaId } : {}),
+        },
+        select: {
+          id: true,
+          descripcion: true,
+          codigo: true,
+          stock: true,
+          categoriaId: true,
+          categoria: { select: { id: true, nombre: true } },
+        },
+      }),
+      // Paquete vendido como UNA línea (Empresa.paquetesComoUnaLinea): el
+      // _sum.cantidad de arriba son "paquetes" (p.ej. 1 caja), no unidades
+      // reales. Se recalculan aparte multiplicando por unidadesPorPaquete.
+      this.prisma.detalleComprobante.findMany({
+        where: { comprobanteId: { in: compIds }, productoId: { in: productoIds } },
+        select: { productoId: true, cantidad: true, unidadesPorPaquete: true },
+      }),
+    ]);
     const mapProd = new Map(productos.map((p) => [p.id, p] as const));
+    const unidadesRealesPorProducto = new Map<number, number>();
+    for (const d of lineasPaquete) {
+      if (d.productoId == null) continue;
+      const u = Number(d.unidadesPorPaquete) || 1;
+      unidadesRealesPorProducto.set(
+        d.productoId,
+        (unidadesRealesPorProducto.get(d.productoId) ?? 0) +
+          Number(d.cantidad ?? 0) * u,
+      );
+    }
 
     // Agrupar por categoría
     const SIN_CATEGORIA_ID = 0;
@@ -520,7 +566,7 @@ export class DashboardService {
       const catId = prod.categoriaId ?? SIN_CATEGORIA_ID;
       const catNombre = prod.categoria?.nombre ?? 'Sin categoría';
       const total = Number(d._sum.mtoValorVenta ?? 0);
-      const cantidad = Number(d._sum.cantidad ?? 0);
+      const cantidad = unidadesRealesPorProducto.get(d.productoId) ?? 0;
       const grupo =
         grupos.get(catId) ||
         {

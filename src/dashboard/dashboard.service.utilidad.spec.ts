@@ -68,4 +68,20 @@ describe('DashboardService.utilidadBrutaPen', () => {
     const r = await crear([]).utilidadBrutaPen({});
     expect(r).toEqual({ venta: 0, costo: 0, utilidad: 0 });
   });
+
+  it('paquete vendido como UNA línea: el costo usa las unidades reales, no la cantidad facturada', async () => {
+    const s = crear([
+      // 1 caja de 10 (Empresa.paquetesComoUnaLinea) a S/49 neto: costo real
+      // es 10 unidades × S/3.11, no 1 × S/3.11.
+      {
+        cantidad: 1,
+        unidadesPorPaquete: 10,
+        mtoValorVenta: 49,
+        producto: { costoPromedio: 3.11 },
+        comprobante: { tipoMoneda: 'PEN', tipoCambio: 1 },
+      },
+    ]);
+    const r = await s.utilidadBrutaPen({});
+    expect(r).toEqual({ venta: 49, costo: 31.1, utilidad: 17.9 });
+  });
 });

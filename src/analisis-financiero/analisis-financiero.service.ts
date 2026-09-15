@@ -89,6 +89,11 @@ interface ProductoCostoPnl {
 interface DetalleComprobantePnl {
   productoId: number | null;
   cantidad: number;
+  // Paquete vendido como UNA línea (Empresa.paquetesComoUnaLinea): unidades
+  // reales por paquete. Sin esto, el costo/unidades de una línea de paquete
+  // (cantidad=1 al precio completo) sale prorrateado por 1 unidad en vez de
+  // las unidades reales vendidas.
+  unidadesPorPaquete?: number | null;
   producto: ProductoCostoPnl | null;
 }
 
@@ -719,7 +724,11 @@ export class AnalisisFinancieroService {
         continue;
       }
 
-      const cantidad = Number(detalle.cantidad || 0) * signo;
+      // Paquete vendido como UNA línea (Empresa.paquetesComoUnaLinea): la
+      // cantidad facturada (p.ej. 1 caja) no son las unidades reales que
+      // costaron/salieron de almacén — eso es cantidad × unidadesPorPaquete.
+      const uPaquete = Number(detalle.unidadesPorPaquete) || 1;
+      const cantidad = Number(detalle.cantidad || 0) * uPaquete * signo;
       const producto = detalle.producto;
       costoBaseProductos += cantidad * this.toNumber(producto.costoPromedio);
       costosFijosProducto += cantidad * this.toNumber(producto.costoFijo);
@@ -977,6 +986,7 @@ export class AnalisisFinancieroService {
               select: {
                 productoId: true,
                 cantidad: true,
+                unidadesPorPaquete: true,
                 producto: {
                   select: {
                     costoPromedio: true,
@@ -1248,6 +1258,7 @@ export class AnalisisFinancieroService {
             select: {
               productoId: true,
               cantidad: true,
+              unidadesPorPaquete: true,
               producto: {
                 select: {
                   costoPromedio: true,
@@ -1528,6 +1539,7 @@ export class AnalisisFinancieroService {
             cantidad: true,
             mtoPrecioUnitario: true,
             productoId: true,
+            unidadesPorPaquete: true,
             producto: {
               select: {
                 descripcion: true,
@@ -1569,7 +1581,13 @@ export class AnalisisFinancieroService {
         const prodNombre =
           det.producto?.descripcion ?? det.descripcion ?? 'Producto';
         const prodKey = String(det.productoId ?? prodNombre);
-        const qty = (det.cantidad ?? 0) * signo;
+        // Paquete vendido como UNA línea (Empresa.paquetesComoUnaLinea): la
+        // cantidad facturada (p.ej. 1 caja) se usa para el ingreso (ya viene
+        // al precio completo del paquete), pero el costo y las unidades deben
+        // reflejar las unidades reales = cantidad × unidadesPorPaquete.
+        const uPaquete = Number(det.unidadesPorPaquete) || 1;
+        const cantidadFacturada = (det.cantidad ?? 0) * signo;
+        const qty = cantidadFacturada * uPaquete;
         const precioUnit = det.mtoPrecioUnitario ?? 0;
         const costoUnit =
           this.toNumber(det.producto?.costoPromedio) +
@@ -1587,7 +1605,7 @@ export class AnalisisFinancieroService {
           });
         }
         const acc = prodMap.get(prodKey)!;
-        acc.ingreso += precioUnit * qty;
+        acc.ingreso += precioUnit * cantidadFacturada;
         acc.costo += costoUnit * qty;
         acc.unidades += qty;
       }
@@ -2388,6 +2406,7 @@ export class AnalisisFinancieroService {
             cantidad: true,
             mtoPrecioUnitario: true,
             productoId: true,
+            unidadesPorPaquete: true,
             producto: {
               select: {
                 codigo: true,
@@ -2448,7 +2467,13 @@ export class AnalisisFinancieroService {
         const nombre =
           det.producto?.descripcion ?? det.descripcion ?? 'Producto';
         const prodKey = String(det.productoId ?? `srv:${nombre}`);
-        const qty = (det.cantidad ?? 0) * signo;
+        // Paquete vendido como UNA línea (Empresa.paquetesComoUnaLinea): la
+        // cantidad facturada (p.ej. 1 caja) se usa para el ingreso (ya viene
+        // al precio completo del paquete), pero el costo y las unidades deben
+        // reflejar las unidades reales = cantidad × unidadesPorPaquete.
+        const uPaquete = Number(det.unidadesPorPaquete) || 1;
+        const cantidadFacturada = (det.cantidad ?? 0) * signo;
+        const qty = cantidadFacturada * uPaquete;
         const precioUnit = montoEnPen(
           det.mtoPrecioUnitario ?? 0,
           comp.tipoMoneda,
@@ -2457,7 +2482,7 @@ export class AnalisisFinancieroService {
         const costoUnit =
           this.toNumber(det.producto?.costoPromedio) +
           this.toNumber(det.producto?.costoFijo);
-        const ingreso = precioUnit * qty;
+        const ingreso = precioUnit * cantidadFacturada;
         const costo = costoUnit * qty;
 
         if (!prodMap.has(prodKey)) {
