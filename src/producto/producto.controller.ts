@@ -1337,6 +1337,30 @@ export class ProductoController {
     );
   }
 
+  /**
+   * PATCH /productos/:id/categoria { categoriaId: number | null }
+   * Cambio rápido de categoría desde la tabla de inventario (sin abrir el
+   * modal completo del producto). null = "Sin categoría".
+   */
+  @Patch(':id/categoria')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async cambiarCategoria(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+    @Body() body: { categoriaId: number | null },
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const actualizado = await this.service.cambiarCategoria(
+      id,
+      user.empresaId,
+      body?.categoriaId == null || body.categoriaId === 0
+        ? null
+        : Number(body.categoriaId),
+    );
+    res.locals.message = 'Categoría actualizada correctamente';
+    return actualizado;
+  }
+
   @Patch(':id/estado')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async cambiarEstado(

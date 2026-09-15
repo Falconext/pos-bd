@@ -994,9 +994,13 @@ export class KardexService {
         where: { productoId_sedeId: { productoId, sedeId } },
         data: {
           stock: round3(Math.max(0, nuevoStock)),
-          // Un ingreso de stock en la sede la deja DISPONIBLE ahí (catálogo por
-          // sede): nunca puede haber stock de un producto "invisible".
-          ...(tipoMovimiento === 'INGRESO' ? { visibleEnSede: true } : {}),
+          // Un ingreso (o un ajuste positivo) de stock en la sede la deja
+          // DISPONIBLE ahí (catálogo por sede): nunca puede haber stock de un
+          // producto "invisible".
+          ...(tipoMovimiento === 'INGRESO' ||
+          (tipoMovimiento === 'AJUSTE' && nuevoStock > 0)
+            ? { visibleEnSede: true }
+            : {}),
         },
       });
     }

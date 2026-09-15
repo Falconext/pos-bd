@@ -156,18 +156,36 @@ describe('ProductoService — disponibilidad por sede', () => {
       expect(
         upserts.find((u: any) => u.where.productoId_sedeId.sedeId === 2).update,
       ).toEqual({ visibleEnSede: false });
-      // variantes heredan por sede
+      // variantes heredan por sede — al ocultar, solo las que no tengan stock
+      // (una variante con stock no debe desaparecer de la sede en silencio).
       expect(prisma.productoStock.updateMany).toHaveBeenCalledWith({
-        where: { productoId: { in: [11, 12] }, sedeId: 2 },
+        where: {
+          productoId: { in: [11, 12] },
+          sedeId: 2,
+          stock: { lte: 0 },
+        },
         data: { visibleEnSede: false },
       });
     });
   });
 
   describe('asignarSedeMasivo', () => {
+    // Los productos elegidos y sus variantes (hijas) se piden con el mismo
+    // prisma.producto.findMany, distinguibles por el `where`: la primera
+    // consulta filtra por `id`, la de variantes por `productoPadreId`.
+    const mockProductosYVariantes = (
+      productos: any[],
+      variantes: any[] = [],
+    ) => {
+      prisma.producto.findMany.mockImplementation(({ where }: any) => {
+        if (where?.productoPadreId) return Promise.resolve(variantes);
+        return Promise.resolve(productos);
+      });
+    };
+
     it('omite los que tienen stock al quitar y aplica al resto', async () => {
       prisma.sede.findFirst.mockResolvedValue({ id: 2, nombre: 'Zapallal' });
-      prisma.producto.findMany.mockResolvedValue([
+      mockProductosYVariantes([
         { id: 1, descripcion: 'Con stock', stocks: [{ stock: 3 }] },
         { id: 2, descripcion: 'Sin stock', stocks: [{ stock: 0 }] },
         { id: 3, descripcion: 'Sin fila', stocks: [] },
@@ -181,7 +199,7 @@ describe('ProductoService — disponibilidad por sede', () => {
     });
     it('asignar nunca omite', async () => {
       prisma.sede.findFirst.mockResolvedValue({ id: 2, nombre: 'Zapallal' });
-      prisma.producto.findMany.mockResolvedValue([
+      mockProductosYVariantes([
         { id: 1, descripcion: 'A', stocks: [{ stock: 3 }] },
       ]);
       const r = await service.asignarSedeMasivo(1, 2, [1], true);
@@ -189,7 +207,7 @@ describe('ProductoService — disponibilidad por sede', () => {
     });
     it('quitar con ajustarStockACero: registra SALIDA en kardex y quita igual', async () => {
       prisma.sede.findFirst.mockResolvedValue({ id: 2, nombre: 'Zapallal' });
-      prisma.producto.findMany.mockResolvedValue([
+      mockProductosYVariantes([
         {
           id: 1,
           descripcion: 'Con stock',
@@ -214,6 +232,55 @@ describe('ProductoService — disponibilidad por sede', () => {
       expect(prisma.productoStock.upsert).toHaveBeenCalledWith(
         expect.objectContaining({ update: { visibleEnSede: false } }),
       );
+    });
+    it('una variante con stock NO se oculta en silencio al quitar el padre (sin stock) de la sede', async () => {
+      // Caso real: el padre no tiene stock propio (vive en sus variantes),
+      // así que pasa el chequeo y queda en `aplicar` — pero su variante SÍ
+      // tiene stock en esta sede y antes se ocultaba igual, sin avisar ni
+      // dejar rastro en kardex.
+      prisma.sede.findFirst.mockResolvedValue({ id: 2, nombre: 'Zapallal' });
+      mockProductosYVariantes(
+        [{ id: 1, descripcion: 'Padre sin stock propio', stocks: [{ stock: 0 }] }],
+        [{ id: 11, descripcion: 'Padre - Talla 38', costoPromedio: 5, stocks: [{ stock: 7 }] }],
+      );
+      const r = await service.asignarSedeMasivo(1, 2, [1], false);
+      expect(r.actualizados).toBe(1); // el padre sí se quitó
+      expect(r.omitidos).toEqual([
+        { id: 11, descripcion: 'Padre - Talla 38', stock: 7 },
+      ]);
+      expect(prisma.productoStock.updateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ productoId: { in: [11] } }),
+        }),
+      );
+    });
+    it('variante con stock + ajustarStockACero: repone en kardex y sí se oculta', async () => {
+      prisma.sede.findFirst.mockResolvedValue({ id: 2, nombre: 'Zapallal' });
+      mockProductosYVariantes(
+        [{ id: 1, descripcion: 'Padre sin stock propio', stocks: [{ stock: 0 }] }],
+        [{ id: 11, descripcion: 'Padre - Talla 38', costoPromedio: 5, stocks: [{ stock: 7 }] }],
+      );
+      const r = await service.asignarSedeMasivo(1, 2, [1], false, {
+        ajustarStockACero: true,
+        usuarioId: 9,
+      });
+      expect(r.omitidos).toEqual([]);
+      // El padre no tenía stock propio (no se ajusta, solo se quita);
+      // solo la variante necesitó el ajuste a 0 en kardex.
+      expect(r.ajustados).toBe(1);
+      expect(kardex.registrarMovimiento).toHaveBeenCalledWith(
+        expect.objectContaining({
+          productoId: 11,
+          sedeId: 2,
+          tipoMovimiento: 'SALIDA',
+          cantidad: 7,
+          usuarioId: 9,
+        }),
+      );
+      expect(prisma.productoStock.updateMany).toHaveBeenCalledWith({
+        where: { sedeId: 2, productoId: { in: [11] } },
+        data: { visibleEnSede: false },
+      });
     });
     it('sede ajena → error', async () => {
       prisma.sede.findFirst.mockResolvedValue(null);

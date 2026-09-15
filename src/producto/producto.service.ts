@@ -188,7 +188,16 @@ export class ProductoService {
     const ids = variantes.map((v) => v.id);
     for (const sp of stocksPadre) {
       await this.prisma.productoStock.updateMany({
-        where: { productoId: { in: ids }, sedeId: sp.sedeId },
+        where: {
+          productoId: { in: ids },
+          sedeId: sp.sedeId,
+          // Al OCULTAR (visibleEnSede=false) no tocar variantes con stock en
+          // esa sede: se perderían de vista sin registrar ninguna salida en
+          // kardex. Se quedan visibles hasta que se manejen explícitamente
+          // desde "Asignar productos a sede", que sí pide confirmación y
+          // ajusta el kardex antes de ocultarlas.
+          ...(sp.visibleEnSede === false ? { stock: { lte: 0 } } : {}),
+        },
         data: { visibleEnSede: sp.visibleEnSede },
       });
     }
@@ -3310,12 +3319,61 @@ export class ProductoService {
         },
       });
     }
-    // Las variantes siguen al padre en esa sede.
+    // Las variantes siguen al padre en esa sede — pero con el MISMO cuidado
+    // que el padre: si al ocultar (!disponible) una variante tiene stock en
+    // esta sede, no se oculta en silencio (se perdería de vista sin dejar
+    // rastro en kardex). Se trata igual que un producto omitido: se reporta
+    // en `omitidos` para que el usuario confirme "Quitar y poner stock en 0",
+    // o directamente se ajusta si ya vino `ajustarStockACero`.
     if (aplicar.length > 0) {
-      await this.prisma.productoStock.updateMany({
-        where: { sedeId, producto: { productoPadreId: { in: aplicar } } },
-        data: { visibleEnSede: disponible },
+      const variantes = await this.prisma.producto.findMany({
+        where: {
+          productoPadreId: { in: aplicar },
+          empresaId,
+          estado: { not: 'PLACEHOLDER' as any },
+        },
+        select: {
+          id: true,
+          descripcion: true,
+          costoPromedio: true,
+          stocks: { where: { sedeId }, select: { stock: true } },
+        },
       });
+      const variantesAplicar: number[] = [];
+      for (const v of variantes) {
+        const stockVariante = num(v.stocks[0]?.stock);
+        if (!disponible && stockVariante > 0) {
+          if (opciones?.ajustarStockACero) {
+            await this.kardexService.registrarMovimiento({
+              productoId: v.id,
+              empresaId,
+              sedeId,
+              tipoMovimiento: 'SALIDA',
+              concepto: `Retiro de ${sede.nombre}: variante quitada de la sede (stock a 0)`,
+              cantidad: round3(stockVariante),
+              costoUnitario: Number(v.costoPromedio) || 0,
+              usuarioId: opciones.usuarioId,
+              observacion: `Stock anterior: ${stockVariante}, Stock nuevo: 0`,
+            });
+            ajustados += 1;
+            variantesAplicar.push(v.id);
+          } else {
+            omitidos.push({
+              id: v.id,
+              descripcion: v.descripcion,
+              stock: stockVariante,
+            });
+          }
+        } else {
+          variantesAplicar.push(v.id);
+        }
+      }
+      if (variantesAplicar.length > 0) {
+        await this.prisma.productoStock.updateMany({
+          where: { sedeId, productoId: { in: variantesAplicar } },
+          data: { visibleEnSede: disponible },
+        });
+      }
     }
     return {
       actualizados: aplicar.length,
@@ -3832,6 +3890,35 @@ export class ProductoService {
         'Error al procesar la imagen desde la URL: ' + error.message,
       );
     }
+  }
+
+  /** Cambio rápido de categoría desde la tabla. La categoría debe ser de la misma empresa. */
+  async cambiarCategoria(
+    id: number,
+    empresaId: number,
+    categoriaId: number | null,
+  ) {
+    const producto = await this.prisma.producto.findFirst({
+      where: { id, empresaId },
+      select: { id: true },
+    });
+    if (!producto) throw new NotFoundException('Producto no encontrado');
+    if (categoriaId != null) {
+      const categoria = await this.prisma.categoria.findFirst({
+        where: { id: categoriaId, empresaId },
+        select: { id: true },
+      });
+      if (!categoria) throw new NotFoundException('Categoría no encontrada');
+    }
+    return this.prisma.producto.update({
+      where: { id },
+      data: { categoriaId },
+      select: {
+        id: true,
+        categoriaId: true,
+        categoria: { select: { id: true, nombre: true } },
+      },
+    });
   }
 
   async cambiarEstado(id: number, empresaId: number, estado: EstadoType) {
