@@ -9,18 +9,21 @@ import {
 import { Transform, Type } from 'class-transformer';
 
 export class CreateClienteDto {
+  // Opcional: sin nombre pero con celular válido, el backend lo registra como
+  // "WSP <celular>" (clientes de WhatsApp) — ver ClienteService.crear.
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  nombre: string;
+  nombre?: string;
 
   @IsString()
   @IsNotEmpty()
   @IsEnum(['DNI', 'RUC', 'CE', 'PASAPORTE', 'OTRO'])
   tipoDoc: 'DNI' | 'RUC' | 'CE' | 'PASAPORTE' | 'OTRO';
 
+  // Obligatorio salvo tipo OTRO (cliente sin documento / solo celular).
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  nroDoc: string;
+  nroDoc?: string;
 
   @IsOptional()
   @Transform(({ value }) => (value === '' ? undefined : value))

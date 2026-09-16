@@ -120,9 +120,9 @@ export class ClienteService {
 
   async crear(
     data: {
-      nombre: string;
+      nombre?: string;
       tipoDoc: 'DNI' | 'RUC' | 'CE' | 'PASAPORTE' | 'OTRO';
-      nroDoc: string;
+      nroDoc?: string;
       direccion?: string;
       email?: string;
       telefono?: string;
@@ -139,7 +139,32 @@ export class ClienteService {
     opts?: { upsert?: boolean },
   ) {
     const { tipoDoc } = data;
-    const nroDoc = this.normalizarNumeroDocumento(tipoDoc, data.nroDoc);
+    // Sin documento solo se admite con tipo OTRO (placeholder '0', ver esSinDocumento).
+    if (tipoDoc !== 'OTRO' && !String(data.nroDoc || '').trim()) {
+      throw new BadRequestException('El número de documento es obligatorio.');
+    }
+    const nroDoc =
+      this.normalizarNumeroDocumento(tipoDoc, data.nroDoc || '') ||
+      (tipoDoc === 'OTRO' ? '0' : '');
+
+    // Alta solo con celular (negocios que venden por WhatsApp): si no mandan
+    // nombre pero sí un celular válido, el cliente se registra como
+    // "WSP <celular>" (se edita cuando sepan cómo se llama) y, si ya existe un
+    // cliente de la empresa con ese celular, se reutiliza en vez de duplicarlo.
+    const celular = String(data.telefono || '').replace(/\D/g, '');
+    if (!String(data.nombre || '').trim()) {
+      if (!/^9\d{8}$/.test(celular)) {
+        throw new BadRequestException(
+          'Ingresa el nombre del cliente o al menos un celular válido (9 dígitos).',
+        );
+      }
+      const porCelular = await this.prisma.cliente.findFirst({
+        where: { empresaId: data.empresaId, telefono: celular },
+      });
+      if (porCelular) return porCelular;
+      data.nombre = `WSP ${celular}`;
+      data.telefono = celular;
+    }
 
     this.validarDocumento(tipoDoc, nroDoc);
     const tipoDocumento = await this.obtenerTipoDocumento(tipoDoc);
@@ -195,7 +220,7 @@ export class ClienteService {
 
     return this.prisma.cliente.create({
       data: {
-        nombre: data.nombre,
+        nombre: String(data.nombre || '').trim(),
         nroDoc,
         direccion: data.direccion,
         email: data.email,
@@ -248,6 +273,7 @@ export class ClienteService {
             OR: [
               { nombre: { contains: search, mode: 'insensitive' } },
               { nroDoc: { contains: search, mode: 'insensitive' } },
+              { telefono: { contains: search } },
             ],
           }
         : {}),
@@ -431,6 +457,7 @@ export class ClienteService {
         ? [
             { nombre: { contains: search, mode: 'insensitive' } },
             { nroDoc: { contains: search, mode: 'insensitive' } },
+              { telefono: { contains: search } },
           ]
         : undefined,
     };
