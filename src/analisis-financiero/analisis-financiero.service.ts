@@ -34,13 +34,30 @@ export interface PnlResponse {
     fechaInicio: string;
     fechaFin: string;
   };
+  /**
+   * Ventas del período SIN el IGV de los comprobantes electrónicos (Factura,
+   * Boleta, NC, ND). El IGV cobrado se le entrega a SUNAT, no es ingreso: si
+   * se comparara la venta con IGV contra el costo (que se guarda neto, ver
+   * compras) el margen saldría inflado ~18 puntos. Los documentos internos
+   * (Nota de Venta, Ticket, etc.) van íntegros porque ese IGV no se declara.
+   */
   ventasNetas: number;
+  /** Ventas totales cobradas (con IGV), antes de descontar `igvVentas`. */
+  ventasConIgv: number;
+  /** IGV de los comprobantes electrónicos del período (ventas − NC). */
+  igvVentas: number;
   costoBaseProductos: number;
   costosFijosProducto: number;
   costoMercaderia: number;
   unidadesVendidas: number;
   lineasProducto: number;
   lineasServicio: number;
+  /**
+   * Productos vendidos en el período cuya ficha tiene costo 0 (nunca se les
+   * registró compra o costo). Sus líneas entran al P&L con costo cero y
+   * inflan la ganancia; se informan para que el usuario los corrija.
+   */
+  productosSinCosto: ProductoSinCosto[];
   gananciaBruta: number;
   margenBruto: number;
   otrosIngresos: number;
@@ -68,6 +85,13 @@ export interface PnlResponse {
   };
 }
 
+export interface ProductoSinCosto {
+  productoId: number;
+  nombre: string;
+  unidades: number;
+  ingreso: number;
+}
+
 export interface EvolucionPoint {
   mes: number;
   anio: number;
@@ -85,11 +109,14 @@ interface DecimalLike {
 interface ProductoCostoPnl {
   costoPromedio: DecimalLike | number | null;
   costoFijo: DecimalLike | number | null;
+  descripcion?: string | null;
 }
 
 interface DetalleComprobantePnl {
   productoId: number | null;
   cantidad: number;
+  /** Precio unitario con IGV, para reportar el ingreso de productos sin costo. */
+  mtoPrecioUnitario?: number | null;
   // Paquete vendido como UNA línea (Empresa.paquetesComoUnaLinea): unidades
   // reales por paquete. Sin esto, el costo/unidades de una línea de paquete
   // (cantidad=1 al precio completo) sale prorrateado por 1 unidad en vez de
@@ -103,6 +130,7 @@ interface ComprobantePnl {
   estadoEnvioSunat: EstadoSunat;
   numDocAfectado?: string | null;
   mtoImpVenta: number;
+  mtoIGV?: number | null;
   tipoMoneda?: string | null;
   tipoCambio?: number | null;
   fechaEmision?: Date;
@@ -680,7 +708,73 @@ export class AnalisisFinancieroService {
     return tipoDoc === '07' ? -1 : 1;
   }
 
-  private calcularCostoProducto(comprobante: ComprobantePnl) {
+  /**
+   * IGV que el comprobante realmente le debe a SUNAT. Solo los comprobantes
+   * electrónicos (Factura 01, Boleta 03, NC 07, ND 08) lo declaran; el POS
+   * también desglosa un "IGV" en Notas de Venta/Tickets/etc. pero ese monto se
+   * queda en la empresa, así que para el P&L esas ventas van íntegras.
+   */
+  private igvDeclarado(c: {
+    tipoDoc: string;
+    mtoImpVenta: number;
+    mtoIGV?: number | null;
+  }): number {
+    if (!AnalisisFinancieroService.TIPOS_DOC_ELECTRONICOS.has(c.tipoDoc)) {
+      return 0;
+    }
+    const total = this.toNumber(c.mtoImpVenta);
+    const igv = this.toNumber(c.mtoIGV);
+    // Datos inconsistentes (IGV negativo o mayor al total): no descontar nada
+    // antes que producir una venta neta absurda.
+    if (!(igv > 0) || igv > total) return 0;
+    return igv;
+  }
+
+  /**
+   * Ingreso de UNA línea sin el IGV declarado (ver `igvDeclarado`): en
+   * comprobantes electrónicos usa el valor de venta de la línea (base sin
+   * IGV); en documentos internos y en líneas gratuitas (donde
+   * mtoPrecioUnitario ya es el valor referencial) queda precio × cantidad.
+   * Devuelve el monto en la moneda del comprobante, sin signo.
+   */
+  private ingresoLineaSinIgv(
+    tipoDoc: string,
+    det: {
+      cantidad: number | null;
+      mtoPrecioUnitario: number | null;
+      mtoValorVenta?: number | null;
+      tipAfeIgv?: number | null;
+    },
+  ): number {
+    const bruto = (det.mtoPrecioUnitario ?? 0) * (det.cantidad ?? 0);
+    if (!AnalisisFinancieroService.TIPOS_DOC_ELECTRONICOS.has(tipoDoc)) {
+      return bruto;
+    }
+    const afe = Number(det.tipAfeIgv ?? 10);
+    const onerosa = afe === 10 || afe === 20 || afe === 30 || afe === 40;
+    const neto = this.toNumber(det.mtoValorVenta);
+    if (!onerosa || !(neto > 0) || neto > bruto + 0.01) return bruto;
+    return neto;
+  }
+
+  /** Total del comprobante en soles, con IGV. */
+  private ventaConIgvPen(c: ComprobantePnl): number {
+    return montoEnPen(c.mtoImpVenta, c.tipoMoneda, this.toNumber(c.tipoCambio));
+  }
+
+  /** IGV declarado del comprobante en soles. */
+  private igvPen(c: ComprobantePnl): number {
+    return montoEnPen(
+      this.igvDeclarado(c),
+      c.tipoMoneda,
+      this.toNumber(c.tipoCambio),
+    );
+  }
+
+  private calcularCostoProducto(
+    comprobante: ComprobantePnl,
+    sinCosto?: Map<number, ProductoSinCosto>,
+  ) {
     const signo = this.signoDocumento(comprobante.tipoDoc);
     let costoBaseProductos = 0;
     let costosFijosProducto = 0;
@@ -698,12 +792,33 @@ export class AnalisisFinancieroService {
       // cantidad facturada (p.ej. 1 caja) no son las unidades reales que
       // costaron/salieron de almacén — eso es cantidad × unidadesPorPaquete.
       const uPaquete = Number(detalle.unidadesPorPaquete) || 1;
-      const cantidad = Number(detalle.cantidad || 0) * uPaquete * signo;
+      const cantidadFacturada = Number(detalle.cantidad || 0) * signo;
+      const cantidad = cantidadFacturada * uPaquete;
       const producto = detalle.producto;
-      costoBaseProductos += cantidad * this.toNumber(producto.costoPromedio);
-      costosFijosProducto += cantidad * this.toNumber(producto.costoFijo);
+      const costoPromedio = this.toNumber(producto.costoPromedio);
+      const costoFijo = this.toNumber(producto.costoFijo);
+      costoBaseProductos += cantidad * costoPromedio;
+      costosFijosProducto += cantidad * costoFijo;
       unidadesVendidas += cantidad;
       lineasProducto += 1;
+
+      // Producto sin costo en su ficha: la línea entra con costo 0 y la
+      // ganancia sale inflada. Se acumula para avisarle al usuario.
+      if (sinCosto && costoPromedio + costoFijo <= 0 && cantidad > 0) {
+        const acc = sinCosto.get(detalle.productoId) ?? {
+          productoId: detalle.productoId,
+          nombre: producto.descripcion ?? `Producto ${detalle.productoId}`,
+          unidades: 0,
+          ingreso: 0,
+        };
+        acc.unidades += cantidad;
+        acc.ingreso += montoEnPen(
+          this.toNumber(detalle.mtoPrecioUnitario) * cantidadFacturada,
+          comprobante.tipoMoneda,
+          this.toNumber(comprobante.tipoCambio),
+        );
+        sinCosto.set(detalle.productoId, acc);
+      }
     }
 
     const costoMercaderia = costoBaseProductos + costosFijosProducto;
@@ -720,6 +835,14 @@ export class AnalisisFinancieroService {
 
   private readonly TIPOS_FINANCIAMIENTO = ['PRESTAMO', 'INVERSION', 'CAPITAL'];
 
+  /** Comprobantes cuyo IGV se declara a SUNAT (ver `igvDeclarado`). */
+  private static readonly TIPOS_DOC_ELECTRONICOS = new Set([
+    '01',
+    '03',
+    '07',
+    '08',
+  ]);
+
   /** Computes P&L figures from pre-fetched raw data. */
   private calcularPnl(
     comprobantes: ComprobantePnl[],
@@ -731,27 +854,23 @@ export class AnalisisFinancieroService {
     const documentosVenta = comprobantes.filter((c) =>
       this.esDocumentoVenta(c),
     );
-    const ventasBrutas = documentosVenta
-      .filter((c) => c.tipoDoc !== '07')
-      .reduce(
-        (acc, c) =>
-          acc +
-          montoEnPen(c.mtoImpVenta, c.tipoMoneda, this.toNumber(c.tipoCambio)),
-        0,
-      );
+    // Ventas con IGV e IGV declarado, ambos netos de notas de crédito. Las
+    // ventas netas del P&L son la diferencia (ver `PnlResponse.ventasNetas`).
+    let ventasConIgv = 0;
+    let igvVentas = 0;
+    for (const c of documentosVenta) {
+      const signo = this.signoDocumento(c.tipoDoc);
+      ventasConIgv += this.ventaConIgvPen(c) * signo;
+      igvVentas += this.igvPen(c) * signo;
+    }
 
-    const notasCredito = documentosVenta
-      .filter((c) => c.tipoDoc === '07')
-      .reduce(
-        (acc, c) =>
-          acc +
-          montoEnPen(c.mtoImpVenta, c.tipoMoneda, this.toNumber(c.tipoCambio)),
-        0,
-      );
-
+    const productosSinCostoMap = new Map<number, ProductoSinCosto>();
     const costosProducto = documentosVenta.reduce(
       (acc, comprobante) => {
-        const costo = this.calcularCostoProducto(comprobante);
+        const costo = this.calcularCostoProducto(
+          comprobante,
+          productosSinCostoMap,
+        );
         acc.costoBaseProductos += costo.costoBaseProductos;
         acc.costosFijosProducto += costo.costosFijosProducto;
         acc.costoMercaderia += costo.costoMercaderia;
@@ -792,11 +911,7 @@ export class AnalisisFinancieroService {
         costoPublicidadPorPedido: null,
       };
       current.ventasNetas +=
-        montoEnPen(
-          comprobante.mtoImpVenta,
-          comprobante.tipoMoneda,
-          this.toNumber(comprobante.tipoCambio),
-        ) * signo;
+        (this.ventaConIgvPen(comprobante) - this.igvPen(comprobante)) * signo;
       current.costoMercaderia += costo.costoMercaderia;
       if (signo > 0) current.pedidos += 1;
       resumenDiarioMap.set(fecha, current);
@@ -864,9 +979,16 @@ export class AnalisisFinancieroService {
       })
       .sort((a, b) => b.fecha.localeCompare(a.fecha));
 
-    const ventasNetas = ventasBrutas - notasCredito;
+    const ventasNetas = ventasConIgv - igvVentas;
     const costoMercaderia = costosProducto.costoMercaderia;
     const gananciaBruta = ventasNetas - costoMercaderia;
+    const productosSinCosto = [...productosSinCostoMap.values()]
+      .map((p) => ({
+        ...p,
+        unidades: this.r2(p.unidades),
+        ingreso: this.r2(p.ingreso),
+      }))
+      .sort((a, b) => b.ingreso - a.ingreso);
 
     // Build gastosPorCategoria grouping by (categoria, etiqueta)
     const gastoMap = new Map<string, GastoPorCategoria>();
@@ -901,12 +1023,15 @@ export class AnalisisFinancieroService {
 
     return {
       ventasNetas: this.r2(ventasNetas),
+      ventasConIgv: this.r2(ventasConIgv),
+      igvVentas: this.r2(igvVentas),
       costoBaseProductos: this.r2(costosProducto.costoBaseProductos),
       costosFijosProducto: this.r2(costosProducto.costosFijosProducto),
       costoMercaderia: this.r2(costoMercaderia),
       unidadesVendidas: this.r2(costosProducto.unidadesVendidas),
       lineasProducto: costosProducto.lineasProducto,
       lineasServicio: costosProducto.lineasServicio,
+      productosSinCosto,
       gananciaBruta: this.r2(gananciaBruta),
       margenBruto: this.r2(margenBruto),
       otrosIngresos: this.r2(otrosIngresos),
@@ -949,6 +1074,7 @@ export class AnalisisFinancieroService {
             estadoEnvioSunat: true,
             numDocAfectado: true,
             mtoImpVenta: true,
+            mtoIGV: true,
             tipoMoneda: true,
             tipoCambio: true,
             fechaEmision: true,
@@ -956,9 +1082,11 @@ export class AnalisisFinancieroService {
               select: {
                 productoId: true,
                 cantidad: true,
+                mtoPrecioUnitario: true,
                 unidadesPorPaquete: true,
                 producto: {
                   select: {
+                    descripcion: true,
                     costoPromedio: true,
                     costoFijo: true,
                   },
@@ -1223,6 +1351,9 @@ export class AnalisisFinancieroService {
           estadoEnvioSunat: true,
           numDocAfectado: true,
           mtoImpVenta: true,
+          mtoIGV: true,
+          tipoMoneda: true,
+          tipoCambio: true,
           fechaEmision: true,
           detalles: {
             select: {
@@ -1525,6 +1656,8 @@ export class AnalisisFinancieroService {
             descripcion: true,
             cantidad: true,
             mtoPrecioUnitario: true,
+            mtoValorVenta: true,
+            tipAfeIgv: true,
             productoId: true,
             unidadesPorPaquete: true,
             producto: {
@@ -1575,7 +1708,8 @@ export class AnalisisFinancieroService {
         const uPaquete = Number(det.unidadesPorPaquete) || 1;
         const cantidadFacturada = (det.cantidad ?? 0) * signo;
         const qty = cantidadFacturada * uPaquete;
-        const precioUnit = det.mtoPrecioUnitario ?? 0;
+        // Ingreso sin el IGV declarado, igual que las ventas netas del P&L.
+        const ingresoLinea = this.ingresoLineaSinIgv(comp.tipoDoc, det) * signo;
         const costoUnit =
           this.toNumber(det.producto?.costoPromedio) +
           this.toNumber(det.producto?.costoFijo);
@@ -1592,7 +1726,7 @@ export class AnalisisFinancieroService {
           });
         }
         const acc = prodMap.get(prodKey)!;
-        acc.ingreso += precioUnit * cantidadFacturada;
+        acc.ingreso += ingresoLinea;
         acc.costo += costoUnit * qty;
         acc.unidades += qty;
       }
@@ -2398,6 +2532,8 @@ export class AnalisisFinancieroService {
             descripcion: true,
             cantidad: true,
             mtoPrecioUnitario: true,
+            mtoValorVenta: true,
+            tipAfeIgv: true,
             productoId: true,
             unidadesPorPaquete: true,
             producto: {
@@ -2467,15 +2603,16 @@ export class AnalisisFinancieroService {
         const uPaquete = Number(det.unidadesPorPaquete) || 1;
         const cantidadFacturada = (det.cantidad ?? 0) * signo;
         const qty = cantidadFacturada * uPaquete;
-        const precioUnit = montoEnPen(
-          det.mtoPrecioUnitario ?? 0,
-          comp.tipoMoneda,
-          this.toNumber(comp.tipoCambio),
-        );
         const costoUnit =
           this.toNumber(det.producto?.costoPromedio) +
           this.toNumber(det.producto?.costoFijo);
-        const ingreso = precioUnit * cantidadFacturada;
+        // Ingreso sin el IGV declarado, igual que las ventas netas del P&L.
+        const ingreso =
+          montoEnPen(
+            this.ingresoLineaSinIgv(comp.tipoDoc, det),
+            comp.tipoMoneda,
+            this.toNumber(comp.tipoCambio),
+          ) * signo;
         const costo = costoUnit * qty;
 
         if (!prodMap.has(prodKey)) {
