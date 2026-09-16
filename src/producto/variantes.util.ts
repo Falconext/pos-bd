@@ -192,12 +192,19 @@ export async function sincronizarVariantes(
     // registrara una compra propia. Igual que precioUnitario/stock arriba, se
     // preserva el costo de la variante existente y solo se hereda del padre al
     // crearla por primera vez, para no pisar un costo ya calculado por compras.
-    const costoPromedio = existe
-      ? Number((existe as any).costoPromedio ?? productoPadre.costoPromedio ?? 0)
-      : Number(productoPadre.costoPromedio ?? 0);
-    const costoFijo = existe
-      ? Number((existe as any).costoFijo ?? productoPadre.costoFijo ?? 0)
-      : Number(productoPadre.costoFijo ?? 0);
+    // Una variante con costo 0 no tiene costo propio (nunca se compró o se creó
+    // antes de que el padre tuviera costo): en ese caso también toma el del
+    // padre, así editar el costo del padre lo baja a las tallas/colores sin costo.
+    const costoVarianteExistente = Number((existe as any)?.costoPromedio ?? 0);
+    const costoPromedio =
+      existe && costoVarianteExistente > 0
+        ? costoVarianteExistente
+        : Number(productoPadre.costoPromedio ?? 0);
+    const costoFijoExistente = Number((existe as any)?.costoFijo ?? 0);
+    const costoFijo =
+      existe && costoFijoExistente > 0
+        ? costoFijoExistente
+        : Number(productoPadre.costoFijo ?? 0);
     const codigoSugerido = `${productoPadre.codigo}-${Object.values(combo)
       .map((value) => normalizeCodeToken(String(value)))
       .filter(Boolean)
