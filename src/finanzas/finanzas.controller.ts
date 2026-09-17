@@ -58,6 +58,7 @@ export class FinanzasController {
     return this.conciliacionService.exportarExcel(
       body?.resultado,
       body?.observaciones,
+      body?.rango,
     );
   }
 

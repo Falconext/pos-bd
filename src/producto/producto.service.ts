@@ -4408,6 +4408,71 @@ export class ProductoService {
       .replace(/[\u0300-\u036f]/g, '');
   }
 
+  /** Nombre normalizado para comparar productos (sin tildes, comillas, saltos ni espacios dobles). */
+  private normNombre(s: unknown): string {
+    return this.normClave(String(s ?? ''))
+      .replace(/["\r\n]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  /**
+   * Ver `cargaMasiva`. Aborta si el archivo parece tener los códigos
+   * desalineados respecto al catálogo: ≥ 5 filas (o ≥ 30 % de las que traen
+   * código existente, mínimo 2) cuyo CÓDIGO corresponde a un producto con OTRO nombre,
+   * mientras el nombre de la fila existe en el sistema con otro código.
+   */
+  private async validarCodigosCoherentes(empresaId: number, rows: any[]) {
+    const productos = await this.prisma.producto.findMany({
+      where: { empresaId, estado: { not: 'PLACEHOLDER' as any } },
+      select: { codigo: true, descripcion: true },
+    });
+    if (!productos.length) return;
+    const porCodigo = new Map(
+      productos.map((p) => [this.normClave(String(p.codigo ?? '').trim()), p]),
+    );
+    const porNombre = new Map(
+      productos.map((p) => [this.normNombre(p.descripcion), p]),
+    );
+
+    let conCodigoExistente = 0;
+    const conflictos: string[] = [];
+    for (const row of rows) {
+      const codigoRaw = row['CÓDIGO'] ?? row['Código'] ?? row['codigo'] ?? null;
+      const nombreRaw =
+        row['PRODUCTO'] ?? row['Producto'] ?? row['producto'] ?? null;
+      const codigo = this.normClave(String(codigoRaw ?? '').trim());
+      const nombre = this.normNombre(nombreRaw);
+      if (!codigo || !nombre) continue;
+      const existente = porCodigo.get(codigo);
+      if (!existente) continue;
+      conCodigoExistente += 1;
+      if (this.normNombre(existente.descripcion) === nombre) continue;
+      const mismoNombre = porNombre.get(nombre);
+      if (
+        mismoNombre &&
+        this.normClave(String(mismoNombre.codigo)) !== codigo
+      ) {
+        conflictos.push(
+          `${codigoRaw} "${String(nombreRaw).trim()}" (en el sistema ${codigoRaw} es "${existente.descripcion.trim()}" y "${String(nombreRaw).trim()}" es ${mismoNombre.codigo})`,
+        );
+      }
+    }
+    // Un solo conflicto nunca bloquea (puede ser un cambio de nombre legítimo
+    // en un archivo chico); a partir de 2 se exige que sean ≥ 30 % de las filas.
+    if (
+      conflictos.length >= 5 ||
+      (conflictos.length >= 2 && conflictos.length / conCodigoExistente >= 0.3)
+    ) {
+      throw new BadRequestException(
+        `Importación cancelada: los códigos del archivo no corresponden a los productos del sistema (${conflictos.length} filas tienen el CÓDIGO de un producto distinto). ` +
+          `Probablemente el Excel se reordenó o se renumeró la columna CÓDIGO. Vuelve a exportar los productos y no modifiques esa columna. Ejemplos: ${conflictos
+            .slice(0, 3)
+            .join('; ')}.`,
+      );
+    }
+  }
+
   private resolverUmbSunat(raw: string | undefined): string {
     const alias: Record<string, string> = {
       KG: 'KGM',
@@ -4640,6 +4705,15 @@ export class ProductoService {
 
     if (rows.length === 0)
       throw new ForbiddenException('El archivo Excel está vacío');
+
+    // Protección contra archivos con los códigos "corridos" (p. ej. un export
+    // reordenado y renumerado a mano PR001, PR002…): como a los productos
+    // existentes se les actualiza nombre/precio/stock por CÓDIGO, un archivo
+    // así renombraría cientos de productos con los datos de otro. Si muchas
+    // filas traen un código que en el sistema pertenece a un producto de nombre
+    // distinto, y ese nombre existe bajo otro código, se aborta con un mensaje
+    // claro antes de tocar nada.
+    await this.validarCodigosCoherentes(empresaId, rows);
 
     const resultados: {
       producto?: any;

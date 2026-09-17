@@ -83,7 +83,9 @@ export class ConciliacionBancariaService {
   private parseMonto(valor: unknown): number {
     if (valor == null || valor === '') return 0;
     if (typeof valor === 'number') return Math.abs(valor);
-    let s = String(valor).trim().replace(/[^0-9.,-]/g, '');
+    let s = String(valor)
+      .trim()
+      .replace(/[^0-9.,-]/g, '');
     // Si tiene ambos separadores, el último es el decimal.
     if (s.includes(',') && s.includes('.')) {
       if (s.lastIndexOf(',') > s.lastIndexOf('.')) {
@@ -101,12 +103,23 @@ export class ConciliacionBancariaService {
   /** Intenta parsear una fecha en formatos comunes (dd/mm/yyyy, ISO, serial Excel). */
   private parseFecha(valor: unknown): string | null {
     if (valor == null || valor === '') return null;
+    if (valor instanceof Date) {
+      if (Number.isNaN(valor.getTime())) return null;
+      // Componentes locales (TZ America/Lima): un Date de celda Excel es la
+      // medianoche local de ese día; toISOString lo correría a la víspera.
+      const y = valor.getFullYear();
+      const m = String(valor.getMonth() + 1).padStart(2, '0');
+      const d = String(valor.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
     if (typeof valor === 'number') {
       // Serial de Excel (días desde 1899-12-30)
       const d = new Date(Math.round((valor - 25569) * 86400 * 1000));
       return Number.isNaN(d.getTime()) ? null : d.toISOString().split('T')[0];
     }
     const s = String(valor).trim();
+    // Serial de Excel que llegó como texto (p. ej. desde un CSV): "46000"
+    if (/^\d{5}$/.test(s)) return this.parseFecha(Number(s));
     // dd/mm/yyyy o dd-mm-yyyy
     const m = s.match(/^(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})/);
     if (m) {
@@ -132,11 +145,19 @@ export class ConciliacionBancariaService {
     try {
       const base64 = archivoBase64.replace(/^data:[^;]+;base64,/, '');
       const buffer = Buffer.from(base64, 'base64');
-      const wb = XLSX.read(buffer, { type: 'buffer' });
+      // cellDates + raw: las celdas de fecha reales del banco llegan como Date
+      // (antes se formateaban en inglés "9/9/26" y corridas un día por la zona
+      // horaria), los montos numéricos como número y los textos tal cual; en
+      // CSV `raw` evita que "10/09/2026" se reinterprete como mes/día.
+      const wb = XLSX.read(buffer, {
+        type: 'buffer',
+        cellDates: true,
+        raw: true,
+      });
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const filas = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, {
         defval: null,
-        raw: false,
+        raw: true,
       });
       return filas.map((f) => {
         const out: Record<string, any> = {};
@@ -257,9 +278,7 @@ export class ConciliacionBancariaService {
         origen: 'COMPRA' as const,
         operacion: String(p.referencia ?? ''),
         operacionNorm: this.normOp(p.referencia),
-        documento: p.compra
-          ? `${p.compra.serie}-${p.compra.numero}`
-          : '—',
+        documento: p.compra ? `${p.compra.serie}-${p.compra.numero}` : '—',
         contraparte: p.compra?.proveedor?.nombre || '—',
         medioPago: String(p.metodoPago || '—'),
         monto: Number(p.monto || 0),
@@ -316,7 +335,9 @@ export class ConciliacionBancariaService {
           '',
       ).toUpperCase();
       let tipo: 'ABONO' | 'CARGO' | null = null;
-      if (/(ABONO|INGRESO|CREDITO|CRÉDITO|HABER|DEPOSITO|DEPÓSITO)/.test(tipoRaw))
+      if (
+        /(ABONO|INGRESO|CREDITO|CRÉDITO|HABER|DEPOSITO|DEPÓSITO)/.test(tipoRaw)
+      )
         tipo = 'ABONO';
       else if (/(CARGO|EGRESO|DEBITO|DÉBITO|DEBE|RETIRO|PAGO)/.test(tipoRaw))
         tipo = 'CARGO';
@@ -444,6 +465,7 @@ export class ConciliacionBancariaService {
   exportarExcel(
     resultado: ResultadoConciliacion,
     observaciones?: string,
+    rango?: { desde?: string; hasta?: string },
   ): { nombreArchivo: string; base64: string } {
     const resumen = resultado?.resumen;
     const movimientos = resultado?.movimientos ?? [];
@@ -456,8 +478,130 @@ export class ConciliacionBancariaService {
     const obs = (observaciones ?? '').trim();
 
     const wb = XLSX.utils.book_new();
+    const origenLabel = (o?: string | null) =>
+      o === 'VENTA'
+        ? 'Venta'
+        : o === 'GASTO'
+          ? 'Gasto'
+          : o === 'COMPRA'
+            ? 'Compra'
+            : (o ?? '');
+    const estadoLabel = (e?: string | null) =>
+      e === 'CONCILIADO' ? 'Conciliado' : 'Pendiente';
+    const n2 = (v: unknown) => (v == null || v === '' ? '' : Number(v));
+    const rangoTxt =
+      rango?.desde || rango?.hasta
+        ? `${rango?.desde ?? '…'} al ${rango?.hasta ?? '…'}`
+        : '';
 
-    // Hoja 1: Resumen (KPIs) + observaciones
+    // Hoja 1 "Conciliación": la misma vista que la pantalla, para que lo que
+    // el usuario ve sea lo que descarga — KPIs arriba y debajo la tabla de
+    // movimientos del banco con Documento sistema, Origen · Contraparte,
+    // Monto sistema y Diferencia; al final los pagos del sistema sin match.
+    // (Antes la primera hoja era solo el resumen de 9 indicadores y parecía
+    // que "no descargaba la tabla".)
+    const hoja: (string | number | null)[][] = [];
+    hoja.push(['CONCILIACIÓN BANCARIA', '', '', '', '', '', '', '', '', '']);
+    if (rangoTxt) hoja.push([`Periodo: ${rangoTxt}`]);
+    hoja.push([
+      `Generado: ${new Date().toLocaleString('es-PE', { timeZone: 'America/Lima' })}`,
+    ]);
+    hoja.push([]);
+    hoja.push([
+      'Movimientos banco',
+      'Pagos sistema',
+      'Conciliados',
+      'Pendientes banco',
+      'Pendientes sistema',
+      'Monto banco',
+      'Monto conciliado',
+      'Monto pendiente banco',
+      'Diferencias de monto',
+    ]);
+    hoja.push([
+      resumen.movimientosBanco,
+      resumen.pagosSistema,
+      resumen.conciliados,
+      resumen.pendientesBanco,
+      resumen.pendientesSistema,
+      n2(resumen.montoBanco),
+      n2(resumen.montoConciliado),
+      n2(resumen.montoPendienteBanco),
+      resumen.diferenciasMonto,
+    ]);
+    if (obs) {
+      hoja.push([]);
+      hoja.push(['Observaciones:', obs]);
+    }
+    hoja.push([]);
+    hoja.push(['MOVIMIENTOS DEL BANCO']);
+    hoja.push([
+      'Fecha',
+      'N° Operación',
+      'Descripción',
+      'Monto banco',
+      'Estado',
+      'Documento sistema',
+      'Origen',
+      'Contraparte',
+      'Monto sistema',
+      'Diferencia',
+    ]);
+    for (const m of movimientos) {
+      hoja.push([
+        m.fecha ?? '',
+        m.operacion ?? '',
+        m.descripcion ?? '',
+        n2(m.monto),
+        estadoLabel(m.estado),
+        m.match?.documento ?? '',
+        m.match ? origenLabel(m.match.origen) : '',
+        m.match?.contraparte ?? '',
+        m.match ? n2(m.match.monto) : '',
+        m.match ? n2(m.match.diferenciaMonto) : '',
+      ]);
+    }
+    if (!movimientos.length) hoja.push(['Sin movimientos.']);
+    if (sistemaPendientes.length) {
+      hoja.push([]);
+      hoja.push(['PAGOS DEL SISTEMA SIN COINCIDENCIA EN EL BANCO']);
+      hoja.push([
+        'Origen',
+        'Documento',
+        'Contraparte',
+        'N° Operación',
+        'Método',
+        'Fecha',
+        'Monto',
+      ]);
+      for (const p of sistemaPendientes) {
+        hoja.push([
+          origenLabel(p.origen),
+          p.documento ?? '',
+          p.contraparte ?? '',
+          p.operacion ?? '',
+          p.medioPago ?? '',
+          p.fecha ?? '',
+          n2(p.monto),
+        ]);
+      }
+    }
+    const wsHoja = XLSX.utils.aoa_to_sheet(hoja);
+    wsHoja['!cols'] = [
+      { wch: 12 },
+      { wch: 16 },
+      { wch: 40 },
+      { wch: 14 },
+      { wch: 12 },
+      { wch: 22 },
+      { wch: 10 },
+      { wch: 34 },
+      { wch: 14 },
+      { wch: 12 },
+    ];
+    XLSX.utils.book_append_sheet(wb, wsHoja, 'Conciliación');
+
+    // Hoja 2: Resumen (KPIs) + observaciones
     const resumenRows: { Indicador: string; Valor: string | number }[] = [
       { Indicador: 'Movimientos banco', Valor: resumen.movimientosBanco },
       { Indicador: 'Pagos sistema', Valor: resumen.pagosSistema },
@@ -466,14 +610,17 @@ export class ConciliacionBancariaService {
       { Indicador: 'Pendientes sistema', Valor: resumen.pendientesSistema },
       { Indicador: 'Monto banco', Valor: resumen.montoBanco },
       { Indicador: 'Monto conciliado', Valor: resumen.montoConciliado },
-      { Indicador: 'Monto pendiente banco', Valor: resumen.montoPendienteBanco },
+      {
+        Indicador: 'Monto pendiente banco',
+        Valor: resumen.montoPendienteBanco,
+      },
       { Indicador: 'Diferencias de monto', Valor: resumen.diferenciasMonto },
     ];
     if (obs) resumenRows.push({ Indicador: 'Observaciones', Valor: obs });
     const wsResumen = XLSX.utils.json_to_sheet(resumenRows);
     XLSX.utils.book_append_sheet(wb, wsResumen, 'Resumen');
 
-    // Hoja 2: Movimientos del banco con su estado y match
+    // Hoja 3: Movimientos del banco (formato plano, una columna por dato)
     const movRows = movimientos.map((m) => ({
       Fila: m.fila,
       Fecha: m.fecha ?? '',
@@ -481,8 +628,8 @@ export class ConciliacionBancariaService {
       Descripción: m.descripcion,
       Monto: m.monto,
       Tipo: m.tipo ?? '',
-      Estado: m.estado,
-      'Origen match': m.match?.origen ?? '',
+      Estado: estadoLabel(m.estado),
+      'Origen match': m.match ? origenLabel(m.match.origen) : '',
       'Documento sistema': m.match?.documento ?? '',
       Contraparte: m.match?.contraparte ?? '',
       'Monto sistema': m.match?.monto ?? '',
@@ -508,9 +655,9 @@ export class ConciliacionBancariaService {
     });
     XLSX.utils.book_append_sheet(wb, wsMov, 'Movimientos');
 
-    // Hoja 3: Pagos del sistema sin coincidencia en el banco
+    // Hoja 4: Pagos del sistema sin coincidencia en el banco
     const pendRows = sistemaPendientes.map((p) => ({
-      Origen: p.origen,
+      Origen: origenLabel(p.origen),
       Documento: p.documento,
       Contraparte: p.contraparte,
       'N° Operación': p.operacion,
