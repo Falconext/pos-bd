@@ -1955,47 +1955,63 @@ export class ComprobanteService {
         const tipAfeIgvLibre = esExportacion
           ? 40
           : parseInt(String(item.tipoAfectacionIGV ?? '10'), 10);
+        // Mismo criterio que las líneas de producto (más abajo): el valor
+        // unitario sin IGV NO se redondea a 2 decimales antes de multiplicar.
+        // Redondearlo (27.12 en vez de 27.1186) hacía que 50 × S/ 32.00 saliera
+        // gravado 1,356.00 / IGV 244.00 en vez de 1,355.93 / 244.07: el PDF y el
+        // XML no cuadraban con lo que mostraba el POS al emitir. El valor de
+        // venta de la línea se redondea, y el unitario se deriva de él con más
+        // decimales (SUNAT admite hasta 10; regla 3271: cantidad × unitario =
+        // valor de venta).
         let igvPct: number;
         let valorUnitario: number;
         let igvMonto: number;
+        let mtoValorVenta: number;
         if (tipAfeIgvLibre === 20) {
           igvPct = 0;
-          valorUnitario = this.round2(precioConIgv);
+          valorUnitario = precioConIgv;
+          mtoValorVenta = this.round2(precioConIgv * cantidad);
           igvMonto = 0;
-          mtoOpExoneradas += precioConIgv * cantidad;
+          mtoOpExoneradas += mtoValorVenta;
         } else if (tipAfeIgvLibre === 30) {
           igvPct = 0;
-          valorUnitario = this.round2(precioConIgv);
+          valorUnitario = precioConIgv;
+          mtoValorVenta = this.round2(precioConIgv * cantidad);
           igvMonto = 0;
-          mtoOpInafectas += precioConIgv * cantidad;
+          mtoOpInafectas += mtoValorVenta;
         } else if (tipAfeIgvLibre === 40) {
           igvPct = 0;
-          valorUnitario = this.round2(precioConIgv);
+          valorUnitario = precioConIgv;
+          mtoValorVenta = this.round2(precioConIgv * cantidad);
           igvMonto = 0;
-          mtoOperExportacion += precioConIgv * cantidad;
+          mtoOperExportacion += mtoValorVenta;
         } else if (this.esGratuito(tipAfeIgvLibre)) {
           // Gratuito: precioConIgv es el VALOR REFERENCIAL. Gravado gratuito (11-16) lleva
           // IGV referencial; exonerado/inafecto gratuito (21/31-37) no. No suma a ningún
           // balde onerable (queda fuera del importe a pagar).
           const grav = tipAfeIgvLibre >= 11 && tipAfeIgvLibre <= 16;
           igvPct = grav ? 18 : 0;
-          valorUnitario = grav
-            ? this.round2(precioConIgv / 1.18)
-            : this.round2(precioConIgv);
+          valorUnitario = grav ? precioConIgv / 1.18 : precioConIgv;
+          mtoValorVenta = this.round2(valorUnitario * cantidad);
           igvMonto = grav
-            ? this.round2(precioConIgv * cantidad - valorUnitario * cantidad)
+            ? this.round2(precioConIgv * cantidad - mtoValorVenta)
             : 0;
         } else {
           igvPct = 18;
-          valorUnitario = this.round2(precioConIgv / 1.18);
-          igvMonto = this.round2(
-            precioConIgv * cantidad - valorUnitario * cantidad,
-          );
-          mtoOperGravadas += valorUnitario * cantidad;
+          valorUnitario = precioConIgv / 1.18;
+          mtoValorVenta = this.round2(valorUnitario * cantidad);
+          igvMonto = this.round2(precioConIgv * cantidad - mtoValorVenta);
+          mtoOperGravadas += mtoValorVenta;
           totalIGV += igvMonto;
         }
         const esGratLibre = this.esGratuito(tipAfeIgvLibre);
-        const mtoValorVenta = this.round2(valorUnitario * cantidad);
+        // Unitario sin IGV derivado del valor de venta ya redondeado (hasta 10
+        // decimales) para que cantidad × unitario == valor de venta exacto.
+        const mtoValorUnitarioLibre = esGratLibre
+          ? 0
+          : cantidad > 0
+            ? parseFloat((mtoValorVenta / cantidad).toFixed(10))
+            : this.round2(valorUnitario);
         // Producto externo (ítem libre) con número de serie: se conserva la serie en
         // el detalle para trazabilidad/garantía. No se valida contra inventario (no
         // hay producto en catálogo), solo se guarda tal cual la ingresó el usuario.
@@ -2019,7 +2035,7 @@ export class ComprobanteService {
             ? this.round2(valorUnitario)
             : this.round2(precioConIgv),
           // Precio de venta: 0 en gratuitas.
-          mtoValorUnitario: esGratLibre ? 0 : valorUnitario,
+          mtoValorUnitario: mtoValorUnitarioLibre,
           mtoValorVenta,
           mtoBaseIgv: mtoValorVenta,
           porcentajeIgv: igvPct,
