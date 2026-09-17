@@ -179,6 +179,8 @@ export interface ProductoVendido {
   precioPromedio: number;
   costoUnitario: number;
   ingresoTotal: number;
+  /** Ventas con IGV del producto. */
+  ventasConIgv: number;
   costoTotal: number;
   gananciaTotal: number;
   margen: number;
@@ -204,7 +206,10 @@ export interface ProductosVendidosResponse {
     label: string;
   };
   resumen: {
+    /** Ventas netas sin IGV (es lo que se compara contra el costo). */
     ingresoTotal: number;
+    /** Ventas con IGV, tal como las pagó el cliente (cuadra con Ventas/Comprobantes). */
+    ventasConIgv: number;
     costoTotal: number;
     gananciaTotal: number;
     margenPromedio: number;
@@ -737,6 +742,14 @@ export class AnalisisFinancieroService {
    * mtoPrecioUnitario ya es el valor referencial) queda precio × cantidad.
    * Devuelve el monto en la moneda del comprobante, sin signo.
    */
+  /** Precio × cantidad de la línea (con IGV), sin signo: lo que pagó el cliente. */
+  private ventaLineaConIgv(det: {
+    cantidad: number | null;
+    mtoPrecioUnitario: number | null;
+  }): number {
+    return (det.mtoPrecioUnitario ?? 0) * (det.cantidad ?? 0);
+  }
+
   private ingresoLineaSinIgv(
     tipoDoc: string,
     det: {
@@ -1265,7 +1278,9 @@ export class AnalisisFinancieroService {
   ): Promise<PnlResponse> {
     const now = new Date();
     const mes =
-      opts.mes && opts.mes >= 1 && opts.mes <= 12 ? opts.mes : now.getMonth() + 1;
+      opts.mes && opts.mes >= 1 && opts.mes <= 12
+        ? opts.mes
+        : now.getMonth() + 1;
     const anio = opts.anio && opts.anio >= 2020 ? opts.anio : now.getFullYear();
     const periodo =
       this.periodoRango(opts.fechaInicio, opts.fechaFin) ??
@@ -1513,7 +1528,10 @@ export class AnalisisFinancieroService {
       empresaId,
       ...(sedeId ? { sedeId } : {}),
       OR: [
-        { recurrenteDiario: false, fecha: { gte: periodo.gte, lte: periodo.lte } },
+        {
+          recurrenteDiario: false,
+          fecha: { gte: periodo.gte, lte: periodo.lte },
+        },
         {
           recurrenteDiario: true,
           fechaInicio: { lte: periodo.lte },
@@ -1685,6 +1703,7 @@ export class AnalisisFinancieroService {
         {
           nombre: string;
           ingreso: number;
+          ventaConIgv: number;
           costo: number;
           unidades: number;
         }
@@ -1710,6 +1729,7 @@ export class AnalisisFinancieroService {
         const qty = cantidadFacturada * uPaquete;
         // Ingreso sin el IGV declarado, igual que las ventas netas del P&L.
         const ingresoLinea = this.ingresoLineaSinIgv(comp.tipoDoc, det) * signo;
+        const ventaLinea = this.ventaLineaConIgv(det) * signo;
         const costoUnit =
           this.toNumber(det.producto?.costoPromedio) +
           this.toNumber(det.producto?.costoFijo);
@@ -1721,12 +1741,14 @@ export class AnalisisFinancieroService {
           prodMap.set(prodKey, {
             nombre: prodNombre,
             ingreso: 0,
+            ventaConIgv: 0,
             costo: 0,
             unidades: 0,
           });
         }
         const acc = prodMap.get(prodKey)!;
         acc.ingreso += ingresoLinea;
+        acc.ventaConIgv += ventaLinea;
         acc.costo += costoUnit * qty;
         acc.unidades += qty;
       }
@@ -1752,6 +1774,7 @@ export class AnalisisFinancieroService {
               margen,
               unidadesVendidas: this.r2(p.unidades),
               ingresoTotal: this.r2(p.ingreso),
+              ventasConIgv: this.r2(p.ventaConIgv),
               gananciaTotal,
             };
           })
@@ -1759,6 +1782,9 @@ export class AnalisisFinancieroService {
 
         const ingresoTotal = this.r2(
           productos.reduce((s, p) => s + p.ingresoTotal, 0),
+        );
+        const ventasConIgv = this.r2(
+          productos.reduce((s, p) => s + p.ventasConIgv, 0),
         );
         const gananciaTotal = this.r2(
           productos.reduce((s, p) => s + p.gananciaTotal, 0),
@@ -1772,6 +1798,7 @@ export class AnalisisFinancieroService {
         return {
           nombre: catNombre,
           ingresoTotal,
+          ventasConIgv,
           gananciaTotal,
           margenPromedio,
           unidadesVendidas,
@@ -1783,6 +1810,9 @@ export class AnalisisFinancieroService {
 
     const ingresoTotal = this.r2(
       categorias.reduce((s, c) => s + c.ingresoTotal, 0),
+    );
+    const ventasConIgv = this.r2(
+      categorias.reduce((s, c) => s + c.ventasConIgv, 0),
     );
     const gananciaTotal = this.r2(
       categorias.reduce((s, c) => s + c.gananciaTotal, 0),
@@ -1799,6 +1829,7 @@ export class AnalisisFinancieroService {
         label: periodoLabel,
       },
       ingresoTotal,
+      ventasConIgv,
       gananciaTotal,
       margenPromedio,
       totalCategorias: categorias.length,
@@ -1904,21 +1935,30 @@ export class AnalisisFinancieroService {
     );
 
     const limpiar = (v?: string | null) =>
-      String(v ?? '').replace(/\s+/g, ' ').trim().toUpperCase();
+      String(v ?? '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toUpperCase();
     const SIN_CIUDAD = 'Sin ciudad registrada';
     // Abreviaturas que las cajeras usan como destino en Lima.
     const ALIAS_DISTRITO: Record<string, string> = {
-      SMP: 'SAN MARTIN DE PORRES', SJL: 'SAN JUAN DE LURIGANCHO', SJM: 'SAN JUAN DE MIRAFLORES',
-      VMT: 'VILLA MARIA DEL TRIUNFO', VES: 'VILLA EL SALVADOR', 'CERCADO': 'CERCADO DE LIMA', LIMA: 'CERCADO DE LIMA',
+      SMP: 'SAN MARTIN DE PORRES',
+      SJL: 'SAN JUAN DE LURIGANCHO',
+      SJM: 'SAN JUAN DE MIRAFLORES',
+      VMT: 'VILLA MARIA DEL TRIUNFO',
+      VES: 'VILLA EL SALVADOR',
+      CERCADO: 'CERCADO DE LIMA',
+      LIMA: 'CERCADO DE LIMA',
     };
     const armarUbicacion = (
       distrito: string,
       provincia: string,
       departamento: string,
     ) => {
-      const ciudad = distrito && provincia && distrito !== provincia
-        ? `${distrito}, ${provincia}`
-        : distrito || provincia || departamento || SIN_CIUDAD;
+      const ciudad =
+        distrito && provincia && distrito !== provincia
+          ? `${distrito}, ${provincia}`
+          : distrito || provincia || departamento || SIN_CIUDAD;
       return {
         ciudad,
         departamento: departamento || null,
@@ -1926,19 +1966,34 @@ export class AnalisisFinancieroService {
         distrito: distrito || null,
       };
     };
-    const ubicacionCliente = (c: (typeof comprobantes)[number]['cliente'] | null) =>
-      armarUbicacion(limpiar(c?.distrito), limpiar(c?.provincia), limpiar(c?.departamento));
+    const ubicacionCliente = (
+      c: (typeof comprobantes)[number]['cliente'] | null,
+    ) =>
+      armarUbicacion(
+        limpiar(c?.distrito),
+        limpiar(c?.provincia),
+        limpiar(c?.departamento),
+      );
     /** Destino del envío: rastreo Shalom → agencia destino → dirección de entrega. */
-    const ubicacionEnvio = (env: (typeof comprobantes)[number]['envioDespacho']) => {
+    const ubicacionEnvio = (
+      env: (typeof comprobantes)[number]['envioDespacho'],
+    ) => {
       if (!env) return null;
       const destino = (env.shalomTrackingJson as any)?.order?.destino;
       if (destino?.distrito || destino?.provincia) {
-        return armarUbicacion(limpiar(destino.distrito), limpiar(destino.provincia), limpiar(destino.departamento));
+        return armarUbicacion(
+          limpiar(destino.distrito),
+          limpiar(destino.provincia),
+          limpiar(destino.departamento),
+        );
       }
       const agencia = limpiar(env.agenciaDestino);
       if (agencia) {
         // Formato Shalom/Olva: "AGENCIA - PROVINCIA - DEPARTAMENTO".
-        const partes = agencia.split(' - ').map((x) => x.trim()).filter(Boolean);
+        const partes = agencia
+          .split(' - ')
+          .map((x) => x.trim())
+          .filter(Boolean);
         if (partes.length >= 3) {
           const departamento = partes[partes.length - 1];
           const provincia = partes[partes.length - 2];
@@ -1956,7 +2011,8 @@ export class AnalisisFinancieroService {
       return null;
     };
     const esClientesVarios = (nroDoc?: string | null, nombre?: string | null) =>
-      !nroDoc || /^0+$|^10000000$|^99999999$/.test(String(nroDoc)) ||
+      !nroDoc ||
+      /^0+$|^10000000$|^99999999$/.test(String(nroDoc)) ||
       /CLIENTES? VARIOS/i.test(String(nombre ?? ''));
 
     interface AccCliente extends ClienteRanking {
@@ -1988,7 +2044,11 @@ export class AnalisisFinancieroService {
       if (comp.estadoEnvioSunat === 'ANULADO') continue;
       const signo: 1 | -1 = comp.tipoDoc === '07' ? -1 : 1;
       const monto =
-        montoEnPen(comp.mtoImpVenta, comp.tipoMoneda, this.toNumber(comp.tipoCambio)) * signo;
+        montoEnPen(
+          comp.mtoImpVenta,
+          comp.tipoMoneda,
+          this.toNumber(comp.tipoCambio),
+        ) * signo;
       ingresoTotal += monto;
       documentos += 1;
       const fecha = comp.fechaEmision ?? null;
@@ -1997,7 +2057,9 @@ export class AnalisisFinancieroService {
       // ── Cliente ──
       const cli = comp.cliente;
       const varios = esClientesVarios(cli?.nroDoc, cli?.nombre);
-      const cliKey = varios ? 'varios' : String(cli?.id ?? comp.clienteId ?? 'varios');
+      const cliKey = varios
+        ? 'varios'
+        : String(cli?.id ?? comp.clienteId ?? 'varios');
       const ubiCliente = ubicacionCliente(varios ? null : cli);
       const ubi =
         ubiCliente.ciudad !== SIN_CIUDAD
@@ -2051,12 +2113,16 @@ export class AnalisisFinancieroService {
       if (env) {
         envios += 1;
         const entregado =
-          env.estado === 'ENTREGADO' || env.shalomEntregado || env.olvaEntregado;
+          env.estado === 'ENTREGADO' ||
+          env.shalomEntregado ||
+          env.olvaEntregado;
         const devuelto = env.estado === 'DEVUELTO';
         if (entregado) enviosEntregados += 1;
         const costo = this.toNumber(env.costoEnvio);
 
-        const repKey = env.repartidorId ? String(env.repartidorId) : nombreCourier(env.transportista);
+        const repKey = env.repartidorId
+          ? String(env.repartidorId)
+          : nombreCourier(env.transportista);
         if (!repMap.has(repKey)) {
           repMap.set(repKey, {
             repartidorId: env.repartidorId ?? null,
@@ -2132,7 +2198,8 @@ export class AnalisisFinancieroService {
         ...c,
         clientes: clientesSet.size,
         ingreso: r2(c.ingreso),
-        participacion: ingresoTotal > 0 ? r2((c.ingreso / ingresoTotal) * 100) : 0,
+        participacion:
+          ingresoTotal > 0 ? r2((c.ingreso / ingresoTotal) * 100) : 0,
       }))
       .sort((a, b) => b.ingreso - a.ingreso || b.compras - a.compras);
 
@@ -2166,9 +2233,11 @@ export class AnalisisFinancieroService {
         ingresoTotal: r2(ingresoTotal),
         documentos,
         clientesDistintos: clientesReales.length,
-        clientesRecurrentes: clientesReales.filter((c) => c.compras >= 2).length,
+        clientesRecurrentes: clientesReales.filter((c) => c.compras >= 2)
+          .length,
         ticketPromedio: documentos > 0 ? r2(ingresoTotal / documentos) : 0,
-        ciudadesDistintas: ciudades.filter((c) => c.ciudad !== SIN_CIUDAD).length,
+        ciudadesDistintas: ciudades.filter((c) => c.ciudad !== SIN_CIUDAD)
+          .length,
         envios,
         enviosEntregados,
       },
@@ -2256,7 +2325,11 @@ export class AnalisisFinancieroService {
       orderBy: { creadoEn: 'desc' },
     });
 
-    const limpiar = (v?: string | null) => String(v ?? '').replace(/\s+/g, ' ').trim().toUpperCase();
+    const limpiar = (v?: string | null) =>
+      String(v ?? '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toUpperCase();
     const nombreCourier = (t?: string | null) => {
       const u = limpiar(t);
       if (!u) return 'Sin courier';
@@ -2279,33 +2352,67 @@ export class AnalisisFinancieroService {
       ENTREGADO: 'Entregado',
       DEVUELTO: 'Devuelto',
     };
-    interface DestinoEnvio { destino: string; departamento: string | null; provincia: string | null; distrito: string | null }
+    interface DestinoEnvio {
+      destino: string;
+      departamento: string | null;
+      provincia: string | null;
+      distrito: string | null;
+    }
     const destinoDe = (e: (typeof envios)[number]): DestinoEnvio => {
       const dest = (e.shalomTrackingJson as any)?.order?.destino;
       if (dest?.provincia || dest?.distrito) {
         const distrito = limpiar(dest.distrito);
         const provincia = limpiar(dest.provincia);
         return {
-          destino: distrito && provincia && distrito !== provincia ? `${distrito}, ${provincia}` : distrito || provincia,
+          destino:
+            distrito && provincia && distrito !== provincia
+              ? `${distrito}, ${provincia}`
+              : distrito || provincia,
           departamento: limpiar(dest.departamento) || null,
           provincia: provincia || null,
           distrito: distrito || null,
         };
       }
-      const olvaDest = (e.olvaTrackingJson as any)?.data?.destination ?? (e.olvaTrackingJson as any)?.destination;
+      const olvaDest =
+        (e.olvaTrackingJson as any)?.data?.destination ??
+        (e.olvaTrackingJson as any)?.destination;
       if (olvaDest?.agency) {
         const agency = limpiar(olvaDest.agency);
-        return { destino: agency, departamento: limpiar(olvaDest.department) || null, provincia: null, distrito: agency.replace(/ CENTRO$/, '') };
+        return {
+          destino: agency,
+          departamento: limpiar(olvaDest.department) || null,
+          provincia: null,
+          distrito: agency.replace(/ CENTRO$/, ''),
+        };
       }
       const agencia = limpiar(e.agenciaDestino);
       if (agencia) {
-        const partes = agencia.split(' - ').map((x) => x.trim()).filter(Boolean);
-        if (partes.length >= 3) return { destino: partes[partes.length - 2], departamento: partes[partes.length - 1], provincia: partes[partes.length - 2], distrito: null };
-        return { destino: agencia, departamento: null, provincia: null, distrito: agencia };
+        const partes = agencia
+          .split(' - ')
+          .map((x) => x.trim())
+          .filter(Boolean);
+        if (partes.length >= 3)
+          return {
+            destino: partes[partes.length - 2],
+            departamento: partes[partes.length - 1],
+            provincia: partes[partes.length - 2],
+            distrito: null,
+          };
+        return {
+          destino: agencia,
+          departamento: null,
+          provincia: null,
+          distrito: agencia,
+        };
       }
       const dir = limpiar(e.direccionDestino);
       const distrito = dir.includes(',') ? dir.split(',').pop()!.trim() : dir;
-      return { destino: dir || 'Sin destino', departamento: null, provincia: null, distrito: distrito || null };
+      return {
+        destino: dir || 'Sin destino',
+        departamento: null,
+        provincia: null,
+        distrito: distrito || null,
+      };
     };
     const fechaDe = (v: any): Date | null => {
       if (!v) return null;
@@ -2313,7 +2420,9 @@ export class AnalisisFinancieroService {
       return Number.isNaN(d.getTime()) ? null : d;
     };
     const fechaEntregaDe = (e: (typeof envios)[number]): Date | null => {
-      const sh = fechaDe((e.shalomTrackingJson as any)?.statuses?.entregado?.fecha);
+      const sh = fechaDe(
+        (e.shalomTrackingJson as any)?.statuses?.entregado?.fecha,
+      );
       if (sh) return sh;
       const ol = fechaDe((e.olvaTrackingJson as any)?.data?.deliveredAt);
       if (ol) return ol;
@@ -2325,15 +2434,37 @@ export class AnalisisFinancieroService {
     const r2 = (n: number) => Math.round(n * 100) / 100;
     const hoy = Date.now();
     const items: EnvioCourierItem[] = [];
-    const porCourier = new Map<string, CourierResumen & { horasSum: number; horasN: number }>();
+    const porCourier = new Map<
+      string,
+      CourierResumen & { horasSum: number; horasN: number }
+    >();
     const diaMap = new Map<string, Record<string, number>>();
-    const destMap = new Map<string, DestinoEnvio & { envios: number; entregados: number; costoEnvio: number; couriers: Map<string, number> }>();
+    const destMap = new Map<
+      string,
+      DestinoEnvio & {
+        envios: number;
+        entregados: number;
+        costoEnvio: number;
+        couriers: Map<string, number>;
+      }
+    >();
     const acumular = (courier: string) => {
       if (!porCourier.has(courier)) {
         porCourier.set(courier, {
-          courier, envios: 0, entregados: 0, enCurso: 0, devueltos: 0, tasaEntrega: 0,
-          costoEnvio: 0, costoPromedio: 0, ingreso: 0, horasPromedioEntrega: null, montoCOD: 0,
-          etapas: {}, horasSum: 0, horasN: 0,
+          courier,
+          envios: 0,
+          entregados: 0,
+          enCurso: 0,
+          devueltos: 0,
+          tasaEntrega: 0,
+          costoEnvio: 0,
+          costoPromedio: 0,
+          ingreso: 0,
+          horasPromedioEntrega: null,
+          montoCOD: 0,
+          etapas: {},
+          horasSum: 0,
+          horasN: 0,
         });
       }
       return porCourier.get(courier)!;
@@ -2341,16 +2472,38 @@ export class AnalisisFinancieroService {
 
     for (const e of envios) {
       const courier = nombreCourier(e.transportista);
-      const entregado = e.estado === 'ENTREGADO' || e.shalomEntregado || e.olvaEntregado;
+      const entregado =
+        e.estado === 'ENTREGADO' || e.shalomEntregado || e.olvaEntregado;
       const devuelto = e.estado === 'DEVUELTO';
       const enCurso = !entregado && !devuelto;
-      const etapa = entregado ? 'entregado' : courier === 'Shalom' ? e.shalomEstado : courier === 'Olva' ? e.olvaEstado : null;
-      const etapaLabel = entregado ? 'Entregado' : devuelto ? 'Devuelto' : ETIQUETA[etapa ?? ''] ?? ETIQUETA[e.estado] ?? e.estado;
+      const etapa = entregado
+        ? 'entregado'
+        : courier === 'Shalom'
+          ? e.shalomEstado
+          : courier === 'Olva'
+            ? e.olvaEstado
+            : null;
+      const etapaLabel = entregado
+        ? 'Entregado'
+        : devuelto
+          ? 'Devuelto'
+          : (ETIQUETA[etapa ?? ''] ?? ETIQUETA[e.estado] ?? e.estado);
       const costo = this.toNumber(e.costoEnvio);
-      const total = montoEnPen(e.comprobante.mtoImpVenta, e.comprobante.tipoMoneda, this.toNumber(e.comprobante.tipoCambio));
+      const total = montoEnPen(
+        e.comprobante.mtoImpVenta,
+        e.comprobante.tipoMoneda,
+        this.toNumber(e.comprobante.tipoCambio),
+      );
       const fechaEnvio = e.comprobante.fechaEmision ?? e.creadoEn;
-      const diasEnCamino = Math.max(0, Math.floor((hoy - new Date(fechaEnvio).getTime()) / 86400000));
-      const retrasado = enCurso && ((e.fechaEstimada && new Date(e.fechaEstimada).getTime() + 86400000 < hoy) || diasEnCamino > 7);
+      const diasEnCamino = Math.max(
+        0,
+        Math.floor((hoy - new Date(fechaEnvio).getTime()) / 86400000),
+      );
+      const retrasado =
+        enCurso &&
+        ((e.fechaEstimada &&
+          new Date(e.fechaEstimada).getTime() + 86400000 < hoy) ||
+          diasEnCamino > 7);
       const ubicacion = destinoDe(e);
       const { destino, departamento } = ubicacion;
 
@@ -2363,8 +2516,12 @@ export class AnalisisFinancieroService {
         c.entregados += 1;
         const fe = fechaEntregaDe(e);
         if (fe) {
-          const horas = (fe.getTime() - new Date(fechaEnvio).getTime()) / 3600000;
-          if (horas > 0 && horas < 24 * 60) { c.horasSum += horas; c.horasN += 1; }
+          const horas =
+            (fe.getTime() - new Date(fechaEnvio).getTime()) / 3600000;
+          if (horas > 0 && horas < 24 * 60) {
+            c.horasSum += horas;
+            c.horasN += 1;
+          }
         }
       } else if (devuelto) c.devueltos += 1;
       else {
@@ -2381,7 +2538,14 @@ export class AnalisisFinancieroService {
       }
 
       const dk = `${destino}|${departamento ?? ''}`;
-      if (!destMap.has(dk)) destMap.set(dk, { ...ubicacion, envios: 0, entregados: 0, costoEnvio: 0, couriers: new Map() });
+      if (!destMap.has(dk))
+        destMap.set(dk, {
+          ...ubicacion,
+          envios: 0,
+          entregados: 0,
+          costoEnvio: 0,
+          couriers: new Map(),
+        });
       const dm = destMap.get(dk)!;
       dm.envios += 1;
       if (entregado) dm.entregados += 1;
@@ -2406,14 +2570,18 @@ export class AnalisisFinancieroService {
         etapaLabel,
         entregado: Boolean(entregado),
         devuelto,
-        fechaEstimada: e.fechaEstimada ? new Date(e.fechaEstimada).toISOString() : null,
+        fechaEstimada: e.fechaEstimada
+          ? new Date(e.fechaEstimada).toISOString()
+          : null,
         diasEnCamino,
         retrasado: Boolean(retrasado),
         costoEnvio: r2(costo),
         montoCOD: e.montoCOD != null ? r2(this.toNumber(e.montoCOD)) : null,
         total: r2(total),
         repartidor: e.repartidor?.nombre ?? null,
-        ultimaActualizacion: (e.shalomSyncAt ?? e.olvaSyncAt ?? e.actualizadoEn)?.toISOString() ?? null,
+        ultimaActualizacion:
+          (e.shalomSyncAt ?? e.olvaSyncAt ?? e.actualizadoEn)?.toISOString() ??
+          null,
       });
     }
 
@@ -2441,7 +2609,10 @@ export class AnalisisFinancieroService {
     const destinos = Array.from(destMap.values())
       .filter((d) => d.destino !== 'Sin destino')
       .map((d) => {
-        const principal = Array.from(d.couriers.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? '-';
+        const principal =
+          Array.from(d.couriers.entries()).sort(
+            (a, b) => b[1] - a[1],
+          )[0]?.[0] ?? '-';
         const coord = coordenadasDeDestino(d);
         return {
           destino: d.destino,
@@ -2459,17 +2630,38 @@ export class AnalisisFinancieroService {
       .sort((a, b) => b.envios - a.envios)
       .slice(0, 40);
 
-    const enCursoItems = items.filter((i) => !i.entregado && !i.devuelto).sort((a, b) => Number(b.retrasado) - Number(a.retrasado) || b.diasEnCamino - a.diasEnCamino);
+    const enCursoItems = items
+      .filter((i) => !i.entregado && !i.devuelto)
+      .sort(
+        (a, b) =>
+          Number(b.retrasado) - Number(a.retrasado) ||
+          b.diasEnCamino - a.diasEnCamino,
+      );
     const totalEnvios = items.length;
     const entregados = items.filter((i) => i.entregado).length;
     const devueltos = items.filter((i) => i.devuelto).length;
     const horasTodas = couriers.filter((c) => c.horasPromedioEntrega != null);
     const horasProm = horasTodas.length
-      ? r2(horasTodas.reduce((s, c) => s + (c.horasPromedioEntrega ?? 0) * c.entregados, 0) / Math.max(1, horasTodas.reduce((s, c) => s + c.entregados, 0)))
+      ? r2(
+          horasTodas.reduce(
+            (s, c) => s + (c.horasPromedioEntrega ?? 0) * c.entregados,
+            0,
+          ) /
+            Math.max(
+              1,
+              horasTodas.reduce((s, c) => s + c.entregados, 0),
+            ),
+        )
       : null;
 
     return {
-      periodo: { mes: mesFinal, anio: anioFinal, fechaInicio: fechaInicio ?? null, fechaFin: fechaFin ?? null, label },
+      periodo: {
+        mes: mesFinal,
+        anio: anioFinal,
+        fechaInicio: fechaInicio ?? null,
+        fechaFin: fechaFin ?? null,
+        label,
+      },
       resumen: {
         envios: totalEnvios,
         entregados,
@@ -2560,6 +2752,7 @@ export class AnalisisFinancieroService {
       nombre: string;
       categoria: string;
       ingreso: number;
+      ventaConIgv: number;
       costo: number;
       unidades: number;
     }
@@ -2614,6 +2807,12 @@ export class AnalisisFinancieroService {
             this.toNumber(comp.tipoCambio),
           ) * signo;
         const costo = costoUnit * qty;
+        const ventaConIgv =
+          montoEnPen(
+            this.ventaLineaConIgv(det),
+            comp.tipoMoneda,
+            this.toNumber(comp.tipoCambio),
+          ) * signo;
 
         if (!prodMap.has(prodKey)) {
           prodMap.set(prodKey, {
@@ -2622,12 +2821,14 @@ export class AnalisisFinancieroService {
             nombre,
             categoria: det.producto?.categoria?.nombre ?? 'Sin categoría',
             ingreso: 0,
+            ventaConIgv: 0,
             costo: 0,
             unidades: 0,
           });
         }
         const acc = prodMap.get(prodKey)!;
         acc.ingreso += ingreso;
+        acc.ventaConIgv += ventaConIgv;
         acc.costo += costo;
         acc.unidades += qty;
 
@@ -2662,6 +2863,7 @@ export class AnalisisFinancieroService {
         precioPromedio: this.r2(p.unidades !== 0 ? p.ingreso / p.unidades : 0),
         costoUnitario: this.r2(p.unidades !== 0 ? p.costo / p.unidades : 0),
         ingresoTotal: ingresoProd,
+        ventasConIgv: this.r2(p.ventaConIgv),
         costoTotal: costoProd,
         gananciaTotal,
         margen: p.ingreso > 0 ? this.r2((gananciaTotal / p.ingreso) * 100) : 0,
@@ -2705,6 +2907,9 @@ export class AnalisisFinancieroService {
       },
       resumen: {
         ingresoTotal,
+        ventasConIgv: this.r2(
+          productos.reduce((s, p) => s + p.ventasConIgv, 0),
+        ),
         costoTotal,
         gananciaTotal,
         margenPromedio:
