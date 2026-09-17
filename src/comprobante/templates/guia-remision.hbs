@@ -1,313 +1,276 @@
 <!DOCTYPE html>
 <html lang="es">
-
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Guía de Remisión</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+  <meta charset="UTF-8">
+  <title>Guía de Remisión</title>
+  <style>
+    {{!-- Mismo lenguaje visual que comprobante.hbs (A4 de Factura/Boleta):
+         cabecera logo | empresa | caja de documento, cajas redondeadas de
+         1.5px, tabla gris de ítems, pie legal + QR de SUNAT y franja inferior. --}}
+    * { margin: 0; padding: 0; box-sizing: border-box; }
 
-        body {
-            font-family: Arial, sans-serif;
-            font-size: 11px;
-            padding: 20px;
-            line-height: 1.3;
-        }
+    body {
+      font-family: Arial, sans-serif;
+      font-size: 11px;
+      padding: 20px 24px 40px 24px;
+      line-height: 1.4;
+      color: #111;
+      background: #fff;
+    }
 
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 15px;
-        }
+    /* ── HEADER ─────────────────────────────────────────────── */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 18px;
+    }
+    .logo-empresa { display: flex; align-items: flex-start; flex: 1; }
+    .logo-empresa img { margin-right: 14px; object-fit: contain; object-position: left top; flex-shrink: 0; }
+    .empresa-info h1 { font-weight: bold; font-size: 20px; margin-bottom: 4px; }
+    .empresa-info .linea { line-height: 1.6; font-size: 12px; }
+    .documento {
+      border: 2px solid #000;
+      padding: 12px 18px;
+      text-align: center;
+      min-width: 190px;
+      margin-left: 16px;
+      flex-shrink: 0;
+    }
+    .documento .ruc { font-size: 11px; margin-bottom: 4px; }
+    .documento .tipo { font-size: 15px; font-weight: bold; margin: 2px 0 0 0; line-height: 1.2; }
+    .documento .numero { font-size: 12px; margin-top: 6px; }
 
-        .logo-empresa {
-            display: flex;
-            align-items: flex-start;
-            flex: 1;
-        }
+    /* ── DATA BOXES ──────────────────────────────────────────── */
+    .data-box {
+      display: flex;
+      gap: 24px;
+      border: 1.5px solid #000;
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .data-col { flex: 1; min-width: 0; }
+    .data-col.with-divider { border-left: 1px solid #ccc; padding-left: 24px; }
+    .data-title { font-weight: bold; font-size: 11px; margin-bottom: 4px; letter-spacing: .3px; }
+    .data-col table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .data-col table td { padding: 1.5px 0; vertical-align: top; font-size: inherit; }
+    .data-col table td:first-child { font-weight: bold; white-space: nowrap; width: 125px; }
+    .data-col .texto { font-size: 12px; line-height: 1.5; }
+    .data-col .sub { font-size: 10px; color: #444; }
 
-        .logo-empresa img {
-            width: 100px;
-            height: 100px;
-            margin-right: 15px;
-            object-fit: contain;
-        }
+    /* ── PRODUCTS TABLE ──────────────────────────────────────── */
+    .productos-table { width: 100%; border: 1.5px solid #999; border-collapse: collapse; margin-bottom: 16px; font-size: 11px; }
+    .productos-table thead { background-color: #d1d5db; border-bottom: 1px solid #999; }
+    .productos-table th { padding: 6px 5px; font-weight: bold; text-align: center; border-right: 1px solid #9ca3af; font-size: inherit; }
+    .productos-table th:last-child { border-right: none; }
+    .productos-table td { padding: 5px 5px; border-bottom: 1px solid #d1d5db; border-right: 1px solid #d1d5db; font-size: inherit; }
+    .productos-table td:last-child { border-right: none; }
+    .col-n    { width: 8%;  text-align: center; }
+    .col-cod  { width: 14%; text-align: center; }
+    .col-desc { text-align: left; }
+    .col-um   { width: 12%; text-align: center; }
+    .col-cant { width: 12%; text-align: center; }
+    .desc-text { white-space: pre-line; line-height: 1.7; }
+    .peso-row td { font-weight: bold; text-align: right; background: #f9fafb; }
 
-        .empresa-info h1 {
-            font-size: 18px;
-            font-weight: bold;
-            margin-bottom: 5px;
-        }
+    /* ── FOOTER SECTION (observaciones + QR) ────────────────── */
+    .footer-section {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      border: 1px solid #000;
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 16px;
+    }
+    .observaciones-box { flex: 1; padding-right: 16px; }
+    .obs-title { font-weight: bold; margin-bottom: 4px; font-size: 12px; }
+    .obs-text { font-size: 12px; white-space: pre-line; }
+    .legal-text { font-size: 10px; margin-top: 8px; color: #444; line-height: 1.6; }
 
-        .empresa-info p {
-            font-size: 10px;
-            line-height: 1.4;
-        }
+    /* QR de SUNAT: URL oficial de consulta que entrega SUNAT en el CDR. */
+    .qr-sunat { width: 150px; flex-shrink: 0; text-align: center; }
+    .qr-sunat img { width: 120px; height: 120px; }
+    .qr-sunat p { font-size: 9px; color: #6b7280; margin-top: 4px; line-height: 1.4; }
+    .qr-pendiente {
+      width: 120px; height: 120px; margin: 0 auto;
+      border: 1px dashed #9ca3af; border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 9px; color: #6b7280; padding: 8px; text-align: center; line-height: 1.4;
+    }
 
-        .documento {
-            border: 1px solid #000;
-            padding: 10px 15px;
-            text-align: center;
-            min-width: 220px;
-        }
-
-        .documento .ruc {
-            font-size: 12px;
-            margin-bottom: 5px;
-        }
-
-        .documento .tipo {
-            font-size: 16px;
-            font-weight: bold;
-            margin: 5px 0;
-            background-color: #eee;
-            padding: 5px 0;
-        }
-
-        .documento .numero {
-            font-size: 14px;
-            margin-top: 5px;
-            font-weight: bold;
-        }
-
-        .section-title {
-            font-weight: bold;
-            font-size: 11px;
-            background-color: #eee;
-            padding: 3px 5px;
-            margin-bottom: 5px;
-            border: 1px solid #ccc;
-        }
-
-        .grid-2 {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 10px;
-        }
-
-        .col-half {
-            flex: 1;
-            border: 1px solid #ccc;
-            padding: 5px;
-        }
-
-        .label-row {
-            display: flex;
-            margin-bottom: 3px;
-        }
-
-        .label-key {
-            font-weight: bold;
-            width: 120px;
-            min-width: 120px;
-        }
-
-        .label-val {
-            flex: 1;
-        }
-
-        .productos-table {
-            width: 100%;
-            border: 1px solid #000;
-            border-collapse: collapse;
-            margin-top: 10px;
-        }
-
-        .productos-table th {
-            border-bottom: 1px solid #000;
-            background-color: #eee;
-            padding: 4px;
-            font-size: 10px;
-            text-align: center;
-        }
-
-        .productos-table td {
-            padding: 4px;
-            font-size: 10px;
-            border-right: 1px solid #ccc;
-        }
-
-        .productos-table td:last-child {
-            border-right: none;
-        }
-
-        .footer {
-            margin-top: 20px;
-            border-top: 1px solid #000;
-            padding-top: 10px;
-        }
-
-        .qr-section {
-            text-align: center;
-            margin-top: 10px;
-        }
-
-        .qr-img {
-            width: 80px;
-            height: 80px;
-        }
-    </style>
+    /* ── BOTTOM STRIP ────────────────────────────────────────── */
+    .footer-bottom {
+      border-top: 1px solid #bbb;
+      padding-top: 6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+    }
+    .footer-bottom .usuario-label { font-size: 9px; color: #6b7280; font-family: monospace; }
+    .footer-bottom .marca-label { font-size: 9px; color: #6b7280; text-align: right; }
+    .footer-bottom .marca-label .marca-name { font-weight: bold; font-style: italic; }
+  </style>
 </head>
-
 <body>
-    <!-- Header -->
-    <div class="header">
-        <div class="logo-empresa">
-            {{#if logo}}
-            <img src="{{logo}}" alt="Logo" style="width: {{logoSize}}px; height: {{logoSize}}px;">
-            {{/if}}
-            <div class="empresa-info">
-                <h1>{{nombreComercial}}</h1>
-                <p>
-                    {{razonSocial}}<br>
-                    {{direccion}}<br>
-                    {{#if rubro}}{{rubro}}<br>{{/if}}
-                    {{#if contacto}}Telf: {{contacto}}<br>{{/if}}
-                    {{#if email}}Email: {{email}}{{/if}}
-                </p>
-            </div>
-        </div>
-        <div class="documento">
-            <div class="ruc">R.U.C. {{ruc}}</div>
-            <div class="tipo">GUÍA DE REMISIÓN<br>REMITENTE ELECTRÓNICA</div>
-            <div class="numero">{{serie}}-{{correlativo}}</div>
-        </div>
+
+  <!-- ── HEADER: Logo | Empresa | Documento ─────────────────── -->
+  <div class="header">
+    <div class="logo-empresa">
+      {{#if logo}}<img src="{{logo}}" alt="logo" style="width: 150px; height: 150px;">{{/if}}
+      <div class="empresa-info">
+        <h1>{{razonSocial}}</h1>
+        <div class="linea">{{direccion}}</div>
+        {{#if rubro}}<div class="linea">{{rubro}}</div>{{/if}}
+        {{#if nombreComercial}}{{#unless (eq nombreComercial razonSocial)}}<div class="linea">NOMBRE COMERCIAL: {{nombreComercial}}</div>{{/unless}}{{/if}}
+        {{#if celular}}<div class="linea">CELULAR: {{celular}}</div>{{/if}}
+        {{#if email}}<div class="linea">EMAIL: {{email}}</div>{{/if}}
+        {{#if paginaWeb}}<div class="linea">WEB: {{paginaWeb}}</div>{{/if}}
+      </div>
     </div>
-
-    <!-- Fechas y Motivo -->
-    <div class="col-half" style="margin-bottom: 10px; border: 1px solid #000;">
-        <div class="label-row">
-            <div class="label-key">FECHA EMISIÓN:</div>
-            <div class="label-val">{{fechaEmision}}</div>
-        </div>
-        <div class="label-row">
-            <div class="label-key">FECHA TRASLADO:</div>
-            <div class="label-val">{{fechaTraslado}}</div>
-        </div>
-        <div class="label-row">
-            <div class="label-key">MOTIVO TRASLADO:</div>
-            <div class="label-val">{{motivoTraslado}}</div>
-        </div>
-        <div class="label-row">
-            <div class="label-key">MODALIDAD:</div>
-            <div class="label-val">{{modalidadTraslado}}</div>
-        </div>
-        <div class="label-row">
-            <div class="label-key">PESO BRUTO TOTAL:</div>
-            <div class="label-val">{{pesoTotal}} {{unidadPeso}}</div>
-        </div>
+    <div class="documento">
+      <div class="ruc">RUC: {{ruc}}</div>
+      <div class="tipo">GUÍA DE REMISIÓN<br>ELECTRÓNICA<br>{{tituloGuia}}</div>
+      <div class="numero">{{serie}}-{{correlativo}}</div>
     </div>
+  </div>
 
-    <!-- Puntos de Partida y Llegada -->
-    <div class="grid-2">
-        <div class="col-half">
-            <div class="section-title">PUNTO DE PARTIDA</div>
-            <div class="label-row">
-                <div class="label-val">{{partidaDireccion}} <br> {{partidaUbigeo}}</div>
-            </div>
-        </div>
-        <div class="col-half">
-            <div class="section-title">PUNTO DE LLEGADA</div>
-            <div class="label-row">
-                <div class="label-val">{{llegadaDireccion}} <br> {{llegadaUbigeo}}</div>
-            </div>
-        </div>
+  <!-- ── DESTINATARIO + DATOS DEL TRASLADO ───────────────────── -->
+  <div class="data-box">
+    <div class="data-col">
+      <div class="data-title">DESTINATARIO</div>
+      <table>
+        <tr><td>RAZÓN SOCIAL:</td><td>{{destinatarioRazonSocial}}</td></tr>
+        <tr><td>{{destinatarioTipoDoc}}:</td><td>{{destinatarioNumDoc}}</td></tr>
+        {{#if esTransportista}}{{#if remitenteBienesRazonSocial}}
+        <tr><td>REMITENTE:</td><td>{{remitenteBienesRazonSocial}}</td></tr>
+        <tr><td>DOC. REMITENTE:</td><td>{{remitenteBienesNumDoc}}</td></tr>
+        {{/if}}{{/if}}
+      </table>
     </div>
-
-    <!-- Destinatario -->
-    <div class="col-half" style="margin-bottom: 10px;">
-        <div class="section-title">DATOS DEL DESTINATARIO</div>
-        <div class="label-row">
-            <div class="label-key">RAZÓN SOCIAL:</div>
-            <div class="label-val">{{destinatarioRazonSocial}}</div>
-        </div>
-        <div class="label-row">
-            <div class="label-key">RUC / DOC:</div>
-            <div class="label-val">{{destinatarioNumDoc}}</div>
-        </div>
+    <div class="data-col with-divider">
+      <div class="data-title">DATOS DEL TRASLADO</div>
+      <table>
+        <tr><td>FECHA EMISIÓN:</td><td>{{fechaEmision}}</td></tr>
+        <tr><td>INICIO TRASLADO:</td><td>{{fechaTraslado}}</td></tr>
+        <tr><td>MOTIVO:</td><td>{{motivoTraslado}}</td></tr>
+        <tr><td>MODALIDAD:</td><td>{{modalidadTraslado}}</td></tr>
+        <tr><td>PESO BRUTO:</td><td>{{pesoTotal}} {{unidadPeso}}</td></tr>
+      </table>
     </div>
+  </div>
 
-    <!-- Datos del Transporte -->
-    <div class="col-half" style="margin-bottom: 10px;">
-        <div class="section-title">DATOS DEL TRANSPORTE</div>
+  <!-- ── PARTIDA + LLEGADA ───────────────────────────────────── -->
+  <div class="data-box">
+    <div class="data-col">
+      <div class="data-title">PUNTO DE PARTIDA</div>
+      <div class="texto">{{partidaDireccion}}</div>
+      {{#if partidaUbigeo}}<div class="sub">UBIGEO: {{partidaUbigeo}}</div>{{/if}}
+    </div>
+    <div class="data-col with-divider">
+      <div class="data-title">PUNTO DE LLEGADA</div>
+      <div class="texto">{{llegadaDireccion}}</div>
+      {{#if llegadaUbigeo}}<div class="sub">UBIGEO: {{llegadaUbigeo}}</div>{{/if}}
+    </div>
+  </div>
 
+  <!-- ── TRANSPORTE ──────────────────────────────────────────── -->
+  <div class="data-box">
+    <div class="data-col">
+      <div class="data-title">{{#if esTransportePublico}}TRANSPORTISTA{{else}}VEHÍCULO Y CONDUCTOR{{/if}}</div>
+      <table>
         {{#if esTransportePublico}}
-        <div class="label-row">
-            <div class="label-key">TRANSPORTISTA:</div>
-            <div class="label-val">{{transportistaRazonSocial}}</div>
-        </div>
-        <div class="label-row">
-            <div class="label-key">RUC:</div>
-            <div class="label-val">{{transportistaRuc}}</div>
-        </div>
+        <tr><td>RAZÓN SOCIAL:</td><td>{{transportistaRazonSocial}}</td></tr>
+        <tr><td>RUC:</td><td>{{transportistaRuc}}</td></tr>
+        {{#if transportistaMTC}}<tr><td>N° REGISTRO MTC:</td><td>{{transportistaMTC}}</td></tr>{{/if}}
         {{else if esVehiculoM1oL}}
-        <div class="label-row">
-            <div class="label-key">MODALIDAD:</div>
-            <div class="label-val">VEHÍCULO CATEGORÍA M1 O L</div>
-        </div>
+        <tr><td>MODALIDAD:</td><td>TRASLADO EN VEHÍCULO DE CATEGORÍA M1 O L</td></tr>
         {{else}}
-        <div class="label-row">
-            <div class="label-key">VEHÍCULO (PLACA):</div>
-            <div class="label-val">{{vehiculoPlaca}}</div>
-        </div>
-        <div class="label-row">
-            <div class="label-key">CONDUCTOR:</div>
-            <div class="label-val">{{conductorNombre}}</div>
-        </div>
-        <div class="label-row">
-            <div class="label-key">LICENCIA:</div>
-            <div class="label-val">{{conductorLicencia}}</div>
-        </div>
+        <tr><td>PLACA:</td><td>{{vehiculoPlaca}}</td></tr>
+        <tr><td>CONDUCTOR:</td><td>{{conductorNombre}}</td></tr>
+        {{#if conductorNumDoc}}<tr><td>DOC. CONDUCTOR:</td><td>{{conductorNumDoc}}</td></tr>{{/if}}
+        <tr><td>LICENCIA:</td><td>{{conductorLicencia}}</td></tr>
         {{/if}}
+      </table>
     </div>
-
-    <!-- Items -->
-    <table class="productos-table">
-        <thead>
-            <tr>
-                <th style="width: 5%;">ITEM</th>
-                <th style="width: 10%;">CODIGO</th>
-                <th style="width: 50%;">DESCRIPCION</th>
-                <th style="width: 10%;">U.M.</th>
-                <th style="width: 10%;">CANT.</th>
-            </tr>
-        </thead>
-        <tbody>
-            {{#each detalles}}
-            <tr>
-                <td style="text-align: center;">{{item}}</td>
-                <td style="text-align: center;">{{codigo}}</td>
-                <td>{{descripcion}}</td>
-                <td style="text-align: center;">{{unidad}}</td>
-                <td style="text-align: center;">{{cantidad}}</td>
-            </tr>
-            {{/each}}
-        </tbody>
-    </table>
-
-    <!-- Footer / Observaciones -->
-    <div class="footer">
-        {{#if observaciones}}
-        <p><strong>OBSERVACIONES:</strong> {{observaciones}}</p>
-        {{/if}}
-        <p style="text-align: center; margin-top: 20px; font-size: 10px;">
-            Representación impresa de la GUÍA DE REMISIÓN REMITENTE ELECTRÓNICA<br>
-            Este documento ha sido emitido a través de un Proveedor de Servicios Electrónicos autorizado por SUNAT.
-        </p>
-
-        {{#if qrCode}}
-        <div class="qr-section">
-            <img src="{{qrCode}}" alt="QR" class="qr-img">
-        </div>
-        {{/if}}
+    {{#if esTransportista}}{{#if esTransportePublico}}
+    <div class="data-col with-divider">
+      <div class="data-title">CONDUCTOR</div>
+      <table>
+        <tr><td>PLACA:</td><td>{{vehiculoPlaca}}</td></tr>
+        <tr><td>CONDUCTOR:</td><td>{{conductorNombre}}</td></tr>
+        {{#if conductorNumDoc}}<tr><td>DOC. CONDUCTOR:</td><td>{{conductorNumDoc}}</td></tr>{{/if}}
+        <tr><td>LICENCIA:</td><td>{{conductorLicencia}}</td></tr>
+      </table>
     </div>
+    {{/if}}{{/if}}
+  </div>
+
+  <!-- ── ITEMS ───────────────────────────────────────────────── -->
+  <table class="productos-table">
+    <thead>
+      <tr>
+        <th class="col-n">N°</th>
+        <th class="col-cod">CÓDIGO</th>
+        <th class="col-desc">DESCRIPCIÓN</th>
+        <th class="col-um">UNIDAD</th>
+        <th class="col-cant">CANT.</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#each detalles}}
+      <tr>
+        <td class="col-n">{{this.item}}</td>
+        <td class="col-cod">{{this.codigo}}</td>
+        <td class="col-desc"><span class="desc-text">{{this.descripcion}}</span></td>
+        <td class="col-um">{{this.unidad}}</td>
+        <td class="col-cant">{{this.cantidad}}</td>
+      </tr>
+      {{/each}}
+      <tr class="peso-row">
+        <td colspan="5">PESO BRUTO TOTAL: {{pesoTotal}} {{unidadPeso}}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ── OBSERVACIONES + QR DE SUNAT ─────────────────────────── -->
+  <div class="footer-section">
+    <div class="observaciones-box">
+      {{#if observaciones}}
+      <div class="obs-title">OBSERVACIONES:</div>
+      <div class="obs-text">{{observaciones}}</div>
+      {{/if}}
+      {{#if retornoVehiculoVacio}}<div class="obs-text">RETORNO CON VEHÍCULO VACÍO</div>{{/if}}
+      {{#if retornoEnvasesVacios}}<div class="obs-text">RETORNO CON ENVASES O EMBALAJES VACÍOS</div>{{/if}}
+      {{#if transbordoProgramado}}<div class="obs-text">TRANSBORDO PROGRAMADO</div>{{/if}}
+      <div class="legal-text">
+        Representación impresa de la Guía de Remisión Electrónica {{tituloGuia}}.<br>
+        Emitida a través de un Proveedor de Servicios Electrónicos autorizado por SUNAT.<br>
+        Para sustentar el traslado basta exhibir el código QR o indicar el RUC, serie y número de la guía.
+      </div>
+    </div>
+    <div class="qr-sunat">
+      {{#if qrCode}}
+      <img src="{{qrCode}}" alt="QR SUNAT">
+      <p>Escanea para verificar la guía en SUNAT</p>
+      {{else}}
+      <div class="qr-pendiente">El código QR de SUNAT se genera cuando la guía es aceptada</div>
+      <p>Estado: {{estadoSunat}}</p>
+      {{/if}}
+    </div>
+  </div>
+
+  <!-- ── BOTTOM STRIP ───────────────────────────────────────── -->
+  <div class="footer-bottom">
+    <div class="usuario-label">USUARIO: {{usuario}} {{fechaImpresion}}</div>
+    {{#unless ocultarMarcaSistema}}
+    <div class="marca-label">
+      <span class="marca-name">{{sistemaNombre}} ™</span><br>
+      Guía emitida a través de {{sistemaWeb}}
+    </div>
+    {{/unless}}
+  </div>
 
 </body>
-
 </html>

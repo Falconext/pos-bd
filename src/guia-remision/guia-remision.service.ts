@@ -12,6 +12,7 @@ import { UpdateGuiaRemisionDto } from './dto/update-guia-remision.dto';
 import { QueryGuiaRemisionDto } from './dto/query-guia-remision.dto';
 import { SunatGuiaService } from './sunat-guia.service';
 import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
+import { generarQrGreDataUrl } from './qr-guia.util';
 import * as XLSX from 'xlsx';
 
 @Injectable()
@@ -854,21 +855,42 @@ export class GuiaRemisionService {
 
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
-      include: { rubro: true },
+      include: {
+        rubro: true,
+        usuarios: {
+          where: { rol: 'ADMIN_EMPRESA' },
+          take: 1,
+          select: { celular: true, email: true },
+        },
+      },
     });
 
     if (!empresa) {
       throw new BadRequestException('Empresa no encontrada');
     }
 
+    // QR oficial de SUNAT (URL de consulta que viene en el CDR aceptado).
+    const qrSunat = await generarQrGreDataUrl(guia);
+
+    const ahora = new Date();
+    const fechaImpresion =
+      ahora.toLocaleDateString('es-PE') +
+      ' ' +
+      ahora.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+    const esTransportista = guia.tipoGuia === 'TRANSPORTISTA';
+    const nombreConductor = [guia.conductorNombre, guia.conductorApellidos]
+      .filter(Boolean)
+      .join(' ');
+
     const data = {
-      // Empresa
-      nombreComercial: empresa.nombreComercial,
-      razonSocial: empresa.razonSocial,
-      direccion: empresa.direccion,
-      rubro: empresa.rubro?.nombre || '',
-      contacto: empresa.whatsappTienda || empresa.yapeNumero || '',
-      email: '', // Empresa model currently does not have explicit email field, usually in Usuario
+      // Empresa (mismos campos y mayúsculas que el A4 de comprobantes)
+      nombreComercial: (empresa.nombreComercial || '').toUpperCase(),
+      razonSocial: (empresa.razonSocial || '').toUpperCase(),
+      direccion: (empresa.direccion || '').toUpperCase(),
+      rubro: empresa.rubro?.nombre?.toUpperCase() || '',
+      celular: empresa.whatsappTienda || empresa.usuarios?.[0]?.celular || '',
+      email: empresa.usuarios?.[0]?.email || '',
+      paginaWeb: empresa.paginaWeb || undefined,
       logo: (() => {
         const raw = empresa.logo;
         if (!raw) return undefined;
@@ -881,10 +903,13 @@ export class GuiaRemisionService {
 
       // Documento
       ruc: empresa.ruc,
+      esTransportista,
+      tituloGuia: esTransportista ? 'TRANSPORTISTA' : 'REMITENTE',
       serie: guia.serie,
       correlativo: String(guia.correlativo).padStart(8, '0'),
       fechaEmision: formatDate(guia.fechaEmision),
       fechaTraslado: formatDate(guia.fechaInicioTraslado),
+      estadoSunat: guia.estadoSunat,
       // @ts-ignore: tipoTraslado might be property on guia
       motivoTraslado:
         motivosTraslado[guia['tipoTraslado']] ||
@@ -902,17 +927,37 @@ export class GuiaRemisionService {
       llegadaUbigeo: guia.llegadaUbigeo,
 
       // Destinatario
-      destinatarioRazonSocial: guia.destinatarioRazonSocial,
+      destinatarioRazonSocial: (
+        guia.destinatarioRazonSocial || ''
+      ).toUpperCase(),
+      destinatarioTipoDoc:
+        guia.destinatarioTipoDoc === '6'
+          ? 'RUC'
+          : guia.destinatarioTipoDoc === '1'
+            ? 'DNI'
+            : 'DOC',
       destinatarioNumDoc: guia.destinatarioNumDoc,
+      // GRE-T: quién entrega los bienes (el remitente no es el emisor)
+      remitenteBienesRazonSocial: (
+        guia.greTRemitenteRazonSocial || ''
+      ).toUpperCase(),
+      remitenteBienesNumDoc: guia.greTRemitenteNumDoc || '',
 
       // Transporte
       esTransportePublico: guia.modoTransporte === '01',
       esVehiculoM1oL: guia.modoTransporte === '02' && !!guia.vehiculoM1oL,
-      transportistaRazonSocial: guia.transportistaRazonSocial,
+      transportistaRazonSocial: (
+        guia.transportistaRazonSocial || ''
+      ).toUpperCase(),
       transportistaRuc: guia.transportistaRuc,
+      transportistaMTC: guia.transportistaMTC || '',
       vehiculoPlaca: guia.vehiculoPlaca,
-      conductorNombre: guia.conductorNombre,
+      conductorNombre: nombreConductor.toUpperCase(),
+      conductorNumDoc: guia.conductorNumDoc || '',
       conductorLicencia: guia.conductorLicencia,
+      retornoVehiculoVacio: guia.retornoVehiculoVacio,
+      retornoEnvasesVacios: guia.retornoEnvasesVacios,
+      transbordoProgramado: guia.transbordoProgramado,
 
       // Items
       detalles: guia.detalles.map((d, i) => ({
@@ -924,8 +969,22 @@ export class GuiaRemisionService {
       })),
 
       // Footer
-      observaciones: guia.observaciones,
-      qrCode: null, // TODO: Generar QR Code real
+      observaciones: guia.observaciones
+        ? guia.observaciones.toUpperCase()
+        : undefined,
+      qrCode: qrSunat,
+      usuario: (guia.usuario?.nombre || 'ADMIN').toUpperCase(),
+      fechaImpresion,
+      // Perfil → Configuración → "Mostrar la marca del sistema" apagado.
+      ocultarMarcaSistema: empresa.mostrarMarcaSistema === false,
+      sistemaNombre: process.env.APP_NAME || 'Falconext',
+      sistemaWeb: (
+        process.env.APP_URL ||
+        process.env.FRONTEND_URL ||
+        'https://falconext.pe'
+      )
+        .replace(/^https?:\/\//, '')
+        .replace(/\/$/, ''),
     };
 
     return this.pdfGeneratorService.generarPDFGuiaRemision(data);
