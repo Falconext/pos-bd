@@ -35,16 +35,18 @@ export interface PnlResponse {
     fechaFin: string;
   };
   /**
-   * Ventas del período SIN el IGV de los comprobantes electrónicos (Factura,
-   * Boleta, NC, ND). El IGV cobrado se le entrega a SUNAT, no es ingreso: si
-   * se comparara la venta con IGV contra el costo (que se guarda neto, ver
-   * compras) el margen saldría inflado ~18 puntos. Los documentos internos
-   * (Nota de Venta, Ticket, etc.) van íntegros porque ese IGV no se declara.
+   * Ventas del período SIN IGV (valor de venta) de TODOS los documentos:
+   * Factura, Boleta, NC, ND y también Nota de Venta/Ticket, porque el POS
+   * desglosa el IGV en todos por igual y el empresario entiende "valor venta"
+   * como total ÷ 1.18 (Chocolatería: 1,034.90 → 877.03). Si se comparara la
+   * venta con IGV contra el costo (que se guarda neto) el margen saldría
+   * inflado ~18 puntos; y descontar solo en los electrónicos daba una cifra
+   * híbrida que nadie reconocía.
    */
   ventasNetas: number;
   /** Ventas totales cobradas (con IGV), antes de descontar `igvVentas`. */
   ventasConIgv: number;
-  /** IGV de los comprobantes electrónicos del período (ventas − NC). */
+  /** IGV incluido en las ventas del período (ventas − NC). */
   igvVentas: number;
   costoBaseProductos: number;
   costosFijosProducto: number;
@@ -714,19 +716,16 @@ export class AnalisisFinancieroService {
   }
 
   /**
-   * IGV que el comprobante realmente le debe a SUNAT. Solo los comprobantes
-   * electrónicos (Factura 01, Boleta 03, NC 07, ND 08) lo declaran; el POS
-   * también desglosa un "IGV" en Notas de Venta/Tickets/etc. pero ese monto se
-   * queda en la empresa, así que para el P&L esas ventas van íntegras.
+   * IGV incluido en el comprobante. Se descuenta en TODOS los tipos de
+   * documento (incluidas Notas de Venta/Tickets, donde el POS también lo
+   * desglosa): el "valor venta" que espera el empresario es total ÷ 1.18.
+   * Solo se omite cuando el documento no trae IGV o el dato es inconsistente.
    */
   private igvDeclarado(c: {
     tipoDoc: string;
     mtoImpVenta: number;
     mtoIGV?: number | null;
   }): number {
-    if (!AnalisisFinancieroService.TIPOS_DOC_ELECTRONICOS.has(c.tipoDoc)) {
-      return 0;
-    }
     const total = this.toNumber(c.mtoImpVenta);
     const igv = this.toNumber(c.mtoIGV);
     // Datos inconsistentes (IGV negativo o mayor al total): no descontar nada
@@ -735,13 +734,6 @@ export class AnalisisFinancieroService {
     return igv;
   }
 
-  /**
-   * Ingreso de UNA línea sin el IGV declarado (ver `igvDeclarado`): en
-   * comprobantes electrónicos usa el valor de venta de la línea (base sin
-   * IGV); en documentos internos y en líneas gratuitas (donde
-   * mtoPrecioUnitario ya es el valor referencial) queda precio × cantidad.
-   * Devuelve el monto en la moneda del comprobante, sin signo.
-   */
   /** Precio × cantidad de la línea (con IGV), sin signo: lo que pagó el cliente. */
   private ventaLineaConIgv(det: {
     cantidad: number | null;
@@ -750,8 +742,16 @@ export class AnalisisFinancieroService {
     return (det.mtoPrecioUnitario ?? 0) * (det.cantidad ?? 0);
   }
 
+  /**
+   * Ingreso de UNA línea sin IGV (ver `igvDeclarado`): usa el valor de venta
+   * de la línea (base sin IGV) en cualquier tipo de documento; en líneas
+   * gratuitas o sin valor guardado (donde mtoPrecioUnitario ya es el valor
+   * referencial) queda precio × cantidad. Devuelve el monto en la moneda del
+   * comprobante, sin signo.
+   */
   private ingresoLineaSinIgv(
-    tipoDoc: string,
+    // Se conserva la firma (tipoDoc) por compatibilidad con los llamadores.
+    _tipoDoc: string,
     det: {
       cantidad: number | null;
       mtoPrecioUnitario: number | null;
@@ -760,9 +760,6 @@ export class AnalisisFinancieroService {
     },
   ): number {
     const bruto = (det.mtoPrecioUnitario ?? 0) * (det.cantidad ?? 0);
-    if (!AnalisisFinancieroService.TIPOS_DOC_ELECTRONICOS.has(tipoDoc)) {
-      return bruto;
-    }
     const afe = Number(det.tipAfeIgv ?? 10);
     const onerosa = afe === 10 || afe === 20 || afe === 30 || afe === 40;
     const neto = this.toNumber(det.mtoValorVenta);
@@ -847,14 +844,6 @@ export class AnalisisFinancieroService {
   }
 
   private readonly TIPOS_FINANCIAMIENTO = ['PRESTAMO', 'INVERSION', 'CAPITAL'];
-
-  /** Comprobantes cuyo IGV se declara a SUNAT (ver `igvDeclarado`). */
-  private static readonly TIPOS_DOC_ELECTRONICOS = new Set([
-    '01',
-    '03',
-    '07',
-    '08',
-  ]);
 
   /** Computes P&L figures from pre-fetched raw data. */
   private calcularPnl(
