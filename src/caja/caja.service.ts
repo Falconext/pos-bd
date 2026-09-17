@@ -33,6 +33,11 @@ export class CajaService {
     }
   }
 
+  /** 'YYYY-MM-DD' del instante en hora de Lima (para evaluar "el día" de una operación). */
+  private diaLima(fecha: Date): string {
+    return fecha.toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+  }
+
   private parseRangeDates(fechaInicio?: string, fechaFin?: string) {
     const today = new Date().toLocaleDateString('en-CA', {
       timeZone: 'America/Lima',
@@ -103,8 +108,11 @@ export class CajaService {
     usuarioId: number,
     empresaId: number,
     sedeId?: number,
+    // Sync offline: evaluar el día en que ocurrió la operación, no "hoy".
+    fechaRef?: Date,
   ) {
-    const { gte: hoyInicio, lte: hoyFin } = this.parseRangeDates();
+    const dia = fechaRef ? this.diaLima(fechaRef) : undefined;
+    const { gte: hoyInicio, lte: hoyFin } = this.parseRangeDates(dia, dia);
 
     // Solo considerar APERTURA y CIERRE — los EGRESO/INGRESO no cambian el estado de la caja
     const ultimoMovimiento = await this.prisma.movimientoCaja.findFirst({
@@ -180,12 +188,15 @@ export class CajaService {
     empresaId: number,
     aperturaCajaDto: AperturaCajaDto,
     sedeId?: number,
+    // Sync offline: hora real de la apertura en el dispositivo y uuid de origen.
+    opts?: { realizadoEn?: Date; origenSyncUuid?: string },
   ) {
     // Verificar si ya hay una caja abierta hoy
     const cajaAbierta = await this.verificarCajaAbierta(
       usuarioId,
       empresaId,
       sedeId,
+      opts?.realizadoEn,
     );
     if (cajaAbierta) {
       throw new BadRequestException(
@@ -208,6 +219,8 @@ export class CajaService {
         observaciones: aperturaCajaDto.observaciones,
         turno,
         estado: 'ACTIVO',
+        ...(opts?.realizadoEn ? { fecha: opts.realizadoEn } : {}),
+        ...(opts?.origenSyncUuid ? { origenSyncUuid: opts.origenSyncUuid } : {}),
       },
       include: {
         usuario: { select: { nombre: true, email: true } },
@@ -228,12 +241,16 @@ export class CajaService {
     empresaId: number,
     cierreCajaDto: CierreCajaDto,
     sedeId?: number,
+    // Sync offline: el cierre ocurrió en `realizadoEn`; el esperado se calcula
+    // con lo registrado entre la apertura y ese instante.
+    opts?: { realizadoEn?: Date; origenSyncUuid?: string },
   ) {
     // Verificar si hay una caja abierta
     const cajaAbierta = await this.verificarCajaAbierta(
       usuarioId,
       empresaId,
       sedeId,
+      opts?.realizadoEn,
     );
     if (!cajaAbierta) {
       throw new BadRequestException(
@@ -245,7 +262,7 @@ export class CajaService {
 
     // Calcular totales de ventas del turno actual (desde la apertura hasta ahora)
     const fechaApertura = cajaAbierta.fecha;
-    const fechaActual = new Date();
+    const fechaActual = opts?.realizadoEn ?? new Date();
 
     const ventasDelTurno = await this.obtenerVentasDelDia(
       empresaId,
@@ -272,7 +289,7 @@ export class CajaService {
             ...(sedeId ? { sedeId } : {}),
             tipoMovimiento: 'EGRESO',
             esTransferencia: false,
-            fecha: { gte: fechaApertura },
+            fecha: { gte: fechaApertura, lte: fechaActual },
             estado: 'ACTIVO',
             // Gastos pendientes/rechazados (maker-checker) no cuentan en el
             // cierre. Lista blanca explícita: null = sin flujo (legacy/admin).
@@ -287,7 +304,7 @@ export class CajaService {
             ...(sedeId ? { sedeId } : {}),
             tipoMovimiento: 'EGRESO',
             esTransferencia: true,
-            fecha: { gte: fechaApertura },
+            fecha: { gte: fechaApertura, lte: fechaActual },
             estado: 'ACTIVO',
           },
           _sum: { monto: true },
@@ -298,7 +315,7 @@ export class CajaService {
             ...(sedeId ? { sedeId } : {}),
             tipoMovimiento: 'INGRESO',
             esTransferencia: true,
-            fecha: { gte: fechaApertura },
+            fecha: { gte: fechaApertura, lte: fechaActual },
             estado: 'ACTIVO',
           },
           _sum: { monto: true },
@@ -344,9 +361,11 @@ export class CajaService {
         totalIngresos: ventasDelTurno.totalIngresos,
         diferencia,
         observaciones: cierreCajaDto.observaciones,
-        fechaCierre: new Date(),
+        fechaCierre: fechaActual,
         turno: turnoApertura,
         estado: 'ACTIVO',
+        ...(opts?.realizadoEn ? { fecha: opts.realizadoEn } : {}),
+        ...(opts?.origenSyncUuid ? { origenSyncUuid: opts.origenSyncUuid } : {}),
       },
       include: {
         usuario: { select: { nombre: true, email: true } },
@@ -1014,11 +1033,14 @@ export class CajaService {
     dto: RegistrarEgresoDto,
     sedeId?: number,
     usuarioRol?: string,
+    // Sync offline: hora real del gasto y uuid de origen.
+    opts?: { realizadoEn?: Date; origenSyncUuid?: string },
   ) {
     const cajaAbierta = await this.verificarCajaAbierta(
       usuarioId,
       empresaId,
       sedeId,
+      opts?.realizadoEn,
     );
     if (!cajaAbierta) {
       throw new BadRequestException(
@@ -1043,6 +1065,8 @@ export class CajaService {
         metodoPago: dto.metodoPago || 'Efectivo',
         estado: 'ACTIVO',
         estadoAprobacion,
+        ...(opts?.realizadoEn ? { fecha: opts.realizadoEn } : {}),
+        ...(opts?.origenSyncUuid ? { origenSyncUuid: opts.origenSyncUuid } : {}),
       },
       include: {
         usuario: { select: { nombre: true, email: true } },

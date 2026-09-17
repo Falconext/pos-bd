@@ -1380,6 +1380,9 @@ export class ComprobanteService {
     empresaId: number,
     tipoDoc: string,
   ) {
+    // Las operaciones que vienen del sync offline ya son idempotentes por uuid
+    // (OperacionSync) y pueden traer legítimamente dos ventas iguales seguidas.
+    if (data?.origenSyncUuid) return;
     const clienteId = Number(data?.clienteId);
     if (!clienteId) return;
     const totalNuevo =
@@ -2355,10 +2358,16 @@ export class ComprobanteService {
       empresaId: number;
       usuarioId?: number;
       sedeId?: number;
+      // Sync offline: la venta ya ocurrió (el cliente se llevó el producto), así
+      // que el faltante de stock no bloquea: se registra en `avisos` y el stock
+      // queda negativo (principio 3 del plan offline).
+      soloAvisar?: boolean;
+      avisos?: string[];
     },
   ): Promise<number> {
     const sedeId = await this.resolverSedeParaStock(data);
     detalles = await this.expandirKitsParaStock(detalles, data.empresaId);
+    const soloAvisar = data.soloAvisar === true;
 
     // Sobreventa configurable: si la empresa habilitó "permitirVentaSinStock",
     // NO se bloquea la venta por falta de stock (la salida se registra igual y el
@@ -2445,7 +2454,12 @@ export class ComprobanteService {
             `El lote ${lote.lote} de "${producto.descripcion}" está vencido`,
           );
         }
-        if (!permitirVentaSinStock && num(lote.stockActual) < cantidadLote) {
+        if (soloAvisar && num(lote.stockActual) < cantidadLote) {
+          data.avisos?.push(
+            `Lote ${lote.lote} de "${producto.descripcion}" quedó con stock insuficiente (había ${num(lote.stockActual)}, se vendieron ${cantidadLote}).`,
+          );
+        }
+        if (!permitirVentaSinStock && !soloAvisar && num(lote.stockActual) < cantidadLote) {
           throw new BadRequestException(
             `Stock insuficiente en lote ${lote.lote} para "${producto.descripcion}". Disponible: ${num(lote.stockActual)}, solicitado: ${cantidadLote}.`,
           );
@@ -2478,7 +2492,12 @@ export class ComprobanteService {
         Math.min(stockBase - reservado, cupoVenta),
       );
 
-      if (!permitirVentaSinStock && disponibleVenta < cantidad) {
+      if (soloAvisar && disponibleVenta < cantidad) {
+        data.avisos?.push(
+          `"${producto.descripcion}" quedó con stock negativo: había ${disponibleVenta} y se vendieron ${cantidad} sin conexión.`,
+        );
+      }
+      if (!permitirVentaSinStock && !soloAvisar && disponibleVenta < cantidad) {
         throw new BadRequestException(
           `Stock no disponible para venta en "${producto.descripcion}". Disponible para venta: ${disponibleVenta}, solicitado: ${cantidad}.`,
         );
@@ -2497,6 +2516,9 @@ export class ComprobanteService {
 
       usuarioId?: number;
       sedeId?: number;
+      // Sync offline: hora real y uuid de la operación (van al kardex).
+      fecha?: Date;
+      origenSyncUuid?: string;
     },
   ) {
     if (!data) {
@@ -2505,7 +2527,12 @@ export class ComprobanteService {
       );
     }
 
-    const sedeId = await this.validarStockDisponibleParaVenta(detalles, data);
+    // Offline (origenSyncUuid): la venta ya ocurrió; el faltante ya se avisó en
+    // la validación previa, aquí solo se descuenta (puede quedar negativo).
+    const sedeId = await this.validarStockDisponibleParaVenta(detalles, {
+      ...data,
+      soloAvisar: Boolean(data.origenSyncUuid),
+    });
     detalles = await this.expandirKitsParaStock(detalles, data.empresaId);
 
     for (const item of detalles) {
@@ -2542,6 +2569,8 @@ export class ComprobanteService {
           costoUnitario: costoUnitario,
           usuarioId: data.usuarioId,
           sedeId,
+          fecha: data.fecha,
+          origenSyncUuid: data.origenSyncUuid,
         });
 
         // Descuento de lote: atómico cuando viene loteId (farmacia), FEFO cuando no
@@ -2778,6 +2807,8 @@ export class ComprobanteService {
     empresaId: number,
     usuarioId?: number,
     sedeId?: number,
+    // Sync offline: la venta ocurrió en `fechaRef`, no "hoy".
+    fechaRef?: Date,
   ) {
     if (!usuarioId) return;
     const empresa = await this.prisma.empresa.findUnique({
@@ -2786,7 +2817,7 @@ export class ComprobanteService {
     });
     if (!empresa?.requiereCajaParaEmitir) return;
 
-    const today = new Date().toLocaleDateString('en-CA', {
+    const today = (fechaRef ?? new Date()).toLocaleDateString('en-CA', {
       timeZone: 'America/Lima',
     });
     const ultimoMovimiento = await this.prisma.movimientoCaja.findFirst({
@@ -4295,9 +4326,20 @@ export class ComprobanteService {
       // Serie/correlativo del documento original (modo importado).
       serie?: string;
       correlativo?: string;
+      // Sync offline (POST /sync/operaciones): la venta ya ocurrió en el
+      // dispositivo en `realizadoEn`. Se respeta esa hora en comprobante, pagos
+      // y kardex (para que caiga en el turno de caja correcto), el faltante de
+      // stock no bloquea (solo avisa) y se guarda el uuid de origen.
+      offline?: boolean;
+      realizadoEn?: Date;
+      origenSyncUuid?: string;
     },
   ) {
     const importado = opts?.importado === true;
+    const offline = opts?.offline === true;
+    const realizadoEn = offline ? opts?.realizadoEn : undefined;
+    const origenSyncUuid = offline ? opts?.origenSyncUuid : undefined;
+    const avisosOffline: string[] = [];
     // En modo importado (histórico) los flags vienen APAGADOS por defecto.
     const afectarStockImport = opts?.afectarStock === true;
     const afectarCajaImport = opts?.afectarCaja === true;
@@ -4336,7 +4378,12 @@ export class ComprobanteService {
     // Caja obligatoria (si la empresa lo configuró). Las cotizaciones (COT)
     // están exentas — no mueven stock ni caja — y las importaciones tampoco.
     if (!importado && String(tipoDoc).toUpperCase() !== 'COT') {
-      await this.exigirCajaAbiertaSiConfigurado(empresaId, usuarioId, sedeId);
+      await this.exigirCajaAbiertaSiConfigurado(
+        empresaId,
+        usuarioId,
+        sedeId,
+        realizadoEn,
+      );
     }
 
     // ¿Este informal debe afectar (descontar) el stock del almacén?
@@ -4509,6 +4556,10 @@ export class ComprobanteService {
       tipoOperacionId: tipoOperacionIdFinal ?? undefined,
       tipoDoc,
       fechaEmision: fecha,
+      // Offline: creadoEn = hora real en el dispositivo (la caja liga las
+      // ventas al turno por creadoEn/Pago.fecha) y rastro del uuid de origen.
+      ...(realizadoEn ? { creadoEn: realizadoEn } : {}),
+      ...(origenSyncUuid ? { origenSyncUuid } : {}),
       formaPagoTipo,
       formaPagoMoneda,
       tipoMoneda,
@@ -4585,6 +4636,8 @@ export class ComprobanteService {
         empresaId,
         sedeId: finalSedeId,
         usuarioId,
+        soloAvisar: offline,
+        avisos: avisosOffline,
       });
     }
 
@@ -4613,7 +4666,7 @@ export class ComprobanteService {
         splitPayments,
         montoPagado: montoPagadoInicial,
         documento: `${tipoDoc}-${comp.serie}-${comp.correlativo}`,
-        fecha,
+        fecha: realizadoEn ?? fecha,
       });
     }
 
@@ -4625,6 +4678,8 @@ export class ComprobanteService {
         concepto: `Venta ${tipoDoc} ${comp.serie}-${comp.correlativo}`,
         sedeId: finalSedeId,
         usuarioId,
+        fecha: realizadoEn,
+        origenSyncUuid,
       });
       await this.registrarSeriesVendidas(comp.id, empresaId, finalSedeId);
     }
@@ -4660,6 +4715,9 @@ export class ComprobanteService {
       }
     }
 
+    if (offline && avisosOffline.length) {
+      (comp as any).avisosOffline = avisosOffline;
+    }
     return comp;
   }
 

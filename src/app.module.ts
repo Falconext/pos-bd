@@ -25,6 +25,7 @@ import { NotificacionesModule } from './notificaciones/notificaciones.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
 import { S3Module } from './s3/s3.module';
 import { SyncModule } from './sync/sync.module';
+import { SyncMovilModule } from './sync-movil/sync-movil.module';
 import { TiendaModule } from './tienda/tienda.module';
 import { MarcaModule } from './marca/marca.module';
 import { DisenoRubroModule } from './diseno-rubro/diseno-rubro.module';
@@ -58,6 +59,7 @@ import { VehiculoModule } from './vehiculo/vehiculo.module';
 import { ContratoVehicularModule } from './contrato-vehicular/contrato-vehicular.module';
 import { TipoCambioModule } from './tipo-cambio/tipo-cambio.module';
 import { LeadsModule } from './leads/leads.module';
+import { SoporteModule } from './soporte/soporte.module';
 import { MercadoPagoModule } from './mercadopago/mercadopago.module';
 
 @Module({
@@ -86,6 +88,7 @@ import { MercadoPagoModule } from './mercadopago/mercadopago.module';
     WhatsAppModule,
     S3Module,
     SyncModule,
+    SyncMovilModule,
     MercadoPagoModule,
     TiendaModule,
     MarcaModule,
@@ -120,6 +123,7 @@ import { MercadoPagoModule } from './mercadopago/mercadopago.module';
     ContratoVehicularModule,
     TipoCambioModule,
     LeadsModule,
+    SoporteModule,
   ],
   controllers: [AppController],
   providers: [AppService],

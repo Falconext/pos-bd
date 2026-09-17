@@ -1334,6 +1334,8 @@ export class EmpresaService {
         updateData.usarPrecioLoteFefo = dto.usarPrecioLoteFefo;
       if (dto.permitirVentaSinStock !== undefined)
         updateData.permitirVentaSinStock = dto.permitirVentaSinStock;
+      if (dto.offlineHabilitado !== undefined)
+        updateData.offlineHabilitado = dto.offlineHabilitado;
       if (dto.cobranzaCampo !== undefined)
         updateData.cobranzaCampo = dto.cobranzaCampo;
       if (dto.requiereAprobacionGastos !== undefined)

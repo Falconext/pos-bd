@@ -266,6 +266,12 @@ model Empresa {
   // (se registra la salida aunque el stock quede en 0/negativo). Default false = mantiene
   // el bloqueo por stock insuficiente.
   permitirVentaSinStock         Boolean                       @default(false)
+  // Modo offline-first de la app móvil (Fase 1): la app puede vender/cajear sin
+  // red y sincronizar después vía /sync/operaciones. OFF por defecto (rollout
+  // gradual por empresa desde el panel de sistema).
+  offlineHabilitado             Boolean                       @default(false)
+  operacionesSync               OperacionSync[]
+  dispositivosMoviles           DispositivoMovil[]
   // Cobranza con vendedores de campo: cuando es true, "Registrar Pago" pide el vendedor de
   // campo que envió el comprobante, a quién se dirigió el pago y permite adjuntar el comprobante.
   // Default false = flujo de cobro estándar (la mayoría de negocios).
@@ -341,59 +347,60 @@ model Empresa {
   repartidores            Repartidor[]
   despachoMensajeTemplate DespachoMensajeTemplate?
 
-  bancoNombre          String?
-  numeroCuenta         String?
-  cci                  String?
-  monedaCuenta         String?                 @default("SOLES")
-  resellerId           Int?
-  reseller             Reseller?               @relation(fields: [resellerId], references: [id])
-  resellerMovimientos  ResellerMovimiento[]
-  brand                String                  @default("falconext")
-  producto             String                  @default("facturacion")
-  hotelTenantId        String?
-  hotelAdminUserId     String?
-  hotelSyncAt          DateTime?
-  usuarioPse           String?
-  contrasenaPse        String?
+  bancoNombre             String?
+  numeroCuenta            String?
+  cci                     String?
+  monedaCuenta            String?                        @default("SOLES")
+  resellerId              Int?
+  reseller                Reseller?                      @relation(fields: [resellerId], references: [id])
+  resellerMovimientos     ResellerMovimiento[]
+  brand                   String                         @default("falconext")
+  producto                String                         @default("facturacion")
+  hotelTenantId           String?
+  hotelAdminUserId        String?
+  hotelSyncAt             DateTime?
+  usuarioPse              String?
+  contrasenaPse           String?
   // Credenciales de API "Consulta de Validez de CPE" de SUNAT (client credentials
   // generadas en el portal SOL). Permiten verificar en SUNAT si un comprobante
   // fue aceptado (usado para conciliar comprobantes cuyo CDR no llegó).
-  sunatClientId        String?
-  sunatClientSecret    String?
-  usaDemo              Boolean                 @default(false)
-  metodoSalidaLotes    String                  @default("LIFO")
+  sunatClientId           String?
+  sunatClientSecret       String?
+  usaDemo                 Boolean                        @default(false)
+  metodoSalidaLotes       String                         @default("LIFO")
   // Mercado Pago (OAuth Marketplace): credenciales de la cuenta MP conectada por la empresa.
   // La plata de cada venta cae directo en la cuenta del negocio; la plataforma puede cobrar comisión.
-  mpUserId             String?
-  mpAccessToken        String?
-  mpRefreshToken       String?
-  mpTokenExpira        DateTime?
-  mpPublicKey          String?
-  mpConectado          Boolean                 @default(false)
+  mpUserId                String?
+  mpAccessToken           String?
+  mpRefreshToken          String?
+  mpTokenExpira           DateTime?
+  mpPublicKey             String?
+  mpConectado             Boolean                        @default(false)
   // Postventa / retención: estado de gestión de la cuenta cuando entra en riesgo de fuga.
   // Valores: POR_CONTACTAR | CONTACTADA | EN_NEGOCIACION | RECUPERADA | PERDIDA (null = sin gestión).
-  estadoGestion        String?
-  notas                NotaEmpresa[]
-  seguimientos         SeguimientoEmpresa[]
-  logs                 EmpresaLog[]
-  gastosOperativos     GastoOperativo[]
+  estadoGestion           String?
+  notas                   NotaEmpresa[]
+  seguimientos            SeguimientoEmpresa[]
+  logs                    EmpresaLog[]
+  gastosOperativos        GastoOperativo[]
   conciliacionesGuardadas ConciliacionBancariaGuardada[]
-  ingresosManual       IngresoManual[]
-  comisionesVendedor   ComisionVendedor[]
-  campanas             CampanaMarketing[]
-  series               EmpresaSerie[]
-  productoSeries       ProductoSerie[]
-  reclamosGarantia     ReclamoGarantia[]
-  productoReviews      ProductoReview[]
-  fichasTecnicas       FichaTecnicaPlantilla[]
-  cuentasBancarias     CuentaBancaria[]
-  doctors              Doctor[]
-  vehiculos            Vehiculo[]
-  contratosVehiculares ContratoVehicular[]
-  listasPrecio         ListaPrecio[]
-  leadConversaciones   LeadConversacion[]
-  leadProspectos       LeadProspecto[]
-  leadDocumentos       LeadDocumento[]
+  ingresosManual          IngresoManual[]
+  comisionesVendedor      ComisionVendedor[]
+  campanas                CampanaMarketing[]
+  series                  EmpresaSerie[]
+  productoSeries          ProductoSerie[]
+  reclamosGarantia        ReclamoGarantia[]
+  productoReviews         ProductoReview[]
+  fichasTecnicas          FichaTecnicaPlantilla[]
+  cuentasBancarias        CuentaBancaria[]
+  doctors                 Doctor[]
+  vehiculos               Vehiculo[]
+  contratosVehiculares    ContratoVehicular[]
+  listasPrecio            ListaPrecio[]
+  leadConversaciones      LeadConversacion[]
+  leadProspectos          LeadProspecto[]
+  leadDocumentos          LeadDocumento[]
+  soporteConversacion     SoporteConversacion?
 
   @@index([providerToken])
   @@index([slugTienda])
@@ -436,7 +443,7 @@ model Usuario {
   comprobantes                      Comprobante[]
   historialEstadosPedido            HistorialEstadoPedido[]
   movimientosCaja                   MovimientoCaja[]
-  depositosCajaRealizados           MovimientoCaja[]                  @relation("DepositoCajaRealizadoPor")
+  depositosCajaRealizados           MovimientoCaja[]                   @relation("DepositoCajaRealizadoPor")
   movimientosKardex                 MovimientoKardex[]
   Notificacion                      Notificacion[]
   pagos                             Pago[]
@@ -822,7 +829,7 @@ model Cliente {
   tipoDocumento         TipoDocumento?       @relation(fields: [tipoDocumentoId], references: [id])
   medicoTratante        Doctor?              @relation("PacienteMedico", fields: [medicoTratanteId], references: [id])
   compras               Compra[]
-  ordenesCompra         OrdenCompra[] @relation("OrdenCompraProveedor")
+  ordenesCompra         OrdenCompra[]        @relation("OrdenCompraProveedor")
   comprobantes          Comprobante[]
   guiasRemision         GuiaRemision[]
   productoReviews       ProductoReview[]
@@ -984,11 +991,15 @@ model Comprobante {
   campanas                CampanaMarketing[]
   productoSeries          ProductoSerie[]
 
+  // uuid de la operación offline que lo originó (null = emitido online).
+  origenSyncUuid String?
+
   // Clave de negocio del comprobante: impide correlativos duplicados en la misma
   // serie a nivel de BD. Es la red que hace efectivo el reintento anti-colisión
   // de crearComprobanteConReintento (P2002) cuando varias sedes/cajas emiten a la
   // vez sobre la misma serie.
   @@unique([empresaId, tipoDoc, serie, correlativo])
+  @@index([origenSyncUuid])
   // Panel de ventas / reportes: filtran por empresa + rango de fecha, opcional sede/usuario
   @@index([empresaId, fechaEmision])
   @@index([empresaId, sedeId, fechaEmision])
@@ -998,50 +1009,50 @@ model Comprobante {
 }
 
 model DetalleComprobante {
-  id                Int             @id @default(autoincrement())
-  comprobanteId     Int
-  productoId        Int?
-  unidad            String
-  descripcion       String
-  cantidad          Float
-  mtoValorUnitario  Float
-  mtoValorVenta     Float
-  mtoBaseIgv        Float
-  porcentajeIgv     Float
-  igv               Float
-  tipAfeIgv         Int
-  totalImpuestos    Float
-  numerosSerie      Json?
-  mtoPrecioUnitario Float
+  id                 Int             @id @default(autoincrement())
+  comprobanteId      Int
+  productoId         Int?
+  unidad             String
+  descripcion        String
+  cantidad           Float
+  mtoValorUnitario   Float
+  mtoValorVenta      Float
+  mtoBaseIgv         Float
+  porcentajeIgv      Float
+  igv                Float
+  tipAfeIgv          Int
+  totalImpuestos     Float
+  numerosSerie       Json?
+  mtoPrecioUnitario  Float
   // Descuento por línea (monto bruto, incl. IGV) — solo para mostrar en el ticket el precio
   // de lista y el ahorro; el precio ya viene con descuento en mtoPrecioUnitario/mtoValorVenta,
   // por lo que NO afecta el XML enviado a SUNAT.
-  mtoDescuento      Float?          @default(0)
+  mtoDescuento       Float?          @default(0)
   // Farmacia: trazabilidad de lote dispensado
-  loteId            Int?
+  loteId             Int?
   // Kit vendido como una sola línea (Empresa.kitsComoUnaLinea): referencia al combo
   // para descontar/reponer el stock de sus componentes.
-  comboId           Int?
+  comboId            Int?
   // Paquete vendido como una sola línea (Empresa.paquetesComoUnaLinea): unidades
   // reales por paquete (ej. 10) para descontar/reponer el stock del MISMO
   // producto (cantidad de esta línea × unidadesPorPaquete), aunque la línea
   // facture cantidad=1 al precio completo del paquete.
   unidadesPorPaquete Int?
   // Farmacia: datos de receta médica y medicamentos controlados
-  numeroReceta      String?
-  dniPaciente       String?
-  nombrePaciente    String?
-  medicoNombre      String?
+  numeroReceta       String?
+  dniPaciente        String?
+  nombrePaciente     String?
+  medicoNombre       String?
   // FKs opcionales — enlazan con entidades Doctor/Cliente si existen; los campos String se mantienen como fallback
-  medicoId          Int?
-  pacienteId        Int?
-  comprobante       Comprobante     @relation(fields: [comprobanteId], references: [id])
-  producto          Producto?       @relation(fields: [productoId], references: [id])
-  lote              ProductoLote?   @relation(fields: [loteId], references: [id])
-  combo             Combo?          @relation(fields: [comboId], references: [id], onDelete: SetNull)
-  medico            Doctor?         @relation("MedicoDetalle", fields: [medicoId], references: [id])
-  paciente          Cliente?        @relation("PacienteDetalle", fields: [pacienteId], references: [id])
-  seriesVendidas    ProductoSerie[]
+  medicoId           Int?
+  pacienteId         Int?
+  comprobante        Comprobante     @relation(fields: [comprobanteId], references: [id])
+  producto           Producto?       @relation(fields: [productoId], references: [id])
+  lote               ProductoLote?   @relation(fields: [loteId], references: [id])
+  combo              Combo?          @relation(fields: [comboId], references: [id], onDelete: SetNull)
+  medico             Doctor?         @relation("MedicoDetalle", fields: [medicoId], references: [id])
+  paciente           Cliente?        @relation("PacienteDetalle", fields: [pacienteId], references: [id])
+  seriesVendidas     ProductoSerie[]
 
   // FK usada en todo include/join de ventas, dashboard, finanzas y kardex
   @@index([comprobanteId])
@@ -1156,28 +1167,28 @@ model Pago {
 }
 
 model CuentaBancaria {
-  id           Int      @id @default(autoincrement())
-  empresaId    Int
-  banco        String
-  numeroCuenta String
-  cci          String?
-  titular      String?
-  tipoCuenta   String   @default("AHORROS")
-  moneda       String   @default("PEN")
-  alias        String?
-  activo       Boolean  @default(true)
-  mostrarEnCotizacion Boolean @default(true)
+  id                         Int              @id @default(autoincrement())
+  empresaId                  Int
+  banco                      String
+  numeroCuenta               String
+  cci                        String?
+  titular                    String?
+  tipoCuenta                 String           @default("AHORROS")
+  moneda                     String           @default("PEN")
+  alias                      String?
+  activo                     Boolean          @default(true)
+  mostrarEnCotizacion        Boolean          @default(true)
   /// Medio de pago digital vinculado ('YAPE' | 'PLIN' | null). Los pagos con ese
   /// medio se consideran abonados automáticamente en esta cuenta (Yape/Plin
   /// depositan directo al banco), así que no pasan por el flujo manual de
   /// depósitos de caja (solo el efectivo). Máx. una cuenta activa por medio
   /// por empresa (validado en servicio).
-  medioPagoVinculado String?
-  creadoEn     DateTime @default(now())
-  empresa      Empresa  @relation(fields: [empresaId], references: [id])
-  pagos        Pago[]
-  pagosCompra  PagoCompra[]
-  gastosOperativos GastoOperativo[]
+  medioPagoVinculado         String?
+  creadoEn                   DateTime         @default(now())
+  empresa                    Empresa          @relation(fields: [empresaId], references: [id])
+  pagos                      Pago[]
+  pagosCompra                PagoCompra[]
+  gastosOperativos           GastoOperativo[]
   movimientosCajaDepositados MovimientoCaja[]
 
   @@index([empresaId])
@@ -1210,6 +1221,8 @@ model MovimientoKardex {
   sede                  Sede?                  @relation(fields: [sedeId], references: [id])
   movimientoLotes       MovimientoKardexLote[]
   movimientosProduccion MovimientoProduccion[]
+  // uuid de la operación offline que lo originó (null = movimiento online).
+  origenSyncUuid        String?
 
   @@index([productoId, fecha])
   @@index([empresaId, fecha])
@@ -1269,6 +1282,8 @@ model MovimientoCaja {
   estadoAprobacion     String?
   // Quién aprobó/rechazó (denormalizado, sin FK — igual que vendedorCampoId).
   aprobadoPorUsuarioId Int?
+  // uuid de la operación offline que lo originó (null = registrado online).
+  origenSyncUuid       String?
 
   // Transferencia de efectivo entre cajas de distintas sedes: en la fila
   // EGRESO (origen), sedeContraparteId apunta a la sede destino; en la fila
@@ -1371,7 +1386,7 @@ model ItemPedidoTienda {
 }
 
 model Combo {
-  id                  Int                @id @default(autoincrement())
+  id                  Int                  @id @default(autoincrement())
   empresaId           Int
   nombre              String
   descripcion         String?
@@ -1379,16 +1394,16 @@ model Combo {
   precioRegular       Decimal
   precioCombo         Decimal
   descuentoPorcentaje Decimal?
-  activo              Boolean            @default(true)
+  activo              Boolean              @default(true)
   stock               Int?
   fechaInicio         DateTime?
   fechaFin            DateTime?
-  creadoEn            DateTime           @default(now())
-  actualizadoEn       DateTime           @updatedAt
+  creadoEn            DateTime             @default(now())
+  actualizadoEn       DateTime             @updatedAt
   pedidoItems         ItemPedidoTienda[]
   items               ComboItem[]
   detallesComprobante DetalleComprobante[]
-  empresa             Empresa            @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  empresa             Empresa              @relation(fields: [empresaId], references: [id], onDelete: Cascade)
 
   @@index([empresaId, activo])
   @@map("combos")
@@ -1640,28 +1655,28 @@ model ProductoLote {
 // cualquiera de estos códigos se resuelve al producto padre. El `codigoBarras`
 // principal vive en Producto; esta tabla guarda los alternos.
 model ProductoCodigoBarras {
-  id         Int      @id @default(autoincrement())
-  productoId Int
-  empresaId  Int
-  codigo     String
+  id                 Int      @id @default(autoincrement())
+  productoId         Int
+  empresaId          Int
+  codigo             String
   /// Unidades del producto base que representa este código al escanearlo (ej. el
   /// código del six-pack de cervezas vale 6; el código individual de la cerveza
   /// suelta usa el default 1). Todos los códigos comparten el MISMO stock.
   unidadesPorPaquete Int      @default(1)
   /// Código interno del negocio para esta presentación (ej. "22005-CJ" para la
   /// caja). Se busca y se escanea/tipea en el POS igual que el código de barras.
-  codigoInterno String?
+  codigoInterno      String?
   /// Precio TOTAL del paquete cuando se vende por este código (suele ser más
   /// barato que unidades × precio unitario). null = sin precio propio: se
   /// cobra precioUnitario × unidadesPorPaquete.
-  precioPaquete Decimal?
+  precioPaquete      Decimal?
   /// Nombre propio del paquete (ej. "SIX PACK CERVEZA PILSEN"): se muestra en
   /// el formulario y como descripción de la línea al vender por este código.
-  alias      String?
+  alias              String?
   /// Imagen propia del paquete (S3), opcional — solo presentación/orden.
-  imagenUrl  String?
-  creadoEn   DateTime @default(now())
-  producto   Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  imagenUrl          String?
+  creadoEn           DateTime @default(now())
+  producto           Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
 
   @@unique([empresaId, codigo])
   @@index([productoId])
@@ -1708,42 +1723,42 @@ model MovimientoKardexLote {
 }
 
 model Sede {
-  id            Int      @id @default(autoincrement())
-  empresaId     Int
-  nombre        String
-  direccion     String?
-  codigo        String?
-  tipo          TipoSede @default(PUNTO_DE_VENTA)
-  esPrincipal   Boolean  @default(false)
+  id                 Int      @id @default(autoincrement())
+  empresaId          Int
+  nombre             String
+  direccion          String?
+  codigo             String?
+  tipo               TipoSede @default(PUNTO_DE_VENTA)
+  esPrincipal        Boolean  @default(false)
   // Permite emitir comprobantes aun cuando la sede es de tipo ALMACEN.
   // Para PUNTO_DE_VENTA es irrelevante (siempre puede facturar).
-  permiteFacturacion Boolean @default(false)
-  activo        Boolean  @default(true)
-  creadoEn      DateTime @default(now())
-  actualizadoEn DateTime @updatedAt
+  permiteFacturacion Boolean  @default(false)
+  activo             Boolean  @default(true)
+  creadoEn           DateTime @default(now())
+  actualizadoEn      DateTime @updatedAt
 
-  empresa           Empresa            @relation(fields: [empresaId], references: [id], onDelete: Cascade)
-  stocks            ProductoStock[]
-  usuarios          Usuario[]
-  usuariosSede      UsuarioSede[]
-  comprobantes      Comprobante[]
-  movimientosKardex MovimientoKardex[]
-  MovimientoCaja    MovimientoCaja[]
-  movimientosCajaContraparte MovimientoCaja[] @relation("MovimientoCajaContraparte")
-  PedidoTienda      PedidoTienda[]
-  Compra            Compra[]
-  detallesCompra    DetalleCompra[] @relation("DetalleCompraSede")
-  GuiaRemision      GuiaRemision[]
-  reservas          Reserva[]
-  repartidores      Repartidor[]
-  productoSeries    ProductoSerie[]
-  listasPrecio      ListaPrecioSede[]
-  gastosOperativos  GastoOperativo[]
-  ingresosManuales  IngresoManual[]
-  campanasMarketing CampanaMarketing[]
+  empresa                    Empresa            @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  stocks                     ProductoStock[]
+  usuarios                   Usuario[]
+  usuariosSede               UsuarioSede[]
+  comprobantes               Comprobante[]
+  movimientosKardex          MovimientoKardex[]
+  MovimientoCaja             MovimientoCaja[]
+  movimientosCajaContraparte MovimientoCaja[]   @relation("MovimientoCajaContraparte")
+  PedidoTienda               PedidoTienda[]
+  Compra                     Compra[]
+  detallesCompra             DetalleCompra[]    @relation("DetalleCompraSede")
+  GuiaRemision               GuiaRemision[]
+  reservas                   Reserva[]
+  repartidores               Repartidor[]
+  productoSeries             ProductoSerie[]
+  listasPrecio               ListaPrecioSede[]
+  gastosOperativos           GastoOperativo[]
+  ingresosManuales           IngresoManual[]
+  campanasMarketing          CampanaMarketing[]
+  ordenesCompra              OrdenCompra[]
 
   @@index([empresaId])
-  ordenesCompra    OrdenCompra[]
 }
 
 model Reserva {
@@ -1831,7 +1846,7 @@ model ListaPrecio {
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt
 
-  empresa  Empresa               @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  empresa  Empresa              @relation(fields: [empresaId], references: [id], onDelete: Cascade)
   sedes    ListaPrecioSede[]
   usuarios ListaPrecioUsuario[]
   items    ListaPrecioItem[]
@@ -1866,14 +1881,14 @@ model ListaPrecioUsuario {
 }
 
 model ListaPrecioItem {
-  id            Int      @id @default(autoincrement())
-  listaPrecioId Int
-  productoId    Int
+  id                 Int      @id @default(autoincrement())
+  listaPrecioId      Int
+  productoId         Int
   // "" = precio de la unidad base; si no, matchea ProductoCodigoBarras.codigo
   // (presentación de paquete) del mismo producto. Se usa "" en vez de null para
   // que el unique compuesto trate "unidad base" como un valor único por producto.
-  presentacionCodigo String  @default("")
-  precioUnitario     Decimal @db.Decimal(12, 4)
+  presentacionCodigo String   @default("")
+  precioUnitario     Decimal  @db.Decimal(12, 4)
   precioOferta       Decimal? @db.Decimal(12, 4)
 
   listaPrecio ListaPrecio @relation(fields: [listaPrecioId], references: [id], onDelete: Cascade)
@@ -1885,44 +1900,44 @@ model ListaPrecioItem {
 }
 
 model Compra {
-  id               Int                @id @default(autoincrement())
-  empresaId        Int
-  proveedorId      Int
-  usuarioId        Int?
-  tipoDoc          String             @default("FACTURA")
-  serie            String
-  numero           String
-  fechaEmision     DateTime
-  fechaVencimiento DateTime?
-  moneda           String             @default("PEN")
-  tipoCambio       Decimal?           @default(1)
-  subtotal         Decimal            @default(0)
-  igv              Decimal            @default(0)
-  total            Decimal            @default(0)
-  saldo            Decimal            @default(0)
-  estado           EstadoCompra       @default(REGISTRADO)
-  estadoPago       EstadoPago         @default(PENDIENTE_PAGO)
+  id                   Int                @id @default(autoincrement())
+  empresaId            Int
+  proveedorId          Int
+  usuarioId            Int?
+  tipoDoc              String             @default("FACTURA")
+  serie                String
+  numero               String
+  fechaEmision         DateTime
+  fechaVencimiento     DateTime?
+  moneda               String             @default("PEN")
+  tipoCambio           Decimal?           @default(1)
+  subtotal             Decimal            @default(0)
+  igv                  Decimal            @default(0)
+  total                Decimal            @default(0)
+  saldo                Decimal            @default(0)
+  estado               EstadoCompra       @default(REGISTRADO)
+  estadoPago           EstadoPago         @default(PENDIENTE_PAGO)
   // Quién aprobó/rechazó la compra pendiente (denormalizado, sin FK).
   aprobadoPorUsuarioId Int?
   // Series/IMEI por línea de una compra PENDIENTE_APROBACION (string[][]):
   // se guardan aquí y recién se crean como ProductoSerie al aprobar.
-  seriesPendientes Json?
-  observaciones    String?
+  seriesPendientes     Json?
+  observaciones        String?
   // Foto de la factura/boleta subida al registrar la compra por IA (URL en S3).
   // Queda como evidencia y se muestra en el detalle de la compra.
-  fotoUrl          String?
-  creadoEn         DateTime           @default(now())
-  actualizadoEn    DateTime           @updatedAt
-  cuotas           Json?
-  empresa          Empresa            @relation(fields: [empresaId], references: [id])
-  proveedor        Cliente            @relation(fields: [proveedorId], references: [id])
-  usuario          Usuario?           @relation(fields: [usuarioId], references: [id])
-  detalles         DetalleCompra[]
-  ordenCompra      OrdenCompra?
-  movimientos      MovimientoKardex[]
-  pagos            PagoCompra[]
-  seriesGarantias  ProductoSerie[]
-  movimientosCaja  MovimientoCaja[]
+  fotoUrl              String?
+  creadoEn             DateTime           @default(now())
+  actualizadoEn        DateTime           @updatedAt
+  cuotas               Json?
+  empresa              Empresa            @relation(fields: [empresaId], references: [id])
+  proveedor            Cliente            @relation(fields: [proveedorId], references: [id])
+  usuario              Usuario?           @relation(fields: [usuarioId], references: [id])
+  detalles             DetalleCompra[]
+  ordenCompra          OrdenCompra?
+  movimientos          MovimientoKardex[]
+  pagos                PagoCompra[]
+  seriesGarantias      ProductoSerie[]
+  movimientosCaja      MovimientoCaja[]
 
   sedeId Int?
   sede   Sede? @relation(fields: [sedeId], references: [id])
@@ -1997,21 +2012,21 @@ model ImagenProductoAprobadaIa {
 }
 
 model PagoCompra {
-  id         Int      @id @default(autoincrement())
-  compraId   Int
-  empresaId  Int
-  usuarioId  Int?
-  fecha      DateTime @default(now())
-  monto      Decimal
-  metodoPago String
-  referencia String?
+  id               Int             @id @default(autoincrement())
+  compraId         Int
+  empresaId        Int
+  usuarioId        Int?
+  fecha            DateTime        @default(now())
+  monto            Decimal
+  metodoPago       String
+  referencia       String?
   // Pago por banco: cuenta bancaria con la que se pagó (referencia = N° de operación).
   cuentaBancariaId Int?
-  creadoEn   DateTime @default(now())
-  compra     Compra   @relation(fields: [compraId], references: [id], onDelete: Cascade)
-  empresa    Empresa  @relation(fields: [empresaId], references: [id])
-  usuario    Usuario? @relation(fields: [usuarioId], references: [id])
-  cuentaBancaria CuentaBancaria? @relation(fields: [cuentaBancariaId], references: [id])
+  creadoEn         DateTime        @default(now())
+  compra           Compra          @relation(fields: [compraId], references: [id], onDelete: Cascade)
+  empresa          Empresa         @relation(fields: [empresaId], references: [id])
+  usuario          Usuario?        @relation(fields: [usuarioId], references: [id])
+  cuentaBancaria   CuentaBancaria? @relation(fields: [cuentaBancariaId], references: [id])
 
   @@index([compraId])
 }
@@ -2243,35 +2258,35 @@ enum TipoRepartidor {
 }
 
 model EnvioDespacho {
-  id                     Int            @id @default(autoincrement())
-  comprobanteId          Int            @unique
-  comprobante            Comprobante    @relation(fields: [comprobanteId], references: [id], onDelete: Cascade)
-  transportista          String?
-  codigoGuia             String?
-  estado                 EstadoDespacho @default(PREPARANDO)
-  observaciones          String?
-  direccionDestino       String?
-  fechaEstimada          DateTime?
-  historial              Json?
+  id                       Int            @id @default(autoincrement())
+  comprobanteId            Int            @unique
+  comprobante              Comprobante    @relation(fields: [comprobanteId], references: [id], onDelete: Cascade)
+  transportista            String?
+  codigoGuia               String?
+  estado                   EstadoDespacho @default(PREPARANDO)
+  observaciones            String?
+  direccionDestino         String?
+  fechaEstimada            DateTime?
+  historial                Json?
   // Coordinación de envío nacional
-  tipoEnvio              String? // AGENCIA | DOMICILIO
-  agenciaDestino         String? // Nombre de agencia destino (ej: "Shalom Cusco Centro")
-  celularDest            String? // Celular del destinatario
-  nroPaquetes            Int?           @default(1)
-  turnoEnvio             String? // MANANA | TARDE | NOCHE
-  tipoMercaderia         String? // Clasificación para el courier (Shalom)
-  claveEnvio             String?
-  nroOrden               String?
-  claveOrden             String?
+  tipoEnvio                String? // AGENCIA | DOMICILIO
+  agenciaDestino           String? // Nombre de agencia destino (ej: "Shalom Cusco Centro")
+  celularDest              String? // Celular del destinatario
+  nroPaquetes              Int?           @default(1)
+  turnoEnvio               String? // MANANA | TARDE | NOCHE
+  tipoMercaderia           String? // Clasificación para el courier (Shalom)
+  claveEnvio               String?
+  nroOrden                 String?
+  claveOrden               String?
   // Estado de rastreo Shalom (persistido: read-through cache + scheduler)
-  shalomEstado           String? // etapa actual: registrado|origen|transito|destino|entregado
-  shalomEntregado        Boolean        @default(false)
-  shalomTrackingJson     Json? // último snapshot normalizado { search, statuses, ose_id }
-  shalomOseId            String? // ose_id resuelto (para descargar comprobante/etiqueta)
-  shalomSyncAt           DateTime? // última sincronización con Shalom
-  shalomAgenciaDestinoId String? // ter_id de la agencia destino (para crear la guía)
-  shalomTipoProducto     Int? // type_product de Shalom (MINI PAQUETERIA XS, etc.)
-  shalomGuiaCreadaEn     DateTime? // cuándo se generó la guía en Shalom Pro desde el sistema
+  shalomEstado             String? // etapa actual: registrado|origen|transito|destino|entregado
+  shalomEntregado          Boolean        @default(false)
+  shalomTrackingJson       Json? // último snapshot normalizado { search, statuses, ose_id }
+  shalomOseId              String? // ose_id resuelto (para descargar comprobante/etiqueta)
+  shalomSyncAt             DateTime? // última sincronización con Shalom
+  shalomAgenciaDestinoId   String? // ter_id de la agencia destino (para crear la guía)
+  shalomTipoProducto       Int? // type_product de Shalom (MINI PAQUETERIA XS, etc.)
+  shalomGuiaCreadaEn       DateTime? // cuándo se generó la guía en Shalom Pro desde el sistema
   // Estado de rastreo Olva (persistido: read-through cache + scheduler).
   // El N° de guía Olva vive en `nroOrden` (Olva no usa clave, solo el número).
   olvaEstado               String? // etapa actual: registrado|transito|reparto|destino|entregado
@@ -2283,20 +2298,20 @@ model EnvioDespacho {
   olvaRespuestaJson        Json? // respuesta cruda del registro (guía, etiqueta, precio)
   // Peso del paquete en kg: Olva lo exige para registrar la guía y cotizar.
   pesoKg                   Float?
-  establecimiento        String? // Local/sucursal desde donde despacha
-  repartidorId           Int?
-  repartidor             Repartidor?    @relation(fields: [repartidorId], references: [id], onDelete: SetNull)
-  empaquetador           String? // Nombre del empaquetador
+  establecimiento          String? // Local/sucursal desde donde despacha
+  repartidorId             Int?
+  repartidor               Repartidor?    @relation(fields: [repartidorId], references: [id], onDelete: SetNull)
+  empaquetador             String? // Nombre del empaquetador
   // Datos del destinatario (Shalom)
-  nombreDestinatario     String? // Nombre completo del destinatario
-  dniDestinatario        String? // DNI/documento del destinatario
-  contenidoPaquete       String? // Descripción del contenido (ej: "1 Caja")
-  montoCOD               Float? // Monto a cobrar en destino (Shalom COD)
-  costoEnvio             Float?         @default(0) // Monto cobrado al cliente o absorbido por el negocio
-  pagarFlete             String?        @default("NEGOCIO") // CLIENTE | NEGOCIO
-  aplicacionMontoCliente String?        @default("NEGOCIO") // ITEM_ENVIO | ADELANTO | NEGOCIO
-  creadoEn               DateTime       @default(now())
-  actualizadoEn          DateTime       @updatedAt
+  nombreDestinatario       String? // Nombre completo del destinatario
+  dniDestinatario          String? // DNI/documento del destinatario
+  contenidoPaquete         String? // Descripción del contenido (ej: "1 Caja")
+  montoCOD                 Float? // Monto a cobrar en destino (Shalom COD)
+  costoEnvio               Float?         @default(0) // Monto cobrado al cliente o absorbido por el negocio
+  pagarFlete               String?        @default("NEGOCIO") // CLIENTE | NEGOCIO
+  aplicacionMontoCliente   String?        @default("NEGOCIO") // ITEM_ENVIO | ADELANTO | NEGOCIO
+  creadoEn                 DateTime       @default(now())
+  actualizadoEn            DateTime       @updatedAt
 
   @@index([comprobanteId])
   @@index([repartidorId])
@@ -2652,15 +2667,15 @@ model EmpresaLog {
 // Bitácora de seguimiento postventa/retención por empresa. Cada entrada registra un
 // contacto o gestión (nota libre), opcionalmente el canal y el estado de gestión resultante.
 model SeguimientoEmpresa {
-  id             Int      @id @default(autoincrement())
-  empresaId      Int
-  empresa        Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
-  nota           String
-  canal          String? // WHATSAPP, LLAMADA, CORREO, PRESENCIAL, OTRO
-  estadoGestion  String? // estado fijado en este seguimiento (snapshot)
-  autorNombre    String
-  autorEmail     String
-  creadoEn       DateTime @default(now())
+  id            Int      @id @default(autoincrement())
+  empresaId     Int
+  empresa       Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  nota          String
+  canal         String? // WHATSAPP, LLAMADA, CORREO, PRESENCIAL, OTRO
+  estadoGestion String? // estado fijado en este seguimiento (snapshot)
+  autorNombre   String
+  autorEmail    String
+  creadoEn      DateTime @default(now())
 
   @@index([empresaId, creadoEn])
 }
@@ -2731,19 +2746,19 @@ enum CategoriaGasto {
 }
 
 model GastoOperativo {
-  id               Int            @id @default(autoincrement())
+  id               Int             @id @default(autoincrement())
   empresaId        Int
   mes              Int
   anio             Int
   fecha            DateTime?
-  recurrenteDiario Boolean        @default(false)
+  recurrenteDiario Boolean         @default(false)
   fechaInicio      DateTime?
   fechaFin         DateTime?
   categoria        CategoriaGasto
   etiqueta         String?
-  monto            Decimal        @db.Decimal(12, 2)
-  moneda           String         @default("PEN")
-  tipoCambio       Decimal?       @db.Decimal(10, 4)
+  monto            Decimal         @db.Decimal(12, 2)
+  moneda           String          @default("PEN")
+  tipoCambio       Decimal?        @db.Decimal(10, 4)
   cuentaBancariaId Int?
   medioPago        String?
   proveedor        String?
@@ -2755,11 +2770,11 @@ model GastoOperativo {
   // vista consolidada, no se le carga a ninguna sede. Los gastos anteriores a
   // esta columna quedan en null, es decir como gastos de empresa.
   sedeId           Int?
-  creadoEn         DateTime       @default(now())
-  actualizadoEn    DateTime       @updatedAt
-  empresa          Empresa        @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  creadoEn         DateTime        @default(now())
+  actualizadoEn    DateTime        @updatedAt
+  empresa          Empresa         @relation(fields: [empresaId], references: [id], onDelete: Cascade)
   cuentaBancaria   CuentaBancaria? @relation(fields: [cuentaBancariaId], references: [id], onDelete: SetNull)
-  sede             Sede?          @relation(fields: [sedeId], references: [id], onDelete: SetNull)
+  sede             Sede?           @relation(fields: [sedeId], references: [id], onDelete: SetNull)
 
   @@index([empresaId, sedeId])
   @@index([empresaId, anio, mes])
@@ -2872,20 +2887,20 @@ model ComisionVendedor {
 // =============================================
 
 model Vehiculo {
-  id            Int      @id @default(autoincrement())
-  empresaId     Int
-  sedeId        Int?
-  placa         String
-  marca         String
-  modelo        String?
-  color         String?
-  anio          Int?
+  id               Int      @id @default(autoincrement())
+  empresaId        Int
+  sedeId           Int?
+  placa            String
+  marca            String
+  modelo           String?
+  color            String?
+  anio             Int?
   kilometraje      Int?
   nivelCombustible String? // LLENO | 3/4 | 1/2 | 1/4 | VACIO
-  clienteId     Int?
-  observaciones String?
-  creadoEn      DateTime @default(now())
-  actualizadoEn DateTime @updatedAt
+  clienteId        Int?
+  observaciones    String?
+  creadoEn         DateTime @default(now())
+  actualizadoEn    DateTime @updatedAt
 
   empresa       Empresa                @relation(fields: [empresaId], references: [id], onDelete: Cascade)
   cliente       Cliente?               @relation(fields: [clienteId], references: [id])
@@ -2931,9 +2946,9 @@ model ContratoVehicular {
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt
 
-  empresa  Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade)
-  vehiculo Vehiculo  @relation(fields: [vehiculoId], references: [id], onDelete: Cascade)
-  producto Producto? @relation(fields: [productoId], references: [id])
+  empresa  Empresa                @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  vehiculo Vehiculo               @relation(fields: [vehiculoId], references: [id], onDelete: Cascade)
+  producto Producto?              @relation(fields: [productoId], references: [id])
   unidades ContratoVehiculoItem[]
 
   @@index([empresaId])
@@ -3136,14 +3151,14 @@ model VehiculoLogistica {
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt
 
-  empresa        Empresa                       @relation(fields: [empresaId], references: [id], onDelete: Cascade)
-  tipoVehiculo   TipoVehiculoLogistica         @relation(fields: [tipoVehiculoId], references: [id], onDelete: Restrict)
-  despachos      DespachoLogistica[]
-  asignaciones   AsignacionVehiculoLogistica[]
-  mantenimientos MantenimientoLogistica[]
-  combustibles   CombustibleLogistica[]
-  peajes         PeajeLogistica[]
-  documentos     DocumentoLogistica[]
+  empresa         Empresa                       @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  tipoVehiculo    TipoVehiculoLogistica         @relation(fields: [tipoVehiculoId], references: [id], onDelete: Restrict)
+  despachos       DespachoLogistica[]
+  asignaciones    AsignacionVehiculoLogistica[]
+  mantenimientos  MantenimientoLogistica[]
+  combustibles    CombustibleLogistica[]
+  peajes          PeajeLogistica[]
+  documentos      DocumentoLogistica[]
   dispositivosGps DispositivoGpsLogistica[]
 
   @@unique([empresaId, placa])
@@ -3226,20 +3241,20 @@ model MantenimientoLogistica {
 
 /// Registro de cargas de combustible por vehículo (control de consumo y gasto).
 model CombustibleLogistica {
-  id         Int                      @id @default(autoincrement())
+  id         Int @id @default(autoincrement())
   empresaId  Int
   vehiculoId Int
 
-  fecha           DateTime
-  tipoCombustible TipoCombustibleLogistica @default(GASOLINA)
-  cantidadLitros  Decimal                  @db.Decimal(10, 2)
-  costoTotal      Decimal                  @db.Decimal(10, 2)
-  costoPorLitro   Decimal?                 @db.Decimal(10, 2)
-  odometroKm      Int?
-  estacion        String?
+  fecha             DateTime
+  tipoCombustible   TipoCombustibleLogistica @default(GASOLINA)
+  cantidadLitros    Decimal                  @db.Decimal(10, 2)
+  costoTotal        Decimal                  @db.Decimal(10, 2)
+  costoPorLitro     Decimal?                 @db.Decimal(10, 2)
+  odometroKm        Int?
+  estacion          String?
   numeroComprobante String?
-  evidenciaUrl    String?
-  notas           String?
+  evidenciaUrl      String?
+  notas             String?
 
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt
@@ -3266,21 +3281,21 @@ enum EstadoPeajeLogistica {
 
 /// Peajes, multas e infracciones asociadas a un vehículo (con comprobante/recibo).
 model PeajeLogistica {
-  id         Int                  @id @default(autoincrement())
+  id         Int  @id @default(autoincrement())
   empresaId  Int
   vehiculoId Int?
 
   tipo   TipoPeajeLogistica   @default(PEAJE)
   estado EstadoPeajeLogistica @default(PENDIENTE)
 
-  fecha       DateTime
-  monto       Decimal  @db.Decimal(10, 2)
-  lugar       String?
-  descripcion String?
-  placa       String?
+  fecha          DateTime
+  monto          Decimal  @db.Decimal(10, 2)
+  lugar          String?
+  descripcion    String?
+  placa          String?
   comprobanteUrl String?
   reciboPagoUrl  String?
-  notas       String?
+  notas          String?
 
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt
@@ -3334,16 +3349,16 @@ model DocumentoLogistica {
 /// Dispositivo GPS (hardware o app) que reporta posiciones. Cada uno tiene un
 /// token para ingestión de ubicaciones y puede asignarse a un vehículo.
 model DispositivoGpsLogistica {
-  id            Int       @id @default(autoincrement())
-  empresaId     Int
-  nombre        String
-  identificador String // IMEI o serial
-  token         String    @unique @default(cuid())
-  vehiculoId    Int?
-  activo        Boolean   @default(true)
+  id             Int       @id @default(autoincrement())
+  empresaId      Int
+  nombre         String
+  identificador  String // IMEI o serial
+  token          String    @unique @default(cuid())
+  vehiculoId     Int?
+  activo         Boolean   @default(true)
   ultimaConexion DateTime?
-  ultimaLat     Decimal?  @db.Decimal(10, 8)
-  ultimaLng     Decimal?  @db.Decimal(11, 8)
+  ultimaLat      Decimal?  @db.Decimal(10, 8)
+  ultimaLng      Decimal?  @db.Decimal(11, 8)
 
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt
@@ -3837,24 +3852,24 @@ enum RolLeadMensaje {
 }
 
 model LeadConversacion {
-  id                Int                    @id @default(autoincrement())
-  empresaId         Int
-  empresa           Empresa                @relation(fields: [empresaId], references: [id], onDelete: Cascade)
-  telefonoProspecto String
-  nombreProspecto   String?
-  estado            EstadoLeadConversacion @default(ACTIVA)
-  cantidadMensajes  Int                    @default(0)
-  numeroWhatsappId  String? // phoneNumberId por el que entró
+  id                  Int                    @id @default(autoincrement())
+  empresaId           Int
+  empresa             Empresa                @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  telefonoProspecto   String
+  nombreProspecto     String?
+  estado              EstadoLeadConversacion @default(ACTIVA)
+  cantidadMensajes    Int                    @default(0)
+  numeroWhatsappId    String? // phoneNumberId por el que entró
   // Seguimiento automático: nº de nudges enviados en el silencio actual (se
   // reinicia a 0 cuando el prospecto vuelve a escribir) y cuándo fue el último.
-  seguimientos      Int                    @default(0)
+  seguimientos        Int                    @default(0)
   ultimoSeguimientoEn DateTime?
   // Evita reenviar el brochure más de una vez por conversación.
-  brochureEnviado   Boolean                @default(false)
-  mensajes          LeadMensaje[]
-  prospecto         LeadProspecto?
-  creadoEn          DateTime               @default(now())
-  actualizadoEn     DateTime               @updatedAt
+  brochureEnviado     Boolean                @default(false)
+  mensajes            LeadMensaje[]
+  prospecto           LeadProspecto?
+  creadoEn            DateTime               @default(now())
+  actualizadoEn       DateTime               @updatedAt
 
   @@unique([empresaId, telefonoProspecto])
   @@index([empresaId, estado])
@@ -3936,14 +3951,101 @@ model LeadDocumento {
 }
 
 model LeadFragmento {
-  id           Int           @id @default(autoincrement())
-  documentoId  Int
-  documento    LeadDocumento @relation(fields: [documentoId], references: [id], onDelete: Cascade)
-  indice       Int
-  contenido    String
+  id          Int                         @id @default(autoincrement())
+  documentoId Int
+  documento   LeadDocumento               @relation(fields: [documentoId], references: [id], onDelete: Cascade)
+  indice      Int
+  contenido   String
   // Embedding de 768 dims (pgvector). Se lee/escribe con SQL crudo ($queryRaw).
-  embedding    Unsupported("vector(768)")?
-  creadoEn     DateTime      @default(now())
+  embedding   Unsupported("vector(768)")?
+  creadoEn    DateTime                    @default(now())
 
   @@index([documentoId])
+}
+
+// ─── Soporte (chat empresario ↔ Krezka) ─────────────────────────────────────
+// Un hilo continuo por empresa, no un sistema de tickets con múltiples hilos:
+// el empresario le escribe a la plataforma y el equipo de Krezka responde
+// desde la bandeja de /administrador/sistema/soporte, scoping por brand igual
+// que sistema-finanzas (ver SistemaFinanzasService.resolveScope).
+enum EstadoSoporteConversacion {
+  ABIERTA
+  CERRADA
+}
+
+enum RolSoporteMensaje {
+  EMPRESA
+  SISTEMA
+}
+
+model SoporteConversacion {
+  id              Int                       @id @default(autoincrement())
+  empresaId       Int                       @unique
+  empresa         Empresa                   @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  estado          EstadoSoporteConversacion @default(ABIERTA)
+  // Quién de Krezka la está atendiendo. Informativo (sin FK): evita tocar el
+  // modelo Usuario solo para una referencia de despliegue en la bandeja.
+  asignadoAId     Int?
+  asignadoANombre String?
+  noLeidosEmpresa Int                       @default(0) // mensajes SISTEMA que la empresa no vio
+  noLeidosSistema Int                       @default(0) // mensajes EMPRESA que Krezka no vio
+  mensajes        SoporteMensaje[]
+  creadoEn        DateTime                  @default(now())
+  actualizadoEn   DateTime                  @updatedAt
+
+  @@index([estado, actualizadoEn])
+}
+
+model SoporteMensaje {
+  id             Int                 @id @default(autoincrement())
+  conversacionId Int
+  conversacion   SoporteConversacion @relation(fields: [conversacionId], references: [id], onDelete: Cascade)
+  rol            RolSoporteMensaje
+  autorNombre    String?
+  contenido      String
+  creadoEn       DateTime            @default(now())
+
+  @@index([conversacionId])
+}
+
+/// Operación recibida desde la app móvil en modo offline (POST /sync/operaciones).
+/// La clave es el `uuid` generado en el teléfono: si la misma operación llega dos
+/// veces (la red se cortó justo después de grabar) se devuelve el resultado
+/// guardado sin volver a aplicarla. Es lo que hace idempotente el sync.
+model OperacionSync {
+  id            Int      @id @default(autoincrement())
+  uuid          String   @unique
+  empresaId     Int
+  usuarioId     Int
+  sedeId        Int?
+  dispositivoId String
+  tipo          String // VENTA_INFORMAL | CAJA_APERTURA | CAJA_EGRESO | CAJA_CIERRE
+  realizadoEn   DateTime // hora real en el dispositivo
+  recibidoEn    DateTime @default(now())
+  estado        String // OK | ERROR | DESCARTADA
+  resultado     Json? // { comprobanteId, serie, correlativo, movimientoCajaId, avisos }
+  error         String?
+  payloadHash   String // sha256 del payload: mismo uuid con otro hash => 409
+  empresa       Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  @@index([empresaId, dispositivoId, recibidoEn])
+  @@index([empresaId, estado])
+}
+
+/// Teléfono/tablet que usa la app en modo offline. Sirve para soporte
+/// ("el equipo de caja 2 no sincroniza desde ayer") y auditoría.
+model DispositivoMovil {
+  id                    String    @id // uuid generado por la app
+  empresaId             Int
+  usuarioId             Int
+  nombre                String?
+  plataforma            String?
+  appVersion            String?
+  ultimoSyncEn          DateTime?
+  ultimoCatalogoVersion String?
+  pendientesReportados  Int       @default(0)
+  creadoEn              DateTime  @default(now())
+  empresa               Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  @@index([empresaId, ultimoSyncEn])
 }

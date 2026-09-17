@@ -29,8 +29,10 @@ export class AuthController {
     @Body() dto: LoginDto,
     @Res({ passthrough: true }) res: Response,
     @Headers('origin') origin: string,
+    @Headers('x-client') xClient?: string,
   ) {
-    const result = await this.authService.login(dto, origin);
+    // La app móvil manda `x-client: mobile` → refresh token largo (offline-first).
+    const result = await this.authService.login(dto, origin, xClient === 'mobile');
     res.locals.message = 'Inicio de sesión exitoso';
     return result;
   }
@@ -42,10 +44,12 @@ export class AuthController {
     @User() user: any,
     @Body('sedeId') sedeId: number,
     @Res({ passthrough: true }) res: Response,
+    @Headers('x-client') xClient?: string,
   ) {
     const result = await this.authService.selectSede(
       user.id ?? user.sub,
       Number(sedeId),
+      xClient === 'mobile',
     );
     res.locals.message = 'Sede seleccionada correctamente';
     return result;

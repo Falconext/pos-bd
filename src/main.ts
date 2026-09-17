@@ -7,6 +7,7 @@ import { buildLogisticaDocument } from './logistica/openapi/logistica-openapi';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import * as express from 'express';
+import compression from 'compression';
 import { PrismaService } from './prisma/prisma.service';
 import { initializeDatabase } from './common/utils/init-db';
 import { ensurePlanesVentas } from './common/utils/ensure-planes-ventas';
@@ -84,6 +85,8 @@ async function bootstrap() {
     allowedHeaders: ['Authorization', 'Content-Type', 'Accept'],
   });
 
+  // gzip de respuestas grandes (el catálogo para la app móvil offline pesa MBs).
+  app.use(compression({ threshold: 8 * 1024 }));
   // Configurar límites de payload y middleware de seguridad
   app.use(httpSecurityHeaders(isProduction));
   app.use(

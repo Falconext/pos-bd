@@ -189,6 +189,10 @@ export class KardexService {
     sedeId: number; // Changed to required
     lote?: string;
     fechaVencimiento?: Date;
+    // Sync offline: hora real del movimiento en el dispositivo y uuid de la
+    // operación que lo originó. Sin ellos se usa now() (comportamiento previo).
+    fecha?: Date;
+    origenSyncUuid?: string;
   }) {
     // Obtener el producto stock en la sede
     let productoStock = await this.prisma.productoStock.findUnique({
@@ -291,6 +295,8 @@ export class KardexService {
         observacion: data.observacion,
         lote: data.lote,
         fechaVencimiento: data.fechaVencimiento,
+        ...(data.fecha ? { fecha: data.fecha } : {}),
+        ...(data.origenSyncUuid ? { origenSyncUuid: data.origenSyncUuid } : {}),
       },
       include: {
         producto: {

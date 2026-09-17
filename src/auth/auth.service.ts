@@ -24,6 +24,10 @@ export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private readonly accessExpiresInSec: number;
   private readonly refreshExpiresInSec: number;
+  // App móvil (modo offline-first): un negocio puede pasar días sin señal, así
+  // que su refresh token dura más (30 días por defecto) y se marca en el JWT
+  // con `movil: true` para que cada renovación conserve la misma duración.
+  private readonly refreshExpiresMovilSec: number;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -45,6 +49,16 @@ export class AuthService {
     this.refreshExpiresInSec = isProduction
       ? Number(refreshEnv) || 604800
       : 604800;
+    this.refreshExpiresMovilSec =
+      Number(this.config.get<string>('JWT_REFRESH_EXPIRES_IN_MOVIL')) ||
+      30 * 24 * 60 * 60;
+  }
+
+  /** Duración del refresh según el cliente (web vs app móvil). */
+  private refreshTtl(movil: boolean) {
+    const seconds = movil ? this.refreshExpiresMovilSec : this.refreshExpiresInSec;
+    const expiresAt = new Date(Date.now() + seconds * 1000);
+    return { seconds, expiresAt };
   }
 
   private resolveBrandFromOrigin(origin: string | undefined): string | null {
@@ -60,6 +74,7 @@ export class AuthService {
   async login(
     { email, password, brand: bodyBrand }: LoginPayload,
     origin?: string,
+    movil = false,
   ) {
     const user: any = await this.prisma.usuario.findUnique({
       where: { email },
@@ -217,15 +232,14 @@ export class AuthService {
     const accessToken = await this.jwt.signAsync(payload, {
       expiresIn: this.accessExpiresInSec,
     });
+    const ttl = this.refreshTtl(movil);
     const refreshToken = await this.jwt.signAsync(
-      { sub: user.id, sedeId: sedeIdFinal ?? null },
-      { expiresIn: this.refreshExpiresInSec },
+      { sub: user.id, sedeId: sedeIdFinal ?? null, movil },
+      { expiresIn: ttl.seconds },
     );
 
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7);
     await this.prisma.refreshToken.create({
-      data: { token: refreshToken, usuarioId: user.id, expiresAt },
+      data: { token: refreshToken, usuarioId: user.id, expiresAt: ttl.expiresAt },
     });
 
     return { accessToken, refreshToken, usuario: usuarioCompleto };
@@ -360,7 +374,7 @@ export class AuthService {
     };
   }
 
-  async selectSede(userId: number, sedeId: number) {
+  async selectSede(userId: number, sedeId: number, movil = false) {
     const user = await this.prisma.usuario.findUnique({
       where: { id: userId },
       include: { empresa: true },
@@ -424,13 +438,13 @@ export class AuthService {
     const accessToken = await this.jwt.signAsync(payload, {
       expiresIn: this.accessExpiresInSec,
     });
+    const ttl = this.refreshTtl(movil);
     const refreshToken = await this.jwt.signAsync(
-      { sub: user.id, sedeId },
-      { expiresIn: this.refreshExpiresInSec },
+      { sub: user.id, sedeId, movil },
+      { expiresIn: ttl.seconds },
     );
 
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7);
+    const expiresAt = ttl.expiresAt;
     await this.prisma.refreshToken.create({
       data: { token: refreshToken, usuarioId: user.id, expiresAt },
     });
@@ -477,6 +491,7 @@ export class AuthService {
     // Recuperar sedeId del refresh token anterior (incluido en el payload al hacer login)
     const decoded = this.jwt.decode(refreshToken);
     const sedeId: number | null = decoded?.sedeId ?? null;
+    const movil: boolean = decoded?.movil === true;
 
     const payload: any = {
       sub: user.id,
@@ -490,13 +505,13 @@ export class AuthService {
     const accessToken = await this.jwt.signAsync(payload, {
       expiresIn: this.accessExpiresInSec,
     });
+    const ttl = this.refreshTtl(movil);
     const newRefreshToken = await this.jwt.signAsync(
-      { sub: user.id, sedeId },
-      { expiresIn: this.refreshExpiresInSec },
+      { sub: user.id, sedeId, movil },
+      { expiresIn: ttl.seconds },
     );
 
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7);
+    const expiresAt = ttl.expiresAt;
 
     await this.prisma.$transaction([
       this.prisma.refreshToken.delete({ where: { id: stored.id } }),
