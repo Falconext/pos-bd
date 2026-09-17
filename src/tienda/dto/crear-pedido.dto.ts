@@ -8,8 +8,11 @@ import {
   IsEnum,
   Min,
   Max,
+  IsNotEmpty,
+  ArrayMinSize,
+  Matches,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 
 export class ItemPedidoDto {
   @IsNumber()
@@ -39,10 +42,19 @@ export enum TipoEntrega {
 }
 
 export class CrearPedidoDto {
+  // Nombre y teléfono son lo único que tiene la tienda para ubicar al cliente:
+  // no se aceptan vacíos ni solo espacios (la validación vivía solo en el front).
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
+  @IsNotEmpty({ message: 'El nombre del cliente es obligatorio' })
   clienteNombre: string;
 
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
+  @IsNotEmpty({ message: 'El teléfono del cliente es obligatorio' })
+  @Matches(/^(?:\D*\d){6,}\D*$/, {
+    message: 'El teléfono debe tener al menos 6 dígitos',
+  })
   clienteTelefono: string;
 
   @IsEmail()
@@ -58,6 +70,7 @@ export class CrearPedidoDto {
   clienteReferencia?: string;
 
   @IsArray()
+  @ArrayMinSize(1, { message: 'El pedido debe tener al menos un producto' })
   @ValidateNested({ each: true })
   @Type(() => ItemPedidoDto)
   items: ItemPedidoDto[];
