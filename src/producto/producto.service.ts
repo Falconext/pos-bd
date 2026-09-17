@@ -4741,12 +4741,18 @@ export class ProductoService {
             : null;
         const descripcion =
           row['PRODUCTO'] ?? row['Producto'] ?? row['producto'] ?? null;
-        const unidadNombre =
+        const unidadCelda =
           row['U.M'] ??
           row['U.M.'] ??
           row['Unidad de Medida'] ??
           row['unidadMedida'] ??
           null;
+        // Celda U.M vacía (fila agregada a mano al final del Excel): se asume
+        // Unidad en vez de rechazar la fila.
+        const unidadNombre =
+          unidadCelda == null || String(unidadCelda).trim() === ''
+            ? 'Unidad'
+            : unidadCelda;
         const afectRaw = row['AFECT'] ?? row['Afect'] ?? row['afect'] ?? null;
         const precioUnitarioRaw =
           row['PRECIO UNITARIO CON IGV'] ??
@@ -4782,9 +4788,14 @@ export class ProductoService {
         const categoriaRaw =
           row['CATEGORIA'] ?? row['Categoría'] ?? row['categoria'] ?? null;
         const marcaRaw = row['MARCA'] ?? row['Marca'] ?? row['marca'] ?? null;
-        if (!codigo)
+        // Fila sin CÓDIGO: es un producto nuevo que el empresario agregó al final
+        // del Excel exportado (caso DEMENVER). Se le genera el siguiente PRxxx en
+        // vez de rechazar la fila; si trae código de barras y ese barcode ya existe,
+        // se actualiza ese producto.
+        const codigoVacio = codigo == null || String(codigo).trim() === '';
+        if (codigoVacio && !descripcion)
           throw new ForbiddenException(
-            `Código no proporcionado en la fila ${index + 1}`,
+            `Fila ${index + 1}: sin CÓDIGO ni nombre de PRODUCTO`,
           );
         if (!descripcion)
           throw new ForbiddenException(
@@ -4798,7 +4809,7 @@ export class ProductoService {
         // Si CÓDIGO es solo dígitos de 8-14 chars → puede ser un código de barras EAN/UPC.
         // La decisión de codigoFinal/codigoBarras se toma tras conocer si el producto
         // ya existe (más abajo), para no romper el round-trip export→import.
-        const codigoRaw = codigo.toString().trim();
+        const codigoRaw = codigoVacio ? '' : codigo.toString().trim();
         const esBarcode = /^\d{8,14}$/.test(codigoRaw);
 
         const unidadKey = unidadNombre
@@ -4897,10 +4908,23 @@ export class ProductoService {
             empresaId,
             estado: { not: 'PLACEHOLDER' as any },
             OR: [
-              { codigo: codigoRaw },
-              { codigoBarras: codigoRaw },
+              ...(codigoRaw
+                ? [{ codigo: codigoRaw }, { codigoBarras: codigoRaw }]
+                : []),
               ...(codigoBarrasExplicito
                 ? [{ codigoBarras: codigoBarrasExplicito }]
+                : []),
+              // Sin código ni barcode: se busca por nombre exacto para que
+              // reimportar el mismo Excel no duplique el producto.
+              ...(!codigoRaw && !codigoBarrasExplicito
+                ? [
+                    {
+                      descripcion: {
+                        equals: descripcion.toString().trim(),
+                        mode: 'insensitive' as const,
+                      },
+                    },
+                  ]
                 : []),
             ],
           },
@@ -4931,6 +4955,10 @@ export class ProductoService {
                 ? codigoRaw
                 : undefined;
           }
+        } else if (!codigoRaw) {
+          // Producto nuevo sin CÓDIGO en el Excel: siguiente correlativo PRxxx.
+          codigoFinal = await this.obtenerSiguienteCodigo(empresaId, 'PR');
+          codigoBarras = codigoBarrasExplicito ?? undefined;
         } else if (codigoBarrasExplicito) {
           // Producto nuevo con columnas separadas: CÓDIGO = SKU, y el barcode viene
           // en su propia columna. El CÓDIGO se respeta tal cual (no se trata como EAN).
@@ -4970,7 +4998,7 @@ export class ProductoService {
           producto = await this.prisma.producto.update({
             where: { id: existe.id },
             data: {
-              descripcion: descripcion.toString(),
+              descripcion: descripcion.toString().trim(),
               unidadMedidaId: Number(unidadMedidaId),
               tipoAfectacionIGV,
               precioUnitario: new Decimal(precioUnitario),
@@ -5012,7 +5040,7 @@ export class ProductoService {
           producto = await this.crear(
             {
               codigo: codigoFinal,
-              descripcion: descripcion.toString(),
+              descripcion: descripcion.toString().trim(),
               unidadMedidaId: Number(unidadMedidaId),
               tipoAfectacionIGV,
               precioUnitario,
