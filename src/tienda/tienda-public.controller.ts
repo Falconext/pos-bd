@@ -2,12 +2,14 @@ import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
 import { TiendaService } from './tienda.service';
 import { CrearPedidoDto } from './dto/crear-pedido.dto';
 import { ModificadoresService } from '../modificadores/modificadores.service';
+import { MercadoPagoService } from '../mercadopago/mercadopago.service';
 
 @Controller('public/store')
 export class TiendaPublicController {
   constructor(
     private readonly tiendaService: TiendaService,
     private readonly modificadoresService: ModificadoresService,
+    private readonly mercadoPago: MercadoPagoService,
   ) {}
 
   @Get(':slug')
@@ -109,6 +111,20 @@ export class TiendaPublicController {
   @Get('track/:codigo')
   async rastrearPedido(@Param('codigo') codigo: string) {
     return this.tiendaService.obtenerPedidoPorCodigo(codigo);
+  }
+
+  // Respaldo al volver de Mercado Pago (back_url trae payment_id/collection_id):
+  // consulta el pago con el token de la empresa y confirma el pedido si fue aprobado.
+  @Get('track/:codigo/mp-sync')
+  async sincronizarMercadoPago(
+    @Param('codigo') codigo: string,
+    @Query('payment_id') paymentId?: string,
+    @Query('collection_id') collectionId?: string,
+  ) {
+    return this.mercadoPago.sincronizarPagoRetorno(
+      codigo,
+      paymentId || collectionId || undefined,
+    );
   }
 
   // ==================== COMBOS ====================

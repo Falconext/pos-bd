@@ -149,7 +149,8 @@ const TEMPLATE_IMAGE_FIELD_PATTERN =
 function isTemplateImageField(campo: string): boolean {
   return (
     typeof campo === 'string' &&
-    (TEMPLATE_IMAGE_FIELDS.has(campo) || TEMPLATE_IMAGE_FIELD_PATTERN.test(campo))
+    (TEMPLATE_IMAGE_FIELDS.has(campo) ||
+      TEMPLATE_IMAGE_FIELD_PATTERN.test(campo))
   );
 }
 
@@ -2223,8 +2224,14 @@ export class TiendaService {
       aceptaTarjeta,
       culqiPublicKey: aceptaTarjeta ? culqiPublicKey : null,
       culqiBackendReady: Boolean(culqiSecretKey),
-      aceptaMercadoPago: Boolean(empresa.mpConectado),
-      mercadoPagoPublicKey: empresa.mpConectado ? empresa.mpPublicKey : null,
+      aceptaMercadoPago:
+        Boolean(empresa.mpConectado) &&
+        this.mercadoPago.habilitadaParaEmpresa(empresa.id),
+      mercadoPagoPublicKey:
+        empresa.mpConectado &&
+        this.mercadoPago.habilitadaParaEmpresa(empresa.id)
+          ? empresa.mpPublicKey
+          : null,
       cuentasBancarias: empresa.cuentasBancarias || [],
     };
   }
@@ -2276,7 +2283,11 @@ export class TiendaService {
     }
 
     // Mercado Pago requiere que la empresa tenga su cuenta conectada.
-    if (dto.medioPago === 'MERCADO_PAGO' && !empresa.mpConectado) {
+    if (
+      dto.medioPago === 'MERCADO_PAGO' &&
+      (!empresa.mpConectado ||
+        !this.mercadoPago.habilitadaParaEmpresa(empresa.id))
+    ) {
       throw new BadRequestException(
         'Esta tienda no tiene Mercado Pago habilitado',
       );
@@ -2498,7 +2509,8 @@ export class TiendaService {
         empresaId: empresa.id,
         pedidoId: pedido.id,
         codigoSeguimiento,
-        titulo: empresa.nombreComercial || empresa.razonSocial || 'Compra online',
+        titulo:
+          empresa.nombreComercial || empresa.razonSocial || 'Compra online',
         total,
         slug,
         clienteEmail: dto.clienteEmail,

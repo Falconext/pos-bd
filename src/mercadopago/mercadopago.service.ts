@@ -67,6 +67,23 @@ export class MercadoPagoService {
   get configurado() {
     return Boolean(this.clientId && this.clientSecret);
   }
+  /**
+   * Lista blanca de empresas que pueden usar Mercado Pago
+   * (MP_EMPRESAS_HABILITADAS="22,45"). Vacía = disponible para todas.
+   * Sirve para lanzar con una sola cuenta piloto y abrirlo después sin deploy.
+   */
+  private get empresasHabilitadas(): Set<number> {
+    return new Set(
+      String(process.env.MP_EMPRESAS_HABILITADAS || '')
+        .split(',')
+        .map((s) => Number(s.trim()))
+        .filter((n) => Number.isInteger(n) && n > 0),
+    );
+  }
+  habilitadaParaEmpresa(empresaId: number): boolean {
+    const lista = this.empresasHabilitadas;
+    return lista.size === 0 || lista.has(Number(empresaId));
+  }
 
   // ── OAuth: conectar / callback / desconectar ───────────────────────────────
 
@@ -75,6 +92,11 @@ export class MercadoPagoService {
     if (!this.configurado) {
       throw new BadRequestException(
         'Mercado Pago no está configurado en la plataforma (faltan credenciales)',
+      );
+    }
+    if (!this.habilitadaParaEmpresa(empresaId)) {
+      throw new BadRequestException(
+        'Mercado Pago aún no está habilitado para esta empresa',
       );
     }
     // state firmado (JWT corto) para saber qué empresa conecta y evitar manipulación.
@@ -102,7 +124,9 @@ export class MercadoPagoService {
       }
       empresaId = Number(payload.empresaId);
     } catch {
-      throw new BadRequestException('El enlace de conexión expiró o es inválido');
+      throw new BadRequestException(
+        'El enlace de conexión expiró o es inválido',
+      );
     }
 
     const token = await this.exchangeCode(code);
@@ -143,6 +167,8 @@ export class MercadoPagoService {
     });
     return {
       configuradoPlataforma: this.configurado,
+      // false = la tarjeta de conexión ni se muestra (lista blanca de lanzamiento).
+      disponible: this.habilitadaParaEmpresa(empresaId),
       conectado: Boolean(e?.mpConectado),
       mpUserId: e?.mpUserId ?? null,
     };
@@ -241,7 +267,11 @@ export class MercadoPagoService {
         mpConectado: true,
       },
     });
-    if (!empresa || !empresa.mpConectado) {
+    if (
+      !empresa ||
+      !empresa.mpConectado ||
+      !this.habilitadaParaEmpresa(empresa.id)
+    ) {
       throw new BadRequestException(
         'Esta tienda no tiene Mercado Pago habilitado',
       );
@@ -348,47 +378,160 @@ export class MercadoPagoService {
         return;
       }
 
-      // Necesitamos un access_token de vendedor para consultar el pago. Como el
-      // webhook no dice a qué empresa pertenece, consultamos el pago probando con
-      // el external_reference. MP permite consultar el pago con el token del vendedor
-      // dueño del pago; recorremos empresas conectadas por metadata cuando sea posible.
-      // Estrategia: obtener el pago con el token de la empresa a partir del external_reference.
-      // Primero, intentar leerlo con cualquier empresa conectada hasta ubicar el pedido.
-      const pago = await this.buscarPago(String(paymentId));
-      if (!pago) return;
-
-      const codigo = pago.external_reference;
-      if (!codigo) return;
-      const pedido = await this.prisma.pedidoTienda.findUnique({
-        where: { codigoSeguimiento: codigo },
-      });
-      if (!pedido) return;
-
-      if (pago.status === 'approved') {
-        const total = Number(pedido.total);
-        await this.prisma.pedidoTienda.update({
-          where: { id: pedido.id },
-          data: {
-            mpPaymentId: String(pago.id),
-            montoPagado: total,
-            saldoPendiente: 0,
-            estado: 'CONFIRMADO',
-            fechaConfirmacion: new Date(),
-            referenciaTransf: `mp_payment:${pago.id}`,
-          },
-        });
-        await this.prisma.historialEstadoPedido.create({
-          data: {
-            pedidoId: pedido.id,
-            estadoAnterior: 'PENDIENTE',
-            estadoNuevo: 'CONFIRMADO',
-            notas: `Pago confirmado por Mercado Pago (${pago.id})`,
-          },
-        });
+      // MP incluye `user_id` = cuenta del vendedor (collector). Con eso ubicamos
+      // la empresa directamente; si no viene, probamos con las empresas conectadas.
+      const userIdHint = body?.user_id ?? query?.user_id;
+      const pago = await this.buscarPago(
+        String(paymentId),
+        userIdHint != null ? String(userIdHint) : undefined,
+      );
+      if (!pago) {
+        this.logger.warn(`Webhook MP: pago ${paymentId} no encontrado`);
+        return;
       }
+      await this.aplicarPago(pago, 'webhook');
     } catch (err: any) {
       this.logger.error(`Error procesando webhook MP: ${err?.message}`);
     }
+  }
+
+  /**
+   * Sincroniza el pago de un pedido cuando el comprador vuelve de Checkout Pro
+   * (back_url trae payment_id/collection_id). Sirve de respaldo si el webhook
+   * todavía no llegó o no está configurado. Es público: solo confirma lo que
+   * Mercado Pago responda con el token de la propia empresa.
+   */
+  async sincronizarPagoRetorno(
+    codigoSeguimiento: string,
+    paymentId?: string,
+  ): Promise<{ estado: string; pagado: boolean; mpStatus: string | null }> {
+    const pedido = await this.prisma.pedidoTienda.findUnique({
+      where: { codigoSeguimiento },
+      select: { id: true, estado: true, empresaId: true, mpPaymentId: true },
+    });
+    if (!pedido) throw new NotFoundException('Pedido no encontrado');
+
+    const yaPagado = Boolean(pedido.mpPaymentId);
+    if (yaPagado) {
+      return { estado: pedido.estado, pagado: true, mpStatus: 'approved' };
+    }
+
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: pedido.empresaId },
+      select: {
+        id: true,
+        mpAccessToken: true,
+        mpRefreshToken: true,
+        mpTokenExpira: true,
+        mpConectado: true,
+      },
+    });
+    if (!empresa?.mpConectado) {
+      return { estado: pedido.estado, pagado: false, mpStatus: null };
+    }
+
+    let pago: any = null;
+    try {
+      const accessToken = await this.getValidAccessToken(empresa);
+      if (paymentId && /^\d+$/.test(paymentId)) {
+        const { data } = await axios.get(`${MP_PAYMENTS_URL}/${paymentId}`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        pago = data;
+      } else {
+        // Sin payment_id: buscar por external_reference el más reciente aprobado.
+        const { data } = await axios.get(`${MP_PAYMENTS_URL}/search`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          params: {
+            external_reference: codigoSeguimiento,
+            sort: 'date_created',
+            criteria: 'desc',
+          },
+        });
+        const lista: any[] = data?.results || [];
+        pago = lista.find((x) => x.status === 'approved') || lista[0] || null;
+      }
+    } catch (err: any) {
+      this.logger.warn(
+        `No se pudo sincronizar pago MP del pedido ${codigoSeguimiento}: ${err?.response?.data?.message || err?.message}`,
+      );
+    }
+
+    if (!pago) return { estado: pedido.estado, pagado: false, mpStatus: null };
+    // Seguridad: el pago debe corresponder a este pedido.
+    if (pago.external_reference !== codigoSeguimiento) {
+      return { estado: pedido.estado, pagado: false, mpStatus: null };
+    }
+    const aplicado = await this.aplicarPago(pago, 'retorno');
+    return {
+      estado: aplicado?.estado ?? pedido.estado,
+      pagado: pago.status === 'approved',
+      mpStatus: pago.status ?? null,
+    };
+  }
+
+  /**
+   * Marca el pedido como pagado/confirmado a partir de un pago de MP aprobado.
+   * Idempotente: si el pedido ya registró ese pago, no hace nada.
+   */
+  private async aplicarPago(
+    pago: any,
+    origen: 'webhook' | 'retorno',
+  ): Promise<{ estado: string } | null> {
+    const codigo = pago?.external_reference;
+    if (!codigo) return null;
+    const pedido = await this.prisma.pedidoTienda.findUnique({
+      where: { codigoSeguimiento: codigo },
+      select: { id: true, estado: true, total: true, mpPaymentId: true },
+    });
+    if (!pedido) return null;
+
+    if (pago.status !== 'approved') {
+      this.logger.log(
+        `Pago MP ${pago.id} del pedido ${codigo} en estado ${pago.status} (${origen})`,
+      );
+      return { estado: pedido.estado };
+    }
+    if (pedido.mpPaymentId === String(pago.id)) {
+      return { estado: pedido.estado }; // ya procesado (reintento de MP)
+    }
+
+    // Monto: el pago debe cubrir el total del pedido (tolerancia de céntimos).
+    const total = Number(pedido.total);
+    const pagado = Number(pago.transaction_amount ?? total);
+    if (pagado + 0.01 < total) {
+      this.logger.warn(
+        `Pago MP ${pago.id} por ${pagado} no cubre el total ${total} del pedido ${codigo}`,
+      );
+    }
+
+    const nuevoEstado =
+      pedido.estado === 'PENDIENTE' ? 'CONFIRMADO' : pedido.estado;
+    await this.prisma.$transaction([
+      this.prisma.pedidoTienda.update({
+        where: { id: pedido.id },
+        data: {
+          mpPaymentId: String(pago.id),
+          montoPagado: total,
+          saldoPendiente: 0,
+          estado: nuevoEstado as any,
+          fechaConfirmacion: new Date(),
+          referenciaTransf: `mp_payment:${pago.id}`,
+        },
+      }),
+      this.prisma.historialEstadoPedido.create({
+        data: {
+          pedidoId: pedido.id,
+          estadoAnterior: pedido.estado,
+          estadoNuevo: nuevoEstado as any,
+          notas: `Pago confirmado por Mercado Pago (${pago.id}) vía ${origen}`,
+        },
+      }),
+    ]);
+    this.logger.log(
+      `Pedido ${codigo} confirmado por Mercado Pago (pago ${pago.id}, ${origen})`,
+    );
+    return { estado: nuevoEstado };
   }
 
   /**
@@ -412,14 +555,13 @@ export class MercadoPagoService {
     if (!xSignature) return false;
 
     // x-signature: "ts=1699999999,v1=abcdef..."
-    const parts = xSignature.split(',').reduce<Record<string, string>>(
-      (acc, kv) => {
+    const parts = xSignature
+      .split(',')
+      .reduce<Record<string, string>>((acc, kv) => {
         const [k, v] = kv.split('=');
         if (k && v) acc[k.trim()] = v.trim();
         return acc;
-      },
-      {},
-    );
+      }, {});
     const ts = parts['ts'];
     const v1 = parts['v1'];
     if (!ts || !v1) return false;
@@ -442,18 +584,34 @@ export class MercadoPagoService {
     }
   }
 
-  /** Consulta el pago probando con los tokens de empresas conectadas. */
-  private async buscarPago(paymentId: string): Promise<any | null> {
-    const empresas = await this.prisma.empresa.findMany({
+  /**
+   * Consulta el pago con el token de la empresa dueña (por mpUserId si MP lo
+   * indica); si no, prueba con las empresas conectadas hasta ubicarlo.
+   */
+  private async buscarPago(
+    paymentId: string,
+    mpUserId?: string,
+  ): Promise<any | null> {
+    const select = {
+      id: true,
+      mpUserId: true,
+      mpAccessToken: true,
+      mpRefreshToken: true,
+      mpTokenExpira: true,
+    } as const;
+    const candidatas = await this.prisma.empresa.findMany({
       where: { mpConectado: true },
-      select: {
-        id: true,
-        mpAccessToken: true,
-        mpRefreshToken: true,
-        mpTokenExpira: true,
-      },
+      select,
+      orderBy: { id: 'asc' },
     });
-    for (const empresa of empresas) {
+    // La empresa indicada por MP va primero; el resto queda como respaldo.
+    const ordenadas = mpUserId
+      ? [
+          ...candidatas.filter((e) => e.mpUserId === mpUserId),
+          ...candidatas.filter((e) => e.mpUserId !== mpUserId),
+        ]
+      : candidatas;
+    for (const empresa of ordenadas) {
       try {
         const accessToken = await this.getValidAccessToken(empresa);
         const { data } = await axios.get(`${MP_PAYMENTS_URL}/${paymentId}`, {
