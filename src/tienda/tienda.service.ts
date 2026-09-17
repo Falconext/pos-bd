@@ -2377,6 +2377,14 @@ export class TiendaService {
     }
     const igv = subtotal - subtotal / 1.18;
     const total = subtotal + costoEnvio;
+    // MP rechaza montos menores a S/ 5 (error 2072 "Invalid value for
+    // transaction_amount") sin explicación para el comprador: se corta aquí,
+    // antes de crear el pedido.
+    if (dto.medioPago === 'MERCADO_PAGO' && total < 5) {
+      throw new BadRequestException(
+        'Mercado Pago solo acepta pagos desde S/ 5. Elige otro medio de pago.',
+      );
+    }
     const adelanto =
       dto.medioPago === 'TARJETA'
         ? total
