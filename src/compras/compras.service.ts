@@ -232,6 +232,10 @@ export class ComprasService {
       sedeId = principal.id;
     }
 
+    // Distribución por sede: las líneas pueden entrar a una sede distinta a la
+    // de la cabecera (misma factura repartida entre almacenes).
+    await this.validarSedesDeLineas(empresaId, data.detalles);
+
     // Prepare detail data and calculate totals from items to be safe
     const detallesData: any[] = [];
 
@@ -263,6 +267,11 @@ export class ComprasService {
         fechaVencimiento: item.fechaVencimiento
           ? parseFechaSoloDia(item.fechaVencimiento)
           : null,
+        // Distribución por sede: null = entra a la sede de la cabecera.
+        sedeId:
+          item.sedeId != null && Number(item.sedeId) !== sedeId
+            ? Number(item.sedeId)
+            : null,
       });
     }
 
@@ -372,7 +381,8 @@ export class ComprasService {
             costoUnitario: costoNetoKardex,
             compraId: compra.id,
             usuarioId,
-            sedeId,
+            // Distribución por sede: la línea entra a su propia sede si la trae.
+            sedeId: item.sedeId != null ? Number(item.sedeId) : sedeId,
             lote: item.lote,
             fechaVencimiento: item.fechaVencimiento
               ? parseFechaSoloDia(item.fechaVencimiento)
@@ -430,7 +440,8 @@ export class ComprasService {
           seriesData.push({
             empresaId,
             productoId: Number(item.productoId),
-            sedeId: sedeId ?? null,
+            sedeId:
+              item.sedeId != null ? Number(item.sedeId) : (sedeId ?? null),
             numeroSerie,
             estado: 'DISPONIBLE',
             garantiaMeses:
@@ -569,7 +580,8 @@ export class ComprasService {
           costoUnitario: Number(detalle.precioUnitario),
           compraId: compra.id,
           usuarioId: adminId,
-          sedeId,
+          // Distribución por sede: cada línea entra a su sede (o a la de la cabecera).
+          sedeId: detalle.sedeId ?? sedeId,
           lote: detalle.lote ?? undefined,
           fechaVencimiento: detalle.fechaVencimiento ?? undefined,
         });
@@ -607,7 +619,7 @@ export class ComprasService {
           seriesData.push({
             empresaId,
             productoId: detalle.productoId,
-            sedeId: sedeId ?? null,
+            sedeId: detalle.sedeId ?? sedeId ?? null,
             numeroSerie,
             estado: 'DISPONIBLE',
             compraId: compra.id,
@@ -728,6 +740,35 @@ export class ComprasService {
     }
   }
 
+  /**
+   * Distribución por sede: valida que las sedes indicadas en las líneas
+   * pertenezcan a la empresa y estén activas.
+   */
+  private async validarSedesDeLineas(
+    empresaId: number,
+    detalles: { sedeId?: number | null }[],
+  ): Promise<void> {
+    const ids = [
+      ...new Set(
+        detalles
+          .map((d) => (d.sedeId != null ? Number(d.sedeId) : null))
+          .filter((x): x is number => x != null && Number.isFinite(x)),
+      ),
+    ];
+    if (!ids.length) return;
+    const sedes = await this.prisma.sede.findMany({
+      where: { id: { in: ids }, empresaId, activo: true },
+      select: { id: true },
+    });
+    const validas = new Set(sedes.map((x) => x.id));
+    const invalidas = ids.filter((x) => !validas.has(x));
+    if (invalidas.length) {
+      throw new BadRequestException(
+        `Sede destino de línea no válida o inactiva (id ${invalidas.join(', ')}).`,
+      );
+    }
+  }
+
   // Revierte el inventario ingresado por una compra: por cada detalle con
   // producto registra un movimiento de kardex compensatorio (SALIDA) que baja el
   // stock, y descuenta el lote FEFO correspondiente. Best-effort: los fallos no
@@ -745,6 +786,7 @@ export class ComprasService {
         lote: string | null;
         fechaVencimiento: Date | null;
         descripcion: string | null;
+        sedeId?: number | null;
       }[];
     },
     empresaId: number,
@@ -771,7 +813,8 @@ export class ComprasService {
           costoUnitario: Number(det.precioUnitario) || 0,
           compraId: compra.id,
           usuarioId,
-          sedeId,
+          // Se revierte en la misma sede a la que entró la línea.
+          sedeId: det.sedeId ?? sedeId,
         });
 
         // Revertir el lote FEFO ingresado por esta línea (si aplicaba).
@@ -959,6 +1002,8 @@ export class ComprasService {
       data.sedeId,
       existente.sedeId ?? reqSedeId,
     );
+    // Distribución por sede: validar ANTES de revertir nada.
+    await this.validarSedesDeLineas(empresaId, data.detalles);
 
     // 1) Revertir el inventario de la versión anterior.
     const warningsRevertir = await this.revertirInventarioCompra(
@@ -1004,6 +1049,11 @@ export class ComprasService {
         fechaVencimiento: item.fechaVencimiento
           ? parseFechaSoloDia(item.fechaVencimiento)
           : null,
+        // Distribución por sede: null = entra a la sede de la cabecera.
+        sedeId:
+          item.sedeId != null && Number(item.sedeId) !== sedeId
+            ? Number(item.sedeId)
+            : null,
       });
     }
     const subtotalTotal = this.roundMoney(subtotal);
@@ -1096,7 +1146,8 @@ export class ComprasService {
           costoUnitario: costoNetoKardex,
           compraId: compra.id,
           usuarioId,
-          sedeId,
+          // Distribución por sede: la línea entra a su propia sede si la trae.
+          sedeId: item.sedeId != null ? Number(item.sedeId) : sedeId,
           lote: item.lote,
           fechaVencimiento: item.fechaVencimiento
             ? parseFechaSoloDia(item.fechaVencimiento)
@@ -1142,7 +1193,8 @@ export class ComprasService {
           seriesData.push({
             empresaId,
             productoId: Number(item.productoId),
-            sedeId: sedeId ?? null,
+            sedeId:
+              item.sedeId != null ? Number(item.sedeId) : (sedeId ?? null),
             numeroSerie,
             estado: 'DISPONIBLE',
             garantiaMeses:
@@ -1196,9 +1248,20 @@ export class ComprasService {
         select: { id: true },
       });
       if (esPrincipal) {
-        sedeFilter = { AND: [{ OR: [{ sedeId }, { sedeId: null }] }] };
+        sedeFilter = {
+          AND: [
+            {
+              OR: [
+                { sedeId },
+                { sedeId: null },
+                { detalles: { some: { sedeId } } },
+              ],
+            },
+          ],
+        };
       } else {
-        sedeFilter = { sedeId };
+        // Una compra distribuida cuenta para cada sede que recibió líneas.
+        sedeFilter = { OR: [{ sedeId }, { detalles: { some: { sedeId } } }] };
       }
     }
 
@@ -1276,6 +1339,7 @@ export class ComprasService {
         detalles: {
           include: {
             producto: true,
+            sede: { select: { id: true, nombre: true } },
             seriesGarantias: {
               select: { numeroSerie: true, garantiaMeses: true, estado: true },
             },

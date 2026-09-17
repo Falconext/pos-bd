@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ComprasController } from './compras.controller';
 import { ComprasService } from './compras.service';
+import { ImportarComprasService } from './importar-compras.service';
+import { ClienteModule } from '../cliente/cliente.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { KardexModule } from '../kardex/kardex.module';
 import { ProductoModule } from '../producto/producto.module';
@@ -12,8 +14,8 @@ import { OrdenCompraController } from './orden-compra.controller';
 import { OrdenCompraService } from './orden-compra.service';
 
 @Module({
-  imports: [PrismaModule, KardexModule, ProductoModule, CajaModule, ComprobanteModule, GeminiModule, S3Module],
+  imports: [PrismaModule, KardexModule, ProductoModule, CajaModule, ComprobanteModule, GeminiModule, S3Module, ClienteModule],
   controllers: [OrdenCompraController, ComprasController],
-  providers: [ComprasService, OrdenCompraService],
+  providers: [ComprasService, OrdenCompraService, ImportarComprasService],
 })
 export class ComprasModule {}

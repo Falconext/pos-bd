@@ -14,19 +14,99 @@ import {
   BadRequestException,
   UploadedFile,
   UseInterceptors,
+  Res,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { ComprasService } from './compras.service';
+import { ImportarComprasService } from './importar-compras.service';
 import { CrearCompraDto } from './dto/crear-compra.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { xmlUploadOptions, imageUploadOptions } from '../common/utils/multer.config';
+import {
+  xmlUploadOptions,
+  imageUploadOptions,
+  spreadsheetUploadOptions,
+} from '../common/utils/multer.config';
 
 @Controller('compras')
 @UseGuards(JwtAuthGuard)
 export class ComprasController {
-  constructor(private readonly comprasService: ComprasService) {}
+  constructor(
+    private readonly comprasService: ComprasService,
+    private readonly importarCompras: ImportarComprasService,
+  ) {}
+
+  // ── Importación masiva de compras desde Excel ──────────────────────────
+  // Rutas fijas ANTES de ':id' para que 'importar' no se lea como un id.
+
+  /** Plantilla .xlsx precargada con el catálogo y el stock por sede. */
+  @Get('importar/plantilla')
+  async plantillaImportar(@Request() req, @Res() res: Response) {
+    const buffer = await this.importarCompras.plantilla(req.user.empresaId);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename=plantilla_importar_compras.xlsx',
+    );
+    res.end(buffer);
+  }
+
+  /** Vista previa: parsea y valida el Excel sin grabar nada. */
+  @Post('importar/previsualizar')
+  @UseInterceptors(FileInterceptor('file', spreadsheetUploadOptions))
+  async previsualizarImportar(
+    @Request() req,
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: any,
+  ) {
+    if (!file?.buffer) {
+      throw new BadRequestException('No se recibió ningún archivo Excel/CSV.');
+    }
+    return this.importarCompras.previsualizar(
+      req.user.empresaId,
+      req.user.sedeId,
+      file.buffer,
+      this.opcionesImportar(body),
+    );
+  }
+
+  /** Importa las compras válidas del Excel (una compra por proveedor+documento+sede). */
+  @Post('importar')
+  @UseInterceptors(FileInterceptor('file', spreadsheetUploadOptions))
+  async importar(
+    @Request() req,
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: any,
+  ) {
+    if (!file?.buffer) {
+      throw new BadRequestException('No se recibió ningún archivo Excel/CSV.');
+    }
+    return this.importarCompras.importar(
+      req.user.empresaId,
+      req.user.id,
+      req.user.rol,
+      req.user.sedeId,
+      file.buffer,
+      this.opcionesImportar(body),
+    );
+  }
+
+  /** Los flags llegan como string en multipart. */
+  private opcionesImportar(body: any) {
+    const flag = (v: any, def: boolean) =>
+      v === undefined || v === null || v === '' ? def : String(v) === 'true';
+    return {
+      incluyeIgvDefault: flag(body?.incluyeIgvDefault, false),
+      crearProductos: flag(body?.crearProductos, false),
+      marcarPagado: flag(body?.marcarPagado, false),
+      metodoPago: body?.metodoPago ? String(body.metodoPago) : undefined,
+    };
+  }
 
   @Post('parse-xml')
   @UseInterceptors(FileInterceptor('file', xmlUploadOptions))

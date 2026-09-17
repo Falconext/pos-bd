@@ -1732,6 +1732,7 @@ model Sede {
   movimientosCajaContraparte MovimientoCaja[] @relation("MovimientoCajaContraparte")
   PedidoTienda      PedidoTienda[]
   Compra            Compra[]
+  detallesCompra    DetalleCompra[] @relation("DetalleCompraSede")
   GuiaRemision      GuiaRemision[]
   reservas          Reserva[]
   repartidores      Repartidor[]
@@ -1943,12 +1944,18 @@ model DetalleCompra {
   total            Decimal
   lote             String?
   fechaVencimiento DateTime?
+  // Distribución por sede: a qué sede/almacén entra ESTA línea. null = la sede
+  // de la cabecera de la compra. Una factura de 10 unidades repartida 6/4 entre
+  // dos sedes se guarda como dos líneas del mismo producto con distinta sede.
+  sedeId           Int?
+  sede             Sede?           @relation("DetalleCompraSede", fields: [sedeId], references: [id])
   compra           Compra          @relation(fields: [compraId], references: [id], onDelete: Cascade)
   producto         Producto?       @relation(fields: [productoId], references: [id])
   seriesGarantias  ProductoSerie[]
 
   @@index([compraId])
   @@index([productoId])
+  @@index([sedeId])
 }
 
 model VinculoProductoProveedorXml {
