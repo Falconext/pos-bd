@@ -244,6 +244,11 @@ export class UpdateEmpresaDto {
   @IsBoolean()
   requiereAprobacionCompras?: boolean;
 
+  // Criterio del IGV en el Análisis Financiero: ELECTRONICOS | TODOS | NINGUNO.
+  @IsOptional()
+  @IsIn(['ELECTRONICOS', 'TODOS', 'NINGUNO'])
+  criterioIgvVentas?: 'ELECTRONICOS' | 'TODOS' | 'NINGUNO';
+
   @IsOptional()
   @IsBoolean()
   requiereCajaParaEmitir?: boolean;

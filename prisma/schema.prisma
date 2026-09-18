@@ -287,6 +287,14 @@ model Empresa {
   // (facturas/boletas/notas de venta/tickets) sin tener SU caja abierta en la
   // sede. Las cotizaciones están exentas (no mueven stock ni caja).
   requiereCajaParaEmitir        Boolean                       @default(false)
+  // Análisis Financiero: qué IGV se descuenta de las ventas para llegar a las
+  // ventas netas del P&L (cada negocio lleva su criterio):
+  //   ELECTRONICOS (default) = solo facturas/boletas/NC/ND; notas de venta y
+  //                            tickets íntegros (no se declaran).
+  //   TODOS                  = todos los documentos, incluidas notas de venta
+  //                            (valor venta = total ÷ 1.18 en todo).
+  //   NINGUNO                = no se descuenta IGV (ventas brutas).
+  criterioIgvVentas             String                        @default("ELECTRONICOS")
   costoActivacionReseller       Decimal?                      @default(0)
   costoEnvioFijo                Decimal?                      @default(0)
   envioGratisDesdeSoles         Decimal?                      @default(0)

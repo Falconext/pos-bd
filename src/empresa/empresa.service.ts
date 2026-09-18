@@ -1343,6 +1343,17 @@ export class EmpresaService {
         updateData.requiereAprobacionGastos = dto.requiereAprobacionGastos;
       if (dto.requiereAprobacionCompras !== undefined)
         updateData.requiereAprobacionCompras = dto.requiereAprobacionCompras;
+      if (dto.criterioIgvVentas !== undefined) {
+        // El body de PUT /empresa/mia llega como Partial<> (sin validación de
+        // clase), así que se valida aquí: solo los 3 criterios conocidos.
+        const criterio = String(dto.criterioIgvVentas).toUpperCase();
+        if (!['ELECTRONICOS', 'TODOS', 'NINGUNO'].includes(criterio)) {
+          throw new BadRequestException(
+            'criterioIgvVentas debe ser ELECTRONICOS, TODOS o NINGUNO.',
+          );
+        }
+        updateData.criterioIgvVentas = criterio;
+      }
       if (dto.requiereCajaParaEmitir !== undefined)
         updateData.requiereCajaParaEmitir = dto.requiereCajaParaEmitir;
       if (dto.directorTecnico !== undefined)

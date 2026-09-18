@@ -25,7 +25,25 @@ export interface OtroIngreso {
   monto: number;
 }
 
+/**
+ * Criterio del IGV en las ventas del Análisis Financiero (Empresa.criterioIgvVentas):
+ *  - ELECTRONICOS: se descuenta solo el IGV de facturas/boletas/NC/ND; notas de
+ *    venta y tickets cuentan íntegros (ese IGV no se declara).
+ *  - TODOS: se descuenta el IGV de todos los documentos (valor venta = total ÷ 1.18).
+ *  - NINGUNO: no se descuenta IGV (ventas brutas, lo cobrado).
+ */
+export type CriterioIgvVentas = 'ELECTRONICOS' | 'TODOS' | 'NINGUNO';
+const TIPOS_DOC_ELECTRONICOS = new Set(['01', '03', '07', '08']);
+export const CRITERIO_IGV_LABEL: Record<CriterioIgvVentas, string> = {
+  ELECTRONICOS: 'IGV descontado solo en facturas, boletas y notas de crédito/débito',
+  TODOS: 'IGV descontado en todos los documentos (incluidas notas de venta)',
+  NINGUNO: 'Sin descontar IGV (ventas brutas)',
+};
+
 export interface PnlResponse {
+  /** Criterio del IGV aplicado (configuración de la empresa). */
+  criterioIgv: CriterioIgvVentas;
+  criterioIgvLabel: string;
   periodo: {
     mes: number;
     anio: number;
@@ -711,6 +729,25 @@ export class AnalisisFinancieroService {
     return excluirNotasCreditoDeAnulacion(this.prisma, empresaId, comprobantes);
   }
 
+  /** Criterio del IGV configurado por la empresa (default ELECTRONICOS). */
+  private async criterioIgvEmpresa(
+    empresaId: number,
+  ): Promise<CriterioIgvVentas> {
+    const e = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { criterioIgvVentas: true },
+    });
+    const v = String(e?.criterioIgvVentas ?? '').toUpperCase();
+    return v === 'TODOS' || v === 'NINGUNO' ? v : 'ELECTRONICOS';
+  }
+
+  /** ¿Se descuenta IGV a este tipo de documento con el criterio dado? */
+  private descuentaIgv(tipoDoc: string, criterio: CriterioIgvVentas): boolean {
+    if (criterio === 'NINGUNO') return false;
+    if (criterio === 'TODOS') return true;
+    return TIPOS_DOC_ELECTRONICOS.has(String(tipoDoc));
+  }
+
   private signoDocumento(tipoDoc: string): 1 | -1 {
     return tipoDoc === '07' ? -1 : 1;
   }
@@ -721,11 +758,15 @@ export class AnalisisFinancieroService {
    * desglosa): el "valor venta" que espera el empresario es total ÷ 1.18.
    * Solo se omite cuando el documento no trae IGV o el dato es inconsistente.
    */
-  private igvDeclarado(c: {
-    tipoDoc: string;
-    mtoImpVenta: number;
-    mtoIGV?: number | null;
-  }): number {
+  private igvDeclarado(
+    c: {
+      tipoDoc: string;
+      mtoImpVenta: number;
+      mtoIGV?: number | null;
+    },
+    criterio: CriterioIgvVentas,
+  ): number {
+    if (!this.descuentaIgv(c.tipoDoc, criterio)) return 0;
     const total = this.toNumber(c.mtoImpVenta);
     const igv = this.toNumber(c.mtoIGV);
     // Datos inconsistentes (IGV negativo o mayor al total): no descontar nada
@@ -750,16 +791,17 @@ export class AnalisisFinancieroService {
    * comprobante, sin signo.
    */
   private ingresoLineaSinIgv(
-    // Se conserva la firma (tipoDoc) por compatibilidad con los llamadores.
-    _tipoDoc: string,
+    tipoDoc: string,
     det: {
       cantidad: number | null;
       mtoPrecioUnitario: number | null;
       mtoValorVenta?: number | null;
       tipAfeIgv?: number | null;
     },
+    criterio: CriterioIgvVentas,
   ): number {
     const bruto = (det.mtoPrecioUnitario ?? 0) * (det.cantidad ?? 0);
+    if (!this.descuentaIgv(tipoDoc, criterio)) return bruto;
     const afe = Number(det.tipAfeIgv ?? 10);
     const onerosa = afe === 10 || afe === 20 || afe === 30 || afe === 40;
     const neto = this.toNumber(det.mtoValorVenta);
@@ -773,9 +815,9 @@ export class AnalisisFinancieroService {
   }
 
   /** IGV declarado del comprobante en soles. */
-  private igvPen(c: ComprobantePnl): number {
+  private igvPen(c: ComprobantePnl, criterio: CriterioIgvVentas): number {
     return montoEnPen(
-      this.igvDeclarado(c),
+      this.igvDeclarado(c, criterio),
       c.tipoMoneda,
       this.toNumber(c.tipoCambio),
     );
@@ -851,6 +893,7 @@ export class AnalisisFinancieroService {
     gastosRaw: GastoPnl[],
     periodo: PeriodoPnl,
     otrosIngresos: number = 0,
+    criterio: CriterioIgvVentas = 'ELECTRONICOS',
   ) {
     const gastosAplicados = this.expandirGastosPeriodo(gastosRaw, periodo);
     const documentosVenta = comprobantes.filter((c) =>
@@ -863,7 +906,7 @@ export class AnalisisFinancieroService {
     for (const c of documentosVenta) {
       const signo = this.signoDocumento(c.tipoDoc);
       ventasConIgv += this.ventaConIgvPen(c) * signo;
-      igvVentas += this.igvPen(c) * signo;
+      igvVentas += this.igvPen(c, criterio) * signo;
     }
 
     const productosSinCostoMap = new Map<number, ProductoSinCosto>();
@@ -913,7 +956,8 @@ export class AnalisisFinancieroService {
         costoPublicidadPorPedido: null,
       };
       current.ventasNetas +=
-        (this.ventaConIgvPen(comprobante) - this.igvPen(comprobante)) * signo;
+        (this.ventaConIgvPen(comprobante) - this.igvPen(comprobante, criterio)) *
+        signo;
       current.costoMercaderia += costo.costoMercaderia;
       if (signo > 0) current.pedidos += 1;
       resumenDiarioMap.set(fecha, current);
@@ -1053,6 +1097,7 @@ export class AnalisisFinancieroService {
     empresaId: number,
     periodo: PeriodoPnl,
     sedeId?: number | null,
+    criterio: CriterioIgvVentas = 'ELECTRONICOS',
   ) {
     // Filtro por sede. Al pedir una sede concreta se traen solo sus ventas, sus
     // gastos de caja, sus gastos operativos, sus ingresos manuales y sus
@@ -1247,6 +1292,7 @@ export class AnalisisFinancieroService {
         gastosConCampanas,
         periodo,
         otrosIngresos,
+        criterio,
       ),
       otrosIngresosDetalle,
       gastosEmpresa: this.r2(gastosEmpresa),
@@ -1277,9 +1323,10 @@ export class AnalisisFinancieroService {
     const anterior = this.periodoAnterior(periodo);
     const sedeId = opts.sedeId;
 
+    const criterio = await this.criterioIgvEmpresa(empresaId);
     const [pnl, pnlAnterior] = await Promise.all([
-      this.fetchPeriodData(empresaId, periodo, sedeId),
-      this.fetchPeriodData(empresaId, anterior, sedeId),
+      this.fetchPeriodData(empresaId, periodo, sedeId, criterio),
+      this.fetchPeriodData(empresaId, anterior, sedeId, criterio),
     ]);
 
     const tieneAnterior =
@@ -1299,6 +1346,8 @@ export class AnalisisFinancieroService {
         : null;
 
     return {
+      criterioIgv: criterio,
+      criterioIgvLabel: CRITERIO_IGV_LABEL[criterio],
       periodo: {
         mes: periodo.mes,
         anio: periodo.anio,
@@ -1342,6 +1391,7 @@ export class AnalisisFinancieroService {
     const rangeLte = this.periodoToRange(mesActual, anioActual).lte;
 
     // Single query per entity covering the full window
+    const criterio = await this.criterioIgvEmpresa(empresaId);
     const [comprobantesRaw, gastos, todosIngresosManuales] = await Promise.all([
       this.prisma.comprobante.findMany({
         where: {
@@ -1439,6 +1489,7 @@ export class AnalisisFinancieroService {
         gastosDelMes,
         this.periodoMes(mes, anio),
         otrosIngresosDelMes,
+        criterio,
       );
 
       resultado.push({
@@ -1679,6 +1730,7 @@ export class AnalisisFinancieroService {
         },
       },
     });
+    const criterio = await this.criterioIgvEmpresa(empresaId);
     const comprobantes = await this.excluirNotasCreditoDeAnulacion(
       empresaId,
       comprobantesRaw,
@@ -1717,7 +1769,8 @@ export class AnalisisFinancieroService {
         const cantidadFacturada = (det.cantidad ?? 0) * signo;
         const qty = cantidadFacturada * uPaquete;
         // Ingreso sin el IGV declarado, igual que las ventas netas del P&L.
-        const ingresoLinea = this.ingresoLineaSinIgv(comp.tipoDoc, det) * signo;
+        const ingresoLinea =
+          this.ingresoLineaSinIgv(comp.tipoDoc, det, criterio) * signo;
         const ventaLinea = this.ventaLineaConIgv(det) * signo;
         const costoUnit =
           this.toNumber(det.producto?.costoPromedio) +
@@ -2730,6 +2783,7 @@ export class AnalisisFinancieroService {
         },
       },
     });
+    const criterio = await this.criterioIgvEmpresa(empresaId);
     const comprobantes = await this.excluirNotasCreditoDeAnulacion(
       empresaId,
       comprobantesRaw,
@@ -2791,7 +2845,7 @@ export class AnalisisFinancieroService {
         // Ingreso sin el IGV declarado, igual que las ventas netas del P&L.
         const ingreso =
           montoEnPen(
-            this.ingresoLineaSinIgv(comp.tipoDoc, det),
+            this.ingresoLineaSinIgv(comp.tipoDoc, det, criterio),
             comp.tipoMoneda,
             this.toNumber(comp.tipoCambio),
           ) * signo;
