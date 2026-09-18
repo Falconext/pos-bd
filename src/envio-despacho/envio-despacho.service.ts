@@ -185,7 +185,10 @@ export class EnvioDespachoService {
     dto: UpdateEnvioDespachoDto,
     usuarioId?: number,
   ) {
-    const comprobante = await this.validateComprobante(comprobanteId, empresaId);
+    const comprobante = await this.validateComprobante(
+      comprobanteId,
+      empresaId,
+    );
     const envio = await this.prisma.envioDespacho.findUnique({
       where: { comprobanteId },
     });
@@ -239,6 +242,15 @@ export class EnvioDespachoService {
       comprobante.cliente?.telefono,
       dto.celularDest,
     );
+    if (dto.actualizarFichaCliente) {
+      await this.completarFichaCliente(
+        comprobante.clienteId,
+        empresaId,
+        dto.dniDestinatario,
+        dto.nombreDestinatario,
+        dto.celularDest,
+      );
+    }
 
     if (
       estadoCambia &&
@@ -831,6 +843,61 @@ export class EnvioDespachoService {
    * en "Celular destinatario" solo vivía en el despacho puntual) y el
    * siguiente despacho para el mismo cliente vuelve a pedirlo desde cero.
    */
+  /**
+   * Cliente registrado solo con WhatsApp ("WSP 9…" y sin documento) o sin DNI:
+   * al completar el destinatario de la guía se corrige su ficha (DNI + nombre
+   * + celular) para que la siguiente venta y su boleta ya salgan bien. Nunca
+   * pisa un DNI/RUC válido ya registrado.
+   */
+  private async completarFichaCliente(
+    clienteId: number | null | undefined,
+    empresaId: number,
+    dni?: string,
+    nombre?: string,
+    celular?: string,
+  ) {
+    if (!clienteId) return;
+    const dniLimpio = String(dni ?? '').replace(/\D/g, '');
+    const nombreLimpio = String(nombre ?? '').trim();
+    if (dniLimpio.length !== 8 || !nombreLimpio) return;
+    const cliente = await this.prisma.cliente.findFirst({
+      where: { id: clienteId, empresaId },
+      select: { id: true, nroDoc: true, nombre: true, telefono: true },
+    });
+    if (!cliente) return;
+    const docActual = String(cliente.nroDoc ?? '').trim();
+    const tieneDocValido =
+      /^\d{8}$/.test(docActual) || /^\d{11}$/.test(docActual);
+    if (tieneDocValido && docActual !== dniLimpio) return;
+    const tipoDni = await this.prisma.tipoDocumento.findFirst({
+      where: {
+        OR: [
+          { codigo: '1' },
+          { descripcion: { contains: 'DNI', mode: 'insensitive' } },
+        ],
+      },
+      select: { id: true },
+    });
+    const celularLimpio = String(celular ?? '').replace(/\D/g, '');
+    await this.prisma.cliente
+      .update({
+        where: { id: cliente.id },
+        data: {
+          nroDoc: dniLimpio,
+          nombre: nombreLimpio,
+          ...(tipoDni ? { tipoDocumentoId: tipoDni.id } : {}),
+          ...(/^9\d{8}$/.test(celularLimpio) && !cliente.telefono
+            ? { telefono: celularLimpio }
+            : {}),
+        },
+      })
+      .catch((e) =>
+        this.logger.warn(
+          `No se pudo completar la ficha del cliente ${cliente.id}: ${e?.message}`,
+        ),
+      );
+  }
+
   private async backfillTelefonoCliente(
     clienteId: number | null | undefined,
     telefonoActual: string | null | undefined,

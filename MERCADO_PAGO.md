@@ -27,7 +27,8 @@ cuenta; la plataforma solo intermedia (comisión configurable, hoy 0 %).
 | `BACKEND_URL` | `https://api.falconext.pe` (se usa para `notification_url`) |
 | `FRONTEND_URL` | URL pública del frontend (back_urls y retorno del OAuth) |
 | `MP_WEBHOOK_SECRET` | Clave secreta de Webhooks de la app MP (modo productivo) |
-| `MP_MARKETPLACE_FEE_PERCENT` | `0` (o el % de comisión de la plataforma) |
+| `MP_MARKETPLACE_FEE_FIJO` | Comisión fija por pago en soles; **S/ 1 por defecto** (0 = sin comisión) |
+| `MP_MARKETPLACE_FEE_PERCENT` | `0` (o un % adicional de comisión) |
 
 Si `MP_WEBHOOK_SECRET` está vacío el webhook se acepta sin validar firma (solo
 para QA). En producción **debe** estar configurado.
@@ -52,7 +53,9 @@ para QA). En producción **debe** estar configurado.
 - Los tokens de vendedor duran 180 días; el servicio los refresca solo cuando
   faltan < 5 min para vencer. Si el refresh falla (empresa revocó el permiso), el
   empresario debe volver a *Conectar*.
-- `marketplace_fee` solo se envía si `MP_MARKETPLACE_FEE_PERCENT > 0`.
+- `marketplace_fee` = `MP_MARKETPLACE_FEE_FIJO` (S/ 1 por defecto) + `MP_MARKETPLACE_FEE_PERCENT`
+  % del total; es un monto en soles que MP descuenta al vendedor y acredita a la
+  cuenta dueña de la app (Krezka). No se envía si es 0 o si iguala/supera el total.
 - Moneda fija `PEN`. Las tiendas en USD no deben ofrecer MP.
 - `auto_return` solo se manda cuando la `back_url` es HTTPS pública (MP rechaza
   localhost).

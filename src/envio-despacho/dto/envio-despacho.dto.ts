@@ -7,6 +7,7 @@ import {
   IsNumber,
   Min,
   IsIn,
+  IsBoolean,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -55,6 +56,12 @@ export class CreateEnvioDespachoDto {
   // Datos destinatario Shalom
   @IsOptional() @IsString() nombreDestinatario?: string;
   @IsOptional() @IsString() dniDestinatario?: string;
+  /**
+   * Clientes dados de alta solo con WhatsApp ("WSP 9…", sin documento): al
+   * completar DNI + nombre del destinatario para la guía, también se corrige
+   * la ficha del cliente para que la próxima venta ya salga completa.
+   */
+  @IsOptional() @IsBoolean() actualizarFichaCliente?: boolean;
   @IsOptional() @IsString() contenidoPaquete?: string;
   /** type_product de Shalom elegido en la coordinación de envío. */
   @IsOptional() @Type(() => Number) @IsInt() shalomTipoProducto?: number;

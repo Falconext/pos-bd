@@ -64,6 +64,36 @@ export class MercadoPagoService {
     const raw = Number(process.env.MP_MARKETPLACE_FEE_PERCENT || 0);
     return Number.isFinite(raw) && raw > 0 ? raw : 0;
   }
+  /**
+   * Comisión fija de la plataforma por pago, en soles (MP_MARKETPLACE_FEE_FIJO).
+   * Por defecto S/ 1 por cada pago cobrado vía Mercado Pago.
+   */
+  private get marketplaceFeeFijo() {
+    const env = process.env.MP_MARKETPLACE_FEE_FIJO;
+    if (env === undefined || env.trim() === '') return 1;
+    const raw = Number(env);
+    return Number.isFinite(raw) && raw > 0 ? Math.round(raw * 100) / 100 : 0;
+  }
+  /**
+   * `marketplace_fee` que se envía a MP (monto en soles): fijo + porcentaje.
+   * Nunca puede igualar o superar el total del pago (MP lo rechazaría), en ese
+   * caso se cobra sin comisión antes que perder la venta.
+   */
+  calcularMarketplaceFee(total: number): number {
+    const porcentaje =
+      this.marketplaceFeePercent > 0
+        ? Math.round(total * this.marketplaceFeePercent) / 100
+        : 0;
+    const fee = Math.round((this.marketplaceFeeFijo + porcentaje) * 100) / 100;
+    if (!(fee > 0)) return 0;
+    if (fee >= total) {
+      this.logger.warn(
+        `Comisión S/ ${fee} >= total S/ ${total}: se omite marketplace_fee`,
+      );
+      return 0;
+    }
+    return fee;
+  }
   get configurado() {
     return Boolean(this.clientId && this.clientSecret);
   }
@@ -282,9 +312,7 @@ export class MercadoPagoService {
     if (!(total > 0)) {
       throw new BadRequestException('Monto inválido para Mercado Pago');
     }
-    const feePercent = this.marketplaceFeePercent;
-    const marketplaceFee =
-      feePercent > 0 ? Math.round(total * feePercent) / 100 : 0;
+    const marketplaceFee = this.calcularMarketplaceFee(total);
 
     const successUrl = `${this.frontendUrl}/tienda/${params.slug}/seguimiento?codigo=${params.codigoSeguimiento}`;
     const notificationUrl = `${(process.env.BACKEND_URL || 'http://localhost:4001').replace(/\/$/, '')}/api/mercadopago/webhook`;

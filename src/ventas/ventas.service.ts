@@ -81,7 +81,8 @@ function etiquetaDirigidoA(
   vendedorNombre?: string | null,
 ): string {
   const d = String(dirigidoA ?? '').toUpperCase();
-  if (d === 'VENDEDOR') return vendedorNombre ? `Vendedor: ${vendedorNombre}` : 'Vendedor';
+  if (d === 'VENDEDOR')
+    return vendedorNombre ? `Vendedor: ${vendedorNombre}` : 'Vendedor';
   if (d === 'ADMINISTRADOR') return 'Administrador';
   if (d === 'EMPRESA') return 'Empresa';
   return '';
@@ -208,6 +209,12 @@ export class VentasService {
     if (cached && cached.expira > Date.now()) return cached.valor;
 
     const sedeFilter = sedeId ? { sedeId } : {};
+    // Los pedidos de la tienda virtual nacen sin sede (sedeId null): al filtrar
+    // por una sede deben seguir viéndose, si no desaparecen del panel salvo en
+    // "Todas las sedes" y el empresario no los ve al entrar a su sede.
+    const pedidoSedeFilter = sedeId
+      ? { OR: [{ sedeId }, { sedeId: null }] }
+      : {};
     // Filtro por VENDEDOR efectivo: el vendedor de campo (vendedorCampoId) si existe,
     // o el emisor (usuarioId) si la venta no tiene vendedor de campo asignado. Así el
     // filtro coincide con la atribución de comisiones (no solo quién emitió el doc).
@@ -251,7 +258,7 @@ export class VentasService {
       this.prisma.pedidoTienda.findMany({
         where: {
           empresaId,
-          ...sedeFilter,
+          ...pedidoSedeFilter,
           ...pedidoUsuarioFilter,
           estado: { not: 'CANCELADO' },
           saldoPendiente: { gt: 0 },
@@ -302,6 +309,12 @@ export class VentasService {
     const finLima = new Date(`${params.fechaFin || fecha}T23:59:59-05:00`);
 
     const sedeFilter = sedeId ? { sedeId } : {};
+    // Los pedidos de la tienda virtual nacen sin sede (sedeId null): al filtrar
+    // por una sede deben seguir viéndose, si no desaparecen del panel salvo en
+    // "Todas las sedes" y el empresario no los ve al entrar a su sede.
+    const pedidoSedeFilter = sedeId
+      ? { OR: [{ sedeId }, { sedeId: null }] }
+      : {};
     // Filtro por VENDEDOR efectivo: el vendedor de campo (vendedorCampoId) si existe,
     // o el emisor (usuarioId) si la venta no tiene vendedor de campo asignado. Así el
     // filtro coincide con la atribución de comisiones (no solo quién emitió el doc).
@@ -349,7 +362,9 @@ export class VentasService {
           // Cobranza en campo: vendedor de campo atribuido (se muestra en vez del usuario).
           vendedorCampoId: true,
           vendedorCampoNombre: true,
-          cliente: { select: { nombre: true, nroDoc: true, telefono: true, email: true } },
+          cliente: {
+            select: { nombre: true, nroDoc: true, telefono: true, email: true },
+          },
           usuario: { select: { nombre: true } },
           sede: { select: { nombre: true } },
           productoSeries: { select: { numeroSerie: true } },
@@ -403,7 +418,7 @@ export class VentasService {
       this.prisma.pedidoTienda.findMany({
         where: {
           empresaId,
-          ...sedeFilter,
+          ...pedidoSedeFilter,
           ...pedidoUsuarioFilter,
           creadoEn: { gte: inicioLima, lte: finLima },
         },
