@@ -59,7 +59,6 @@ import { VehiculoModule } from './vehiculo/vehiculo.module';
 import { ContratoVehicularModule } from './contrato-vehicular/contrato-vehicular.module';
 import { TipoCambioModule } from './tipo-cambio/tipo-cambio.module';
 import { LeadsModule } from './leads/leads.module';
-import { SoporteModule } from './soporte/soporte.module';
 import { MercadoPagoModule } from './mercadopago/mercadopago.module';
 
 @Module({
@@ -123,7 +122,6 @@ import { MercadoPagoModule } from './mercadopago/mercadopago.module';
     ContratoVehicularModule,
     TipoCambioModule,
     LeadsModule,
-    SoporteModule,
   ],
   controllers: [AppController],
   providers: [AppService],
