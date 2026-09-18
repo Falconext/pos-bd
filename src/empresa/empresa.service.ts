@@ -1043,6 +1043,7 @@ export class EmpresaService {
           slugTienda: true,
           brand: true,
           producto: true,
+          offlineHabilitado: true,
           usaDemo: true,
           estadoGestion: true,
           billingProvider: true,
