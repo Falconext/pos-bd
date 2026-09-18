@@ -171,13 +171,18 @@ export class OperacionesMovilService {
       }
       return { uuid: op.uuid, estado: 'OK', resultado };
     } catch (e: any) {
-      const mensaje = String(e?.message ?? 'Error al aplicar la operación');
       const codigo =
         e instanceof BadRequestException
           ? 'VALIDACION'
           : e instanceof HttpException
             ? 'RECHAZADA'
             : 'INTERNO';
+      // Un error interno (p. ej. FK de Prisma) no debe llegar al cajero con el
+      // stack: se guarda el detalle en el log y se devuelve un texto útil.
+      const mensaje =
+        codigo === 'INTERNO'
+          ? this.mensajeInterno(e)
+          : String(e?.message ?? 'Error al aplicar la operación');
       this.logger.warn(`[sync-movil] ${op.tipo} ${op.uuid} → ${codigo}: ${mensaje}`);
       await this.guardar(user, dispositivoId, op, sedeId, realizadoEn, hash, 'ERROR', null, mensaje);
       return { uuid: op.uuid, estado: 'ERROR', codigo, mensaje };
@@ -218,6 +223,23 @@ export class OperacionesMovilService {
       }
       case 'CAJA_APERTURA': {
         const payload = await this.validarPayload(AperturaCajaDto, op.payload);
+        // Si el mismo usuario ya abrió caja ese día desde la web u otro
+        // dispositivo, la apertura offline se absorbe en ese turno: no se
+        // duplica y no bloquea las operaciones que dependen de ella.
+        const existente = await this.caja.verificarCajaAbierta(
+          user.id,
+          user.empresaId,
+          sedeId,
+          realizadoEn,
+        );
+        if (existente) {
+          return {
+            movimientoCajaId: existente.id,
+            avisos: [
+              `Ya tenías un turno abierto ese día (S/ ${Number(existente.montoInicial ?? 0).toFixed(2)} inicial); las operaciones sin conexión entraron en ese turno y no se registró la apertura de S/ ${Number(payload.montoInicial ?? 0).toFixed(2)}.`,
+            ],
+          };
+        }
         const r: any = await this.caja.abrirCaja(user.id, user.empresaId, payload, sedeId, opts);
         return { movimientoCajaId: r?.data?.id ?? r?.id };
       }
@@ -311,6 +333,19 @@ export class OperacionesMovilService {
       };
     }
     return { realizadoEn: d };
+  }
+
+  /** Texto corto para errores no controlados (Prisma/FK/etc.). */
+  private mensajeInterno(e: any): string {
+    const raw = String(e?.message ?? '');
+    this.logger.error(`[sync-movil] error interno: ${raw.slice(0, 500)}`);
+    if (/Foreign key constraint/i.test(raw)) {
+      const m = raw.match(/constraint: `([^`]+)`/);
+      const campo = m?.[1]?.replace(/^Comprobante_|_fkey$/g, '') ?? 'referencia';
+      return `Un dato de la venta ya no existe en el servidor (${campo}). Revísala o descártala.`;
+    }
+    if (/Unique constraint/i.test(raw)) return 'Conflicto de numeración en el servidor; vuelve a intentar.';
+    return 'Error interno del servidor al aplicar la operación. Vuelve a intentar más tarde.';
   }
 
   private hashPayload(payload: unknown): string {
