@@ -25,6 +25,7 @@ import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
 import { S3Service } from '../s3/s3.service';
 import { FIRMA_KREZKA_DATA_URI } from './firma-krezka';
 import { LOGO_KREZKA_DATA_URI } from './logo-krezka';
+import { pagoEnMonedaCuenta } from '../common/utils/moneda-compra';
 
 function parseDDMMYYYY(input: string): Date {
   if (!input || input.trim() === '') {
@@ -2728,7 +2729,7 @@ export class EmpresaService {
     const ids = cuentas.map((c) => c.id);
     if (ids.length === 0) return [];
 
-    const [pagos, depositos, compras, gastos] = await Promise.all([
+    const [pagos, depositos, comprasPagos, gastos] = await Promise.all([
       this.prisma.pago.groupBy({
         by: ['cuentaBancariaId'],
         where: { cuentaBancariaId: { in: ids } },
@@ -2743,10 +2744,18 @@ export class EmpresaService {
         },
         _sum: { montoEfectivo: true },
       }),
-      this.prisma.pagoCompra.groupBy({
-        by: ['cuentaBancariaId'],
+      // Pagos a proveedores en la MONEDA DE LA CUENTA (una cuenta en soles que
+      // pagó una factura en US$ registra lo que salió en soles).
+      this.prisma.pagoCompra.findMany({
         where: { cuentaBancariaId: { in: ids } },
-        _sum: { monto: true },
+        select: {
+          cuentaBancariaId: true,
+          monto: true,
+          montoSoles: true,
+          tipoCambio: true,
+          moneda: true,
+          compra: { select: { moneda: true, tipoCambio: true } },
+        },
       }),
       this.prisma.gastoOperativo.groupBy({
         by: ['cuentaBancariaId'],
@@ -2754,6 +2763,16 @@ export class EmpresaService {
         _sum: { monto: true },
       }),
     ]);
+    const monedaCuenta = new Map(cuentas.map((c) => [c.id, c.moneda]));
+    const comprasPorCuenta = new Map<number, number>();
+    for (const p of comprasPagos) {
+      if (p.cuentaBancariaId == null) continue;
+      comprasPorCuenta.set(
+        p.cuentaBancariaId,
+        (comprasPorCuenta.get(p.cuentaBancariaId) || 0) +
+          pagoEnMonedaCuenta(p, p.compra, monedaCuenta.get(p.cuentaBancariaId)),
+      );
+    }
 
     const toMap = (arr: any[], field: string) =>
       new Map<number, number>(
@@ -2766,7 +2785,7 @@ export class EmpresaService {
       );
     const mPagos = toMap(pagos, 'monto');
     const mDep = toMap(depositos, 'montoEfectivo');
-    const mCompras = toMap(compras, 'monto');
+    const mCompras = comprasPorCuenta;
     const mGastos = toMap(gastos, 'monto');
 
     return cuentas.map((c) => {
@@ -2841,8 +2860,17 @@ export class EmpresaService {
           id: true,
           fecha: true,
           monto: true,
+          montoSoles: true,
+          tipoCambio: true,
+          moneda: true,
           referencia: true,
-          compra: { select: { proveedor: { select: { nombre: true } } } },
+          compra: {
+            select: {
+              moneda: true,
+              tipoCambio: true,
+              proveedor: { select: { nombre: true } },
+            },
+          },
         },
       }),
       this.prisma.gastoOperativo.findMany({
@@ -2891,7 +2919,10 @@ export class EmpresaService {
           origen: 'COMPRA',
           concepto: proveedor ? `Pago a ${proveedor}` : 'Pago a proveedor',
           referencia: c.referencia || null,
-          monto: Number(c.monto),
+          // En la moneda de la cuenta (ver saldos de cuentas).
+          monto: Number(
+            pagoEnMonedaCuenta(c, c.compra, cuenta.moneda).toFixed(2),
+          ),
         };
       }),
       ...gastos.map((g) => ({

@@ -975,8 +975,12 @@ export class AuthService {
           ]),
         );
       }
+      // Conectado = token propio, o número conectado vía Embedded Signup
+      // (WABA compartida: el token vive en la plataforma, no en la empresa).
       usuario.empresa.whatsappApiTokenConfigured = Boolean(
-        usuario.empresa.whatsappApiToken,
+        usuario.empresa.whatsappApiToken ||
+          (usuario.empresa.whatsappProvider === 'EMPRESA' &&
+            usuario.empresa.whatsappPhoneNumberId),
       );
       delete usuario.empresa.whatsappApiToken;
       // Shalom Pro: exponer solo un booleano; nunca la contraseña.

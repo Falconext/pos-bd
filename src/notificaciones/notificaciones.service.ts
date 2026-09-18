@@ -20,6 +20,11 @@ export class NotificacionesService {
     private readonly gateway: NotificacionesGateway,
   ) {}
 
+  /** Empuja un evento en vivo (no el genérico de campana) a los usuarios conectados. */
+  emitirEventoAUsuarios(usuariosIds: number[], evento: string, payload: any) {
+    this.gateway.enviarEventoAUsuarios(usuariosIds, evento, payload);
+  }
+
   // Verificar suscripciones próximas a vencer
   async verificarSuscripcionesProximasVencer() {
     const hoy = new Date();

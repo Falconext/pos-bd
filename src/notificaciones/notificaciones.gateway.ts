@@ -149,4 +149,16 @@ export class NotificacionesGateway
     this.server.emit('nueva-notificacion', notificacion);
     console.log(`📢 Notificación broadcast a todos los usuarios`);
   }
+
+  /** Emite un evento arbitrario (no 'nueva-notificacion') a los sockets de un usuario. */
+  enviarEventoAUsuario(usuarioId: number, evento: string, payload: any) {
+    const sockets = this.usuariosConectados.get(usuarioId);
+    if (!sockets?.length) return;
+    sockets.forEach((socketId) => this.server.to(socketId).emit(evento, payload));
+  }
+
+  /** Emite un evento arbitrario a varios usuarios (los que estén conectados). */
+  enviarEventoAUsuarios(usuariosIds: number[], evento: string, payload: any) {
+    usuariosIds.forEach((id) => this.enviarEventoAUsuario(id, evento, payload));
+  }
 }

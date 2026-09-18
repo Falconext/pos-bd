@@ -2025,7 +2025,16 @@ model PagoCompra {
   empresaId        Int
   usuarioId        Int?
   fecha            DateTime        @default(now())
+  // `monto` va en la moneda del documento de compra (US$ si la factura es en dólares).
   monto            Decimal
+  moneda           String          @default("PEN")
+  // S/ por US$ del día del pago (1 si es en soles). Con él se calcula el egreso real en soles.
+  tipoCambio       Decimal?        @default(1)
+  // monto × tipoCambio: lo que realmente salió en soles (base de flujo de caja y conciliación).
+  montoSoles       Decimal?
+  // (TC del pago − TC de la compra) × monto, en soles. Positivo = pérdida por diferencia
+  // de cambio (se pagaron más soles que los contabilizados); negativo = ganancia.
+  diferenciaCambio Decimal?        @default(0)
   metodoPago       String
   referencia       String?
   // Pago por banco: cuenta bancaria con la que se pagó (referencia = N° de operación).

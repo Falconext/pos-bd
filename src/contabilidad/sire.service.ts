@@ -2,6 +2,7 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as XLSX from 'xlsx';
 import * as nodemailer from 'nodemailer';
+import { factorCompraASoles } from '../common/utils/moneda-compra';
 
 // Map compras tipoDoc text → SUNAT código catálogo 01
 const TIPO_DOC_COMPRA_MAP: Record<string, string> = {
@@ -477,8 +478,39 @@ export class SireService {
       orderBy: { fechaEmision: 'asc' },
       include: {
         proveedor: { include: { tipoDocumento: true } },
+        // Para separar la base gravada (campo 15) de las adquisiciones no
+        // gravadas (campo 21): líneas de exonerados/inafectos van sin IGV.
+        detalles: { select: { subtotal: true, igv: true } },
       },
     });
+  }
+
+  /**
+   * Base gravada vs. no gravada de una compra según sus líneas: las que
+   * llevan IGV suman a la base imponible (campo 15 del RCE); las de productos
+   * exonerados/inafectos (IGV 0) van como adquisiciones no gravadas (campo 21).
+   * Sin detalle (compras antiguas/importadas) todo se toma como gravado.
+   */
+  private desgloseBaseCompra(c: {
+    subtotal: any;
+    igv: any;
+    detalles?: Array<{ subtotal: any; igv: any }>;
+  }) {
+    const dets = c.detalles ?? [];
+    if (!dets.length) {
+      return { gravada: Number(c.subtotal ?? 0), noGravada: 0 };
+    }
+    let gravada = 0;
+    let noGravada = 0;
+    for (const d of dets) {
+      if (Number(d.igv ?? 0) > 0) gravada += Number(d.subtotal ?? 0);
+      else noGravada += Number(d.subtotal ?? 0);
+    }
+    // Si toda la compra es gravada se respeta el subtotal de cabecera (puede
+    // absorber centavos de redondeo del total tecleado).
+    if (noGravada === 0) return { gravada: Number(c.subtotal ?? 0), noGravada: 0 };
+    if (gravada === 0) return { gravada: 0, noGravada: Number(c.subtotal ?? 0) };
+    return { gravada: this.r2(gravada), noGravada: this.r2(noGravada) };
   }
 
   async generarTxtCompras(
@@ -499,8 +531,12 @@ export class SireService {
       // Las notas de crédito de compra restan crédito fiscal: montos en
       // negativo, igual criterio que en el RVIE.
       const signo = tipoDocSunat === '07' ? -1 : 1;
-      const monto = (val: any) => this.fmt(Number(val ?? 0) * signo);
+      // Los importes del RCE van en moneda nacional: una factura en dólares se
+      // convierte con el TC de la compra (columnas 26/27 llevan moneda y TC).
+      const factor = factorCompraASoles(c);
+      const monto = (val: any) => this.fmt(Number(val ?? 0) * factor * signo);
       const moneda = c.moneda || 'PEN';
+      const base = this.desgloseBaseCompra(c);
 
       // Formato RCE — 37 campos (RS 000040-2022/SUNAT).
       lines.push(
@@ -526,13 +562,13 @@ export class SireService {
           // gravadas y/o de exportación (el caso normal). Los pares 17/18 y
           // 19/20 son para uso mixto y para compras sin derecho a crédito,
           // que el sistema no discrimina hoy.
-          monto(c.subtotal), //                        15  Base imponible gravada (con derecho a crédito)
+          monto(base.gravada), //                      15  Base imponible gravada (con derecho a crédito)
           monto(c.igv), //                             16  IGV / IPM de la base 15
           '0.00', //                                   17  Base gravada uso mixto
           '0.00', //                                   18  IGV uso mixto
           '0.00', //                                   19  Base gravada sin derecho a crédito
           '0.00', //                                   20  IGV sin derecho a crédito
-          '0.00', //                                   21  Valor de adquisiciones no gravadas
+          monto(base.noGravada), //                    21  Valor de adquisiciones no gravadas (exonerados/inafectos)
           '0.00', //                                   22  ISC
           '0.00', //                                   23  ICBPER
           '0.00', //                                   24  Otros conceptos, tributos y cargos
@@ -583,8 +619,11 @@ export class SireService {
     const rows = compras.map((c) => {
       const tipoDocSunat = TIPO_DOC_COMPRA_MAP[c.tipoDoc] ?? '01';
       const signo = tipoDocSunat === '07' ? -1 : 1;
-      const n = (val: any) => +(Number(val ?? 0) * signo).toFixed(2);
+      // Importes en soles (ver RCE TXT): factura en US$ × TC de la compra.
+      const factor = factorCompraASoles(c);
+      const n = (val: any) => +(Number(val ?? 0) * factor * signo).toFixed(2);
       const moneda = c.moneda || 'PEN';
+      const base = this.desgloseBaseCompra(c);
 
       return {
         RUC: generador.ruc,
@@ -604,13 +643,13 @@ export class SireService {
         ),
         'NRO DOC IDENTIDAD': c.proveedor?.nroDoc ?? '',
         'APELLIDOS NOMBRES/ RAZON SOCIAL': this.texto(c.proveedor?.nombre),
-        'BI GRAVADO DG': n(c.subtotal),
+        'BI GRAVADO DG': n(base.gravada),
         'IGV / IPM DG': n(c.igv),
         'BI GRAVADO DGNG': 0,
         'IGV / IPM DGNG': 0,
         'BI GRAVADO DNG': 0,
         'IGV / IPM DNG': 0,
-        'VALOR ADQ. NG': 0,
+        'VALOR ADQ. NG': n(base.noGravada),
         ISC: 0,
         ICBPER: 0,
         'OTROS TRIB/ CARGOS': 0,
@@ -872,14 +911,22 @@ export class SireService {
     const compras = await this.fetchCompras(empresaId, mes, anio, sedeId);
 
     let base = 0;
+    let noGravadas = 0;
     let igv = 0;
     let total = 0;
     const porTipoDoc: Record<string, { cantidad: number; total: number }> = {};
 
     for (const c of compras) {
-      base += Number(c.subtotal ?? 0);
-      igv += Number(c.igv ?? 0);
-      const importe = Number(c.total ?? 0);
+      // Mismo criterio que el TXT: soles (US$ × TC de la compra), las notas
+      // de crédito (07) restan y los exonerados/inafectos no son base gravada.
+      const tipoDocSunat = TIPO_DOC_COMPRA_MAP[c.tipoDoc] ?? '01';
+      const signo = tipoDocSunat === '07' ? -1 : 1;
+      const factor = factorCompraASoles(c) * signo;
+      const desglose = this.desgloseBaseCompra(c);
+      base += desglose.gravada * factor;
+      noGravadas += desglose.noGravada * factor;
+      igv += Number(c.igv ?? 0) * factor;
+      const importe = Number(c.total ?? 0) * factor;
       total += importe;
 
       const tipo = TIPO_DOC_COMPRA_MAP[c.tipoDoc] ?? '01';
@@ -892,6 +939,7 @@ export class SireService {
       periodo: `${anio}${String(mes).padStart(2, '0')}`,
       cantidad: compras.length,
       base: this.r2(base),
+      noGravadas: this.r2(noGravadas),
       igv: this.r2(igv),
       total: this.r2(total),
       porTipoDoc,

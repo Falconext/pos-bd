@@ -7175,14 +7175,21 @@ export class ComprobanteService {
     }
 
     if (empresa.whatsappProvider === 'EMPRESA') {
-      if (!empresa.whatsappApiToken || !empresa.whatsappPhoneNumberId) {
+      // Token propio del cliente o, si su WABA está compartida con la
+      // plataforma (Embedded Signup), el token permanente del usuario del sistema.
+      const token =
+        empresa.whatsappApiToken ||
+        process.env.META_SYSTEM_USER_TOKEN ||
+        process.env.WHATSAPP_TOKEN ||
+        '';
+      if (!token || !empresa.whatsappPhoneNumberId) {
         throw new BadRequestException(
-          'WhatsApp propio no configurado. Agrega token y phone number ID de Meta para esta empresa.',
+          'WhatsApp propio no configurado. Conecta tu número desde Configuración → Conectar mi WhatsApp.',
         );
       }
 
       return {
-        token: empresa.whatsappApiToken,
+        token,
         phoneNumberId: empresa.whatsappPhoneNumberId,
         source: 'EMPRESA',
       };

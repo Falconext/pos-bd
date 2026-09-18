@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { parseFechaSoloDia } from '../common/utils/fecha';
 import { ComprasService } from './compras.service';
 import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
 import {
@@ -32,30 +33,45 @@ export class OrdenCompraService {
     return `OC-${String(numero).padStart(6, '0')}`;
   }
 
-  private calcularTotales(
-    detalles: { cantidad: number; precioUnitario: number }[],
+  /**
+   * Totales de la orden. El IGV solo va sobre las líneas de productos
+   * gravados: los exonerados/inafectos (farmacia, agro…) suman tal cual, con
+   * o sin "IGV incluido" (misma regla que ComprasService al recibirla).
+   */
+  private async calcularTotales(
+    empresaId: number,
+    detalles: { productoId?: number | null; cantidad: number; precioUnitario: number }[],
     aplicaIgv: boolean,
     igvIncluido = false,
   ) {
-    const suma = detalles.reduce(
-      (s, d) => s + Number(d.cantidad) * Number(d.precioUnitario),
-      0,
-    );
-    if (aplicaIgv && igvIncluido) {
-      // Los precios ya traen el IGV embebido: el total es la suma tal cual
-      // y el IGV se extrae (misma lógica que incluyeIgv en Compras)
-      const subtotal = suma / (1 + IGV_RATE);
-      return {
-        subtotal: Number(subtotal.toFixed(2)),
-        igv: Number((suma - subtotal).toFixed(2)),
-        total: Number(suma.toFixed(2)),
-      };
+    const gravadoPorProducto = aplicaIgv
+      ? await this.comprasService.afectacionGravadaPorProducto(empresaId, detalles)
+      : new Map<number, boolean>();
+    let subtotal = 0;
+    let total = 0;
+    for (const d of detalles) {
+      const bruto = Number(d.cantidad) * Number(d.precioUnitario);
+      const gravado =
+        aplicaIgv && (gravadoPorProducto.get(Number(d.productoId)) ?? true);
+      if (!gravado) {
+        subtotal += bruto;
+        total += bruto;
+      } else if (igvIncluido) {
+        // Los precios ya traen el IGV embebido: el total es la suma tal cual
+        // y el IGV se extrae (misma lógica que incluyeIgv en Compras)
+        subtotal += bruto / (1 + IGV_RATE);
+        total += bruto;
+      } else {
+        subtotal += bruto;
+        total += bruto * (1 + IGV_RATE);
+      }
     }
-    const igv = aplicaIgv ? suma * IGV_RATE : 0;
+    const subtotalR = Number(subtotal.toFixed(2));
+    const totalR = Number(total.toFixed(2));
     return {
-      subtotal: Number(suma.toFixed(2)),
-      igv: Number(igv.toFixed(2)),
-      total: Number((suma + igv).toFixed(2)),
+      subtotal: subtotalR,
+      igv: Number((totalR - subtotalR).toFixed(2)),
+      total: totalR,
     };
   }
 
@@ -76,7 +92,12 @@ export class OrdenCompraService {
 
     const aplicaIgv = dto.aplicaIgv !== false;
     const igvIncluido = aplicaIgv && dto.igvIncluido === true;
-    const totales = this.calcularTotales(dto.detalles, aplicaIgv, igvIncluido);
+    const totales = await this.calcularTotales(
+      empresaId,
+      dto.detalles,
+      aplicaIgv,
+      igvIncluido,
+    );
 
     const ultimo = await this.prisma.ordenCompra.aggregate({
       where: { empresaId },
@@ -91,8 +112,8 @@ export class OrdenCompraService {
         proveedorId: dto.proveedorId,
         usuarioId,
         numero,
-        fechaEmision: dto.fechaEmision ? new Date(dto.fechaEmision) : new Date(),
-        fechaEntrega: dto.fechaEntrega ? new Date(dto.fechaEntrega) : null,
+        fechaEmision: dto.fechaEmision ? parseFechaSoloDia(dto.fechaEmision) : new Date(),
+        fechaEntrega: dto.fechaEntrega ? parseFechaSoloDia(dto.fechaEntrega) : null,
         moneda: dto.moneda || 'PEN',
         tipoCambio: dto.tipoCambio ?? 1,
         ...totales,
@@ -185,7 +206,14 @@ export class OrdenCompraService {
       include: {
         detalles: {
           include: {
-            producto: { select: { id: true, codigo: true, descripcion: true } },
+            producto: {
+              select: {
+                id: true,
+                codigo: true,
+                descripcion: true,
+                tipoAfectacionIGV: true,
+              },
+            },
           },
         },
         proveedor: true,
@@ -221,7 +249,12 @@ export class OrdenCompraService {
     }
     const aplicaIgv = dto.aplicaIgv !== false;
     const igvIncluido = aplicaIgv && dto.igvIncluido === true;
-    const totales = this.calcularTotales(dto.detalles, aplicaIgv, igvIncluido);
+    const totales = await this.calcularTotales(
+      empresaId,
+      dto.detalles,
+      aplicaIgv,
+      igvIncluido,
+    );
 
     await this.prisma.detalleOrdenCompra.deleteMany({
       where: { ordenCompraId: id },
@@ -231,8 +264,8 @@ export class OrdenCompraService {
       data: {
         proveedorId: dto.proveedorId,
         sedeId: dto.sedeId ?? null,
-        fechaEmision: dto.fechaEmision ? new Date(dto.fechaEmision) : undefined,
-        fechaEntrega: dto.fechaEntrega ? new Date(dto.fechaEntrega) : null,
+        fechaEmision: dto.fechaEmision ? parseFechaSoloDia(dto.fechaEmision) : undefined,
+        fechaEntrega: dto.fechaEntrega ? parseFechaSoloDia(dto.fechaEntrega) : null,
         moneda: dto.moneda || 'PEN',
         tipoCambio: dto.tipoCambio ?? 1,
         ...totales,
@@ -309,7 +342,11 @@ export class OrdenCompraService {
         fechaEmision: dto.fechaEmision,
         fechaVencimiento: dto.fechaVencimiento,
         moneda: orden.moneda,
-        tipoCambio: Number(orden.tipoCambio ?? 1),
+        // El TC que manda es el de la factura al recibir; si no, el de la orden.
+        tipoCambio:
+          dto.tipoCambio != null
+            ? Number(dto.tipoCambio)
+            : Number(orden.tipoCambio ?? 1),
         observaciones: `Generada desde la orden de compra ${OrdenCompraService.formatNumero(orden.numero)}`,
         sedeId: dto.sedeId ?? orden.sedeId ?? undefined,
         formaPago: dto.formaPago,

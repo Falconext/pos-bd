@@ -8,6 +8,7 @@ import {
 import * as https from 'https';
 import * as http from 'http';
 import type { MovimientoKardex, Prisma } from '@prisma/client';
+import { TipoCambioService } from '../tipo-cambio/tipo-cambio.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   FiltrosKardexDto,
@@ -36,7 +37,31 @@ export class KardexService {
   constructor(
     private prisma: PrismaService,
     private pdfGenerator: PdfGeneratorService,
+    private tipoCambioService: TipoCambioService,
   ) {}
+
+  /**
+   * TC venta SUNAT del día para mostrar en soles el precio de los productos en
+   * dólares (el costo del kardex ya está en soles). 0 si no se pudo obtener.
+   */
+  private async tcVentaHoy(): Promise<number> {
+    try {
+      const tc = await this.tipoCambioService.consultar();
+      return Number(tc?.venta) > 0 ? Number(tc.venta) : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** Precio de venta del producto en soles (US$ × TC del día). */
+  private precioVentaSoles(
+    producto: { precioUnitario?: any; moneda?: string | null } | null | undefined,
+    tc: number,
+  ): number {
+    const precio = Number(producto?.precioUnitario || 0);
+    if (String(producto?.moneda ?? 'PEN').toUpperCase() !== 'USD') return precio;
+    return tc > 0 ? precio * tc : 0;
+  }
 
   /** Cabecera del reporte de movimientos; se usa también cuando no hay filas. */
   private static readonly COLUMNAS_EXPORTACION = [
@@ -560,6 +585,11 @@ export class KardexService {
     ]);
 
     // Mapear movimientos con campos calculados
+    const tcHoy = movimientos.some(
+      (m) => String(m.producto?.moneda ?? 'PEN').toUpperCase() === 'USD',
+    )
+      ? await this.tcVentaHoy()
+      : 0;
     const movimientosMapeados = movimientos.map((mov) => {
       // Obtener costo unitario: si no existe en el movimiento, usar costo promedio del producto
       const costoUnitarioMovimiento = mov.costoUnitario
@@ -576,18 +606,23 @@ export class KardexService {
         ? Number(mov.valorTotal)
         : costoFinal * num(mov.cantidad);
 
-      // Calcular ganancia unitaria
-      const precioVenta = mov.producto
-        ? Number(mov.producto.precioUnitario || 0)
-        : 0;
+      // Calcular ganancia unitaria (en SOLES: el precio en US$ se convierte al TC del día)
+      const precioVenta = this.precioVentaSoles(mov.producto, tcHoy);
       const gananciaUnidad =
         precioVenta > 0 && costoFinal > 0 ? precioVenta - costoFinal : 0;
+      const esUsd =
+        String(mov.producto?.moneda ?? 'PEN').toUpperCase() === 'USD';
 
       return {
         ...mov,
         costoUnitario: costoFinal,
         valorTotal: valorTotal,
         gananciaUnidad: gananciaUnidad,
+        // Precio en soles (para comparar con el costo) + el precio original en su moneda.
+        precioUnitario: precioVenta,
+        precioMoneda: esUsd ? 'USD' : 'PEN',
+        precioMonedaProducto: Number(mov.producto?.precioUnitario || 0),
+        tipoCambioDia: esUsd ? tcHoy : 1,
         producto: mov.producto
           ? {
               ...mov.producto,
@@ -2518,8 +2553,12 @@ export class KardexService {
     const filas = movimientos.map((mov: any) => {
       const costoUnitario = round3(num(mov.costoUnitario));
       const gananciaUnidad = round3(num(mov.gananciaUnidad));
+      // Precio en soles (los movimientos ya vienen mapeados con el precio
+      // convertido cuando el producto es en US$).
       const precioUnitario = round3(
-        num(mov.producto?.precioUnitario) || costoUnitario + gananciaUnidad,
+        num(mov.precioUnitario) ||
+          num(mov.producto?.precioUnitario) ||
+          costoUnitario + gananciaUnidad,
       );
       const cantidad = round3(cantidadConSigno(mov));
       const comprobante = mov.comprobante

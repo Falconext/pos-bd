@@ -6,6 +6,7 @@ import {
   mapCategoriaCaja,
   EGRESO_CAJA_SELECT,
 } from '../common/utils/egresos-caja.util';
+import { factorCompraASoles, montoCompraEnSoles } from '../common/utils/moneda-compra';
 
 @Injectable()
 export class ContabilidadService {
@@ -371,10 +372,17 @@ export class ContabilidadService {
       fechaEmision: c.fechaEmision,
       fechaVencimiento: c.fechaVencimiento,
       moneda: c.moneda,
-      subtotal: Number(c.subtotal || 0),
-      igv: Number(c.igv || 0),
-      total: Number(c.total || 0),
-      saldo: Number(c.saldo || 0),
+      tipoCambio: factorCompraASoles(c),
+      // Importes en SOLES (una factura en US$ se convierte con su TC), que es
+      // lo que suma el reporte; los valores del documento van aparte.
+      subtotal: montoCompraEnSoles(c.subtotal, c),
+      igv: montoCompraEnSoles(c.igv, c),
+      total: montoCompraEnSoles(c.total, c),
+      saldo: montoCompraEnSoles(c.saldo, c),
+      subtotalDoc: Number(c.subtotal || 0),
+      igvDoc: Number(c.igv || 0),
+      totalDoc: Number(c.total || 0),
+      saldoDoc: Number(c.saldo || 0),
       estadoPago: c.estadoPago,
       observaciones: c.observaciones ?? '',
       proveedor: c.proveedor,

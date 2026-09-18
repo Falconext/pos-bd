@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { montoEnPen } from '../common/utils/moneda.util';
 import { egresosCajaWhere } from '../common/utils/egresos-caja.util';
 import { excluirNotasCreditoDeAnulacion } from '../common/utils/notas-credito.util';
+import { montoCompraEnSoles } from '../common/utils/moneda-compra';
 
 @Injectable()
 export class DashboardService {
@@ -689,9 +690,11 @@ export class DashboardService {
 
     const start = new Date(`${fechaInicio}T00:00:00.000-05:00`);
     const end = new Date(`${fechaFin}T23:59:59.999-05:00`);
+    // Periodo anterior = mismo largo, terminando el día antes de `start`.
+    // (Antes restaba un día de más: para "hoy" comparaba contra 2 días.)
     const diffMs = end.getTime() - start.getTime();
-    const prevStart = new Date(start.getTime() - diffMs - 24 * 60 * 60 * 1000);
-    const prevEnd = new Date(end.getTime() - diffMs - 24 * 60 * 60 * 1000);
+    const prevEnd = new Date(start.getTime() - 1);
+    const prevStart = new Date(prevEnd.getTime() - diffMs);
 
     const prevRange = {
       gte: new Date(prevStart.setHours(0, 0, 0, 0)),
@@ -722,9 +725,12 @@ export class DashboardService {
     const baseCompraWhere = {
       empresaId,
       ...compraSedeFilter,
-      // Excluir compras anuladas (borrado lógico): igual que el listado de compras,
-      // no deben contar en el Resumen Financiero una vez eliminadas.
-      estado: { not: 'ANULADO' as any },
+      // Excluir compras anuladas (borrado lógico), rechazadas y pendientes de
+      // aprobación: ninguna de las tres es una compra vigente (las pendientes
+      // ni siquiera ingresaron stock) y no deben contar en el Resumen Financiero.
+      estado: {
+        notIn: ['ANULADO', 'RECHAZADA', 'PENDIENTE_APROBACION'] as any,
+      },
     };
 
     const TIPOS_FINANCIAMIENTO = ['PRESTAMO', 'INVERSION', 'CAPITAL'];
@@ -993,14 +999,17 @@ export class DashboardService {
       sedeId,
     );
 
-    const comprasRows = await this.prisma.compra.aggregate({
-      _sum: { total: true },
-      where: { ...baseCompraWhere, fechaEmision: currentRange },
-    });
-    const comprasPrevRows = await this.prisma.compra.aggregate({
-      _sum: { total: true },
-      where: { ...baseCompraWhere, fechaEmision: prevRange },
-    });
+    // Compras en soles: las facturas en dólares se convierten con el TC con el
+    // que se registraron (no con el de hoy), para que el mes no "se mueva".
+    const sumarComprasSoles = async (rango: any) => {
+      const filas = await this.prisma.compra.findMany({
+        where: { ...baseCompraWhere, fechaEmision: rango },
+        select: { total: true, moneda: true, tipoCambio: true },
+      });
+      return filas.reduce((acc, c) => acc + montoCompraEnSoles(c.total, c), 0);
+    };
+    const comprasRows = { _sum: { total: await sumarComprasSoles(currentRange) } };
+    const comprasPrevRows = { _sum: { total: await sumarComprasSoles(prevRange) } };
 
     const TIPOS_INFORMALES_ARRAY = this.TIPOS_INFORMALES;
     const [

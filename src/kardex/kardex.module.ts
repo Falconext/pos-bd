@@ -1,3 +1,4 @@
+import { TipoCambioModule } from '../tipo-cambio/tipo-cambio.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
 import { KardexService } from './kardex.service';
@@ -8,6 +9,7 @@ import { ComprobanteModule } from '../comprobante/comprobante.module';
   imports: [
     PrismaModule,
     forwardRef(() => ComprobanteModule), // Para evitar dependencias circulares
+    TipoCambioModule, // precio de productos en US$ → soles en el reporte de movimientos
   ],
   controllers: [KardexController],
   providers: [KardexService],

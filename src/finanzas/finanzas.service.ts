@@ -7,6 +7,7 @@ import {
   fechaKeyLima,
   EGRESO_CAJA_SELECT,
 } from '../common/utils/egresos-caja.util';
+import { montoCompraEnSoles, pagoCompraEnSoles } from '../common/utils/moneda-compra';
 
 @Injectable()
 export class FinanzasService {
@@ -34,15 +35,24 @@ export class FinanzasService {
     const rangoFecha = this.parseRange(fechaInicio, fechaFin);
 
     // 1. Cuentas por Pagar (Compras) — filtradas por sede
-    const porPagarAgg = await this.prisma.compra.aggregate({
+    // Saldo en soles: las compras en dólares se convierten con su TC.
+    const porPagarFilas = await this.prisma.compra.findMany({
       where: {
         empresaId,
         ...(sedeId ? { sedeId } : {}),
-        estado: { not: 'ANULADO' },
+        estado: { notIn: ['ANULADO', 'RECHAZADA', 'PENDIENTE_APROBACION'] as any },
         saldo: { gt: 0 },
       },
-      _sum: { saldo: true },
+      select: { saldo: true, moneda: true, tipoCambio: true },
     });
+    const porPagarAgg = {
+      _sum: {
+        saldo: porPagarFilas.reduce(
+          (acc, c) => acc + montoCompraEnSoles(c.saldo, c),
+          0,
+        ),
+      },
+    };
 
     // 2. Cuentas por Cobrar — filtradas por sede
     const porCobrarAgg = await this.prisma.comprobante.aggregate({
@@ -116,14 +126,33 @@ export class FinanzasService {
     });
 
     // PAGOS A PROVEEDORES (Egreso Real) — filtrados por sede
-    const pagosCompras = await this.prisma.pagoCompra.groupBy({
-      by: ['fecha'],
+    // Egreso real en soles: un pago de factura en dólares sale al TC del día
+    // del pago (montoSoles), no por su valor nominal en US$.
+    const pagosComprasFilas = await this.prisma.pagoCompra.findMany({
       where: {
         empresaId,
         fecha: rangoFecha,
       },
-      _sum: { monto: true },
+      select: {
+        fecha: true,
+        monto: true,
+        montoSoles: true,
+        tipoCambio: true,
+        moneda: true,
+        compra: { select: { moneda: true, tipoCambio: true } },
+      },
     });
+    const pagosPorFecha = new Map<string, { fecha: Date; soles: number }>();
+    for (const p of pagosComprasFilas) {
+      const clave = p.fecha.toISOString().split('T')[0];
+      const actual = pagosPorFecha.get(clave) ?? { fecha: p.fecha, soles: 0 };
+      actual.soles += pagoCompraEnSoles(p, p.compra);
+      pagosPorFecha.set(clave, actual);
+    }
+    const pagosCompras = Array.from(pagosPorFecha.values()).map((p) => ({
+      fecha: p.fecha,
+      _sum: { monto: p.soles },
+    }));
 
     // Mapear datos para el gráfico
     const mapDatos = new Map<

@@ -100,14 +100,17 @@ export class WhatsAppService {
     }
 
     if (empresa.whatsappProvider === 'EMPRESA') {
-      if (!empresa.whatsappApiToken || !empresa.whatsappPhoneNumberId) {
+      // Token propio del cliente o, si su WABA está compartida con la
+      // plataforma (Embedded Signup), el token permanente del usuario del sistema.
+      const token = empresa.whatsappApiToken || this.systemUserToken;
+      if (!token || !empresa.whatsappPhoneNumberId) {
         throw new BadRequestException(
-          'WhatsApp propio no configurado. Agrega token y phone number ID de Meta para esta empresa.',
+          'WhatsApp propio no configurado. Conecta tu número desde Configuración → Conectar mi WhatsApp.',
         );
       }
 
       return {
-        token: empresa.whatsappApiToken,
+        token,
         phoneId: empresa.whatsappPhoneNumberId,
         source: 'EMPRESA',
       };
@@ -158,6 +161,59 @@ export class WhatsAppService {
   }
   private get metaAppSecret(): string {
     return this.configService.get<string>('META_APP_SECRET') || '';
+  }
+
+  // ── Patrón "proveedor de tecnología" de Meta ────────────────────────────────
+  // El token que devuelve el Embedded Signup caduca a los 60 días (Meta ya no
+  // ofrece configuraciones de registro insertado con token permanente). Para no
+  // depender de él, al conectar asignamos la WABA del cliente al usuario del
+  // sistema de la plataforma (Krezka) y operamos con SU token, que no caduca.
+  // Si la asignación falla, se guarda el token del cliente como respaldo.
+  private get systemUserId(): string {
+    return this.configService.get<string>('META_SYSTEM_USER_ID') || '';
+  }
+  private get systemUserToken(): string {
+    return (
+      this.configService.get<string>('META_SYSTEM_USER_TOKEN') ||
+      this.configService.get<string>('WHATSAPP_TOKEN') ||
+      this.configService.get<string>('META_WHATSAPP_TOKEN') ||
+      ''
+    );
+  }
+
+  /**
+   * Asigna la WABA del cliente al usuario del sistema de la plataforma (tarea
+   * MANAGE) usando el token del cliente, y comprueba que el token de plataforma
+   * ya puede leer el número. Devuelve true solo si ambas cosas funcionan.
+   */
+  private async asignarWabaAUsuarioDelSistema(
+    wabaId: string,
+    phoneNumberId: string,
+    clientToken: string,
+  ): Promise<boolean> {
+    if (!this.systemUserId || !this.systemUserToken) {
+      this.logger.warn(
+        'META_SYSTEM_USER_ID / META_SYSTEM_USER_TOKEN no configurados: se usará el token del cliente (caduca en 60 días).',
+      );
+      return false;
+    }
+    try {
+      await axios.post(`${this.apiUrl}/${wabaId}/assigned_users`, null, {
+        params: { user: this.systemUserId, tasks: '["MANAGE"]' },
+        headers: { Authorization: `Bearer ${clientToken}` },
+      });
+      // Verificación: el token de plataforma debe poder leer el número.
+      await axios.get(`${this.apiUrl}/${phoneNumberId}`, {
+        params: { fields: 'id,display_phone_number' },
+        headers: { Authorization: `Bearer ${this.systemUserToken}` },
+      });
+      return true;
+    } catch (e: any) {
+      this.logger.warn(
+        `No se pudo asignar la WABA ${wabaId} al usuario del sistema: ${e.response?.data?.error?.message || e.message}`,
+      );
+      return false;
+    }
   }
 
   /** Intercambia el `code` del Embedded Signup por un token de larga duración. */
@@ -324,23 +380,32 @@ export class WhatsAppService {
     if (!numeroVisible)
       numeroVisible = await this.fetchDisplayNumber(phoneNumberId, token);
 
-    // 5) Persistir en Empresa (provider=EMPRESA).
+    // 5) Asignar la WABA al usuario del sistema de la plataforma. Si funciona,
+    //    NO guardamos el token del cliente (caduca a los 60 días): la empresa
+    //    queda con whatsappApiToken=null y se opera con el token permanente.
+    const usaTokenPlataforma = await this.asignarWabaAUsuarioDelSistema(
+      wabaId,
+      phoneNumberId,
+      token,
+    );
+
+    // 6) Persistir en Empresa (provider=EMPRESA).
     await this.prisma.empresa.update({
       where: { id: empresaId },
       data: {
         whatsappProvider: 'EMPRESA' as any,
-        whatsappApiToken: token,
+        whatsappApiToken: usaTokenPlataforma ? null : token,
         whatsappPhoneNumberId: phoneNumberId,
         whatsappBusinessId: wabaId,
         whatsappActivo: true,
       },
     });
 
-    // 6) Auto-crear plantillas de despacho en la WABA del empresario.
+    // 7) Auto-crear plantillas de despacho en la WABA del empresario.
     const plantillas = await this.crearPlantillasDespacho(wabaId, token);
 
     this.logger.log(
-      `Empresa ${empresaId} conectó WhatsApp propio (${numeroVisible ?? phoneNumberId}).`,
+      `Empresa ${empresaId} conectó WhatsApp propio (${numeroVisible ?? phoneNumberId}) — token ${usaTokenPlataforma ? 'de plataforma (permanente)' : 'del cliente (60 días)'}.`,
     );
     return { phoneNumberId, wabaId, numeroVisible, plantillas };
   }

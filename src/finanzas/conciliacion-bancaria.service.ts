@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import * as XLSX from 'xlsx';
 import { PrismaService } from '../prisma/prisma.service';
+import { pagoCompraEnSoles } from '../common/utils/moneda-compra';
 
 /**
  * Conciliación bancaria: importa un Excel del banco (movimientos con N° de
@@ -27,6 +28,8 @@ export interface PagoSistema {
   contraparte: string; // cliente / proveedor
   medioPago: string;
   monto: number;
+  /** Mismo pago en la otra moneda (US$ de una factura en dólares), para cruzar cuentas en dólares. */
+  montoAlterno?: number;
   fecha: string; // YYYY-MM-DD
 }
 
@@ -225,6 +228,9 @@ export class ConciliacionBancariaService {
         select: {
           fecha: true,
           monto: true,
+          montoSoles: true,
+          tipoCambio: true,
+          moneda: true,
           metodoPago: true,
           referencia: true,
           compra: {
@@ -232,6 +238,8 @@ export class ConciliacionBancariaService {
               serie: true,
               numero: true,
               tipoDoc: true,
+              moneda: true,
+              tipoCambio: true,
               proveedor: { select: { nombre: true } },
             },
           },
@@ -281,7 +289,13 @@ export class ConciliacionBancariaService {
         documento: p.compra ? `${p.compra.serie}-${p.compra.numero}` : '—',
         contraparte: p.compra?.proveedor?.nombre || '—',
         medioPago: String(p.metodoPago || '—'),
-        monto: Number(p.monto || 0),
+        // El extracto suele ser en soles → se cruza con lo que salió en soles;
+        // si la cuenta es en dólares el cruce acepta también el monto en US$.
+        monto: Number(pagoCompraEnSoles(p, p.compra).toFixed(2)),
+        montoAlterno:
+          String(p.moneda ?? p.compra?.moneda ?? 'PEN').toUpperCase() === 'USD'
+            ? Number(p.monto || 0)
+            : undefined,
         fecha: p.fecha.toISOString().split('T')[0],
       }));
 
@@ -412,7 +426,15 @@ export class ConciliacionBancariaService {
 
       if (elegido) {
         usados.add(elegido);
-        const dif = Number((mov.monto - elegido.monto).toFixed(2));
+        // Si el banco coincide con el monto en la otra moneda (cuenta en US$),
+        // se toma ese para no reportar una diferencia falsa.
+        const montoCruce =
+          elegido.montoAlterno != null &&
+          Math.abs(mov.monto - elegido.montoAlterno) <
+            Math.abs(mov.monto - elegido.monto)
+            ? elegido.montoAlterno
+            : elegido.monto;
+        const dif = Number((mov.monto - montoCruce).toFixed(2));
         if (Math.abs(dif) > TOLERANCIA_MONTO) diferenciasMonto++;
         montoConciliado += mov.monto;
         mov.estado = 'CONCILIADO';
@@ -420,7 +442,7 @@ export class ConciliacionBancariaService {
           origen: elegido.origen,
           documento: elegido.documento,
           contraparte: elegido.contraparte,
-          monto: elegido.monto,
+          monto: montoCruce,
           fecha: elegido.fecha,
           diferenciaMonto: dif,
         };

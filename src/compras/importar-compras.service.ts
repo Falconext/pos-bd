@@ -341,6 +341,7 @@ export class ImportarComprasService {
         codigo: true,
         codigoBarras: true,
         descripcion: true,
+        tipoAfectacionIGV: true,
         codigosBarras: {
           select: {
             codigo: true,
@@ -354,8 +355,12 @@ export class ImportarComprasService {
     const porBarras = new Map<string, { id: number; unidades: number }>();
     const porDescripcion = new Map<string, number[]>();
     const nombres = new Map<number, string>();
+    // Afectación IGV: exonerados (20) / inafectos (30) entran sin IGV.
+    const gravado = new Map<number, boolean>();
     for (const p of productos) {
       nombres.set(p.id, p.descripcion);
+      const afe = String(p.tipoAfectacionIGV ?? '10').trim();
+      gravado.set(p.id, afe === '' || afe.startsWith('1'));
       if (p.codigo) porCodigo.set(this.normalizarTexto(p.codigo), p.id);
       if (p.codigoBarras) {
         porBarras.set(this.normalizarTexto(p.codigoBarras), {
@@ -379,7 +384,7 @@ export class ImportarComprasService {
       const d = this.normalizarTexto(p.descripcion);
       if (d) porDescripcion.set(d, [...(porDescripcion.get(d) ?? []), p.id]);
     }
-    return { porCodigo, porBarras, porDescripcion, nombres };
+    return { porCodigo, porBarras, porDescripcion, nombres, gravado };
   }
 
   /**
@@ -560,9 +565,13 @@ export class ImportarComprasService {
       sedeRaw: any;
       sedeFija: { id: number; nombre: string } | null;
     }[] => {
+      // Un 0 (o vacío) en la columna de una sede = no se compró para esa
+      // sede: se omite en vez de tumbar la compra con "cantidad debe ser > 0".
+      const esCero = (raw: any) =>
+        String(raw ?? '').trim() === '' || Number(String(raw).trim()) === 0;
       const porSede = colCantPorSede
         .map(({ sede, claves }) => ({ sede, raw: this.pick(f, claves) }))
-        .filter((x) => x.raw != null);
+        .filter((x) => x.raw != null && !esCero(x.raw));
       if (porSede.length) {
         return porSede.map((x) => ({
           cantidadRaw: x.raw,
@@ -696,7 +705,7 @@ export class ImportarComprasService {
           cantidadReal = cantidad * res.unidades;
           costoReal = self.r2((costoUnitario ?? 0) / res.unidades);
           aviso(
-            `Código de paquete (x${res.unidades}): entran ${cantidadReal} unidades a S/ ${costoReal.toFixed(2)} c/u.`,
+            `Código de paquete (x${res.unidades}): entran ${cantidadReal} unidades a ${costoReal.toFixed(2)} c/u (moneda del documento).`,
           );
         }
         if (res.via === 'descripción') {
@@ -885,13 +894,20 @@ export class ImportarComprasService {
 
       // Totales de la línea (misma fórmula que ComprasService.crear)
       // Celdas inválidas (NaN) ya marcaron error; para los totales cuentan 0.
+      // Producto exonerado/inafecto: sin IGV (el costo tecleado es el neto).
       const qtyCalc = Number.isFinite(cantidadReal) ? cantidadReal : 0;
       const costoCalc = Number.isFinite(costoReal) ? costoReal : 0;
-      const costoNeto = incluyeIgv ? costoCalc / 1.18 : costoCalc;
+      const gravado = productoId ? (idx.gravado.get(productoId) ?? true) : true;
+      const costoNeto = gravado && incluyeIgv ? costoCalc / 1.18 : costoCalc;
       const subtotalLinea = self.r2(costoNeto * qtyCalc);
-      const totalLinea = self.r2(
-        incluyeIgv ? costoCalc * qtyCalc : costoNeto * 1.18 * qtyCalc,
-      );
+      const totalLinea = !gravado
+        ? subtotalLinea
+        : self.r2(
+            incluyeIgv ? costoCalc * qtyCalc : costoNeto * 1.18 * qtyCalc,
+          );
+      if (!gravado && incluyeIgv) {
+        aviso('Producto exonerado/inafecto: no lleva IGV, el costo se toma tal cual.');
+      }
 
       if (sede && !grupo.sedesNombres.includes(sede.nombre)) {
         grupo.sedesNombres.push(sede.nombre);
@@ -1075,6 +1091,8 @@ export class ImportarComprasService {
               empresaId,
               l.sedeId ?? g.sedeId!,
               l,
+              // Costo y precio provisional del producto nuevo en SOLES.
+              g.moneda === 'USD' ? Number(g.tipoCambio) || 1 : 1,
             );
             productoNuevoId.set(k, id);
           }
@@ -1270,8 +1288,10 @@ export class ImportarComprasService {
     empresaId: number,
     sedeId: number,
     l: LineaImport,
+    factorSoles = 1,
   ): Promise<number> {
-    const costoNeto = l.incluyeIgv ? l.costoUnitario / 1.18 : l.costoUnitario;
+    const costoNeto =
+      (l.incluyeIgv ? l.costoUnitario / 1.18 : l.costoUnitario) * factorSoles;
     // Precio de venta provisional (costo con IGV + 30%) para que se pueda vender;
     // el usuario lo ajusta desde Inventario.
     const precioVenta = this.r2(costoNeto * 1.18 * 1.3);

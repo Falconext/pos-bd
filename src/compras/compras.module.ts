@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { TipoCambioModule } from '../tipo-cambio/tipo-cambio.module';
 import { ComprasController } from './compras.controller';
 import { ComprasService } from './compras.service';
 import { ImportarComprasService } from './importar-compras.service';
@@ -14,7 +15,7 @@ import { OrdenCompraController } from './orden-compra.controller';
 import { OrdenCompraService } from './orden-compra.service';
 
 @Module({
-  imports: [PrismaModule, KardexModule, ProductoModule, CajaModule, ComprobanteModule, GeminiModule, S3Module, ClienteModule],
+  imports: [PrismaModule, KardexModule, ProductoModule, CajaModule, ComprobanteModule, GeminiModule, S3Module, ClienteModule, TipoCambioModule],
   controllers: [OrdenCompraController, ComprasController],
   providers: [ComprasService, OrdenCompraService, ImportarComprasService],
 })

@@ -111,6 +111,11 @@ export class RecibirOrdenCompraDto {
   @IsString()
   formaPago?: string; // CONTADO o CREDITO
 
+  // Orden en dólares: TC de la factura recibida (si no viene, el de la orden).
+  @IsOptional()
+  @IsNumber()
+  tipoCambio?: number;
+
   @IsOptional()
   @IsNumber()
   montoPagadoInicial?: number;

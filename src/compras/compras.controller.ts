@@ -260,6 +260,20 @@ export class ComprasController {
     );
   }
 
+  @Delete(':id/pagos/:pagoId')
+  async anularPago(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('pagoId', ParseIntPipe) pagoId: number,
+  ) {
+    return this.comprasService.anularPago(
+      req.user.empresaId,
+      req.user.id,
+      id,
+      pagoId,
+    );
+  }
+
   @Get(':id/pagos')
   async historialPagos(@Request() req, @Param('id', ParseIntPipe) id: number) {
     return this.comprasService.getHistorialPagos(

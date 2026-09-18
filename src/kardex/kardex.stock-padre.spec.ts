@@ -7,7 +7,7 @@ import { KardexService } from './kardex.service';
  */
 describe('KardexService.sincronizarStockPadre', () => {
   const buildService = (mockPrisma: any) =>
-    new KardexService(mockPrisma as any, {} as any);
+    new KardexService(mockPrisma as any, {} as any, {} as any);
 
   it('recalcula el stock del padre = suma de variantes tras una venta', async () => {
     // Padre id=1 con 2 variantes (S=id 10, M=id 11). Total inicial 20.

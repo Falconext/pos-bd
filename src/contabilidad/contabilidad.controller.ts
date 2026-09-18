@@ -420,6 +420,9 @@ export class ContabilidadController {
         ? toFechaLima(new Date(c.fechaVencimiento))
         : '',
       MONEDA: c.moneda ?? 'PEN',
+      // Importes en soles; para facturas en US$ se agrega el TC y el total del documento.
+      'TIPO CAMBIO': c.moneda === 'USD' ? Number(c.tipoCambio ?? 0) : '',
+      'TOTAL DOC (MONEDA)': Number(c.totalDoc ?? c.total ?? 0),
       'ESTADO PAGO': estadoPagoLabel[c.estadoPago] ?? c.estadoPago ?? '',
       'BASE GRAVADA': Number(c.subtotal ?? 0),
       IGV: Number(c.igv ?? 0),

@@ -11,6 +11,7 @@ import { GeminiService } from '../gemini/gemini.service';
 import { S3Service } from '../s3/s3.service';
 import { CrearCompraDto } from './dto/crear-compra.dto';
 import { Prisma } from '@prisma/client';
+import { TipoCambioService } from '../tipo-cambio/tipo-cambio.service';
 import { XMLParser } from 'fast-xml-parser';
 import { parseFechaSoloDia } from '../common/utils/fecha';
 
@@ -23,6 +24,7 @@ export class ComprasService {
     private cajaService: CajaService,
     private geminiService: GeminiService,
     private s3Service: S3Service,
+    private tipoCambioService: TipoCambioService,
   ) {}
 
   /**
@@ -78,8 +80,205 @@ export class ComprasService {
 
   private readonly saldoTolerance = 0.01;
 
+  /**
+   * Moneda del documento y tipo de cambio con el que se convierte a soles.
+   * Regla del sistema: la moneda base es el sol y el costo es histórico — todo
+   * lo que entra al kardex/costo promedio va en soles al TC de la compra, y ese
+   * TC queda guardado en la compra para que los reportes sean reproducibles.
+   * PEN → tc 1. USD → exige un TC > 0 (no se adivina: es dato de la factura).
+   */
+  private resolverMonedaYTipoCambio(data: {
+    moneda?: string | null;
+    tipoCambio?: number | null;
+  }): { moneda: 'PEN' | 'USD'; tipoCambio: number } {
+    const moneda = String(data.moneda ?? 'PEN').trim().toUpperCase();
+    if (moneda !== 'PEN' && moneda !== 'USD') {
+      throw new BadRequestException(
+        `Moneda "${data.moneda}" no soportada. Usa PEN (soles) o USD (dólares).`,
+      );
+    }
+    if (moneda === 'PEN') return { moneda, tipoCambio: 1 };
+    const tc = Number(data.tipoCambio);
+    if (!Number.isFinite(tc) || tc <= 0) {
+      throw new BadRequestException(
+        'Indica el tipo de cambio (S/ por US$) para registrar una compra en dólares.',
+      );
+    }
+    // TC 1 en dólares = "no se convirtió": casi siempre es un dato faltante.
+    if (tc < 1.5 || tc > 20) {
+      throw new BadRequestException(
+        `El tipo de cambio ${tc} no parece válido (se esperan soles por dólar, p. ej. 3.75).`,
+      );
+    }
+    return { moneda, tipoCambio: Math.round(tc * 10000) / 10000 };
+  }
+
+  /** Factor moneda del documento → soles, a partir de una compra guardada. */
+  private factorASoles(compra: {
+    moneda?: string | null;
+    tipoCambio?: any;
+  }): number {
+    if (String(compra.moneda ?? 'PEN').toUpperCase() !== 'USD') return 1;
+    const tc = Number(compra.tipoCambio);
+    return Number.isFinite(tc) && tc > 0 ? tc : 1;
+  }
+
+  /**
+   * Valoriza un pago en soles. `monto` va en la moneda de la compra; para USD
+   * usa el TC del día del pago (o el de la compra si no se indica) y calcula la
+   * diferencia de cambio frente al TC con el que se contabilizó la compra.
+   */
+  private valorizarPago(
+    compra: { moneda?: string | null; tipoCambio?: any },
+    monto: number,
+    tipoCambioPago?: number | null,
+  ): {
+    moneda: 'PEN' | 'USD';
+    tipoCambio: number;
+    montoSoles: number;
+    diferenciaCambio: number;
+  } {
+    const esUsd = String(compra.moneda ?? 'PEN').toUpperCase() === 'USD';
+    if (!esUsd) {
+      return {
+        moneda: 'PEN',
+        tipoCambio: 1,
+        montoSoles: this.roundMoney(monto),
+        diferenciaCambio: 0,
+      };
+    }
+    const tcCompra = this.factorASoles(compra);
+    let tc = Number(tipoCambioPago);
+    if (!Number.isFinite(tc) || tc <= 0) tc = tcCompra;
+    if (tc < 1.5 || tc > 20) {
+      throw new BadRequestException(
+        `El tipo de cambio del pago (${tc}) no parece válido (soles por dólar, p. ej. 3.75).`,
+      );
+    }
+    tc = Math.round(tc * 10000) / 10000;
+    return {
+      moneda: 'USD',
+      tipoCambio: tc,
+      montoSoles: this.roundMoney(monto * tc),
+      diferenciaCambio: this.roundMoney((tc - tcCompra) * monto),
+    };
+  }
+
+  /**
+   * Pago de un documento en SOLES desde una cuenta bancaria en DÓLARES: el pago
+   * se guarda en soles, pero necesita un TC para que el ledger de la cuenta lo
+   * muestre en US$. Usa el TC enviado o, si no, el TC venta SUNAT del día.
+   * Devuelve 1 si no aplica (misma moneda) o si no se pudo obtener.
+   */
+  private async tipoCambioParaCuenta(
+    cuentaBancariaId: number | null | undefined,
+    monedaDoc: 'PEN' | 'USD',
+    tcEnviado?: number | null,
+  ): Promise<number> {
+    if (!cuentaBancariaId || monedaDoc !== 'PEN') return 1;
+    const cuenta = await this.prisma.cuentaBancaria.findUnique({
+      where: { id: Number(cuentaBancariaId) },
+      select: { moneda: true },
+    });
+    if (String(cuenta?.moneda ?? 'PEN').toUpperCase() !== 'USD') return 1;
+    const tc = Number(tcEnviado);
+    if (Number.isFinite(tc) && tc >= 1.5 && tc <= 20) return tc;
+    try {
+      const sunat = await this.tipoCambioService.consultar();
+      return sunat?.venta > 0 ? sunat.venta : 1;
+    } catch {
+      return 1;
+    }
+  }
+
+  /** Costo unitario en soles (4 decimales) para kardex/costo promedio. */
+  private costoEnSoles(costoMonedaDoc: number, factor: number): number {
+    return parseFloat((Number(costoMonedaDoc) * factor).toFixed(4));
+  }
+
   private roundMoney(value: number) {
     return parseFloat((Number(value) || 0).toFixed(2));
+  }
+
+  /**
+   * Monto para columnas Decimal. Prisma manda los `number` como float y
+   * Postgres los guarda con residuo (94.400000000000010); como texto con los
+   * decimales justos se guarda exacto.
+   */
+  private dec(value: number, decimales = 2): string {
+    return (Number(value) || 0).toFixed(decimales);
+  }
+
+  /**
+   * Afectación IGV de los productos de la compra. Solo los gravados (Catálogo
+   * 07 código 10-17) llevan el 18%: exonerados (20), inafectos (30) y
+   * exportación (40) —medicinas de farmacia, productos agrícolas, etc.— entran
+   * sin IGV. Ítems sin producto o sin afectación registrada se tratan como
+   * gravados (comportamiento histórico).
+   */
+  async afectacionGravadaPorProducto(
+    empresaId: number,
+    detalles: Array<{ productoId?: number | null }>,
+  ): Promise<Map<number, boolean>> {
+    const ids = [
+      ...new Set(
+        (detalles || [])
+          .map((d) => Number(d.productoId))
+          .filter((id) => Number.isFinite(id) && id > 0),
+      ),
+    ];
+    const gravado = new Map<number, boolean>();
+    if (!ids.length) return gravado;
+    const productos = await this.prisma.producto.findMany({
+      where: { id: { in: ids }, empresaId },
+      select: { id: true, tipoAfectacionIGV: true },
+    });
+    for (const p of productos) {
+      gravado.set(p.id, this.esAfectacionGravada(p.tipoAfectacionIGV));
+    }
+    return gravado;
+  }
+
+  private esAfectacionGravada(tipoAfectacionIGV?: string | null): boolean {
+    const cod = String(tipoAfectacionIGV ?? '10').trim();
+    return cod === '' || cod.startsWith('1');
+  }
+
+  /**
+   * Montos de una línea de compra según su afectación. `precioUnitario` es el
+   * tecleado: con `incluyeIgv` trae el IGV embebido (solo aplica a gravados).
+   * Devuelve neto unitario, IGV unitario y totales de la línea (moneda doc).
+   */
+  private montosLinea(
+    item: { precioUnitario: number | string; cantidad: number | string; incluyeIgv?: boolean },
+    gravado: boolean,
+  ) {
+    const precioIngresado = Number(item.precioUnitario) || 0;
+    const cantidad = Number(item.cantidad) || 0;
+    const costoNeto =
+      gravado && item.incluyeIgv
+        ? parseFloat((precioIngresado / 1.18).toFixed(4))
+        : precioIngresado;
+    const igvItem = gravado ? parseFloat((costoNeto * 0.18).toFixed(4)) : 0;
+    const sub = costoNeto * cantidad;
+    const totalLinea = !gravado
+      ? sub
+      : item.incluyeIgv
+        ? precioIngresado * cantidad
+        : (costoNeto + igvItem) * cantidad;
+    return { costoNeto, igvItem, sub, totalLinea };
+  }
+
+  /**
+   * Total de la cabecera: el que manda el cliente (el de la factura) solo si
+   * coincide con la suma de líneas salvo redondeo; si difiere (cliente viejo
+   * que aplicó IGV a un exonerado, etc.) manda la suma de líneas.
+   */
+  private totalCabecera(totalCliente: unknown, totalLineas: number): number {
+    const calculado = this.roundMoney(totalLineas);
+    if (totalCliente === undefined || totalCliente === null) return calculado;
+    const enviado = this.roundMoney(Number(totalCliente));
+    return Math.abs(enviado - calculado) <= 0.05 ? enviado : calculado;
   }
 
   // Normaliza y deduplica las series/IMEI de una línea (trim + mayúsculas),
@@ -236,21 +435,26 @@ export class ComprasService {
     // de la cabecera (misma factura repartida entre almacenes).
     await this.validarSedesDeLineas(empresaId, data.detalles);
 
+    // Moneda del documento: los montos (detalle, subtotal, total, saldo) se
+    // guardan en la moneda de la factura; al kardex entra el costo en soles.
+    const { moneda, tipoCambio } = this.resolverMonedaYTipoCambio(data);
+    const factorSoles = moneda === 'USD' ? tipoCambio : 1;
+
     // Prepare detail data and calculate totals from items to be safe
     const detallesData: any[] = [];
 
+    // IGV por línea según la afectación del producto (exonerados/inafectos
+    // sin IGV). Ítems sin producto conocido → gravados.
+    const gravadoPorProducto = await this.afectacionGravadaPorProducto(
+      empresaId,
+      data.detalles,
+    );
     for (const item of data.detalles) {
       // costoNeto = precio sin IGV, usado para actualizar costoPromedio en kardex
       // Si incluyeIgv=true el precio ingresado ya trae el IGV embebido → extraerlo
-      const precioIngresado = Number(item.precioUnitario);
-      const costoNeto = item.incluyeIgv
-        ? parseFloat((precioIngresado / 1.18).toFixed(4))
-        : precioIngresado;
-      const igvItem = parseFloat((costoNeto * 0.18).toFixed(4));
-      const sub = costoNeto * Number(item.cantidad);
-      const totalLinea = item.incluyeIgv
-        ? precioIngresado * Number(item.cantidad)
-        : (costoNeto + igvItem) * Number(item.cantidad);
+      const gravado =
+        gravadoPorProducto.get(Number(item.productoId)) ?? true;
+      const { costoNeto, sub, totalLinea } = this.montosLinea(item, gravado);
 
       subtotal += sub;
       totalLineas += totalLinea;
@@ -259,10 +463,10 @@ export class ComprasService {
         productoId: item.productoId,
         descripcion: item.descripcion,
         cantidad: item.cantidad,
-        precioUnitario: costoNeto, // siempre neto en DB
-        subtotal: sub,
-        igv: totalLinea - sub,
-        total: totalLinea,
+        precioUnitario: this.dec(costoNeto, 4), // siempre neto en DB
+        subtotal: this.dec(sub),
+        igv: this.dec(totalLinea - sub),
+        total: this.dec(totalLinea),
         lote: item.lote,
         fechaVencimiento: item.fechaVencimiento
           ? parseFechaSoloDia(item.fechaVencimiento)
@@ -275,14 +479,12 @@ export class ComprasService {
       });
     }
 
-    // Calculate final totals
+    // Calculate final totals. El IGV sale de las líneas (neto vs total): un
+    // `igv` mandado por el cliente ya no se toma, así un cliente desactualizado
+    // no puede grabar IGV sobre productos exonerados.
     const subtotalTotal = this.roundMoney(subtotal);
-    const total = this.roundMoney(
-      data.total !== undefined ? Number(data.total) : totalLineas,
-    );
-    const igvTotal = this.roundMoney(
-      data.igv !== undefined ? Number(data.igv) : total - subtotalTotal,
-    );
+    const total = this.totalCabecera(data.total, totalLineas);
+    const igvTotal = this.roundMoney(total - subtotalTotal);
     // Maker-checker: compra de vendedor con aprobación activada queda
     // PENDIENTE_APROBACION — sin stock, sin pagos (ni el inicial), sin series.
     const esPendiente = await this.requiereAprobacionCompra(
@@ -290,9 +492,14 @@ export class ComprasService {
       usuarioRol,
     );
 
+    // El pago inicial nunca supera el total (un cliente que calculó el total
+    // con IGV sobre exonerados mandaría de más).
     const montoPagadoInicial = esPendiente
       ? 0
-      : Math.max(0, this.roundMoney(Number(data.montoPagadoInicial) || 0));
+      : Math.min(
+          total,
+          Math.max(0, this.roundMoney(Number(data.montoPagadoInicial) || 0)),
+        );
     const saldoInicial = Math.max(
       0,
       this.roundMoney(total - montoPagadoInicial),
@@ -301,6 +508,16 @@ export class ComprasService {
       total,
       saldoInicial,
     );
+    // Pago inicial de un documento en soles desde cuenta en dólares: TC del día
+    // para que la cuenta lo vea en US$ (en el resto de casos queda el de la compra).
+    const tcPagoInicial =
+      montoPagadoInicial > 0 && moneda === 'PEN' && data.cuentaBancariaIdInicial
+        ? await this.tipoCambioParaCuenta(
+            data.cuentaBancariaIdInicial,
+            'PEN',
+            undefined,
+          )
+        : tipoCambio;
 
     // Create Purchase Transaction
     const compra = await this.prisma.$transaction(async (tx) => {
@@ -317,12 +534,12 @@ export class ComprasService {
           fechaVencimiento: data.fechaVencimiento
             ? parseFechaSoloDia(data.fechaVencimiento)
             : null,
-          moneda: data.moneda || 'PEN',
-          tipoCambio: data.tipoCambio,
-          subtotal: subtotalTotal,
-          igv: igvTotal,
-          total,
-          saldo: saldoInicial,
+          moneda,
+          tipoCambio: this.dec(tipoCambio, 4),
+          subtotal: this.dec(subtotalTotal),
+          igv: this.dec(igvTotal),
+          total: this.dec(total),
+          saldo: this.dec(saldoInicial),
           estado: esPendiente ? 'PENDIENTE_APROBACION' : 'REGISTRADO',
           // Los números de serie viajan en JSON y se materializan al aprobar.
           ...(esPendiente && todasLasSeries.length
@@ -343,7 +560,12 @@ export class ComprasService {
                   create: {
                     empresaId,
                     usuarioId,
-                    monto: montoPagadoInicial,
+                    monto: this.dec(montoPagadoInicial),
+                    // El pago inicial va al mismo TC de la compra: sin diferencia de cambio.
+                    moneda,
+                    tipoCambio: this.dec(tcPagoInicial, 4),
+                    montoSoles: this.dec(montoPagadoInicial * factorSoles),
+                    diferenciaCambio: '0.00',
                     metodoPago: data.metodoPagoInicial || 'EFECTIVO',
                     // Pago por banco: N° de operación + cuenta bancaria usada.
                     referencia: data.referenciaInicial || undefined,
@@ -368,10 +590,15 @@ export class ComprasService {
     for (const item of esPendiente ? [] : data.detalles) {
       if (item.productoId) {
         try {
-          // costoPromedio siempre se actualiza con el precio NETO (sin IGV)
-          const costoNetoKardex = item.incluyeIgv
-            ? parseFloat((Number(item.precioUnitario) / 1.18).toFixed(4))
-            : Number(item.precioUnitario);
+          // costoPromedio siempre se actualiza con el precio NETO (sin IGV) y
+          // EN SOLES: una compra en dólares entra al TC de la factura.
+          const costoNetoKardex = this.costoEnSoles(
+            this.montosLinea(
+              item,
+              gravadoPorProducto.get(Number(item.productoId)) ?? true,
+            ).costoNeto,
+            factorSoles,
+          );
           const movimiento = await this.kardexService.registrarMovimiento({
             empresaId,
             productoId: item.productoId,
@@ -521,7 +748,8 @@ export class ComprasService {
     if (montoPagadoInicial > 0) {
       await this.registrarEgresoCajaSiEfectivo({
         metodo: data.metodoPagoInicial,
-        monto: montoPagadoInicial,
+        // La caja es en soles: una compra en dólares pagada en efectivo sale al TC.
+        monto: this.roundMoney(montoPagadoInicial * factorSoles),
         empresaId,
         usuarioId,
         sedeId: reqSedeId,
@@ -567,17 +795,23 @@ export class ComprasService {
       compra.sedeId ?? undefined,
     );
     const stockWarnings: string[] = [];
+    // El detalle está en la moneda de la factura; al kardex va en soles.
+    const factorSoles = this.factorASoles(compra);
     for (const detalle of compra.detalles) {
       if (!detalle.productoId) continue;
       try {
         // precioUnitario en DetalleCompra ya está guardado NETO (sin IGV).
+        const costoSoles = this.costoEnSoles(
+          Number(detalle.precioUnitario),
+          factorSoles,
+        );
         const movimiento = await this.kardexService.registrarMovimiento({
           empresaId,
           productoId: detalle.productoId,
           tipoMovimiento: 'INGRESO',
           concepto: `COMPRA ${compra.serie}-${compra.numero}`,
           cantidad: Number(detalle.cantidad),
-          costoUnitario: Number(detalle.precioUnitario),
+          costoUnitario: costoSoles,
           compraId: compra.id,
           usuarioId: adminId,
           // Distribución por sede: cada línea entra a su sede (o a la de la cabecera).
@@ -592,7 +826,7 @@ export class ComprasService {
             lote: detalle.lote,
             fechaVencimiento: detalle.fechaVencimiento,
             cantidad: Number(detalle.cantidad),
-            costoUnitario: Number(detalle.precioUnitario),
+            costoUnitario: costoSoles,
             movimientoKardexId: movimiento.id,
           });
         }
@@ -779,6 +1013,8 @@ export class ComprasService {
       serie: string;
       numero: string;
       sedeId: number | null;
+      moneda?: string | null;
+      tipoCambio?: any;
       detalles: {
         productoId: number | null;
         cantidad: any;
@@ -797,6 +1033,8 @@ export class ComprasService {
     const sedeId =
       compra.sedeId ??
       (await this.resolverSedeDestino(empresaId, undefined, undefined));
+    // La salida compensatoria se valoriza en soles, igual que entró.
+    const factorSoles = this.factorASoles(compra);
 
     for (const det of compra.detalles) {
       if (!det.productoId) continue;
@@ -810,7 +1048,10 @@ export class ComprasService {
           tipoMovimiento: 'SALIDA',
           concepto: `${conceptoPrefix} ${compra.serie}-${compra.numero}`,
           cantidad,
-          costoUnitario: Number(det.precioUnitario) || 0,
+          costoUnitario: this.costoEnSoles(
+            Number(det.precioUnitario) || 0,
+            factorSoles,
+          ),
           compraId: compra.id,
           usuarioId,
           // Se revierte en la misma sede a la que entró la línea.
@@ -882,6 +1123,24 @@ export class ComprasService {
 
     await this.assertSinSeriesUsadas(id, empresaId);
 
+    // Con abonos registrados no se anula "por encima": el dinero ya salió (caja,
+    // banco) y quedaría un pago huérfano en el flujo de caja. Primero se anulan
+    // los abonos desde el historial (que devuelven saldo y revierten caja).
+    const pagosVigentes = await this.prisma.pagoCompra.findMany({
+      where: { compraId: id, empresaId },
+      select: { monto: true },
+    });
+    if (pagosVigentes.length) {
+      const simbolo = String(compra.moneda).toUpperCase() === 'USD' ? '$' : 'S/';
+      const totalPagos = pagosVigentes.reduce(
+        (acc, p) => acc + Number(p.monto),
+        0,
+      );
+      throw new BadRequestException(
+        `La compra tiene ${pagosVigentes.length} abono(s) por ${simbolo} ${totalPagos.toFixed(2)}. Anula primero los abonos desde el historial de pagos y luego anula la compra.`,
+      );
+    }
+
     const stockWarnings = await this.revertirInventarioCompra(
       compra as any,
       empresaId,
@@ -926,7 +1185,7 @@ export class ComprasService {
       include: {
         detalles: { orderBy: { id: 'asc' } },
         pagos: {
-          select: { id: true, monto: true },
+          select: { id: true, monto: true, tipoCambio: true },
           orderBy: { id: 'asc' },
         },
       },
@@ -1004,6 +1263,32 @@ export class ComprasService {
     );
     // Distribución por sede: validar ANTES de revertir nada.
     await this.validarSedesDeLineas(empresaId, data.detalles);
+    // Moneda/TC de la versión nueva. El TC guardado solo sirve de respaldo si
+    // la compra YA era en dólares; al pasar de soles a dólares hay que indicarlo
+    // (el tc=1 de una compra en soles no es un tipo de cambio).
+    const monedaNueva = String(data.moneda || existente.moneda).toUpperCase();
+    const existenteEraUsd = String(existente.moneda).toUpperCase() === 'USD';
+    const { moneda, tipoCambio } = this.resolverMonedaYTipoCambio({
+      moneda: monedaNueva,
+      tipoCambio:
+        data.tipoCambio != null
+          ? data.tipoCambio
+          : existenteEraUsd && existente.tipoCambio != null
+            ? Number(existente.tipoCambio)
+            : undefined,
+    });
+    const factorSoles = moneda === 'USD' ? tipoCambio : 1;
+    // Con pagos registrados la moneda no se cambia: los abonos y el saldo están
+    // en la moneda original y mezclarlos dejaría el saldo sin sentido.
+    if (
+      existente.pagos.length &&
+      moneda !== String(existente.moneda ?? 'PEN').toUpperCase()
+    ) {
+      throw new BadRequestException(
+        'No se puede cambiar la moneda de una compra que ya tiene pagos registrados. Anula los pagos primero o registra una nueva compra.',
+      );
+    }
+    const tcAnterior = this.factorASoles(existente);
 
     // 1) Revertir el inventario de la versión anterior.
     const warningsRevertir = await this.revertirInventarioCompra(
@@ -1025,26 +1310,24 @@ export class ComprasService {
     let subtotal = 0;
     let totalLineas = 0;
     const detallesData: any[] = [];
+    const gravadoPorProducto = await this.afectacionGravadaPorProducto(
+      empresaId,
+      data.detalles,
+    );
     for (const item of data.detalles) {
-      const precioIngresado = Number(item.precioUnitario);
-      const costoNeto = item.incluyeIgv
-        ? parseFloat((precioIngresado / 1.18).toFixed(4))
-        : precioIngresado;
-      const igvItem = parseFloat((costoNeto * 0.18).toFixed(4));
-      const sub = costoNeto * Number(item.cantidad);
-      const totalLinea = item.incluyeIgv
-        ? precioIngresado * Number(item.cantidad)
-        : (costoNeto + igvItem) * Number(item.cantidad);
+      const gravado =
+        gravadoPorProducto.get(Number(item.productoId)) ?? true;
+      const { costoNeto, sub, totalLinea } = this.montosLinea(item, gravado);
       subtotal += sub;
       totalLineas += totalLinea;
       detallesData.push({
         productoId: item.productoId,
         descripcion: item.descripcion,
         cantidad: item.cantidad,
-        precioUnitario: costoNeto,
-        subtotal: sub,
-        igv: totalLinea - sub,
-        total: totalLinea,
+        precioUnitario: this.dec(costoNeto, 4),
+        subtotal: this.dec(sub),
+        igv: this.dec(totalLinea - sub),
+        total: this.dec(totalLinea),
         lote: item.lote,
         fechaVencimiento: item.fechaVencimiento
           ? parseFechaSoloDia(item.fechaVencimiento)
@@ -1057,12 +1340,8 @@ export class ComprasService {
       });
     }
     const subtotalTotal = this.roundMoney(subtotal);
-    const total = this.roundMoney(
-      data.total !== undefined ? Number(data.total) : totalLineas,
-    );
-    const igvTotal = this.roundMoney(
-      data.igv !== undefined ? Number(data.igv) : total - subtotalTotal,
-    );
+    const total = this.totalCabecera(data.total, totalLineas);
+    const igvTotal = this.roundMoney(total - subtotalTotal);
     // Saldo recalculado con los pagos YA registrados (no se tocan).
     const totalPagado = existente.pagos.reduce(
       (acc, p) => acc + Number(p.monto),
@@ -1084,6 +1363,27 @@ export class ComprasService {
     // 3) Reemplazar cabecera + detalles en una transacción.
     const compra = await this.prisma.$transaction(async (tx) => {
       await tx.detalleCompra.deleteMany({ where: { compraId: id } });
+      // Cambió el TC de una compra en dólares: los pagos hechos "al TC de la
+      // compra" se revalorizan al nuevo TC (sin diferencia de cambio) y los
+      // demás recalculan su diferencia frente al nuevo TC contable.
+      if (moneda === 'USD' && existente.pagos.length && tipoCambio !== tcAnterior) {
+        for (const p of existente.pagos) {
+          const tcPago = Number(p.tipoCambio) || tcAnterior;
+          const alTcCompra = Math.abs(tcPago - tcAnterior) < 0.00005;
+          const tcNuevoPago = alTcCompra ? tipoCambio : tcPago;
+          await tx.pagoCompra.update({
+            where: { id: p.id },
+            data: {
+              moneda: 'USD',
+              tipoCambio: this.dec(tcNuevoPago, 4),
+              montoSoles: this.dec(Number(p.monto) * tcNuevoPago),
+              diferenciaCambio: this.dec(
+                (tcNuevoPago - tipoCambio) * Number(p.monto),
+              ),
+            },
+          });
+        }
+      }
       if (debeActualizarPagoInicial) {
         await tx.pagoCompra.update({
           where: { id: pagoInicial.id },
@@ -1111,12 +1411,12 @@ export class ComprasService {
           fechaVencimiento: data.fechaVencimiento
             ? parseFechaSoloDia(data.fechaVencimiento)
             : null,
-          moneda: data.moneda || existente.moneda,
-          tipoCambio: data.tipoCambio,
-          subtotal: subtotalTotal,
-          igv: igvTotal,
-          total,
-          saldo: nuevoSaldo,
+          moneda,
+          tipoCambio: this.dec(tipoCambio, 4),
+          subtotal: this.dec(subtotalTotal),
+          igv: this.dec(igvTotal),
+          total: this.dec(total),
+          saldo: this.dec(nuevoSaldo),
           estadoPago: nuevoEstadoPago as any,
           observaciones: data.observaciones,
           // Solo se sobreescribe la foto si el payload trae una nueva (al re-leer
@@ -1134,9 +1434,14 @@ export class ComprasService {
     for (const item of data.detalles) {
       if (!item.productoId) continue;
       try {
-        const costoNetoKardex = item.incluyeIgv
-          ? parseFloat((Number(item.precioUnitario) / 1.18).toFixed(4))
-          : Number(item.precioUnitario);
+        // Neto (sin IGV) y en soles al TC de la compra editada.
+        const costoNetoKardex = this.costoEnSoles(
+          this.montosLinea(
+            item,
+            gravadoPorProducto.get(Number(item.productoId)) ?? true,
+          ).costoNeto,
+          factorSoles,
+        );
         const movimiento = await this.kardexService.registrarMovimiento({
           empresaId,
           productoId: item.productoId,
@@ -1319,11 +1624,30 @@ export class ComprasService {
       this.prisma.compra.count({ where }),
     ]);
 
+    // Saldo por pagar del filtro completo (no solo la página), en soles: las
+    // compras en dólares se convierten con el TC con que se registraron.
+    const conSaldo = await this.prisma.compra.findMany({
+      where: {
+        ...where,
+        estado: { notIn: ['ANULADO', 'RECHAZADA'] as any },
+        saldo: { gt: new Prisma.Decimal(this.saldoTolerance) },
+      },
+      select: { saldo: true, moneda: true, tipoCambio: true },
+    });
+    const saldoPendienteSoles = this.roundMoney(
+      conSaldo.reduce(
+        (acc, c) => acc + Number(c.saldo) * this.factorASoles(c),
+        0,
+      ),
+    );
+
     return {
       data: data.map((compra) => this.normalizeCompraForResponse(compra)),
       total,
       page: Number(page),
       limit: Number(limit),
+      saldoPendienteSoles,
+      comprasConSaldo: conSaldo.length,
     };
   }
 
@@ -1379,32 +1703,72 @@ export class ComprasService {
       );
     }
 
-    const monto = Number(data.monto);
+    const monto = this.roundMoney(Number(data.monto));
     if (monto <= 0)
       throw new BadRequestException('El monto debe ser mayor a 0');
-    if (monto > Number(compra.saldo) + 0.1)
+    if (monto > Number(compra.saldo) + this.saldoTolerance)
       throw new BadRequestException('El monto excede el saldo pendiente');
-
-    const nuevoSaldo = Math.max(
-      0,
-      this.roundMoney(Number(compra.saldo) - monto),
-    );
-    const nuevoEstadoPago = this.normalizeEstadoPagoBySaldo(
-      Number(compra.total),
-      nuevoSaldo,
-    );
+    // Moneda del documento: el abono se registra en la misma moneda que el saldo
+    // y se valoriza en soles con el TC del día del pago.
+    const valor = this.valorizarPago(compra, monto, data.tipoCambio);
+    // Documento en soles pagado desde cuenta en dólares: TC para el ledger USD.
+    if (valor.moneda === 'PEN' && data.cuentaBancariaId) {
+      valor.tipoCambio = await this.tipoCambioParaCuenta(
+        data.cuentaBancariaId,
+        'PEN',
+        data.tipoCambio,
+      );
+    }
 
     // Transaction
     const result = await this.prisma.$transaction(async (tx) => {
+      // Descuento condicional y atómico del saldo: la fila queda bloqueada
+      // hasta el commit, así dos abonos simultáneos no pueden descontar el
+      // mismo saldo (el segundo ve el saldo ya reducido y se rechaza).
+      const descontado = await tx.compra.updateMany({
+        where: {
+          id: compraId,
+          empresaId,
+          saldo: {
+            gte: new Prisma.Decimal(
+              (monto - this.saldoTolerance).toFixed(2),
+            ),
+          },
+        },
+        data: { saldo: { decrement: monto } },
+      });
+      if (descontado.count === 0) {
+        throw new BadRequestException('El monto excede el saldo pendiente');
+      }
+      const actual = await tx.compra.findUnique({
+        where: { id: compraId },
+        select: { saldo: true, total: true },
+      });
+      const nuevoSaldo = Math.max(
+        0,
+        this.roundMoney(Number(actual?.saldo ?? 0)),
+      );
+      const nuevoEstadoPago = this.normalizeEstadoPagoBySaldo(
+        Number(actual?.total ?? compra.total),
+        nuevoSaldo,
+      );
+
       // Create Pago
       const pago = await tx.pagoCompra.create({
         data: {
           empresaId,
           usuarioId,
           compraId,
-          monto,
+          monto: this.dec(monto),
+          moneda: valor.moneda,
+          tipoCambio: this.dec(valor.tipoCambio, 4),
+          montoSoles: this.dec(valor.montoSoles),
+          diferenciaCambio: this.dec(valor.diferenciaCambio),
           metodoPago: data.medioPago || 'EFECTIVO', // Frontend sends 'medioPago', backend uses 'metodoPago'
           referencia: data.referencia,
+          cuentaBancariaId: data.cuentaBancariaId
+            ? Number(data.cuentaBancariaId)
+            : undefined,
         },
       });
 
@@ -1412,7 +1776,7 @@ export class ComprasService {
       const compraUpdated = await tx.compra.update({
         where: { id: compraId },
         data: {
-          saldo: nuevoSaldo,
+          saldo: this.dec(nuevoSaldo),
           estadoPago: nuevoEstadoPago,
         },
       });
@@ -1425,10 +1789,10 @@ export class ComprasService {
       };
     });
 
-    // Abono en efectivo → egreso de caja (si hay caja abierta).
+    // Abono en efectivo → egreso de caja (si hay caja abierta), en soles.
     await this.registrarEgresoCajaSiEfectivo({
       metodo: data.medioPago,
-      monto,
+      monto: valor.montoSoles,
       empresaId,
       usuarioId,
       sedeId,
@@ -1846,6 +2210,85 @@ export class ComprasService {
       .toUpperCase();
   }
 
+  /**
+   * Anula un abono: lo elimina, devuelve su monto al saldo de la compra y, si
+   * fue en efectivo con caja abierta, deja INACTIVO el egreso de caja que generó.
+   */
+  async anularPago(
+    empresaId: number,
+    usuarioId: number,
+    compraId: number,
+    pagoId: number,
+  ) {
+    const compra = await this.prisma.compra.findFirst({
+      where: { id: compraId, empresaId },
+      select: { id: true, total: true, saldo: true, estado: true, serie: true, numero: true },
+    });
+    if (!compra) throw new NotFoundException('Compra no encontrada');
+    if (compra.estado === ('ANULADO' as any)) {
+      throw new BadRequestException('La compra está anulada.');
+    }
+    const pago = await this.prisma.pagoCompra.findFirst({
+      where: { id: pagoId, compraId, empresaId },
+    });
+    if (!pago) throw new NotFoundException('El abono no existe.');
+
+    const nuevoSaldo = Math.min(
+      Number(compra.total),
+      this.roundMoney(Number(compra.saldo) + Number(pago.monto)),
+    );
+    const nuevoEstadoPago = this.normalizeEstadoPagoBySaldo(
+      Number(compra.total),
+      nuevoSaldo,
+    );
+    const esEfectivo =
+      String(pago.metodoPago || '').toUpperCase().trim() === 'EFECTIVO';
+    const montoCaja =
+      pago.montoSoles != null ? Number(pago.montoSoles) : Number(pago.monto);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.pagoCompra.delete({ where: { id: pago.id } });
+      await tx.compra.update({
+        where: { id: compraId },
+        data: { saldo: this.dec(nuevoSaldo), estadoPago: nuevoEstadoPago as any },
+      });
+      if (esEfectivo) {
+        // El egreso de caja de este abono (mismo monto en soles, activo).
+        const egreso = await tx.movimientoCaja.findFirst({
+          where: {
+            compraId,
+            empresaId,
+            tipoMovimiento: 'EGRESO',
+            estado: 'ACTIVO',
+            monto: { gte: montoCaja - 0.005, lte: montoCaja + 0.005 },
+          },
+          orderBy: { id: 'desc' },
+        });
+        if (egreso) {
+          await tx.movimientoCaja.update({
+            where: { id: egreso.id },
+            data: {
+              estado: 'INACTIVO',
+              observaciones: [
+                egreso.observaciones,
+                `[${new Date().toISOString()}] Abono anulado (usuarioId ${usuarioId}) de la compra ${compra.serie}-${compra.numero}.`,
+              ]
+                .filter(Boolean)
+                .join(' | '),
+            },
+          });
+        }
+      }
+    });
+
+    return {
+      success: true,
+      nuevoSaldo,
+      nuevoEstado: nuevoEstadoPago,
+      message: 'Abono anulado. El saldo de la compra fue restablecido.',
+    };
+  }
+
   async getHistorialPagos(
     empresaId: number,
     compraId: number,
@@ -1865,7 +2308,28 @@ export class ComprasService {
       (acc, curr) => acc + Number(curr.monto),
       0,
     );
+    const factor = this.factorASoles(compra);
+    const totalPagadoSoles = pagos.reduce(
+      (acc, curr) =>
+        acc +
+        (curr.montoSoles != null
+          ? Number(curr.montoSoles)
+          : Number(curr.monto) * factor),
+      0,
+    );
+    const diferenciaCambioTotal = pagos.reduce(
+      (acc, curr) => acc + Number(curr.diferenciaCambio ?? 0),
+      0,
+    );
 
-    return { success: true, data: pagos, totalPagado };
+    return {
+      success: true,
+      data: pagos,
+      totalPagado,
+      moneda: compra.moneda,
+      tipoCambioCompra: factor,
+      totalPagadoSoles: this.roundMoney(totalPagadoSoles),
+      diferenciaCambioTotal: this.roundMoney(diferenciaCambioTotal),
+    };
   }
 }
