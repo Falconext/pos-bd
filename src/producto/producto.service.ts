@@ -2130,6 +2130,24 @@ export class ProductoService {
         },
         imagenUrl: true,
         tipoAfectacionIGV: true,
+        // Mismos campos que trae `listar` para el catálogo del POS: escanear y
+        // hacer clic en la tarjeta pasan por el mismo handleProductClick, y sin
+        // estos el escaneo ignoraba los precios mayorista (no aparecía el selector
+        // en "Editar ítem"), la moneda/oferta y las banderas de farmacia.
+        preciosMayorista: true,
+        moneda: true,
+        precioOferta: true,
+        fechaInicioOferta: true,
+        fechaFinOferta: true,
+        requiereReceta: true,
+        controlado: true,
+        refrigerado: true,
+        factorConversion: true,
+        unidadCompra: true,
+        unidadVenta: true,
+        opcionesAtributos: true,
+        valoresAtributos: true,
+        productoPadreId: true,
         unidadMedida: true,
         categoria: true,
         marca: true,
@@ -4674,7 +4692,10 @@ export class ProductoService {
       if (u.codigo) unidadMap.set(this.normClave(u.codigo), u.id);
     }
 
+    // Solo categorías de la empresa: sin este filtro, "HOGAR" podía resolverse
+    // a la categoría homónima de OTRA empresa (el mapa se llenaba con todas).
     const categorias = await this.prisma.categoria.findMany({
+      where: { empresaId },
       select: { id: true, nombre: true },
     });
     const categoriaMap = new Map(
