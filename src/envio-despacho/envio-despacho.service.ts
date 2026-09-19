@@ -10,11 +10,14 @@ import {
   CreateEnvioDespachoDto,
   UpdateEnvioDespachoDto,
   EstadoDespacho,
+  ExportarRepartoQueryDto,
 } from './dto/envio-despacho.dto';
+import * as XLSX from 'xlsx';
 import { DespachoConfigDto } from './dto/despacho-config.dto';
 import { RepartidorService } from '../repartidor/repartidor.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { planPermiteShalomPro } from '../shalom/shalom.util';
+import { parseFechaSoloDia } from '../common/utils/fecha';
 
 const ESTADOS_NOTIFICABLES = new Set([
   EstadoDespacho.EN_CAMINO,
@@ -54,6 +57,13 @@ const DESPACHO_FIELDS = [
   'costoEnvio',
   'pagarFlete',
   'aplicacionMontoCliente',
+  // Reparto propio / motorizado externo
+  'tipoVentaReparto',
+  'distritoUbigeo',
+  'distrito',
+  'coordenadas',
+  'formaPagoCobro',
+  'revisarProducto',
 ] as const;
 
 const DESPACHO_TO_PEDIDO_ESTADO: Record<
@@ -100,9 +110,22 @@ export class EnvioDespachoService {
     await this.validateComprobante(comprobanteId, empresaId);
     const envio = await this.prisma.envioDespacho.findUnique({
       where: { comprobanteId },
-      include: { repartidor: true },
+      include: {
+        repartidor: true,
+        // Sede desde la que sale el pedido: el reparto propio la muestra y la
+        // exporta como origen (no es editable, es la del comprobante).
+        comprobante: {
+          select: { sedeId: true, sede: { select: { id: true, nombre: true } } },
+        },
+      },
     });
-    return this.withLegacyRepartidor(envio);
+    if (!envio) return null;
+    const { comprobante, ...rest } = envio as any;
+    return this.withLegacyRepartidor({
+      ...rest,
+      sedeOrigenId: comprobante?.sedeId ?? null,
+      sedeOrigenNombre: comprobante?.sede?.nombre ?? null,
+    });
   }
 
   async create(
@@ -150,7 +173,10 @@ export class EnvioDespachoService {
         historial,
         direccionDestino:
           dto.direccionDestino ?? comprobante.cliente?.direccion ?? null,
-        fechaEstimada: dto.fechaEstimada ? new Date(dto.fechaEstimada) : null,
+        // Fecha "solo día": a mediodía UTC para que en Lima no se vea el día anterior.
+        fechaEstimada: dto.fechaEstimada
+          ? parseFechaSoloDia(dto.fechaEstimada)
+          : null,
         ...(repartidorId !== undefined && { repartidorId }),
         ...this.pickFields(dto),
       },
@@ -227,7 +253,7 @@ export class EnvioDespachoService {
       data: {
         ...(dto.estado !== undefined && { estado: dto.estado as any }),
         ...(dto.fechaEstimada !== undefined && {
-          fechaEstimada: new Date(dto.fechaEstimada),
+          fechaEstimada: parseFechaSoloDia(dto.fechaEstimada),
         }),
         ...(repartidorId !== undefined && { repartidorId }),
         historial,
@@ -526,6 +552,13 @@ export class EnvioDespachoService {
         repartidorData: d.repartidor,
         estado: d.estado,
         creadoEn: d.creadoEn,
+        // Reparto propio: lo que el panel muestra como chips (distrito, tipo,
+        // cobro en destino) sin abrir el modal.
+        tipoVentaReparto: d.tipoVentaReparto ?? null,
+        distrito: d.distrito ?? null,
+        montoCOD: d.montoCOD ?? null,
+        formaPagoCobro: d.formaPagoCobro ?? null,
+        fechaEstimada: d.fechaEstimada ?? null,
       };
     });
 
@@ -925,6 +958,310 @@ export class EnvioDespachoService {
       where: { comprobanteId },
       data: mapped,
     });
+  }
+
+  // ─── Reparto propio / motorizado externo ──────────────────────────────────
+
+  /**
+   * Despachos con transportista PROPIOS del rango pedido. La fecha es la de
+   * entrega programada (`fechaEstimada`); si no se programó, cuenta el día en
+   * que se creó el despacho. Por defecto un solo día (hoy en Lima).
+   */
+  private async despachosRepartoPropio(
+    empresaId: number,
+    q: ExportarRepartoQueryDto,
+  ) {
+    const hoyLima = new Date()
+      .toLocaleDateString('en-CA', { timeZone: 'America/Lima' })
+      .slice(0, 10);
+    const fecha = q.fecha || hoyLima;
+    const fechaFin = q.fechaFin && q.fechaFin > fecha ? q.fechaFin : fecha;
+    // `fechaEstimada` es una fecha "solo día" (se guarda a mediodía UTC; las
+    // filas antiguas quedaron a medianoche UTC): se compara por día calendario
+    // UTC, que cubre ambos casos. `creadoEn` sí es un instante real → día Lima.
+    const rangoDia = {
+      gte: new Date(`${fecha}T00:00:00.000Z`),
+      lte: new Date(`${fechaFin}T23:59:59.999Z`),
+    };
+    const rango = {
+      gte: new Date(`${fecha}T00:00:00-05:00`),
+      lte: new Date(`${fechaFin}T23:59:59.999-05:00`),
+    };
+
+    const items = await this.prisma.envioDespacho.findMany({
+      where: {
+        transportista: 'PROPIOS',
+        comprobante: {
+          empresaId,
+          ...(q.sedeId ? { sedeId: Number(q.sedeId) } : {}),
+        },
+        ...(q.repartidorId ? { repartidorId: Number(q.repartidorId) } : {}),
+        ...(q.estado
+          ? { estado: q.estado as any }
+          : { estado: { not: 'DEVUELTO' as any } }),
+        OR: [
+          { fechaEstimada: rangoDia },
+          { fechaEstimada: null, creadoEn: rango },
+        ],
+      },
+      orderBy: [{ fechaEstimada: 'asc' }, { creadoEn: 'asc' }],
+      include: {
+        repartidor: { select: { id: true, nombre: true } },
+        comprobante: {
+          select: {
+            id: true,
+            tipoDoc: true,
+            serie: true,
+            correlativo: true,
+            mtoImpVenta: true,
+            saldo: true,
+            estadoPago: true,
+            sede: { select: { id: true, nombre: true } },
+            cliente: { select: { nombre: true, telefono: true, direccion: true } },
+            detalles: {
+              select: { cantidad: true, descripcion: true },
+              orderBy: { id: 'asc' },
+            },
+          },
+        },
+      },
+    });
+    return { items, fecha, fechaFin };
+  }
+
+  /** Etiquetas exactas que acepta la plantilla del courier. */
+  private static readonly TIPO_VENTA_COURIER: Record<string, string> = {
+    CONTRAENTREGA: 'CONTRAENTREGA',
+    SOLO_ENTREGA: 'SOLO-ENTREGA-NO-COBRAR',
+    CAMBIO: 'CAMBIO',
+    CONTRAENTREGA_CAMBIO: 'CONTRAENTREGA-CAMBIO',
+    RECOJO: 'RECOJO TURNO TARDE',
+  };
+  private static readonly FORMA_PAGO_COURIER: Record<string, string> = {
+    EFECTIVO: 'EFECTIVO',
+    YAPE: 'YAPE',
+    PLIN: 'PLIN',
+    TRANSFERENCIA: 'TRANSFERENCIA',
+    POS: 'POS',
+    NO_COBRAR: 'NO COBRAR',
+  };
+  private static readonly ESTADO_LABEL: Record<string, string> = {
+    PREPARANDO: 'Preparando',
+    EN_CAMINO: 'En camino',
+    EN_AGENCIA: 'En agencia',
+    EN_DESTINO: 'En destino',
+    ENTREGADO: 'Entregado',
+    DEVUELTO: 'Devuelto',
+  };
+
+  /** Fila de la plantilla del courier + los datos internos, para export y resumen. */
+  private filaReparto(e: any) {
+    const c = e.comprobante;
+    const cobra =
+      e.tipoVentaReparto === 'CONTRAENTREGA' ||
+      e.tipoVentaReparto === 'CONTRAENTREGA_CAMBIO';
+    // Monto a cobrar: el indicado en el despacho; si no se puso y la venta es
+    // contraentrega, lo que falta por pagar del comprobante.
+    const montoCobrar = cobra
+      ? this.round2(
+          Number(e.montoCOD ?? 0) > 0
+            ? Number(e.montoCOD)
+            : Number(c?.saldo ?? 0) > 0
+              ? Number(c.saldo)
+              : Number(c?.mtoImpVenta ?? 0),
+        )
+      : 0;
+    const telefono = String(e.celularDest || c?.cliente?.telefono || '')
+      .replace(/\D/g, '')
+      .slice(-9);
+    const direccion = String(
+      e.agenciaDestino || e.direccionDestino || c?.cliente?.direccion || '',
+    ).trim();
+    const detalle =
+      String(e.contenidoPaquete || '').trim() ||
+      (c?.detalles || [])
+        .map(
+          (d: any) =>
+            `${Number(d.cantidad) % 1 === 0 ? Number(d.cantidad) : Number(d.cantidad).toFixed(2)} x ${String(d.descripcion || '').trim()}`,
+        )
+        .join(', ');
+    // fechaEstimada es "solo día" → se lee por calendario UTC; creadoEn es un
+    // instante real → día de Lima.
+    const fechaTxt = e.fechaEstimada
+      ? new Date(e.fechaEstimada).toLocaleDateString('es-PE', {
+          timeZone: 'UTC',
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+        })
+      : e.creadoEn
+        ? new Date(e.creadoEn).toLocaleDateString('es-PE', {
+            timeZone: 'America/Lima',
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+          })
+        : '';
+    const nombre = String(e.nombreDestinatario || c?.cliente?.nombre || '').trim();
+    const distrito = String(e.distrito || '').trim();
+    const faltan: string[] = [];
+    if (!e.tipoVentaReparto) faltan.push('tipo de venta');
+    if (!nombre) faltan.push('nombre');
+    if (!/^9\d{8}$/.test(telefono)) faltan.push('teléfono');
+    if (!distrito) faltan.push('distrito');
+    if (!direccion) faltan.push('dirección');
+    if (!detalle) faltan.push('detalle');
+    if (cobra && montoCobrar <= 0) faltan.push('monto a cobrar');
+    if (cobra && (!e.formaPagoCobro || e.formaPagoCobro === 'NO_COBRAR'))
+      faltan.push('forma de pago');
+    const formaPago = cobra
+      ? EnvioDespachoService.FORMA_PAGO_COURIER[e.formaPagoCobro] || ''
+      : 'NO COBRAR';
+    const documento = c ? `${c.serie}-${c.correlativo}` : '';
+    return {
+      courier: {
+        CARGA: faltan.length ? `FALTAN DATOS: ${faltan.join(', ')}` : 'OK',
+        'TIPO DE VENTA (SELECCIONE SOLO DEL LISTADO)':
+          EnvioDespachoService.TIPO_VENTA_COURIER[e.tipoVentaReparto] || '',
+        'NOMBRE DEL DESTINATARIO': nombre,
+        'TELEFONO DESTINATARIO 9 DIGITOS': telefono,
+        'DISTRITO (SELECCIONE SOLO DEL LISTADO)': distrito,
+        'DIRECCION DE ENTREGA': direccion,
+        'COORDENADAS DE LA DIRECCIÓN': String(e.coordenadas || '').trim(),
+        'FECHA DE ENTREGA (DIA/MES/AÑO)': fechaTxt,
+        'DETALLE DEL PRODUCTO': detalle,
+        'MONTO A COBRAR (decimales se separan con punto . )': montoCobrar,
+        'FORMA DE PAGO': formaPago,
+        OBSERVACION: String(e.observaciones || '').trim(),
+        '¿Revisar producto? (SI/NO).': e.revisarProducto ? 'SI' : 'NO',
+      },
+      interno: {
+        DOCUMENTO: documento,
+        'SEDE ORIGEN': c?.sede?.nombre || '',
+        REPARTIDOR: e.repartidor?.nombre || '',
+        ESTADO: EnvioDespachoService.ESTADO_LABEL[e.estado] || e.estado,
+        TURNO: e.turnoEnvio || '',
+        'N° PAQUETES': e.nroPaquetes ?? 1,
+        'TOTAL VENTA': this.round2(Number(c?.mtoImpVenta ?? 0)),
+        'MONTO A COBRAR': montoCobrar,
+        'COSTO ENVÍO': this.round2(Number(e.costoEnvio ?? 0)),
+        'FLETE LO PAGA': e.pagarFlete || '',
+        'CÓDIGO GUÍA': e.codigoGuia || '',
+      },
+      meta: {
+        completo: faltan.length === 0,
+        cobra,
+        montoCobrar,
+        distrito: distrito || '(sin distrito)',
+        tipoVenta: e.tipoVentaReparto || '(sin tipo)',
+        formaPago: cobra ? e.formaPagoCobro || '(sin forma)' : 'NO_COBRAR',
+        estado: e.estado,
+        repartidor: e.repartidor?.nombre || '(sin repartidor)',
+        sede: c?.sede?.nombre || '(sin sede)',
+        totalVenta: this.round2(Number(c?.mtoImpVenta ?? 0)),
+        costoEnvio: this.round2(Number(e.costoEnvio ?? 0)),
+      },
+    };
+  }
+
+  /** Agrupa contando pedidos y sumando monto a cobrar; base de las estadísticas. */
+  private agrupar(
+    filas: ReturnType<EnvioDespachoService['filaReparto']>[],
+    key: 'distrito' | 'tipoVenta' | 'formaPago' | 'estado' | 'repartidor' | 'sede',
+  ) {
+    const map = new Map<string, { pedidos: number; montoCobrar: number; totalVenta: number }>();
+    for (const f of filas) {
+      const k = f.meta[key];
+      const acc = map.get(k) ?? { pedidos: 0, montoCobrar: 0, totalVenta: 0 };
+      acc.pedidos += 1;
+      acc.montoCobrar = this.round2(acc.montoCobrar + f.meta.montoCobrar);
+      acc.totalVenta = this.round2(acc.totalVenta + f.meta.totalVenta);
+      map.set(k, acc);
+    }
+    return [...map.entries()]
+      .map(([nombre, v]) => ({ nombre, ...v }))
+      .sort((a, b) => b.pedidos - a.pedidos || a.nombre.localeCompare(b.nombre));
+  }
+
+  async resumenReparto(empresaId: number, q: ExportarRepartoQueryDto) {
+    const { items, fecha, fechaFin } = await this.despachosRepartoPropio(empresaId, q);
+    const filas = items.map((e) => this.filaReparto(e));
+    const totales = filas.reduce(
+      (acc, f) => ({
+        pedidos: acc.pedidos + 1,
+        completos: acc.completos + (f.meta.completo ? 1 : 0),
+        contraentrega: acc.contraentrega + (f.meta.cobra ? 1 : 0),
+        montoCobrar: this.round2(acc.montoCobrar + f.meta.montoCobrar),
+        totalVenta: this.round2(acc.totalVenta + f.meta.totalVenta),
+        costoEnvio: this.round2(acc.costoEnvio + f.meta.costoEnvio),
+        entregados: acc.entregados + (f.meta.estado === 'ENTREGADO' ? 1 : 0),
+      }),
+      { pedidos: 0, completos: 0, contraentrega: 0, montoCobrar: 0, totalVenta: 0, costoEnvio: 0, entregados: 0 },
+    );
+    return {
+      fecha,
+      fechaFin,
+      totales,
+      porDistrito: this.agrupar(filas, 'distrito'),
+      porTipoVenta: this.agrupar(filas, 'tipoVenta'),
+      porFormaPago: this.agrupar(filas, 'formaPago'),
+      porEstado: this.agrupar(filas, 'estado'),
+      porRepartidor: this.agrupar(filas, 'repartidor'),
+      porSede: this.agrupar(filas, 'sede'),
+      incompletos: filas
+        .filter((f) => !f.meta.completo)
+        .map((f) => ({ documento: f.interno.DOCUMENTO, falta: f.courier.CARGA })),
+    };
+  }
+
+  async exportarReparto(empresaId: number, q: ExportarRepartoQueryDto) {
+    const { items, fecha, fechaFin } = await this.despachosRepartoPropio(empresaId, q);
+    const filas = items.map((e) => this.filaReparto(e));
+    const resumen = await this.resumenReparto(empresaId, q);
+
+    const wb = XLSX.utils.book_new();
+    // Hoja 1: EXACTAMENTE las 13 columnas de la plantilla del courier, sin extras,
+    // para que se cargue tal cual en su sistema.
+    const wsPedidos = XLSX.utils.json_to_sheet(filas.map((f) => f.courier));
+    wsPedidos['!cols'] = [14, 34, 30, 18, 24, 40, 24, 18, 40, 18, 16, 30, 14].map((wch) => ({ wch }));
+    XLSX.utils.book_append_sheet(wb, wsPedidos, 'PEDIDOS');
+    // Hoja 2: qué documento/sede/repartidor es cada fila (mismo orden que PEDIDOS).
+    const wsInterno = XLSX.utils.json_to_sheet(
+      filas.map((f, i) => ({ FILA: i + 1, ...f.interno, DESTINATARIO: f.courier['NOMBRE DEL DESTINATARIO'], DISTRITO: f.courier['DISTRITO (SELECCIONE SOLO DEL LISTADO)'] })),
+    );
+    XLSX.utils.book_append_sheet(wb, wsInterno, 'DETALLE INTERNO');
+    // Hoja 3: resumen para estadísticas.
+    const t = resumen.totales;
+    const bloque = (titulo: string, grupos: { nombre: string; pedidos: number; montoCobrar: number; totalVenta: number }[]) => [
+      [titulo, 'PEDIDOS', 'MONTO A COBRAR', 'TOTAL VENTA'],
+      ...grupos.map((g) => [g.nombre, g.pedidos, g.montoCobrar, g.totalVenta]),
+      [],
+    ];
+    const aoa: any[][] = [
+      ['RESUMEN REPARTO PROPIO', fecha === fechaFin ? fecha : `${fecha} a ${fechaFin}`],
+      [],
+      ['Pedidos', t.pedidos],
+      ['Con datos completos', t.completos],
+      ['Contraentrega (pedidos)', t.contraentrega],
+      ['Monto a cobrar (S/)', t.montoCobrar],
+      ['Total venta (S/)', t.totalVenta],
+      ['Costo de envío (S/)', t.costoEnvio],
+      ['Entregados', t.entregados],
+      [],
+      ...bloque('POR DISTRITO', resumen.porDistrito),
+      ...bloque('POR TIPO DE VENTA', resumen.porTipoVenta),
+      ...bloque('POR FORMA DE PAGO', resumen.porFormaPago),
+      ...bloque('POR ESTADO', resumen.porEstado),
+      ...bloque('POR REPARTIDOR', resumen.porRepartidor),
+      ...bloque('POR SEDE', resumen.porSede),
+    ];
+    const wsResumen = XLSX.utils.aoa_to_sheet(aoa);
+    wsResumen['!cols'] = [{ wch: 32 }, { wch: 14 }, { wch: 18 }, { wch: 14 }];
+    XLSX.utils.book_append_sheet(wb, wsResumen, 'RESUMEN');
+
+    const buffer: Buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' });
+    const nombreArchivo = `reparto_${fecha}${fechaFin !== fecha ? `_a_${fechaFin}` : ''}.xlsx`;
+    return { buffer, nombreArchivo };
   }
 
   private withLegacyRepartidor<T>(envio: T): T {

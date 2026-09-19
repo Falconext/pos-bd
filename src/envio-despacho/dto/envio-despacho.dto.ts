@@ -31,6 +31,27 @@ export enum TurnoEnvio {
   NOCHE = 'NOCHE',
 }
 
+/** Tipo de venta para el motorizado (cómo se entrega y si cobra). */
+export const TIPOS_VENTA_REPARTO = [
+  'CONTRAENTREGA',
+  'SOLO_ENTREGA',
+  'CAMBIO',
+  'CONTRAENTREGA_CAMBIO',
+  'RECOJO',
+] as const;
+export type TipoVentaReparto = (typeof TIPOS_VENTA_REPARTO)[number];
+
+/** Con qué le paga el cliente al motorizado en la puerta. */
+export const FORMAS_PAGO_COBRO = [
+  'EFECTIVO',
+  'YAPE',
+  'PLIN',
+  'TRANSFERENCIA',
+  'POS',
+  'NO_COBRAR',
+] as const;
+export type FormaPagoCobro = (typeof FORMAS_PAGO_COBRO)[number];
+
 export class CreateEnvioDespachoDto {
   @IsOptional() @IsString() transportista?: string;
   @IsOptional() @IsString() codigoGuia?: string;
@@ -75,6 +96,28 @@ export class CreateEnvioDespachoDto {
   @IsOptional()
   @IsIn(['ITEM_ENVIO', 'ADELANTO', 'NEGOCIO'])
   aplicacionMontoCliente?: 'ITEM_ENVIO' | 'ADELANTO' | 'NEGOCIO';
+
+  // ── Reparto propio / motorizado externo (plantilla de carga masiva del courier)
+  @IsOptional()
+  @IsIn([...TIPOS_VENTA_REPARTO])
+  tipoVentaReparto?: TipoVentaReparto;
+  @IsOptional() @IsString() distritoUbigeo?: string;
+  @IsOptional() @IsString() distrito?: string;
+  @IsOptional() @IsString() coordenadas?: string;
+  @IsOptional()
+  @IsIn([...FORMAS_PAGO_COBRO])
+  formaPagoCobro?: FormaPagoCobro;
+  @IsOptional() @IsBoolean() revisarProducto?: boolean;
 }
 
 export class UpdateEnvioDespachoDto extends CreateEnvioDespachoDto {}
+
+export class ExportarRepartoQueryDto {
+  /** Día (YYYY-MM-DD) de entrega programada; con `fechaFin` es un rango. */
+  @IsOptional() @IsString() fecha?: string;
+  @IsOptional() @IsString() fechaFin?: string;
+  @IsOptional() @Type(() => Number) @IsInt() sedeId?: number;
+  @IsOptional() @Type(() => Number) @IsInt() repartidorId?: number;
+  /** Estado del despacho a incluir (por defecto todos menos DEVUELTO). */
+  @IsOptional() @IsString() estado?: string;
+}

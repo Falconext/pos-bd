@@ -2323,7 +2323,15 @@ model EnvioDespacho {
   nombreDestinatario       String? // Nombre completo del destinatario
   dniDestinatario          String? // DNI/documento del destinatario
   contenidoPaquete         String? // Descripción del contenido (ej: "1 Caja")
-  montoCOD                 Float? // Monto a cobrar en destino (Shalom COD)
+  montoCOD                 Float? // Monto a cobrar en destino (Shalom COD / reparto propio contraentrega)
+  // Reparto propio / motorizado externo: lo que pide la plantilla de carga
+  // masiva del courier de última milla y lo que alimenta las estadísticas.
+  tipoVentaReparto         String? // CONTRAENTREGA | SOLO_ENTREGA | CAMBIO | CONTRAENTREGA_CAMBIO | RECOJO
+  distritoUbigeo           String? // código ubigeo del distrito de entrega
+  distrito                 String? // nombre del distrito (como lo lista el courier)
+  coordenadas              String? // "lat,lng" de la dirección de entrega (opcional)
+  formaPagoCobro           String? // EFECTIVO | YAPE | PLIN | TRANSFERENCIA | POS | NO_COBRAR
+  revisarProducto          Boolean        @default(false) // el cliente puede abrir/revisar antes de pagar
   costoEnvio               Float?         @default(0) // Monto cobrado al cliente o absorbido por el negocio
   pagarFlete               String?        @default("NEGOCIO") // CLIENTE | NEGOCIO
   aplicacionMontoCliente   String?        @default("NEGOCIO") // ITEM_ENVIO | ADELANTO | NEGOCIO

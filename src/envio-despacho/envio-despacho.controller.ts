@@ -10,7 +10,9 @@ import {
   ParseIntPipe,
   UseGuards,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { EnvioDespachoService } from './envio-despacho.service';
 
 class ActualizarSaldoDto {
@@ -19,6 +21,7 @@ class ActualizarSaldoDto {
 import {
   CreateEnvioDespachoDto,
   UpdateEnvioDespachoDto,
+  ExportarRepartoQueryDto,
 } from './dto/envio-despacho.dto';
 import { DespachoConfigDto } from './dto/despacho-config.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -71,6 +74,39 @@ export class EnvioDespachoController {
       page: page ? Number(page) : 1,
       limit: limit ? Number(limit) : 100,
     });
+  }
+
+  /**
+   * Reparto propio / motorizado: Excel con la plantilla de carga masiva del
+   * courier de última milla (hoja PEDIDOS) + detalle interno + resumen para
+   * estadísticas. Se filtra por fecha de entrega programada (o rango), sede
+   * de origen del comprobante y repartidor.
+   */
+  @Get('reparto/exportar')
+  async exportarReparto(
+    @User() user: any,
+    @Query() query: ExportarRepartoQueryDto,
+    @Res() res: Response,
+  ) {
+    const { buffer, nombreArchivo } = await this.service.exportarReparto(
+      user.empresaId,
+      query,
+    );
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename=${nombreArchivo}`,
+    );
+    res.status(200).send(buffer);
+  }
+
+  /** Resumen del reparto propio (mismos filtros que el export) para el panel. */
+  @Get('reparto/resumen')
+  resumenReparto(@User() user: any, @Query() query: ExportarRepartoQueryDto) {
+    return this.service.resumenReparto(user.empresaId, query);
   }
 
   @Get('comprobante/:comprobanteId')
