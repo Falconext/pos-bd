@@ -1274,7 +1274,46 @@ export class EnvioDespachoService {
       incompletos: filas
         .filter((f) => !f.meta.completo)
         .map((f) => ({ documento: f.interno.DOCUMENTO, falta: f.courier.CARGA })),
+      otrasFechas: await this.pendientesOtrasFechas(empresaId, q, fecha, fechaFin),
     };
+  }
+
+  /**
+   * Pedidos de reparto propio aún por entregar cuya fecha de entrega cae FUERA
+   * del rango consultado (p. ej. vendidos hoy para entregar pasado mañana): el
+   * panel los avisa para que no parezca que "faltan" en el Excel del día.
+   */
+  private async pendientesOtrasFechas(
+    empresaId: number,
+    q: ExportarRepartoQueryDto,
+    fecha: string,
+    fechaFin: string,
+  ) {
+    const items = await this.prisma.envioDespacho.findMany({
+      where: {
+        transportista: 'PROPIOS',
+        estado: { notIn: ['ENTREGADO', 'DEVUELTO'] as any },
+        comprobante: {
+          empresaId,
+          estadoEnvioSunat: { not: 'ANULADO' as any },
+          NOT: { estadoPago: 'ANULADO' as any },
+          ...(q.sedeId ? { sedeId: Number(q.sedeId) } : {}),
+        },
+        ...(q.repartidorId ? { repartidorId: Number(q.repartidorId) } : {}),
+      },
+      select: { fechaEstimada: true, creadoEn: true, montoCOD: true },
+    });
+    const porFecha = new Map<string, { fecha: string; pedidos: number }>();
+    for (const e of items) {
+      const dia = e.fechaEstimada
+        ? new Date(e.fechaEstimada).toISOString().slice(0, 10)
+        : new Date(e.creadoEn).toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+      if (dia >= fecha && dia <= fechaFin) continue;
+      const cur = porFecha.get(dia) ?? { fecha: dia, pedidos: 0 };
+      cur.pedidos += 1;
+      porFecha.set(dia, cur);
+    }
+    return [...porFecha.values()].sort((a, b) => a.fecha.localeCompare(b.fecha));
   }
 
   async exportarReparto(empresaId: number, q: ExportarRepartoQueryDto) {
