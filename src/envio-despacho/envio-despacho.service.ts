@@ -993,6 +993,10 @@ export class EnvioDespachoService {
     const hoyLima = new Date()
       .toLocaleDateString('en-CA', { timeZone: 'America/Lima' })
       .slice(0, 10);
+    const esDia = (v?: string) => !v || /^\d{4}-\d{2}-\d{2}$/.test(v);
+    if (!esDia(q.fecha) || !esDia(q.fechaFin)) {
+      throw new BadRequestException('La fecha debe tener el formato YYYY-MM-DD');
+    }
     const fecha = q.fecha || hoyLima;
     const fechaFin = q.fechaFin && q.fechaFin > fecha ? q.fechaFin : fecha;
     // `fechaEstimada` es una fecha "solo día" (se guarda a mediodía UTC; las
@@ -1094,13 +1098,15 @@ export class EnvioDespachoService {
       e.tipoVentaReparto === 'CONTRAENTREGA_CAMBIO';
     // Monto a cobrar: el indicado en el despacho; si no se puso y la venta es
     // contraentrega, lo que falta por pagar del comprobante.
+    // Monto a cobrar: el indicado en el despacho o, si no se puso, lo que falta
+    // por pagar del comprobante. Una venta ya pagada (saldo 0) marcada como
+    // contraentrega sin monto queda en 0 y se avisa: nunca se manda a cobrar el
+    // total de nuevo.
     const montoCobrar = cobra
       ? this.round2(
           Number(e.montoCOD ?? 0) > 0
             ? Number(e.montoCOD)
-            : Number(c?.saldo ?? 0) > 0
-              ? Number(c.saldo)
-              : Number(c?.mtoImpVenta ?? 0),
+            : Math.max(Number(c?.saldo ?? 0), 0),
         )
       : 0;
     const telefono = String(e.celularDest || c?.cliente?.telefono || '')
