@@ -774,7 +774,7 @@ export class EnvioDespachoService {
 
     const comprobante = await this.prisma.comprobante.findFirst({
       where: { id: comprobanteId, empresaId },
-      select: { id: true, tipoDoc: true, mtoImpVenta: true },
+      select: { id: true, tipoDoc: true, mtoImpVenta: true, adelanto: true },
     });
     if (!comprobante) return;
 
@@ -788,31 +788,16 @@ export class EnvioDespachoService {
     ]);
     if (!tiposInformalesConAdelanto.has(comprobante.tipoDoc)) return;
 
+    const total = Number(comprobante.mtoImpVenta);
     const monto = Math.max(Number(dto.costoEnvio ?? 0), 0);
     const esAdelanto = aplicacion === 'ADELANTO' && monto > 0;
-    const adelanto = esAdelanto
-      ? Math.min(monto, Number(comprobante.mtoImpVenta))
-      : 0;
-    const saldo = esAdelanto
-      ? Math.max(this.round2(Number(comprobante.mtoImpVenta) - adelanto), 0)
-      : 0;
-    const estadoPago = esAdelanto
-      ? saldo > 0
-        ? 'PAGO_PARCIAL'
-        : 'COMPLETADO'
-      : 'COMPLETADO';
-
-    await this.prisma.comprobante.update({
-      where: { id: comprobanteId },
-      data: { adelanto, saldo, estadoPago: estadoPago as any },
-    });
 
     // Limpiar SOLO los pagos que genera este método, para poder recalcularlos si
     // el envío se edita. Se identifican por su referencia determinista; las dos
     // observaciones son el formato antiguo, se mantienen para limpiar los que ya
     // existían antes de que hubiera referencia.
     const refEnvio = `${comprobante.tipoDoc}-ENVIO-${comprobanteId}`;
-    await this.prisma.pago.deleteMany({
+    const borrados = await this.prisma.pago.deleteMany({
       where: {
         comprobanteId,
         OR: [
@@ -829,17 +814,20 @@ export class EnvioDespachoService {
       },
     });
 
+    // Lo realmente cobrado hasta ahora (pagos de emisión, cobros posteriores…).
+    const { _sum } = await this.prisma.pago.aggregate({
+      where: { comprobanteId },
+      _sum: { monto: true },
+    });
+    const yaPagado = this.round2(Number(_sum.monto ?? 0));
+
     if (esAdelanto) {
+      const adelanto = Math.min(monto, total);
       // Cuando el adelanto ya se cobró al emitir el comprobante, el pago existe
       // desde `registrarPagosDeEmision` con el medio real (Yape, tarjeta...). No
       // se debe crear otro: antes se duplicaba porque el limpiador de arriba solo
       // buscaba por observación y la de emisión es distinta, así que el historial
       // mostraba dos pagos y el total pagado salía al doble.
-      const { _sum } = await this.prisma.pago.aggregate({
-        where: { comprobanteId },
-        _sum: { monto: true },
-      });
-      const yaPagado = this.round2(Number(_sum.monto ?? 0));
       const falta = this.round2(adelanto - yaPagado);
       if (falta > 0) {
         await this.prisma.pago.create({
@@ -853,6 +841,37 @@ export class EnvioDespachoService {
           },
         });
       }
+      const saldo = Math.max(this.round2(total - adelanto), 0);
+      await this.prisma.comprobante.update({
+        where: { id: comprobanteId },
+        data: {
+          adelanto,
+          saldo,
+          estadoPago: (saldo > 0 ? 'PAGO_PARCIAL' : 'COMPLETADO') as any,
+        },
+      });
+      return;
+    }
+
+    // Sin adelanto en el envío: el estado de pago de la venta NO se toca.
+    // Antes se marcaba COMPLETADO con saldo 0 solo por guardar el despacho, y una
+    // venta a crédito o contraentrega (reparto propio) quedaba "pagada" antes de
+    // que el motorizado cobrara. Solo si este método había registrado un adelanto
+    // antes (y ahora se quitó), se recalcula el saldo con los pagos que quedan.
+    if (borrados.count > 0) {
+      const saldo = Math.max(this.round2(total - yaPagado), 0);
+      await this.prisma.comprobante.update({
+        where: { id: comprobanteId },
+        data: {
+          adelanto: saldo > 0 ? yaPagado : (comprobante.adelanto ?? 0),
+          saldo,
+          estadoPago: (saldo <= 0
+            ? 'COMPLETADO'
+            : yaPagado > 0
+              ? 'PAGO_PARCIAL'
+              : 'PENDIENTE_PAGO') as any,
+        },
+      });
     }
   }
 
