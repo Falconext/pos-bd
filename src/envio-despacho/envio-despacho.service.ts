@@ -1041,6 +1041,8 @@ export class EnvioDespachoService {
             mtoImpVenta: true,
             saldo: true,
             estadoPago: true,
+            tipoMoneda: true,
+            tipoCambio: true,
             sede: { select: { id: true, nombre: true } },
             cliente: { select: { nombre: true, telefono: true, direccion: true } },
             detalles: {
@@ -1102,11 +1104,17 @@ export class EnvioDespachoService {
     // por pagar del comprobante. Una venta ya pagada (saldo 0) marcada como
     // contraentrega sin monto queda en 0 y se avisa: nunca se manda a cobrar el
     // total de nuevo.
+    // Venta en dólares: el motorizado cobra en soles, así que el saldo y el
+    // total se convierten al TC del comprobante (montoCOD ya se ingresa en S/).
+    const factorPen =
+      c?.tipoMoneda === 'USD' && Number(c?.tipoCambio) > 0
+        ? Number(c.tipoCambio)
+        : 1;
+    const saldoPen = Math.max(Number(c?.saldo ?? 0), 0) * factorPen;
+    const totalPen = Number(c?.mtoImpVenta ?? 0) * factorPen;
     const montoCobrar = cobra
       ? this.round2(
-          Number(e.montoCOD ?? 0) > 0
-            ? Number(e.montoCOD)
-            : Math.max(Number(c?.saldo ?? 0), 0),
+          Number(e.montoCOD ?? 0) > 0 ? Number(e.montoCOD) : saldoPen,
         )
       : 0;
     const telefono = String(e.celularDest || c?.cliente?.telefono || '')
@@ -1165,8 +1173,12 @@ export class EnvioDespachoService {
       faltan.push('monto a cobrar');
     if (cobra && (!e.formaPagoCobro || e.formaPagoCobro === 'NO_COBRAR'))
       faltan.push('forma de pago');
+    // Contraentrega con "No cobrar" es contradictorio: se deja vacío (y CARGA lo
+    // marca) en vez de mandar "NO COBRAR" junto a un monto.
     const formaPago = cobra
-      ? EnvioDespachoService.FORMA_PAGO_COURIER[e.formaPagoCobro] || ''
+      ? e.formaPagoCobro && e.formaPagoCobro !== 'NO_COBRAR'
+        ? EnvioDespachoService.FORMA_PAGO_COURIER[e.formaPagoCobro] || ''
+        : ''
       : 'NO COBRAR';
     const documento = c ? `${c.serie}-${c.correlativo}` : '';
     return {
@@ -1193,7 +1205,7 @@ export class EnvioDespachoService {
         ESTADO: EnvioDespachoService.ESTADO_LABEL[e.estado] || e.estado,
         TURNO: e.turnoEnvio || '',
         'N° PAQUETES': e.nroPaquetes ?? 1,
-        'TOTAL VENTA': this.round2(Number(c?.mtoImpVenta ?? 0)),
+        'TOTAL VENTA': this.round2(totalPen),
         'MONTO A COBRAR': montoCobrar,
         'COSTO ENVÍO': this.round2(Number(e.costoEnvio ?? 0)),
         'FLETE LO PAGA': e.pagarFlete || '',
@@ -1209,7 +1221,7 @@ export class EnvioDespachoService {
         estado: e.estado,
         repartidor: e.repartidor?.nombre || '(sin repartidor)',
         sede: c?.sede?.nombre || '(sin sede)',
-        totalVenta: this.round2(Number(c?.mtoImpVenta ?? 0)),
+        totalVenta: this.round2(totalPen),
         costoEnvio: this.round2(Number(e.costoEnvio ?? 0)),
       },
     };
