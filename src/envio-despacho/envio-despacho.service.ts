@@ -1012,6 +1012,9 @@ export class EnvioDespachoService {
         transportista: 'PROPIOS',
         comprobante: {
           empresaId,
+          // Una venta anulada no se reparte ni se cobra.
+          estadoEnvioSunat: { not: 'ANULADO' as any },
+          NOT: { estadoPago: 'ANULADO' as any },
           ...(q.sedeId ? { sedeId: Number(q.sedeId) } : {}),
         },
         ...(q.repartidorId ? { repartidorId: Number(q.repartidorId) } : {}),
@@ -1023,7 +1026,6 @@ export class EnvioDespachoService {
           { fechaEstimada: null, creadoEn: rango },
         ],
       },
-      orderBy: [{ fechaEstimada: 'asc' }, { creadoEn: 'asc' }],
       include: {
         repartidor: { select: { id: true, nombre: true } },
         comprobante: {
@@ -1044,6 +1046,17 @@ export class EnvioDespachoService {
           },
         },
       },
+    });
+    // Orden por fecha de entrega efectiva: la programada o, si no hay, el día
+    // en que se creó el despacho (un orderBy de BD mandaba los nulos al final).
+    const diaUtc = (d: Date | null | undefined) =>
+      d ? new Date(d).toISOString().slice(0, 10) : '';
+    const diaLima = (d: Date) =>
+      new Date(d).toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+    items.sort((a, b) => {
+      const fa = a.fechaEstimada ? diaUtc(a.fechaEstimada) : diaLima(a.creadoEn);
+      const fb = b.fechaEstimada ? diaUtc(b.fechaEstimada) : diaLima(b.creadoEn);
+      return fa.localeCompare(fb) || a.creadoEn.getTime() - b.creadoEn.getTime();
     });
     return { items, fecha, fechaFin };
   }
@@ -1121,7 +1134,12 @@ export class EnvioDespachoService {
             year: 'numeric',
           })
         : '';
-    const nombre = String(e.nombreDestinatario || c?.cliente?.nombre || '').trim();
+    // Clientes dados de alta solo con WhatsApp se llaman "WSP 9…": eso no es un
+    // nombre para el motorizado; se exporta vacío y se marca como faltante.
+    const nombreCliente = String(c?.cliente?.nombre || '').trim();
+    const nombre = String(
+      e.nombreDestinatario || (/^WSP\s/i.test(nombreCliente) ? '' : nombreCliente),
+    ).trim();
     const distrito = String(e.distrito || '').trim();
     const faltan: string[] = [];
     if (!e.tipoVentaReparto) faltan.push('tipo de venta');
