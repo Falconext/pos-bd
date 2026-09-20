@@ -1140,12 +1140,17 @@ export class EnvioDespachoService {
             year: 'numeric',
           })
         : '';
-    // Clientes dados de alta solo con WhatsApp se llaman "WSP 9…": eso no es un
-    // nombre para el motorizado; se exporta vacío y se marca como faltante.
+    // "WSP 9…" (alta solo con WhatsApp) y "CLIENTES VARIOS" (genérico del POS)
+    // no son nombres para el motorizado: se exporta vacío y se marca faltante.
+    const esGenerico = (v: string) =>
+      /^WSP\s/i.test(v) || /^CLIENTES?\s+VARIOS$/i.test(v);
     const nombreCliente = String(c?.cliente?.nombre || '').trim();
-    const nombre = String(
-      e.nombreDestinatario || (/^WSP\s/i.test(nombreCliente) ? '' : nombreCliente),
-    ).trim();
+    const nombreManual = String(e.nombreDestinatario || '').trim();
+    // Aunque venga guardado a mano (p. ej. precargado antes de este fix), un
+    // genérico sigue sin ser nombre.
+    const nombre = esGenerico(nombreManual)
+      ? ''
+      : nombreManual || (esGenerico(nombreCliente) ? '' : nombreCliente);
     const distrito = String(e.distrito || '').trim();
     const faltan: string[] = [];
     if (!e.tipoVentaReparto) faltan.push('tipo de venta');
@@ -1154,7 +1159,10 @@ export class EnvioDespachoService {
     if (!distrito) faltan.push('distrito');
     if (!direccion) faltan.push('dirección');
     if (!detalle) faltan.push('detalle');
-    if (cobra && montoCobrar <= 0) faltan.push('monto a cobrar');
+    // Un pedido ya entregado no vuelve al motorizado: si además ya se cobró
+    // (saldo 0), no es un dato faltante sino un cobro cerrado.
+    if (cobra && montoCobrar <= 0 && e.estado !== 'ENTREGADO')
+      faltan.push('monto a cobrar');
     if (cobra && (!e.formaPagoCobro || e.formaPagoCobro === 'NO_COBRAR'))
       faltan.push('forma de pago');
     const formaPago = cobra
