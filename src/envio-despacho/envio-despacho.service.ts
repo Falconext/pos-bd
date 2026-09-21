@@ -822,13 +822,13 @@ export class EnvioDespachoService {
     const yaPagado = this.round2(Number(_sum.monto ?? 0));
 
     if (esAdelanto) {
-      const adelanto = Math.min(monto, total);
+      const adelantoDto = Math.min(monto, total);
       // Cuando el adelanto ya se cobró al emitir el comprobante, el pago existe
       // desde `registrarPagosDeEmision` con el medio real (Yape, tarjeta...). No
       // se debe crear otro: antes se duplicaba porque el limpiador de arriba solo
       // buscaba por observación y la de emisión es distinta, así que el historial
       // mostraba dos pagos y el total pagado salía al doble.
-      const falta = this.round2(adelanto - yaPagado);
+      const falta = this.round2(adelantoDto - yaPagado);
       if (falta > 0) {
         await this.prisma.pago.create({
           data: {
@@ -841,6 +841,11 @@ export class EnvioDespachoService {
           },
         });
       }
+      // El adelanto efectivo nunca puede ser menor a lo ya cobrado: si la venta
+      // ya estaba pagada (o tenía cobros mayores) y en el despacho se escribe un
+      // monto menor, antes el saldo se recalculaba como total − monto y una venta
+      // Completada pasaba a Pago parcial con saldo inventado.
+      const adelanto = Math.min(Math.max(adelantoDto, yaPagado), total);
       const saldo = Math.max(this.round2(total - adelanto), 0);
       await this.prisma.comprobante.update({
         where: { id: comprobanteId },
