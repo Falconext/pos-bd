@@ -2598,6 +2598,41 @@ export class ProductoService {
     return null;
   }
 
+  /**
+   * Baja el costo nuevo del padre a las variantes que venían heredando el
+   * anterior: costo igual al del padre, 0, o el del padre ×1.18 (variantes
+   * creadas cuando el costo aún se guardaba CON IGV y quedaron desfasadas al
+   * normalizar el padre a NETO — el Excel/tabla les volvía a sumar el IGV y
+   * salían con S/ 112.10 en vez de S/ 95). Una variante con costo propio
+   * distinto (compras a otro precio) no se toca.
+   */
+  private async propagarCostoAVariantes(
+    padreId: number,
+    empresaId: number,
+    costoAnterior: number,
+    costoNuevo: number,
+  ) {
+    if (!(costoNuevo >= 0) || Math.abs(costoNuevo - costoAnterior) < 0.00005) {
+      return;
+    }
+    const variantes = await this.prisma.producto.findMany({
+      where: { productoPadreId: padreId, empresaId },
+      select: { id: true, costoPromedio: true },
+    });
+    const espejaba = (c: number) =>
+      c === 0 ||
+      Math.abs(c - costoAnterior) < 0.01 ||
+      (costoAnterior > 0 && Math.abs(c / costoAnterior - 1.18) < 0.005);
+    const ids = variantes
+      .filter((v) => espejaba(Number(v.costoPromedio ?? 0)))
+      .map((v) => v.id);
+    if (ids.length === 0) return;
+    await this.prisma.producto.updateMany({
+      where: { id: { in: ids } },
+      data: { costoPromedio: new Decimal(costoNuevo) },
+    });
+  }
+
   async actualizar(
     data: {
       id: number;
@@ -3137,6 +3172,18 @@ export class ProductoService {
             : undefined,
       },
     });
+
+    // Si el empresario cambió el costo del padre, las tallas/colores que solo
+    // "espejaban" ese costo (nunca tuvieron compra propia) lo siguen. Va antes
+    // de sincronizarVariantes, que preserva el costo existente de cada variante.
+    if (data.costoUnitario !== undefined) {
+      await this.propagarCostoAVariantes(
+        actualizado.id,
+        data.empresaId,
+        Number(producto.costoPromedio ?? 0),
+        Number(data.costoUnitario),
+      );
+    }
 
     if (actualizado.opcionesAtributos) {
       const sedesSync = await this.prisma.sede.findMany({
