@@ -1459,6 +1459,8 @@ export class EmpresaService {
       if (dto.ventaObservacionesDefault !== undefined)
         updateData.ventaObservacionesDefault =
           dto.ventaObservacionesDefault?.trim() || null;
+      if (dto.posMantenerBusqueda !== undefined)
+        updateData.posMantenerBusqueda = Boolean(dto.posMantenerBusqueda);
       // Catálogo por sede (Perfil → Configuración → Sedes y catálogo).
       if (dto.catalogoPorSede !== undefined)
         updateData.catalogoPorSede = dto.catalogoPorSede;

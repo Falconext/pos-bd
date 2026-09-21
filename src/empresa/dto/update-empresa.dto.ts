@@ -166,6 +166,11 @@ export class UpdateEmpresaDto {
   @IsString()
   ventaObservacionesDefault?: string;
 
+  /** POS: mantener la búsqueda al agregar un producto (seguir agregando de la misma lista). */
+  @IsOptional()
+  @IsBoolean()
+  posMantenerBusqueda?: boolean;
+
   @IsOptional()
   @IsObject()
   notaVentaFormatoConfig?: Record<string, { visible?: boolean; size?: number }>;

@@ -140,6 +140,10 @@ model Empresa {
   // en "Configurar venta → Observaciones" para todas las cajas y sedes; cada
   // venta puede editarlas. Null = sin texto por defecto.
   ventaObservacionesDefault     String?
+  // POS: al agregar un producto desde la búsqueda, ¿mantener lo buscado para
+  // seguir agregando de la misma lista (true) o limpiar y mostrar todo el
+  // catálogo (false, comportamiento original pedido por Demenver)?
+  posMantenerBusqueda           Boolean                       @default(false)
   rubroId                       Int?
   providerId                    String?
   tipoEmpresa                   TipoEmpresa                   @default(FORMAL)
