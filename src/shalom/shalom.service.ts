@@ -76,6 +76,8 @@ export const TAMANOS_SHALOM: { id: number; key: string; nombre: string }[] = [
   { id: 900005, key: 'M', nombre: 'PAQUETE M' },
   { id: 900006, key: 'L', nombre: 'PAQUETE L (grande)' },
 ];
+/** Shalom rechaza como clave de retiro cualquier año del calendario (1900–2099). */
+export const esAnioCalendario = (clave: string) => /^(19|20)\d{2}$/.test(clave);
 const tamanoPorId = (id: number) => TAMANOS_SHALOM.find((t) => t.id === id);
 const tamanoPorKey = (key?: string | null) =>
   TAMANOS_SHALOM.find((t) => t.key === String(key ?? '').toUpperCase());
@@ -293,9 +295,20 @@ export class ShalomService {
           .map((g) => String(g.claveEnvio)),
       ),
     );
-    const claveHoy =
-      guiasRecientes.find((g) => g.shalomGuiaCreadaEn && g.shalomGuiaCreadaEn >= hoy)
-        ?.claveEnvio ?? null;
+    // Clave del día = la más usada en las guías de hoy (empate → la más
+    // reciente). Así un intento aislado con otra clave (o un reemplazo por
+    // rechazo de Shalom) no cambia la clave que ya llevan las demás guías.
+    const conteoHoy = new Map<string, number>();
+    for (const g of guiasRecientes) {
+      if (!g.shalomGuiaCreadaEn || g.shalomGuiaCreadaEn < hoy) continue;
+      const c = String(g.claveEnvio);
+      conteoHoy.set(c, (conteoHoy.get(c) ?? 0) + 1);
+    }
+    let claveHoy: string | null = null;
+    let mejor = 0;
+    for (const [c, n] of conteoHoy) {
+      if (n > mejor) { mejor = n; claveHoy = c; }
+    }
     const configuradas = this.parsearClavesConfiguradas(empresa?.shalomClavesRetiro);
     return { usadasAyer, claveHoy: claveHoy ? String(claveHoy) : null, configuradas };
   }
@@ -328,7 +341,7 @@ export class ShalomService {
   private claveAleatoria(prohibidas: Set<string>): string {
     for (let i = 0; i < 50; i += 1) {
       const candidata = String(1000 + Math.floor(Math.random() * 9000));
-      if (!prohibidas.has(candidata)) return candidata;
+      if (!prohibidas.has(candidata) && !esAnioCalendario(candidata)) return candidata;
     }
     return String(1000 + Math.floor(Math.random() * 9000));
   }
@@ -348,6 +361,13 @@ export class ShalomService {
       if (!/^\d{4}$/.test(solicitada)) {
         throw new BadRequestException(
           'La clave de retiro debe tener 4 dígitos.',
+        );
+      }
+      // Regla de Shalom (verificada 2026-09-21 con "2024"): "Por seguridad, su
+      // clave no puede ser los años del calendario".
+      if (esAnioCalendario(solicitada)) {
+        throw new BadRequestException(
+          `Shalom no acepta un año como clave (${solicitada}). Usa otra combinación de 4 dígitos (p. ej. ${sugerencia.clave}).`,
         );
       }
       if (sugerencia.usadasAyer.includes(solicitada)) {
@@ -1048,6 +1068,7 @@ export class ShalomService {
         ...(Number(envio.pesoKg) > 0 ? { peso: String(Number(envio.pesoKg)) } : {}),
       });
     let claveUsada = clave;
+    let claveReemplazada: { solicitada: string; usada: string; motivo: string } | null = null;
     let respuesta = await registrar(claveUsada);
     // Red de seguridad: la clave del día / configurada se repite entre guías
     // (así trabaja el negocio en el panel de Shalom). Si aun así Shalom la
@@ -1057,12 +1078,18 @@ export class ShalomService {
       respuesta?.success === false &&
       /clave/i.test(String(respuesta?.message ?? ''))
     ) {
-      const alternativa = this.claveAleatoria(
-        new Set([claveUsada, '0000', '1234']),
-      );
+      // Primero una clave configurada de la empresa que no sea la rechazada ni la
+      // de ayer (así la "clave del día" no se desvía por un intento fallido);
+      // si no hay, una aleatoria.
+      const estado = await this.estadoClavesRetiro(empresa.id);
+      const prohibidas = new Set([claveUsada, ...estado.usadasAyer, '0000', '1234']);
+      const alternativa =
+        estado.configuradas.find((c) => !prohibidas.has(c)) ??
+        this.claveAleatoria(prohibidas);
       this.logger.warn(
         `Shalom rechazó la clave ${claveUsada} del comprobante ${comprobanteId} ("${respuesta?.message}"); se reintenta con ${alternativa}.`,
       );
+      claveReemplazada = { solicitada: claveUsada, usada: alternativa, motivo: String(respuesta?.message ?? '') };
       claveUsada = alternativa;
       respuesta = await registrar(claveUsada);
     }
@@ -1144,7 +1171,12 @@ export class ShalomService {
       },
     });
 
-    return { ...actualizado, respuesta };
+    return {
+      ...actualizado,
+      respuesta,
+      // Para que la cajera sepa que la clave que escribió no fue la que quedó.
+      ...(claveReemplazada ? { claveReemplazada } : {}),
+    };
   }
 
   /**

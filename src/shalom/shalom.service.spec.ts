@@ -315,8 +315,9 @@ describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
     it('repite la clave del día si hoy ya se generó una guía', async () => {
       const { svc, prisma } = build();
       prisma.empresa.findUnique.mockResolvedValue({ shalomClavesRetiro: '1010,1011' });
-      prisma.envioDespacho.findMany.mockResolvedValue([guia('7777', 0), guia('1010', 1)]);
+      prisma.envioDespacho.findMany.mockResolvedValue([guia('6167', 0), guia('7777', 0), guia('7777', 0), guia('1010', 1)]);
       const r = await svc.claveSugerida(1);
+      // La más usada hoy (7777 ×2) gana sobre un intento aislado más reciente (6167).
       expect(r).toMatchObject({ clave: '7777', origen: 'HOY', usadasAyer: ['1010'], claveHoy: '7777' });
     });
 
@@ -342,7 +343,9 @@ describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
       const { svc, prisma } = build();
       prisma.empresa.findUnique.mockResolvedValue({ shalomClavesRetiro: '1010,1011' });
       prisma.envioDespacho.findMany.mockResolvedValue([guia('1010', 1)]);
-      await expect((svc as any).generarClaveRetiro(1, '2024')).resolves.toBe('2024');
+      await expect((svc as any).generarClaveRetiro(1, '2468')).resolves.toBe('2468');
+      // Shalom rechaza los años del calendario como clave.
+      await expect((svc as any).generarClaveRetiro(1, '2024')).rejects.toThrow(/no acepta un año/);
       await expect((svc as any).generarClaveRetiro(1, '1010')).rejects.toThrow(/fue la de ayer.*1011/);
       await expect((svc as any).generarClaveRetiro(1, '12')).rejects.toThrow(/4 dígitos/);
     });
@@ -366,10 +369,29 @@ describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
       const segunda = lat.createOrder.mock.calls[1][0].clave;
       expect(segunda).toMatch(/^\d{4}$/);
       expect(segunda).not.toBe('1010');
+      expect(r.claveReemplazada).toMatchObject({ solicitada: '1010', usada: segunda });
       expect(prisma.envioDespacho.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ claveEnvio: segunda }) }));
       expect(r.nroOrden).toBe('77');
     });
   });
+
+    it('si rechaza la clave escrita, prefiere otra clave configurada de la empresa antes que una aleatoria', async () => {
+      const { svc, prisma, lat } = build();
+      lat.getAgencias.mockResolvedValue({ success: true, data: [agencia('7', 'Lima Centro'), agencia('582', 'Cusco Centro')], total: 2 });
+      prisma.empresa.findUnique.mockResolvedValue({ ...empresaCorporativa(), shalomClavesRetiro: '1010,1011' });
+      prisma.envioDespacho.findFirst.mockResolvedValue({
+        id: 55, nroOrden: null, claveOrden: null, claveEnvio: '', agenciaDestino: 'Cusco Centro', shalomAgenciaDestinoId: '582',
+        celularDest: '987654321', nroPaquetes: 1, dniDestinatario: '', nombreDestinatario: '',
+        comprobante: { id: 9, serie: 'NV01', correlativo: 1, cliente: { nombre: 'JUAN PEREZ', nroDoc: '12345678', telefono: '987654321', direccion: '' }, detalles: [] },
+      });
+      prisma.envioDespacho.update.mockResolvedValue({ id: 55, nroOrden: '78', claveOrden: 'EFGH' });
+      lat.createOrder
+        .mockResolvedValueOnce({ success: false, message: 'Por seguridad, su clave no puede ser...' })
+        .mockResolvedValueOnce({ success: true, data: { orderNumber: '78', orderCode: 'EFGH' } });
+      const r = await svc.crearGuiaDesdeDespacho(9, 1, { clave: '5555' });
+      expect(lat.createOrder.mock.calls[1][0].clave).toBe('1010');
+      expect(r.claveReemplazada).toMatchObject({ solicitada: '5555', usada: '1010' });
+    });
 
   describe('tamaño del paquete y flete', () => {
     const quoteLimaArequipa = { success: true, data: { tariff: { sobre: 8, cajapaquetexxs: 8, cajapaquetexs: 10, cajapaquetes: 12, cajapaquetem: 20, cajapaquetel: 28 }, lead_time: '96 horas' } };
