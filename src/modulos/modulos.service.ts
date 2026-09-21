@@ -15,11 +15,12 @@ export class ModulosService {
 
   private normalizeProducto(
     value?: string | null,
-  ): 'facturacion' | 'hotel' | 'logistica' {
+  ): 'facturacion' | 'hotel' | 'restaurante' | 'logistica' {
     const v = String(value ?? '')
       .trim()
       .toLowerCase();
     if (v === 'hotel') return 'hotel';
+    if (v === 'restaurante') return 'restaurante';
     if (v === 'logistica') return 'logistica';
     return 'facturacion';
   }

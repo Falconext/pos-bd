@@ -94,7 +94,7 @@ export class UpdateUserDto {
 
   @IsOptional()
   @IsString()
-  @IsIn(['FACTURACION', 'HOTEL'])
+  @IsIn(['FACTURACION', 'HOTEL', 'RESTAURANTE'])
   sistemaProducto?: string | null;
 
   @IsOptional()

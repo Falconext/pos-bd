@@ -1,0 +1,4 @@
+ALTER TABLE "Empresa"
+ADD COLUMN IF NOT EXISTS "restauranteTenantId" TEXT,
+ADD COLUMN IF NOT EXISTS "restauranteAdminUserId" TEXT,
+ADD COLUMN IF NOT EXISTS "restauranteSyncAt" TIMESTAMP(3);

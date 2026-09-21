@@ -125,11 +125,12 @@ export class PlanService {
 
   private normalizeProducto(
     value?: string | null,
-  ): 'facturacion' | 'hotel' | 'logistica' {
+  ): 'facturacion' | 'hotel' | 'restaurante' | 'logistica' {
     const v = String(value ?? '')
       .trim()
       .toLowerCase();
     if (v === 'hotel') return 'hotel';
+    if (v === 'restaurante') return 'restaurante';
     if (v === 'logistica') return 'logistica';
     return 'facturacion';
   }
@@ -143,7 +144,7 @@ export class PlanService {
   }
 
   private async validateProductAssignments(
-    producto: 'facturacion' | 'hotel' | 'logistica',
+    producto: 'facturacion' | 'hotel' | 'restaurante' | 'logistica',
     moduloIds?: number[],
     subModuloIds?: number[],
   ) {

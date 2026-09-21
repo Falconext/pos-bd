@@ -100,11 +100,12 @@ function normalizeBrand(value?: string | null): 'falconext' | 'krezka' {
 
 function normalizeProducto(
   value?: string | null,
-): 'facturacion' | 'hotel' | 'logistica' | 'ventas' | 'full' {
+): 'facturacion' | 'hotel' | 'restaurante' | 'logistica' | 'ventas' | 'full' {
   const v = String(value ?? '')
     .trim()
     .toLowerCase();
   if (v === 'hotel') return 'hotel';
+  if (v === 'restaurante') return 'restaurante';
   if (v === 'logistica') return 'logistica';
   if (v === 'ventas') return 'ventas';
   if (v === 'full') return 'full';
@@ -216,6 +217,34 @@ interface HotelSyncPayload {
   producto: 'hotel';
   plan?: string;
   planExpiresAt?: string;
+}
+
+interface RestauranteSyncPayload {
+  resellerEmpresaId: number;
+  resellerUsuarioId: number;
+  ruc: string;
+  razonSocial: string;
+  nombreComercial?: string;
+  direccion?: string;
+  departamento?: string;
+  provincia?: string;
+  distrito?: string;
+  ubigeo?: string;
+  tipoEmpresa?: 'FORMAL' | 'INFORMAL';
+  adminEmail: string;
+  adminPassword?: string;
+  adminNombre: string;
+  adminCelular?: string;
+  adminDni?: string;
+  isActive: boolean;
+  plan?: string;
+  planExpiresAt?: string;
+  fechaActivacion?: string;
+  // Facturación electrónica QPSE (creds por empresa, aprovisionadas desde mype)
+  billingProvider?: string;
+  usuarioPse?: string;
+  contrasenaPse?: string;
+  usaDemo?: boolean;
 }
 
 @Injectable()
@@ -609,6 +638,134 @@ export class EmpresaService {
     return synced;
   }
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // Gobernanza del producto RESTAURANTE (falconext-restaurante, backend aparte).
+  // Mismo patrón que hotel: mype es la fuente de verdad y hace push del
+  // aprovisionamiento vía HTTP M2M (token compartido). Ver receptor:
+  //   POST {RESTAURANTE_BACKEND_SYNC_URL}  header x-sync-token
+  // ───────────────────────────────────────────────────────────────────────────
+
+  private getRestauranteSyncConfig() {
+    const baseUrl = (process.env.RESTAURANTE_BACKEND_SYNC_URL || '').trim();
+    const syncToken = (process.env.RESTAURANTE_BACKEND_SYNC_TOKEN || '').trim();
+    return { baseUrl, syncToken };
+  }
+
+  private async callRestauranteSync(
+    payload: RestauranteSyncPayload,
+  ): Promise<{ tenantId: string; adminUserId: string }> {
+    const { baseUrl, syncToken } = this.getRestauranteSyncConfig();
+    if (!baseUrl || !syncToken) {
+      throw new ForbiddenException(
+        'Falta configurar RESTAURANTE_BACKEND_SYNC_URL / RESTAURANTE_BACKEND_SYNC_TOKEN',
+      );
+    }
+
+    try {
+      const response = await axios.post(baseUrl, payload, {
+        headers: {
+          'Content-Type': 'application/json',
+          'x-sync-token': syncToken,
+        },
+        timeout: 12000,
+      });
+
+      const data = response?.data?.data || response?.data || {};
+      if (!data.tenantId || !data.adminUserId) {
+        throw new Error('Respuesta inválida desde Falconext Restaurante');
+      }
+      return { tenantId: data.tenantId, adminUserId: data.adminUserId };
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.message ||
+        error?.message ||
+        'Error de sincronización';
+      throw new ForbiddenException(
+        `No se pudo sincronizar con Falconext Restaurante: ${message}`,
+      );
+    }
+  }
+
+  private async buildRestauranteSyncPayload(
+    empresaId: number,
+    adminPassword?: string,
+  ): Promise<RestauranteSyncPayload> {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      include: { plan: true },
+    });
+    if (!empresa) throw new NotFoundException('Empresa no encontrada');
+    if (normalizeProducto(empresa.producto) !== 'restaurante') {
+      throw new ForbiddenException(
+        'Solo aplica para empresas de producto RESTAURANTE',
+      );
+    }
+
+    const admin = await this.prisma.usuario.findFirst({
+      where: { empresaId, rol: { in: ['ADMIN_EMPRESA', 'ADMIN_SISTEMA'] } },
+      orderBy: { id: 'asc' },
+      select: { id: true, email: true, nombre: true, celular: true, dni: true },
+    });
+    if (!admin) {
+      throw new ForbiddenException(
+        'La empresa no tiene usuario administrador para sincronizar',
+      );
+    }
+
+    return {
+      resellerEmpresaId: empresa.id,
+      resellerUsuarioId: admin.id,
+      ruc: empresa.ruc,
+      razonSocial: empresa.razonSocial,
+      nombreComercial: empresa.nombreComercial || empresa.razonSocial,
+      direccion: empresa.direccion || undefined,
+      departamento: empresa.departamento || undefined,
+      provincia: empresa.provincia || undefined,
+      distrito: empresa.distrito || undefined,
+      ubigeo: empresa.ubigeo || undefined,
+      tipoEmpresa: empresa.tipoEmpresa as 'FORMAL' | 'INFORMAL',
+      adminEmail: admin.email,
+      adminPassword: adminPassword || undefined,
+      adminNombre: admin.nombre || 'Administrador',
+      adminCelular: admin.celular || undefined,
+      adminDni: admin.dni || undefined,
+      isActive: empresa.estado === 'ACTIVO',
+      plan: empresa.plan?.nombre,
+      planExpiresAt: empresa.fechaExpiracion
+        ? empresa.fechaExpiracion.toISOString()
+        : undefined,
+      fechaActivacion: empresa.fechaActivacion
+        ? empresa.fechaActivacion.toISOString()
+        : undefined,
+      billingProvider: empresa.billingProvider || undefined,
+      usuarioPse: empresa.usuarioPse || undefined,
+      contrasenaPse: empresa.contrasenaPse || undefined,
+      usaDemo: empresa.usaDemo ?? undefined,
+    };
+  }
+
+  private async sincronizarEmpresaRestaurante(
+    empresaId: number,
+    adminPassword?: string,
+  ) {
+    const payload = await this.buildRestauranteSyncPayload(
+      empresaId,
+      adminPassword,
+    );
+    const synced = await this.callRestauranteSync(payload);
+
+    await this.prisma.empresa.update({
+      where: { id: empresaId },
+      data: {
+        restauranteTenantId: synced.tenantId,
+        restauranteAdminUserId: synced.adminUserId,
+        restauranteSyncAt: new Date(),
+      },
+    });
+
+    return synced;
+  }
+
   async crear(
     data: CreateEmpresaDto,
     adminSistemaNegocio?: string | null,
@@ -913,6 +1070,23 @@ export class EmpresaService {
         } catch {}
         throw new ForbiddenException(
           error?.message || 'No se pudo crear la empresa en Falconext Hotel',
+        );
+      }
+    }
+
+    if (productoEmpresa === 'restaurante') {
+      try {
+        await this.sincronizarEmpresaRestaurante(
+          empresa.id,
+          data.usuario.password,
+        );
+      } catch (error: any) {
+        try {
+          await this.eliminar(empresa.id);
+        } catch {}
+        throw new ForbiddenException(
+          error?.message ||
+            'No se pudo crear la empresa en Falconext Restaurante',
         );
       }
     }
@@ -1505,6 +1679,22 @@ export class EmpresaService {
         });
       }
 
+      if (productoFinal === 'restaurante') {
+        await this.sincronizarEmpresaRestaurante(dto.id, dto.usuario?.password);
+      } else if (
+        empresaActualizada.restauranteTenantId ||
+        empresaActualizada.restauranteAdminUserId
+      ) {
+        await this.prisma.empresa.update({
+          where: { id: dto.id },
+          data: {
+            restauranteTenantId: null,
+            restauranteAdminUserId: null,
+            restauranteSyncAt: null,
+          },
+        });
+      }
+
       return this.obtenerPorId(dto.id);
     } catch (error: any) {
       if (
@@ -1561,6 +1751,9 @@ export class EmpresaService {
     });
     if (normalizeProducto(empresa.producto) === 'hotel') {
       await this.sincronizarEmpresaHotel(id);
+    }
+    if (normalizeProducto(empresa.producto) === 'restaurante') {
+      await this.sincronizarEmpresaRestaurante(id);
     }
     if (userId) {
       await this.registrarLog(
@@ -2068,6 +2261,43 @@ export class EmpresaService {
       empresaId,
       hotelTenantId: synced.tenantId,
       hotelAdminUserId: synced.adminUserId,
+    };
+  }
+
+  async sincronizarRestauranteDesdeMype(
+    empresaId: number,
+    adminSistemaNegocio?: string | null,
+    adminSistemaProducto?: string | null,
+    adminPassword?: string,
+  ) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+    });
+    if (!empresa) throw new NotFoundException('Empresa no encontrada');
+
+    if (
+      adminSistemaNegocio &&
+      normalizeBrand(empresa.brand) !== normalizeBrand(adminSistemaNegocio)
+    ) {
+      throw new ForbiddenException('No tienes acceso a esta empresa');
+    }
+    if (
+      adminSistemaProducto &&
+      normalizeProducto(empresa.producto) !==
+        normalizeProducto(adminSistemaProducto)
+    ) {
+      throw new ForbiddenException('No tienes acceso a esta empresa');
+    }
+
+    const synced = await this.sincronizarEmpresaRestaurante(
+      empresaId,
+      adminPassword,
+    );
+    return {
+      ok: true,
+      empresaId,
+      restauranteTenantId: synced.tenantId,
+      restauranteAdminUserId: synced.adminUserId,
     };
   }
 

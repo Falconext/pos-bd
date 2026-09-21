@@ -91,7 +91,7 @@ export class CreateUserDto {
 
   @IsOptional()
   @IsString()
-  @IsIn(['FACTURACION', 'HOTEL'])
+  @IsIn(['FACTURACION', 'HOTEL', 'RESTAURANTE'])
   sistemaProducto?: string;
 
   @IsOptional()

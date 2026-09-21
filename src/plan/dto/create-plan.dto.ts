@@ -15,8 +15,8 @@ export class CreatePlanDto {
 
   @IsString()
   @IsOptional()
-  @IsIn(['facturacion', 'hotel', 'logistica'])
-  producto?: 'facturacion' | 'hotel' | 'logistica';
+  @IsIn(['facturacion', 'hotel', 'restaurante', 'logistica'])
+  producto?: 'facturacion' | 'hotel' | 'restaurante' | 'logistica';
 
   @IsString()
   @IsOptional()

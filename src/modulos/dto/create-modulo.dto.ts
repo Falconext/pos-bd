@@ -6,8 +6,8 @@ export class CreateModuloDto {
 
   @IsString()
   @IsOptional()
-  @IsIn(['facturacion', 'hotel'])
-  producto?: 'facturacion' | 'hotel';
+  @IsIn(['facturacion', 'hotel', 'restaurante', 'logistica'])
+  producto?: 'facturacion' | 'hotel' | 'restaurante' | 'logistica';
 
   @IsString()
   nombre: string;

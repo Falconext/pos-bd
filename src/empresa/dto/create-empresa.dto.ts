@@ -146,7 +146,7 @@ export class CreateEmpresaDto {
 
   @IsOptional()
   @IsString()
-  @IsIn(['facturacion', 'hotel', 'logistica'])
+  @IsIn(['facturacion', 'hotel', 'restaurante', 'logistica'])
   producto?: string;
 
   @IsOptional()

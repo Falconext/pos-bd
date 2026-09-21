@@ -367,6 +367,10 @@ model Empresa {
   hotelTenantId           String?
   hotelAdminUserId        String?
   hotelSyncAt             DateTime?
+  // Gobernanza del producto RESTAURANTE (falconext-restaurante, backend aparte)
+  restauranteTenantId     String?
+  restauranteAdminUserId  String?
+  restauranteSyncAt       DateTime?
   usuarioPse              String?
   contrasenaPse           String?
   // Credenciales de API "Consulta de Validez de CPE" de SUNAT (client credentials
