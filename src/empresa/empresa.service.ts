@@ -1461,6 +1461,21 @@ export class EmpresaService {
           dto.ventaObservacionesDefault?.trim() || null;
       if (dto.posMantenerBusqueda !== undefined)
         updateData.posMantenerBusqueda = Boolean(dto.posMantenerBusqueda);
+      if (dto.posComprobanteDefault !== undefined) {
+        const valor = String(dto.posComprobanteDefault).toUpperCase();
+        if (
+          !['MANTENER_ULTIMO', 'NOTA_DE_VENTA', 'BOLETA', 'FACTURA'].includes(
+            valor,
+          )
+        ) {
+          throw new BadRequestException(
+            'posComprobanteDefault debe ser MANTENER_ULTIMO, NOTA_DE_VENTA, BOLETA o FACTURA.',
+          );
+        }
+        updateData.posComprobanteDefault = valor;
+      }
+      if (dto.posExigirCpeMedioPago !== undefined)
+        updateData.posExigirCpeMedioPago = Boolean(dto.posExigirCpeMedioPago);
       // Catálogo por sede (Perfil → Configuración → Sedes y catálogo).
       if (dto.catalogoPorSede !== undefined)
         updateData.catalogoPorSede = dto.catalogoPorSede;
