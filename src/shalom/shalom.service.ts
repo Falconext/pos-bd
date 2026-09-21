@@ -62,6 +62,24 @@ const TARIFA_POR_TAMANO: Record<
 };
 const TAMANO_DEFECTO = TARIFA_POR_TAMANO.XS;
 
+/**
+ * Tamaños universales para el selector del despacho, con un id numérico
+ * estable (EnvioDespacho.shalomTipoProducto es Int). Los ids altos no chocan
+ * con los del catálogo por cuenta (ej. 1090), que se siguen aceptando por
+ * compatibilidad con despachos antiguos.
+ */
+export const TAMANOS_SHALOM: { id: number; key: string; nombre: string }[] = [
+  { id: 900001, key: 'SOBRE', nombre: 'SOBRE (documentos)' },
+  { id: 900002, key: 'XXS', nombre: 'PAQUETE XXS (muy pequeño)' },
+  { id: 900003, key: 'XS', nombre: 'PAQUETE XS (pequeño)' },
+  { id: 900004, key: 'S', nombre: 'PAQUETE S' },
+  { id: 900005, key: 'M', nombre: 'PAQUETE M' },
+  { id: 900006, key: 'L', nombre: 'PAQUETE L (grande)' },
+];
+const tamanoPorId = (id: number) => TAMANOS_SHALOM.find((t) => t.id === id);
+const tamanoPorKey = (key?: string | null) =>
+  TAMANOS_SHALOM.find((t) => t.key === String(key ?? '').toUpperCase());
+
 /** Clasifica el nombre de un producto de catálogo (ej. "MINI PAQUETERIA XS")
  * en uno de los tamaños de tarifa de Shalom. El orden importa: XXS antes que
  * XS, porque "XXS" contiene "XS" como subcadena. */
@@ -488,6 +506,7 @@ export class ShalomService {
         shalomAgenciaOrigenNombre: true,
         shalomAutoGuiaActivo: true,
         shalomClavesRetiro: true,
+        shalomTamanoDefault: true,
         plan: { select: { nombre: true, features: { select: { featureKey: true, enabled: true } } } },
       },
     });
@@ -519,6 +538,7 @@ export class ShalomService {
         shalomAgenciaOrigenNombre: true,
         shalomAutoGuiaActivo: true,
         shalomClavesRetiro: true,
+        shalomTamanoDefault: true,
         plan: { select: { nombre: true, features: { select: { featureKey: true, enabled: true } } } },
       },
     });
@@ -540,6 +560,7 @@ export class ShalomService {
       // La venta genera la guía sola (opt-in por empresa).
       autoGuiaActivo: empresa.shalomAutoGuiaActivo,
       clavesRetiro: empresa.shalomClavesRetiro ?? '',
+      tamanoDefault: empresa.shalomTamanoDefault ?? 'XS',
     };
   }
 
@@ -559,6 +580,7 @@ export class ShalomService {
       agenciaOrigenNombre: null,
       autoGuiaActivo: false,
       clavesRetiro: '',
+      tamanoDefault: 'XS',
     };
   }
 
@@ -691,6 +713,7 @@ export class ShalomService {
       | 'securityCode'
       | 'autoGuiaActivo'
       | 'clavesRetiro'
+      | 'tamanoDefault'
     >,
   ) {
     await this.empresaConShalomPro(empresaId);
@@ -706,6 +729,11 @@ export class ShalomService {
     await this.prisma.empresa.update({
       where: { id: empresaId },
       data: {
+        ...(dto.tamanoDefault !== undefined
+          ? {
+              shalomTamanoDefault: tamanoPorKey(dto.tamanoDefault)?.key ?? null,
+            }
+          : {}),
         ...(dto.clavesRetiro !== undefined
           ? {
               shalomClavesRetiro:
@@ -774,32 +802,57 @@ export class ShalomService {
    * /account/register con un id inválido a propósito); ya no hace falta:
    * los tamaños de TAMANOS_SHALOM son universales y no requieren red.
    */
-  /** Catálogo real de productos de la cuenta, para el selector del despacho. */
+  /**
+   * Tamaños para el selector del despacho: lista fija y universal (es lo que
+   * Shalom acepta en `content` para cualquier cuenta). Antes se sondeaba el
+   * catálogo por cuenta contra el proveedor y, cuando esa llamada fallaba, el
+   * selector salía vacío y todo se registraba como XS (Navilook pagaba S/10
+   * por sobres de S/8).
+   */
   async productos(empresaId: number) {
-    const empresa = await this.empresaConShalomPro(empresaId);
-    if (!empresa.shalomInstanceId || !empresa.shalomAgenciaOrigenId) return [];
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { shalomTamanoDefault: true },
+    });
+    const porDefecto = tamanoPorKey(empresa?.shalomTamanoDefault) ?? tamanoPorKey('XS')!;
+    return TAMANOS_SHALOM.map((t) => ({
+      id: t.id,
+      key: t.key,
+      nombre: t.nombre,
+      content: TARIFA_POR_TAMANO[t.key].content,
+      porDefecto: t.id === porDefecto.id,
+    }));
+  }
 
-    const origen = Number(empresa.shalomAgenciaOrigenId);
-    // El destino debe ser una agencia distinta y válida; cualquiera sirve porque
-    // la sonda falla antes de crear nada.
-    const agencias = (await this.lat.getAgencias()).data ?? [];
-    const otra = agencias.find((a) => Number(a.terId) && Number(a.terId) !== origen);
-    if (!otra) return [];
-
-    try {
-      const catalogo = await this.lat.catalogoProductos(
-        empresa.shalomInstanceId,
-        origen,
-        Number(otra.terId),
+  /**
+   * Tarifa por tamaño para la ruta origen (agencia de la empresa) → destino,
+   * según la cotización real de Shalom (POST /account/quote). Sirve para que la
+   * cajera vea cuánto pagará el cliente al recoger antes de elegir el tamaño.
+   */
+  async tarifaPorTamano(empresaId: number, destinoId: string | number, origenId?: string | number) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { shalomAgenciaOrigenId: true },
+    });
+    const origen = Number(origenId || empresa?.shalomAgenciaOrigenId || 0);
+    const destino = Number(destinoId || 0);
+    if (!origen || !destino) {
+      throw new BadRequestException(
+        'Falta la agencia de origen (Perfil → Shalom Pro) o la de destino para cotizar.',
       );
-      return Object.entries(catalogo)
-        .map(([id, nombre]) => ({ id: Number(id), nombre: String(nombre) }))
-        .filter((p) => Number.isFinite(p.id))
-        .sort((a, b) => a.nombre.localeCompare(b.nombre));
-    } catch (e: any) {
-      this.logger.warn(`No se pudo leer el catálogo de productos: ${e?.message}`);
-      return [];
     }
+    const q = await this.lat.quote(origen, destino);
+    const tariff = q?.data?.tariff ?? q?.tariff ?? {};
+    const leadTime: string | null = q?.data?.lead_time ?? q?.lead_time ?? null;
+    return {
+      origen,
+      destino,
+      leadTime,
+      tamanos: TAMANOS_SHALOM.map((t) => {
+        const precio = Number(tariff[TARIFA_POR_TAMANO[t.key].tarifaKey]);
+        return { id: t.id, key: t.key, nombre: t.nombre, precio: Number.isFinite(precio) && precio > 0 ? precio : null };
+      }),
+    };
   }
 
   /** Envíos pendientes de la cuenta conectada (espejo de Shalom Pro). */
@@ -922,31 +975,48 @@ export class ShalomService {
       );
     }
 
-    const tipoProducto = Number(
-      dto.tipoProducto ??
-        envio.shalomTipoProducto ??
-        process.env.SHALOM_TIPO_PRODUCTO ??
-        PRODUCTO_DEFECTO_ID,
-    );
-
-    // Se usa el catálogo de la cuenta solo para saber a qué tamaño corresponde
-    // el producto elegido (y así mandar el literal de `content` correcto);
-    // ya no se manda `tipo_producto` a Shalom (ver comentario en
-    // TARIFA_POR_TAMANO más arriba — deja el envío en N/A / S/0.00).
-    let nombreCatalogo: string | undefined;
-    try {
-      const catalogo = await this.lat.catalogoProductos(
-        empresa.shalomInstanceId,
-        Number(origen.terId),
-        Number(destino.terId),
-      );
-      nombreCatalogo = catalogo[String(tipoProducto)];
-    } catch (e: any) {
-      this.logger.warn(
-        `No se pudo leer el catálogo de productos para el comprobante ${comprobanteId}, se usará el tamaño por defecto: ${e?.message}`,
-      );
+    // Tamaño del paquete: id fijo del selector > id del catálogo por cuenta
+    // (despachos antiguos) > tamaño por defecto de la empresa > XS.
+    const tipoProductoRaw = dto.tipoProducto ?? envio.shalomTipoProducto ?? null;
+    const tipoProducto = Number(tipoProductoRaw ?? 0);
+    let tamano: (typeof TARIFA_POR_TAMANO)[string] | null = null;
+    const fijo = tamanoPorId(tipoProducto);
+    if (fijo) {
+      tamano = TARIFA_POR_TAMANO[fijo.key];
+    } else if (tipoProducto > 0) {
+      // Id del catálogo por cuenta: se pregunta al proveedor solo para saber a
+      // qué tamaño corresponde; si falla, se sigue con el default.
+      try {
+        const catalogo = await this.lat.catalogoProductos(
+          empresa.shalomInstanceId,
+          Number(origen.terId),
+          Number(destino.terId),
+        );
+        const nombreCatalogo = catalogo[String(tipoProducto)];
+        if (nombreCatalogo) tamano = tamanoDesdeNombre(nombreCatalogo);
+      } catch (e: any) {
+        this.logger.warn(
+          `No se pudo leer el catálogo de productos para el comprobante ${comprobanteId}: ${e?.message}`,
+        );
+      }
     }
-    const tamano = tamanoDesdeNombre(nombreCatalogo ?? '');
+    if (!tamano) {
+      const porDefecto = tamanoPorKey((empresa as any).shalomTamanoDefault) ?? tamanoPorKey(process.env.SHALOM_TAMANO_DEFAULT) ?? null;
+      tamano = porDefecto ? TARIFA_POR_TAMANO[porDefecto.key] : TAMANO_DEFECTO;
+    }
+    const tamanoKey = Object.keys(TARIFA_POR_TAMANO).find((k) => TARIFA_POR_TAMANO[k] === tamano) ?? 'XS';
+
+    // Flete cotizado para ese tamaño y ruta: se guarda en el despacho para
+    // mostrarlo (resumen, WhatsApp al cliente, rótulo). Si la cotización falla
+    // la guía se crea igual.
+    let fleteCotizado: number | null = null;
+    try {
+      const q = await this.lat.quote(Number(origen.terId), Number(destino.terId));
+      const precio = Number((q?.data?.tariff ?? q?.tariff ?? {})[tamano.tarifaKey]);
+      if (Number.isFinite(precio) && precio > 0) fleteCotizado = precio;
+    } catch (e: any) {
+      this.logger.warn(`No se pudo cotizar el flete del comprobante ${comprobanteId}: ${e?.message}`);
+    }
 
     // Clave de retiro (4 dígitos que presenta el destinatario en agencia). Si no
     // se manda, el proveedor reutiliza la última clave de la cuenta Shalom Pro y
@@ -1062,6 +1132,8 @@ export class ShalomService {
         ...(guia.claveEnvio ? { claveEnvio: guia.claveEnvio } : {}),
         shalomAgenciaDestinoId: destino.terId,
         shalomGuiaCreadaEn: new Date(),
+        shalomTamano: tamanoKey,
+        ...(fleteCotizado != null ? { shalomFleteCotizado: fleteCotizado } : {}),
       },
       select: {
         id: true,

@@ -194,6 +194,9 @@ model Empresa {
   // Shalom no permite repetir la clave del día anterior: al generar la guía se
   // toma la primera que no se usó ayer. Vacío = clave aleatoria por envío.
   shalomClavesRetiro            String?
+  // Tamaño de paquete Shalom por defecto (SOBRE|XXS|XS|S|M|L) cuando el
+  // despacho no elige uno. Null = XS (comportamiento histórico).
+  shalomTamanoDefault           String?
   // ── Olva Courier (api.olva-api.lat) ──────────────────────────────────────
   // El proveedor autentica TODO con una API key global (OLVA_API_KEY): no hay
   // cuenta por negocio que conectar como en Shalom Pro. Lo único propio de cada
@@ -2316,6 +2319,8 @@ model EnvioDespacho {
   shalomAgenciaDestinoId   String? // ter_id de la agencia destino (para crear la guía)
   shalomTipoProducto       Int? // type_product de Shalom (MINI PAQUETERIA XS, etc.)
   shalomGuiaCreadaEn       DateTime? // cuándo se generó la guía en Shalom Pro desde el sistema
+  shalomTamano             String? // tamaño enviado en `content` (SOBRE|XXS|XS|S|M|L)
+  shalomFleteCotizado      Float? // flete cotizado por Shalom para ese tamaño y ruta al crear la guía
   // Estado de rastreo Olva (persistido: read-through cache + scheduler).
   // El N° de guía Olva vive en `nroOrden` (Olva no usa clave, solo el número).
   olvaEstado               String? // etapa actual: registrado|transito|reparto|destino|entregado

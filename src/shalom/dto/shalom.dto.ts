@@ -17,6 +17,8 @@ export class ConectarInstanciaDto {
   @IsOptional() @IsBoolean() autoGuiaActivo?: boolean;
   /** Claves de retiro propias, separadas por coma (ej. "1010,1011"). */
   @IsOptional() @IsString() clavesRetiro?: string;
+  /** Tamaño de paquete por defecto (SOBRE|XXS|XS|S|M|L). */
+  @IsOptional() @IsString() tamanoDefault?: string;
 }
 
 /** Ajustes de la instancia que no requieren volver a loguear. */
@@ -27,6 +29,8 @@ export class ConfigInstanciaDto {
   @IsOptional() @IsString() agenciaOrigenId?: string;
   @IsOptional() @IsString() agenciaOrigenNombre?: string;
   @IsOptional() @IsBoolean() autoGuiaActivo?: boolean;
+  /** Tamaño de paquete por defecto (SOBRE|XXS|XS|S|M|L). */
+  @IsOptional() @IsString() tamanoDefault?: string;
 }
 
 /**

@@ -97,7 +97,17 @@ export class ShalomController {
     return this.service.claveSugerida(user.empresaId);
   }
 
-  // Productos disponibles para la empresa (derivados de su propia cuenta).
+  // Tarifa por tamaño para la ruta origen (empresa) → destino, cotizada en Shalom.
+  @Get('tarifa')
+  tarifa(
+    @Query('destinoId') destinoId: string,
+    @Query('origenId') origenId: string | undefined,
+    @User() user: any,
+  ) {
+    return this.service.tarifaPorTamano(user.empresaId, destinoId, origenId || undefined);
+  }
+
+  // Tamaños de paquete para el selector del despacho (lista fija universal).
   @Get('productos')
   productos(@User() user: any) {
     return this.service.productos(user.empresaId);

@@ -9,6 +9,7 @@ describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
     getAgencias: jest.fn().mockResolvedValue({ success: true, data: [], total: 0 }),
     track: jest.fn().mockResolvedValue({ success: true, search: {}, statuses: {} }),
     quote: jest.fn().mockResolvedValue({ ok: true }),
+    catalogoProductos: jest.fn().mockResolvedValue({}),
     createOrder: jest.fn().mockResolvedValue({
       data: { orderNumber: '66479331', orderCode: '3KTH' },
     }),
@@ -367,6 +368,64 @@ describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
       expect(segunda).not.toBe('1010');
       expect(prisma.envioDespacho.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ claveEnvio: segunda }) }));
       expect(r.nroOrden).toBe('77');
+    });
+  });
+
+  describe('tamaño del paquete y flete', () => {
+    const quoteLimaArequipa = { success: true, data: { tariff: { sobre: 8, cajapaquetexxs: 8, cajapaquetexs: 10, cajapaquetes: 12, cajapaquetem: 20, cajapaquetel: 28 }, lead_time: '96 horas' } };
+    const despachoBase = (extra: any = {}) => ({
+      id: 55, nroOrden: null, claveOrden: null, claveEnvio: '', agenciaDestino: 'Cusco Centro', shalomAgenciaDestinoId: '582',
+      celularDest: '987654321', nroPaquetes: 1, dniDestinatario: '', nombreDestinatario: '',
+      comprobante: { id: 9, serie: 'NV01', correlativo: 1, cliente: { nombre: 'JUAN PEREZ', nroDoc: '12345678', telefono: '987654321', direccion: '' }, detalles: [] },
+      ...extra,
+    });
+
+    it('productos(): lista fija universal, marca el tamaño por defecto de la empresa', async () => {
+      const { svc, prisma } = build();
+      prisma.empresa.findUnique.mockResolvedValue({ shalomTamanoDefault: 'XXS' });
+      const r = await svc.productos(1);
+      expect(r.map((t: any) => t.key)).toEqual(['SOBRE', 'XXS', 'XS', 'S', 'M', 'L']);
+      expect(r.find((t: any) => t.porDefecto)?.key).toBe('XXS');
+      expect(r.find((t: any) => t.key === 'XS')?.content).toBe('PAQUETE XS');
+    });
+
+    it('tarifaPorTamano(): precio por tamaño desde /account/quote de la ruta', async () => {
+      const { svc, prisma, lat } = build();
+      prisma.empresa.findUnique.mockResolvedValue({ shalomAgenciaOrigenId: '128' });
+      lat.quote.mockResolvedValue(quoteLimaArequipa);
+      const r = await svc.tarifaPorTamano(1, '7');
+      expect(lat.quote).toHaveBeenCalledWith(128, 7);
+      expect(r.leadTime).toBe('96 horas');
+      expect(r.tamanos.map((t: any) => [t.key, t.precio])).toEqual([['SOBRE', 8], ['XXS', 8], ['XS', 10], ['S', 12], ['M', 20], ['L', 28]]);
+    });
+
+    it('crear guía con tamaño fijo XXS manda content "PAQUETE XXS" sin tocar el catálogo y guarda el flete', async () => {
+      const { svc, prisma, lat } = build();
+      lat.getAgencias.mockResolvedValue({ success: true, data: [agencia('7', 'Lima Centro'), agencia('582', 'Cusco Centro')], total: 2 });
+      prisma.empresa.findUnique.mockResolvedValue(empresaCorporativa());
+      prisma.envioDespacho.findFirst.mockResolvedValue(despachoBase({ shalomTipoProducto: 900002 }));
+      prisma.envioDespacho.update.mockResolvedValue({ id: 55, nroOrden: '77', claveOrden: 'ABCD' });
+      lat.quote.mockResolvedValue(quoteLimaArequipa);
+      lat.createOrder.mockResolvedValue({ success: true, data: { orderNumber: '77', orderCode: 'ABCD' } });
+      await svc.crearGuiaDesdeDespacho(9, 1, {});
+      expect(lat.catalogoProductos).not.toHaveBeenCalled();
+      expect(lat.createOrder.mock.calls[0][0].content).toBe('PAQUETE XXS');
+      expect(prisma.envioDespacho.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ shalomTamano: 'XXS', shalomFleteCotizado: 8 }) }));
+    });
+
+    it('sin tamaño elegido usa el default de la empresa (SOBRE) y, sin default, XS', async () => {
+      const { svc, prisma, lat } = build();
+      lat.getAgencias.mockResolvedValue({ success: true, data: [agencia('7', 'Lima Centro'), agencia('582', 'Cusco Centro')], total: 2 });
+      prisma.envioDespacho.update.mockResolvedValue({ id: 55, nroOrden: '77', claveOrden: 'ABCD' });
+      lat.quote.mockResolvedValue(quoteLimaArequipa);
+      lat.createOrder.mockResolvedValue({ success: true, data: { orderNumber: '77', orderCode: 'ABCD' } });
+      prisma.empresa.findUnique.mockResolvedValue({ ...empresaCorporativa(), shalomTamanoDefault: 'SOBRE' });
+      prisma.envioDespacho.findFirst.mockResolvedValue(despachoBase({ shalomTipoProducto: null }));
+      await svc.crearGuiaDesdeDespacho(9, 1, {});
+      expect(lat.createOrder.mock.calls[0][0].content).toBe('SOBRE');
+      prisma.empresa.findUnique.mockResolvedValue({ ...empresaCorporativa(), shalomTamanoDefault: null });
+      await svc.crearGuiaDesdeDespacho(9, 1, {});
+      expect(lat.createOrder.mock.calls[1][0].content).toBe('PAQUETE XS');
     });
   });
 });

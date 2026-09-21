@@ -52,6 +52,7 @@ const DESPACHO_FIELDS = [
   'dniDestinatario',
   'contenidoPaquete',
   'shalomTipoProducto',
+  'shalomAgenciaDestinoId',
   'pesoKg',
   'montoCOD',
   'costoEnvio',

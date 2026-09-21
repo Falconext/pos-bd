@@ -86,6 +86,8 @@ export class CreateEnvioDespachoDto {
   @IsOptional() @IsString() contenidoPaquete?: string;
   /** type_product de Shalom elegido en la coordinación de envío. */
   @IsOptional() @Type(() => Number) @IsInt() shalomTipoProducto?: number;
+  /** ter_id de la agencia Shalom de destino elegida en el selector (para cotizar y crear la guía). */
+  @IsOptional() @IsString() shalomAgenciaDestinoId?: string;
   // Peso del paquete en kg: Olva lo exige para registrar la guía y cotizar.
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0.1) pesoKg?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) montoCOD?: number;
