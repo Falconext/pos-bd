@@ -90,6 +90,13 @@ export class ShalomController {
     return this.service.desconectarInstancia(user.empresaId);
   }
 
+  // Clave de retiro sugerida para la próxima guía (clave del día / configurada /
+  // aleatoria) + las que Shalom rechazaría hoy por ser de ayer.
+  @Get('clave-retiro')
+  claveRetiro(@User() user: any) {
+    return this.service.claveSugerida(user.empresaId);
+  }
+
   // Productos disponibles para la empresa (derivados de su propia cuenta).
   @Get('productos')
   productos(@User() user: any) {

@@ -28,7 +28,13 @@ describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
   });
   const makePrisma = () => ({
     empresa: { findUnique: jest.fn(), update: jest.fn() },
-    envioDespacho: { findFirst: jest.fn(), update: jest.fn(), findUnique: jest.fn() },
+    envioDespacho: {
+      findFirst: jest.fn(),
+      update: jest.fn(),
+      findUnique: jest.fn(),
+      // Historial de claves de retiro (estadoClavesRetiro): sin guías recientes.
+      findMany: jest.fn().mockResolvedValue([]),
+    },
   });
 
   // Agencia tal como la devuelve el proveedor ya normalizada por ShalomLatService.
@@ -295,5 +301,49 @@ describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
     await expect(svc.crearGuiaDesdeDespacho(9, 100)).rejects.toThrow(/Seleccione un producto/);
     // Lo crítico: no debe quedar marcado como generado.
     expect(prisma.envioDespacho.update).not.toHaveBeenCalled();
+  });
+
+  describe('claves de retiro', () => {
+    const guia = (clave: string, diasAtras: number) => {
+      const d = new Date();
+      d.setHours(12, 0, 0, 0);
+      d.setDate(d.getDate() - diasAtras);
+      return { claveEnvio: clave, shalomGuiaCreadaEn: d };
+    };
+
+    it('repite la clave del día si hoy ya se generó una guía', async () => {
+      const { svc, prisma } = build();
+      prisma.empresa.findUnique.mockResolvedValue({ shalomClavesRetiro: '1010,1011' });
+      prisma.envioDespacho.findMany.mockResolvedValue([guia('7777', 0), guia('1010', 1)]);
+      const r = await svc.claveSugerida(1);
+      expect(r).toMatchObject({ clave: '7777', origen: 'HOY', usadasAyer: ['1010'], claveHoy: '7777' });
+    });
+
+    it('primera guía del día: toma la configurada que no se usó ayer', async () => {
+      const { svc, prisma } = build();
+      prisma.empresa.findUnique.mockResolvedValue({ shalomClavesRetiro: '1010, 1011' });
+      prisma.envioDespacho.findMany.mockResolvedValue([guia('1010', 1)]);
+      const r = await svc.claveSugerida(1);
+      expect(r).toMatchObject({ clave: '1011', origen: 'CONFIGURADA', configuradas: ['1010', '1011'] });
+    });
+
+    it('sin claves configuradas ni guías de hoy: aleatoria de 4 dígitos distinta a la de ayer', async () => {
+      const { svc, prisma } = build();
+      prisma.empresa.findUnique.mockResolvedValue({ shalomClavesRetiro: null });
+      prisma.envioDespacho.findMany.mockResolvedValue([guia('4321', 1)]);
+      const r = await svc.claveSugerida(1);
+      expect(r.origen).toBe('ALEATORIA');
+      expect(r.clave).toMatch(/^\d{4}$/);
+      expect(r.clave).not.toBe('4321');
+    });
+
+    it('la clave escrita por el usuario se respeta, salvo que sea la de ayer', async () => {
+      const { svc, prisma } = build();
+      prisma.empresa.findUnique.mockResolvedValue({ shalomClavesRetiro: '1010,1011' });
+      prisma.envioDespacho.findMany.mockResolvedValue([guia('1010', 1)]);
+      await expect((svc as any).generarClaveRetiro(1, '2024')).resolves.toBe('2024');
+      await expect((svc as any).generarClaveRetiro(1, '1010')).rejects.toThrow(/fue la de ayer.*1011/);
+      await expect((svc as any).generarClaveRetiro(1, '12')).rejects.toThrow(/4 dígitos/);
+    });
   });
 });

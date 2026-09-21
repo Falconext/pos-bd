@@ -186,6 +186,10 @@ model Empresa {
   // empresa (default false): crea envíos REALES en la cuenta Shalom Pro, así que
   // nadie debe descubrirlo sin haberlo pedido.
   shalomAutoGuiaActivo          Boolean                       @default(false)
+  // Claves de retiro propias del negocio, separadas por coma (ej. "1010,1011").
+  // Shalom no permite repetir la clave del día anterior: al generar la guía se
+  // toma la primera que no se usó ayer. Vacío = clave aleatoria por envío.
+  shalomClavesRetiro            String?
   // ── Olva Courier (api.olva-api.lat) ──────────────────────────────────────
   // El proveedor autentica TODO con una API key global (OLVA_API_KEY): no hay
   // cuenta por negocio que conectar como en Shalom Pro. Lo único propio de cada

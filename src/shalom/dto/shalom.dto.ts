@@ -15,11 +15,15 @@ export class ConectarInstanciaDto {
   @IsOptional() @IsString() agenciaOrigenNombre?: string;
   /** Generar la guía sola al cerrar una venta con courier Shalom. */
   @IsOptional() @IsBoolean() autoGuiaActivo?: boolean;
+  /** Claves de retiro propias, separadas por coma (ej. "1010,1011"). */
+  @IsOptional() @IsString() clavesRetiro?: string;
 }
 
 /** Ajustes de la instancia que no requieren volver a loguear. */
 export class ConfigInstanciaDto {
   @IsOptional() @IsString() securityCode?: string;
+  /** Claves de retiro propias, separadas por coma (ej. "1010,1011"). */
+  @IsOptional() @IsString() clavesRetiro?: string;
   @IsOptional() @IsString() agenciaOrigenId?: string;
   @IsOptional() @IsString() agenciaOrigenNombre?: string;
   @IsOptional() @IsBoolean() autoGuiaActivo?: boolean;
@@ -42,6 +46,8 @@ export class CrearGuiaDto {
   @IsOptional() @IsNumber() tipoProducto?: number;
   /** Regenerar aunque el despacho ya tenga N° de orden. */
   @IsOptional() @IsBoolean() forzar?: boolean;
+  /** Clave de retiro (4 dígitos) que quiere usar el negocio; si no llega se sugiere. */
+  @IsOptional() @IsString() clave?: string;
 }
 
 /** Cotización previa entre dos agencias. */

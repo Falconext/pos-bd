@@ -231,29 +231,116 @@ export class ShalomService {
 
   // ─── Persistencia / caché de tracking ────────────────────────────────────
 
+  /** Inicio del día calendario (TZ del proceso = America/Lima) desplazado N días. */
+  private inicioDia(desplazamientoDias = 0): Date {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + desplazamientoDias);
+    return d;
+  }
+
+  /** Claves de retiro configuradas por la empresa ("1010,1011" → ['1010','1011']). */
+  private parsearClavesConfiguradas(raw?: string | null): string[] {
+    return String(raw ?? '')
+      .split(/[,;\s]+/)
+      .map((c) => c.trim())
+      .filter((c) => /^\d{4}$/.test(c));
+  }
+
   /**
-   * Clave de retiro de 4 dígitos para una guía nueva. Shalom no permite repetir
-   * la clave usada el día anterior en la misma cuenta, así que se evita cualquier
-   * clave que la empresa haya usado en las últimas 48 h (y las triviales).
+   * Situación de las claves de retiro de la empresa: cuáles se usaron ayer
+   * (Shalom las rechaza hoy), cuál se está usando hoy y cuáles configuró.
    */
-  private async generarClaveRetiro(empresaId: number): Promise<string> {
-    const desde = new Date(Date.now() - 48 * 60 * 60 * 1000);
-    const usadas = await this.prisma.envioDespacho.findMany({
-      where: {
-        claveEnvio: { not: null },
-        creadoEn: { gte: desde },
-        comprobante: { empresaId },
-      },
-      select: { claveEnvio: true },
-    });
-    const prohibidas = new Set(
-      usadas.map((u) => String(u.claveEnvio)).concat(['0000', '1234']),
+  async estadoClavesRetiro(empresaId: number) {
+    const [empresa, guiasRecientes] = await Promise.all([
+      this.prisma.empresa.findUnique({
+        where: { id: empresaId },
+        select: { shalomClavesRetiro: true },
+      }),
+      this.prisma.envioDespacho.findMany({
+        where: {
+          claveEnvio: { not: null },
+          shalomGuiaCreadaEn: { gte: this.inicioDia(-1) },
+          comprobante: { empresaId },
+        },
+        select: { claveEnvio: true, shalomGuiaCreadaEn: true },
+        orderBy: { shalomGuiaCreadaEn: 'desc' },
+      }),
+    ]);
+    const hoy = this.inicioDia(0);
+    const usadasAyer = Array.from(
+      new Set(
+        guiasRecientes
+          .filter((g) => g.shalomGuiaCreadaEn && g.shalomGuiaCreadaEn < hoy)
+          .map((g) => String(g.claveEnvio)),
+      ),
     );
+    const claveHoy =
+      guiasRecientes.find((g) => g.shalomGuiaCreadaEn && g.shalomGuiaCreadaEn >= hoy)
+        ?.claveEnvio ?? null;
+    const configuradas = this.parsearClavesConfiguradas(empresa?.shalomClavesRetiro);
+    return { usadasAyer, claveHoy: claveHoy ? String(claveHoy) : null, configuradas };
+  }
+
+  /**
+   * Clave sugerida para la próxima guía y de dónde sale. Regla única que cubre
+   * a quien alterna dos claves fijas, a quien inventa una por día y a quien no
+   * quiere pensar en claves:
+   *   1. si hoy ya se generó una guía → la misma clave (clave del día);
+   *   2. si no, la primera clave configurada que no se usó ayer;
+   *   3. si no hay configuradas (o todas se usaron ayer) → aleatoria.
+   */
+  async claveSugerida(empresaId: number) {
+    const estado = await this.estadoClavesRetiro(empresaId);
+    const ayer = new Set(estado.usadasAyer);
+    if (estado.claveHoy && !ayer.has(estado.claveHoy)) {
+      return { ...estado, clave: estado.claveHoy, origen: 'HOY' as const };
+    }
+    const configurada = estado.configuradas.find((c) => !ayer.has(c));
+    if (configurada) {
+      return { ...estado, clave: configurada, origen: 'CONFIGURADA' as const };
+    }
+    return {
+      ...estado,
+      clave: this.claveAleatoria(new Set([...ayer, '0000', '1234'])),
+      origen: 'ALEATORIA' as const,
+    };
+  }
+
+  private claveAleatoria(prohibidas: Set<string>): string {
     for (let i = 0; i < 50; i += 1) {
       const candidata = String(1000 + Math.floor(Math.random() * 9000));
       if (!prohibidas.has(candidata)) return candidata;
     }
     return String(1000 + Math.floor(Math.random() * 9000));
+  }
+
+  /**
+   * Clave de retiro de 4 dígitos para una guía nueva. Si el usuario escribió una
+   * se respeta, salvo que sea la usada ayer (Shalom la rechaza con "No puede
+   * usar la clave del día anterior"); si no, la sugerida (ver claveSugerida).
+   */
+  private async generarClaveRetiro(
+    empresaId: number,
+    claveSolicitada?: string | null,
+  ): Promise<string> {
+    const solicitada = String(claveSolicitada ?? '').trim();
+    const sugerencia = await this.claveSugerida(empresaId);
+    if (solicitada) {
+      if (!/^\d{4}$/.test(solicitada)) {
+        throw new BadRequestException(
+          'La clave de retiro debe tener 4 dígitos.',
+        );
+      }
+      if (sugerencia.usadasAyer.includes(solicitada)) {
+        const alternativa = sugerencia.clave;
+        throw new BadRequestException(
+          `La clave ${solicitada} fue la de ayer y Shalom no permite repetirla hoy. Usa otra (p. ej. ${alternativa}).`,
+        );
+      }
+      return solicitada;
+    }
+    return sugerencia.clave;
   }
 
   /** Busca el EnvioDespacho asociado a una orden Shalom (por nº + clave). */
@@ -400,6 +487,7 @@ export class ShalomService {
         shalomAgenciaOrigenId: true,
         shalomAgenciaOrigenNombre: true,
         shalomAutoGuiaActivo: true,
+        shalomClavesRetiro: true,
         plan: { select: { nombre: true, features: { select: { featureKey: true, enabled: true } } } },
       },
     });
@@ -430,6 +518,7 @@ export class ShalomService {
         shalomAgenciaOrigenId: true,
         shalomAgenciaOrigenNombre: true,
         shalomAutoGuiaActivo: true,
+        shalomClavesRetiro: true,
         plan: { select: { nombre: true, features: { select: { featureKey: true, enabled: true } } } },
       },
     });
@@ -450,6 +539,7 @@ export class ShalomService {
       agenciaOrigenNombre: empresa.shalomAgenciaOrigenNombre,
       // La venta genera la guía sola (opt-in por empresa).
       autoGuiaActivo: empresa.shalomAutoGuiaActivo,
+      clavesRetiro: empresa.shalomClavesRetiro ?? '',
     };
   }
 
@@ -468,6 +558,7 @@ export class ShalomService {
       agenciaOrigenId: null,
       agenciaOrigenNombre: null,
       autoGuiaActivo: false,
+      clavesRetiro: '',
     };
   }
 
@@ -599,12 +690,28 @@ export class ShalomService {
       | 'agenciaOrigenNombre'
       | 'securityCode'
       | 'autoGuiaActivo'
+      | 'clavesRetiro'
     >,
   ) {
     await this.empresaConShalomPro(empresaId);
+    if (dto.clavesRetiro !== undefined && dto.clavesRetiro.trim() !== '') {
+      const claves = this.parsearClavesConfiguradas(dto.clavesRetiro);
+      const tokens = dto.clavesRetiro.split(/[,;\s]+/).filter(Boolean);
+      if (claves.length !== tokens.length) {
+        throw new BadRequestException(
+          'Las claves de retiro deben ser de 4 dígitos, separadas por coma (ej. 1010, 1011).',
+        );
+      }
+    }
     await this.prisma.empresa.update({
       where: { id: empresaId },
       data: {
+        ...(dto.clavesRetiro !== undefined
+          ? {
+              shalomClavesRetiro:
+                this.parsearClavesConfiguradas(dto.clavesRetiro).join(',') || null,
+            }
+          : {}),
         ...(dto.agenciaOrigenId !== undefined
           ? {
               shalomAgenciaOrigenId: dto.agenciaOrigenId?.trim() || null,
@@ -846,7 +953,13 @@ export class ShalomService {
     // Shalom la rechaza con "No puede usar la clave del día anterior" — así se
     // caían TODAS las guías del día siguiente a la última. Se genera una propia
     // por envío, distinta a las usadas por esta empresa en las últimas 48 h.
-    const clave = await this.generarClaveRetiro(empresa.id);
+    // La clave escrita en el modal (dto.clave) manda; si no llega, la del
+    // despacho solo cuenta cuando aún no tiene guía (al regenerar, la vieja
+    // puede ser de otro día y Shalom la rechazaría: se vuelve a sugerir).
+    const clave = await this.generarClaveRetiro(
+      empresa.id,
+      dto.clave ?? (envio.nroOrden ? null : envio.claveEnvio),
+    );
 
     const respuesta = await this.lat.createOrder({
       instanceId: empresa.shalomInstanceId,
