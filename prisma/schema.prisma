@@ -144,6 +144,15 @@ model Empresa {
   // seguir agregando de la misma lista (true) o limpiar y mostrar todo el
   // catálogo (false, comportamiento original pedido por Demenver)?
   posMantenerBusqueda           Boolean                       @default(false)
+  // POS: tipo de comprobante con el que arranca cada venta (y al que vuelve al
+  // terminar una). MANTENER_ULTIMO = hereda el de la venta anterior (original);
+  // NOTA_DE_VENTA | BOLETA | FACTURA = siempre ese (pedido por Demenver: tras
+  // una boleta el POS se quedaba en boleta y salían boletas que no correspondían).
+  posComprobanteDefault         String                        @default("MANTENER_ULTIMO")
+  // POS: si el cobro incluye Yape/Plin/Transferencia/Tarjeta, no se puede cerrar
+  // la venta con un comprobante interno (nota de venta, ticket…): exige Boleta o
+  // Factura. Efectivo sigue libre. Criterio propio de cada empresa (opt-in).
+  posExigirCpeMedioPago         Boolean                       @default(false)
   rubroId                       Int?
   providerId                    String?
   tipoEmpresa                   TipoEmpresa                   @default(FORMAL)
@@ -2022,6 +2031,10 @@ model ImagenProductoAprobadaIa {
   marcaNorm     String?
   categoriaNorm String?
   imagenUrl     String
+  // Todas las opciones que devolvió la búsqueda (URLs), para volver a ofrecerlas
+  // sin otra llamada a Serper: antes la memoria devolvía solo la aprobada y el
+  // usuario veía UNA opción la segunda vez.
+  candidatos    Json?
   vecesUsada    Int      @default(1)
   ultimoUsoEn   DateTime @default(now())
   creadoEn      DateTime @default(now())

@@ -159,15 +159,21 @@ export class ProductoController {
       marca,
       categoria,
     );
-    if (imagenMemorizada?.url) {
-      return {
-        success: true,
-        url: imagenMemorizada.url,
-        confidence: 100,
-        source: 'MEMORIA_APROBADA',
+    // Memoria de la empresa: devuelve la aprobada PRIMERO pero con todas las
+    // opciones que se vieron la primera vez. Si es un registro viejo sin
+    // opciones guardadas, se sigue a la búsqueda normal y la aprobada se pone
+    // al frente del resultado (ver `conMemorizada` más abajo).
+    const conMemorizada = (r: any) => {
+      if (!imagenMemorizada?.url || !r) return r;
+      const lista = Array.isArray(r.candidates) ? r.candidates : [];
+      const candidates = Array.from(new Set([imagenMemorizada.url, ...lista]));
+      return { ...r, success: true, url: imagenMemorizada.url, confidence: 100, source: 'MEMORIA_APROBADA', candidates };
+    };
+    if (imagenMemorizada?.url && imagenMemorizada.candidatos.length > 1) {
+      return conMemorizada({
         message: 'Imagen recuperada desde memoria aprobada de tu empresa.',
-        candidates: [imagenMemorizada.url],
-      };
+        candidates: imagenMemorizada.candidatos,
+      });
     }
 
     // Cache en memoria (evita llamadas duplicadas a Serper en la misma sesión)
@@ -182,17 +188,18 @@ export class ProductoController {
           nombre,
           marca,
           categoria,
-          url: cached.bestUrl,
+          url: imagenMemorizada?.url || cached.bestUrl,
+          candidatos: cached.candidates,
         })
         .catch(() => {});
-      return {
+      return conMemorizada({
         success: true,
         url: cached.bestUrl,
         confidence: 80,
         source: 'CACHE',
         message: 'Imagen recuperada desde caché.',
         candidates: cached.candidates,
-      };
+      });
     }
 
     const normalize = (text: string) =>
@@ -700,7 +707,9 @@ export class ProductoController {
             nombre,
             marca,
             categoria,
-            url,
+            // Si la empresa ya aprobó una imagen para este nombre, no se pisa.
+            url: imagenMemorizada?.url || url,
+            candidatos: candidates,
           })
           .catch(() => {});
         // Cache-through: alimentar la tabla maestra global para reusar entre empresas.
@@ -741,13 +750,13 @@ export class ProductoController {
           const candidates =
             globalCandidates.length > 0 ? globalCandidates : [geminiChoice.url];
           guardarEnCache(geminiChoice.url, candidates);
-          return {
+          return conMemorizada({
             success: true,
             url: geminiChoice.url,
             confidence: geminiChoice.confidence,
             message: geminiChoice.reason || 'Imagen seleccionada por Gemini.',
             candidates,
-          };
+          });
         }
       }
 
@@ -758,23 +767,23 @@ export class ProductoController {
         const candidates =
           globalCandidates.length > 0 ? globalCandidates : [bestGlobal.url];
         guardarEnCache(bestGlobal.url, candidates);
-        return {
+        return conMemorizada({
           success: true,
           url: bestGlobal.url,
           confidence: bestGlobal.score,
           candidates,
           message: 'Imagen encontrada.',
-        };
+        });
       }
 
       if (globalCandidates.length > 0) {
         guardarEnCache(globalCandidates[0], globalCandidates);
-        return {
+        return conMemorizada({
           success: false,
           message:
             'No hubo coincidencia exacta, pero encontré opciones sugeridas.',
           candidates: globalCandidates,
-        };
+        });
       }
 
       return {

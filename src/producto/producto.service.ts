@@ -4136,7 +4136,7 @@ export class ProductoService {
     nombre: string,
     marca?: string,
     categoria?: string,
-  ): Promise<{ url: string; clave: string } | null> {
+  ): Promise<{ url: string; clave: string; candidatos: string[] } | null> {
     const claves = this.construirClavesBusquedaImagen(nombre, marca, categoria);
     if (claves.length === 0) return null;
 
@@ -4158,7 +4158,12 @@ export class ProductoService {
             ultimoUsoEn: new Date(),
           },
         });
-        return { url: match.imagenUrl, clave: claveBusqueda };
+        const candidatos = Array.isArray(match.candidatos)
+          ? (match.candidatos as unknown[]).filter(
+              (u): u is string => typeof u === 'string' && /^https?:\/\//i.test(u),
+            )
+          : [];
+        return { url: match.imagenUrl, clave: claveBusqueda, candidatos };
       }
     }
 
@@ -4171,11 +4176,22 @@ export class ProductoService {
     marca?: string;
     categoria?: string;
     url: string;
+    /** Opciones completas de la búsqueda; si no vienen, se conservan las guardadas. */
+    candidatos?: string[];
   }) {
     const url = String(params.url || '').trim();
     if (!/^https?:\/\//i.test(url)) {
       throw new BadRequestException('La URL de imagen no es válida.');
     }
+    const candidatos = Array.isArray(params.candidatos)
+      ? Array.from(
+          new Set(
+            params.candidatos
+              .map((u) => String(u || '').trim())
+              .filter((u) => /^https?:\/\//i.test(u)),
+          ),
+        ).slice(0, 12)
+      : undefined;
 
     const nombreNorm = this.normalizarTextoImagen(params.nombre);
     if (!nombreNorm) {
@@ -4210,11 +4226,13 @@ export class ProductoService {
           marcaNorm: marcaNorm || null,
           categoriaNorm: categoriaNorm || null,
           imagenUrl: url,
+          ...(candidatos ? { candidatos } : {}),
           vecesUsada: 1,
           ultimoUsoEn: new Date(),
         },
         update: {
           imagenUrl: url,
+          ...(candidatos && candidatos.length > 0 ? { candidatos } : {}),
           nombreNorm,
           marcaNorm: marcaNorm || null,
           categoriaNorm: categoriaNorm || null,
