@@ -961,21 +961,41 @@ export class ShalomService {
       dto.clave ?? (envio.nroOrden ? null : envio.claveEnvio),
     );
 
-    const respuesta = await this.lat.createOrder({
-      instanceId: empresa.shalomInstanceId,
-      origen: Number(origen.terId),
-      destino: Number(destino.terId),
-      documento: dni,
-      name: partes.nombres,
-      firstname: partes.apellidoPaterno,
-      lastname: partes.apellidoMaterno,
-      phone,
-      content: tamano.content,
-      clave,
-      cantidad: Number(envio.nroPaquetes) > 0 ? Number(envio.nroPaquetes) : 1,
-      declaracion_jurada: declararContenido(envio.tipoMercaderia, envio.contenidoPaquete),
-      ...(Number(envio.pesoKg) > 0 ? { peso: String(Number(envio.pesoKg)) } : {}),
-    });
+    const registrar = (claveRetiro: string) =>
+      this.lat.createOrder({
+        instanceId: empresa.shalomInstanceId!,
+        origen: Number(origen.terId),
+        destino: Number(destino.terId),
+        documento: dni,
+        name: partes.nombres,
+        firstname: partes.apellidoPaterno,
+        lastname: partes.apellidoMaterno,
+        phone,
+        content: tamano.content,
+        clave: claveRetiro,
+        cantidad: Number(envio.nroPaquetes) > 0 ? Number(envio.nroPaquetes) : 1,
+        declaracion_jurada: declararContenido(envio.tipoMercaderia, envio.contenidoPaquete),
+        ...(Number(envio.pesoKg) > 0 ? { peso: String(Number(envio.pesoKg)) } : {}),
+      });
+    let claveUsada = clave;
+    let respuesta = await registrar(claveUsada);
+    // Red de seguridad: la clave del día / configurada se repite entre guías
+    // (así trabaja el negocio en el panel de Shalom). Si aun así Shalom la
+    // rechazara por la clave, se reintenta UNA vez con una aleatoria en vez de
+    // dejar caída la guía; el aviso queda en el log para revisarlo.
+    if (
+      respuesta?.success === false &&
+      /clave/i.test(String(respuesta?.message ?? ''))
+    ) {
+      const alternativa = this.claveAleatoria(
+        new Set([claveUsada, '0000', '1234']),
+      );
+      this.logger.warn(
+        `Shalom rechazó la clave ${claveUsada} del comprobante ${comprobanteId} ("${respuesta?.message}"); se reintenta con ${alternativa}.`,
+      );
+      claveUsada = alternativa;
+      respuesta = await registrar(claveUsada);
+    }
 
     // Shalom responde 200 con { success:false, message } cuando rechaza el
     // registro (p. ej. "Seleccione un producto"): sin esto se guardaba como éxito
@@ -1003,7 +1023,7 @@ export class ShalomService {
 
     const guia = this.extraerGuia(respuesta);
     // /account/register no devuelve la clave de retiro: es la que mandamos.
-    if (guia.nroOrden && !guia.claveEnvio) guia.claveEnvio = clave;
+    if (guia.nroOrden && !guia.claveEnvio) guia.claveEnvio = claveUsada;
     if (!guia.nroOrden) {
       // Sin el N° de orden no hay rastreo posible, así que hay que poder ver qué
       // devolvió realmente el proveedor en vez de adivinar.

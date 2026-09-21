@@ -345,5 +345,28 @@ describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
       await expect((svc as any).generarClaveRetiro(1, '1010')).rejects.toThrow(/fue la de ayer.*1011/);
       await expect((svc as any).generarClaveRetiro(1, '12')).rejects.toThrow(/4 dígitos/);
     });
+
+    it('si Shalom rechaza la clave, reintenta una vez con una aleatoria y guarda esa', async () => {
+      const { svc, prisma, lat } = build();
+      lat.getAgencias.mockResolvedValue({ success: true, data: [agencia('7', 'Lima Centro'), agencia('582', 'Cusco Centro')], total: 2 });
+      prisma.empresa.findUnique.mockResolvedValue({ ...empresaCorporativa(), shalomClavesRetiro: '1010' });
+      prisma.envioDespacho.findFirst.mockResolvedValue({
+        id: 55, nroOrden: null, claveOrden: null, claveEnvio: '', agenciaDestino: 'Cusco Centro', shalomAgenciaDestinoId: '582',
+        celularDest: '987654321', nroPaquetes: 1, dniDestinatario: '', nombreDestinatario: '',
+        comprobante: { id: 9, serie: 'NV01', correlativo: 1, cliente: { nombre: 'JUAN PEREZ', nroDoc: '12345678', telefono: '987654321', direccion: '' }, detalles: [] },
+      });
+      prisma.envioDespacho.update.mockResolvedValue({ id: 55, nroOrden: '77', claveOrden: 'ABCD' });
+      lat.createOrder
+        .mockResolvedValueOnce({ success: false, message: 'No puede usar la clave del día anterior' })
+        .mockResolvedValueOnce({ success: true, data: { orderNumber: '77', orderCode: 'ABCD' } });
+      const r = await svc.crearGuiaDesdeDespacho(9, 1, {});
+      expect(lat.createOrder).toHaveBeenCalledTimes(2);
+      expect(lat.createOrder.mock.calls[0][0].clave).toBe('1010');
+      const segunda = lat.createOrder.mock.calls[1][0].clave;
+      expect(segunda).toMatch(/^\d{4}$/);
+      expect(segunda).not.toBe('1010');
+      expect(prisma.envioDespacho.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ claveEnvio: segunda }) }));
+      expect(r.nroOrden).toBe('77');
+    });
   });
 });
