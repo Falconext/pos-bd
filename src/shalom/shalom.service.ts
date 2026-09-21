@@ -200,13 +200,16 @@ export class ShalomService {
       select: {
         nroOrden: true,
         claveOrden: true,
+        claveEnvio: true,
+        celularDest: true,
+        transportista: true,
         nombreDestinatario: true,
         dniDestinatario: true,
         tipoEnvio: true,
         agenciaDestino: true,
         direccionDestino: true,
         shalomAgenciaDestinoId: true,
-        comprobante: { select: { cliente: { select: { nombre: true, nroDoc: true } } } },
+        comprobante: { select: { serie: true, correlativo: true, cliente: { select: { nombre: true, nroDoc: true, telefono: true } } } },
       },
     });
     if (!envio) {
@@ -235,6 +238,11 @@ export class ShalomService {
     return {
       nroOrden: envio.nroOrden,
       claveOrden: envio.claveOrden,
+      // Para la etiqueta 80×50: clave de retiro (solo Shalom), celular y referencia.
+      claveEnvio: /SHALOM/.test(String(envio.transportista ?? '')) ? envio.claveEnvio : null,
+      celular: primeroNoVacio(envio.celularDest, envio.comprobante?.cliente?.telefono),
+      transportista: envio.transportista,
+      referencia: envio.comprobante ? `${envio.comprobante.serie}-${String(envio.comprobante.correlativo).padStart(8, '0')}` : '',
       nombreDestinatario: primeroNoVacio(
         envio.nombreDestinatario,
         envio.comprobante?.cliente?.nombre,
