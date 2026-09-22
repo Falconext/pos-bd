@@ -548,6 +548,13 @@ export class ComprasService {
           estadoPago: estadoPagoInicial as any,
           observaciones: data.observaciones,
           fotoUrl: data.fotoUrl || null,
+          // Consumo propio: explícito desde el formulario o inferido cuando
+          // ninguna línea apunta a un producto del catálogo (ítems libres).
+          esGasto:
+            typeof data.esGasto === 'boolean'
+              ? data.esGasto
+              : data.detalles.length > 0 &&
+                data.detalles.every((d) => !d.productoId),
           // Save installments
           cuotas: data.cuotas ? JSON.stringify(data.cuotas) : undefined,
           detalles: {
@@ -1422,6 +1429,11 @@ export class ComprasService {
           // Solo se sobreescribe la foto si el payload trae una nueva (al re-leer
           // por IA en edición); si no viene, se conserva la existente.
           ...(data.fotoUrl !== undefined ? { fotoUrl: data.fotoUrl || null } : {}),
+          esGasto:
+            typeof data.esGasto === 'boolean'
+              ? data.esGasto
+              : data.detalles.length > 0 &&
+                data.detalles.every((d) => !d.productoId),
           cuotas: data.cuotas ? JSON.stringify(data.cuotas) : undefined,
           sedeId,
           detalles: { create: detallesData },

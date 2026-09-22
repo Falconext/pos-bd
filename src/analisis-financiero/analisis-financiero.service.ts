@@ -91,6 +91,16 @@ export interface PnlResponse {
    * consolidada siempre es 0, porque ahí ya van incluidos.
    */
   gastosEmpresa: number;
+  /**
+   * Compras de consumo propio (Compra.esGasto: gasolina, útiles, comida,
+   * servicios…) del período, NETAS de IGV. Ya están sumadas en
+   * `gastosTotales` (categoría COMPRAS) y restan en `gananciaNeta`; se exponen
+   * aparte para mostrarlas como su propia línea del P&L.
+   */
+  comprasConsumo: number;
+  /** IGV de esas compras: crédito fiscal, no gasto. Informativo. */
+  comprasConsumoIgv: number;
+  comprasConsumoCantidad: number;
   gananciaNeta: number;
   margenNeto: number;
   resumenDiario: RentabilidadDia[];
@@ -710,6 +720,60 @@ export class AnalisisFinancieroService {
     return gastosAplicados;
   }
 
+  /**
+   * Compras marcadas como consumo propio (Compra.esGasto) del rango, convertidas
+   * a gastos del P&L: entran NETAS (subtotal sin IGV, en soles) el día de su
+   * emisión, agrupadas por proveedor bajo la categoría COMPRAS. El IGV se
+   * devuelve aparte porque es crédito fiscal, no un gasto.
+   */
+  private async comprasConsumoComoGastos(
+    empresaId: number,
+    gte: Date,
+    lte: Date,
+    sedeId?: number | null,
+  ): Promise<{ gastos: GastoPnl[]; neto: number; igv: number; cantidad: number }> {
+    const compras = await this.prisma.compra.findMany({
+      where: {
+        empresaId,
+        esGasto: true,
+        estado: { notIn: ['ANULADO', 'PENDIENTE_APROBACION'] as any },
+        fechaEmision: { gte, lte },
+        ...(sedeId ? { sedeId } : {}),
+      },
+      select: {
+        subtotal: true,
+        igv: true,
+        moneda: true,
+        tipoCambio: true,
+        fechaEmision: true,
+        proveedor: { select: { nombre: true } },
+      },
+    });
+    let neto = 0;
+    let igv = 0;
+    const gastos: GastoPnl[] = compras.map((c) => {
+      const tc =
+        String(c.moneda || 'PEN').toUpperCase() === 'USD'
+          ? this.toNumber(c.tipoCambio as any) || 1
+          : 1;
+      const subtotalPen = this.toNumber(c.subtotal as any) * tc;
+      neto += subtotalPen;
+      igv += this.toNumber(c.igv as any) * tc;
+      return {
+        categoria: 'COMPRAS',
+        etiqueta: c.proveedor?.nombre?.trim() || 'Proveedor',
+        monto: { toNumber: () => subtotalPen },
+        moneda: 'PEN',
+        tipoCambio: null,
+        fecha: c.fechaEmision,
+        recurrenteDiario: false,
+        fechaInicio: null,
+        fechaFin: null,
+      };
+    });
+    return { gastos, neto, igv, cantidad: compras.length };
+  }
+
   private esDocumentoVenta(c: ComprobantePnl): boolean {
     return c.tipoDoc !== 'COT' && c.estadoEnvioSunat !== EstadoSunat.ANULADO;
   }
@@ -1191,6 +1255,12 @@ export class AnalisisFinancieroService {
       empresaId,
       comprobantesRaw,
     );
+    const comprasConsumo = await this.comprasConsumoComoGastos(
+      empresaId,
+      range.gte,
+      range.lte,
+      sedeId,
+    );
 
     const otrosIngresos = ingresosManuales.reduce(
       (sum, i) => sum + this.toNumber(i.monto as any),
@@ -1208,7 +1278,7 @@ export class AnalisisFinancieroService {
     const hoy = new Date();
     const finReal = hoy < finMes ? hoy : finMes;
 
-    const gastosConCampanas: GastoPnl[] = [...gastos];
+    const gastosConCampanas: GastoPnl[] = [...gastos, ...comprasConsumo.gastos];
     // Cada gasto de caja aplica a un solo día (no hay recurrencia). La
     // categoría de caja es texto libre y se mapea al enum; el texto original
     // queda en `etiqueta` para que se vea de dónde salió.
@@ -1296,6 +1366,9 @@ export class AnalisisFinancieroService {
       ),
       otrosIngresosDetalle,
       gastosEmpresa: this.r2(gastosEmpresa),
+      comprasConsumo: this.r2(comprasConsumo.neto),
+      comprasConsumoIgv: this.r2(comprasConsumo.igv),
+      comprasConsumoCantidad: comprasConsumo.cantidad,
     };
   }
 
@@ -1458,6 +1531,9 @@ export class AnalisisFinancieroService {
       empresaId,
       comprobantesRaw,
     );
+    const comprasVentana = (
+      await this.comprasConsumoComoGastos(empresaId, rangeGte, rangeLte, sedeId)
+    ).gastos;
 
     // Build result iterating backwards from current month
     const resultado: EvolucionPoint[] = [];
@@ -1471,11 +1547,17 @@ export class AnalisisFinancieroService {
         return t >= range.gte.getTime() && t <= range.lte.getTime();
       });
 
-      const gastosDelMes = gastos.filter(
-        (g) =>
-          (g.mes === mes && g.anio === anio) ||
-          this.gastoRecurrenteCubrePeriodo(g, range.gte, range.lte),
-      );
+      const gastosDelMes: GastoPnl[] = [
+        ...gastos.filter(
+          (g) =>
+            (g.mes === mes && g.anio === anio) ||
+            this.gastoRecurrenteCubrePeriodo(g, range.gte, range.lte),
+        ),
+        ...comprasVentana.filter((g) => {
+          const t = g.fecha?.getTime() ?? 0;
+          return t >= range.gte.getTime() && t <= range.lte.getTime();
+        }),
+      ];
 
       const otrosIngresosDelMes = todosIngresosManuales
         .filter((i) => {

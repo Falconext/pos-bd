@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsNotEmpty,
   IsString,
   IsNumber,
@@ -93,6 +94,15 @@ export class CrearCompraDto {
   @IsOptional()
   @IsString()
   fotoUrl?: string;
+
+  /**
+   * Compra de consumo propio (no inventario): entra al Análisis Financiero
+   * como gasto del mes, neto de IGV. Si no viene, se infiere: true cuando
+   * ninguna línea tiene productoId.
+   */
+  @IsOptional()
+  @IsBoolean()
+  esGasto?: boolean;
 
   @IsOptional()
   @IsNumber()

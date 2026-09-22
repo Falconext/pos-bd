@@ -1958,6 +1958,11 @@ model Compra {
   // Foto de la factura/boleta subida al registrar la compra por IA (URL en S3).
   // Queda como evidencia y se muestra en el detalle de la compra.
   fotoUrl              String?
+  // Compra de consumo propio (gasolina, útiles, comida, servicios…): no es
+  // inventario para revender, así que entra al Análisis Financiero como gasto
+  // del mes (neto, sin IGV: ese IGV es crédito fiscal). Por defecto se marca
+  // sola cuando ninguna línea está enlazada a un producto del catálogo.
+  esGasto              Boolean            @default(false)
   creadoEn             DateTime           @default(now())
   actualizadoEn        DateTime           @updatedAt
   cuotas               Json?
