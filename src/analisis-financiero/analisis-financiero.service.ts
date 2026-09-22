@@ -101,6 +101,25 @@ export interface PnlResponse {
   /** IGV de esas compras: crédito fiscal, no gasto. Informativo. */
   comprasConsumoIgv: number;
   comprasConsumoCantidad: number;
+  /**
+   * IGV del mes frente a SUNAT (independiente del criterio del P&L):
+   * lo cobrado en facturas/boletas/NC/ND menos el crédito fiscal de TODAS las
+   * compras con factura del período (inventario o consumo). Responde "¿cuánto
+   * IGV pago este mes y cuánto me ahorré pidiendo facturas?".
+   */
+  igvSunat: {
+    /** IGV de facturas, boletas y NC/ND emitidas (lo que se declara). */
+    cobrado: number;
+    /** IGV de compras con factura (crédito fiscal). */
+    creditoCompras: number;
+    comprasConFactura: number;
+    /** max(0, cobrado − crédito): lo que toca pagar. */
+    aPagar: number;
+    /** max(0, crédito − cobrado): queda a favor para el siguiente período. */
+    saldoAFavor: number;
+    /** min(cobrado, crédito): lo que se dejó de pagar gracias a las facturas. */
+    ahorro: number;
+  };
   gananciaNeta: number;
   margenNeto: number;
   resumenDiario: RentabilidadDia[];
@@ -774,6 +793,34 @@ export class AnalisisFinancieroService {
     return { gastos, neto, igv, cantidad: compras.length };
   }
 
+  /** IGV (en soles) de todas las compras con FACTURA del rango: crédito fiscal. */
+  private async creditoFiscalCompras(
+    empresaId: number,
+    gte: Date,
+    lte: Date,
+    sedeId?: number | null,
+  ): Promise<{ igv: number; cantidad: number }> {
+    const compras = await this.prisma.compra.findMany({
+      where: {
+        empresaId,
+        tipoDoc: 'FACTURA',
+        estado: { notIn: ['ANULADO', 'PENDIENTE_APROBACION'] as any },
+        fechaEmision: { gte, lte },
+        ...(sedeId ? { sedeId } : {}),
+      },
+      select: { igv: true, moneda: true, tipoCambio: true },
+    });
+    let igv = 0;
+    for (const c of compras) {
+      const tc =
+        String(c.moneda || 'PEN').toUpperCase() === 'USD'
+          ? this.toNumber(c.tipoCambio as any) || 1
+          : 1;
+      igv += this.toNumber(c.igv as any) * tc;
+    }
+    return { igv, cantidad: compras.length };
+  }
+
   private esDocumentoVenta(c: ComprobantePnl): boolean {
     return c.tipoDoc !== 'COT' && c.estadoEnvioSunat !== EstadoSunat.ANULADO;
   }
@@ -967,10 +1014,14 @@ export class AnalisisFinancieroService {
     // ventas netas del P&L son la diferencia (ver `PnlResponse.ventasNetas`).
     let ventasConIgv = 0;
     let igvVentas = 0;
+    // IGV realmente declarado ante SUNAT (solo electrónicos), sea cual sea el
+    // criterio con el que el P&L descuenta el IGV de las ventas.
+    let igvSunatCobrado = 0;
     for (const c of documentosVenta) {
       const signo = this.signoDocumento(c.tipoDoc);
       ventasConIgv += this.ventaConIgvPen(c) * signo;
       igvVentas += this.igvPen(c, criterio) * signo;
+      igvSunatCobrado += this.igvPen(c, 'ELECTRONICOS') * signo;
     }
 
     const productosSinCostoMap = new Map<number, ProductoSinCosto>();
@@ -1147,6 +1198,7 @@ export class AnalisisFinancieroService {
       otrosIngresos: this.r2(otrosIngresos),
       gastosTotales: this.r2(gastosTotales),
       gastoPublicidad: this.r2(gastoPublicidad),
+      igvSunatCobrado: this.r2(Math.max(0, igvSunatCobrado)),
       gastosPorCategoria,
       gananciaNeta: this.r2(gananciaNeta),
       margenNeto: this.r2(margenNeto),
@@ -1255,12 +1307,10 @@ export class AnalisisFinancieroService {
       empresaId,
       comprobantesRaw,
     );
-    const comprasConsumo = await this.comprasConsumoComoGastos(
-      empresaId,
-      range.gte,
-      range.lte,
-      sedeId,
-    );
+    const [comprasConsumo, creditoFiscal] = await Promise.all([
+      this.comprasConsumoComoGastos(empresaId, range.gte, range.lte, sedeId),
+      this.creditoFiscalCompras(empresaId, range.gte, range.lte, sedeId),
+    ]);
 
     const otrosIngresos = ingresosManuales.reduce(
       (sum, i) => sum + this.toNumber(i.monto as any),
@@ -1356,19 +1406,30 @@ export class AnalisisFinancieroService {
         }, 0);
     }
 
+    const pnl = this.calcularPnl(
+      comprobantes,
+      gastosConCampanas,
+      periodo,
+      otrosIngresos,
+      criterio,
+    );
+    const cobrado = pnl.igvSunatCobrado;
+    const credito = creditoFiscal.igv;
     return {
-      ...this.calcularPnl(
-        comprobantes,
-        gastosConCampanas,
-        periodo,
-        otrosIngresos,
-        criterio,
-      ),
+      ...pnl,
       otrosIngresosDetalle,
       gastosEmpresa: this.r2(gastosEmpresa),
       comprasConsumo: this.r2(comprasConsumo.neto),
       comprasConsumoIgv: this.r2(comprasConsumo.igv),
       comprasConsumoCantidad: comprasConsumo.cantidad,
+      igvSunat: {
+        cobrado: this.r2(cobrado),
+        creditoCompras: this.r2(credito),
+        comprasConFactura: creditoFiscal.cantidad,
+        aPagar: this.r2(Math.max(0, cobrado - credito)),
+        saldoAFavor: this.r2(Math.max(0, credito - cobrado)),
+        ahorro: this.r2(Math.min(cobrado, credito)),
+      },
     };
   }
 
