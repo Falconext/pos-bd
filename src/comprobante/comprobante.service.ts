@@ -7541,15 +7541,15 @@ export class ComprobanteService {
       if (comp.tipoDoc === 'COT') {
         const tipo = (comp as any).cotizTipoPago || 'CONTADO';
         const adelanto = (comp as any).cotizAdelanto || 0;
-        const map: Record<string, string> = {
-          CONTADO: 'Contado',
-          CREDITO_30: 'Crédito 30 días',
-          CREDITO_60: 'Crédito 60 días',
-          CREDITO_90: 'Crédito 90 días',
-        };
-        return tipo === 'ADELANTO'
-          ? `Adelanto ${adelanto}%`
-          : map[tipo] || tipo;
+        if (tipo === 'ADELANTO') return `Adelanto ${adelanto}%`;
+        // Genérico (igual que el PDF): sirve para cualquier plazo —7/15/30/45/60/90—
+        // sin tener que mantener una lista. Antes CREDITO_7/15/45 salían crudos.
+        const raw = String(tipo).toUpperCase();
+        if (raw.includes('CREDITO') || raw.includes('CRÉDITO')) {
+          const dias = raw.match(/\d+/)?.[0];
+          return dias ? `Crédito ${dias} días` : 'Crédito';
+        }
+        return 'Contado';
       }
       return (comp as any).medioPago || undefined;
     })();

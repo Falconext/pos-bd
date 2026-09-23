@@ -2441,7 +2441,12 @@ export class EnviarSunatService {
               // Productos
               productos: detallesPrevios.map((det: any) => ({
                 cantidad: det.cantidad,
-                unidadMedida: det.unidadMedida || 'NIU',
+                // OJO: en DetalleComprobante el campo se llama `unidad`. Usar
+                // solo `det.unidadMedida` dejaba siempre NIU en el PDF (una
+                // factura en KGM se imprimía como NIU, aunque el XML sí iba bien).
+                unidadMedida: String(
+                  det.unidad || det.unidadMedida || 'NIU',
+                ).toUpperCase(),
                 descripcion: (det.descripcion || '').toUpperCase(),
                 precioUnitario: Number(det.mtoPrecioUnitario || 0).toFixed(2),
                 total: Number(
@@ -3685,7 +3690,10 @@ export class EnviarSunatService {
         clienteDireccion: (comp.cliente?.direccion || '-').toUpperCase(),
         productos: comp.detalles.map((det: any) => ({
           cantidad: det.cantidad,
-          unidadMedida: det.unidadMedida || 'NIU',
+          // Mismo caso que arriba: el campo persistido es `unidad`.
+          unidadMedida: String(
+            det.unidad || det.unidadMedida || 'NIU',
+          ).toUpperCase(),
           descripcion: (det.descripcion || '').toUpperCase(),
           precioUnitario: Number(det.mtoPrecioUnitario || 0).toFixed(2),
           total: Number((det.mtoPrecioUnitario || 0) * det.cantidad).toFixed(2),
