@@ -1,4 +1,9 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
+import {
+  SireClient,
+  type SireCredenciales,
+} from '../common/utils/sire.client';
+import { descifrarSecreto } from '../common/utils/secreto.util';
 import { PrismaService } from '../prisma/prisma.service';
 import * as XLSX from 'xlsx';
 import * as nodemailer from 'nodemailer';
@@ -474,10 +479,14 @@ export class SireService {
         // RECHAZADA (el admin la rechazó) y PENDIENTE_APROBACION (aún sin
         // visto bueno, sin stock ni pago). Solo REGISTRADO va al RCE.
         estado: 'REGISTRADO' as any,
+        // El contador puede denegar una compra (p.ej. no corresponde al giro):
+        // esa no se declara, así que queda fuera del RCE y de los totales.
+        estadoContador: { not: 'DENEGADA' } as any,
       },
       orderBy: { fechaEmision: 'asc' },
       include: {
         proveedor: { include: { tipoDocumento: true } },
+        usuario: { select: { nombre: true } },
         // Para separar la base gravada (campo 15) de las adquisiciones no
         // gravadas (campo 21): líneas de exonerados/inafectos van sin IGV.
         detalles: { select: { subtotal: true, igv: true } },
@@ -1257,4 +1266,492 @@ export class SireService {
       ],
     });
   }
+
+  // ───────────────────────── Revisión del contador (RCE) ─────────────────────
+  /**
+   * Compras del período con su estado de revisión, para que el contador las
+   * apruebe o deniegue una por una. A diferencia del resumen/TXT, aquí SÍ se
+   * listan las denegadas: el negocio tiene que ver qué le rechazaron y por qué.
+   */
+  async obtenerRevisionCompras(
+    empresaId: number,
+    mes: number,
+    anio: number,
+    sedeId?: number,
+  ) {
+    const fechaEmision = this.getDateRange(mes, anio);
+    const compras = await this.prisma.compra.findMany({
+      where: {
+        empresaId,
+        ...(sedeId ? { sedeId } : {}),
+        fechaEmision,
+        estado: 'REGISTRADO' as any,
+      },
+      orderBy: [{ fechaEmision: 'asc' }, { id: 'asc' }],
+      select: {
+        id: true,
+        tipoDoc: true,
+        serie: true,
+        numero: true,
+        fechaEmision: true,
+        moneda: true,
+        tipoCambio: true,
+        subtotal: true,
+        igv: true,
+        total: true,
+        esGasto: true,
+        estadoContador: true,
+        motivoContador: true,
+        revisadoContadorEn: true,
+        proveedor: { select: { nombre: true, nroDoc: true } },
+      },
+    });
+
+    const items = compras.map((c) => {
+      const factor = factorCompraASoles(c as any);
+      return {
+        id: c.id,
+        tipoDoc: c.tipoDoc,
+        tipoDocSunat: TIPO_DOC_COMPRA_MAP[c.tipoDoc] ?? '01',
+        documento: `${c.serie}-${c.numero}`,
+        fechaEmision: c.fechaEmision,
+        proveedor: c.proveedor?.nombre ?? '',
+        proveedorDoc: c.proveedor?.nroDoc ?? '',
+        moneda: c.moneda,
+        // Importes en soles, igual que el TXT y el resumen.
+        base: this.r2(Number(c.subtotal ?? 0) * factor),
+        igv: this.r2(Number(c.igv ?? 0) * factor),
+        total: this.r2(Number(c.total ?? 0) * factor),
+        esGasto: c.esGasto,
+        estadoContador: c.estadoContador,
+        motivoContador: c.motivoContador,
+        revisadoContadorEn: c.revisadoContadorEn,
+      };
+    });
+
+    const suma = (f: (i: (typeof items)[number]) => number, estado?: string) =>
+      this.r2(
+        items
+          .filter((i) => !estado || i.estadoContador === estado)
+          .reduce((a, i) => a + f(i), 0),
+      );
+
+    return {
+      periodo: `${anio}${String(mes).padStart(2, '0')}`,
+      items,
+      resumen: {
+        total: items.length,
+        pendientes: items.filter((i) => i.estadoContador === 'PENDIENTE').length,
+        aprobadas: items.filter((i) => i.estadoContador === 'APROBADA').length,
+        denegadas: items.filter((i) => i.estadoContador === 'DENEGADA').length,
+        // Crédito fiscal en juego: el que se declara y el que se pierde al denegar.
+        igvDeclarable: this.r2(suma((i) => i.igv) - suma((i) => i.igv, 'DENEGADA')),
+        igvDenegado: suma((i) => i.igv, 'DENEGADA'),
+      },
+    };
+  }
+
+  /**
+   * Aprueba o deniega compras (una o varias). Denegar exige motivo: es lo que
+   * el negocio va a leer para entender por qué no se declaró esa factura.
+   */
+  async revisarCompras(
+    empresaId: number,
+    usuarioId: number | undefined,
+    dto: { ids: number[]; estado: 'PENDIENTE' | 'APROBADA' | 'DENEGADA'; motivo?: string },
+  ) {
+    const ids = Array.from(new Set((dto.ids || []).map(Number).filter(Boolean)));
+    if (!ids.length) {
+      throw new BadRequestException('Elige al menos una compra para revisar.');
+    }
+    const motivo = String(dto.motivo ?? '').trim();
+    if (dto.estado === 'DENEGADA' && !motivo) {
+      throw new BadRequestException(
+        'Indica el motivo del rechazo: el negocio necesita saber por qué no se declara esa compra.',
+      );
+    }
+    // Solo compras de la empresa (el id viaja desde el cliente).
+    const propias = await this.prisma.compra.findMany({
+      where: { id: { in: ids }, empresaId },
+      select: { id: true },
+    });
+    if (!propias.length) {
+      throw new BadRequestException('No se encontraron esas compras.');
+    }
+    const pendiente = dto.estado === 'PENDIENTE';
+    await this.prisma.compra.updateMany({
+      where: { id: { in: propias.map((c) => c.id) }, empresaId },
+      data: {
+        estadoContador: dto.estado as any,
+        // Volver a "pendiente" limpia la revisión anterior.
+        motivoContador: pendiente ? null : motivo || null,
+        revisadoContadorEn: pendiente ? null : new Date(),
+        revisadoContadorPor: pendiente ? null : (usuarioId ?? null),
+      },
+    });
+    return { actualizadas: propias.length, estado: dto.estado };
+  }
+
+
+  /**
+   * Cruza las COMPRAS del período con la propuesta del RCE que SUNAT publica
+   * (Menú SOL → SIRE → RCE → Propuesta → Exportar). Es lo que un contador
+   * revisa a mano: qué facturas tiene SUNAT que el negocio nunca registró (ahí
+   * se pierde crédito fiscal), cuáles registró el negocio y SUNAT no tiene, y
+   * cuáles no cuadran en importes.
+   *
+   * El archivo del RCE es "campo|campo|..." por posición. Ojo: NO es el mismo
+   * layout que el de ventas — entre la serie y el número va el "año de emisión
+   * de la DUA", así que el número está una posición más a la derecha. Se valida
+   * y, si no calza, se cae a la posición anterior para tolerar variantes.
+   */
+  async compararComprasConPropuesta(params: {
+    empresaId: number;
+    mes: number;
+    anio: number;
+    contenido: string;
+    sedeId?: number;
+  }) {
+    const { empresaId, mes, anio, contenido, sedeId } = params;
+
+    const lineas = contenido
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    if (!lineas.length) {
+      throw new BadRequestException('El archivo está vacío.');
+    }
+
+    const sep = lineas[0].includes('|') ? '|' : ';';
+    const filas = lineas
+      .map((l) => l.split(sep))
+      .filter((f) => f.length >= 20)
+      // Descarta la cabecera: en las filas de datos el tipo de CP es numérico.
+      .filter((f) => /^\d{1,2}$/.test((f[6] ?? '').trim()));
+
+    if (!filas.length) {
+      throw new BadRequestException(
+        'No se reconocieron filas válidas. Se esperaba el archivo de la propuesta del RCE ' +
+          '(SIRE → Compras → Propuesta → Exportar), con los campos separados por "|".',
+      );
+    }
+
+    const num = (v: string | undefined) => {
+      const n = Number(String(v ?? '').replace(/,/g, '').trim());
+      return Number.isFinite(n) ? this.r2(n) : 0;
+    };
+    const clave = (tipo: string, serie: string, numero: string) =>
+      `${tipo.trim().padStart(2, '0')}|${serie.trim().toUpperCase()}|${String(numero)
+        .trim()
+        .replace(/^0+/, '')}`;
+
+    // El número del CP va en la posición 10 del RCE (la 9 es el año de emisión
+    // de la DUA, casi siempre vacío). Se resuelve POR FILA: si la 10 trae algo
+    // se usa esa; si viene vacía, el archivo no tiene la columna DUA y el
+    // número está en la 9. Mirar solo la primera fila fallaba con archivos
+    // mixtos (una importación con DUA entre facturas normales).
+    const numeroDeFila = (f: string[]) => {
+      const conDua = (f[9] ?? '').trim();
+      return conDua || (f[8] ?? '').trim();
+    };
+
+    const sunat = new Map<
+      string,
+      {
+        comprobante: string;
+        proveedor: string;
+        proveedorDoc: string;
+        fechaEmision: string;
+        base: number;
+        igv: number;
+        total: number;
+      }
+    >();
+    for (const f of filas) {
+      const tipo = (f[6] ?? '').trim().padStart(2, '0');
+      const serie = (f[7] ?? '').trim();
+      const numero = numeroDeFila(f);
+      if (!serie && !numero) continue;
+      // La base gravada del RCE viene partida en tres pares (gravada, gravada
+      // y no gravada, no gravada); para cuadrar con nuestra compra se suman.
+      const base = num(f[13]) + num(f[15]) + num(f[17]);
+      const igv = num(f[14]) + num(f[16]) + num(f[18]);
+      sunat.set(clave(tipo, serie, numero), {
+        comprobante: `${serie}-${numero.replace(/^0+/, '')}`,
+        proveedorDoc: (f[11] ?? '').trim(),
+        proveedor: (f[12] ?? '').trim(),
+        fechaEmision: (f[4] ?? '').trim(),
+        base: this.r2(base),
+        igv: this.r2(igv),
+        total: num(f[23]),
+      });
+    }
+
+    // Las denegadas por el contador no entran al RCE (fetchCompras las excluye),
+    // pero SÍ hay que reconocerlas en el cruce: si no, aparecerían como "SUNAT
+    // las tiene y tú no" cuando en realidad se excluyeron a propósito.
+    const propias = await this.fetchCompras(empresaId, mes, anio, sedeId);
+    const denegadas = await this.prisma.compra.findMany({
+      where: {
+        empresaId,
+        ...(sedeId ? { sedeId } : {}),
+        fechaEmision: this.getDateRange(mes, anio),
+        estado: 'REGISTRADO' as any,
+        estadoContador: 'DENEGADA' as any,
+      },
+      select: {
+        id: true,
+        tipoDoc: true,
+        serie: true,
+        numero: true,
+        motivoContador: true,
+      },
+    });
+    const denegadasPorClave = new Map(
+      denegadas.map((c) => [
+        clave(TIPO_DOC_COMPRA_MAP[c.tipoDoc] ?? '01', c.serie, String(c.numero)),
+        c,
+      ]),
+    );
+    const sistema = new Map<
+      string,
+      {
+        id: number;
+        comprobante: string;
+        proveedor: string;
+        base: number;
+        igv: number;
+        total: number;
+      }
+    >();
+    for (const c of propias) {
+      const tipoSunat = TIPO_DOC_COMPRA_MAP[c.tipoDoc] ?? '01';
+      const signo = tipoSunat === '07' ? -1 : 1;
+      const factor = factorCompraASoles(c as any) * signo;
+      sistema.set(clave(tipoSunat, c.serie, String(c.numero)), {
+        id: c.id,
+        comprobante: `${c.serie}-${c.numero}`,
+        proveedor: (c as any).proveedor?.nombre ?? '',
+        base: this.r2(Number(c.subtotal ?? 0) * factor),
+        igv: this.r2(Number(c.igv ?? 0) * factor),
+        total: this.r2(Number(c.total ?? 0) * factor),
+      });
+    }
+
+    const soloEnSunat: any[] = [];
+    const soloEnSistema: any[] = [];
+    const diferencias: any[] = [];
+    const denegadasEnSunat: any[] = [];
+    const tolerancia = 0.01;
+
+    for (const [k, v] of sunat) {
+      const mio = sistema.get(k);
+      if (!mio) {
+        const deneg = denegadasPorClave.get(k);
+        if (deneg) {
+          // SUNAT la tiene y el negocio la registró, pero el contador la excluyó.
+          denegadasEnSunat.push({
+            ...v,
+            tipoDoc: k.split('|')[0],
+            compraId: deneg.id,
+            motivo: deneg.motivoContador,
+          });
+          continue;
+        }
+        soloEnSunat.push({ ...v, tipoDoc: k.split('|')[0] });
+        continue;
+      }
+      if (
+        Math.abs(mio.base - v.base) > tolerancia ||
+        Math.abs(mio.igv - v.igv) > tolerancia ||
+        Math.abs(mio.total - v.total) > tolerancia
+      ) {
+        diferencias.push({
+          comprobante: mio.comprobante,
+          tipoDoc: k.split('|')[0],
+          compraId: mio.id,
+          sunat: v,
+          sistema: mio,
+        });
+      }
+    }
+    for (const [k, v] of sistema) {
+      if (!sunat.has(k)) {
+        soloEnSistema.push({ ...v, tipoDoc: k.split('|')[0] });
+      }
+    }
+
+    const suma = (arr: Array<{ igv: number; total: number }>) => ({
+      igv: this.r2(arr.reduce((a, v) => a + v.igv, 0)),
+      total: this.r2(arr.reduce((a, v) => a + v.total, 0)),
+    });
+
+    return {
+      periodo: this.periodoSire(mes, anio),
+      totales: {
+        sunat: { cantidad: sunat.size, ...suma([...sunat.values()]) },
+        sistema: { cantidad: sistema.size, ...suma([...sistema.values()]) },
+      },
+      cuadra:
+        !soloEnSunat.length && !soloEnSistema.length && !diferencias.length,
+      // Crédito fiscal que el negocio está dejando de usar por no haber
+      // registrado esas compras: el número que justifica todo el cruce.
+      igvNoAprovechado: suma(soloEnSunat).igv,
+      // Las que SUNAT tiene y el contador excluyó a propósito: ni error ni
+      // crédito perdido por descuido, pero hay que verlas.
+      denegadas: denegadasEnSunat.slice(0, 200),
+      totalDenegadas: denegadasEnSunat.length,
+      igvDenegado: suma(denegadasEnSunat).igv,
+      soloEnSunat: soloEnSunat.slice(0, 200),
+      soloEnSistema: soloEnSistema.slice(0, 200),
+      diferencias: diferencias.slice(0, 200),
+      totalSoloEnSunat: soloEnSunat.length,
+      totalSoloEnSistema: soloEnSistema.length,
+      totalDiferencias: diferencias.length,
+    };
+  }
+
+
+  // ───────────── Sincronización con la API del SIRE de SUNAT ─────────────
+  /**
+   * Estado de la configuración del SIRE de una empresa, para que la UI sepa si
+   * puede ofrecer el botón de sincronizar (sin exponer secretos).
+   */
+  async estadoSire(empresaId: number) {
+    const e = (await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: {
+        ruc: true,
+        sireClientId: true,
+        sireClientSecret: true,
+        sireUsuarioSol: true,
+        sireClaveSol: true,
+      },
+    })) as any;
+    const falta: string[] = [];
+    if (!e?.sireClientId) falta.push('Client ID');
+    if (!e?.sireClientSecret) falta.push('Client Secret');
+    if (!e?.sireUsuarioSol) falta.push('Usuario SOL');
+    if (!e?.sireClaveSol) falta.push('Clave SOL');
+    return {
+      configurado: falta.length === 0,
+      falta,
+      usuarioSol: e?.sireUsuarioSol ?? null,
+      clientId: e?.sireClientId ?? null,
+    };
+  }
+
+  /** Credenciales listas para el cliente, o un error explicando qué falta. */
+  private async credencialesSire(empresaId: number): Promise<SireCredenciales> {
+    const e = (await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: {
+        ruc: true,
+        sireClientId: true,
+        sireClientSecret: true,
+        sireUsuarioSol: true,
+        sireClaveSol: true,
+      },
+    })) as any;
+    const clave = descifrarSecreto(e?.sireClaveSol);
+    if (!e?.sireClientId || !e?.sireClientSecret || !e?.sireUsuarioSol || !clave) {
+      throw new BadRequestException(
+        'Faltan las credenciales del SIRE. Complétalas en Perfil → Configuración → SIRE (API de SUNAT).',
+      );
+    }
+    return {
+      ruc: String(e.ruc ?? ''),
+      clientId: e.sireClientId,
+      clientSecret: e.sireClientSecret,
+      usuarioSol: e.sireUsuarioSol,
+      claveSol: clave,
+    };
+  }
+
+  /**
+   * Prueba de conexión: pide el token al SIRE y reporta el resultado. Sirve
+   * para que el usuario sepa si sus credenciales quedaron bien SIN tener que
+   * esperar a una sincronización completa.
+   */
+  async probarConexionSire(empresaId: number) {
+    const cred = await this.credencialesSire(empresaId);
+    const cliente = new SireClient(cred);
+    try {
+      const token = await cliente.obtenerToken();
+      return {
+        ok: true,
+        mensaje: 'Conexión con el SIRE establecida.',
+        tokenLargo: token.length,
+      };
+    } catch (e: any) {
+      return {
+        ok: false,
+        mensaje: e?.message ?? 'No se pudo conectar con el SIRE.',
+        detalle: e?.detalle ?? null,
+      };
+    }
+  }
+
+  /**
+   * Trae del SIRE la propuesta de compras del período y la cruza con lo
+   * registrado, reusando exactamente el mismo análisis que el cruce manual
+   * (`compararComprasConPropuesta`): la API solo reemplaza el "subir archivo".
+   *
+   * OJO: la descarga depende de rutas de SUNAT que al 2026-09-22 devuelven 401
+   * (credenciales recién creadas, aún no habilitadas). El flujo queda escrito y
+   * los errores traducidos; al habilitarse puede hacer falta ajustar las rutas
+   * (son configurables por variables de entorno en sire.client.ts).
+   */
+  async sincronizarComprasDesdeSire(
+    empresaId: number,
+    mes: number,
+    anio: number,
+    sedeId?: number,
+  ) {
+    const cred = await this.credencialesSire(empresaId);
+    const cliente = new SireClient(cred);
+    const periodo = `${anio}${String(mes).padStart(2, '0')}`;
+
+    const solicitud = await cliente.solicitarPropuestaRce(periodo);
+    // SUNAT responde con un ticket cuando la exportación es asíncrona, o
+    // directamente con el contenido cuando es pequeña.
+    const numTicket =
+      solicitud?.numTicket ?? solicitud?.numticket ?? solicitud?.ticket ?? null;
+
+    let contenido = '';
+    if (!numTicket) {
+      contenido = typeof solicitud === 'string' ? solicitud : '';
+    } else {
+      const estado = await cliente.consultarTicket(periodo, String(numTicket));
+      const archivo =
+        estado?.registros?.[0]?.archivoReporte?.[0]?.nomArchivoReporte ??
+        estado?.nomArchivoReporte ??
+        null;
+      if (!archivo) {
+        return {
+          pendiente: true,
+          numTicket: String(numTicket),
+          mensaje:
+            'SUNAT está preparando el archivo. Vuelve a intentar en unos minutos.',
+        };
+      }
+      contenido = await cliente.descargarArchivo(String(archivo));
+    }
+
+    if (!contenido.trim()) {
+      throw new BadRequestException(
+        'SUNAT no devolvió comprobantes para ese período.',
+      );
+    }
+
+    const cruce = await this.compararComprasConPropuesta({
+      empresaId,
+      mes,
+      anio,
+      contenido,
+      sedeId,
+    });
+    return { ...cruce, origen: 'SUNAT' as const };
+  }
+
 }

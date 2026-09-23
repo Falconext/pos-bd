@@ -6,6 +6,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { cifrarSecreto } from '../common/utils/secreto.util';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { PrismaService } from '../prisma/prisma.service';
@@ -1579,6 +1580,16 @@ export class EmpresaService {
         updateData.sunatClientId = dto.sunatClientId || null;
       if (dto.sunatClientSecret !== undefined)
         updateData.sunatClientSecret = dto.sunatClientSecret || null;
+      // SIRE: la clave SOL se guarda CIFRADA (el sistema necesita leerla para
+      // pedir el token, así que no sirve un hash). Mandar cadena vacía la borra.
+      if (dto.sireClientId !== undefined)
+        updateData.sireClientId = dto.sireClientId || null;
+      if (dto.sireClientSecret !== undefined)
+        updateData.sireClientSecret = dto.sireClientSecret || null;
+      if (dto.sireUsuarioSol !== undefined)
+        updateData.sireUsuarioSol = dto.sireUsuarioSol?.trim() || null;
+      if (dto.sireClaveSol !== undefined)
+        updateData.sireClaveSol = cifrarSecreto(dto.sireClaveSol);
       if (dto.whatsappProvider !== undefined)
         updateData.whatsappProvider = dto.whatsappProvider;
       if (dto.whatsappApiToken !== undefined)

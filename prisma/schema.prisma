@@ -398,6 +398,15 @@ model Empresa {
   // fue aceptado (usado para conciliar comprobantes cuyo CDR no llegó).
   sunatClientId           String?
   sunatClientSecret       String?
+  // Credenciales de API del SIRE (se generan aparte, en Menú SOL → Credenciales
+  // de API SUNAT → Gestión, marcando "MIGE RCE y RVIE - SIRE"). OJO: el SIRE no
+  // usa client_credentials como la Consulta de Validez, sino grant_type=password
+  // con el usuario y la clave SOL, por eso también se guardan esos dos.
+  sireClientId            String?
+  sireClientSecret        String?
+  sireUsuarioSol          String?
+  /** Clave SOL cifrada (AES-256-GCM). Nunca se devuelve al frontend. */
+  sireClaveSol            String?
   usaDemo                 Boolean                        @default(false)
   metodoSalidaLotes       String                         @default("LIFO")
   // Mercado Pago (OAuth Marketplace): credenciales de la cuenta MP conectada por la empresa.
@@ -1963,6 +1972,14 @@ model Compra {
   // del mes (neto, sin IGV: ese IGV es crédito fiscal). Por defecto se marca
   // sola cuando ninguna línea está enlazada a un producto del catálogo.
   esGasto              Boolean            @default(false)
+  // Revisión del CONTADOR sobre esta compra para el SIRE (distinto de `estado`,
+  // que es el visto bueno interno del dueño a sus vendedores): PENDIENTE al
+  // registrarse, APROBADA entra al RCE, DENEGADA se excluye con su motivo
+  // (p.ej. "no corresponde al giro del negocio").
+  estadoContador       EstadoContador     @default(PENDIENTE)
+  motivoContador       String?
+  revisadoContadorEn   DateTime?
+  revisadoContadorPor  Int?
   creadoEn             DateTime           @default(now())
   actualizadoEn        DateTime           @updatedAt
   cuotas               Json?
@@ -2276,6 +2293,13 @@ enum EstadoOrdenCompra {
   EMITIDA
   RECIBIDA
   ANULADA
+}
+
+// Revisión del contador sobre una compra de cara al SIRE / RCE.
+enum EstadoContador {
+  PENDIENTE
+  APROBADA
+  DENEGADA
 }
 
 enum EstadoCompra {

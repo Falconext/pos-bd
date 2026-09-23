@@ -854,6 +854,11 @@ export class AuthService {
             imprimirAutomatico: true,
             directorTecnico: true,
             sunatClientId: true,
+            // Del SIRE se expone lo no sensible: el id de cliente y el usuario
+            // SOL. El secret y la clave SOL nunca salen al frontend; para saber
+            // si están configurados se usa `sireConfigurado` del endpoint.
+            sireClientId: true,
+            sireUsuarioSol: true,
             sunatClientSecret: true,
             whatsappProvider: true,
             whatsappApiToken: true,

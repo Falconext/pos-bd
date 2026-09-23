@@ -801,6 +801,97 @@ export class ContabilidadController {
     });
   }
 
+  /** Compras del período con su estado de revisión (aprobada / denegada). */
+  @Get('sire/compras-revision')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async sireComprasRevision(
+    @User() user: any,
+    @Query('mes') mes: string,
+    @Query('anio') anio: string,
+  ) {
+    const { mes: m, anio: a } = this.parseSireParams(mes, anio);
+    return this.sireService.obtenerRevisionCompras(
+      user.empresaId,
+      m,
+      a,
+      user.sedeId,
+    );
+  }
+
+  /** El contador aprueba o deniega compras (una o varias) de cara al RCE. */
+  @Post('sire/compras-revisar')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async sireComprasRevisar(
+    @User() user: any,
+    @Body()
+    body: {
+      ids: number[];
+      estado: 'PENDIENTE' | 'APROBADA' | 'DENEGADA';
+      motivo?: string;
+    },
+  ) {
+    if (!['PENDIENTE', 'APROBADA', 'DENEGADA'].includes(String(body?.estado))) {
+      throw new BadRequestException(
+        'Estado inválido: usa PENDIENTE, APROBADA o DENEGADA.',
+      );
+    }
+    return this.sireService.revisarCompras(user.empresaId, user.id, body);
+  }
+
+  /** ¿La empresa tiene configuradas las credenciales del SIRE? */
+  @Get('sire/estado-conexion')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async sireEstadoConexion(@User() user: any) {
+    return this.sireService.estadoSire(user.empresaId);
+  }
+
+  /** Prueba de conexión: pide un token al SIRE y devuelve el diagnóstico. */
+  @Post('sire/probar-conexion')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async sireProbarConexion(@User() user: any) {
+    return this.sireService.probarConexionSire(user.empresaId);
+  }
+
+  /** Trae del SIRE las compras del período y las cruza con lo registrado. */
+  @Post('sire/compras-sincronizar')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async sireComprasSincronizar(
+    @User() user: any,
+    @Body() body: { mes: number; anio: number },
+  ) {
+    const { mes: m, anio: a } = this.parseSireParams(
+      String(body?.mes),
+      String(body?.anio),
+    );
+    return this.sireService.sincronizarComprasDesdeSire(
+      user.empresaId,
+      m,
+      a,
+      user.sedeId,
+    );
+  }
+
+  /** Cruce de las compras del período con la propuesta del RCE de SUNAT. */
+  @Post('sire/compras-comparar')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async sireComprasComparar(
+    @User() user: any,
+    @Body() body: { mes: number; anio: number; contenido: string },
+  ) {
+    const { mes, anio, contenido } = body;
+    if (!contenido || typeof contenido !== 'string') {
+      throw new BadRequestException('Falta el contenido del archivo.');
+    }
+    const { mes: m, anio: a } = this.parseSireParams(String(mes), String(anio));
+    return this.sireService.compararComprasConPropuesta({
+      empresaId: user.empresaId,
+      mes: m,
+      anio: a,
+      contenido,
+      sedeId: user.sedeId,
+    });
+  }
+
   @Get('sire/ventas-txt')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async sireVentasTxt(
