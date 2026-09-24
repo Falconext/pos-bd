@@ -494,204 +494,155 @@ export class ProductoController {
         }
       >();
 
+      // Los proveedores se consultan EN PARALELO (antes iban uno tras otro, y
+      // cada uno con 10 s de timeout: una búsqueda que no acertaba al primer
+      // intento tardaba 20-28 s, más de lo que espera el frontend, y el usuario
+      // veía "error al buscar imagen" aunque el backend sí terminaba).
+      // Además hay una fecha límite global: al agotarse se devuelve el mejor
+      // resultado encontrado hasta el momento en vez de seguir buscando.
+      const DEADLINE_MS = 9000;
+      const PROVIDER_TIMEOUT = 6000;
+      const deadline = Date.now() + DEADLINE_MS;
+      const quedaTiempo = () => Date.now() < deadline;
+
+      const fetchSerper = async (query: string): Promise<ImageResult[]> => {
+        const key = process.env.SERPER_API_KEY;
+        if (!key) return [];
+        const resp = await axios.post(
+          'https://google.serper.dev/images',
+          { q: query, gl: 'pe', hl: 'es', num: 10 },
+          {
+            headers: { 'X-API-KEY': key, 'Content-Type': 'application/json' },
+            timeout: PROVIDER_TIMEOUT,
+          },
+        );
+        return (resp.data?.images || []).map((img: any) => ({
+          url: img?.imageUrl || '',
+          title: img?.title || '',
+          alt: img?.title || '',
+          width: Number(img?.imageWidth || 0) || undefined,
+          height: Number(img?.imageHeight || 0) || undefined,
+        }));
+      };
+
+      const fetchCse = async (query: string): Promise<ImageResult[]> => {
+        const key = process.env.GOOGLE_CSE_API_KEY;
+        const cx = process.env.GOOGLE_CSE_CX;
+        if (!key || !cx) return [];
+        const resp = await axios.get(
+          'https://www.googleapis.com/customsearch/v1',
+          {
+            params: {
+              key,
+              cx,
+              searchType: 'image',
+              q: query,
+              num: 10,
+              imgType: 'photo',
+              safe: 'medium',
+              gl: 'pe',
+              hl: 'es',
+            },
+            timeout: PROVIDER_TIMEOUT,
+          },
+        );
+        const items: any[] = Array.isArray(resp.data?.items)
+          ? resp.data.items
+          : [];
+        return items.map((item: any) => ({
+          url: item?.link || '',
+          title: item?.title || '',
+          alt: item?.snippet || '',
+          width: Number(item?.image?.width || 0) || undefined,
+          height: Number(item?.image?.height || 0) || undefined,
+        }));
+      };
+
+      const fetchBrave = async (query: string): Promise<ImageResult[]> => {
+        const key = process.env.BRAVE_SEARCH_API_KEY;
+        if (!key) return [];
+        const resp = await axios.get(
+          'https://api.search.brave.com/res/v1/images/search',
+          {
+            params: {
+              q: query,
+              count: 20,
+              country: 'PE',
+              search_lang: 'es',
+              safesearch: 'strict',
+              spellcheck: true,
+            },
+            headers: { 'X-Subscription-Token': key },
+            timeout: PROVIDER_TIMEOUT,
+          },
+        );
+        const items: any[] = Array.isArray(resp.data?.results)
+          ? resp.data.results
+          : [];
+        return items.map((item: any) => ({
+          url:
+            item?.properties?.url || item?.url || item?.thumbnail?.src || '',
+          title: item?.title || item?.page_title || '',
+          alt: item?.description || item?.alt || '',
+          width:
+            Number(item?.properties?.width || item?.width || 0) || undefined,
+          height:
+            Number(item?.properties?.height || item?.height || 0) || undefined,
+        }));
+      };
+
+      const fetchPixabay = async (query: string): Promise<ImageResult[]> => {
+        const key = process.env.PIXABAY_API_KEY;
+        if (!key) return [];
+        const resp = await axios.get('https://pixabay.com/api/', {
+          params: {
+            key,
+            q: query,
+            image_type: 'photo',
+            lang: 'es',
+            per_page: 20,
+            safesearch: 'true',
+          },
+          timeout: PROVIDER_TIMEOUT,
+        });
+        const hits: any[] = Array.isArray(resp.data?.hits)
+          ? resp.data.hits
+          : [];
+        return hits.map((h: any) => ({
+          url: h?.largeImageURL || h?.webformatURL || '',
+          title: h?.tags || '',
+          alt: h?.tags || '',
+          width: Number(h?.imageWidth || 0) || undefined,
+          height: Number(h?.imageHeight || 0) || undefined,
+        }));
+      };
+
+      const proveedores = [fetchSerper, fetchCse, fetchBrave, fetchPixabay];
+
+      const esSuficiente = (b: typeof bestGlobal) =>
+        !!b &&
+        b.score >= 6 &&
+        b.tokenMatches >= 1 &&
+        (!colorMatcher.active || b.color === 'match');
+
       for (const query of queries) {
-        // Provider 1: Serper (Google Images real, 2500 gratis sin CC)
-        const serperKey = process.env.SERPER_API_KEY;
-        if (serperKey) {
-          try {
-            const serperResp = await axios.post(
-              'https://google.serper.dev/images',
-              { q: query, gl: 'pe', hl: 'es', num: 10 },
-              {
-                headers: {
-                  'X-API-KEY': serperKey,
-                  'Content-Type': 'application/json',
-                },
-                timeout: 10000,
-              },
-            );
-            const serperImages: ImageResult[] = (
-              serperResp.data?.images || []
-            ).map((img: any) => ({
-              url: img?.imageUrl || '',
-              title: img?.title || '',
-              alt: img?.title || '',
-              width: Number(img?.imageWidth || 0) || undefined,
-              height: Number(img?.imageHeight || 0) || undefined,
-            }));
-            const { bestLocal } = processImageResults(
-              serperImages,
-              rankedByUrl,
-              curatedGlobal,
-            );
-            if (
-              bestLocal &&
-              (!bestGlobal || bestLocal.score > bestGlobal.score)
-            )
-              bestGlobal = bestLocal;
-            if (
-              bestLocal &&
-              bestLocal.score >= 6 &&
-              bestLocal.tokenMatches >= 1 &&
-              (!colorMatcher.active || bestLocal.color === 'match')
-            )
-              break;
-          } catch {
-            // Continuar con siguiente provider
-          }
+        if (!quedaTiempo() && bestGlobal) break;
+        // Todos los proveedores a la vez: el costo de la consulta pasa a ser el
+        // del más lento, no la suma de todos.
+        const tandas = await Promise.allSettled(
+          proveedores.map((fn) => fn(query)),
+        );
+        for (const t of tandas) {
+          if (t.status !== 'fulfilled' || !t.value.length) continue;
+          const { bestLocal } = processImageResults(
+            t.value,
+            rankedByUrl,
+            curatedGlobal,
+          );
+          if (bestLocal && (!bestGlobal || bestLocal.score > bestGlobal.score))
+            bestGlobal = bestLocal;
         }
-
-        // Provider 2: Google Custom Search JSON API (gratis 100/día)
-        const cseApiKey = process.env.GOOGLE_CSE_API_KEY;
-        const cseCx = process.env.GOOGLE_CSE_CX;
-        if (cseApiKey && cseCx) {
-          try {
-            const cseResp = await axios.get(
-              'https://www.googleapis.com/customsearch/v1',
-              {
-                params: {
-                  key: cseApiKey,
-                  cx: cseCx,
-                  searchType: 'image',
-                  q: query,
-                  num: 10,
-                  imgType: 'photo',
-                  safe: 'medium',
-                  gl: 'pe',
-                  hl: 'es',
-                },
-                timeout: 10000,
-              },
-            );
-            const cseItems: any[] = Array.isArray(cseResp.data?.items)
-              ? cseResp.data.items
-              : [];
-            const cseImages: ImageResult[] = cseItems.map((item: any) => ({
-              url: item?.link || '',
-              title: item?.title || '',
-              alt: item?.snippet || '',
-              width: Number(item?.image?.width || 0) || undefined,
-              height: Number(item?.image?.height || 0) || undefined,
-            }));
-            const { bestLocal } = processImageResults(
-              cseImages,
-              rankedByUrl,
-              curatedGlobal,
-            );
-            if (
-              bestLocal &&
-              (!bestGlobal || bestLocal.score > bestGlobal.score)
-            )
-              bestGlobal = bestLocal;
-            if (
-              bestLocal &&
-              bestLocal.score >= 6 &&
-              bestLocal.tokenMatches >= 1 &&
-              (!colorMatcher.active || bestLocal.color === 'match')
-            )
-              break;
-          } catch {
-            // Continuar con siguiente provider
-          }
-        }
-
-        // Provider 2: Brave Image Search API
-        const braveApiKey = process.env.BRAVE_SEARCH_API_KEY;
-        if (braveApiKey) {
-          try {
-            const braveResp = await axios.get(
-              'https://api.search.brave.com/res/v1/images/search',
-              {
-                params: {
-                  q: query,
-                  count: 20,
-                  country: 'PE',
-                  search_lang: 'es',
-                  safesearch: 'strict',
-                  spellcheck: true,
-                },
-                headers: { 'X-Subscription-Token': braveApiKey },
-                timeout: 10000,
-              },
-            );
-            const braveItems: any[] = Array.isArray(braveResp.data?.results)
-              ? braveResp.data.results
-              : [];
-            const braveImages: ImageResult[] = braveItems.map((item: any) => ({
-              url:
-                item?.properties?.url ||
-                item?.url ||
-                item?.thumbnail?.src ||
-                '',
-              title: item?.title || item?.page_title || '',
-              alt: item?.description || item?.alt || '',
-              width:
-                Number(item?.properties?.width || item?.width || 0) ||
-                undefined,
-              height:
-                Number(item?.properties?.height || item?.height || 0) ||
-                undefined,
-            }));
-            const { bestLocal } = processImageResults(
-              braveImages,
-              rankedByUrl,
-              curatedGlobal,
-            );
-            if (
-              bestLocal &&
-              (!bestGlobal || bestLocal.score > bestGlobal.score)
-            )
-              bestGlobal = bestLocal;
-          } catch {
-            // Continuar
-          }
-        }
-
-        // Provider 3: Pixabay (gratis 5000/hora, sin CC — imágenes genéricas de producto)
-        const pixabayKey = process.env.PIXABAY_API_KEY;
-        if (pixabayKey) {
-          try {
-            const pixabayResp = await axios.get('https://pixabay.com/api/', {
-              params: {
-                key: pixabayKey,
-                q: query,
-                image_type: 'photo',
-                per_page: 10,
-                safesearch: true,
-                lang: 'es',
-              },
-              timeout: 8000,
-            });
-            const pixabayHits: any[] = Array.isArray(pixabayResp.data?.hits)
-              ? pixabayResp.data.hits
-              : [];
-            const pixabayImages: ImageResult[] = pixabayHits.map(
-              (hit: any) => ({
-                url: hit?.largeImageURL || hit?.webformatURL || '',
-                title: hit?.tags || '',
-                alt: hit?.tags || '',
-                width:
-                  Number(hit?.imageWidth || hit?.webformatWidth || 0) ||
-                  undefined,
-                height:
-                  Number(hit?.imageHeight || hit?.webformatHeight || 0) ||
-                  undefined,
-              }),
-            );
-            const { bestLocal } = processImageResults(
-              pixabayImages,
-              rankedByUrl,
-              curatedGlobal,
-            );
-            if (
-              bestLocal &&
-              (!bestGlobal || bestLocal.score > bestGlobal.score)
-            )
-              bestGlobal = bestLocal;
-          } catch {
-            // Continuar
-          }
-        }
+        if (esSuficiente(bestGlobal)) break;
       }
 
       // Helper para guardar resultado en caché en memoria + DB automáticamente
