@@ -2524,6 +2524,12 @@ model GuiaRemision {
   sunatNextRetryAt  DateTime?
   sunatLastRetryAt  DateTime?
 
+  /// Documentos relacionados al traslado (Catálogo 61): la factura/boleta que
+  /// origina el envío, la DAM, la constancia de detracción, etc. Se imprimen en
+  /// la guía y viajan a SUNAT en cac:AdditionalDocumentReference.
+  /// Forma: [{ tipo: '01', numero: 'F001-8055', emisorNumDoc?: '20...' }]
+  documentosRelacionados Json?
+
   // Observaciones
   observaciones String?
 

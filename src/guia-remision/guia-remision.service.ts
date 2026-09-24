@@ -6,8 +6,12 @@ import {
   HttpException,
   Logger,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateGuiaRemisionDto } from './dto/create-guia-remision.dto';
+import {
+  CreateGuiaRemisionDto,
+  DOC_RELACIONADO_LABEL,
+} from './dto/create-guia-remision.dto';
 import { UpdateGuiaRemisionDto } from './dto/update-guia-remision.dto';
 import { QueryGuiaRemisionDto } from './dto/query-guia-remision.dto';
 import { SunatGuiaService } from './sunat-guia.service';
@@ -73,7 +77,9 @@ export class GuiaRemisionService {
     this.validateGuiaRemision(createDto);
 
     // Extraer detalles para crear por separado
-    const { detalles, ...guiaData } = createDto;
+    const { detalles, documentosRelacionados, ...guiaData } = createDto;
+    const docsRelacionados =
+      this.normalizarDocumentosRelacionados(documentosRelacionados);
 
     // Asegurar que correlativo esté definido
     const correlativoFinal = createDto.correlativo;
@@ -92,6 +98,9 @@ export class GuiaRemisionService {
           fechaEmision: new Date(guiaData.fechaEmision),
           fechaInicioTraslado: new Date(guiaData.fechaInicioTraslado),
           horaEmision: guiaData.horaEmision || this.getCurrentTime(),
+          ...(docsRelacionados !== undefined
+            ? { documentosRelacionados: docsRelacionados }
+            : {}),
           detalles: {
             create: detalles.map((detalle, index) => ({
               numeroOrden: index + 1,
@@ -130,6 +139,9 @@ export class GuiaRemisionService {
             fechaEmision: new Date(guiaData.fechaEmision),
             fechaInicioTraslado: new Date(guiaData.fechaInicioTraslado),
             horaEmision: guiaData.horaEmision || this.getCurrentTime(),
+            ...(docsRelacionados !== undefined
+              ? { documentosRelacionados: docsRelacionados }
+              : {}),
             detalles: {
               create: detalles.map((detalle, index) => ({
                 numeroOrden: index + 1,
@@ -321,7 +333,9 @@ export class GuiaRemisionService {
     this.validateGuiaRemision({ ...guia, ...updateDto } as any);
 
     // Si se actualizan detalles, eliminar los anteriores y crear los nuevos
-    const { detalles, ...guiaData } = updateDto;
+    const { detalles, documentosRelacionados, ...guiaData } = updateDto;
+    const docsRelacionados =
+      this.normalizarDocumentosRelacionados(documentosRelacionados);
 
     const dataToUpdate: any = {
       ...guiaData,
@@ -337,6 +351,9 @@ export class GuiaRemisionService {
 
     if (guiaData.fechaInicioTraslado) {
       dataToUpdate.fechaInicioTraslado = new Date(guiaData.fechaInicioTraslado);
+    }
+    if (docsRelacionados !== undefined) {
+      dataToUpdate.documentosRelacionados = docsRelacionados;
     }
 
     if (detalles && detalles.length > 0) {
@@ -712,6 +729,28 @@ export class GuiaRemisionService {
     return next;
   }
 
+  /**
+   * Normaliza los documentos relacionados (Catálogo 61) para guardarlos como
+   * JSON: descarta los incompletos y deja solo los campos que se imprimen y
+   * viajan a SUNAT. Devuelve undefined si no hay ninguno, para no pisar lo ya
+   * guardado en una actualización parcial.
+   */
+  private normalizarDocumentosRelacionados(
+    docs?: { tipo: string; numero: string; emisorNumDoc?: string }[],
+  ) {
+    if (!Array.isArray(docs)) return undefined;
+    const limpios = docs
+      .filter((d) => d && String(d.tipo || '').trim() && String(d.numero || '').trim())
+      .map((d) => ({
+        tipo: String(d.tipo).trim(),
+        numero: String(d.numero).trim().toUpperCase(),
+        ...(String(d.emisorNumDoc || '').trim()
+          ? { emisorNumDoc: String(d.emisorNumDoc).trim() }
+          : {}),
+      }));
+    return limpios as unknown as Prisma.InputJsonValue;
+  }
+
   private validateGuiaRemision(
     dto: CreateGuiaRemisionDto | UpdateGuiaRemisionDto,
   ) {
@@ -952,12 +991,34 @@ export class GuiaRemisionService {
       transportistaRuc: guia.transportistaRuc,
       transportistaMTC: guia.transportistaMTC || '',
       vehiculoPlaca: guia.vehiculoPlaca,
+      // TUCE / Certificado de Habilitación Vehicular: SUNAT lo imprime junto a
+      // la placa y es lo que pide el fiscalizador en carretera.
+      vehiculoAutorizacion: guia.vehiculoAutorizacion || '',
       conductorNombre: nombreConductor.toUpperCase(),
       conductorNumDoc: guia.conductorNumDoc || '',
       conductorLicencia: guia.conductorLicencia,
       retornoVehiculoVacio: guia.retornoVehiculoVacio,
       retornoEnvasesVacios: guia.retornoEnvasesVacios,
       transbordoProgramado: guia.transbordoProgramado,
+      vehiculoM1oL: guia.vehiculoM1oL,
+      // Handlebars no evalúa expresiones: el bloque de indicadores se muestra
+      // solo si hay alguno encendido.
+      hayIndicadores: Boolean(
+        guia.transbordoProgramado ||
+          guia.retornoVehiculoVacio ||
+          guia.retornoEnvasesVacios ||
+          guia.vehiculoM1oL,
+      ),
+      // Documentos relacionados (Catálogo 61): la factura/boleta que origina el
+      // traslado, con su etiqueta legible.
+      documentosRelacionados: (Array.isArray(guia.documentosRelacionados)
+        ? (guia.documentosRelacionados as any[])
+        : []
+      ).map((d: any) => ({
+        etiqueta: DOC_RELACIONADO_LABEL[String(d?.tipo)] || 'Documento',
+        numero: String(d?.numero || '').toUpperCase(),
+        emisor: String(d?.emisorNumDoc || ''),
+      })),
 
       // Items
       detalles: guia.detalles.map((d, i) => ({
@@ -1014,6 +1075,7 @@ export class GuiaRemisionService {
         detalles: {
           include: { producto: true },
         },
+        empresa: { select: { ruc: true } },
       },
     });
 
@@ -1037,6 +1099,17 @@ export class GuiaRemisionService {
       '08': 'NOTA DE DEBITO',
     };
     const refLabel = tipoLabels[comprobante.tipoDoc] || 'COMPROBANTE';
+    const numeroComprobante = `${comprobante.serie}-${String(
+      comprobante.correlativo,
+    ).padStart(8, '0')}`;
+    // Documento relacionado (Catálogo 61): solo factura, boleta y ticket están
+    // en ese catálogo. Las notas de crédito/débito no, así que no se sugieren.
+    const TIPO_EN_CATALOGO_61: Record<string, string> = {
+      '01': '01',
+      '03': '03',
+      '12': '12',
+    };
+    const tipoRelacionado = TIPO_EN_CATALOGO_61[comprobante.tipoDoc];
 
     return {
       clienteId: cliente?.id,
@@ -1045,9 +1118,18 @@ export class GuiaRemisionService {
       destinatarioRazonSocial: cliente?.nombre || '',
       llegadaDireccion: cliente?.direccion || '',
       llegadaUbigeo: cliente?.ubigeo || '',
-      observaciones: `Ref. ${refLabel} ${comprobante.serie}-${String(
-        comprobante.correlativo,
-      ).padStart(8, '0')}`,
+      observaciones: `Ref. ${refLabel} ${numeroComprobante}`,
+      // El comprobante que origina el traslado se sugiere ya cargado: es el dato
+      // que SUNAT imprime como "Documentos Relacionados" en la guía.
+      documentosRelacionados: tipoRelacionado
+        ? [
+            {
+              tipo: tipoRelacionado,
+              numero: numeroComprobante,
+              emisorNumDoc: comprobante.empresa?.ruc ?? '',
+            },
+          ]
+        : [],
       comprobanteRef: {
         id: comprobante.id,
         tipoDoc: comprobante.tipoDoc,

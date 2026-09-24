@@ -1,6 +1,7 @@
 import { Injectable, Logger, HttpException } from '@nestjs/common';
 import { QpseClient, QpseSendResponse } from '../common/utils/qpse.client';
 import { buildUblXml } from '../common/utils/ubl-xml';
+import { DOC_RELACIONADO_LABEL } from './dto/create-guia-remision.dto';
 import axios from 'axios';
 
 @Injectable()
@@ -309,6 +310,11 @@ export class SunatGuiaService {
 
     return {
       ...this.buildDocumentHeader(guia, '09'),
+      // Va aquí a propósito: el esquema espera AdditionalDocumentReference
+      // después de la cabecera y antes de DespatchSupplierParty.
+      ...(this.buildAdditionalDocumentReference(guia)
+        ? { 'cac:AdditionalDocumentReference': this.buildAdditionalDocumentReference(guia) }
+        : {}),
       'cac:DespatchSupplierParty': this.buildDespatchSupplierParty(guia),
       'cac:DeliveryCustomerParty': deliveryCustomerParty,
       ...(isCompra
@@ -421,6 +427,11 @@ export class SunatGuiaService {
 
     return {
       ...this.buildDocumentHeader(guia, '31'),
+      // Va aquí a propósito: el esquema espera AdditionalDocumentReference
+      // después de la cabecera y antes de DespatchSupplierParty.
+      ...(this.buildAdditionalDocumentReference(guia)
+        ? { 'cac:AdditionalDocumentReference': this.buildAdditionalDocumentReference(guia) }
+        : {}),
       'cac:DespatchSupplierParty': this.buildDespatchSupplierParty(guia),
       'cac:DeliveryCustomerParty': this.buildPartyCac(
         '6',
@@ -671,6 +682,59 @@ export class SunatGuiaService {
     if (guia.vehiculoM1oL)
       si.push({ _text: 'SUNAT_Envio_IndicadorTrasladoVehiculoM1L' });
     return si;
+  }
+
+  /**
+   * Documentos relacionados al traslado (cac:AdditionalDocumentReference):
+   * la factura/boleta que origina el envío, la DAM, la constancia de detracción…
+   * El tipo va con el Catálogo 61 y el RUC del emisor con el Catálogo 06.
+   */
+  private buildAdditionalDocumentReference(guia: any): any[] | undefined {
+    const docs = Array.isArray(guia.documentosRelacionados)
+      ? guia.documentosRelacionados
+      : [];
+    const items = docs
+      .filter((d: any) => d && String(d.tipo || '').trim() && String(d.numero || '').trim())
+      .map((d: any) => {
+        const tipo = String(d.tipo).trim();
+        const emisor = String(d.emisorNumDoc || '').trim();
+        return {
+          'cbc:ID': { _text: String(d.numero).trim().toUpperCase() },
+          'cbc:DocumentTypeCode': {
+            _attributes: {
+              listAgencyName: 'PE:SUNAT',
+              listName: 'Documento relacionado al transporte',
+              listURI: 'urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo61',
+            },
+            _text: tipo,
+          },
+          // Descripción legible del tipo. En el esquema UBL va justo después del
+          // código y es lo que emiten las implementaciones de referencia; SUNAT
+          // la trata como texto libre.
+          'cbc:DocumentType': {
+            _text: DOC_RELACIONADO_LABEL[tipo] || 'Documento relacionado',
+          },
+          ...(emisor
+            ? {
+                'cac:IssuerParty': {
+                  'cac:PartyIdentification': {
+                    'cbc:ID': {
+                      _attributes: {
+                        schemeID: /^\d{11}$/.test(emisor) ? '6' : '1',
+                        schemeName: 'Documento de Identidad',
+                        schemeAgencyName: 'PE:SUNAT',
+                        schemeURI:
+                          'urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo06',
+                      },
+                      _text: emisor,
+                    },
+                  },
+                },
+              }
+            : {}),
+        };
+      });
+    return items.length > 0 ? items : undefined;
   }
 
   private buildDespatchLines(guia: any): any[] {

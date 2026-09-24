@@ -188,6 +188,7 @@
         <tr><td>MODALIDAD:</td><td>TRASLADO EN VEHÍCULO DE CATEGORÍA M1 O L</td></tr>
         {{else}}
         <tr><td>PLACA:</td><td>{{vehiculoPlaca}}</td></tr>
+        {{#if vehiculoAutorizacion}}<tr><td>TUCE / HAB. VEH.:</td><td>{{vehiculoAutorizacion}}</td></tr>{{/if}}
         <tr><td>CONDUCTOR:</td><td>{{conductorNombre}}</td></tr>
         {{#if conductorNumDoc}}<tr><td>DOC. CONDUCTOR:</td><td>{{conductorNumDoc}}</td></tr>{{/if}}
         <tr><td>LICENCIA:</td><td>{{conductorLicencia}}</td></tr>
@@ -199,6 +200,7 @@
       <div class="data-title">CONDUCTOR</div>
       <table>
         <tr><td>PLACA:</td><td>{{vehiculoPlaca}}</td></tr>
+        {{#if vehiculoAutorizacion}}<tr><td>TUCE / HAB. VEH.:</td><td>{{vehiculoAutorizacion}}</td></tr>{{/if}}
         <tr><td>CONDUCTOR:</td><td>{{conductorNombre}}</td></tr>
         {{#if conductorNumDoc}}<tr><td>DOC. CONDUCTOR:</td><td>{{conductorNumDoc}}</td></tr>{{/if}}
         <tr><td>LICENCIA:</td><td>{{conductorLicencia}}</td></tr>
@@ -206,6 +208,37 @@
     </div>
     {{/if}}{{/if}}
   </div>
+
+  <!-- ── Docs. del traslado e indicadores ───────────────────── -->
+  {{#if documentosRelacionados.length}}
+  <div class="data-box">
+    <div class="data-col">
+      <div class="data-title">DOCUMENTOS RELACIONADOS</div>
+      <table>
+        {{#each documentosRelacionados}}
+        <tr>
+          <td>{{this.etiqueta}}:</td>
+          <td>N° {{this.numero}}{{#if this.emisor}} &nbsp;·&nbsp; RUC {{this.emisor}}{{/if}}</td>
+        </tr>
+        {{/each}}
+      </table>
+    </div>
+  </div>
+  {{/if}}
+
+  {{#if hayIndicadores}}
+  <div class="data-box">
+    <div class="data-col">
+      <div class="data-title">INDICADORES DEL TRASLADO</div>
+      <table>
+        {{#if transbordoProgramado}}<tr><td>TRANSBORDO PROGRAMADO:&nbsp;</td><td>SÍ</td></tr>{{/if}}
+        {{#if retornoVehiculoVacio}}<tr><td>RETORNO DE VEHÍCULO VACÍO:&nbsp;</td><td>SÍ</td></tr>{{/if}}
+        {{#if retornoEnvasesVacios}}<tr><td>RETORNO CON ENVASES VACÍOS:&nbsp;</td><td>SÍ</td></tr>{{/if}}
+        {{#if vehiculoM1oL}}<tr><td>VEHÍCULO CATEGORÍA M1 O L:&nbsp;</td><td>SÍ</td></tr>{{/if}}
+      </table>
+    </div>
+  </div>
+  {{/if}}
 
   <!-- ── ITEMS ───────────────────────────────────────────────── -->
   <table class="productos-table">
@@ -241,9 +274,8 @@
       <div class="obs-title">OBSERVACIONES:</div>
       <div class="obs-text">{{observaciones}}</div>
       {{/if}}
-      {{#if retornoVehiculoVacio}}<div class="obs-text">RETORNO CON VEHÍCULO VACÍO</div>{{/if}}
-      {{#if retornoEnvasesVacios}}<div class="obs-text">RETORNO CON ENVASES O EMBALAJES VACÍOS</div>{{/if}}
-      {{#if transbordoProgramado}}<div class="obs-text">TRANSBORDO PROGRAMADO</div>{{/if}}
+      {{!-- Los indicadores del traslado salen arriba, en su propio bloque con
+            etiqueta; antes se repetían aquí sueltos dentro de observaciones. --}}
       <div class="legal-text">
         Representación impresa de la Guía de Remisión Electrónica {{tituloGuia}}.<br>
         Emitida a través de un Proveedor de Servicios Electrónicos autorizado por SUNAT.<br>
