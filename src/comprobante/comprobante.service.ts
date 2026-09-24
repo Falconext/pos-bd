@@ -2929,12 +2929,20 @@ export class ComprobanteService {
     // ¿El comprobante origen ya movió stock? Se determina por la existencia de un
     // movimiento de kardex SALIDA asociado — robusto incluso para NPs antiguas.
     let origenYaDescontoStock = false;
+    // ¿Cuánta plata del origen YA entró a caja? La conversión no cobra de nuevo:
+    // solo emite el documento formal de una venta ya cobrada.
+    let montoYaCobradoEnOrigen = 0;
 
     // Validar que el comprobante origen pertenezca a esta empresa (seguridad)
     if (esConversionDesdeInformal) {
       const origen = await this.prisma.comprobante.findFirst({
         where: { id: Number(comprobanteOrigenId), empresaId },
-        select: { id: true, tipoDoc: true },
+        select: {
+          id: true,
+          tipoDoc: true,
+          estadoPago: true,
+          mtoImpVenta: true,
+        },
       });
       if (!origen) {
         throw new BadRequestException(
@@ -2954,6 +2962,19 @@ export class ComprobanteService {
         },
       });
       origenYaDescontoStock = salidasOrigen > 0;
+
+      const pagosOrigen = await this.prisma.pago.aggregate({
+        where: { comprobanteId: Number(comprobanteOrigenId) },
+        _sum: { monto: true },
+      });
+      // Notas antiguas quedaron marcadas COMPLETADO sin filas de Pago: su cobro
+      // igual figura en caja (se suma por mtoImpVenta), así que también bloquea.
+      montoYaCobradoEnOrigen = Math.max(
+        this.round2(Number(pagosOrigen._sum.monto || 0)),
+        origen.estadoPago === 'COMPLETADO'
+          ? this.round2(Number(origen.mtoImpVenta || 0))
+          : 0,
+      );
     }
 
     // Map retencion fields to detraccion fields if present
@@ -3309,7 +3330,20 @@ export class ComprobanteService {
         );
 
     // En importación, el cobro solo se registra en caja si afectarCaja !== false.
-    if (esPagoContado && (!importado || afectarCajaImport)) {
+    //
+    // Conversión de un informal YA COBRADO: la plata entró a caja cuando se emitió
+    // la nota; volver a registrarla aquí la contaba dos veces (caja y cierre de
+    // turno, flujo de caja de Finanzas y conciliación bancaria). Mismo criterio que
+    // ya tenían el stock y las comisiones. Si el origen se cobró solo en parte
+    // (adelanto), se registra únicamente la diferencia que se cobra ahora.
+    const montoPagoEmision = this.round2(
+      Math.max(0, mtoImpVenta - montoYaCobradoEnOrigen),
+    );
+    if (
+      esPagoContado &&
+      montoPagoEmision > 0 &&
+      (!importado || afectarCajaImport)
+    ) {
       await this.registrarPagosDeEmision({
         comprobanteId: comprobante.id,
         empresaId,
@@ -3317,7 +3351,7 @@ export class ComprobanteService {
         medioPago,
         paymentDetails,
         splitPayments,
-        montoPagado: mtoImpVenta,
+        montoPagado: montoPagoEmision,
         documento: `${comprobante.serie}-${comprobante.correlativo}`,
         fecha,
       });

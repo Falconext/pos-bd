@@ -115,6 +115,10 @@ export class FinanzasService {
         estadoPago: 'COMPLETADO',
         tipoDoc: { notIn: TIPOS_NO_INGRESO },
         pagos: { none: {} },
+        // Igual que en caja: el formal que sale de convertir un informal ya
+        // cobrado no tiene pagos propios (la plata ingresó con la nota). Sin este
+        // filtro el mismo cobro inflaba los ingresos del flujo de caja.
+        comprobanteOrigenId: null,
       },
       select: {
         fechaEmision: true,

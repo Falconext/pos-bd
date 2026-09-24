@@ -718,6 +718,10 @@ export class CajaService {
         // en el resumen de Ventas del turno / cierre de caja.
         formaPagoTipo: { equals: 'Contado', mode: 'insensitive' },
         pagos: { none: {} },
+        // Boleta/factura que viene de convertir un informal ya cobrado: no tiene
+        // pagos propios porque la plata entró a caja con la nota de origen. Sin
+        // este filtro se contaba el mismo cobro dos veces en el cierre de turno.
+        comprobanteOrigenId: null,
       },
       select: {
         mtoImpVenta: true,
