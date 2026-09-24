@@ -3259,24 +3259,20 @@ export class ComprobanteService {
         : {}),
       detalles: { create: this.limpiarDetalleParaPersistencia(detalleFinal) },
       leyendas: {
-        create: [
-          {
-            code: '1000',
-            // En importación se calcula la leyenda "SON: ..." si no vino en el input.
-            value:
-              leyenda && String(leyenda).trim().length
-                ? leyenda
-                : importado
-                  ? `SON: ${numeroALetras(mtoImpVenta)
-                      .toUpperCase()
-                      .replace(/ Y (\d{2}\/100)$/, ' CON $1')} ${
-                      monedaComprobante === 'USD'
-                        ? 'DÓLARES AMERICANOS'
-                        : 'SOLES'
-                    }`
-                  : leyenda,
-          },
-        ],
+        create: await this.construirLeyendas(
+          empresaId,
+          formalTipo,
+          // En importación se calcula la leyenda "SON: ..." si no vino en el input.
+          leyenda && String(leyenda).trim().length
+            ? leyenda
+            : importado
+              ? `SON: ${numeroALetras(mtoImpVenta)
+                  .toUpperCase()
+                  .replace(/ Y (\d{2}\/100)$/, ' CON $1')} ${
+                  monedaComprobante === 'USD' ? 'DÓLARES AMERICANOS' : 'SOLES'
+                }`
+              : leyenda,
+        ),
       },
       // Vínculo con el documento informal de origen (NV, TICKET, NP, etc.)
       ...(esConversionDesdeInformal && comprobanteOrigenId != null
@@ -4270,7 +4266,7 @@ export class ComprobanteService {
           create: detalleFinal,
         },
         leyendas: {
-          create: [{ code: '1000', value: leyenda }],
+          create: await this.construirLeyendas(empresaId, '07', leyenda),
         },
         tipDocAfectado: tipDocAfectadoFinal,
         numDocAfectado,
@@ -4624,7 +4620,9 @@ export class ComprobanteService {
       porcentajeDetraccion: porcentajeDetraccion ?? undefined,
       montoDetraccion: montoDetraccion ?? undefined,
       detalles: { create: this.limpiarDetalleParaPersistencia(detalleFinal) },
-      leyendas: { create: [{ code: '1000', value: leyenda }] },
+      leyendas: {
+        create: await this.construirLeyendas(empresaId, tipoDoc, leyenda),
+      },
     };
     // Validar receta médica en backend si rubro farmacia/botica
     await this.validarRecetasSiFarmacia(detalles, empresaId);
@@ -5483,7 +5481,13 @@ export class ComprobanteService {
         detalles: {
           create: this.limpiarDetalleParaPersistencia(detalleFinal),
         },
-        leyendas: { create: [{ code: '1000', value: leyenda ?? '' }] },
+        leyendas: {
+          create: await this.construirLeyendas(
+            empresaId,
+            comp.tipoDoc,
+            leyenda ?? '',
+          ),
+        },
       },
     });
 
@@ -5764,6 +5768,33 @@ export class ComprobanteService {
 
   // ─── Helpers compartidos PDF informal ────────────────────────────────────
 
+  /**
+   * Leyendas del comprobante. Siempre va la 1000 (monto en letras); si la
+   * empresa opera bajo la Ley de Amazonía (Ley 27037) se agrega además la 2000
+   * del Catálogo 52, que es la que SUNAT espera para sustentar la exoneración
+   * del IGV en la zona. Solo aplica a los documentos que van a SUNAT.
+   */
+  private async construirLeyendas(
+    empresaId: number,
+    tipoDoc: string,
+    montoEnLetras: string,
+  ): Promise<{ code: string; value: string }[]> {
+    const leyendas = [{ code: '1000', value: montoEnLetras ?? '' }];
+    if (!['01', '03', '07', '08'].includes(String(tipoDoc))) return leyendas;
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { leyAmazonia: true },
+    });
+    if (empresa?.leyAmazonia) {
+      leyendas.push({
+        code: '2000',
+        value:
+          'BIENES TRANSFERIDOS EN LA AMAZONIA REGION SELVA PARA SER CONSUMIDOS EN LA MISMA',
+      });
+    }
+    return leyendas;
+  }
+
   private async cargarComprobanteCompleto(id: number) {
     return this.prisma.comprobante.findUnique({
       where: { id },
@@ -5786,6 +5817,8 @@ export class ComprobanteService {
           },
         },
         detalles: { include: { producto: { select: { imagenUrl: true } } } },
+        // Necesarias para imprimir la leyenda de Ley de Amazonía (código 2000).
+        leyendas: { select: { code: true, value: true } },
         tipoDetraccion: true,
         medioPagoDetraccion: true,
         usuario: { select: { nombre: true, celular: true, email: true } },
@@ -6001,6 +6034,11 @@ export class ComprobanteService {
         saldoPendiente > 0 ? saldoPendiente.toFixed(2) : undefined,
       // Cobranza en campo: prioriza el vendedor de campo atribuido.
       vendedor: ((full as any).vendedorCampoNombre || full.usuario?.nombre || 'ADMIN').toUpperCase(),
+      // Ley de Amazonía: leyenda 2000 del Catálogo 52, impresa junto a las
+      // observaciones para sustentar la exoneración del IGV.
+      leyendaAmazonia:
+        (full as any).leyendas?.find((l: any) => l.code === '2000')?.value ||
+        undefined,
       observaciones: full.observaciones
         ? full.observaciones.toUpperCase()
         : undefined,

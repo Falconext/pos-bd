@@ -315,6 +315,12 @@ model Empresa {
   //                            (valor venta = total ÷ 1.18 en todo).
   //   NINGUNO                = no se descuenta IGV (ventas brutas).
   criterioIgvVentas             String                        @default("ELECTRONICOS")
+  /// Ley de Amazonía (Ley 27037): la empresa opera en zona exonerada del IGV
+  /// (Loreto, Ucayali, San Martín, Madre de Dios, Amazonas y provincias
+  /// designadas de Junín, Cusco, Huánuco…). Cuando está activa, sus facturas y
+  /// boletas llevan además la leyenda 2000 del Catálogo 52 que SUNAT espera
+  /// para sustentar la exoneración.
+  leyAmazonia                   Boolean                       @default(false)
   costoActivacionReseller       Decimal?                      @default(0)
   costoEnvioFijo                Decimal?                      @default(0)
   envioGratisDesdeSoles         Decimal?                      @default(0)

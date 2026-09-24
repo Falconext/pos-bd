@@ -264,6 +264,12 @@ export class UpdateEmpresaDto {
   @IsIn(['ELECTRONICOS', 'TODOS', 'NINGUNO'])
   criterioIgvVentas?: 'ELECTRONICOS' | 'TODOS' | 'NINGUNO';
 
+  // Ley de Amazonía (Ley 27037): agrega a los comprobantes la leyenda 2000
+  // del Catálogo 52 que sustenta la exoneración del IGV en la zona.
+  @IsOptional()
+  @IsBoolean()
+  leyAmazonia?: boolean;
+
   @IsOptional()
   @IsBoolean()
   requiereCajaParaEmitir?: boolean;

@@ -612,9 +612,12 @@ export class EnviarSunatService {
           },
           // cbc:Note DEBE ir antes de cbc:DocumentCurrencyCode (UBL 2.1 SUNAT schema)
           'cbc:Note': [
+            // languageLocaleID = código de la leyenda (Catálogo 52): 1000 monto
+            // en letras, 2000 Ley de Amazonía. Antes iba '1000' fijo, así que
+            // una leyenda de Amazonía se habría enviado con el código errado.
             ...comp.leyendas.map((l: any) => ({
               _text: l.value,
-              _attributes: { languageLocaleID: '1000' },
+              _attributes: { languageLocaleID: l.code || '1000' },
             })),
             ...(comp.tipoDetraccionId
               ? [
@@ -1367,12 +1370,13 @@ export class EnviarSunatService {
         );
 
         // Sobrescribir Note como array para nota de crédito
-        payload.documentBody['cbc:Note'] = [
-          {
-            _text: comp.leyendas[0]?.value || '',
-            _attributes: { languageLocaleID: '1000' },
-          },
-        ];
+        payload.documentBody['cbc:Note'] = (comp.leyendas?.length
+          ? comp.leyendas
+          : [{ code: '1000', value: '' }]
+        ).map((l: any) => ({
+          _text: l.value || '',
+          _attributes: { languageLocaleID: l.code || '1000' },
+        }));
 
         // Ajustar TaxTotal para nota de crédito (con array en TaxSubtotal)
         payload.documentBody['cac:TaxTotal'] = {
@@ -1558,12 +1562,13 @@ export class EnviarSunatService {
         });
 
         // Note como array con languageLocaleID (igual que la nota de crédito).
-        payload.documentBody['cbc:Note'] = [
-          {
-            _text: comp.leyendas?.[0]?.value || '',
-            _attributes: { languageLocaleID: '1000' },
-          },
-        ];
+        payload.documentBody['cbc:Note'] = (comp.leyendas?.length
+          ? comp.leyendas
+          : [{ code: '1000', value: '' }]
+        ).map((l: any) => ({
+          _text: l.value || '',
+          _attributes: { languageLocaleID: l.code || '1000' },
+        }));
         const requestedMonetaryTotal = {
           'cbc:PayableAmount': {
             _attributes: { currencyID: comp.tipoMoneda },
