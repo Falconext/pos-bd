@@ -3054,7 +3054,10 @@ export class ComprobanteService {
         select: {
           id: true,
           tipoDoc: true,
+          serie: true,
+          correlativo: true,
           estadoPago: true,
+          estadoEnvioSunat: true,
           mtoImpVenta: true,
         },
       });
@@ -3067,6 +3070,27 @@ export class ComprobanteService {
       if (!tiposInformales.includes(origen.tipoDoc)) {
         throw new BadRequestException(
           'El comprobante de origen no es de tipo informal',
+        );
+      }
+      // Un informal anulado ya no representa una venta: convertirlo emitiría a
+      // SUNAT un documento fiscal por una operación que se dio de baja.
+      if (origen.estadoEnvioSunat === 'ANULADO') {
+        throw new BadRequestException(
+          `${origen.serie}-${origen.correlativo} está anulado y no puede convertirse en un comprobante formal.`,
+        );
+      }
+      // Ya convertido: emitir un segundo formal duplicaría la venta en SUNAT, en
+      // los reportes y en las comisiones. `editarNotaVenta` ya bloqueaba por lo
+      // mismo; la conversión no lo hacía.
+      const yaConvertido = await this.prisma.comprobante.findFirst({
+        where: { comprobanteOrigenId: Number(comprobanteOrigenId) },
+        select: { serie: true, correlativo: true },
+      });
+      if (yaConvertido) {
+        throw new BadRequestException(
+          `${origen.serie}-${origen.correlativo} ya fue convertido a ` +
+            `${yaConvertido.serie}-${String(yaConvertido.correlativo).padStart(8, '0')}. ` +
+            'Emitir otro comprobante duplicaría la venta.',
         );
       }
       const salidasOrigen = await this.prisma.movimientoKardex.count({
