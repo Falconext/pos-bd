@@ -8,6 +8,26 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateComboDto, UpdateComboDto } from './dto';
 import { S3Service } from '../s3/s3.service';
 
+/**
+ * Un kit puede llevar el mismo producto más de una vez (un pack de 2 cajas de
+ * toffees, por ejemplo). El formulario lo manda como dos filas, así que aquí se
+ * juntan en una sola línea con la cantidad sumada: si no, el conteo contra la
+ * base fallaba —`in: [7, 7]` devuelve UN producto, no dos— y el comerciante
+ * veía "Algunos productos no existen o no están activos" con productos que sí
+ * existían y estaban activos.
+ */
+const consolidarItems = (items: { productoId: number; cantidad: number }[]) => {
+  const porProducto = new Map<number, number>();
+  for (const item of items) {
+    const id = Number(item.productoId);
+    porProducto.set(id, (porProducto.get(id) ?? 0) + Number(item.cantidad));
+  }
+  return [...porProducto].map(([productoId, cantidad]) => ({
+    productoId,
+    cantidad,
+  }));
+};
+
 @Injectable()
 export class CombosService {
   constructor(
@@ -17,22 +37,23 @@ export class CombosService {
 
   async create(empresaId: number, dto: CreateComboDto) {
     // 1. Validar que todos los productos existan y pertenezcan a la empresa
+    const items = consolidarItems(dto.items);
     const productos = await this.prisma.producto.findMany({
       where: {
-        id: { in: dto.items.map((i) => i.productoId) },
+        id: { in: items.map((i) => i.productoId) },
         empresaId,
         estado: 'ACTIVO',
       },
     });
 
-    if (productos.length !== dto.items.length) {
+    if (productos.length !== items.length) {
       throw new BadRequestException(
         'Algunos productos no existen o no están activos',
       );
     }
 
     // 2. Calcular precio regular (suma de precios individuales)
-    const precioRegular = dto.items.reduce((sum, item) => {
+    const precioRegular = items.reduce((sum, item) => {
       const producto = productos.find((p) => p.id === item.productoId);
       if (!producto) return sum;
       return sum + Number(producto.precioUnitario) * item.cantidad;
@@ -63,7 +84,7 @@ export class CombosService {
         fechaInicio: dto.fechaInicio ? new Date(dto.fechaInicio) : null,
         fechaFin: dto.fechaFin ? new Date(dto.fechaFin) : null,
         items: {
-          create: dto.items.map((item) => ({
+          create: items.map((item) => ({
             productoId: item.productoId,
             cantidad: item.cantidad,
           })),
@@ -182,22 +203,23 @@ export class CombosService {
 
     if (dto.items && dto.items.length > 0) {
       // Validar productos
+      const items = consolidarItems(dto.items);
       const productos = await this.prisma.producto.findMany({
         where: {
-          id: { in: dto.items.map((i) => i.productoId) },
+          id: { in: items.map((i) => i.productoId) },
           empresaId,
           estado: 'ACTIVO',
         },
       });
 
-      if (productos.length !== dto.items.length) {
+      if (productos.length !== items.length) {
         throw new BadRequestException(
           'Algunos productos no existen o no están activos',
         );
       }
 
       // Calcular nuevo precio regular
-      const precioRegular = dto.items.reduce((sum, item) => {
+      const precioRegular = items.reduce((sum, item) => {
         const producto = productos.find((p) => p.id === item.productoId);
         if (!producto) return sum;
         return sum + Number(producto.precioUnitario) * item.cantidad;
@@ -230,7 +252,7 @@ export class CombosService {
       });
 
       updateData.items = {
-        create: dto.items.map((item) => ({
+        create: items.map((item) => ({
           productoId: item.productoId,
           cantidad: item.cantidad,
         })),
