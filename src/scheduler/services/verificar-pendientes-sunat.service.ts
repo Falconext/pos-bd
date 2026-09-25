@@ -17,6 +17,14 @@ import { NotificacionesService } from '../../notificaciones/notificaciones.servi
 
 const MAX_RETRIES_ANTES_NOTIFICAR = 5;
 const PENDIENTE_STUCK_HORAS = 2;
+/**
+ * A partir de esta antigüedad, un comprobante PENDIENTE deja de reenviarse a
+ * ciegas y primero se le pregunta a SUNAT (Consulta de Validez) si ya lo tiene
+ * registrado. Una hora es holgado: SUNAT responde los tipos síncronos en
+ * segundos, así que pasada una hora sin CDR lo más probable es que la respuesta
+ * se haya perdido, no que siga procesándose.
+ */
+const PENDIENTE_AUTOVERIFICAR_HORAS = 1;
 
 @Injectable()
 export class VerificarPendientesSunatService {
@@ -136,6 +144,14 @@ export class VerificarPendientesSunatService {
           }
 
           if (TIPOS_SINCRONOS.includes(comprobante.tipoDoc)) {
+            // Para estos tipos QPSE no permite reconsultar el CDR, así que el
+            // único reintento posible es reenviar el comprobante completo. Pero
+            // reenviar uno que SUNAT YA aceptó solo produce un 1033 y lo manda a
+            // conciliación manual, y si QPSE sigue devolviendo una respuesta
+            // ambigua el comprobante se queda "En procesamiento" para siempre.
+            // Por eso, pasado un rato, primero se le pregunta a SUNAT.
+            if (await this.resolverPorConsultaValidez(comprobante)) continue;
+
             this.logger.log(
               `[Job 1] Boleta/sincrono ${comprobante.id} (tipoDoc ${comprobante.tipoDoc}) → re-enviando`,
             );
@@ -183,6 +199,9 @@ export class VerificarPendientesSunatService {
                 throw err;
               }
             }
+            // Si sigue PENDIENTE tras el reenvío, espaciar el próximo intento.
+            // Sin esto el job lo reenviaba cada 5 minutos indefinidamente.
+            await this.espaciarSiSiguePendiente(comprobante);
             continue;
           }
 
@@ -478,6 +497,245 @@ export class VerificarPendientesSunatService {
     } catch (err: any) {
       this.logger.error(
         `Error en notificaciones de pendientes estancados: ${err.message}`,
+      );
+    }
+  }
+
+  /**
+   * Le pregunta a SUNAT (API "Consulta de Validez de CPE") si un comprobante que
+   * lleva rato en PENDIENTE ya está registrado, y resuelve su estado con esa
+   * respuesta. Es la única salida real del limbo "En procesamiento": el CDR pudo
+   * perderse en el camino y el proveedor no siempre puede devolverlo.
+   *
+   * Devuelve `true` cuando el comprobante quedó resuelto (no hay que reenviarlo)
+   * y `false` cuando hay que seguir con el flujo de reintento de siempre —
+   * incluido el caso de que falten las credenciales de API SUNAT de la empresa,
+   * para que esta mejora nunca empeore el comportamiento actual.
+   */
+  private async resolverPorConsultaValidez(comprobante: any): Promise<boolean> {
+    try {
+      const horas =
+        (Date.now() - new Date(comprobante.creadoEn).getTime()) /
+        (60 * 60 * 1000);
+      if (horas < PENDIENTE_AUTOVERIFICAR_HORAS) return false;
+
+      const { result } = await this.comprobanteService.consultarValidezSunat(
+        comprobante.id,
+      );
+      // Sin credenciales de API SUNAT, o consulta caída: se sigue como antes.
+      if (!result) return false;
+
+      const ref = `${comprobante.serie ?? ''}-${String(comprobante.correlativo ?? '').padStart(8, '0')}`;
+
+      if (result.estado === 'ACEPTADO') {
+        // Guard atómico: solo escribir si sigue PENDIENTE, para no pisar un
+        // estado que otro proceso ya resolvió mientras consultábamos.
+        const res = await this.prisma.comprobante.updateMany({
+          where: { id: comprobante.id, estadoEnvioSunat: 'PENDIENTE' },
+          data: {
+            estadoEnvioSunat: 'EMITIDO' as any,
+            sunatNextRetryAt: null,
+            sunatErrorMsg:
+              'Verificado en SUNAT (Consulta de Validez): comprobante ACEPTADO. CDR no recuperable vía el proveedor.',
+          },
+        });
+        if (res.count === 0) return true;
+
+        this.logger.log(
+          `[Job 1] ${ref} confirmado ACEPTADO por Consulta de Validez SUNAT → EMITIDO`,
+        );
+        // Aceptado por consulta, no por CDR: hay que disparar a mano los efectos
+        // que `execute()` aplica al recibir el CDR (comisión del vendedor y, si
+        // es nota de crédito, la anulación del documento afectado).
+        await this.enviarSunat.aplicarEfectosDeAceptacion(comprobante.id);
+        await this.enviarSunat
+          .generarYSubirPDF(comprobante.id)
+          .catch((e: any) =>
+            this.logger.warn(`No se pudo generar PDF de ${ref}: ${e?.message}`),
+          );
+        await this.notificacionesService
+          .notificarFallaSunat({
+            empresaId: comprobante.empresaId,
+            tipo: 'INFO',
+            titulo: 'Comprobante confirmado en SUNAT',
+            mensaje: `${ref} figuraba "En procesamiento" pero SUNAT confirma que está ACEPTADO. Ya quedó registrado como aceptado.`,
+            meta: {
+              comprobanteId: comprobante.id,
+              serie: comprobante.serie,
+              correlativo: comprobante.correlativo,
+              tipoDoc: comprobante.tipoDoc,
+            },
+          })
+          .catch(() => {
+            /* no bloquear el flujo */
+          });
+        return true;
+      }
+
+      if (result.estado === 'ANULADO') {
+        // SUNAT lo tiene dado de baja. Reenviarlo no tiene sentido.
+        await this.prisma.comprobante.updateMany({
+          where: { id: comprobante.id, estadoEnvioSunat: 'PENDIENTE' },
+          data: {
+            estadoEnvioSunat: 'ANULADO' as any,
+            sunatNextRetryAt: null,
+            sunatErrorMsg:
+              'Verificado en SUNAT (Consulta de Validez): comprobante ANULADO / dado de baja.',
+          },
+        });
+        this.logger.log(`[Job 1] ${ref} figura ANULADO en SUNAT → ANULADO`);
+        return true;
+      }
+
+      // NO_EXISTE: SUNAT no lo tiene. Reenviar es seguro (el número sigue libre).
+      // DESCONOCIDO: respuesta no concluyente, mejor seguir con el flujo normal.
+      return false;
+    } catch (err: any) {
+      this.logger.warn(
+        `[Job 1] Consulta de Validez falló para ${comprobante.id}: ${err?.message}`,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Espacia el siguiente reintento de un comprobante que sigue PENDIENTE después
+   * de un reenvío. Sin esto, los tipos síncronos se reenviaban cada 5 minutos de
+   * forma indefinida contra un proveedor que ya demostró no tener respuesta.
+   * El guard por estado lo hace inocuo si el reenvío sí lo resolvió.
+   *
+   * El escalón de espera se deriva de la ANTIGÜEDAD del comprobante y no de
+   * `sunatRetriesCount` a propósito: ese contador también decide cuándo un
+   * comprobante se da por RECHAZADO tras agotar reintentos, y engordarlo aquí
+   * adelantaría ese corte para errores que no tienen nada que ver.
+   */
+  private async espaciarSiSiguePendiente(comprobante: any): Promise<void> {
+    try {
+      const horas =
+        (Date.now() - new Date(comprobante.creadoEn).getTime()) /
+        (60 * 60 * 1000);
+      // Umbrales en horas → escalón de backoff: 5m, 15m, 1h, 4h, 12h, 24h.
+      const escalon = [1, 4, 12, 24, 72].filter((h) => horas >= h).length;
+      await this.prisma.comprobante.updateMany({
+        where: { id: comprobante.id, estadoEnvioSunat: 'PENDIENTE' },
+        data: {
+          sunatLastRetryAt: new Date(),
+          sunatNextRetryAt: this.enviarSunat.calculateNetworkRetry(escalon),
+        },
+      });
+    } catch (err: any) {
+      this.logger.warn(
+        `No se pudo espaciar el reintento de ${comprobante.id}: ${err?.message}`,
+      );
+    }
+  }
+
+  /**
+   * Job 5: avisar de anulaciones que el sistema dio por hechas pero SUNAT no.
+   *
+   * Al emitir una nota de crédito de anulación (motivo 01/06) el comprobante
+   * afectado se marca ANULADO de inmediato, para que deje de contar en caja,
+   * reportes y cobranzas. Si esa nota termina RECHAZADA por SUNAT, la boleta
+   * queda anulada en el sistema pero VIGENTE ante SUNAT: una discrepancia que
+   * nadie ve hasta que llega una fiscalización. Esto la hace visible.
+   */
+  async notificarAnulacionesNoConfirmadas(): Promise<void> {
+    try {
+      // Acotado a los últimos 90 días: el histórico antiguo ya no es accionable
+      // y avisar de él solo sería ruido en la campana de notificaciones.
+      const desde = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+      const notasFallidas = await this.prisma.comprobante.findMany({
+        where: {
+          tipoDoc: '07',
+          estadoEnvioSunat: { in: ['RECHAZADO', 'FALLIDO_ENVIO'] as any },
+          numDocAfectado: { not: null },
+          creadoEn: { gte: desde },
+          motivo: { codigo: { in: ['01', '06'] } },
+        },
+        select: {
+          id: true,
+          empresaId: true,
+          serie: true,
+          correlativo: true,
+          tipoDoc: true,
+          numDocAfectado: true,
+          sunatErrorMsg: true,
+        },
+        take: 50,
+        orderBy: { id: 'desc' },
+      });
+
+      if (notasFallidas.length === 0) return;
+
+      // Solo hay discrepancia si el documento afectado quedó efectivamente
+      // ANULADO en el sistema. Si no lo está, no hay nada que avisar.
+      const series = new Set<string>();
+      for (const nota of notasFallidas) {
+        const serie = String(nota.numDocAfectado).split('-')[0];
+        if (serie) series.add(serie.toUpperCase());
+      }
+      const afectados = await this.prisma.comprobante.findMany({
+        where: {
+          tipoDoc: { in: ['01', '03'] },
+          estadoEnvioSunat: 'ANULADO' as any,
+          empresaId: {
+            in: [...new Set(notasFallidas.map((n) => n.empresaId))],
+          },
+          serie: { in: [...series] },
+        },
+        select: { serie: true, correlativo: true, empresaId: true },
+      });
+      const anulados = new Set<string>();
+      for (const a of afectados) {
+        for (const corr of [
+          String(a.correlativo),
+          String(a.correlativo).padStart(8, '0'),
+        ]) {
+          anulados.add(`${a.empresaId}|${a.serie}-${corr}`.toUpperCase());
+        }
+      }
+
+      const discrepantes = notasFallidas.filter((n) =>
+        anulados.has(
+          `${n.empresaId}|${String(n.numDocAfectado)}`.toUpperCase(),
+        ),
+      );
+
+      if (discrepantes.length > 0) {
+        this.logger.log(
+          `[Job 5] ${discrepantes.length} anulaciones marcadas en el sistema que SUNAT no aceptó`,
+        );
+      }
+
+      for (const nota of discrepantes) {
+        const ref = `${nota.serie ?? ''}-${String(nota.correlativo ?? '').padStart(8, '0')}`;
+        const detalle = String(nota.sunatErrorMsg || '')
+          .replace(/^\[(DATOS|RED|CONFIG)\]\s*(\(intento \d+\/\d+\):\s*)?/i, '')
+          .trim();
+        await this.notificacionesService
+          .notificarFallaSunat({
+            empresaId: nota.empresaId,
+            tipo: 'CRITICAL',
+            titulo: 'Anulación no confirmada por SUNAT',
+            mensaje:
+              `${nota.numDocAfectado} figura ANULADO en el sistema, pero la nota de crédito ${ref} que lo anula ` +
+              `no fue aceptada por SUNAT${detalle ? `: ${detalle}` : ''}. Ante SUNAT el documento sigue vigente: ` +
+              `corrige la nota y reemítela desde Comprobantes → Reemitir a SUNAT.`,
+            meta: {
+              comprobanteId: nota.id,
+              serie: nota.serie,
+              correlativo: nota.correlativo,
+              tipoDoc: nota.tipoDoc,
+              errorMsg: detalle || undefined,
+            },
+          })
+          .catch(() => {
+            /* no bloquear el flujo */
+          });
+      }
+    } catch (err: any) {
+      this.logger.error(
+        `Error notificando anulaciones no confirmadas: ${err.message}`,
       );
     }
   }

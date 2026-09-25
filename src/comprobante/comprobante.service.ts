@@ -1,6 +1,9 @@
 import { num, round3 } from '../common/utils/stock';
 import { excluirNotasCreditoDeAnulacion } from '../common/utils/notas-credito.util';
-import { SunatValidezClient } from '../common/utils/sunat-validez.client';
+import {
+  SunatValidezClient,
+  SunatValidezResult,
+} from '../common/utils/sunat-validez.client';
 import { resolverCuentaVinculada } from '../common/utils/cuenta-vinculada.util';
 import {
   BadRequestException,
@@ -586,6 +589,74 @@ export class ComprobanteService {
         }
       };
 
+      // Anulaciones aún no confirmadas por SUNAT.
+      //
+      // Una factura/boleta se marca ANULADO en cuanto se emite su nota de crédito
+      // de anulación (motivo 01/06), sin esperar el CDR: así deja de contar en
+      // caja, reportes y cobranzas de inmediato. Pero mientras esa nota no sea
+      // aceptada, la anulación NO existe ante SUNAT, y la pantalla mostraba
+      // "Anulado" a secas, afirmando algo que todavía no es cierto.
+      const anulacionEnTramite = new Set<number>();
+      // Distingue "SUNAT todavía no responde" de "el envío falló y nadie lo está
+      // procesando": la primera se resuelve sola, la segunda necesita a alguien.
+      const anulacionNoConfirmada = new Set<number>();
+      try {
+        const anulados = (rawItems as any[]).filter(
+          (it) =>
+            String(it.estadoEnvioSunat) === 'ANULADO' &&
+            ['01', '03'].includes(it.tipoDoc),
+        );
+        if (anulados.length > 0) {
+          // `numDocAfectado` se guarda tal cual lo manda el emisor, con el
+          // correlativo con o sin ceros a la izquierda: se buscan ambas formas.
+          const refs = new Map<string, number>();
+          for (const it of anulados) {
+            for (const corr of [
+              String(it.correlativo),
+              String(it.correlativo).padStart(8, '0'),
+            ]) {
+              refs.set(`${it.serie}-${corr}`.toUpperCase(), it.id);
+            }
+          }
+          const notasSinAceptar = await this.prisma.comprobante.findMany({
+            where: {
+              empresaId,
+              tipoDoc: '07',
+              numDocAfectado: { in: [...refs.keys()] },
+              estadoEnvioSunat: {
+                in: [
+                  EstadoSunat.PENDIENTE,
+                  EstadoSunat.FALLIDO_ENVIO,
+                  EstadoSunat.RECHAZADO,
+                  EstadoSunat.PENDIENTE_CONCILIACION,
+                ],
+              },
+              motivo: { codigo: { in: ['01', '06'] } },
+            },
+            select: { numDocAfectado: true, estadoEnvioSunat: true },
+          });
+          for (const nota of notasSinAceptar) {
+            const id = refs.get(String(nota.numDocAfectado).toUpperCase());
+            if (id == null) continue;
+            anulacionEnTramite.add(id);
+            // RECHAZADO / FALLIDO_ENVIO: la nota ni siquiera está en manos de
+            // SUNAT. Llamar a eso "en trámite" sugiere que algo avanza cuando
+            // en realidad está detenido esperando que alguien intervenga.
+            if (
+              nota.estadoEnvioSunat === EstadoSunat.RECHAZADO ||
+              nota.estadoEnvioSunat === EstadoSunat.FALLIDO_ENVIO
+            ) {
+              anulacionNoConfirmada.add(id);
+            }
+          }
+        }
+      } catch (e: any) {
+        // Es solo un matiz de presentación: si falla, la lista sigue igual.
+        this.logger.warn(
+          `No se pudo calcular anulaciones en trámite: ${e?.message}`,
+        );
+      }
+
       // Mapear etiqueta de comprobante (estadoPago/saldo ya vienen de DB si existen)
       const mapped = await Promise.all(
         rawItems.map(async (it) => {
@@ -612,7 +683,18 @@ export class ComprobanteService {
               };
             }),
           );
-          return { ...it, detalles, comprobante, convertidoA } as any;
+          return {
+            ...it,
+            detalles,
+            comprobante,
+            convertidoA,
+            anulacionEnTramite: anulacionEnTramite.has(it.id),
+            anulacionEstado: anulacionNoConfirmada.has(it.id)
+              ? 'NO_CONFIRMADA'
+              : anulacionEnTramite.has(it.id)
+                ? 'EN_TRAMITE'
+                : null,
+          } as any;
         }),
       );
 
@@ -1796,8 +1878,36 @@ export class ComprobanteService {
               where: { empresaId, tipoDoc, activo: true },
               orderBy: { id: 'asc' },
             });
-      if (configuredSerie?.serie) {
+      // Una serie configurada solo puede pisar la calculada si es COHERENTE con el
+      // documento afectado: las notas sobre boleta van en serie B* y las notas
+      // sobre factura en F*.
+      //
+      // La búsqueda de arriba, al no encontrar la serie específica ("07:03"),
+      // cae a la genérica del tipo ("07"). Si la empresa tenía configurada una
+      // sola serie de notas —típicamente FCA1, creada para las notas de
+      // factura—, esa genérica pisaba la BCA1 recién calculada y la nota sobre
+      // una boleta salía numerada como nota sobre factura. SUNAT rechaza esa
+      // contradicción con el error 2116 y la anulación nunca ocurre.
+      const prefijoRequerido =
+        (tipoDoc === '07' || tipoDoc === '08') && tipDocAfectado
+          ? tipDocAfectado === '03'
+            ? 'B'
+            : 'F'
+          : null;
+      const serieConfigCoherente =
+        !prefijoRequerido ||
+        String(configuredSerie?.serie || '').startsWith(prefijoRequerido);
+
+      const serieConfigAplicada =
+        !!configuredSerie?.serie && serieConfigCoherente;
+      if (serieConfigAplicada && configuredSerie) {
         serie = configuredSerie.serie;
+      } else if (configuredSerie?.serie) {
+        console.warn(
+          `[obtenerSerieYCorrelativo] Serie configurada ${configuredSerie.serie} ignorada: ` +
+            `el documento afectado es de tipo ${tipDocAfectado} y exige una serie ${prefijoRequerido}*. ` +
+            `Se usa la serie calculada ${serie}.`,
+        );
       }
 
       console.log('[obtenerSerieYCorrelativo] Querying for serie:', serie);
@@ -1808,8 +1918,12 @@ export class ComprobanteService {
       });
       let correlativo = ultimo ? Number(ultimo.correlativo) + 1 : 1;
 
+      // El correlativo inicial configurado solo vale si su serie fue la que se
+      // usó. Arrastrarlo desde una serie descartada numeraría la serie nueva
+      // desde donde iba otra.
       if (
         !ultimo &&
+        serieConfigAplicada &&
         configuredSerie?.correlativo &&
         correlativo < configuredSerie.correlativo
       ) {
@@ -3543,11 +3657,26 @@ export class ComprobanteService {
    * Requiere que la empresa tenga cargadas las credenciales de API SUNAT
    * (sunatClientId / sunatClientSecret) generadas en el portal SOL.
    */
-  async verificarValidezSunat(id: number, empresaId: number) {
+  /**
+   * Núcleo compartido de la Consulta de Validez. Nunca lanza: devuelve el
+   * resultado de SUNAT, o `motivo` explicando por qué no se pudo consultar.
+   * El endpoint manual convierte `motivo` en un error explicativo; el scheduler
+   * solo necesita saber si obtuvo respuesta, y un fallo de consulta jamás debe
+   * tumbar el job.
+   */
+  async consultarValidezSunat(
+    id: number,
+    empresaId?: number,
+  ): Promise<{
+    comp: any | null;
+    result: SunatValidezResult | null;
+    motivo: string | null;
+  }> {
     const comp = await this.prisma.comprobante.findFirst({
-      where: { id, empresaId },
+      where: { id, ...(empresaId != null ? { empresaId } : {}) },
       select: {
         id: true,
+        sunatErrorMsg: true,
         tipoDoc: true,
         serie: true,
         correlativo: true,
@@ -3563,19 +3692,27 @@ export class ComprobanteService {
         },
       },
     });
-    if (!comp) throw new NotFoundException('Comprobante no encontrado');
+    if (!comp) {
+      return { comp: null, result: null, motivo: 'Comprobante no encontrado' };
+    }
     if (!['01', '03', '07', '08'].includes(comp.tipoDoc)) {
-      throw new BadRequestException(
-        'Solo se puede verificar en SUNAT Facturas, Boletas y Notas (01/03/07/08).',
-      );
+      return {
+        comp,
+        result: null,
+        motivo:
+          'Solo se puede verificar en SUNAT Facturas, Boletas y Notas (01/03/07/08).',
+      };
     }
     const clientId = comp.empresa?.sunatClientId?.trim();
     const clientSecret = comp.empresa?.sunatClientSecret?.trim();
     if (!clientId || !clientSecret) {
-      throw new BadRequestException(
-        'Faltan las credenciales de API SUNAT (Consulta de Validez). Configúralas en ' +
+      return {
+        comp,
+        result: null,
+        motivo:
+          'Faltan las credenciales de API SUNAT (Consulta de Validez). Configúralas en ' +
           'Empresa → Facturación (client_id / client_secret generados en tu portal SOL).',
-      );
+      };
     }
 
     // Fecha de emisión en dd/mm/aaaa (formato que exige SUNAT).
@@ -3586,9 +3723,8 @@ export class ComprobanteService {
     const fechaEmision = `${dd}/${mm}/${yyyy}`;
 
     const client = new SunatValidezClient();
-    let result;
     try {
-      result = await client.verificar({
+      const result = await client.verificar({
         clientId,
         clientSecret,
         rucEmisor: comp.empresa!.ruc,
@@ -3598,51 +3734,108 @@ export class ComprobanteService {
         fechaEmision,
         monto: Number(comp.mtoImpVenta ?? 0).toFixed(2),
       });
+      return { comp, result, motivo: null };
     } catch (e: any) {
-      throw new BadRequestException(
-        `No se pudo consultar SUNAT: ${e?.message || 'error desconocido'}`,
-      );
+      return {
+        comp,
+        result: null,
+        motivo: `No se pudo consultar SUNAT: ${e?.message || 'error desconocido'}`,
+      };
     }
+  }
+
+  /**
+   * Verifica en SUNAT si un comprobante fue ACEPTADO y concilia su estado con lo
+   * que SUNAT diga. No reenvía nada ni toca stock.
+   */
+  async verificarValidezSunat(id: number, empresaId: number) {
+    const { comp, result, motivo } = await this.consultarValidezSunat(
+      id,
+      empresaId,
+    );
+    if (!comp) throw new NotFoundException('Comprobante no encontrado');
+    if (!result) throw new BadRequestException(motivo!);
+
+    // Estados de los que SÍ se puede salir con lo que diga SUNAT. Un comprobante
+    // ya EMITIDO o ANULADO no se toca: su estado es más específico.
+    const estadosConciliables = [
+      'PENDIENTE_CONCILIACION',
+      'PENDIENTE',
+      'FALLIDO_ENVIO',
+    ];
+    const conciliable = estadosConciliables.includes(
+      String(comp.estadoEnvioSunat),
+    );
 
     let conciliado = false;
-    if (result.estado === 'ACEPTADO') {
-      const estadosConciliables = [
-        'PENDIENTE_CONCILIACION',
-        'PENDIENTE',
-        'FALLIDO_ENVIO',
-      ];
-      if (estadosConciliables.includes(String(comp.estadoEnvioSunat))) {
-        await this.prisma.comprobante.update({
-          where: { id: comp.id },
-          data: {
-            estadoEnvioSunat: 'EMITIDO' as any,
-            sunatNextRetryAt: null,
-            sunatErrorMsg:
-              'Verificado en SUNAT (Consulta de Validez): comprobante ACEPTADO.',
-          },
-        });
-        conciliado = true;
-
-        // Mismo caso que la conciliación manual: SUNAT confirma que el
-        // comprobante está ACEPTADO, así que aquí también hay que generar la
-        // comisión del vendedor. Las tres rutas conciliables
-        // (PENDIENTE_CONCILIACION, PENDIENTE, FALLIDO_ENVIO) nunca pasaron por
-        // el punto de aceptación de `EnviarSunatService.execute`, de modo que
-        // sin esto la venta quedaba EMITIDA y el vendedor no cobraba nunca.
-        const conDetalles = await this.prisma.comprobante.findUnique({
-          where: { id: comp.id },
-          include: { detalles: true },
-        });
-        if (conDetalles) {
-          await this.enviarSunatService.registrarComisionesAlAceptar(conDetalles);
-        }
-      }
+    let estadoResultante = String(comp.estadoEnvioSunat);
+    if (result.estado === 'ACEPTADO' && conciliable) {
+      await this.prisma.comprobante.update({
+        where: { id: comp.id },
+        data: {
+          estadoEnvioSunat: 'EMITIDO' as any,
+          sunatNextRetryAt: null,
+          sunatErrorMsg:
+            'Verificado en SUNAT (Consulta de Validez): comprobante ACEPTADO.',
+        },
+      });
+      conciliado = true;
+      estadoResultante = 'EMITIDO';
+      // Pasa a aceptado por esta vía, no por un CDR: hay que disparar a mano los
+      // efectos que `execute()` aplica al recibirlo — comisión del vendedor y,
+      // en una nota de crédito, la anulación del documento afectado.
+      await this.enviarSunatService.aplicarEfectosDeAceptacion(comp.id);
+    } else if (
+      result.estado === 'NO_EXISTE' &&
+      String(comp.estadoEnvioSunat) === 'PENDIENTE'
+    ) {
+      // SUNAT no lo tiene: el envío nunca llegó. Dejarlo "En procesamiento" no
+      // solo es falso, además lo deja sin ninguna acción posible — reemitir
+      // exige RECHAZADO o FALLIDO_ENVIO. Solo desde PENDIENTE: un
+      // PENDIENTE_CONCILIACION nace de un 1033 de la propia SUNAT, evidencia
+      // más específica que un NO_EXISTE por un monto o fecha que no casan.
+      const causaPrevia = String(comp.sunatErrorMsg || '').trim();
+      const yaVerificado = causaPrevia.startsWith('Verificado en SUNAT');
+      const veredicto =
+        'Verificado en SUNAT (Consulta de Validez): el comprobante NO figura como registrado. ' +
+        'El envío nunca llegó a SUNAT; se reintentará automáticamente y puede reemitirse a mano.';
+      await this.prisma.comprobante.update({
+        where: { id: comp.id },
+        data: {
+          estadoEnvioSunat: 'FALLIDO_ENVIO' as any,
+          // Media hora de margen antes del reintento automático: quien acaba de
+          // verificar a mano necesita poder descartarlo o reemitirlo sin que el
+          // scheduler lo devuelva a PENDIENTE en el ciclo siguiente.
+          sunatNextRetryAt: new Date(Date.now() + 30 * 60 * 1000),
+          // La causa original es lo que dice si reemitir sirve de algo, así que
+          // se conserva detrás del veredicto en vez de pisarla.
+          sunatErrorMsg:
+            causaPrevia && !yaVerificado
+              ? `${veredicto} Último error del envío: ${causaPrevia}`
+              : causaPrevia || veredicto,
+        },
+      });
+      estadoResultante = 'FALLIDO_ENVIO';
+    } else if (result.estado === 'ANULADO' && conciliable) {
+      // SUNAT lo tiene dado de baja. Dejarlo PENDIENTE haría que el scheduler lo
+      // reenviara indefinidamente contra un número que ya no existe.
+      await this.prisma.comprobante.update({
+        where: { id: comp.id },
+        data: {
+          estadoEnvioSunat: 'ANULADO' as any,
+          sunatNextRetryAt: null,
+          sunatErrorMsg:
+            'Verificado en SUNAT (Consulta de Validez): comprobante ANULADO / dado de baja.',
+        },
+      });
+      estadoResultante = 'ANULADO';
     }
 
     return {
       estado: result.estado, // ACEPTADO | NO_EXISTE | ANULADO | DESCONOCIDO
       estadoCp: result.estadoCp,
       conciliado, // true si se marcó EMITIDO en este llamado
+      estadoEnvioSunat: estadoResultante,
       serie: comp.serie,
       correlativo: comp.correlativo,
       observaciones: result.observaciones,
@@ -3829,10 +4022,26 @@ export class ComprobanteService {
       comp.estadoEnvioSunat === 'PENDIENTE'
     ) {
       throw new BadRequestException(
-        'Este comprobante ya fue enviado a SUNAT y podría estar aceptado. ' +
-          'Reenvíalo para confirmar su estado (Emitido o Rechazado) antes de intentar eliminarlo.',
+        'Este comprobante ya fue enviado a SUNAT y podría estar aceptado; borrarlo ahora ' +
+          'dejaría un documento registrado en SUNAT y sin rastro aquí. ' +
+          'Usa primero "Verificar en SUNAT" en este mismo menú: consulta el estado real y, ' +
+          'si SUNAT no lo tiene, lo deja como envío fallido y recién ahí se puede eliminar.',
       );
     }
+
+    // 0) Si es una nota de crédito de anulación, devolver a la vida el documento
+    //    que anuló. Se marcó ANULADO al crear la nota, sin esperar a SUNAT; si
+    //    la nota se descarta, esa anulación nunca llegó a existir y dejar la
+    //    boleta anulada crearía una discrepancia silenciosa con SUNAT.
+    const afectadoRevivido =
+      await this.revertirAnulacionPorNotaDescartada(comp);
+
+    // 0b) Deshacer la devolución de stock que hizo la nota de crédito. Borrar
+    //     los movimientos —lo que hace el paso 2— NO revierte el stock:
+    //     `registrarMovimiento` ya escribió el saldo en ProductoStock. Sin esto
+    //     el inventario queda inflado y, al reemitir la nota corregida, el
+    //     stock se devolvería dos veces.
+    await this.deshacerDevolucionDeStockDeNota(comp);
 
     // 1) Revertir stock primero (antes de borrar los detalles).
     //    Si el comprobante ya estaba ANULADO, el stock ya se revirtió al anular
@@ -3877,9 +4086,131 @@ export class ComprobanteService {
     });
 
     return {
-      message: 'Comprobante eliminado y stock revertido',
+      message: afectadoRevivido
+        ? `Comprobante eliminado y stock revertido. ${afectadoRevivido} vuelve a estar vigente y quedó como PENDIENTE DE PAGO: sus pagos se borraron al emitir la nota y hay que volver a registrarlos.`
+        : 'Comprobante eliminado y stock revertido',
       eliminado: true,
+      afectadoRevivido: afectadoRevivido ?? null,
     };
+  }
+
+  /**
+   * Compensa con SALIDAs los INGRESOs de stock que registró una nota de crédito,
+   * cuando esa nota se descarta. Aplica a cualquier motivo que haya movido
+   * inventario (01, 06, 07).
+   *
+   * Limitación conocida: la compensación es a nivel de producto y sede. Si el
+   * ingreso original se imputó a lotes concretos, el saldo por lote puede
+   * requerir un ajuste manual.
+   */
+  private async deshacerDevolucionDeStockDeNota(nota: any): Promise<void> {
+    try {
+      if (nota?.tipoDoc !== '07') return;
+      const ingresos = await this.prisma.movimientoKardex.findMany({
+        where: {
+          comprobanteId: nota.id,
+          empresaId: nota.empresaId,
+          tipoMovimiento: 'INGRESO',
+        },
+        select: {
+          productoId: true,
+          cantidad: true,
+          sedeId: true,
+          costoUnitario: true,
+        },
+      });
+      if (ingresos.length === 0) return;
+
+      for (const mov of ingresos) {
+        if (mov.sedeId == null) continue;
+        const cantidad = Number(mov.cantidad);
+        if (!(cantidad > 0)) continue;
+        await this.kardexService.registrarMovimiento({
+          productoId: mov.productoId,
+          empresaId: nota.empresaId,
+          tipoMovimiento: 'SALIDA',
+          concepto: `Descarte de nota de crédito ${nota.serie}-${nota.correlativo}: se deshace la devolución de stock`,
+          cantidad,
+          comprobanteId: nota.id,
+          costoUnitario: Number(mov.costoUnitario) || undefined,
+          sedeId: mov.sedeId,
+        });
+      }
+      this.logger.log(
+        `[descartarComprobante] Deshecha la devolución de stock de ${nota.serie}-${nota.correlativo} (${ingresos.length} ítems)`,
+      );
+    } catch (err: any) {
+      this.logger.error(
+        `[deshacerDevolucionDeStockDeNota] nota ${nota?.id}: ${err?.message}. Revisa el stock manualmente.`,
+      );
+    }
+  }
+
+  /**
+   * Devuelve a EMITIDO el documento que una nota de crédito de anulación
+   * (motivo 01/06) había marcado ANULADO, cuando esa nota se descarta.
+   *
+   * Devuelve "SERIE-CORRELATIVO" del documento revivido, o null si no aplica.
+   */
+  private async revertirAnulacionPorNotaDescartada(
+    nota: any,
+  ): Promise<string | null> {
+    try {
+      if (nota?.tipoDoc !== '07' || !nota?.numDocAfectado || !nota?.motivoId) {
+        return null;
+      }
+      const motivo = await this.prisma.motivoNota.findUnique({
+        where: { id: nota.motivoId },
+        select: { codigo: true },
+      });
+      // Solo 01 y 06 anulan el documento; el resto nunca lo tocó.
+      if (!motivo || !['01', '06'].includes(motivo.codigo)) return null;
+
+      const [serie, corr] = String(nota.numDocAfectado).split('-');
+      if (!serie || !corr) return null;
+      const correlativo = Number(corr);
+      if (Number.isNaN(correlativo)) return null;
+
+      const afectado = await this.prisma.comprobante.findFirst({
+        where: {
+          empresaId: nota.empresaId,
+          tipoDoc: { in: ['01', '03'] },
+          serie,
+          correlativo,
+          estadoEnvioSunat: EstadoSunat.ANULADO,
+        },
+        select: { id: true, serie: true, correlativo: true, mtoImpVenta: true },
+      });
+      if (!afectado) return null;
+
+      await this.prisma.comprobante.update({
+        where: { id: afectado.id },
+        data: {
+          estadoEnvioSunat: EstadoSunat.EMITIDO,
+          // Los pagos se borraron al crear la nota y no se pueden reconstruir.
+          // Vuelve como pendiente de cobro —visible en cuentas por cobrar— en
+          // vez de quedar en cero, que lo escondería de quien debe conciliarlo.
+          estadoPago: 'PENDIENTE_PAGO' as any,
+          saldo: afectado.mtoImpVenta,
+        },
+      });
+
+      const conDetalles = await this.prisma.comprobante.findUnique({
+        where: { id: afectado.id },
+        include: { detalles: true },
+      });
+      if (conDetalles) {
+        await this.enviarSunatService.registrarComisionesAlAceptar(conDetalles);
+      }
+
+      this.logger.log(
+        `[descartarComprobante] ${afectado.serie}-${afectado.correlativo} vuelve a EMITIDO: su nota de anulación fue descartada`,
+      );
+      return `${afectado.serie}-${String(afectado.correlativo).padStart(8, '0')}`;
+    } catch (err: any) {
+      this.logger.error(`[revertirAnulacionPorNotaDescartada] ${err?.message}`);
+      return null;
+    }
   }
 
   async crearNotaCredito(
@@ -4259,11 +4590,32 @@ export class ComprobanteService {
     }
 
     // 9) Serie y correlativo
+    //
+    // Va `tipDocAfectadoFinal`, el tipo YA corregido a partir de la serie del
+    // documento afectado — no el que mandó el formulario. Si el emisor elegía
+    // mal el tipo (p. ej. "Factura" sobre una boleta), la autocorrección
+    // arreglaba lo que se guarda en BD y el DocumentTypeCode del XML, pero la
+    // serie se seguía calculando con el valor equivocado: salía FCA1 (serie de
+    // nota sobre factura) con DocumentTypeCode 03 (boleta). SUNAT ve esa
+    // contradicción y rechaza con el error 2116, y la nota nunca anula nada.
     const { serie, correlativo } = await this.obtenerSerieYCorrelativo(
       '07',
-      tipDocAfectado,
+      tipDocAfectadoFinal,
       empresaId,
     );
+
+    // Red de seguridad: una nota sobre boleta va en serie B*, y sobre factura en
+    // F*. Si alguna vez vuelven a divergir, es preferible fallar acá —antes de
+    // consumir un correlativo y de marcar el documento como anulado— que emitir
+    // algo que SUNAT va a rechazar y dejar la anulación a medio camino.
+    const prefijoSerieEsperado = tipDocAfectadoFinal === '03' ? 'B' : 'F';
+    if (!serie.startsWith(prefijoSerieEsperado)) {
+      throw new BadRequestException(
+        `Inconsistencia al numerar la nota de crédito: el documento afectado ${numDocAfectado} ` +
+          `es de tipo ${tipDocAfectadoFinal}, que corresponde a una serie ${prefijoSerieEsperado}*, ` +
+          `pero se asignó la serie ${serie}. No se emitió nada.`,
+      );
+    }
 
     const fecha = new Date(fechaEmision);
 

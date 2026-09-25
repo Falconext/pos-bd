@@ -157,6 +157,26 @@ export class SchedulerService {
     }
   }
 
+  /**
+   * Job 5: avisar de anulaciones que el sistema dio por hechas pero SUNAT no
+   * aceptó (nota de crédito 01/06 RECHAZADA con su documento ya marcado
+   * ANULADO). Cada hora; la notificación se deduplica por comprobante.
+   */
+  @Cron('30 * * * *', {
+    name: 'notificar-anulaciones-no-confirmadas',
+    timeZone: 'America/Lima',
+  })
+  async notificarAnulacionesNoConfirmadas(): Promise<void> {
+    if (!this.sunatJobsEnabled()) return;
+    try {
+      await this.verificarSunat.notificarAnulacionesNoConfirmadas();
+    } catch (error: any) {
+      this.logger.error(
+        `[Job 5] Error al notificar anulaciones no confirmadas: ${error?.message}`,
+      );
+    }
+  }
+
   // Verificar suscripciones todos los días a las 9 AM
   @Cron('0 9 * * *', {
     name: 'verificar-suscripciones',
