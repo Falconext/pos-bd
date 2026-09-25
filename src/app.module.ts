@@ -19,6 +19,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { ContabilidadModule } from './contabilidad/contabilidad.module';
 import { SuscripcionModule } from './suscripcion/suscripcion.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
+import { NiubizModule } from './niubiz/niubiz.module';
 import { PagoModule } from './pago/pago.module';
 import { CajaModule } from './caja/caja.module';
 import { NotificacionesModule } from './notificaciones/notificaciones.module';
@@ -83,6 +84,7 @@ import { MercadoPagoModule } from './mercadopago/mercadopago.module';
     ContabilidadModule,
     SuscripcionModule,
     SchedulerModule,
+    NiubizModule,
     NotificacionesModule,
     WhatsAppModule,
     S3Module,

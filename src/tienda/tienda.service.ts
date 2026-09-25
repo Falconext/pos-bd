@@ -17,6 +17,7 @@ import { DisenoRubroService } from '../diseno-rubro/diseno-rubro.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { MercadoPagoService } from '../mercadopago/mercadopago.service';
+import { NiubizService } from '../niubiz/niubiz.service';
 import { descifrarSecreto } from '../common/utils/secreto.util';
 import {
   esRubroComputo,
@@ -189,6 +190,7 @@ export class TiendaService {
     private readonly whatsapp: WhatsAppService,
     private readonly notificaciones: NotificacionesService,
     private readonly mercadoPago: MercadoPagoService,
+    private readonly niubiz: NiubizService,
   ) {}
 
   private parseImagenesExtra(value: unknown): string[] {
@@ -2237,6 +2239,9 @@ export class TiendaService {
       aceptaTarjeta,
       culqiPublicKey: aceptaTarjeta ? culqiPublicKey : null,
       culqiBackendReady: Boolean(culqiSecretKey),
+      // Niubiz: la tienda solo lo ofrece si el comerciante configuró SU afiliación.
+      aceptaNiubiz: Boolean(empresa.niubizActivo && empresa.niubizMerchantId),
+      niubizMerchantId: empresa.niubizActivo ? empresa.niubizMerchantId : null,
       aceptaMercadoPago:
         Boolean(empresa.mpConectado) &&
         this.mercadoPago.habilitadaParaEmpresa(empresa.id),
@@ -2429,6 +2434,19 @@ export class TiendaService {
           'No se pudo identificar la empresa para cobro con tarjeta',
         );
       }
+      // Dos pasarelas posibles para la misma opción "tarjeta": la tienda usa la
+      // que el comerciante tenga configurada. Niubiz manda su transactionToken;
+      // Culqi, su token de tarjeta.
+      const niubizToken = (dto.niubizTransactionToken || '').trim();
+      if (niubizToken) {
+        const cobro = await this.niubiz.autorizar({
+          empresaId: empresa.id,
+          transactionToken: niubizToken,
+          purchaseNumber: codigoSeguimiento.replace(/\D/g, '').slice(-12) || String(Date.now()).slice(-12),
+          montoSoles: total,
+        });
+        referenciaTarjeta = `NIUBIZ ${cobro.transactionId ?? ''} ${cobro.descripcion}`.trim();
+      } else {
       const culqiToken = (dto.culqiToken || '').trim();
       if (!culqiToken) {
         throw new BadRequestException('Falta el token de pago con tarjeta');
@@ -2470,6 +2488,7 @@ export class TiendaService {
       });
 
       referenciaTarjeta = `culqi_charge:${charge.id}`;
+      }
     }
 
     // Crear pedido
@@ -2732,6 +2751,16 @@ export class TiendaService {
       throw new BadRequestException('Monto inválido para cobro con tarjeta');
     }
     return Math.round(montoSoles * 100);
+  }
+
+  /** Empresa dueña de la tienda pública, por su slug. */
+  async obtenerEmpresaIdPorSlug(slug: string): Promise<number> {
+    const empresa = await this.prisma.empresa.findFirst({
+      where: { slugTienda: slug },
+      select: { id: true },
+    });
+    if (!empresa) throw new BadRequestException('Tienda no encontrada');
+    return empresa.id;
   }
 
   private async crearCargoCulqi(params: {

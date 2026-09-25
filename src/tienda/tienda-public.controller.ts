@@ -1,8 +1,9 @@
-import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, Ip } from '@nestjs/common';
 import { TiendaService } from './tienda.service';
 import { CrearPedidoDto } from './dto/crear-pedido.dto';
 import { ModificadoresService } from '../modificadores/modificadores.service';
 import { MercadoPagoService } from '../mercadopago/mercadopago.service';
+import { NiubizService } from '../niubiz/niubiz.service';
 
 @Controller('public/store')
 export class TiendaPublicController {
@@ -10,6 +11,7 @@ export class TiendaPublicController {
     private readonly tiendaService: TiendaService,
     private readonly modificadoresService: ModificadoresService,
     private readonly mercadoPago: MercadoPagoService,
+    private readonly niubiz: NiubizService,
   ) {}
 
   @Get(':slug')
@@ -162,6 +164,24 @@ export class TiendaPublicController {
   }
 
   // ==================== PEDIDOS ====================
+
+  /**
+   * Abre la sesión de Niubiz para que el navegador pueda mostrar el formulario
+   * de tarjeta. Devuelve solo lo público: nunca la clave del comercio.
+   */
+  @Post(':slug/niubiz/session')
+  async crearSesionNiubiz(
+    @Param('slug') slug: string,
+    @Body() body: { total: number },
+    @Ip() ip: string,
+  ) {
+    const empresaId = await this.tiendaService.obtenerEmpresaIdPorSlug(slug);
+    return this.niubiz.crearSesion({
+      empresaId,
+      montoSoles: Number(body?.total),
+      clientIp: ip,
+    });
+  }
 
   @Post(':slug/orders')
   async crearPedido(@Param('slug') slug: string, @Body() dto: CrearPedidoDto) {

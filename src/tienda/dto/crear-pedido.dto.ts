@@ -90,6 +90,11 @@ export class CrearPedidoDto {
   @IsOptional()
   culqiToken?: string;
 
+  /** Token que devuelve el formulario de Niubiz tras cargar la tarjeta. */
+  @IsString()
+  @IsOptional()
+  niubizTransactionToken?: string;
+
   @IsEmail()
   @IsOptional()
   culqiEmail?: string;
