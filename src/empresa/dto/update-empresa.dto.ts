@@ -370,6 +370,39 @@ export class UpdateEmpresaDto {
   @IsString()
   sunatClientSecret?: string;
 
+  // ── Pasarelas de pago de la tienda (credenciales del propio comerciante) ──
+  @IsOptional()
+  @IsString()
+  culqiPublicKey?: string;
+
+  @IsOptional()
+  @IsString()
+  culqiSecretKey?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  culqiActivo?: boolean;
+
+  @IsOptional()
+  @IsString()
+  niubizMerchantId?: string;
+
+  @IsOptional()
+  @IsString()
+  niubizUsuario?: string;
+
+  @IsOptional()
+  @IsString()
+  niubizPassword?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  niubizActivo?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  pasarelasUsaDemo?: boolean;
+
   // Credenciales de API del SIRE (se generan aparte; ver sire.client.ts).
   @IsOptional()
   @IsString()

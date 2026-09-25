@@ -17,6 +17,7 @@ import { DisenoRubroService } from '../diseno-rubro/diseno-rubro.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { MercadoPagoService } from '../mercadopago/mercadopago.service';
+import { descifrarSecreto } from '../common/utils/secreto.util';
 import {
   esRubroComputo,
   obtenerPlantillaComputo,
@@ -2170,6 +2171,12 @@ export class TiendaService {
         whatsappTienda: true,
         mpConectado: true,
         mpPublicKey: true,
+        // Credenciales de la pasarela de la propia empresa.
+        culqiPublicKey: true,
+        culqiSecretKey: true,
+        culqiActivo: true,
+        niubizMerchantId: true,
+        niubizActivo: true,
         plan: {
           select: {
             tieneCulqi: true,
@@ -2210,9 +2217,15 @@ export class TiendaService {
       }
     };
 
-    const culqiPublicKey = (process.env.CULQI_PUBLIC_KEY || '').trim();
-    const culqiSecretKey = (process.env.CULQI_SECRET_KEY || '').trim();
-    const aceptaTarjeta = Boolean(empresa.plan?.tieneCulqi && culqiPublicKey);
+    // Credenciales DE LA EMPRESA: cada tienda cobra a su propia cuenta Culqi.
+    const culqiPublicKey = (empresa.culqiPublicKey || '').trim();
+    const culqiSecretKey = descifrarSecreto(empresa.culqiSecretKey) || '';
+    const aceptaTarjeta = Boolean(
+      empresa.plan?.tieneCulqi &&
+        empresa.culqiActivo &&
+        culqiPublicKey &&
+        culqiSecretKey,
+    );
 
     return {
       yapeQrUrl: await signIfS3(empresa.yapeQrUrl),
@@ -2426,6 +2439,7 @@ export class TiendaService {
         select: {
           nombreComercial: true,
           razonSocial: true,
+          culqiSecretKey: true,
           plan: { select: { tieneCulqi: true } },
         },
       });
@@ -2452,6 +2466,7 @@ export class TiendaService {
           empresaConPlan.razonSocial ||
           'Tienda',
         orderCode: codigoSeguimiento,
+        secretKey: descifrarSecreto(empresaConPlan.culqiSecretKey) || '',
       });
 
       referenciaTarjeta = `culqi_charge:${charge.id}`;
@@ -2725,10 +2740,16 @@ export class TiendaService {
     amountInSoles: number;
     empresaNombre: string;
     orderCode: string;
+    /** Llave secreta de Culqi DE LA EMPRESA, ya descifrada. */
+    secretKey: string;
   }): Promise<CulqiChargeResponse> {
-    const secretKey = (process.env.CULQI_SECRET_KEY || '').trim();
+    // La plata entra a la cuenta Culqi del propio comerciante. Antes esto leía
+    // una llave global y TODAS las tiendas cobraban a la misma cuenta.
+    const secretKey = (params.secretKey || '').trim();
     if (!secretKey) {
-      throw new BadRequestException('Pasarela de tarjeta no configurada');
+      throw new BadRequestException(
+        'Esta tienda todavía no configuró su cuenta de Culqi',
+      );
     }
 
     const payload = {

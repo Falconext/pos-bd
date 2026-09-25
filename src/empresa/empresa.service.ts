@@ -1592,6 +1592,24 @@ export class EmpresaService {
         updateData.sireUsuarioSol = dto.sireUsuarioSol?.trim() || null;
       if (dto.sireClaveSol !== undefined)
         updateData.sireClaveSol = cifrarSecreto(dto.sireClaveSol);
+      // Pasarelas de pago: las llaves secretas se guardan cifradas, igual que
+      // la clave SOL. Una cadena vacía significa "borrar la credencial".
+      if (dto.culqiPublicKey !== undefined)
+        updateData.culqiPublicKey = dto.culqiPublicKey?.trim() || null;
+      if (dto.culqiSecretKey !== undefined)
+        updateData.culqiSecretKey = cifrarSecreto(dto.culqiSecretKey?.trim());
+      if (dto.culqiActivo !== undefined)
+        updateData.culqiActivo = Boolean(dto.culqiActivo);
+      if (dto.niubizMerchantId !== undefined)
+        updateData.niubizMerchantId = dto.niubizMerchantId?.trim() || null;
+      if (dto.niubizUsuario !== undefined)
+        updateData.niubizUsuario = dto.niubizUsuario?.trim() || null;
+      if (dto.niubizPassword !== undefined)
+        updateData.niubizPassword = cifrarSecreto(dto.niubizPassword?.trim());
+      if (dto.niubizActivo !== undefined)
+        updateData.niubizActivo = Boolean(dto.niubizActivo);
+      if (dto.pasarelasUsaDemo !== undefined)
+        updateData.pasarelasUsaDemo = Boolean(dto.pasarelasUsaDemo);
       if (dto.whatsappProvider !== undefined)
         updateData.whatsappProvider = dto.whatsappProvider;
       if (dto.whatsappApiToken !== undefined)
