@@ -17,7 +17,7 @@ import { DisenoRubroService } from '../diseno-rubro/diseno-rubro.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { MercadoPagoService } from '../mercadopago/mercadopago.service';
-import { NiubizService } from '../niubiz/niubiz.service';
+import { NiubizService, nuevoPurchaseNumber } from '../niubiz/niubiz.service';
 import { descifrarSecreto } from '../common/utils/secreto.util';
 import {
   esRubroComputo,
@@ -2442,7 +2442,10 @@ export class TiendaService {
         const cobro = await this.niubiz.autorizar({
           empresaId: empresa.id,
           transactionToken: niubizToken,
-          purchaseNumber: codigoSeguimiento.replace(/\D/g, '').slice(-12) || String(Date.now()).slice(-12),
+          // El mismo que usó el formulario en el navegador; si no llegara,
+          // se cae a uno nuevo antes que dejar el cobro sin número.
+          purchaseNumber:
+            (dto.niubizPurchaseNumber || '').trim() || nuevoPurchaseNumber(),
           montoSoles: total,
         });
         referenciaTarjeta = `NIUBIZ ${cobro.transactionId ?? ''} ${cobro.descripcion}`.trim();

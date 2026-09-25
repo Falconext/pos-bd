@@ -861,6 +861,14 @@ export class AuthService {
             // si están configurados se usa `sireConfigurado` del endpoint.
             sireClientId: true,
             sireUsuarioSol: true,
+            // Pasarelas de la tienda: solo lo público. La llave secreta de
+            // Culqi y la clave de Niubiz nunca salen al frontend.
+            culqiPublicKey: true,
+            culqiActivo: true,
+            niubizMerchantId: true,
+            niubizUsuario: true,
+            niubizActivo: true,
+            pasarelasUsaDemo: true,
             sunatClientSecret: true,
             whatsappProvider: true,
             whatsappApiToken: true,

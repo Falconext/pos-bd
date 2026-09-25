@@ -1596,16 +1596,18 @@ export class EmpresaService {
       // la clave SOL. Una cadena vacía significa "borrar la credencial".
       if (dto.culqiPublicKey !== undefined)
         updateData.culqiPublicKey = dto.culqiPublicKey?.trim() || null;
-      if (dto.culqiSecretKey !== undefined)
-        updateData.culqiSecretKey = cifrarSecreto(dto.culqiSecretKey?.trim());
+      // Las claves secretas solo se pisan si llega una nueva: un campo vacío
+      // conserva la que ya está cobrando (el formulario la muestra en blanco).
+      if (dto.culqiSecretKey?.trim())
+        updateData.culqiSecretKey = cifrarSecreto(dto.culqiSecretKey.trim());
       if (dto.culqiActivo !== undefined)
         updateData.culqiActivo = Boolean(dto.culqiActivo);
       if (dto.niubizMerchantId !== undefined)
         updateData.niubizMerchantId = dto.niubizMerchantId?.trim() || null;
       if (dto.niubizUsuario !== undefined)
         updateData.niubizUsuario = dto.niubizUsuario?.trim() || null;
-      if (dto.niubizPassword !== undefined)
-        updateData.niubizPassword = cifrarSecreto(dto.niubizPassword?.trim());
+      if (dto.niubizPassword?.trim())
+        updateData.niubizPassword = cifrarSecreto(dto.niubizPassword.trim());
       if (dto.niubizActivo !== undefined)
         updateData.niubizActivo = Boolean(dto.niubizActivo);
       if (dto.pasarelasUsaDemo !== undefined)

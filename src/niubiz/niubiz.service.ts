@@ -30,6 +30,14 @@ export const CHECKOUT_JS = {
   prod: 'https://static-content.vnforapps.com/vToken/js/checkout.js',
 };
 
+/**
+ * Número de compra de Niubiz: hasta 12 dígitos y único por comercio. Se arma
+ * con los últimos dígitos del reloj más azar, para que dos compras del mismo
+ * segundo no choquen.
+ */
+export const nuevoPurchaseNumber = (): string =>
+  `${Date.now()}`.slice(-9) + `${Math.floor(Math.random() * 1000)}`.padStart(3, '0');
+
 export interface NiubizCredenciales {
   merchantId: string;
   usuario: string;
@@ -122,6 +130,7 @@ export class NiubizService {
     sessionKey: string;
     merchantId: string;
     scriptUrl: string;
+    purchaseNumber: string;
     expiracion: number | null;
   }> {
     const cred = await this.credenciales(params.empresaId);
@@ -136,6 +145,7 @@ export class NiubizService {
     }
 
     const token = await this.accessToken(cred);
+    const purchaseNumber = nuevoPurchaseNumber();
     try {
       const { data } = await axios.post(
         `${this.base(cred.usaDemo)}/api.ecommerce/v2/ecommerce/token/session/${cred.merchantId}`,
@@ -159,6 +169,10 @@ export class NiubizService {
         sessionKey,
         merchantId: cred.merchantId,
         scriptUrl: cred.usaDemo ? CHECKOUT_JS.demo : CHECKOUT_JS.prod,
+        // Niubiz exige que el número de compra del formulario sea EXACTAMENTE
+        // el mismo que se manda a autorizar. Se genera aquí y viaja de ida y
+        // vuelta; si cada lado lo inventara por su cuenta, el cobro se cae.
+        purchaseNumber,
         expiracion: data?.expirationTime ?? null,
       };
     } catch (error: any) {

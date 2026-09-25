@@ -153,3 +153,41 @@ describe('Niubiz · autorización del cobro', () => {
     await expect(autorizar()).rejects.toThrow('Tarjeta vencida');
   });
 });
+
+/**
+ * Niubiz rechaza la autorización si el número de compra no es el mismo que se
+ * le pasó al formulario del navegador. Por eso lo genera la sesión y viaja de
+ * ida y vuelta: ningún lado lo inventa por su cuenta.
+ */
+describe('Niubiz · número de compra', () => {
+  it('la sesión devuelve el número que el navegador debe usar', async () => {
+    axiosMock.get.mockResolvedValue({ data: 't' });
+    axiosMock.post.mockResolvedValue({ data: { sessionKey: 'k' } });
+
+    const r = await servicio(empresaNiubiz()).crearSesion({ empresaId: 1, montoSoles: 10 });
+    expect(r.purchaseNumber).toMatch(/^\d{12}$/);
+  });
+
+  it('dos sesiones seguidas no repiten el número', async () => {
+    axiosMock.get.mockResolvedValue({ data: 't' });
+    axiosMock.post.mockResolvedValue({ data: { sessionKey: 'k' } });
+    const s = servicio(empresaNiubiz());
+    const a = await s.crearSesion({ empresaId: 1, montoSoles: 10 });
+    const b = await s.crearSesion({ empresaId: 1, montoSoles: 10 });
+    expect(a.purchaseNumber).not.toBe(b.purchaseNumber);
+  });
+
+  it('autoriza con el número que se le pasa, tal cual', async () => {
+    axiosMock.get.mockResolvedValue({ data: 'token' });
+    axiosMock.post.mockResolvedValue({
+      data: { errorCode: '0', order: { transactionId: '1' }, dataMap: { ACTION_CODE: '000' } },
+    });
+    await servicio(empresaNiubiz()).autorizar({
+      empresaId: 1,
+      transactionToken: 'tok',
+      purchaseNumber: '123456789012',
+      montoSoles: 10,
+    });
+    expect((axiosMock.post.mock.calls[0][1] as any).order.purchaseNumber).toBe('123456789012');
+  });
+});

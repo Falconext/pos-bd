@@ -95,6 +95,11 @@ export class CrearPedidoDto {
   @IsOptional()
   niubizTransactionToken?: string;
 
+  /** Número de compra que devolvió la sesión: Niubiz exige el mismo al autorizar. */
+  @IsOptional()
+  @IsString()
+  niubizPurchaseNumber?: string;
+
   @IsEmail()
   @IsOptional()
   culqiEmail?: string;
