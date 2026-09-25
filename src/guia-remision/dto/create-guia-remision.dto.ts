@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsString,
   IsNotEmpty,
@@ -13,6 +13,21 @@ import {
   IsEnum,
   IsIn,
 } from 'class-validator';
+
+/**
+ * Un campo opcional que el formulario deja en blanco llega como "" — los inputs
+ * de HTML no distinguen "vacío" de "sin valor". `@IsOptional()` solo perdona
+ * `undefined` y `null`, así que ese "" le pasaba el turno al validador de
+ * formato y tumbaba la petición entera con un error sobre un campo que el
+ * usuario tenía derecho a no llenar.
+ *
+ * Normalizar a `undefined` antes de validar es lo que hace que "opcional"
+ * signifique opcional de verdad.
+ */
+const VacioComoIndefinido = () =>
+  Transform(({ value }) =>
+    typeof value === 'string' && value.trim() === '' ? undefined : value,
+  );
 
 /**
  * Catálogo 61 de SUNAT — documento relacionado al transporte. Son los tipos que
@@ -323,6 +338,7 @@ export class CreateGuiaRemisionDto {
   fechaInicioTraslado: string;
 
   /** Fecha de entrega de los bienes al transportista. */
+  @VacioComoIndefinido()
   @IsOptional()
   @IsDateString()
   fechaEntregaBienes?: string;
