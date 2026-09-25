@@ -177,3 +177,38 @@ describe('Guía de remisión · bloque 2', () => {
     expect(xml).toMatch(/<cac:LoadingTransportEvent><cbc:OccurrenceDate>2026-09-23</);
   });
 });
+
+/**
+ * El RUC del punto de llegada no puede ser el del remitente cuando el
+ * destinatario es persona natural: SUNAT lo rechaza con 3411. Arreglo traído
+ * desde vendify-api, donde ya estaba resuelto.
+ */
+describe('Guía de remisión · punto de llegada con destinatario sin RUC (3411)', () => {
+  const conDni = (extra: Record<string, any> = {}) =>
+    guiaBase({ destinatarioTipoDoc: '1', destinatarioNumDoc: '40420741', ...extra });
+
+  it('con destinatario DNI NO se manda el RUC del remitente en el punto de llegada', () => {
+    const xml = xmlDe(conDni());
+    // Antes salía <cbc:AddressTypeCode listID="20602479693"> en la llegada.
+    const llegada = xml.slice(xml.indexOf('<cac:DeliveryAddress>'), xml.indexOf('</cac:DeliveryAddress>'));
+    expect(llegada).not.toContain('AddressTypeCode');
+  });
+
+  it('el punto de partida sí conserva el RUC del remitente', () => {
+    const xml = xmlDe(conDni());
+    const partida = xml.slice(xml.indexOf('<cac:DespatchAddress>'), xml.indexOf('</cac:DespatchAddress>'));
+    expect(partida).toMatch(/listID="20602479693"/);
+  });
+
+  it('con destinatario RUC el punto de llegada lleva ese RUC, no el del remitente', () => {
+    const xml = xmlDe(guiaBase());
+    const llegada = xml.slice(xml.indexOf('<cac:DeliveryAddress>'), xml.indexOf('</cac:DeliveryAddress>'));
+    expect(llegada).toMatch(/listID="20170040938"/);
+  });
+
+  it('traslado entre establecimientos de la misma empresa (motivo 04) usa el RUC del remitente en ambos puntos', () => {
+    const xml = xmlDe(guiaBase({ tipoTraslado: '04' }));
+    const llegada = xml.slice(xml.indexOf('<cac:DeliveryAddress>'), xml.indexOf('</cac:DeliveryAddress>'));
+    expect(llegada).toMatch(/listID="20602479693"/);
+  });
+});
