@@ -80,13 +80,15 @@ describe('PDF de la guía · documentos relacionados, TUCE e indicadores', () =>
   });
 
   it('imprime el TUCE junto a la placa cuando la guía lo trae', () => {
-    const html = plantilla(datosBase({ vehiculoAutorizacion: '15M23028581E' }));
+    const html = plantilla(
+      datosBase({ vehiculoAutorizacion: '15M23028581E', mostrarVehiculoConductor: true }),
+    );
     expect(html).toContain('TUCE / HAB. VEH.');
     expect(html).toContain('15M23028581E');
   });
 
   it('sin TUCE no se imprime esa fila', () => {
-    const html = plantilla(datosBase());
+    const html = plantilla(datosBase({ mostrarVehiculoConductor: true }));
     expect(html).not.toContain('TUCE / HAB. VEH.');
   });
 

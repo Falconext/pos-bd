@@ -77,9 +77,17 @@ export class GuiaRemisionService {
     this.validateGuiaRemision(createDto);
 
     // Extraer detalles para crear por separado
-    const { detalles, documentosRelacionados, ...guiaData } = createDto;
+    const {
+      detalles,
+      documentosRelacionados,
+      vehiculosSecundarios,
+      conductoresSecundarios,
+      ...guiaData
+    } = createDto;
     const docsRelacionados =
       this.normalizarDocumentosRelacionados(documentosRelacionados);
+    const vehSecundarios = this.normalizarVehiculosSecundarios(vehiculosSecundarios);
+    const condSecundarios = this.normalizarConductoresSecundarios(conductoresSecundarios);
 
     // Asegurar que correlativo esté definido
     const correlativoFinal = createDto.correlativo;
@@ -101,10 +109,16 @@ export class GuiaRemisionService {
           ...(docsRelacionados !== undefined
             ? { documentosRelacionados: docsRelacionados }
             : {}),
+          ...(vehSecundarios !== undefined ? { vehiculosSecundarios: vehSecundarios } : {}),
+          ...(condSecundarios !== undefined ? { conductoresSecundarios: condSecundarios } : {}),
+          ...(guiaData.fechaEntregaBienes
+            ? { fechaEntregaBienes: new Date(guiaData.fechaEntregaBienes) }
+            : {}),
           detalles: {
             create: detalles.map((detalle, index) => ({
               numeroOrden: index + 1,
               codigoProducto: detalle.codigoProducto,
+              codigoProductoSunat: detalle.codigoProductoSunat,
               descripcion: detalle.descripcion,
               cantidad: detalle.cantidad,
               unidadMedida: detalle.unidadMedida || 'NIU',
@@ -141,6 +155,11 @@ export class GuiaRemisionService {
             horaEmision: guiaData.horaEmision || this.getCurrentTime(),
             ...(docsRelacionados !== undefined
               ? { documentosRelacionados: docsRelacionados }
+              : {}),
+            ...(vehSecundarios !== undefined ? { vehiculosSecundarios: vehSecundarios } : {}),
+            ...(condSecundarios !== undefined ? { conductoresSecundarios: condSecundarios } : {}),
+            ...(guiaData.fechaEntregaBienes
+              ? { fechaEntregaBienes: new Date(guiaData.fechaEntregaBienes) }
               : {}),
             detalles: {
               create: detalles.map((detalle, index) => ({
@@ -262,9 +281,11 @@ export class GuiaRemisionService {
           empresa: true,
           cliente: true,
         },
-        orderBy: {
-          fechaEmision: 'desc',
-        },
+        // Desempate por id: fechaEmision es solo fecha, así que todas las guías
+        // del mismo día empataban y Postgres las devolvía en orden arbitrario.
+        // Con paginación eso hacía que una fila se repitiera en una página y
+        // faltara en otra (las últimas emitidas no aparecían arriba).
+        orderBy: [{ fechaEmision: 'desc' }, { id: 'desc' }],
       }),
       this.prisma.guiaRemision.count({ where }),
     ]);
@@ -333,9 +354,17 @@ export class GuiaRemisionService {
     this.validateGuiaRemision({ ...guia, ...updateDto } as any);
 
     // Si se actualizan detalles, eliminar los anteriores y crear los nuevos
-    const { detalles, documentosRelacionados, ...guiaData } = updateDto;
+    const {
+      detalles,
+      documentosRelacionados,
+      vehiculosSecundarios,
+      conductoresSecundarios,
+      ...guiaData
+    } = updateDto;
     const docsRelacionados =
       this.normalizarDocumentosRelacionados(documentosRelacionados);
+    const vehSecundarios = this.normalizarVehiculosSecundarios(vehiculosSecundarios);
+    const condSecundarios = this.normalizarConductoresSecundarios(conductoresSecundarios);
 
     const dataToUpdate: any = {
       ...guiaData,
@@ -355,6 +384,11 @@ export class GuiaRemisionService {
     if (docsRelacionados !== undefined) {
       dataToUpdate.documentosRelacionados = docsRelacionados;
     }
+    if (vehSecundarios !== undefined) dataToUpdate.vehiculosSecundarios = vehSecundarios;
+    if (condSecundarios !== undefined) dataToUpdate.conductoresSecundarios = condSecundarios;
+    if (guiaData.fechaEntregaBienes) {
+      dataToUpdate.fechaEntregaBienes = new Date(guiaData.fechaEntregaBienes);
+    }
 
     if (detalles && detalles.length > 0) {
       // Eliminar detalles anteriores y crear los nuevos
@@ -366,6 +400,7 @@ export class GuiaRemisionService {
         create: detalles.map((detalle, index) => ({
           numeroOrden: index + 1,
           codigoProducto: detalle.codigoProducto,
+          codigoProductoSunat: detalle.codigoProductoSunat,
           descripcion: detalle.descripcion,
           cantidad: detalle.cantidad,
           unidadMedida: detalle.unidadMedida || 'NIU',
@@ -751,6 +786,37 @@ export class GuiaRemisionService {
     return limpios as unknown as Prisma.InputJsonValue;
   }
 
+  /** Limpia los vehículos secundarios antes de guardarlos como JSON. */
+  private normalizarVehiculosSecundarios(
+    v?: { placa: string; tuce?: string }[],
+  ) {
+    if (!Array.isArray(v)) return undefined;
+    const limpios = v
+      .filter((x) => x && String(x.placa || '').trim())
+      .map((x) => ({
+        placa: String(x.placa).trim().toUpperCase(),
+        ...(String(x.tuce || '').trim() ? { tuce: String(x.tuce).trim().toUpperCase() } : {}),
+      }));
+    return limpios as unknown as Prisma.InputJsonValue;
+  }
+
+  /** Limpia los conductores secundarios antes de guardarlos como JSON. */
+  private normalizarConductoresSecundarios(
+    c?: { tipoDoc?: string; numDoc: string; nombres?: string; apellidos?: string; licencia: string }[],
+  ) {
+    if (!Array.isArray(c)) return undefined;
+    const limpios = c
+      .filter((x) => x && String(x.numDoc || '').trim() && String(x.licencia || '').trim())
+      .map((x) => ({
+        tipoDoc: String(x.tipoDoc || '1').trim(),
+        numDoc: String(x.numDoc).trim(),
+        nombres: String(x.nombres || '').trim(),
+        apellidos: String(x.apellidos || '').trim(),
+        licencia: String(x.licencia).trim().toUpperCase(),
+      }));
+    return limpios as unknown as Prisma.InputJsonValue;
+  }
+
   private validateGuiaRemision(
     dto: CreateGuiaRemisionDto | UpdateGuiaRemisionDto,
   ) {
@@ -985,6 +1051,17 @@ export class GuiaRemisionService {
       // Transporte
       esTransportePublico: guia.modoTransporte === '01',
       esVehiculoM1oL: guia.modoTransporte === '02' && !!guia.vehiculoM1oL,
+      // Con transporte público la primera columna la ocupa el transportista, así
+      // que el vehículo y el conductor van aparte. Antes esto solo salía en la
+      // guía de transportista: una GRE-Remitente con transporte público imprimía
+      // el transportista y escondía la placa, el TUCE y el chofer, aunque sí
+      // viajaran a SUNAT (es lo que SUNAT sí muestra en su propio formato).
+      // El bloque de vehículo/conductor es independiente de la modalidad: sale
+      // siempre que haya algo que mostrar, en su propia fila de dos columnas.
+      mostrarVehiculoConductor: Boolean(
+        !(guia.modoTransporte === '02' && guia.vehiculoM1oL) &&
+          (guia.vehiculoPlaca || guia.conductorNumDoc),
+      ),
       transportistaRazonSocial: (
         guia.transportistaRazonSocial || ''
       ).toUpperCase(),
@@ -994,6 +1071,30 @@ export class GuiaRemisionService {
       // TUCE / Certificado de Habilitación Vehicular: SUNAT lo imprime junto a
       // la placa y es lo que pide el fiscalizador en carretera.
       vehiculoAutorizacion: guia.vehiculoAutorizacion || '',
+      // Autorización especial del vehículo y quién la emitió.
+      vehiculoNroAutorizacion: guia.vehiculoNroAutorizacion || '',
+      vehiculoEntidadEmisora: guia.vehiculoEntidadEmisora || '',
+      // Vehículos y conductores además del principal.
+      vehiculosSecundarios: (Array.isArray(guia.vehiculosSecundarios)
+        ? (guia.vehiculosSecundarios as any[])
+        : []
+      ).map((v: any, i: number) => ({
+        orden: i + 1,
+        placa: String(v?.placa || '').toUpperCase(),
+        tuce: String(v?.tuce || ''),
+      })),
+      conductoresSecundarios: (Array.isArray(guia.conductoresSecundarios)
+        ? (guia.conductoresSecundarios as any[])
+        : []
+      ).map((c: any, i: number) => ({
+        orden: i + 1,
+        nombre: `${String(c?.apellidos || '')} ${String(c?.nombres || '')}`.trim().toUpperCase(),
+        numDoc: String(c?.numDoc || ''),
+        licencia: String(c?.licencia || ''),
+      })),
+      fechaEntregaBienes: guia.fechaEntregaBienes
+        ? formatDate(guia.fechaEntregaBienes)
+        : '',
       conductorNombre: nombreConductor.toUpperCase(),
       conductorNumDoc: guia.conductorNumDoc || '',
       conductorLicencia: guia.conductorLicencia,
@@ -1023,6 +1124,7 @@ export class GuiaRemisionService {
       // Items
       detalles: guia.detalles.map((d, i) => ({
         item: i + 1,
+        codigoSunat: (d as any).codigoProductoSunat || '',
         codigo: d.codigoProducto,
         descripcion: d.descripcion,
         unidad: d.unidadMedida,

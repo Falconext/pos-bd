@@ -411,7 +411,9 @@ model Empresa {
   sireClientId            String?
   sireClientSecret        String?
   sireUsuarioSol          String?
-  /** Clave SOL cifrada (AES-256-GCM). Nunca se devuelve al frontend. */
+  /**
+   * Clave SOL cifrada (AES-256-GCM). Nunca se devuelve al frontend.
+   */
   sireClaveSol            String?
   usaDemo                 Boolean                        @default(false)
   metodoSalidaLotes       String                         @default("LIFO")
@@ -2481,13 +2483,23 @@ model GuiaRemision {
   greTRemitenteRazonSocial String? // Razón social del remitente de los bienes
 
   // Conductor/Vehículo (para transporte privado)
-  conductorTipoDoc     String?
-  conductorNumDoc      String?
-  conductorNombre      String?
-  conductorApellidos   String?
-  conductorLicencia    String?
-  vehiculoPlaca        String?
-  vehiculoAutorizacion String?
+  conductorTipoDoc        String?
+  conductorNumDoc         String?
+  conductorNombre         String?
+  conductorApellidos      String?
+  conductorLicencia       String?
+  vehiculoPlaca           String?
+  /// TUCE / Certificado de Habilitación Vehicular del vehículo principal.
+  vehiculoAutorizacion    String?
+  /// Autorización especial del vehículo y la entidad que la emitió (ej. MTC).
+  /// Van juntas: SUNAT las manda en cac:ShipmentDocumentReference.
+  vehiculoNroAutorizacion String?
+  vehiculoEntidadEmisora  String?
+  /// Vehículos secundarios del traslado: [{ placa, tuce? }]
+  vehiculosSecundarios    Json?
+  /// Conductores además del principal:
+  /// [{ tipoDoc, numDoc, nombres, apellidos, licencia }]
+  conductoresSecundarios  Json?
 
   // Punto de partida
   partidaUbigeo                String
@@ -2501,6 +2513,9 @@ model GuiaRemision {
 
   // Fecha de traslado
   fechaInicioTraslado DateTime
+  /// Fecha en que los bienes se entregan al transportista. SUNAT la imprime
+  /// aparte de la fecha de inicio de traslado; si no se indica, se usa esta.
+  fechaEntregaBienes  DateTime?
 
   // Flags opcionales
   retornoVehiculoVacio Boolean @default(false)
@@ -2559,9 +2574,11 @@ model DetalleGuiaRemision {
   guiaRemisionId Int
   numeroOrden    Int // Orden del ítem
 
-  productoId     Int?
-  codigoProducto String
-  descripcion    String
+  productoId          Int?
+  codigoProducto      String
+  /// Código del producto en el catálogo de SUNAT (UNSPSC).
+  codigoProductoSunat String?
+  descripcion         String
 
   cantidad     Decimal
   unidadMedida String  @default("NIU")

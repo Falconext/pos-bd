@@ -76,6 +76,11 @@ export class CreateDetalleGuiaDto {
   @IsOptional()
   @IsString()
   unidadMedida?: string = 'NIU';
+
+  /** Código del producto en el catálogo de SUNAT (UNSPSC). */
+  @IsOptional()
+  @IsString()
+  codigoProductoSunat?: string;
 }
 
 /**
@@ -97,6 +102,41 @@ export class DocumentoRelacionadoGuiaDto {
   @IsOptional()
   @IsString()
   emisorNumDoc?: string;
+}
+
+/** Vehículo adicional al principal. */
+export class VehiculoSecundarioDto {
+  @IsString()
+  @IsNotEmpty()
+  placa: string;
+
+  /** TUCE / Certificado de Habilitación Vehicular. */
+  @IsOptional()
+  @IsString()
+  tuce?: string;
+}
+
+/** Conductor adicional al principal. */
+export class ConductorSecundarioDto {
+  @IsOptional()
+  @IsString()
+  tipoDoc?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  numDoc: string;
+
+  @IsOptional()
+  @IsString()
+  nombres?: string;
+
+  @IsOptional()
+  @IsString()
+  apellidos?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  licencia: string;
 }
 
 export class CreateGuiaRemisionDto {
@@ -231,6 +271,27 @@ export class CreateGuiaRemisionDto {
   @IsString()
   vehiculoAutorizacion?: string;
 
+  // Autorización especial del vehículo y quién la emitió (ej. MTC)
+  @IsOptional()
+  @IsString()
+  vehiculoNroAutorizacion?: string;
+
+  @IsOptional()
+  @IsString()
+  vehiculoEntidadEmisora?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => VehiculoSecundarioDto)
+  vehiculosSecundarios?: VehiculoSecundarioDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ConductorSecundarioDto)
+  conductoresSecundarios?: ConductorSecundarioDto[];
+
   // Punto de partida
   @IsString()
   @IsNotEmpty()
@@ -260,6 +321,11 @@ export class CreateGuiaRemisionDto {
   // Fecha de traslado
   @IsDateString()
   fechaInicioTraslado: string;
+
+  /** Fecha de entrega de los bienes al transportista. */
+  @IsOptional()
+  @IsDateString()
+  fechaEntregaBienes?: string;
 
   // Flags opcionales
   @IsOptional()

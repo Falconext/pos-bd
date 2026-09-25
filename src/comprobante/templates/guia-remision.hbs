@@ -154,6 +154,7 @@
       <table>
         <tr><td>FECHA EMISIÓN:</td><td>{{fechaEmision}}</td></tr>
         <tr><td>INICIO TRASLADO:</td><td>{{fechaTraslado}}</td></tr>
+        {{#if fechaEntregaBienes}}<tr><td>ENTREGA AL TRANSPORTISTA:</td><td>{{fechaEntregaBienes}}</td></tr>{{/if}}
         <tr><td>MOTIVO:</td><td>{{motivoTraslado}}</td></tr>
         <tr><td>MODALIDAD:</td><td>{{modalidadTraslado}}</td></tr>
         <tr><td>PESO BRUTO:</td><td>{{pesoTotal}} {{unidadPeso}}</td></tr>
@@ -176,38 +177,64 @@
   </div>
 
   <!-- ── TRANSPORTE ──────────────────────────────────────────── -->
+  {{#if esTransportePublico}}
   <div class="data-box">
     <div class="data-col">
-      <div class="data-title">{{#if esTransportePublico}}TRANSPORTISTA{{else}}VEHÍCULO Y CONDUCTOR{{/if}}</div>
+      <div class="data-title">TRANSPORTISTA</div>
       <table>
-        {{#if esTransportePublico}}
         <tr><td>RAZÓN SOCIAL:</td><td>{{transportistaRazonSocial}}</td></tr>
         <tr><td>RUC:</td><td>{{transportistaRuc}}</td></tr>
-        {{#if transportistaMTC}}<tr><td>N° REGISTRO MTC:</td><td>{{transportistaMTC}}</td></tr>{{/if}}
-        {{else if esVehiculoM1oL}}
-        <tr><td>MODALIDAD:</td><td>TRASLADO EN VEHÍCULO DE CATEGORÍA M1 O L</td></tr>
-        {{else}}
-        <tr><td>PLACA:</td><td>{{vehiculoPlaca}}</td></tr>
-        {{#if vehiculoAutorizacion}}<tr><td>TUCE / HAB. VEH.:</td><td>{{vehiculoAutorizacion}}</td></tr>{{/if}}
-        <tr><td>CONDUCTOR:</td><td>{{conductorNombre}}</td></tr>
-        {{#if conductorNumDoc}}<tr><td>DOC. CONDUCTOR:</td><td>{{conductorNumDoc}}</td></tr>{{/if}}
-        <tr><td>LICENCIA:</td><td>{{conductorLicencia}}</td></tr>
-        {{/if}}
       </table>
     </div>
-    {{#if esTransportista}}{{#if esTransportePublico}}
+    <div class="data-col with-divider">
+      <div class="data-title">AUTORIZACIONES</div>
+      <table>
+        {{#if transportistaMTC}}<tr><td>N° REGISTRO MTC:</td><td>{{transportistaMTC}}</td></tr>{{/if}}
+        {{#if vehiculoNroAutorizacion}}<tr><td>AUT. ESPECIAL:</td><td>{{vehiculoNroAutorizacion}}{{#if vehiculoEntidadEmisora}} &nbsp;·&nbsp; {{vehiculoEntidadEmisora}}{{/if}}</td></tr>{{/if}}
+      </table>
+    </div>
+  </div>
+  {{/if}}
+
+  {{#if esVehiculoM1oL}}
+  <div class="data-box">
+    <div class="data-col">
+      <div class="data-title">MODALIDAD</div>
+      <table>
+        <tr><td>TRASLADO:</td><td>EN VEHÍCULO DE CATEGORÍA M1 O L</td></tr>
+      </table>
+    </div>
+  </div>
+  {{/if}}
+
+  {{!-- Vehículo y conductor en dos columnas, como partida/llegada: antes iban
+        apilados en una sola y la guía se estiraba de más. --}}
+  {{#if mostrarVehiculoConductor}}
+  <div class="data-box">
+    <div class="data-col">
+      <div class="data-title">VEHÍCULO</div>
+      <table>
+        <tr><td>PLACA:</td><td>{{vehiculoPlaca}}</td></tr>
+        {{#if vehiculoAutorizacion}}<tr><td>TUCE / HAB. VEH.:</td><td>{{vehiculoAutorizacion}}</td></tr>{{/if}}
+        {{#unless esTransportePublico}}{{#if vehiculoNroAutorizacion}}<tr><td>AUT. ESPECIAL:</td><td>{{vehiculoNroAutorizacion}}{{#if vehiculoEntidadEmisora}} &nbsp;·&nbsp; {{vehiculoEntidadEmisora}}{{/if}}</td></tr>{{/if}}{{/unless}}
+        {{#each vehiculosSecundarios}}
+        <tr><td>SECUNDARIO {{this.orden}}:</td><td>{{this.placa}}{{#if this.tuce}} &nbsp;·&nbsp; TUCE {{this.tuce}}{{/if}}</td></tr>
+        {{/each}}
+      </table>
+    </div>
     <div class="data-col with-divider">
       <div class="data-title">CONDUCTOR</div>
       <table>
-        <tr><td>PLACA:</td><td>{{vehiculoPlaca}}</td></tr>
-        {{#if vehiculoAutorizacion}}<tr><td>TUCE / HAB. VEH.:</td><td>{{vehiculoAutorizacion}}</td></tr>{{/if}}
-        <tr><td>CONDUCTOR:</td><td>{{conductorNombre}}</td></tr>
-        {{#if conductorNumDoc}}<tr><td>DOC. CONDUCTOR:</td><td>{{conductorNumDoc}}</td></tr>{{/if}}
+        <tr><td>NOMBRE:</td><td>{{conductorNombre}}</td></tr>
+        {{#if conductorNumDoc}}<tr><td>DOCUMENTO:</td><td>{{conductorNumDoc}}</td></tr>{{/if}}
         <tr><td>LICENCIA:</td><td>{{conductorLicencia}}</td></tr>
+        {{#each conductoresSecundarios}}
+        <tr><td>SECUNDARIO {{this.orden}}:</td><td>{{this.nombre}}{{#if this.numDoc}} &nbsp;·&nbsp; {{this.numDoc}}{{/if}}{{#if this.licencia}} &nbsp;·&nbsp; LIC. {{this.licencia}}{{/if}}</td></tr>
+        {{/each}}
       </table>
     </div>
-    {{/if}}{{/if}}
   </div>
+  {{/if}}
 
   <!-- ── Docs. del traslado e indicadores ───────────────────── -->
   {{#if documentosRelacionados.length}}
@@ -255,7 +282,7 @@
       {{#each detalles}}
       <tr>
         <td class="col-n">{{this.item}}</td>
-        <td class="col-cod">{{this.codigo}}</td>
+        <td class="col-cod">{{this.codigo}}{{#if this.codigoSunat}}<br><span style="font-size:7px;color:#6b7280">SUNAT {{this.codigoSunat}}</span>{{/if}}</td>
         <td class="col-desc"><span class="desc-text">{{this.descripcion}}</span></td>
         <td class="col-um">{{this.unidad}}</td>
         <td class="col-cant">{{this.cantidad}}</td>
