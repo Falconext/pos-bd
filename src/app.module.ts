@@ -23,6 +23,7 @@ import { NiubizModule } from './niubiz/niubiz.module';
 import { PagoModule } from './pago/pago.module';
 import { CajaModule } from './caja/caja.module';
 import { NotificacionesModule } from './notificaciones/notificaciones.module';
+import { SoporteModule } from './soporte/soporte.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
 import { S3Module } from './s3/s3.module';
 import { SyncModule } from './sync/sync.module';
@@ -86,6 +87,7 @@ import { MercadoPagoModule } from './mercadopago/mercadopago.module';
     SchedulerModule,
     NiubizModule,
     NotificacionesModule,
+    SoporteModule,
     WhatsAppModule,
     S3Module,
     SyncModule,
