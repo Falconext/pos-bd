@@ -46,7 +46,7 @@ const dto = (items: any[], precioCombo = 31) =>
 describe('Kit con el mismo producto repetido', () => {
   it('dos filas del mismo producto NO son un error: se guardan como una línea de cantidad 2', async () => {
     const { prisma, creado } = prismaFalso();
-    await new CombosService(prisma).create(1, dto([
+    await new CombosService(prisma, {} as any).create(1, dto([
       { productoId: 7, cantidad: 1 },
       { productoId: 7, cantidad: 1 },
     ]));
@@ -55,7 +55,7 @@ describe('Kit con el mismo producto repetido', () => {
 
   it('el precio regular suma las dos unidades (22.50 × 2 = 45)', async () => {
     const { prisma, creado } = prismaFalso();
-    await new CombosService(prisma).create(1, dto([
+    await new CombosService(prisma, {} as any).create(1, dto([
       { productoId: 7, cantidad: 1 },
       { productoId: 7, cantidad: 1 },
     ]));
@@ -66,7 +66,7 @@ describe('Kit con el mismo producto repetido', () => {
 
   it('mezcla de repetido y distinto: se juntan solo los iguales', async () => {
     const { prisma, creado } = prismaFalso();
-    await new CombosService(prisma).create(1, dto([
+    await new CombosService(prisma, {} as any).create(1, dto([
       { productoId: 7, cantidad: 2 },
       { productoId: 9, cantidad: 1 },
       { productoId: 7, cantidad: 1 },
@@ -81,7 +81,7 @@ describe('Kit con el mismo producto repetido', () => {
   it('un producto que de verdad no existe sigue siendo error', async () => {
     const { prisma } = prismaFalso();
     await expect(
-      new CombosService(prisma).create(1, dto([
+      new CombosService(prisma, {} as any).create(1, dto([
         { productoId: 7, cantidad: 1 },
         { productoId: 999, cantidad: 1 },
       ])),
@@ -91,7 +91,7 @@ describe('Kit con el mismo producto repetido', () => {
   it('el precio del kit sigue teniendo que ser menor al regular', async () => {
     const { prisma } = prismaFalso();
     await expect(
-      new CombosService(prisma).create(1, dto([
+      new CombosService(prisma, {} as any).create(1, dto([
         { productoId: 7, cantidad: 1 },
         { productoId: 7, cantidad: 1 },
       ], 45)),
@@ -100,7 +100,7 @@ describe('Kit con el mismo producto repetido', () => {
 
   it('al editar el kit pasa lo mismo: no se rompe por repetidos', async () => {
     const { prisma, creado } = prismaFalso();
-    await new CombosService(prisma).update(1, 1, dto([
+    await new CombosService(prisma, {} as any).update(1, 1, dto([
       { productoId: 7, cantidad: 1 },
       { productoId: 7, cantidad: 1 },
     ]) as any);

@@ -37,6 +37,19 @@ const PLAN_INCLUDE = {
   features: true,
 } as const;
 
+/** Los dos submódulos con los que se sirve el SIRE. */
+const SUBMODULOS_SIRE = ['contabilidad:sire-ventas', 'contabilidad:sire-compras'];
+
+/** ¿Este plan ya trae el SIRE por submódulos asignados? */
+const planTieneSubmodulosSire = (plan: Record<string, unknown>): boolean => {
+  const asignados = Array.isArray(plan.subModulosAsignados)
+    ? (plan.subModulosAsignados as Array<{ subModulo?: { codigo?: string } }>)
+    : [];
+  return asignados.some((a) =>
+    SUBMODULOS_SIRE.includes(String(a?.subModulo?.codigo ?? '')),
+  );
+};
+
 @Injectable()
 export class PlanService {
   constructor(private prisma: PrismaService) {}
@@ -55,9 +68,18 @@ export class PlanService {
 
     return getPlanFeatureKeys().reduce<Record<string, boolean>>(
       (features, key) => {
-        features[key] = relationMap.has(key)
-          ? Boolean(relationMap.get(key))
-          : Boolean(plan[key]);
+        if (relationMap.has(key)) {
+          features[key] = Boolean(relationMap.get(key));
+          return features;
+        }
+        // El SIRE vivía solo como submódulos asignados a mano. Para los planes
+        // que ya lo tenían así, el interruptor debe aparecer encendido en vez
+        // de mentir diciendo que está apagado.
+        if (key === 'tieneSire') {
+          features[key] = planTieneSubmodulosSire(plan);
+          return features;
+        }
+        features[key] = Boolean(plan[key]);
         return features;
       },
       {},
@@ -239,6 +261,10 @@ export class PlanService {
         },
         include: PLAN_INCLUDE,
       });
+      // Un plan nuevo con el SIRE prendido nace ya con sus submódulos.
+      if (features.tieneSire) {
+        await this.sincronizarSubmodulosSire(this.prisma, plan.id, true);
+      }
       return this.withResolvedFeatures(plan);
     } catch (error) {
       if (
@@ -390,7 +416,15 @@ export class PlanService {
           },
           include: PLAN_INCLUDE,
         });
-        return this.withResolvedFeatures(plan);
+        // Después de guardar: el interruptor del SIRE define los submódulos.
+        // Va al final para que gane sobre cualquier lista de submódulos que
+        // haya llegado en el mismo guardado.
+        await this.sincronizarSubmodulosSire(prisma, id, features.tieneSire);
+        const conSire = await prisma.plan.findUniqueOrThrow({
+          where: { id },
+          include: PLAN_INCLUDE,
+        });
+        return this.withResolvedFeatures(conSire);
       } catch (error) {
         if (
           error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -402,6 +436,37 @@ export class PlanService {
         }
         throw error;
       }
+    });
+  }
+
+  /**
+   * El interruptor "SIRE" del plan manda sobre los dos submódulos que lo
+   * sirven. Así el administrador lo prende en un solo lugar —las
+   * características del plan— y no tiene que acordarse de asignar
+   * `contabilidad:sire-ventas` y `contabilidad:sire-compras` a mano.
+   */
+  private async sincronizarSubmodulosSire(
+    prisma: Prisma.TransactionClient | PrismaService,
+    planId: number,
+    activo: boolean,
+  ) {
+    const submodulos = await prisma.subModulo.findMany({
+      where: { codigo: { in: SUBMODULOS_SIRE } },
+      select: { id: true },
+    });
+    if (submodulos.length === 0) return;
+    const ids = submodulos.map((s) => s.id);
+
+    if (!activo) {
+      await prisma.planSubModulo.deleteMany({
+        where: { planId, subModuloId: { in: ids } },
+      });
+      return;
+    }
+    // createMany con skipDuplicates: prender dos veces no duplica filas.
+    await prisma.planSubModulo.createMany({
+      data: ids.map((subModuloId) => ({ planId, subModuloId })),
+      skipDuplicates: true,
     });
   }
 
