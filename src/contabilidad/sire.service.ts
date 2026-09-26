@@ -1722,11 +1722,17 @@ export class SireService {
     if (!numTicket) {
       contenido = typeof solicitud === 'string' ? solicitud : '';
     } else {
-      const estado = await cliente.consultarTicket(periodo, String(numTicket));
-      // El ticket dice tanto el nombre del archivo como su tipo; el tipo estaba
-      // asumido en "01" y los tickets reales traen "00".
-      const reporte = estado?.registros?.[0]?.archivoReporte?.[0] ?? null;
-      const archivo = reporte?.nomArchivoReporte ?? estado?.nomArchivoReporte ?? null;
+      // SUNAT tarda unos segundos en generar el archivo. Antes se consultaba el
+      // ticket una sola vez, al instante, y casi siempre salía "aún no está
+      // listo" aunque a los pocos segundos ya lo estuviera. Se espera un poco.
+      let reporte: any = null;
+      for (let intento = 1; intento <= 6; intento++) {
+        const estado = await cliente.consultarTicket(periodo, String(numTicket));
+        reporte = estado?.registros?.[0]?.archivoReporte?.[0] ?? null;
+        if (reporte?.nomArchivoReporte || estado?.nomArchivoReporte) break;
+        if (intento < 6) await new Promise((s) => setTimeout(s, 5000));
+      }
+      const archivo = reporte?.nomArchivoReporte ?? null;
       if (!archivo) {
         return {
           pendiente: true,
