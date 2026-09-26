@@ -173,15 +173,21 @@ export class SireClient {
   async solicitarPropuestaRce(periodo: string): Promise<any> {
     const plantilla =
       process.env.SIRE_RCE_PROPUESTA_PATH ||
-      '/libros/rce/propuesta/web/propuesta/{periodo}/exportacioncomprobantepropuesta?codTipoArchivo=0';
+      // `codOrigenEnvio=1` = servicio web. Sin este campo SUNAT responde 422:
+      // "El campo 'codOrigenEnvio' es nulo o vacio" (verificado 2026-09-25).
+      '/libros/rce/propuesta/web/propuesta/{periodo}/exportacioncomprobantepropuesta?codTipoArchivo=0&codOrigenEnvio=1';
     return this.get(plantilla.replace('{periodo}', periodo));
   }
 
-  /** Estado de un ticket de exportación (mismo caveat que el método anterior). */
+  /**
+   * Estado de un ticket de exportación. SUNAT exige paginación: sin `page` y
+   * `perPage` responde 422 ("El campo 'page' no enviado o es vacío").
+   * Verificado 2026-09-25 contra el SIRE real.
+   */
   async consultarTicket(periodo: string, numTicket: string): Promise<any> {
     const plantilla =
       process.env.SIRE_TICKET_PATH ||
-      '/libros/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets?perIni={periodo}&perFin={periodo}&numTicket={ticket}';
+      '/libros/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets?perIni={periodo}&perFin={periodo}&numTicket={ticket}&page=1&perPage=20';
     return this.get(
       plantilla
         .replace(/\{periodo\}/g, periodo)
@@ -189,13 +195,24 @@ export class SireClient {
     );
   }
 
-  /** Descarga el archivo generado por un ticket, como texto (formato TXT SUNAT). */
-  async descargarArchivo(nombreArchivo: string): Promise<string> {
+  /**
+   * Descarga el archivo generado por un ticket, como texto (formato TXT SUNAT).
+   *
+   * El tipo de archivo NO es una constante: viene en el propio ticket, en
+   * `archivoReporte[].codTipoAchivoReporte` (sí, SUNAT lo escribe sin la "r").
+   * Estaba fijo en "01" y los tickets reales traen "00".
+   */
+  async descargarArchivo(
+    nombreArchivo: string,
+    codTipoArchivo = '00',
+  ): Promise<string> {
     const plantilla =
       process.env.SIRE_DESCARGA_PATH ||
-      '/libros/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte?nomArchivoReporte={archivo}&codTipoAchivoReporte=01';
+      '/libros/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte?nomArchivoReporte={archivo}&codTipoAchivoReporte={tipo}';
     const data = await this.get<string>(
-      plantilla.replace('{archivo}', encodeURIComponent(nombreArchivo)),
+      plantilla
+        .replace('{archivo}', encodeURIComponent(nombreArchivo))
+        .replace('{tipo}', encodeURIComponent(codTipoArchivo)),
       'text',
     );
     return typeof data === 'string' ? data : String(data ?? '');

@@ -1723,10 +1723,10 @@ export class SireService {
       contenido = typeof solicitud === 'string' ? solicitud : '';
     } else {
       const estado = await cliente.consultarTicket(periodo, String(numTicket));
-      const archivo =
-        estado?.registros?.[0]?.archivoReporte?.[0]?.nomArchivoReporte ??
-        estado?.nomArchivoReporte ??
-        null;
+      // El ticket dice tanto el nombre del archivo como su tipo; el tipo estaba
+      // asumido en "01" y los tickets reales traen "00".
+      const reporte = estado?.registros?.[0]?.archivoReporte?.[0] ?? null;
+      const archivo = reporte?.nomArchivoReporte ?? estado?.nomArchivoReporte ?? null;
       if (!archivo) {
         return {
           pendiente: true,
@@ -1735,7 +1735,10 @@ export class SireService {
             'SUNAT está preparando el archivo. Vuelve a intentar en unos minutos.',
         };
       }
-      contenido = await cliente.descargarArchivo(String(archivo));
+      contenido = await cliente.descargarArchivo(
+        String(archivo),
+        String(reporte?.codTipoAchivoReporte ?? '00'),
+      );
     }
 
     if (!contenido.trim()) {
