@@ -1,9 +1,9 @@
 /**
  * QA funcional del costo por sede, contra PostgreSQL real.
  *
- * Cinco rondas sobre una empresa de dos sedes creada para la ocasión, cada una
- * con los servicios reales —kardex, producción, dashboard— y datos que se
- * crean y se borran. No hay mocks: lo que falla aquí, falla en el panel.
+ * Diez rondas sobre empresas creadas para la ocasión, con los servicios reales
+ * —kardex, dashboard— y datos que se crean y se borran. No hay mocks: lo que
+ * falla aquí, falla en el panel.
  *
  * Cada ronda arranca de una empresa nueva, así que correr el archivo varias
  * veces seguidas tiene que dar exactamente lo mismo; si no, hay arrastre de
@@ -130,11 +130,60 @@ class Escenario {
     await this.prisma.empresa.delete({ where: { id: empresaId } });
   }
 
-  /** Un ingreso de mercadería a una sede, como lo hace una compra. */
-  async comprar(sedeId: number, cantidad: number, costo: number) {
-    const actual = await this.stockDe(sedeId);
+  /** Una tercera sede, para los casos que no se ven con solo dos. */
+  async abrirSede(nombre: string) {
+    const s = await this.prisma.sede.create({
+      data: { nombre, empresaId: this.empresaId },
+      select: { id: true },
+    });
+    await this.prisma.productoStock.create({
+      data: { productoId: this.productoId, sedeId: s.id, stock: 0 },
+    });
+    return s.id;
+  }
+
+  /** Un producto más, con sus filas de stock en las sedes que se indiquen. */
+  async nuevoProducto(marca: string, sedes: number[], padreId?: number) {
+    const unidad = await this.prisma.unidadMedida.findFirst({ select: { id: true } });
+    const p = await this.prisma.producto.create({
+      data: {
+        codigo: marca,
+        descripcion: marca,
+        empresaId: this.empresaId,
+        unidadMedidaId: unidad!.id,
+        tipoAfectacionIGV: '10',
+        precioUnitario: 100,
+        valorUnitario: 100,
+        costoPromedio: 0,
+        stock: 0,
+        ...(padreId ? { productoPadreId: padreId } : {}),
+      },
+      select: { id: true },
+    });
+    await this.prisma.productoStock.createMany({
+      data: sedes.map((sedeId) => ({ productoId: p.id, sedeId, stock: 0 })),
+    });
+    return p.id;
+  }
+
+  /** Un ajuste de inventario, positivo o negativo. */
+  async ajustar(sedeId: number, delta: number, productoId = this.productoId) {
+    const actual = await this.stockDe(sedeId, productoId);
     await (this.kardex as any).actualizarStockYCosto(
-      this.productoId,
+      productoId,
+      sedeId,
+      actual + delta,
+      'AJUSTE',
+      undefined,
+      delta,
+    );
+  }
+
+  /** Un ingreso de mercadería a una sede, como lo hace una compra. */
+  async comprar(sedeId: number, cantidad: number, costo: number, productoId = this.productoId) {
+    const actual = await this.stockDe(sedeId, productoId);
+    await (this.kardex as any).actualizarStockYCosto(
+      productoId,
       sedeId,
       actual + cantidad,
       'INGRESO',
@@ -144,10 +193,10 @@ class Escenario {
   }
 
   /** Una salida de mercadería de una sede, como lo hace una venta. */
-  async despachar(sedeId: number, cantidad: number) {
-    const actual = await this.stockDe(sedeId);
+  async despachar(sedeId: number, cantidad: number, productoId = this.productoId) {
+    const actual = await this.stockDe(sedeId, productoId);
     await (this.kardex as any).actualizarStockYCosto(
-      this.productoId,
+      productoId,
       sedeId,
       actual - cantidad,
       'SALIDA',
@@ -156,37 +205,37 @@ class Escenario {
     );
   }
 
-  async stockDe(sedeId: number) {
+  async stockDe(sedeId: number, productoId = this.productoId) {
     const f = await this.prisma.productoStock.findUnique({
-      where: { productoId_sedeId: { productoId: this.productoId, sedeId } },
+      where: { productoId_sedeId: { productoId, sedeId } },
       select: { stock: true },
     });
     return Number(f?.stock ?? 0);
   }
 
-  async costoDe(sedeId: number) {
+  async costoDe(sedeId: number, productoId = this.productoId) {
     const f = await this.prisma.productoStock.findUnique({
-      where: { productoId_sedeId: { productoId: this.productoId, sedeId } },
+      where: { productoId_sedeId: { productoId, sedeId } },
       select: { costoPromedio: true },
     });
     return f?.costoPromedio == null ? null : Number(f.costoPromedio);
   }
 
-  async costoGlobal() {
+  async costoGlobal(productoId = this.productoId) {
     const p = await this.prisma.producto.findUnique({
-      where: { id: this.productoId },
+      where: { id: productoId },
       select: { costoPromedio: true },
     });
     return Number(p?.costoPromedio ?? 0);
   }
 
   /** Lo que valen las sedes por separado, con el respaldo al global. */
-  async valorPorSedes() {
+  async valorPorSedes(productoId = this.productoId) {
     const filas = await this.prisma.productoStock.findMany({
-      where: { productoId: this.productoId },
+      where: { productoId },
       select: { stock: true, costoPromedio: true },
     });
-    const global = await this.costoGlobal();
+    const global = await this.costoGlobal(productoId);
     return filas.reduce(
       (t, f) => t + Number(f.stock) * costoDeSede(f.costoPromedio, global),
       0,
@@ -194,9 +243,9 @@ class Escenario {
   }
 
   /** Lo que vale el producto entero según el costo global. */
-  async valorGlobal() {
+  async valorGlobal(productoId = this.productoId) {
     const p = await this.prisma.producto.findUnique({
-      where: { id: this.productoId },
+      where: { id: productoId },
       select: { stock: true, costoPromedio: true },
     });
     return Number(p?.stock ?? 0) * Number(p?.costoPromedio ?? 0);
@@ -593,6 +642,324 @@ describeSiHayBase('QA funcional · costo por sede', () => {
       expect(Number(p?.stock)).toBe(
         (await e.stockDe(e.centro)) + (await e.stockDe(e.norte)),
       );
+    });
+  });
+
+  // ── RONDA 6 · Tres sedes y ajustes de inventario ──────────────────────────
+  describe('Ronda 6 · tres sedes y ajustes de inventario', () => {
+    enEscenario('abrir una sede nueva no le inventa un costo', async (e) => {
+      await e.comprar(e.centro, 10, 100);
+      await e.comprar(e.norte, 10, 200);
+      const sur = await e.abrirSede('Sur');
+
+      // La sede recién abierta no tiene costo propio: vale el global.
+      expect(await e.costoDe(sur)).toBeNull();
+      expect(await e.stockDe(sur)).toBe(0);
+      expect(await e.costoGlobal()).toBe(150);
+    });
+
+    enEscenario('con tres sedes, cada una mantiene lo suyo', async (e) => {
+      const sur = await e.abrirSede('Sur');
+      await e.comprar(e.centro, 10, 100);
+      await e.comprar(e.norte, 10, 200);
+      await e.comprar(sur, 10, 300);
+
+      expect(await e.costoDe(e.centro)).toBe(100);
+      expect(await e.costoDe(e.norte)).toBe(200);
+      expect(await e.costoDe(sur)).toBe(300);
+      expect(await e.costoGlobal()).toBe(200); // (1000+2000+3000)/30
+      expect(await e.valorPorSedes()).toBeCloseTo(await e.valorGlobal(), 6);
+    });
+
+    enEscenario('un ajuste positivo no cambia el costo de la sede', async (e) => {
+      await e.comprar(e.centro, 10, 100);
+      // Aparecen 3 unidades en el conteo físico. No se sabe qué costaron, así
+      // que el costo de la sede no se toca; solo cambia el stock.
+      await e.ajustar(e.centro, 3);
+
+      expect(await e.stockDe(e.centro)).toBe(13);
+      expect(await e.costoDe(e.centro)).toBe(100);
+      // Pero el global sí se rehace, porque cambió la mezcla.
+      expect(await e.valorPorSedes()).toBeCloseTo(await e.valorGlobal(), 6);
+    });
+
+    enEscenario('un ajuste negativo tampoco lo cambia, y sigue cuadrando', async (e) => {
+      await e.comprar(e.centro, 10, 100);
+      await e.comprar(e.norte, 10, 200);
+      await e.ajustar(e.norte, -4); // merma
+
+      expect(await e.stockDe(e.norte)).toBe(6);
+      expect(await e.costoDe(e.norte)).toBe(200);
+      expect(await e.valorPorSedes()).toBeCloseTo(await e.valorGlobal(), 6);
+    });
+
+    enEscenario('traslado en cadena Centro → Norte → Sur', async (e) => {
+      const sur = await e.abrirSede('Sur');
+      await e.comprar(e.centro, 30, 90);
+
+      const mover = (origen: number, destino: number, cantidad: number) =>
+        e.kardex.realizarTraslado(
+          {
+            sedeOrigenId: origen,
+            sedeDestinoId: destino,
+            items: [{ productoId: e.productoId, cantidad }],
+          } as any,
+          e.empresaId,
+          e.usuarioId,
+        );
+
+      await mover(e.centro, e.norte, 20);
+      await mover(e.norte, sur, 10);
+
+      // El costo viaja con la mercadería: las tres quedan en S/90.
+      expect(await e.costoDe(e.centro)).toBe(90);
+      expect(await e.costoDe(e.norte)).toBe(90);
+      expect(await e.costoDe(sur)).toBe(90);
+      expect(await e.costoGlobal()).toBeCloseTo(90, 6);
+    });
+  });
+
+  // ── RONDA 7 · Variantes (talla, color) ────────────────────────────────────
+  describe('Ronda 7 · productos con variantes', () => {
+    enEscenario('cada variante lleva su propio costo por sede', async (e) => {
+      const talla38 = await e.nuevoProducto(
+        `v38-${Date.now()}`,
+        [e.centro, e.norte],
+        e.productoId,
+      );
+      const talla40 = await e.nuevoProducto(
+        `v40-${Date.now()}`,
+        [e.centro, e.norte],
+        e.productoId,
+      );
+
+      await e.comprar(e.centro, 10, 80, talla38);
+      await e.comprar(e.centro, 10, 95, talla40);
+      await e.comprar(e.norte, 10, 130, talla38);
+
+      expect(await e.costoDe(e.centro, talla38)).toBe(80);
+      expect(await e.costoDe(e.centro, talla40)).toBe(95);
+      expect(await e.costoDe(e.norte, talla38)).toBe(130);
+      // La talla 40 nunca llegó a Norte.
+      expect(await e.costoDe(e.norte, talla40)).toBeNull();
+    });
+
+    enEscenario('la invariante se cumple variante por variante', async (e) => {
+      const variante = await e.nuevoProducto(
+        `var-${Date.now()}`,
+        [e.centro, e.norte],
+        e.productoId,
+      );
+      await e.comprar(e.centro, 12, 70, variante);
+      await e.comprar(e.norte, 8, 110, variante);
+      await e.despachar(e.centro, 5, variante);
+
+      expect(await e.valorPorSedes(variante)).toBeCloseTo(
+        await e.valorGlobal(variante),
+        4,
+      );
+    });
+
+    enEscenario('mover una variante entre sedes no altera a sus hermanas', async (e) => {
+      const a = await e.nuevoProducto(`va-${Date.now()}`, [e.centro, e.norte], e.productoId);
+      const b = await e.nuevoProducto(`vb-${Date.now()}`, [e.centro, e.norte], e.productoId);
+      await e.comprar(e.centro, 10, 50, a);
+      await e.comprar(e.centro, 10, 250, b);
+
+      await e.kardex.realizarTraslado(
+        {
+          sedeOrigenId: e.centro,
+          sedeDestinoId: e.norte,
+          items: [{ productoId: a, cantidad: 4 }],
+        } as any,
+        e.empresaId,
+        e.usuarioId,
+      );
+
+      expect(await e.costoDe(e.norte, a)).toBe(50);
+      expect(await e.costoDe(e.centro, b)).toBe(250);
+      expect(await e.costoDe(e.norte, b)).toBeNull();
+    });
+  });
+
+  // ── RONDA 8 · Decimales y fracciones ──────────────────────────────────────
+  describe('Ronda 8 · decimales, fracciones y redondeo', () => {
+    enEscenario('fracciones de galón no descuadran el valorizado', async (e) => {
+      // Venta por fracción: 1/2, 1/4, 1/8 de galón.
+      await e.comprar(e.centro, 10, 47.35);
+      await e.despachar(e.centro, 0.5);
+      await e.despachar(e.centro, 0.25);
+      await e.despachar(e.centro, 0.125);
+
+      expect(await e.stockDe(e.centro)).toBeCloseTo(9.125, 3);
+      expect(await e.costoDe(e.centro)).toBeCloseTo(47.35, 6);
+      expect(await e.valorPorSedes()).toBeCloseTo(await e.valorGlobal(), 2);
+    });
+
+    enEscenario('costos con muchos decimales no se van acumulando en error', async (e) => {
+      // Precios que no dan redondos a propósito.
+      await e.comprar(e.centro, 3, 33.333333);
+      await e.comprar(e.centro, 7, 11.117777);
+      await e.comprar(e.norte, 11, 7.070707);
+
+      const esperadoCentro = (3 * 33.333333 + 7 * 11.117777) / 10;
+      expect(await e.costoDe(e.centro)).toBeCloseTo(esperadoCentro, 4);
+      expect(await e.valorPorSedes()).toBeCloseTo(await e.valorGlobal(), 2);
+    });
+
+    enEscenario('cantidades muy chicas no llevan el costo a cero', async (e) => {
+      await e.comprar(e.centro, 100, 25);
+      await e.comprar(e.centro, 0.001, 80);
+
+      const costo = await e.costoDe(e.centro);
+      expect(costo).toBeGreaterThan(24.9);
+      expect(costo).toBeLessThan(25.1);
+    });
+
+    enEscenario('un costo alto con stock chico sigue cuadrando', async (e) => {
+      // Un producto caro: una moto, una máquina.
+      await e.comprar(e.centro, 1, 18500.75);
+      await e.comprar(e.norte, 2, 21300.4);
+
+      expect(await e.costoDe(e.centro)).toBeCloseTo(18500.75, 2);
+      expect(await e.valorPorSedes()).toBeCloseTo(await e.valorGlobal(), 2);
+    });
+  });
+
+  // ── RONDA 9 · Varios productos y el reporte completo ──────────────────────
+  describe('Ronda 9 · varios productos a la vez', () => {
+    enEscenario('el inventario valorizado de una sede suma solo lo suyo', async (e) => {
+      const b = await e.nuevoProducto(`p2-${Date.now()}`, [e.centro, e.norte]);
+      const c = await e.nuevoProducto(`p3-${Date.now()}`, [e.centro, e.norte]);
+
+      await e.comprar(e.centro, 10, 100);
+      await e.comprar(e.centro, 5, 40, b);
+      await e.comprar(e.norte, 10, 300, c);
+
+      const centro: any = await e.kardex.obtenerInventarioValorizado(
+        e.empresaId,
+        {} as any,
+        e.centro,
+      );
+      const enCentro = (id: number) => centro.productos.find((p: any) => p.id === id);
+
+      expect(enCentro(e.productoId).valorTotal).toBe(1000);
+      expect(enCentro(b).valorTotal).toBe(200);
+      // El tercero no tiene stock en Centro: no aporta valor.
+      expect(enCentro(c)?.valorTotal ?? 0).toBe(0);
+    });
+
+    enEscenario('la rentabilidad mezcla productos con costos distintos por sede', async (e) => {
+      const b = await e.nuevoProducto(`p2-${Date.now()}`, [e.centro, e.norte]);
+      await e.comprar(e.centro, 10, 100);
+      await e.comprar(e.centro, 10, 40, b);
+      await e.comprar(e.norte, 10, 250);
+
+      await e.vender(e.centro, 1, 300, 1);
+      await e.vender(e.norte, 1, 300, 2);
+
+      const centro = await e.dashboard.utilidadBrutaPen({
+        empresaId: e.empresaId,
+        sedeId: e.centro,
+      });
+      const norte = await e.dashboard.utilidadBrutaPen({
+        empresaId: e.empresaId,
+        sedeId: e.norte,
+      });
+
+      expect(centro.costo).toBe(100);
+      expect(norte.costo).toBe(250);
+    });
+
+    enEscenario('trasladar varios productos en un solo envío', async (e) => {
+      const b = await e.nuevoProducto(`p2-${Date.now()}`, [e.centro, e.norte]);
+      await e.comprar(e.centro, 10, 60);
+      await e.comprar(e.centro, 10, 180, b);
+
+      await e.kardex.realizarTraslado(
+        {
+          sedeOrigenId: e.centro,
+          sedeDestinoId: e.norte,
+          items: [
+            { productoId: e.productoId, cantidad: 5 },
+            { productoId: b, cantidad: 5 },
+          ],
+        } as any,
+        e.empresaId,
+        e.usuarioId,
+      );
+
+      // Cada producto viaja con SU costo, no con un promedio del envío.
+      expect(await e.costoDe(e.norte)).toBe(60);
+      expect(await e.costoDe(e.norte, b)).toBe(180);
+      expect(await e.valorPorSedes()).toBeCloseTo(await e.valorGlobal(), 4);
+      expect(await e.valorPorSedes(b)).toBeCloseTo(await e.valorGlobal(b), 4);
+    });
+  });
+
+  // ── RONDA 10 · Concurrencia y volumen ─────────────────────────────────────
+  describe('Ronda 10 · concurrencia y volumen', () => {
+    enEscenario('dos compras simultáneas a la misma sede no pierden stock', async (e) => {
+      await Promise.all([
+        e.comprar(e.centro, 10, 100),
+        e.comprar(e.norte, 10, 200),
+      ]);
+
+      // Sedes distintas: no compiten por la misma fila.
+      expect(await e.stockDe(e.centro)).toBe(10);
+      expect(await e.stockDe(e.norte)).toBe(10);
+    });
+
+    enEscenario('ventas simultáneas en la misma sede no sobrevenden', async (e) => {
+      await e.comprar(e.centro, 10, 100);
+      await Promise.all([
+        e.despachar(e.centro, 3),
+        e.despachar(e.centro, 3),
+        e.despachar(e.centro, 3),
+      ]);
+
+      // El descuento de salidas es atómico (updateMany condicionado).
+      const stock = await e.stockDe(e.centro);
+      expect(stock).toBeGreaterThanOrEqual(1);
+      expect(stock).toBeLessThanOrEqual(7);
+      expect(await e.costoDe(e.centro)).toBe(100);
+    });
+
+    enEscenario('50 movimientos sobre 3 productos mantienen la invariante', async (e) => {
+      const sur = await e.abrirSede('Sur');
+      const b = await e.nuevoProducto(`p2-${Date.now()}`, [e.centro, e.norte, sur]);
+      const productos = [e.productoId, b];
+      const sedes = [e.centro, e.norte, sur];
+
+      for (let i = 0; i < 25; i++) {
+        const p = productos[i % productos.length];
+        const s = sedes[i % sedes.length];
+        await e.comprar(s, 4, 20 + (i % 7) * 13, p);
+        if (i % 3 === 0) await e.despachar(s, 2, p);
+      }
+
+      for (const p of productos) {
+        const porSedes = await e.valorPorSedes(p);
+        expect(porSedes).toBeGreaterThan(0);
+        expect(porSedes).toBeCloseTo(await e.valorGlobal(p), 2);
+      }
+    });
+
+    enEscenario('la rentabilidad no consulta costos de más al crecer', async (e) => {
+      const b = await e.nuevoProducto(`p2-${Date.now()}`, [e.centro, e.norte]);
+      await e.comprar(e.centro, 50, 100);
+      await e.comprar(e.centro, 50, 40, b);
+
+      for (let i = 1; i <= 8; i++) {
+        await e.vender(e.centro, 1, 300, i);
+      }
+
+      const espiado = jest.spyOn(prisma.productoStock, 'findMany');
+      const r = await e.dashboard.utilidadBrutaPen({ empresaId: e.empresaId });
+      // Ocho ventas, UNA sola consulta de costos.
+      expect(espiado).toHaveBeenCalledTimes(1);
+      expect(r.costo).toBe(800);
+      espiado.mockRestore();
     });
   });
 });
