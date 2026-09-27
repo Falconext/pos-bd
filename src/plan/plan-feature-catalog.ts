@@ -21,7 +21,12 @@ export type PlanFeatureKey =
   | 'tieneShalomGuias'
   | 'tieneOlva'
   | 'tieneOlvaGuias'
-  | 'tienePlantillasWhatsApp';
+  | 'tienePlantillasWhatsApp'
+  // ── Contabilidad ───────────────────────────────────────────────────────────
+  // El SIRE es lo que distingue al plan Corporativo: que SUNAT le traiga las
+  // compras al negocio en vez de digitarlas a mano. Antes solo se podía dar
+  // asignando dos submódulos a mano; ahora es un interruptor del plan.
+  | 'tieneSire';
 
 export interface PlanFeatureCatalogItem {
   key: PlanFeatureKey;
@@ -204,6 +209,14 @@ export const PLAN_FEATURE_CATALOG: PlanFeatureCatalogItem[] = [
       'Conectar el WhatsApp del negocio y crear sus plantillas de despacho. Se contrata por separado.',
     group: 'operaciones',
     icon: 'solar:chat-round-line-bold-duotone',
+  },
+  {
+    key: 'tieneSire',
+    label: 'SIRE · traer mis compras de SUNAT',
+    description:
+      'Descarga del SIRE las compras y ventas que SUNAT tiene a nombre del RUC, sin digitarlas. Requiere que la empresa sea FORMAL y cargue sus credenciales del SIRE en su perfil.',
+    group: 'operaciones',
+    icon: 'solar:cloud-download-bold-duotone',
   },
 ];
 
