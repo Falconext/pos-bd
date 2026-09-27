@@ -1077,22 +1077,25 @@ export class KardexService {
         where: { productoId },
         _sum: { stock: true },
       });
-      const stockTotalGlobal = num(totalStock._sum.stock); // Este es el stock NUEVO total ya actualizado en la línea anterior?
-      // Espera, acabamos de actualizar el stock de la sede.
-      // El stockAnteriorGlobal seria stockTotalGlobal - cantidad.
+      // El stock de la sede ya se actualizó arriba, así que esta suma es el
+      // stock DESPUÉS del ingreso; lo de antes es la diferencia con la cantidad.
+      const stockActualGlobal = num(totalStock._sum.stock);
 
       if (producto) {
-        const stockActualGlobal = stockTotalGlobal;
         const stockAnteriorGlobal = stockActualGlobal - cantidad;
         const costoAnterior = Number(producto.costoPromedio) || 0;
 
-        // Calcular costo promedio ponderado
-        const valorAnterior = stockAnteriorGlobal * costoAnterior;
-        const valorNuevo = cantidad * costoUnitario;
-
         if (stockActualGlobal > 0) {
+          // Si no había mercadería que promediar —producto nuevo, o stock en
+          // negativo por sobreventa— el costo del ingreso ES el promedio. Sin
+          // esta guarda, un stock previo negativo mete un "valor anterior"
+          // negativo y el promedio sale por encima del precio de compra, o
+          // incluso negativo.
           const costoPromedio =
-            (valorAnterior + valorNuevo) / stockActualGlobal;
+            stockAnteriorGlobal > 0
+              ? (stockAnteriorGlobal * costoAnterior + cantidad * costoUnitario) /
+                stockActualGlobal
+              : costoUnitario;
           await this.prisma.producto.update({
             where: { id: productoId },
             data: { costoPromedio },
