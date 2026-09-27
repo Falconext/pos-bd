@@ -497,4 +497,166 @@ describeSiHayBase('Chat de soporte · contra base real', () => {
       }
     });
   });
+
+  // ── Lo que pasa cuando algo alrededor falla ───────────────────────────────
+  describe('cuando el aviso en vivo falla', () => {
+    /** Un servicio de soporte cuyo aviso revienta, como si el socket se cayera. */
+    const conAvisoRoto = () => {
+      const notificaciones: any = new Proxy(
+        {},
+        {
+          get: () => () => {
+            throw new Error('socket caído');
+          },
+        },
+      );
+      return new SoporteService(prisma as any, notificaciones);
+    };
+
+    it('el mensaje no se pierde si el aviso revienta', async () => {
+      const empresa = (await crearEmpresas(1, 'krezka', 'qa-soporte-aviso'))[0];
+      try {
+        const roto = conAvisoRoto();
+        await roto.enviarMensajeEmpresa(empresa, usuarioEmpresaId, 'se cayó el socket').catch(() => {});
+
+        // Haya fallado o no el envío, el mensaje YA está guardado.
+        const { mensajes } = await soporte.listarMensajes(empresa);
+        expect(mensajes).toHaveLength(1);
+      } finally {
+        await borrarEmpresas([empresa]);
+      }
+    });
+
+    it('un aviso caído no le devuelve error al empresario', async () => {
+      // Si rechaza, el empresario ve un error, reintenta, y el mensaje queda
+      // DUPLICADO: el primero sí se había guardado.
+      const empresa = (await crearEmpresas(1, 'krezka', 'qa-soporte-aviso2'))[0];
+      try {
+        const roto = conAvisoRoto();
+        await expect(
+          roto.enviarMensajeEmpresa(empresa, usuarioEmpresaId, 'primer intento'),
+        ).resolves.toBeDefined();
+      } finally {
+        await borrarEmpresas([empresa]);
+      }
+    });
+
+    it('lo mismo del lado de Krezka al responder', async () => {
+      const empresa = (await crearEmpresas(1, 'krezka', 'qa-soporte-aviso3'))[0];
+      try {
+        await soporte.enviarMensajeEmpresa(empresa, usuarioEmpresaId, 'hola');
+        const hilo = await leerConversacion(empresa);
+        const roto = conAvisoRoto();
+        await expect(
+          roto.enviarMensajeSistema(hilo!.id, 'krezka', usuarioKrezkaId, 'respondo'),
+        ).resolves.toBeDefined();
+      } finally {
+        await borrarEmpresas([empresa]);
+      }
+    });
+  });
+
+  // ── El contenido que la gente escribe de verdad ───────────────────────────
+  describe('contenido', () => {
+    let empresa: number;
+    beforeAll(async () => {
+      empresa = (await crearEmpresas(1, 'krezka', 'qa-soporte-texto'))[0];
+    });
+    afterAll(async () => {
+      await borrarEmpresas([empresa]);
+    });
+
+    it('acepta tildes, ñ y emoji sin romperlos', async () => {
+      const texto = 'La boleta de mañana salió mal 😕 ¿me ayudan?';
+      await soporte.enviarMensajeEmpresa(empresa, usuarioEmpresaId, texto);
+      const { mensajes } = await soporte.listarMensajes(empresa);
+      expect(mensajes[mensajes.length - 1].contenido).toBe(texto);
+    });
+
+    it('un mensaje largo se guarda entero, sin cortarlo', async () => {
+      const largo = 'necesito ayuda con esto. '.repeat(400); // ~10 000 caracteres
+      await soporte.enviarMensajeEmpresa(empresa, usuarioEmpresaId, largo);
+      const { mensajes } = await soporte.listarMensajes(empresa);
+      expect(mensajes[mensajes.length - 1].contenido).toHaveLength(largo.trim().length);
+    });
+
+    it('los saltos de línea se conservan', async () => {
+      const texto = 'primero esto\nsegundo esto\n\ny esto';
+      await soporte.enviarMensajeEmpresa(empresa, usuarioEmpresaId, texto);
+      const { mensajes } = await soporte.listarMensajes(empresa);
+      expect(mensajes[mensajes.length - 1].contenido).toBe(texto);
+    });
+
+    it('el texto se guarda tal cual, sin interpretarlo', async () => {
+      // Parece SQL y parece HTML; para el chat es texto y nada más.
+      const texto = "'; DROP TABLE \"SoporteMensaje\"; -- <script>alert(1)</script>";
+      await soporte.enviarMensajeEmpresa(empresa, usuarioEmpresaId, texto);
+      const { mensajes } = await soporte.listarMensajes(empresa);
+      expect(mensajes[mensajes.length - 1].contenido).toBe(texto);
+      // Y la tabla sigue ahí.
+      expect(await prisma.soporteMensaje.count()).toBeGreaterThan(0);
+    });
+  });
+
+  // ── El orden del hilo, que es lo que hace legible la conversación ─────────
+  describe('orden de los mensajes', () => {
+    it('una ráfaga de mensajes seguidos se lee en el orden en que se escribió', async () => {
+      const empresa = (await crearEmpresas(1, 'krezka', 'qa-soporte-orden'))[0];
+      try {
+        for (let i = 1; i <= 12; i++) {
+          await soporte.enviarMensajeEmpresa(empresa, usuarioEmpresaId, `mensaje ${i}`);
+        }
+        const { mensajes } = await soporte.listarMensajes(empresa);
+        expect(mensajes.map((m) => m.contenido)).toEqual(
+          Array.from({ length: 12 }, (_, i) => `mensaje ${i + 1}`),
+        );
+      } finally {
+        await borrarEmpresas([empresa]);
+      }
+    });
+
+    it('ida y vuelta entre empresa y Krezka queda intercalado correctamente', async () => {
+      const empresa = (await crearEmpresas(1, 'krezka', 'qa-soporte-ida'))[0];
+      try {
+        await soporte.enviarMensajeEmpresa(empresa, usuarioEmpresaId, 'pregunta 1');
+        const hilo = await leerConversacion(empresa);
+        await soporte.enviarMensajeSistema(hilo!.id, 'krezka', usuarioKrezkaId, 'respuesta 1');
+        await soporte.enviarMensajeEmpresa(empresa, usuarioEmpresaId, 'pregunta 2');
+        await soporte.enviarMensajeSistema(hilo!.id, 'krezka', usuarioKrezkaId, 'respuesta 2');
+
+        const { mensajes } = await soporte.listarMensajes(empresa);
+        expect(mensajes.map((m) => `${m.rol}:${m.contenido}`)).toEqual([
+          'EMPRESA:pregunta 1',
+          'SISTEMA:respuesta 1',
+          'EMPRESA:pregunta 2',
+          'SISTEMA:respuesta 2',
+        ]);
+      } finally {
+        await borrarEmpresas([empresa]);
+      }
+    });
+
+    it('mensajes simultáneos: no se pierde ninguno y el contador es exacto', async () => {
+      const empresa = (await crearEmpresas(1, 'krezka', 'qa-soporte-rafaga'))[0];
+      try {
+        // El hilo ya existe, así que esto no prueba la carrera de creación
+        // sino que los `increment` del contador no se pisen entre sí.
+        await soporte.estado(empresa);
+        await Promise.all(
+          Array.from({ length: 10 }, (_, i) =>
+            soporte.enviarMensajeEmpresa(empresa, usuarioEmpresaId, `simultáneo ${i}`),
+          ),
+        );
+
+        const { mensajes } = await soporte.listarMensajes(empresa);
+        expect(mensajes).toHaveLength(10);
+        // Se leyó recién arriba, así que el de la empresa quedó en 0; el que
+        // importa es el de Krezka, que tiene que contar los 10.
+        const hilo = await leerConversacion(empresa);
+        expect(hilo!.noLeidosSistema).toBe(10);
+      } finally {
+        await borrarEmpresas([empresa]);
+      }
+    });
+  });
 });

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -13,6 +14,8 @@ import { NotificacionesService } from '../notificaciones/notificaciones.service'
  */
 @Injectable()
 export class SoporteService {
+  private readonly logger = new Logger(SoporteService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificaciones: NotificacionesService,
@@ -101,7 +104,16 @@ export class SoporteService {
       }),
     ]);
 
-    await this.notificarSistema(empresaId, actualizada.id, autorNombre, texto);
+    // El aviso va DESPUÉS de guardar, así que si falla el mensaje ya está en
+    // la base. Dejar que el error suba haría que el empresario vea un fallo,
+    // reintente y termine con el mensaje duplicado. Un socket caído no puede
+    // costarle eso: se avisa lo que se pueda y el envío se da por hecho.
+    await this.notificarSistema(empresaId, actualizada.id, autorNombre, texto).catch(
+      (error) =>
+        this.logger.warn(
+          `[soporte] no se pudo avisar a Krezka del mensaje de la empresa ${empresaId}: ${error?.message}`,
+        ),
+    );
     return actualizada;
   }
 
@@ -232,7 +244,13 @@ export class SoporteService {
       }),
     ]);
 
-    await this.notificarEmpresa(conversacion.empresaId, id, autorNombre, texto);
+    // Mismo criterio que del lado de la empresa: el mensaje ya está guardado.
+    await this.notificarEmpresa(conversacion.empresaId, id, autorNombre, texto).catch(
+      (error) =>
+        this.logger.warn(
+          `[soporte] no se pudo avisar a la empresa ${conversacion.empresaId}: ${error?.message}`,
+        ),
+    );
     return actualizada;
   }
 
