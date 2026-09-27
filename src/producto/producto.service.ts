@@ -3816,7 +3816,7 @@ export class ProductoService {
     if (limpias.length > maxExtra) {
       const maxTotal = maxExtra + 1;
       throw new ForbiddenException(
-        `Máximo ${maxTotal} imágenes por producto (1 principal + ${maxExtra} adicionales) para tu rubro.`,
+        `Máximo ${maxTotal} imágenes por producto: 1 principal + ${maxExtra} adicionales.`,
       );
     }
     await this.prisma.producto.update({
@@ -3857,7 +3857,7 @@ export class ProductoService {
     const maxExtra = await this.getMaxImagenesExtraEmpresa(empresaId);
     if (actuales.length >= maxExtra) {
       throw new ForbiddenException(
-        `Máximo ${maxExtra + 1} imágenes por producto (1 principal + ${maxExtra} adicionales) para tu rubro.`,
+        `Máximo ${maxExtra + 1} imágenes por producto: 1 principal + ${maxExtra} adicionales.`,
       );
     }
 

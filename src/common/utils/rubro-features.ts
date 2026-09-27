@@ -104,14 +104,12 @@ export function usaLotes(nombreRubro: string): boolean {
  * Máximo de imágenes por producto (principal + galería) según el rubro.
  * Evita el abuso de imágenes. Apicultura: 3; resto de rubros: 5.
  */
-export function getMaxImagenesProducto(nombreRubro?: string | null): number {
-  const nombre = (nombreRubro ?? '').toLowerCase();
-  const esApicultura =
-    nombre.includes('apicultura') ||
-    nombre.includes('apícola') ||
-    nombre.includes('apicola') ||
-    nombre.includes('miel');
-  return esApicultura ? 3 : 5;
+export function getMaxImagenesProducto(_nombreRubro?: string | null): number {
+  // 1 principal + 2 adicionales. El formulario llegó a permitir 5 y se retiró
+  // entero en agosto por recargado; vuelve acotado, que es lo que el negocio
+  // realmente usa (foto del producto, del conector, de la etiqueta).
+  // Las imágenes por variante/color son aparte y no cuentan aquí.
+  return 3;
 }
 
 /**
