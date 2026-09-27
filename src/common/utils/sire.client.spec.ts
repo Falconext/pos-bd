@@ -8,11 +8,16 @@
  *  - descargar con el tipo de archivo fijo en "01" → 422 "El archivo solicitado
  *    no existe": los tickets reales traen "00" y el tipo hay que tomarlo del
  *    propio ticket.
+ *  - descargar SIN `numTicket` y `codProceso` → el mismo 422, aunque el nombre
+ *    del archivo esté bien (verificado el 2026-09-27). Ese mensaje hace pensar
+ *    en un nombre mal armado y tuvo la descarga trabada varios días; agregar
+ *    `codLibro`, que parece lo natural, tampoco alcanza.
  *
- * Estas pruebas congelan esos tres aprendizajes para que no se pierdan.
+ * Estas pruebas congelan esos aprendizajes para que no se pierdan.
  */
 import axios from 'axios';
-import { SireClient } from './sire.client';
+import AdmZip from 'adm-zip';
+import { SireClient, extraerTxtDelZip } from './sire.client';
 
 jest.mock('axios');
 const axiosMock = axios as jest.Mocked<typeof axios>;
@@ -54,20 +59,91 @@ describe('SIRE · parámetros que SUNAT exige', () => {
   });
 
   describe('descarga del archivo', () => {
+    /** Un ZIP como el que manda SUNAT: un único TXT adentro. */
+    const zipConTxt = (contenido: string, nombre = 'propuesta.txt') => {
+      const zip = new AdmZip();
+      zip.addFile(nombre, Buffer.from(contenido, 'utf8'));
+      return zip.toBuffer();
+    };
+
+    const descargar = (extra: Record<string, string> = {}) =>
+      cliente().descargarArchivo({
+        nombreArchivo: '20616318773-propuesta.zip',
+        numTicket: '20260300000014',
+        codProceso: '10',
+        perTributario: '202608',
+        ...extra,
+      });
+
+    /** Parámetros del último GET (ahora viajan como `params`, no en la URL). */
+    const paramsPedidos = () => (axiosMock.get.mock.calls[0][1] as any).params;
+
+    beforeEach(() => {
+      axiosMock.get.mockResolvedValue({ data: zipConTxt('RUC|Razón social\n') });
+    });
+
+    it('manda numTicket y codProceso: sin ellos SUNAT responde 422', async () => {
+      await descargar();
+      const p = paramsPedidos();
+      expect(p.numTicket).toBe('20260300000014');
+      expect(p.codProceso).toBe('10');
+      expect(p.perTributario).toBe('202608');
+      expect(p.nomArchivoReporte).toBe('20616318773-propuesta.zip');
+    });
+
     it('usa el tipo que informa el ticket', async () => {
-      await cliente().descargarArchivo('20616318773-propuesta.zip', '00');
-      expect(urlPedida()).toContain('codTipoAchivoReporte=00');
+      await descargar({ codTipoArchivo: '00' });
+      expect(paramsPedidos().codTipoAchivoReporte).toBe('00');
     });
 
     it('si el ticket no lo informa, asume 00 (no 01, que no existe)', async () => {
-      await cliente().descargarArchivo('20616318773-propuesta.zip');
-      expect(urlPedida()).toContain('codTipoAchivoReporte=00');
-      expect(urlPedida()).not.toContain('codTipoAchivoReporte=01');
+      await descargar();
+      expect(paramsPedidos().codTipoAchivoReporte).toBe('00');
     });
 
-    it('el nombre del archivo va escapado', async () => {
-      await cliente().descargarArchivo('con espacio y+signo.zip', '00');
-      expect(urlPedida()).toContain('con%20espacio%20y%2Bsigno.zip');
+    it('pide el archivo como binario: lo que llega es un ZIP, no texto', async () => {
+      await descargar();
+      expect((axiosMock.get.mock.calls[0][1] as any).responseType).toBe('arraybuffer');
     });
+
+    it('devuelve el TXT de adentro del ZIP, no el ZIP', async () => {
+      axiosMock.get.mockResolvedValue({
+        data: zipConTxt('RUC|Razón social|Periodo\n20616318773|KREZKA|202608\n'),
+      });
+      const contenido = await descargar();
+      expect(contenido).toContain('20616318773|KREZKA|202608');
+      expect(contenido.startsWith('PK')).toBe(false);
+    });
+  });
+});
+
+describe('El ZIP que manda SUNAT', () => {
+  const armar = (archivos: Array<[string, string]>) => {
+    const zip = new AdmZip();
+    archivos.forEach(([n, c]) => zip.addFile(n, Buffer.from(c, 'utf8')));
+    return zip.toBuffer();
+  };
+
+  it('saca el TXT cuando es el único archivo', () => {
+    expect(extraerTxtDelZip(armar([['propuesta.txt', 'contenido']]))).toBe('contenido');
+  });
+
+  it('con varios archivos se queda con el .txt', () => {
+    const zip = armar([
+      ['resumen.pdf', 'no es este'],
+      ['propuesta.txt', 'este sí'],
+    ]);
+    expect(extraerTxtDelZip(zip)).toBe('este sí');
+  });
+
+  it('conserva las tildes del castellano', () => {
+    // El TXT trae razones sociales con ñ y tildes; leerlo como latin1 las
+    // rompería y el cruce dejaría de encontrar proveedores.
+    const zip = armar([['propuesta.txt', 'KREZKA PERÚ S.A.C.|Año|Ñandú']]);
+    expect(extraerTxtDelZip(zip)).toBe('KREZKA PERÚ S.A.C.|Año|Ñandú');
+  });
+
+  it('un ZIP vacío avisa en vez de devolver texto en blanco', () => {
+    expect(() => extraerTxtDelZip(armar([]))).toThrow(/vacío/i);
   });
 });

@@ -1726,9 +1726,11 @@ export class SireService {
       // ticket una sola vez, al instante, y casi siempre salía "aún no está
       // listo" aunque a los pocos segundos ya lo estuviera. Se espera un poco.
       let reporte: any = null;
+      let registro: any = null;
       for (let intento = 1; intento <= 6; intento++) {
         const estado = await cliente.consultarTicket(periodo, String(numTicket));
-        reporte = estado?.registros?.[0]?.archivoReporte?.[0] ?? null;
+        registro = estado?.registros?.[0] ?? null;
+        reporte = registro?.archivoReporte?.[0] ?? null;
         if (reporte?.nomArchivoReporte || estado?.nomArchivoReporte) break;
         if (intento < 6) await new Promise((s) => setTimeout(s, 5000));
       }
@@ -1741,10 +1743,15 @@ export class SireService {
             'SUNAT está preparando el archivo. Vuelve a intentar en unos minutos.',
         };
       }
-      contenido = await cliente.descargarArchivo(
-        String(archivo),
-        String(reporte?.codTipoAchivoReporte ?? '00'),
-      );
+      // Todo sale del ticket. `codProceso` y `numTicket` no son opcionales:
+      // sin ellos SUNAT responde 422 "El archivo solicitado no existe".
+      contenido = await cliente.descargarArchivo({
+        nombreArchivo: String(archivo),
+        codTipoArchivo: String(reporte?.codTipoAchivoReporte ?? '00'),
+        numTicket: String(numTicket),
+        codProceso: String(registro?.codProceso ?? '10'),
+        perTributario: String(registro?.perTributario ?? periodo),
+      });
     }
 
     if (!contenido.trim()) {

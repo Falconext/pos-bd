@@ -1,4 +1,5 @@
 import axios from 'axios';
+import AdmZip from 'adm-zip';
 
 /**
  * Cliente de la API del SIRE de SUNAT (RVIE/RCE).
@@ -196,25 +197,76 @@ export class SireClient {
   }
 
   /**
-   * Descarga el archivo generado por un ticket, como texto (formato TXT SUNAT).
+   * Descarga el archivo generado por un ticket y devuelve su TXT.
    *
-   * El tipo de archivo NO es una constante: viene en el propio ticket, en
-   * `archivoReporte[].codTipoAchivoReporte` (sí, SUNAT lo escribe sin la "r").
-   * Estaba fijo en "01" y los tickets reales traen "00".
+   * Verificado contra SUNAT el 2026-09-27. Lo que trababa esto era que faltaban
+   * DOS parámetros: `numTicket` y `codProceso`. Con el nombre del archivo y el
+   * tipo solamente —o agregando `codLibro`, que parece lo natural— SUNAT
+   * responde 422 "El archivo solicitado no existe", un mensaje que hace pensar
+   * en un nombre mal armado cuando en realidad falta identificar el proceso.
+   *
+   * Todos los valores salen del propio ticket:
+   *   nomArchivoReporte    archivoReporte[].nomArchivoReporte  (el .zip)
+   *   codTipoAchivoReporte archivoReporte[].codTipoAchivoReporte  (SUNAT lo
+   *                        escribe sin la "r"; los tickets reales traen "00")
+   *   numTicket            numTicket
+   *   codProceso           codProceso  ("10" = exportar propuesta)
+   *   perTributario        perTributario
+   *
+   * Lo que llega es un ZIP con un único TXT adentro, no texto plano.
    */
-  async descargarArchivo(
-    nombreArchivo: string,
-    codTipoArchivo = '00',
-  ): Promise<string> {
-    const plantilla =
-      process.env.SIRE_DESCARGA_PATH ||
-      '/libros/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte?nomArchivoReporte={archivo}&codTipoAchivoReporte={tipo}';
-    const data = await this.get<string>(
-      plantilla
-        .replace('{archivo}', encodeURIComponent(nombreArchivo))
-        .replace('{tipo}', encodeURIComponent(codTipoArchivo)),
-      'text',
-    );
-    return typeof data === 'string' ? data : String(data ?? '');
+  async descargarArchivo(params: {
+    nombreArchivo: string;
+    numTicket: string;
+    codProceso: string;
+    perTributario: string;
+    codTipoArchivo?: string;
+  }): Promise<string> {
+    const token = await this.obtenerToken();
+    const url = `${SIRE_BASE}/libros/rvierce/gestionprocesosmasivos/web/masivo/archivoreporte`;
+
+    let zip: Buffer;
+    try {
+      const { data } = await axios.get(url, {
+        headers: { Authorization: `Bearer ${token}` },
+        params: {
+          nomArchivoReporte: params.nombreArchivo,
+          codTipoAchivoReporte: params.codTipoArchivo ?? '00',
+          numTicket: params.numTicket,
+          codProceso: params.codProceso,
+          perTributario: params.perTributario,
+        },
+        responseType: 'arraybuffer',
+        timeout: 60000,
+      });
+      zip = Buffer.from(data);
+    } catch (error: any) {
+      const status = error?.response?.status;
+      throw new SireError(
+        'No se pudo descargar el archivo del SIRE.',
+        `HTTP ${status ?? '?'}`,
+        status,
+      );
+    }
+
+    return extraerTxtDelZip(zip);
   }
+}
+
+/**
+ * Saca el TXT del ZIP que manda SUNAT. Trae un solo archivo; si alguna vez
+ * viniera con más, se toma el .txt.
+ */
+export function extraerTxtDelZip(zip: Buffer): string {
+  const entradas = new AdmZip(zip).getEntries().filter((e) => !e.isDirectory);
+  if (!entradas.length) {
+    throw new SireError(
+      'SUNAT devolvió un archivo vacío.',
+      'El ZIP no trae ningún archivo adentro.',
+    );
+  }
+  const txt =
+    entradas.find((e) => e.entryName.toLowerCase().endsWith('.txt')) ??
+    entradas[0];
+  return txt.getData().toString('utf8');
 }
