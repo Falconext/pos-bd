@@ -118,7 +118,15 @@ describeSiHayBase('Costo por sede · contra base real', () => {
   });
 
   afterAll(async () => {
-    if (empresaId) await prisma.empresa.delete({ where: { id: empresaId } }).catch(() => {});
+    if (empresaId) {
+      // En este orden: las llaves foráneas del kardex no van en cascada y un
+      // delete directo de la empresa falla en silencio, dejando basura.
+      await prisma.movimientoKardex.deleteMany({ where: { empresaId } });
+      await prisma.productoStock.deleteMany({ where: { producto: { empresaId } } });
+      await prisma.producto.deleteMany({ where: { empresaId } });
+      await prisma.sede.deleteMany({ where: { empresaId } });
+      await prisma.empresa.delete({ where: { id: empresaId } }).catch(() => {});
+    }
     await prisma.$disconnect();
   });
 

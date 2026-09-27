@@ -9,6 +9,9 @@ describe('KardexService', () => {
   let service: KardexService;
   let prisma: PrismaService;
 
+  /** Lo último que el servicio grabó como costo de la sede (ver `findMany`). */
+  let costoSedeEscrito: any = null;
+
   const mockPrismaService = {
     producto: {
       findUnique: jest.fn(),
@@ -20,7 +23,20 @@ describe('KardexService', () => {
       findUnique: jest
         .fn()
         .mockResolvedValue({ stock: 100, producto: { costoPromedio: 10.5 } }),
-      update: jest.fn().mockResolvedValue({}),
+      // El costo global se deriva de las sedes, así que `findMany` tiene que
+      // devolver lo que `update` acaba de escribir: si devolviera un valor
+      // fijo, la prueba estaría afirmando un número que ella misma inventó.
+      // Cada test ajusta el stock; el costo sale del propio servicio.
+      findMany: jest.fn(async () => [
+        {
+          stock: (await mockPrismaService.productoStock.aggregate())._sum.stock,
+          costoPromedio: costoSedeEscrito,
+        },
+      ]),
+      update: jest.fn(async ({ data }: any) => {
+        if (data?.costoPromedio !== undefined) costoSedeEscrito = data.costoPromedio;
+        return {};
+      }),
       // Descuento atómico de salidas: `count: 1` = habia stock suficiente, que
       // es el camino normal. Con 0 el servicio cae al fallback que fuerza 0.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -75,6 +91,7 @@ describe('KardexService', () => {
 
   afterEach(() => {
     jest.clearAllMocks();
+    costoSedeEscrito = null;
   });
 
   describe('registrarMovimiento', () => {
@@ -235,10 +252,13 @@ describe('KardexService', () => {
     it('debería registrar un ingreso con costoUnitario=0 (bonificación) sin reemplazarlo por el costoPromedio, y bajar el costo promedio ponderado', async () => {
       // 50 unidades a S/8.00, y llegan 12 de bonificación a costo S/0.00.
       // Costo promedio esperado: (50*8 + 12*0) / 62 = 6.4516... (debe BAJAR de 8).
-      mockPrismaService.productoStock.findUnique.mockResolvedValue({
-        stock: 50,
-        producto: { costoPromedio: 8.0 },
-      });
+      // La primera lectura es ANTES del ingreso (stock 50, para el stock
+      // anterior del movimiento); la segunda es DESPUÉS, ya con las 12
+      // unidades adentro. Devolver 50 las dos veces haría que la prueba
+      // valide un cálculo que en la base nunca ocurre.
+      mockPrismaService.productoStock.findUnique
+        .mockResolvedValueOnce({ stock: 50, producto: { costoPromedio: 8.0 } })
+        .mockResolvedValue({ stock: 62, costoPromedio: null });
       mockPrismaService.productoStock.aggregate.mockResolvedValue({
         _sum: { stock: 62 },
       });

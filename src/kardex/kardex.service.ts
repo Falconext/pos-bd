@@ -10,7 +10,11 @@ import * as http from 'http';
 import type { MovimientoKardex, Prisma } from '@prisma/client';
 import { TipoCambioService } from '../tipo-cambio/tipo-cambio.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { costoDeSede, promedioTrasIngreso } from './costo-sede';
+import {
+  costoDeSede,
+  promedioDesdeSedes,
+  promedioTrasIngreso,
+} from './costo-sede';
 import {
   FiltrosKardexDto,
   FiltrosReporteDto,
@@ -1090,40 +1094,14 @@ export class KardexService {
     // costo 0 es válido (bonificación de proveedor): antes `&& costoUnitario`
     // lo trataba como "sin costo" y se saltaba el recálculo, así que las
     // unidades gratis nunca bajaban el costo promedio del producto.
+    const producto = await this.prisma.producto.findUnique({
+      where: { id: productoId },
+      select: { costoPromedio: true },
+    });
+
     if (tipoMovimiento === 'INGRESO' && costoUnitario != null && cantidad) {
-      // Recalcular costo promedio global
-      const producto = await this.prisma.producto.findUnique({
-        where: { id: productoId },
-        select: { costoPromedio: true },
-      });
-      // Obtener stock TOTAL de todas las sedes para el ponderado
-      const totalStock = await this.prisma.productoStock.aggregate({
-        where: { productoId },
-        _sum: { stock: true },
-      });
-      // El stock de la sede ya se actualizó arriba, así que esta suma es el
-      // stock DESPUÉS del ingreso; lo de antes es la diferencia con la cantidad.
-      const stockActualGlobal = num(totalStock._sum.stock);
-
-      if (producto) {
-        const costoPromedio = promedioTrasIngreso(
-          stockActualGlobal,
-          cantidad,
-          costoUnitario,
-          Number(producto.costoPromedio) || 0,
-        );
-        if (costoPromedio != null) {
-          await this.prisma.producto.update({
-            where: { id: productoId },
-            data: { costoPromedio },
-          });
-        }
-      }
-
-      // Y el costo de ESTA sede, con su propio stock. Mientras dure la
-      // migración se escriben los dos: el global lo siguen leyendo los
-      // reportes, y el de la sede se va llenando solo. Una sede que nunca
-      // recibe mercadería se queda en NULL y sigue valiendo el global.
+      // El costo de ESTA sede, ponderado contra SU stock y SU costo. El stock
+      // de la sede ya se actualizó arriba, así que es el de después.
       const stockSede = await this.prisma.productoStock.findUnique({
         where: { productoId_sedeId: { productoId, sedeId } },
         select: { stock: true, costoPromedio: true },
@@ -1144,6 +1122,35 @@ export class KardexService {
           });
         }
       }
+    }
+
+    await this.recalcularCostoGlobal(productoId, producto?.costoPromedio);
+  }
+
+  /**
+   * Rehace el costo global del producto a partir de lo que vale cada sede.
+   *
+   * Corre después de CUALQUIER movimiento, no solo de un ingreso, porque una
+   * salida también cambia la mezcla: vender en la sede barata deja el producto
+   * concentrado en la cara, y un promedio global que no se entera hace que el
+   * valorizado de la empresa deje de ser la suma de sus locales.
+   *
+   * Con una sola sede el resultado es idéntico al de antes.
+   */
+  private async recalcularCostoGlobal(
+    productoId: number,
+    costoGlobalActual: unknown,
+  ) {
+    const filas = await this.prisma.productoStock.findMany({
+      where: { productoId },
+      select: { stock: true, costoPromedio: true },
+    });
+    const costoPromedio = promedioDesdeSedes(filas, costoGlobalActual);
+    if (costoPromedio != null) {
+      await this.prisma.producto.update({
+        where: { id: productoId },
+        data: { costoPromedio },
+      });
     }
   }
 
@@ -1749,6 +1756,28 @@ export class KardexService {
           where: { id: item.productoId },
           data: { stock: totalStock._sum.stock ?? 0 },
         });
+
+        // El traslado no cambia cuánto vale el producto, pero sí puede fijarle
+        // costo a una sede que estaba en NULL. Rehacer el global desde las
+        // sedes mantiene la identidad con el valorizado por local.
+        const productoActual = await tx.producto.findUnique({
+          where: { id: item.productoId },
+          select: { costoPromedio: true },
+        });
+        const filas = await tx.productoStock.findMany({
+          where: { productoId: item.productoId },
+          select: { stock: true, costoPromedio: true },
+        });
+        const costoGlobal = promedioDesdeSedes(
+          filas,
+          productoActual?.costoPromedio,
+        );
+        if (costoGlobal != null) {
+          await tx.producto.update({
+            where: { id: item.productoId },
+            data: { costoPromedio: costoGlobal },
+          });
+        }
 
         // Si el producto trasladado es una variante, recalcular el stock del
         // padre (global y por sede) para que su distribución por sede quede

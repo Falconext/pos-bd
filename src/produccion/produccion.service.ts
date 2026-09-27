@@ -15,7 +15,11 @@ import { UpdateMetodoSalidaDto } from './dto/update-metodo-salida.dto';
 import { Prisma } from '@prisma/client';
 import { ProductoService } from '../producto/producto.service';
 import { Decimal } from '@prisma/client/runtime/library';
-import { costoDeSede, promedioTrasIngreso } from '../kardex/costo-sede';
+import {
+  costoDeSede,
+  promedioDesdeSedes,
+  promedioTrasIngreso,
+} from '../kardex/costo-sede';
 import * as XLSX from 'xlsx';
 
 @Injectable()
@@ -414,20 +418,8 @@ export class ProduccionService {
       // Misma regla que el kardex, importada y no copiada: este bloque era una
       // copia de la fórmula vieja y arrastraba el mismo defecto de stock
       // negativo, además de no escribir nunca el costo de la sede.
-      const nuevoCostoPromedio = promedioTrasIngreso(
-        num(totalStock._sum.stock),
-        num(data.cantidad),
-        data.costoUnitario,
-        Number(producto?.costoPromedio ?? 0),
-      );
-      if (nuevoCostoPromedio != null) {
-        await tx.producto.update({
-          where: { id: data.productoId },
-          data: { costoPromedio: nuevoCostoPromedio },
-        });
-      }
-
-      // Y el costo de la sede que produjo, contra SU stock. Sin esto, lo
+      //
+      // El costo de la sede que produjo, contra SU stock. Sin esto, lo
       // fabricado en un local se costea con el promedio de todos.
       const stockSede = await tx.productoStock.findUnique({
         where: {
@@ -456,6 +448,20 @@ export class ProduccionService {
             data: { costoPromedio: costoSede },
           });
         }
+      }
+
+      // Y el global derivado de las sedes, para que el valorizado de la
+      // empresa siga siendo la suma de sus locales.
+      const filas = await tx.productoStock.findMany({
+        where: { productoId: data.productoId },
+        select: { stock: true, costoPromedio: true },
+      });
+      const costoGlobal = promedioDesdeSedes(filas, producto?.costoPromedio);
+      if (costoGlobal != null) {
+        await tx.producto.update({
+          where: { id: data.productoId },
+          data: { costoPromedio: costoGlobal },
+        });
       }
     }
 

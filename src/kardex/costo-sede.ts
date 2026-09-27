@@ -37,6 +37,36 @@ export const costoDeSede = (
  * en la ponderación y el resultado sale por encima del precio de compra, o
  * directamente negativo.
  */
+/**
+ * El costo global del producto, derivado de lo que vale cada sede.
+ *
+ * No se lleva como un promedio aparte porque en cuanto las sedes tienen costos
+ * distintos, un promedio propio se despega de la realidad: vender en la sede
+ * barata baja el inventario global por el promedio y no por lo que esa sede
+ * pagó, y el valorizado de la empresa deja de ser la suma de sus locales.
+ *
+ * Derivarlo mantiene la identidad exacta —stock global × costo global = suma de
+ * (stock × costo) por sede— que es lo que hace que los dos reportes cuadren.
+ * Con una sola sede da exactamente lo mismo que antes.
+ *
+ * Devuelve null si no hay stock sobre el cual promediar.
+ */
+export const promedioDesdeSedes = (
+  filas: Array<{ stock: unknown; costoPromedio: unknown }>,
+  costoGlobalActual: unknown,
+): number | null => {
+  let stockTotal = 0;
+  let valorTotal = 0;
+  for (const fila of filas) {
+    const stock = Number(fila.stock);
+    if (!Number.isFinite(stock)) continue;
+    stockTotal += stock;
+    valorTotal += stock * costoDeSede(fila.costoPromedio, costoGlobalActual);
+  }
+  if (!(stockTotal > 0)) return null;
+  return valorTotal / stockTotal;
+};
+
 export const promedioTrasIngreso = (
   stockDespues: number,
   cantidad: number,
