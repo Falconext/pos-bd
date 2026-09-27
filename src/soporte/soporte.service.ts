@@ -18,12 +18,33 @@ export class SoporteService {
     private readonly notificaciones: NotificacionesService,
   ) {}
 
+  /**
+   * El hilo de la empresa, creándolo si es su primera consulta.
+   *
+   * Dos personas de la misma empresa escribiendo a la vez llegaban las dos a
+   * la creación y, como `empresaId` es único, a una le explotaba el envío con
+   * P2002. Le pasa justo a quien estrena el chat, que es el peor momento para
+   * que falle.
+   *
+   * El `upsert` de Prisma tampoco alcanza —también termina en P2002 cuando las
+   * dos entran juntas—, así que se atrapa el choque y se relee: el hilo lo
+   * acaba de crear la otra, y es el mismo que esta necesita.
+   */
   private async obtenerOCrearConversacion(empresaId: number) {
     const existente = await this.prisma.soporteConversacion.findUnique({
       where: { empresaId },
     });
     if (existente) return existente;
-    return this.prisma.soporteConversacion.create({ data: { empresaId } });
+    try {
+      return await this.prisma.soporteConversacion.create({ data: { empresaId } });
+    } catch (error: any) {
+      if (error?.code !== 'P2002') throw error;
+      const creadaPorLaOtra = await this.prisma.soporteConversacion.findUnique({
+        where: { empresaId },
+      });
+      if (!creadaPorLaOtra) throw error;
+      return creadaPorLaOtra;
+    }
   }
 
   // ── Lado empresa ────────────────────────────────────────────────────────

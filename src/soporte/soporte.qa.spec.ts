@@ -93,6 +93,25 @@ describeSiHayBase('Chat de soporte · contra base real', () => {
     avisos = [];
   });
 
+  /** Varias empresas de golpe, para los casos de bandeja con carga real. */
+  const crearEmpresas = async (cuantas: number, brand: string, prefijo: string) => {
+    const ids: number[] = [];
+    for (let i = 0; i < cuantas; i++) {
+      ids.push(await crearEmpresa(`${prefijo}-${i}-${Date.now()}`, brand));
+    }
+    return ids;
+  };
+
+  const borrarEmpresas = async (ids: number[]) => {
+    for (const id of ids) {
+      await prisma.soporteMensaje.deleteMany({
+        where: { conversacion: { empresaId: id } },
+      });
+      await prisma.soporteConversacion.deleteMany({ where: { empresaId: id } });
+      await prisma.empresa.delete({ where: { id } }).catch(() => {});
+    }
+  };
+
   // ── El hilo de la empresa ─────────────────────────────────────────────────
   describe('el empresario escribe', () => {
     it('la primera consulta crea el hilo sola, sin que nadie lo abra', async () => {
@@ -299,6 +318,183 @@ describeSiHayBase('Chat de soporte · contra base real', () => {
 
       await prisma.soporteConversacion.deleteMany({ where: { empresaId: vacia } });
       await prisma.empresa.delete({ where: { id: vacia } }).catch(() => {});
+    });
+  });
+
+  // ── Varias empresas hablando a la vez ─────────────────────────────────────
+  // Con una sola empresa no se ve nada de esto: los hilos son por empresa, los
+  // contadores son por hilo y la bandeja los mezcla todos. Aquí es donde se
+  // cruzarían si algo estuviera mal.
+  describe('varias empresas escribiendo al mismo tiempo', () => {
+    let muchas: number[] = [];
+
+    beforeAll(async () => {
+      muchas = await crearEmpresas(6, 'krezka', 'qa-soporte-multi');
+    });
+
+    afterAll(async () => {
+      await borrarEmpresas(muchas);
+    });
+
+    it('cada empresa tiene SU hilo, no uno compartido', async () => {
+      await Promise.all(
+        muchas.map((id, i) =>
+          soporte.enviarMensajeEmpresa(id, usuarioEmpresaId, `consulta de la empresa ${i}`),
+        ),
+      );
+
+      const hilos = await Promise.all(muchas.map((id) => leerConversacion(id)));
+      const ids = hilos.map((h) => h!.id);
+      expect(new Set(ids).size).toBe(muchas.length);
+    });
+
+    it('cada una ve solo sus propios mensajes', async () => {
+      for (let i = 0; i < muchas.length; i++) {
+        const { mensajes } = await soporte.listarMensajes(muchas[i]);
+        expect(mensajes).toHaveLength(1);
+        expect(mensajes[0].contenido).toBe(`consulta de la empresa ${i}`);
+      }
+    });
+
+    it('los contadores de no leídos no se cruzan entre empresas', async () => {
+      // La empresa 0 escribe tres veces más; eso no puede mover a las demás.
+      await soporte.enviarMensajeEmpresa(muchas[0], usuarioEmpresaId, 'insisto 1');
+      await soporte.enviarMensajeEmpresa(muchas[0], usuarioEmpresaId, 'insisto 2');
+      await soporte.enviarMensajeEmpresa(muchas[0], usuarioEmpresaId, 'insisto 3');
+
+      expect((await leerConversacion(muchas[0]))!.noLeidosSistema).toBe(4);
+      for (const id of muchas.slice(1)) {
+        expect((await leerConversacion(id))!.noLeidosSistema).toBe(1);
+      }
+    });
+
+    it('la bandeja las lista a todas, cada una con su último mensaje', async () => {
+      const lista = await soporte.listarConversacionesSistema('krezka');
+      for (let i = 0; i < muchas.length; i++) {
+        const fila = lista.find((c) => c.empresaId === muchas[i]);
+        expect(fila).toBeDefined();
+        expect(fila!.ultimoMensaje).toBe(
+          i === 0 ? 'insisto 3' : `consulta de la empresa ${i}`,
+        );
+      }
+    });
+
+    it('Krezka responde a varias y cada respuesta llega a su hilo', async () => {
+      const hilos = await Promise.all(muchas.map((id) => leerConversacion(id)));
+      await Promise.all(
+        hilos.map((h, i) =>
+          soporte.enviarMensajeSistema(
+            h!.id,
+            'krezka',
+            usuarioKrezkaId,
+            `respuesta para la ${i}`,
+          ),
+        ),
+      );
+
+      for (let i = 0; i < muchas.length; i++) {
+        const { mensajes } = await soporte.listarMensajes(muchas[i]);
+        const ultimo = mensajes[mensajes.length - 1];
+        expect(ultimo.rol).toBe('SISTEMA');
+        expect(ultimo.contenido).toBe(`respuesta para la ${i}`);
+      }
+    });
+
+    it('atender a una empresa no marca como leídas las demás', async () => {
+      // El error clásico: poner los contadores en cero de golpe al abrir la
+      // bandeja, y perder los pedidos de todos los que no se atendieron.
+      await Promise.all(
+        muchas.map((id) => soporte.enviarMensajeEmpresa(id, usuarioEmpresaId, 'algo nuevo')),
+      );
+      const hilo0 = await leerConversacion(muchas[0]);
+      await soporte.obtenerConversacionSistema(hilo0!.id, 'krezka');
+
+      expect((await leerConversacion(muchas[0]))!.noLeidosSistema).toBe(0);
+      for (const id of muchas.slice(1)) {
+        expect((await leerConversacion(id))!.noLeidosSistema).toBeGreaterThan(0);
+      }
+    });
+
+    it('cerrar el hilo de una no cierra el de las otras', async () => {
+      const hilo0 = await leerConversacion(muchas[0]);
+      await soporte.cerrarConversacion(hilo0!.id, 'krezka');
+
+      expect((await leerConversacion(muchas[0]))!.estado).toBe('CERRADA');
+      for (const id of muchas.slice(1)) {
+        expect((await leerConversacion(id))!.estado).toBe('ABIERTA');
+      }
+    });
+
+    it('la bandeja mezcla marcas distintas sin filtrarlas mal', async () => {
+      const deOtraMarca = await crearEmpresas(3, 'falconext', 'qa-soporte-mixto');
+      try {
+        await Promise.all(
+          deOtraMarca.map((id) =>
+            soporte.enviarMensajeEmpresa(id, usuarioEmpresaId, 'soy de la otra marca'),
+          ),
+        );
+
+        const krezka = await soporte.listarConversacionesSistema('krezka');
+        const otra = await soporte.listarConversacionesSistema('falconext');
+
+        // Ninguna de las seis de Krezka se cuela en la bandeja de la otra…
+        for (const id of muchas) {
+          expect(otra.some((c) => c.empresaId === id)).toBe(false);
+        }
+        // …ni al revés.
+        for (const id of deOtraMarca) {
+          expect(krezka.some((c) => c.empresaId === id)).toBe(false);
+          expect(otra.some((c) => c.empresaId === id)).toBe(true);
+        }
+      } finally {
+        await borrarEmpresas(deOtraMarca);
+      }
+    });
+
+    it('dos empleados de la MISMA empresa escribiendo a la vez no chocan', async () => {
+      // `obtenerOCrearConversacion` lee y después crea; dos mensajes a la vez
+      // sobre una empresa sin hilo podrían intentar crearlo dos veces, y la
+      // columna es única.
+      const nueva = (await crearEmpresas(1, 'krezka', 'qa-soporte-carrera'))[0];
+      try {
+        const resultados = await Promise.allSettled([
+          soporte.enviarMensajeEmpresa(nueva, usuarioEmpresaId, 'del vendedor'),
+          soporte.enviarMensajeEmpresa(nueva, usuarioEmpresaId, 'del administrador'),
+        ]);
+
+        const fallidos = resultados.filter((r) => r.status === 'rejected');
+        if (fallidos.length > 0) {
+          const motivo = (fallidos[0] as PromiseRejectedResult).reason;
+          throw new Error(
+            `dos mensajes simultáneos de la misma empresa fallaron: ${String(motivo?.code ?? '')} ${String(motivo?.message ?? motivo).slice(0, 400)}`,
+          );
+        }
+        const { mensajes } = await soporte.listarMensajes(nueva);
+        expect(mensajes).toHaveLength(2);
+      } finally {
+        await borrarEmpresas([nueva]);
+      }
+    });
+
+    it('con 20 empresas escribiendo, la bandeja sigue ordenada por actividad', async () => {
+      const lote = await crearEmpresas(20, 'krezka', 'qa-soporte-lote');
+      try {
+        // En orden: la última en escribir tiene que quedar primera.
+        for (const id of lote) {
+          await soporte.enviarMensajeEmpresa(id, usuarioEmpresaId, `soy ${id}`);
+        }
+
+        const lista = await soporte.listarConversacionesSistema('krezka');
+        const delLote = lista.filter((c) => lote.includes(c.empresaId));
+        expect(delLote).toHaveLength(lote.length);
+
+        const fechas = delLote.map((c) => new Date(c.actualizadoEn).getTime());
+        expect(fechas).toEqual([...fechas].sort((a, b) => b - a));
+        // La primera de la bandeja es la última que escribió.
+        expect(delLote[0].empresaId).toBe(lote[lote.length - 1]);
+      } finally {
+        await borrarEmpresas(lote);
+      }
     });
   });
 });
