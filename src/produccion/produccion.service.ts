@@ -15,6 +15,7 @@ import { UpdateMetodoSalidaDto } from './dto/update-metodo-salida.dto';
 import { Prisma } from '@prisma/client';
 import { ProductoService } from '../producto/producto.service';
 import { Decimal } from '@prisma/client/runtime/library';
+import { costoDeSede, promedioTrasIngreso } from '../kardex/costo-sede';
 import * as XLSX from 'xlsx';
 
 @Injectable()
@@ -352,8 +353,14 @@ export class ProduccionService {
       );
     }
 
+    // El insumo se consume en una sede concreta, así que vale lo que esa sede
+    // pagó por él, no el promedio de todos los locales.
     const costoUnitario =
-      data.costoUnitario ?? Number(productoStock.producto.costoPromedio) ?? 0;
+      data.costoUnitario ??
+      costoDeSede(
+        productoStock.costoPromedio,
+        productoStock.producto.costoPromedio,
+      );
     const valorTotal = costoUnitario * data.cantidad;
 
     const movimiento = await tx.movimientoKardex.create({
@@ -404,19 +411,51 @@ export class ProduccionService {
         select: { costoPromedio: true },
       });
 
-      const stockActualGlobal = num(totalStock._sum.stock);
-      const stockAnteriorGlobal = stockActualGlobal - num(data.cantidad);
-      const costoAnterior = Number(producto?.costoPromedio ?? 0);
-      const valorAnterior = stockAnteriorGlobal * costoAnterior;
-      const valorNuevo = num(data.cantidad) * data.costoUnitario;
-
-      if (stockActualGlobal > 0) {
-        const nuevoCostoPromedio =
-          (valorAnterior + valorNuevo) / stockActualGlobal;
+      // Misma regla que el kardex, importada y no copiada: este bloque era una
+      // copia de la fórmula vieja y arrastraba el mismo defecto de stock
+      // negativo, además de no escribir nunca el costo de la sede.
+      const nuevoCostoPromedio = promedioTrasIngreso(
+        num(totalStock._sum.stock),
+        num(data.cantidad),
+        data.costoUnitario,
+        Number(producto?.costoPromedio ?? 0),
+      );
+      if (nuevoCostoPromedio != null) {
         await tx.producto.update({
           where: { id: data.productoId },
           data: { costoPromedio: nuevoCostoPromedio },
         });
+      }
+
+      // Y el costo de la sede que produjo, contra SU stock. Sin esto, lo
+      // fabricado en un local se costea con el promedio de todos.
+      const stockSede = await tx.productoStock.findUnique({
+        where: {
+          productoId_sedeId: {
+            productoId: data.productoId,
+            sedeId: data.sedeId,
+          },
+        },
+        select: { stock: true, costoPromedio: true },
+      });
+      if (stockSede) {
+        const costoSede = promedioTrasIngreso(
+          num(stockSede.stock),
+          num(data.cantidad),
+          data.costoUnitario,
+          costoDeSede(stockSede.costoPromedio, producto?.costoPromedio),
+        );
+        if (costoSede != null) {
+          await tx.productoStock.update({
+            where: {
+              productoId_sedeId: {
+                productoId: data.productoId,
+                sedeId: data.sedeId,
+              },
+            },
+            data: { costoPromedio: costoSede },
+          });
+        }
       }
     }
 
