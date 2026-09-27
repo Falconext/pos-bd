@@ -267,7 +267,13 @@ export class KardexService {
     }
 
     const stockAnterior = num(productoStock.stock);
-    const costoPromedio = Number(productoStock.producto.costoPromedio) || 0;
+    // El movimiento ocurre en una sede concreta, así que se valoriza al costo
+    // de esa sede. Es lo que hace que la rentabilidad por local sea real: una
+    // venta en Centro ya no se cuesta con lo que pagó Norte.
+    const costoPromedio = costoDeSede(
+      productoStock.costoPromedio,
+      productoStock.producto.costoPromedio,
+    );
     let stockActual = stockAnterior;
     const cantidadNum = round3(num(data.cantidad));
 
@@ -832,7 +838,13 @@ export class KardexService {
           : 0
         : num(producto.stock);
 
-      const costoPromedio = Number(producto.costoPromedio) || 0;
+      // Viendo una sola sede, el costo también es el de esa sede: antes se
+      // multiplicaba el stock del local por el costo global, y el inventario
+      // valorizado de una sede salía con el costo de compras de otra.
+      const costoPromedio =
+        sedeId && producto.stocks?.length
+          ? costoDeSede(producto.stocks[0].costoPromedio, producto.costoPromedio)
+          : Number(producto.costoPromedio) || 0;
       const valorTotal = stockUsar * costoPromedio;
 
       return {
@@ -991,7 +1003,18 @@ export class KardexService {
       select: { costoPromedio: true },
     });
 
-    const costoPromedio = Number(producto?.costoPromedio) || 0;
+    // Si el resumen es de una sede, el stock ya viene de esa sede: el costo
+    // tiene que venir de ahí también, o el valorizado mezcla dos locales.
+    const stockDeSede = sedeId
+      ? await this.prisma.productoStock.findUnique({
+          where: { productoId_sedeId: { productoId, sedeId } },
+          select: { costoPromedio: true },
+        })
+      : null;
+
+    const costoPromedio = sedeId
+      ? costoDeSede(stockDeSede?.costoPromedio, producto?.costoPromedio)
+      : Number(producto?.costoPromedio) || 0;
     const valorInventario = stockActual * costoPromedio;
 
     return {
