@@ -1,7 +1,7 @@
 /**
  * QA funcional del costo por sede, contra PostgreSQL real.
  *
- * Once rondas sobre empresas creadas para la ocasión, con los servicios reales
+ * Trece rondas sobre empresas creadas para la ocasión, con los servicios reales
  * —kardex, dashboard— y datos que se crean y se borran. No hay mocks: lo que
  * falla aquí, falla en el panel.
  *
@@ -980,8 +980,199 @@ describeSiHayBase('QA funcional · costo por sede', () => {
     });
   });
 
-  // ── RONDA 11 · Concurrencia y volumen ─────────────────────────────────────
-  describe('Ronda 11 · concurrencia y volumen', () => {
+  // ── RONDA 11 · Los estados heredados que hay hoy en la base ───────────────
+  // La lección del defecto de la circularidad: los escenarios que arrancan de
+  // cero no encuentran lo que sí encuentra un producto con historia. Estos
+  // casos son un censo de la base local: 4 921 de 5 805 filas son de productos
+  // SIN costo, 196 con stock cero, 733 productos sin ninguna fila de stock.
+  describe('Ronda 11 · estados heredados', () => {
+    enEscenario('un producto sin costo estrena el de su primera compra', async (e) => {
+      // El caso más común: 4 921 filas de 5 805.
+      await prisma.producto.update({
+        where: { id: e.productoId },
+        data: { costoPromedio: 0 },
+      });
+      await e.comprar(e.centro, 10, 73.4);
+
+      expect(await e.costoDe(e.centro)).toBeCloseTo(73.4, 4);
+      expect(await e.costoGlobal()).toBeCloseTo(73.4, 4);
+    });
+
+    enEscenario('un producto con costo global NULL no rompe nada', async (e) => {
+      await prisma.producto.update({
+        where: { id: e.productoId },
+        data: { costoPromedio: null },
+      });
+      await e.comprar(e.norte, 5, 20);
+
+      expect(await e.costoDe(e.norte)).toBeCloseTo(20, 4);
+      expect(await e.valorPorSedes()).toBeCloseTo(await e.valorGlobal(), 4);
+    });
+
+    enEscenario('un producto sin ninguna fila de stock no se corrompe', async (e) => {
+      // 733 productos están así: legado anterior a multi-sede.
+      const suelto = await e.nuevoProducto(`suelto-${Date.now()}`, []);
+      await prisma.producto.update({
+        where: { id: suelto },
+        data: { costoPromedio: 45.5, stock: 12 },
+      });
+
+      const inv: any = await e.kardex.obtenerInventarioValorizado(
+        e.empresaId,
+        {} as any,
+        e.centro,
+      );
+      const fila = inv.productos.find((p: any) => p.id === suelto);
+      // No tiene stock en esta sede, así que no aporta valor; y su costo
+      // global queda intacto, sin que nadie se lo pise con un 0.
+      expect(fila?.valorTotal ?? 0).toBe(0);
+      expect(await e.costoGlobal(suelto)).toBeCloseTo(45.5, 4);
+    });
+
+    enEscenario('una sede con stock cero no se lleva costo al congelar', async (e) => {
+      // 196 filas están en cero. No tienen nada que valorizar.
+      await prisma.productoStock.update({
+        where: { productoId_sedeId: { productoId: e.productoId, sedeId: e.norte } },
+        data: { stock: 0 },
+      });
+      await e.comprar(e.centro, 10, 88);
+
+      expect(await e.costoDe(e.norte)).toBeNull();
+      expect(await e.costoDe(e.centro)).toBe(88);
+    });
+
+    enEscenario('un producto oculto en la sede igual se valoriza bien', async (e) => {
+      // 34 filas tienen visibleEnSede = false: no salen en el catálogo, pero
+      // la mercadería está ahí y el inventario tiene que contarla.
+      await e.comprar(e.centro, 10, 61);
+      await prisma.productoStock.update({
+        where: { productoId_sedeId: { productoId: e.productoId, sedeId: e.centro } },
+        data: { visibleEnSede: false },
+      });
+
+      const inv: any = await e.kardex.obtenerInventarioValorizado(
+        e.empresaId,
+        {} as any,
+        e.centro,
+      );
+      expect(inv.productos.find((p: any) => p.id === e.productoId).valorTotal).toBe(610);
+    });
+  });
+
+  // ── RONDA 12 · Secuencias al azar ─────────────────────────────────────────
+  describe('Ronda 12 · secuencias al azar', () => {
+    /** Azar reproducible: si una corrida falla, la semilla la repite. */
+    const generador = (semilla: number) => () => {
+      semilla = (semilla * 1103515245 + 12345) & 0x7fffffff;
+      return semilla / 0x7fffffff;
+    };
+
+    enEscenario('40 operaciones al azar nunca rompen la invariante', async (e) => {
+      const semilla = Date.now() % 100000;
+      const azar = generador(semilla);
+      const sur = await e.abrirSede('Sur');
+      const sedes = [e.centro, e.norte, sur];
+
+      // Se arranca de un estado heredado, como los productos reales.
+      await prisma.producto.update({
+        where: { id: e.productoId },
+        data: { costoPromedio: 42.5, stock: 30 },
+      });
+      for (const s of sedes) {
+        await prisma.productoStock.update({
+          where: { productoId_sedeId: { productoId: e.productoId, sedeId: s } },
+          data: { stock: 10, costoPromedio: null },
+        });
+      }
+
+      const historia: string[] = [`semilla ${semilla}`];
+      for (let i = 0; i < 40; i++) {
+        const sede = sedes[Math.floor(azar() * sedes.length)];
+        const dado = azar();
+        try {
+          if (dado < 0.4) {
+            const c = Math.round(azar() * 20000) / 100;
+            await e.comprar(sede, Math.ceil(azar() * 9), c);
+            historia.push(`compra en ${sede} a ${c}`);
+          } else if (dado < 0.7) {
+            const disponible = await e.stockDe(sede);
+            if (disponible >= 1) {
+              const q = Math.min(disponible, Math.ceil(azar() * 4));
+              await e.despachar(sede, q);
+              historia.push(`venta ${q} en ${sede}`);
+            }
+          } else if (dado < 0.85) {
+            await e.ajustar(sede, Math.ceil(azar() * 5) - 3);
+            historia.push(`ajuste en ${sede}`);
+          } else {
+            const otra = sedes.filter((s) => s !== sede)[Math.floor(azar() * 2)];
+            const disponible = await e.stockDe(sede);
+            if (disponible >= 1) {
+              const q = Math.min(disponible, Math.ceil(azar() * 3));
+              await e.kardex.realizarTraslado(
+                {
+                  sedeOrigenId: sede,
+                  sedeDestinoId: otra,
+                  items: [{ productoId: e.productoId, cantidad: q }],
+                } as any,
+                e.empresaId,
+                e.usuarioId,
+              );
+              historia.push(`traslado ${q} de ${sede} a ${otra}`);
+            }
+          }
+        } catch (error: any) {
+          // Un rechazo del servicio (p.ej. stock insuficiente) es válido; lo
+          // que no puede pasar es que deje los números inconsistentes.
+          historia.push(`rechazo: ${String(error?.message).slice(0, 50)}`);
+        }
+
+        // Tras CADA paso, no solo al final.
+        const porSedes = await e.valorPorSedes();
+        const global = await e.valorGlobal();
+        if (Math.abs(porSedes - global) > 0.05) {
+          throw new Error(
+            `descuadre de S/${Math.abs(porSedes - global).toFixed(2)} en el paso ${i}\n${historia.join('\n')}`,
+          );
+        }
+      }
+
+      // Y ningún costo absurdo al final del recorrido.
+      for (const s of sedes) {
+        const c = await e.costoDe(s);
+        if (c != null) {
+          expect(c).toBeGreaterThanOrEqual(0);
+          expect(c).toBeLessThan(1000);
+        }
+      }
+      expect(await e.costoGlobal()).toBeGreaterThanOrEqual(0);
+    });
+
+    enEscenario('el stock global sigue a las sedes tras el azar', async (e) => {
+      const azar = generador((Date.now() % 100000) + 7);
+      const sedes = [e.centro, e.norte];
+
+      for (let i = 0; i < 25; i++) {
+        const sede = sedes[Math.floor(azar() * sedes.length)];
+        if (azar() < 0.6) {
+          await e.comprar(sede, Math.ceil(azar() * 6), Math.round(azar() * 9000) / 100);
+        } else {
+          const d = await e.stockDe(sede);
+          if (d >= 1) await e.despachar(sede, Math.min(d, Math.ceil(azar() * 3)));
+        }
+      }
+
+      const p = await prisma.producto.findUnique({
+        where: { id: e.productoId },
+        select: { stock: true },
+      });
+      const suma = (await e.stockDe(e.centro)) + (await e.stockDe(e.norte));
+      expect(Number(p?.stock)).toBeCloseTo(suma, 3);
+    });
+  });
+
+  // ── RONDA 13 · Concurrencia y volumen ─────────────────────────────────────
+  describe('Ronda 13 · concurrencia y volumen', () => {
     enEscenario('dos compras simultáneas a la misma sede no pierden stock', async (e) => {
       await Promise.all([
         e.comprar(e.centro, 10, 100),
