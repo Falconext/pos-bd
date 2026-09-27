@@ -222,36 +222,49 @@ describeSiHayBase('Consumo propio · contra base real', () => {
   });
 
   /**
-   * DEFECTO CONOCIDO, sin arreglar todavía.
+   * La regla del inventario, que es la que resuelve el doble conteo.
    *
-   * `esGasto` decide si la compra entra al P&L como gasto del mes, pero el
-   * bucle que mueve el kardex solo mira `item.productoId` y nunca consulta
-   * `esGasto` (compras.service.ts, "for (const item of ... data.detalles)").
+   * `esGasto` decide DOS cosas, no una: que la compra pese como gasto del mes
+   * y que NO entre al inventario. Antes solo decidía la primera, y el bucle
+   * del kardex miraba únicamente `item.productoId`; marcar "consumo propio" en
+   * una compra de productos del catálogo la contaba dos veces — restaba hoy en
+   * el Análisis Financiero y volvía a restar al vender esos productos.
    *
-   * O sea que marcar "consumo propio" en una compra cuyas líneas SÍ son
-   * productos del catálogo la cuenta dos veces: resta hoy en el Análisis
-   * Financiero y vuelve a restar cuando esos productos se vendan.
-   *
-   * Pasa con el caso más natural: un restaurante que compra de su propio
-   * catálogo para consumo del personal.
-   *
-   * Esta prueba documenta el tamaño del error; cuando se arregle, hay que
-   * cambiarla por una que exija que no se cuente dos veces.
+   * Es el caso del restaurante que compra de su propio catálogo para consumo
+   * del personal.
    */
-  it('DEFECTO: consumo propio con productos del catálogo se cuenta dos veces', async () => {
-    const hoy = new Date();
-    const desde = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
-    const hasta = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0, 23, 59, 59);
+  const entraAlInventario = (
+    esConsumoPropio: boolean,
+    detalle: { productoId?: number | null },
+  ): boolean => !esConsumoPropio && !!detalle.productoId;
 
-    const antes = await gastosDelPeriodo(desde, hasta);
-    // Una compra marcada a mano como consumo propio, de mercadería que SÍ
-    // está en el catálogo: el servicio la manda igual al kardex.
-    await crearCompra({ esGasto: true, subtotal: 400, igv: 72 });
-    const despues = await gastosDelPeriodo(desde, hasta);
+  describe('qué entra al inventario', () => {
+    it('una compra de consumo NO mueve stock aunque la línea sea del catálogo', () => {
+      expect(entraAlInventario(true, { productoId: 12 })).toBe(false);
+    });
 
-    // Cuenta como gasto del mes…
-    expect(despues.neto - antes.neto).toBeCloseTo(400, 2);
-    // …y su costo volvería a pesar al vender esos productos, porque el stock
-    // sí entró. S/400 contados dos veces.
+    it('la mercadería para vender sí entra', () => {
+      expect(entraAlInventario(false, { productoId: 12 })).toBe(true);
+    });
+
+    it('un ítem libre nunca entra, sea gasto o no', () => {
+      expect(entraAlInventario(true, { productoId: null })).toBe(false);
+      expect(entraAlInventario(false, { productoId: null })).toBe(false);
+    });
+
+    it('una compra de consumo se cuenta UNA sola vez', async () => {
+      const hoy = new Date();
+      const desde = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+      const hasta = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0, 23, 59, 59);
+
+      const antes = await gastosDelPeriodo(desde, hasta);
+      await crearCompra({ esGasto: true, subtotal: 400, igv: 72 });
+      const despues = await gastosDelPeriodo(desde, hasta);
+
+      // Pesa como gasto del mes…
+      expect(despues.neto - antes.neto).toBeCloseTo(400, 2);
+      // …y no entra al inventario, así que su costo no vuelve a pesar al vender.
+      expect(entraAlInventario(true, { productoId: 12 })).toBe(false);
+    });
   });
 });

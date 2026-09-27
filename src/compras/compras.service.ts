@@ -492,6 +492,15 @@ export class ComprasService {
       usuarioRol,
     );
 
+    // Consumo propio: explícito desde el formulario o inferido cuando ninguna
+    // línea apunta a un producto del catálogo (ítems libres). Se calcula una
+    // sola vez porque decide DOS cosas: que la compra pese como gasto del mes
+    // y que NO entre al inventario.
+    const esConsumoPropio =
+      typeof data.esGasto === 'boolean'
+        ? data.esGasto
+        : data.detalles.length > 0 && data.detalles.every((d) => !d.productoId);
+
     // El pago inicial nunca supera el total (un cliente que calculó el total
     // con IGV sobre exonerados mandaría de más).
     const montoPagadoInicial = esPendiente
@@ -548,13 +557,7 @@ export class ComprasService {
           estadoPago: estadoPagoInicial as any,
           observaciones: data.observaciones,
           fotoUrl: data.fotoUrl || null,
-          // Consumo propio: explícito desde el formulario o inferido cuando
-          // ninguna línea apunta a un producto del catálogo (ítems libres).
-          esGasto:
-            typeof data.esGasto === 'boolean'
-              ? data.esGasto
-              : data.detalles.length > 0 &&
-                data.detalles.every((d) => !d.productoId),
+          esGasto: esConsumoPropio,
           // Save installments
           cuotas: data.cuotas ? JSON.stringify(data.cuotas) : undefined,
           detalles: {
@@ -594,7 +597,10 @@ export class ComprasService {
     const stockWarnings: string[] = [];
     // Compra pendiente de aprobación: el stock/series recién se aplican al
     // aprobar (aprobarCompra). data.detalles queda intacto en DetalleCompra.
-    for (const item of esPendiente ? [] : data.detalles) {
+    // Una compra de consumo propio NO entra al inventario: ya restó como gasto
+    // del mes en el Análisis Financiero, y si además sumara stock su costo
+    // volvería a restar al vender. Eso es contarla dos veces.
+    for (const item of esPendiente || esConsumoPropio ? [] : data.detalles) {
       if (item.productoId) {
         try {
           // costoPromedio siempre se actualiza con el precio NETO (sin IGV) y
@@ -804,7 +810,7 @@ export class ComprasService {
     const stockWarnings: string[] = [];
     // El detalle está en la moneda de la factura; al kardex va en soles.
     const factorSoles = this.factorASoles(compra);
-    for (const detalle of compra.detalles) {
+    for (const detalle of compra.esGasto ? [] : compra.detalles) {
       if (!detalle.productoId) continue;
       try {
         // precioUnitario en DetalleCompra ya está guardado NETO (sin IGV).
@@ -1022,6 +1028,8 @@ export class ComprasService {
       sedeId: number | null;
       moneda?: string | null;
       tipoCambio?: any;
+      /** Consumo propio: nunca entró al inventario, así que no hay qué revertir. */
+      esGasto?: boolean | null;
       detalles: {
         productoId: number | null;
         cantidad: any;
@@ -1043,7 +1051,9 @@ export class ComprasService {
     // La salida compensatoria se valoriza en soles, igual que entró.
     const factorSoles = this.factorASoles(compra);
 
-    for (const det of compra.detalles) {
+    // Una compra de consumo propio no sumó stock: revertirla lo dejaría en
+    // negativo por mercadería que nunca entró.
+    for (const det of compra.esGasto ? [] : compra.detalles) {
       if (!det.productoId) continue;
       const cantidad = Number(det.cantidad) || 0;
       if (cantidad <= 0) continue;
@@ -1213,6 +1223,13 @@ export class ComprasService {
       );
     }
     await this.assertSinSeriesUsadas(id, empresaId);
+
+    // Igual que al crear: decide que la compra pese como gasto del mes y que
+    // NO entre al inventario. Una sola definición para las dos cosas.
+    const esConsumoPropio =
+      typeof data.esGasto === 'boolean'
+        ? data.esGasto
+        : data.detalles.length > 0 && data.detalles.every((d) => !d.productoId);
 
     // Duplicado serie+numero excluyendo la propia compra.
     const duplicado = await this.prisma.compra.findFirst({
@@ -1429,11 +1446,7 @@ export class ComprasService {
           // Solo se sobreescribe la foto si el payload trae una nueva (al re-leer
           // por IA en edición); si no viene, se conserva la existente.
           ...(data.fotoUrl !== undefined ? { fotoUrl: data.fotoUrl || null } : {}),
-          esGasto:
-            typeof data.esGasto === 'boolean'
-              ? data.esGasto
-              : data.detalles.length > 0 &&
-                data.detalles.every((d) => !d.productoId),
+          esGasto: esConsumoPropio,
           cuotas: data.cuotas ? JSON.stringify(data.cuotas) : undefined,
           sedeId,
           detalles: { create: detallesData },
@@ -1441,9 +1454,10 @@ export class ComprasService {
       });
     });
 
-    // 4) Re-aplicar el inventario nuevo (INGRESO + lotes FEFO).
+    // 4) Re-aplicar el inventario nuevo (INGRESO + lotes FEFO). Una compra de
+    // consumo propio no entra al inventario: ya pesa como gasto del mes.
     const warningsAplicar: string[] = [];
-    for (const item of data.detalles) {
+    for (const item of esConsumoPropio ? [] : data.detalles) {
       if (!item.productoId) continue;
       try {
         // Neto (sin IGV) y en soles al TC de la compra editada.
