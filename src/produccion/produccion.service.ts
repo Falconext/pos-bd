@@ -16,8 +16,8 @@ import { Prisma } from '@prisma/client';
 import { ProductoService } from '../producto/producto.service';
 import { Decimal } from '@prisma/client/runtime/library';
 import {
+  alinearCostoGlobal,
   costoDeSede,
-  promedioDesdeSedes,
   promedioTrasIngreso,
 } from '../kardex/costo-sede';
 import * as XLSX from 'xlsx';
@@ -450,19 +450,9 @@ export class ProduccionService {
         }
       }
 
-      // Y el global derivado de las sedes, para que el valorizado de la
+      // Y el global alineado con las sedes, para que el valorizado de la
       // empresa siga siendo la suma de sus locales.
-      const filas = await tx.productoStock.findMany({
-        where: { productoId: data.productoId },
-        select: { stock: true, costoPromedio: true },
-      });
-      const costoGlobal = promedioDesdeSedes(filas, producto?.costoPromedio);
-      if (costoGlobal != null) {
-        await tx.producto.update({
-          where: { id: data.productoId },
-          data: { costoPromedio: costoGlobal },
-        });
-      }
+      await alinearCostoGlobal(tx, data.productoId, producto?.costoPromedio);
     }
 
     return movimiento;

@@ -1,7 +1,7 @@
 /**
  * QA funcional del costo por sede, contra PostgreSQL real.
  *
- * Diez rondas sobre empresas creadas para la ocasión, con los servicios reales
+ * Once rondas sobre empresas creadas para la ocasión, con los servicios reales
  * —kardex, dashboard— y datos que se crean y se borran. No hay mocks: lo que
  * falla aquí, falla en el panel.
  *
@@ -645,7 +645,90 @@ describeSiHayBase('QA funcional · costo por sede', () => {
     });
   });
 
-  // ── RONDA 6 · Tres sedes y ajustes de inventario ──────────────────────────
+  /**
+   * Este defecto solo apareció con datos reales, con un producto que ya tenía
+   * stock repartido en tres sedes antes de existir la columna.
+   *
+   * Una sede en NULL "vale el global", pero el global se deriva de las sedes.
+   * Mientras quedaran NULLs en la mezcla, cada recálculo las revaluaba con el
+   * global recién calculado y el costo se iba solo para arriba: S/36.62 se
+   * convertía en S/41.99 en seis movimientos, sin que entrara mercadería. El
+   * inventario se habría ido inflando en silencio.
+   */
+  describe('Ronda 6 · el producto que ya tenía stock en varias sedes', () => {
+    enEscenario('el costo no se infla solo al repetir movimientos', async (e) => {
+      const sur = await e.abrirSede('Sur');
+      // Producto viejo: stock en las tres sedes y un costo global, ninguna con
+      // costo propio. Es el estado de las 5 805 filas que hay hoy en la base.
+      for (const sede of [e.centro, e.norte, sur]) {
+        await prisma.productoStock.update({
+          where: { productoId_sedeId: { productoId: e.productoId, sedeId: sede } },
+          data: { stock: 29, costoPromedio: null },
+        });
+      }
+      await prisma.producto.update({
+        where: { id: e.productoId },
+        data: { stock: 87, costoPromedio: 36.62 },
+      });
+
+      // La primera compra en una sede: aquí es donde arrancaba el lazo.
+      await e.comprar(e.centro, 10, 58.59);
+      const trasLaCompra = await e.costoGlobal();
+
+      // Movimientos que no agregan valor: el costo no puede moverse.
+      await e.ajustar(e.norte, 0);
+      await e.despachar(e.centro, 1);
+      await e.ajustar(sur, 0);
+      const despues = await e.costoGlobal();
+
+      // Una salida cambia la mezcla, así que el global puede variar algo; lo
+      // que NO puede es dispararse hacia arriba sin mercadería nueva.
+      expect(despues).toBeLessThanOrEqual(trasLaCompra + 0.01);
+      expect(await e.valorPorSedes()).toBeCloseTo(await e.valorGlobal(), 2);
+    });
+
+    enEscenario('las sedes que no compraron quedan fijadas en el global vigente', async (e) => {
+      const sur = await e.abrirSede('Sur');
+      for (const sede of [e.centro, e.norte, sur]) {
+        await prisma.productoStock.update({
+          where: { productoId_sedeId: { productoId: e.productoId, sedeId: sede } },
+          data: { stock: 29, costoPromedio: null },
+        });
+      }
+      await prisma.producto.update({
+        where: { id: e.productoId },
+        data: { stock: 87, costoPromedio: 36.62 },
+      });
+
+      await e.comprar(e.centro, 10, 58.59);
+
+      // Las otras dos se congelan en lo que ya estaban mostrando: no cambia
+      // ningún número para el empresario, y se corta la circularidad.
+      expect(await e.costoDe(e.norte)).toBeCloseTo(36.62, 4);
+      expect(await e.costoDe(sur)).toBeCloseTo(36.62, 4);
+      // Centro: (29×36.62 + 10×58.59)/39.
+      expect(await e.costoDe(e.centro)).toBeCloseTo(
+        (29 * 36.62 + 10 * 58.59) / 39,
+        4,
+      );
+      expect(await e.valorPorSedes()).toBeCloseTo(await e.valorGlobal(), 2);
+    });
+
+    enEscenario('mientras nadie compre, las sedes siguen en NULL', async (e) => {
+      // Un producto que nunca se mueve no debe estrenar costos por sede: eso
+      // es lo que mantiene la migración perezosa y reversible.
+      await prisma.productoStock.update({
+        where: { productoId_sedeId: { productoId: e.productoId, sedeId: e.centro } },
+        data: { stock: 5, costoPromedio: null },
+      });
+      await e.despachar(e.centro, 1);
+
+      expect(await e.costoDe(e.centro)).toBeNull();
+      expect(await e.costoDe(e.norte)).toBeNull();
+    });
+  });
+
+  // ── RONDA 7 · Tres sedes y ajustes de inventario ──────────────────────────
   describe('Ronda 6 · tres sedes y ajustes de inventario', () => {
     enEscenario('abrir una sede nueva no le inventa un costo', async (e) => {
       await e.comprar(e.centro, 10, 100);
@@ -719,8 +802,8 @@ describeSiHayBase('QA funcional · costo por sede', () => {
     });
   });
 
-  // ── RONDA 7 · Variantes (talla, color) ────────────────────────────────────
-  describe('Ronda 7 · productos con variantes', () => {
+  // ── RONDA 8 · Variantes (talla, color) ────────────────────────────────────
+  describe('Ronda 8 · productos con variantes', () => {
     enEscenario('cada variante lleva su propio costo por sede', async (e) => {
       const talla38 = await e.nuevoProducto(
         `v38-${Date.now()}`,
@@ -782,8 +865,8 @@ describeSiHayBase('QA funcional · costo por sede', () => {
     });
   });
 
-  // ── RONDA 8 · Decimales y fracciones ──────────────────────────────────────
-  describe('Ronda 8 · decimales, fracciones y redondeo', () => {
+  // ── RONDA 9 · Decimales y fracciones ──────────────────────────────────────
+  describe('Ronda 9 · decimales, fracciones y redondeo', () => {
     enEscenario('fracciones de galón no descuadran el valorizado', async (e) => {
       // Venta por fracción: 1/2, 1/4, 1/8 de galón.
       await e.comprar(e.centro, 10, 47.35);
@@ -826,8 +909,8 @@ describeSiHayBase('QA funcional · costo por sede', () => {
     });
   });
 
-  // ── RONDA 9 · Varios productos y el reporte completo ──────────────────────
-  describe('Ronda 9 · varios productos a la vez', () => {
+  // ── RONDA 10 · Varios productos y el reporte completo ──────────────────────
+  describe('Ronda 10 · varios productos a la vez', () => {
     enEscenario('el inventario valorizado de una sede suma solo lo suyo', async (e) => {
       const b = await e.nuevoProducto(`p2-${Date.now()}`, [e.centro, e.norte]);
       const c = await e.nuevoProducto(`p3-${Date.now()}`, [e.centro, e.norte]);
@@ -897,8 +980,8 @@ describeSiHayBase('QA funcional · costo por sede', () => {
     });
   });
 
-  // ── RONDA 10 · Concurrencia y volumen ─────────────────────────────────────
-  describe('Ronda 10 · concurrencia y volumen', () => {
+  // ── RONDA 11 · Concurrencia y volumen ─────────────────────────────────────
+  describe('Ronda 11 · concurrencia y volumen', () => {
     enEscenario('dos compras simultáneas a la misma sede no pierden stock', async (e) => {
       await Promise.all([
         e.comprar(e.centro, 10, 100),

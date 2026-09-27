@@ -67,6 +67,71 @@ export const promedioDesdeSedes = (
   return valorTotal / stockTotal;
 };
 
+/**
+ * Cliente de Prisma o transacción; solo se usan estas dos tablas.
+ */
+type ClienteCosto = {
+  productoStock: {
+    findMany: (args: any) => Promise<any[]>;
+    updateMany: (args: any) => Promise<any>;
+  };
+  producto: { update: (args: any) => Promise<any> };
+};
+
+/**
+ * Deja el costo global del producto en línea con el de sus sedes, y de paso
+ * cierra la circularidad que hace falta cerrar para que esto funcione.
+ *
+ * El problema: una sede en NULL "vale el global", pero el global se deriva de
+ * las sedes. Si quedan NULLs en la mezcla, cada recálculo las revalúa con el
+ * global recién calculado y el número se va corriendo solo — S/36.62 se
+ * convertía en S/41.99 en seis movimientos, sin que entrara mercadería.
+ *
+ * Por eso, en cuanto UNA sede estrena costo propio, las demás se fijan en el
+ * global vigente en ese instante. No cambia lo que se ve —era justamente el
+ * valor que estaban mostrando— y a partir de ahí cada sede solo se mueve por
+ * sus propios movimientos. La migración sigue siendo perezosa, pero por
+ * producto y no por sede.
+ */
+export const alinearCostoGlobal = async (
+  cliente: ClienteCosto,
+  productoId: number,
+  costoGlobalActual: unknown,
+): Promise<void> => {
+  let filas = await cliente.productoStock.findMany({
+    where: { productoId },
+    select: { stock: true, costoPromedio: true },
+  });
+
+  const algunaTieneCosto = filas.some((f) => f.costoPromedio != null);
+  // Solo las sedes que TIENEN mercadería: una en cero no aporta valor y no
+  // entra en la circularidad, así que se la deja en NULL. Congelarle un costo
+  // sería inventarle un dato que nadie le puso.
+  const faltanCostos = filas.some(
+    (f) => f.costoPromedio == null && Number(f.stock) !== 0,
+  );
+  if (algunaTieneCosto && faltanCostos) {
+    const congelado = costoDeSede(null, costoGlobalActual);
+    await cliente.productoStock.updateMany({
+      where: { productoId, costoPromedio: null, NOT: { stock: 0 } },
+      data: { costoPromedio: congelado },
+    });
+    filas = filas.map((f) =>
+      f.costoPromedio == null && Number(f.stock) !== 0
+        ? { ...f, costoPromedio: congelado }
+        : f,
+    );
+  }
+
+  const costoPromedio = promedioDesdeSedes(filas, costoGlobalActual);
+  if (costoPromedio != null) {
+    await cliente.producto.update({
+      where: { id: productoId },
+      data: { costoPromedio },
+    });
+  }
+};
+
 export const promedioTrasIngreso = (
   stockDespues: number,
   cantidad: number,
