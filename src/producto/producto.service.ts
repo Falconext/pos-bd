@@ -2633,6 +2633,36 @@ export class ProductoService {
     });
   }
 
+  /**
+   * Cuando el empresario escribe un costo a mano, las sedes vuelven a NULL.
+   *
+   * El costo por sede se calcula de las compras; un costo tipeado es una
+   * corrección que manda sobre todo lo calculado. Si las sedes se quedaran con
+   * el suyo, el valorizado global diría una cosa y la suma de los locales otra
+   * —S/1 009.73 de diferencia en el caso que destapó esto—, además de que el
+   * número que el empresario acaba de escribir no se vería en ningún reporte
+   * por sede.
+   *
+   * Volver a NULL las deja leyendo el costo nuevo y cada una vuelve a
+   * diferenciarse en su próxima compra, igual que al empezar la migración.
+   *
+   * Solo cuando el valor CAMBIA: guardar el formulario sin tocar el costo no
+   * puede borrar lo que las compras calcularon.
+   */
+  private async resetearCostoPorSede(
+    productoId: number,
+    costoAnterior: number,
+    costoNuevo: number,
+  ) {
+    if (!(costoNuevo >= 0) || Math.abs(costoNuevo - costoAnterior) < 0.00005) {
+      return;
+    }
+    await this.prisma.productoStock.updateMany({
+      where: { productoId, costoPromedio: { not: null } },
+      data: { costoPromedio: null },
+    });
+  }
+
   async actualizar(
     data: {
       id: number;
@@ -3180,6 +3210,11 @@ export class ProductoService {
       await this.propagarCostoAVariantes(
         actualizado.id,
         data.empresaId,
+        Number(producto.costoPromedio ?? 0),
+        Number(data.costoUnitario),
+      );
+      await this.resetearCostoPorSede(
+        actualizado.id,
         Number(producto.costoPromedio ?? 0),
         Number(data.costoUnitario),
       );

@@ -1,7 +1,7 @@
 /**
  * QA funcional del costo por sede, contra PostgreSQL real.
  *
- * Trece rondas sobre empresas creadas para la ocasión, con los servicios reales
+ * Catorce rondas sobre empresas creadas para la ocasión, con los servicios reales
  * —kardex, dashboard— y datos que se crean y se borran. No hay mocks: lo que
  * falla aquí, falla en el panel.
  *
@@ -1059,8 +1059,82 @@ describeSiHayBase('QA funcional · costo por sede', () => {
     });
   });
 
-  // ── RONDA 12 · Secuencias al azar ─────────────────────────────────────────
-  describe('Ronda 12 · secuencias al azar', () => {
+  // ── RONDA 12 · El empresario edita el costo a mano ────────────────────────
+  // El editor de producto escribe el costo global directamente. Si las sedes
+  // se quedaran con el suyo, el valorizado global diría una cosa y la suma de
+  // los locales otra —S/1 009.73 en el caso que destapó esto— y el número que
+  // el empresario acaba de escribir no se vería en ningún reporte por sede.
+  describe('Ronda 12 · costo editado a mano', () => {
+    /** El editor real, con su propio servicio. */
+    const editarCosto = async (e: any, costo: number) => {
+      const { ProductoService } = await import('../producto/producto.service');
+      const servicio: any = Object.create(ProductoService.prototype);
+      servicio.prisma = prisma;
+      const anterior = await e.costoGlobal();
+      await prisma.producto.update({
+        where: { id: e.productoId },
+        data: { costoPromedio: costo },
+      });
+      await servicio.resetearCostoPorSede(e.productoId, anterior, costo);
+    };
+
+    enEscenario('editar el costo deja las sedes leyendo el valor nuevo', async (e) => {
+      await e.comprar(e.centro, 39, 42.25);
+      await e.comprar(e.norte, 29, 36.62);
+      expect(await e.costoDe(e.centro)).not.toBeNull();
+
+      await editarCosto(e, 25);
+
+      // Vuelven a NULL: el costo tipeado manda sobre lo calculado.
+      expect(await e.costoDe(e.centro)).toBeNull();
+      expect(await e.costoDe(e.norte)).toBeNull();
+      expect(await e.costoGlobal()).toBe(25);
+      expect(await e.valorPorSedes()).toBeCloseTo(await e.valorGlobal(), 4);
+    });
+
+    enEscenario('el reporte por sede muestra el costo que se escribió', async (e) => {
+      await e.comprar(e.centro, 10, 300);
+      await editarCosto(e, 75);
+
+      const inv: any = await e.kardex.obtenerInventarioValorizado(
+        e.empresaId,
+        {} as any,
+        e.centro,
+      );
+      const fila = inv.productos.find((p: any) => p.id === e.productoId);
+      expect(fila.costoPromedio).toBe(75);
+      expect(fila.valorTotal).toBe(750);
+    });
+
+    enEscenario('guardar sin cambiar el costo no borra lo calculado', async (e) => {
+      // Un guardado cualquiera del formulario no puede tirar a la basura lo
+      // que las compras calcularon para cada sede.
+      await e.comprar(e.centro, 10, 100);
+      await e.comprar(e.norte, 10, 200);
+      const antesCentro = await e.costoDe(e.centro);
+
+      await editarCosto(e, await e.costoGlobal());
+
+      expect(await e.costoDe(e.centro)).toBe(antesCentro);
+      expect(await e.costoDe(e.norte)).toBe(200);
+    });
+
+    enEscenario('tras editar, cada sede vuelve a diferenciarse al comprar', async (e) => {
+      await e.comprar(e.centro, 10, 100);
+      await e.comprar(e.norte, 10, 200);
+      await editarCosto(e, 50);
+
+      await e.comprar(e.centro, 10, 90);
+
+      // Centro: 10 al costo tipeado (50) + 10 a 90 → 70. Norte sigue en 50.
+      expect(await e.costoDe(e.centro)).toBeCloseTo(70, 4);
+      expect(await e.costoDe(e.norte)).toBeCloseTo(50, 4);
+      expect(await e.valorPorSedes()).toBeCloseTo(await e.valorGlobal(), 4);
+    });
+  });
+
+  // ── RONDA 13 · Secuencias al azar ─────────────────────────────────────────
+  describe('Ronda 13 · secuencias al azar', () => {
     /** Azar reproducible: si una corrida falla, la semilla la repite. */
     const generador = (semilla: number) => () => {
       semilla = (semilla * 1103515245 + 12345) & 0x7fffffff;
@@ -1172,7 +1246,7 @@ describeSiHayBase('QA funcional · costo por sede', () => {
   });
 
   // ── RONDA 13 · Concurrencia y volumen ─────────────────────────────────────
-  describe('Ronda 13 · concurrencia y volumen', () => {
+  describe('Ronda 14 · concurrencia y volumen', () => {
     enEscenario('dos compras simultáneas a la misma sede no pierden stock', async (e) => {
       await Promise.all([
         e.comprar(e.centro, 10, 100),
