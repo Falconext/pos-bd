@@ -84,7 +84,10 @@ export class NotificacionesGateway
       if (!this.usuariosConectados.has(usuarioId)) {
         this.usuariosConectados.set(usuarioId, []);
       }
-      this.usuariosConectados.get(usuarioId)!.push(client.id);
+      // Sin el chequeo, una reconexión que reusa el id deja el socket dos veces
+      // en la lista y cada evento en vivo le llega duplicado al usuario.
+      const sockets = this.usuariosConectados.get(usuarioId)!;
+      if (!sockets.includes(client.id)) sockets.push(client.id);
 
       this.logger.debug(
         `Usuario ${usuarioId} conectado (socket: ${client.id})`,

@@ -86,7 +86,7 @@ export class SoporteService {
 
     const autorNombre = await this.resolveUsuarioNombre(usuarioId);
     const conversacion = await this.obtenerOCrearConversacion(empresaId);
-    const [, actualizada] = await this.prisma.$transaction([
+    const [mensaje, actualizada] = await this.prisma.$transaction([
       this.prisma.soporteMensaje.create({
         data: {
           conversacionId: conversacion.id,
@@ -108,7 +108,7 @@ export class SoporteService {
     // la base. Dejar que el error suba haría que el empresario vea un fallo,
     // reintente y termine con el mensaje duplicado. Un socket caído no puede
     // costarle eso: se avisa lo que se pueda y el envío se da por hecho.
-    await this.notificarSistema(empresaId, actualizada.id, autorNombre, texto).catch(
+    await this.notificarSistema(empresaId, actualizada.id, mensaje.id, autorNombre, texto).catch(
       (error) =>
         this.logger.warn(
           `[soporte] no se pudo avisar a Krezka del mensaje de la empresa ${empresaId}: ${error?.message}`,
@@ -121,6 +121,7 @@ export class SoporteService {
   private async notificarSistema(
     empresaId: number,
     conversacionId: number,
+    mensajeId: number,
     autorNombre: string,
     contenido: string,
   ) {
@@ -142,6 +143,10 @@ export class SoporteService {
       {
         conversacionId,
         empresaId,
+        // El id real del mensaje: sin él, quien lo recibe no puede distinguir
+        // un mensaje nuevo de uno que ya tiene, y un evento repetido
+        // (reconexión, dos pestañas) lo muestra duplicado.
+        mensajeId,
         empresaNombre: empresa?.nombreComercial || empresa?.razonSocial,
         autorNombre,
         contenido,
@@ -229,7 +234,7 @@ export class SoporteService {
     const autorNombre = await this.resolveUsuarioNombre(autorId);
     const conversacion = await this.obtenerConversacionEscopeada(id, sistemaNegocio);
 
-    const [, actualizada] = await this.prisma.$transaction([
+    const [mensaje, actualizada] = await this.prisma.$transaction([
       this.prisma.soporteMensaje.create({
         data: { conversacionId: id, rol: 'SISTEMA', autorNombre, contenido: texto },
       }),
@@ -245,7 +250,7 @@ export class SoporteService {
     ]);
 
     // Mismo criterio que del lado de la empresa: el mensaje ya está guardado.
-    await this.notificarEmpresa(conversacion.empresaId, id, autorNombre, texto).catch(
+    await this.notificarEmpresa(conversacion.empresaId, id, mensaje.id, autorNombre, texto).catch(
       (error) =>
         this.logger.warn(
           `[soporte] no se pudo avisar a la empresa ${conversacion.empresaId}: ${error?.message}`,
@@ -274,6 +279,7 @@ export class SoporteService {
   private async notificarEmpresa(
     empresaId: number,
     conversacionId: number,
+    mensajeId: number,
     autorNombre: string,
     contenido: string,
   ) {
@@ -289,7 +295,10 @@ export class SoporteService {
     this.notificaciones.emitirEventoAUsuarios(
       usuarios.map((u) => u.id),
       'nuevo-mensaje-soporte',
-      { conversacionId, empresaId, autorNombre, contenido, rol: 'SISTEMA' },
+      // El id real del mensaje viaja en el aviso: sin él, quien lo recibe no
+      // puede distinguir un mensaje nuevo de uno que ya tiene, y un evento
+      // repetido (reconexión, dos pestañas) lo muestra duplicado.
+      { conversacionId, empresaId, mensajeId, autorNombre, contenido, rol: 'SISTEMA' },
     );
   }
 }

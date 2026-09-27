@@ -33,7 +33,7 @@ describeSiHayBase('Chat de soporte · contra base real', () => {
   const crearEmpresa = async (marca: string, brand: string) => {
     const plan = await prisma.plan.findFirst({ select: { id: true } });
     const anio = 1000 * 60 * 60 * 24 * 365;
-    return (
+    const empresaId = (
       await prisma.empresa.create({
         data: {
           razonSocial: marca,
@@ -48,6 +48,20 @@ describeSiHayBase('Chat de soporte · contra base real', () => {
         select: { id: true },
       })
     ).id;
+    // Con un usuario propio: sin nadie a quien avisar, el aviso en vivo ni
+    // siquiera se emite y las pruebas que lo miran quedarían vacías.
+    await prisma.usuario.create({
+      data: {
+        nombre: `Dueño de ${marca}`,
+        dni: `${Math.floor(Math.random() * 1e8)}`.padStart(8, '0'),
+        celular: '999999999',
+        email: `${marca}@qa.local`,
+        password: 'no-se-usa',
+        rol: 'ADMIN_EMPRESA',
+        empresaId,
+      },
+    });
+    return empresaId;
   };
 
   const leerConversacion = (empresaId: number) =>
@@ -84,6 +98,7 @@ describeSiHayBase('Chat de soporte · contra base real', () => {
         where: { conversacion: { empresaId: id } },
       });
       await prisma.soporteConversacion.deleteMany({ where: { empresaId: id } });
+      await prisma.usuario.deleteMany({ where: { empresaId: id } });
       await prisma.empresa.delete({ where: { id } }).catch(() => {});
     }
     await prisma.$disconnect();
@@ -108,6 +123,7 @@ describeSiHayBase('Chat de soporte · contra base real', () => {
         where: { conversacion: { empresaId: id } },
       });
       await prisma.soporteConversacion.deleteMany({ where: { empresaId: id } });
+      await prisma.usuario.deleteMany({ where: { empresaId: id } });
       await prisma.empresa.delete({ where: { id } }).catch(() => {});
     }
   };
@@ -656,6 +672,117 @@ describeSiHayBase('Chat de soporte · contra base real', () => {
         expect(hilo!.noLeidosSistema).toBe(10);
       } finally {
         await borrarEmpresas([empresa]);
+      }
+    });
+  });
+
+  // ── El aviso en vivo, que es lo que el empresario ve aparecer solo ────────
+  // Reportado desde el uso real: dos empresas escribían, Krezka respondía a
+  // cada una, y a cada una le llegaba el mismo mensaje DOS veces.
+  describe('el aviso en vivo no duplica mensajes', () => {
+    /** Captura los avisos emitidos, tal como los recibe el navegador. */
+    const conCaptura = () => {
+      const emitidos: any[] = [];
+      const notificaciones: any = {
+        emitirEventoAUsuarios: (ids: number[], evento: string, payload: any) => {
+          emitidos.push({ ids, evento, payload });
+        },
+        crearNotificacion: () => Promise.resolve(),
+      };
+      return { servicio: new SoporteService(prisma as any, notificaciones), emitidos };
+    };
+
+    it('el aviso lleva el id REAL del mensaje, no uno inventado', async () => {
+      // Sin el id, quien lo recibe no puede distinguir un mensaje nuevo de uno
+      // que ya tiene, y un evento repetido se muestra duplicado.
+      const empresa = (await crearEmpresas(1, 'krezka', 'qa-soporte-idreal'))[0];
+      try {
+        const { servicio, emitidos } = conCaptura();
+        await servicio.enviarMensajeEmpresa(empresa, usuarioEmpresaId, 'hola');
+
+        const { mensajes } = await soporte.listarMensajes(empresa);
+        const aviso = emitidos.find((e) => e.evento === 'nuevo-mensaje-soporte');
+        expect(aviso).toBeDefined();
+        expect(aviso.payload.mensajeId).toBe(mensajes[0].id);
+      } finally {
+        await borrarEmpresas([empresa]);
+      }
+    });
+
+    it('la respuesta de Krezka avisa con el id del mensaje que acaba de crear', async () => {
+      const empresa = (await crearEmpresas(1, 'krezka', 'qa-soporte-idresp'))[0];
+      try {
+        await soporte.enviarMensajeEmpresa(empresa, usuarioEmpresaId, 'consulta');
+        const hilo = await leerConversacion(empresa);
+
+        const { servicio, emitidos } = conCaptura();
+        await servicio.enviarMensajeSistema(hilo!.id, 'krezka', usuarioKrezkaId, 'respuesta');
+
+        const { mensajes } = await soporte.listarMensajes(empresa);
+        const ultimo = mensajes[mensajes.length - 1];
+        const aviso = emitidos.find((e) => e.evento === 'nuevo-mensaje-soporte');
+        expect(aviso.payload.mensajeId).toBe(ultimo.id);
+        expect(aviso.payload.rol).toBe('SISTEMA');
+      } finally {
+        await borrarEmpresas([empresa]);
+      }
+    });
+
+    it('EL CASO REPORTADO: dos empresas, una respuesta a cada una, un solo aviso por empresa', async () => {
+      const dos = await crearEmpresas(2, 'krezka', 'qa-soporte-dos');
+      try {
+        for (const id of dos) {
+          await soporte.enviarMensajeEmpresa(id, usuarioEmpresaId, 'tengo un problema');
+        }
+        const hilos = await Promise.all(dos.map((id) => leerConversacion(id)));
+
+        const { servicio, emitidos } = conCaptura();
+        await servicio.enviarMensajeSistema(hilos[0]!.id, 'krezka', usuarioKrezkaId, 'respuesta A');
+        await servicio.enviarMensajeSistema(hilos[1]!.id, 'krezka', usuarioKrezkaId, 'respuesta B');
+
+        // Un aviso por respuesta, no dos.
+        expect(emitidos).toHaveLength(2);
+
+        // Y cada uno con SU contenido y SU id: nada cruzado entre empresas.
+        const ids = emitidos.map((e) => e.payload.mensajeId);
+        expect(new Set(ids).size).toBe(2);
+        expect(emitidos[0].payload.contenido).toBe('respuesta A');
+        expect(emitidos[1].payload.contenido).toBe('respuesta B');
+        expect(emitidos[0].payload.empresaId).toBe(dos[0]);
+        expect(emitidos[1].payload.empresaId).toBe(dos[1]);
+
+        // Y en la base quedó UNA sola copia de cada respuesta.
+        for (let i = 0; i < 2; i++) {
+          const { mensajes } = await soporte.listarMensajes(dos[i]);
+          const respuestas = mensajes.filter((m) => m.rol === 'SISTEMA');
+          expect(respuestas).toHaveLength(1);
+          expect(respuestas[0].contenido).toBe(i === 0 ? 'respuesta A' : 'respuesta B');
+        }
+      } finally {
+        await borrarEmpresas(dos);
+      }
+    });
+
+    it('el aviso a la empresa no le llega a usuarios de otra', async () => {
+      const dos = await crearEmpresas(2, 'krezka', 'qa-soporte-destino');
+      try {
+        await soporte.enviarMensajeEmpresa(dos[0], usuarioEmpresaId, 'soy la primera');
+        const hilo = await leerConversacion(dos[0]);
+
+        const { servicio, emitidos } = conCaptura();
+        await servicio.enviarMensajeSistema(hilo!.id, 'krezka', usuarioKrezkaId, 'solo para vos');
+
+        const aviso = emitidos[0];
+        // Los destinatarios son los usuarios de ESA empresa, no de la otra.
+        const usuariosDeLaOtra = await prisma.usuario.findMany({
+          where: { empresaId: dos[1] },
+          select: { id: true },
+        });
+        for (const u of usuariosDeLaOtra) {
+          expect(aviso.ids).not.toContain(u.id);
+        }
+      } finally {
+        await borrarEmpresas(dos);
       }
     });
   });
