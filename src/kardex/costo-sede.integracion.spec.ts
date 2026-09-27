@@ -24,6 +24,7 @@ describeSiHayBase('Costo por sede · contra base real', () => {
   let sedeA: number;
   let sedeB: number;
   let productoId: number;
+  let usuarioId: number;
 
   /** Ejecuta el recálculo de costos tal como lo hace un movimiento de kardex. */
   const ingreso = (sedeId: number, stockNuevo: number, cantidad: number, costo: number) =>
@@ -62,7 +63,16 @@ describeSiHayBase('Costo por sede · contra base real', () => {
     // es el costeo, no el alta de catálogos.
     const plan = await prisma.plan.findFirst({ select: { id: true } });
     const unidad = await prisma.unidadMedida.findFirst({ select: { id: true } });
-    if (!plan || !unidad) throw new Error('la base local no tiene plan/unidad para la prueba');
+    // El movimiento de kardex exige un usuario real; sirve cualquiera que no
+    // tenga restringidas las transferencias.
+    const usuario = await prisma.usuario.findFirst({
+      where: { NOT: { restringirTransferenciasASuSede: true } },
+      select: { id: true },
+    });
+    if (!plan || !unidad || !usuario) {
+      throw new Error('la base local no tiene plan/unidad/usuario para la prueba');
+    }
+    usuarioId = usuario.id;
 
     const anio = 1000 * 60 * 60 * 24 * 365;
     const empresa = await prisma.empresa.create({
@@ -149,5 +159,78 @@ describeSiHayBase('Costo por sede · contra base real', () => {
 
     expect(Number((await leerSede(sedeA))?.costoPromedio)).toBe(120);
     expect(Number((await leerSede(sedeB))?.costoPromedio)).toBe(200);
+  });
+
+  /**
+   * La invariante que mantiene honesta toda la migración: lo que valen las
+   * sedes por separado tiene que ser lo mismo que vale el producto entero.
+   * Si esto se rompe, los reportes por sede y los globales dejan de cuadrar.
+   */
+  const valorPorSedes = async () => {
+    const filas = await prisma.productoStock.findMany({
+      where: { productoId },
+      select: { stock: true, costoPromedio: true },
+    });
+    const global = await leerGlobal();
+    return filas.reduce(
+      (t, f) => t + Number(f.stock) * costoDeSede(f.costoPromedio, global),
+      0,
+    );
+  };
+
+  const valorGlobal = async () => {
+    const p = await prisma.producto.findUnique({
+      where: { id: productoId },
+      select: { stock: true, costoPromedio: true },
+    });
+    return Number(p?.stock) * Number(p?.costoPromedio);
+  };
+
+  it('la suma de las sedes vale lo mismo que el producto entero', async () => {
+    // Centro 20 × S/120 = 2400, Norte 10 × S/200 = 2000 → S/4400.
+    expect(await valorPorSedes()).toBeCloseTo(4400, 6);
+    expect(await valorGlobal()).toBeCloseTo(4400, 6);
+  });
+
+  describe('traslado entre sedes', () => {
+    beforeAll(async () => {
+      // Norte manda a Centro sus 10 unidades.
+      await servicio.realizarTraslado(
+        {
+          sedeOrigenId: sedeB,
+          sedeDestinoId: sedeA,
+          items: [{ productoId, cantidad: 10 }],
+        } as any,
+        empresaId,
+        usuarioId,
+      );
+    });
+
+    it('sale valorizado al costo de la sede que envía, no al global', async () => {
+      // Norte tenía S/200 y el global estaba en S/146.67. Antes el movimiento
+      // se registraba al global, así que Norte despachaba a un costo que no
+      // era el suyo.
+      const salida = await prisma.movimientoKardex.findFirst({
+        where: { productoId, sedeId: sedeB, tipoMovimiento: 'SALIDA' },
+        orderBy: { id: 'desc' },
+        select: { costoUnitario: true, valorTotal: true },
+      });
+      expect(Number(salida?.costoUnitario)).toBe(200);
+      expect(Number(salida?.valorTotal)).toBe(2000);
+    });
+
+    it('la sede que recibe promedia lo suyo con lo que le llega', async () => {
+      // Centro: 20 × S/120 = 2400, más 10 × S/200 = 2000 → 4400/30 = S/146.67.
+      const a = await leerSede(sedeA);
+      expect(Number(a?.stock)).toBe(30);
+      expect(Number(a?.costoPromedio)).toBeCloseTo(4400 / 30, 4);
+    });
+
+    it('un traslado reparte valor, no lo crea ni lo destruye', async () => {
+      // El costo global no se mueve por un traslado: es la misma mercadería,
+      // solo que en otro local.
+      expect(await valorPorSedes()).toBeCloseTo(4400, 4);
+      expect(await valorGlobal()).toBeCloseTo(4400, 4);
+    });
   });
 });

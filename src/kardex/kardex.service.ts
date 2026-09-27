@@ -1599,6 +1599,16 @@ export class KardexService {
           );
         }
 
+        // La mercadería sale valorizada al costo de LA SEDE QUE LA ENVÍA, que
+        // es lo que esa sede pagó por ella. Antes se usaba el costo global, así
+        // que un local podía despachar a un costo que nunca le correspondió.
+        // El costo de la sede origen no cambia por una salida: el promedio
+        // ponderado solo se mueve cuando entra mercadería.
+        const costoOrigen = costoDeSede(
+          stockOrigen.costoPromedio,
+          stockOrigen.producto.costoPromedio,
+        );
+
         // 2. Registrar SALIDA en sede origen
         const movSalida = await tx.movimientoKardex.create({
           data: {
@@ -1609,9 +1619,8 @@ export class KardexService {
             cantidad: item.cantidad,
             stockAnterior: num(stockOrigen.stock),
             stockActual: round3(num(stockOrigen.stock) - num(item.cantidad)),
-            costoUnitario: stockOrigen.producto.costoPromedio,
-            valorTotal:
-              Number(stockOrigen.producto.costoPromedio) * num(item.cantidad),
+            costoUnitario: costoOrigen,
+            valorTotal: costoOrigen * num(item.cantidad),
             sedeId: sedeOrigenId,
             usuarioId,
             observacion,
@@ -1659,9 +1668,8 @@ export class KardexService {
             cantidad: item.cantidad,
             stockAnterior: stockAnteriorDestino,
             stockActual: round3(stockAnteriorDestino + num(item.cantidad)),
-            costoUnitario: stockOrigen.producto.costoPromedio,
-            valorTotal:
-              Number(stockOrigen.producto.costoPromedio) * num(item.cantidad),
+            costoUnitario: costoOrigen,
+            valorTotal: costoOrigen * num(item.cantidad),
             sedeId: sedeDestinoId,
             usuarioId,
             observacion,
@@ -1676,6 +1684,20 @@ export class KardexService {
           data: { stock: { decrement: item.cantidad } },
         });
 
+        // La sede que recibe promedia lo que ya tenía con lo que le llega, al
+        // costo de la sede que lo envió. Un traslado no crea ni destruye valor:
+        // por eso el costo global del producto no se toca, solo se reparte
+        // distinto entre los locales.
+        const costoDestino = promedioTrasIngreso(
+          stockAnteriorDestino + num(item.cantidad),
+          num(item.cantidad),
+          costoOrigen,
+          costoDeSede(
+            stockDestinoActual?.costoPromedio,
+            stockOrigen.producto.costoPromedio,
+          ),
+        );
+
         await tx.productoStock.update({
           where: {
             productoId_sedeId: {
@@ -1684,7 +1706,11 @@ export class KardexService {
             },
           },
           // Recibir stock por traslado asigna el producto a la sede destino.
-          data: { stock: { increment: item.cantidad }, visibleEnSede: true },
+          data: {
+            stock: { increment: item.cantidad },
+            visibleEnSede: true,
+            ...(costoDestino != null ? { costoPromedio: costoDestino } : {}),
+          },
         });
 
         resultados.push({ productoId: item.productoId, movSalida, movIngreso });
