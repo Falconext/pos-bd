@@ -1889,6 +1889,12 @@ model ProductoStock {
   precioUnitarioOverride Decimal?
   precioOfertaOverride   Decimal?
 
+  /// Costo promedio ponderado de ESTA sede. NULL = la sede todavía no tiene
+  /// costo propio y se usa el de Producto.costoPromedio. Mantenerlo nullable
+  /// es lo que permite convivir con el costo global mientras dure la
+  /// migración: ninguna consulta cambia de resultado por agregar la columna.
+  costoPromedio          Decimal?
+
   producto Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
   sede     Sede     @relation(fields: [sedeId], references: [id], onDelete: Cascade)
 

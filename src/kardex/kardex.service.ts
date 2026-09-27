@@ -10,6 +10,7 @@ import * as http from 'http';
 import type { MovimientoKardex, Prisma } from '@prisma/client';
 import { TipoCambioService } from '../tipo-cambio/tipo-cambio.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { costoDeSede, promedioTrasIngreso } from './costo-sede';
 import {
   FiltrosKardexDto,
   FiltrosReporteDto,
@@ -1082,23 +1083,41 @@ export class KardexService {
       const stockActualGlobal = num(totalStock._sum.stock);
 
       if (producto) {
-        const stockAnteriorGlobal = stockActualGlobal - cantidad;
-        const costoAnterior = Number(producto.costoPromedio) || 0;
-
-        if (stockActualGlobal > 0) {
-          // Si no había mercadería que promediar —producto nuevo, o stock en
-          // negativo por sobreventa— el costo del ingreso ES el promedio. Sin
-          // esta guarda, un stock previo negativo mete un "valor anterior"
-          // negativo y el promedio sale por encima del precio de compra, o
-          // incluso negativo.
-          const costoPromedio =
-            stockAnteriorGlobal > 0
-              ? (stockAnteriorGlobal * costoAnterior + cantidad * costoUnitario) /
-                stockActualGlobal
-              : costoUnitario;
+        const costoPromedio = promedioTrasIngreso(
+          stockActualGlobal,
+          cantidad,
+          costoUnitario,
+          Number(producto.costoPromedio) || 0,
+        );
+        if (costoPromedio != null) {
           await this.prisma.producto.update({
             where: { id: productoId },
             data: { costoPromedio },
+          });
+        }
+      }
+
+      // Y el costo de ESTA sede, con su propio stock. Mientras dure la
+      // migración se escriben los dos: el global lo siguen leyendo los
+      // reportes, y el de la sede se va llenando solo. Una sede que nunca
+      // recibe mercadería se queda en NULL y sigue valiendo el global.
+      const stockSede = await this.prisma.productoStock.findUnique({
+        where: { productoId_sedeId: { productoId, sedeId } },
+        select: { stock: true, costoPromedio: true },
+      });
+      if (stockSede) {
+        const costoSede = promedioTrasIngreso(
+          num(stockSede.stock),
+          cantidad,
+          costoUnitario,
+          // De qué costo parte la sede: el suyo si ya lo tiene, y si no el
+          // global, que es lo que venía valiendo hasta este ingreso.
+          costoDeSede(stockSede.costoPromedio, producto?.costoPromedio),
+        );
+        if (costoSede != null) {
+          await this.prisma.productoStock.update({
+            where: { productoId_sedeId: { productoId, sedeId } },
+            data: { costoPromedio: costoSede },
           });
         }
       }

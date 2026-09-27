@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { KardexService } from './kardex.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
+import { TipoCambioService } from '../tipo-cambio/tipo-cambio.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 
 describe('KardexService', () => {
@@ -57,6 +58,13 @@ describe('KardexService', () => {
         {
           provide: PdfGeneratorService,
           useValue: mockPdfGeneratorService,
+        },
+        // El kardex pide el tipo de cambio para mostrar en soles los productos
+        // en dólares. Aquí no se ejercita esa conversión, pero sin el proveedor
+        // Nest no llega ni a construir el servicio y las 7 pruebas se caen.
+        {
+          provide: TipoCambioService,
+          useValue: { obtenerTipoCambioVenta: jest.fn().mockResolvedValue(0) },
         },
       ],
     }).compile();
