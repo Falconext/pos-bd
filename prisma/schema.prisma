@@ -473,6 +473,7 @@ model Empresa {
   @@index([producto])
   @@index([brand, producto])
   @@index([whatsappProvider])
+  reglasComision       ReglaComision[]
 }
 
 model EmpresaSerie {
@@ -557,6 +558,7 @@ model Usuario {
   historialEstadosPedidoLogistica   HistorialEstadoPedidoLogistica[]
   historialEstadosDespachoLogistica HistorialEstadoDespachoLogistica[]
   listasPrecio                      ListaPrecioUsuario[]
+  reglasComision       ReglaComision[]
 }
 
 model Categoria {
@@ -703,6 +705,7 @@ model Producto {
   @@index([empresaId, publicarEnTienda])
   @@index([marcaId])
   @@index([empresaId, codigoBarras])
+  reglasComision           ReglaComision[]
 }
 
 enum EstadoProductoReview {
@@ -3015,6 +3018,47 @@ model ComisionVendedor {
   @@index([empresaId, mes, anio])
   @@index([comprobanteId])
   @@index([vendedorId, estado])
+}
+
+/// Excepciones a la comisión, con condiciones opcionales.
+///
+/// Cada campo de condición en NULL significa "cualquiera": una regla sin
+/// producto aplica a todos, una sin vendedor aplica a todos, una sin días
+/// aplica siempre. Gana la regla que más condiciones cumple.
+///
+/// La tabla arranca vacía y así se queda hasta que alguien cargue una regla a
+/// propósito. Sin reglas no coincide ninguna y el cálculo corre exactamente
+/// como antes, así que ninguna empresa cambia de comisión por existir esto.
+///
+/// Nace del pedido de IMPORTEMOS JUNTOS: el fin de semana se paga más que de
+/// lunes a viernes. Se modela como condición y no como un campo suelto para
+/// que el próximo pedido —un feriado, un vendedor con trato propio, un canal—
+/// entre como una columna anulable más y no como otro nivel en la cascada.
+model ReglaComision {
+  id         Int      @id @default(autoincrement())
+  empresaId  Int
+  /// NULL = cualquier producto.
+  productoId Int?
+  /// NULL = cualquier vendedor.
+  vendedorId Int?
+  /// Días en que aplica, 0=domingo … 6=sábado, separados por coma ("0,6").
+  /// NULL = todos los días. Se evalúa en hora de Perú, no del servidor.
+  diasSemana String?
+  /// Monto fijo por unidad. Tiene prioridad sobre el porcentaje.
+  montoFijo  Decimal?
+  /// Porcentaje del precio unitario.
+  porcentaje Decimal?
+  activa     Boolean  @default(true)
+  creadoEn   DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  empresa  Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  producto Producto? @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  vendedor Usuario?  @relation(fields: [vendedorId], references: [id], onDelete: Cascade)
+
+  @@index([empresaId, activa])
+  @@index([productoId])
+  @@index([vendedorId])
 }
 
 // =============================================

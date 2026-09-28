@@ -1,6 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { EstadoComision } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  describirRegla,
+  elegirRegla,
+  type ReglaComision,
+} from './regla-comision';
+
+/** Sábado y domingo: la única combinación que hoy se configura desde la pantalla. */
+const FIN_DE_SEMANA = '0,6';
 
 @Injectable()
 export class ComisionesService {
@@ -10,6 +18,77 @@ export class ComisionesService {
   // HOOK: Registrar comisiones automáticamente al emitir un comprobante
   // Se llama desde comprobante.service.ts después de crear el comprobante.
   // ─────────────────────────────────────────────────────────────────────────────
+  /**
+   * La comisión de fin de semana de un producto, o null si no tiene.
+   *
+   * Por dentro es una regla con `diasSemana = '0,6'`. Se expone así de simple
+   * porque es lo único que hoy se configura desde la pantalla; el resto de
+   * combinaciones (por vendedor, por otros días) ya las soporta la tabla y
+   * esperan a que alguien las pida.
+   */
+  async comisionFinDeSemana(
+    empresaId: number,
+    productoId: number,
+  ): Promise<number | null> {
+    const regla = await this.prisma.reglaComision.findFirst({
+      where: {
+        empresaId,
+        productoId,
+        vendedorId: null,
+        diasSemana: FIN_DE_SEMANA,
+        activa: true,
+      },
+      select: { montoFijo: true },
+    });
+    return regla ? Number(regla.montoFijo ?? 0) : null;
+  }
+
+  /**
+   * Fija (o quita) la comisión de fin de semana de un producto.
+   *
+   * Un monto vacío o cero borra la regla en vez de guardarla en cero: dejarla
+   * activa con cero haría que el fin de semana no pague nada, que es lo
+   * contrario de lo que el empresario quiso al vaciar el campo.
+   */
+  async fijarComisionFinDeSemana(
+    empresaId: number,
+    productoId: number,
+    monto: number | null,
+  ): Promise<void> {
+    const producto = await this.prisma.producto.findFirst({
+      where: { id: productoId, empresaId },
+      select: { id: true },
+    });
+    if (!producto) return;
+
+    const existente = await this.prisma.reglaComision.findFirst({
+      where: { empresaId, productoId, vendedorId: null, diasSemana: FIN_DE_SEMANA },
+      select: { id: true },
+    });
+
+    if (monto == null || !(monto > 0)) {
+      if (existente) {
+        await this.prisma.reglaComision.delete({ where: { id: existente.id } });
+      }
+      return;
+    }
+    if (existente) {
+      await this.prisma.reglaComision.update({
+        where: { id: existente.id },
+        data: { montoFijo: monto, activa: true },
+      });
+      return;
+    }
+    await this.prisma.reglaComision.create({
+      data: {
+        empresaId,
+        productoId,
+        diasSemana: FIN_DE_SEMANA,
+        montoFijo: monto,
+      },
+    });
+  }
+
   async registrarComisionesDesdeComprobante(params: {
     comprobanteId: number;
     empresaId: number;
@@ -60,6 +139,27 @@ export class ComisionesService {
 
     const productoMap = new Map(productos.map((p) => [p.id, p]));
 
+    // Excepciones de comisión de la empresa. Casi siempre no hay ninguna y
+    // esta consulta devuelve vacío, con lo cual el cálculo de abajo queda
+    // exactamente como estaba.
+    const reglas: ReglaComision[] = await this.prisma.reglaComision.findMany({
+      where: {
+        empresaId,
+        activa: true,
+        OR: [{ productoId: null }, { productoId: { in: productoIds } }],
+        AND: [{ OR: [{ vendedorId: null }, { vendedorId }] }],
+      },
+      select: {
+        id: true,
+        productoId: true,
+        vendedorId: true,
+        diasSemana: true,
+        montoFijo: true,
+        porcentaje: true,
+        activa: true,
+      },
+    });
+
     const fecha = new Date(fechaEmision);
     const mes = fecha.getMonth() + 1;
     const anio = fecha.getFullYear();
@@ -86,10 +186,28 @@ export class ComisionesService {
       const comisionFija = Number(producto.comisionPorVenta ?? 0);
       const comisionPct = Number(producto.comisionPorcentaje ?? 0);
 
-      // Calcular monto: primero se usa comisión fija (producto), luego % (producto), luego comisión fija (vendedor), luego % (vendedor)
+      // Una excepción cargada a mano manda sobre todo lo demás: es lo que el
+      // empresario configuró para ESTE caso. Sin reglas, `elegirRegla`
+      // devuelve null y sigue la cascada de siempre.
+      const regla = elegirRegla(reglas, {
+        productoId: detalle.productoId,
+        vendedorId,
+        fecha,
+      });
+      const reglaFija = Number(regla?.montoFijo ?? 0);
+      const reglaPct = Number(regla?.porcentaje ?? 0);
+
+      // Calcular monto: primero la regla, luego comisión fija (producto), luego % (producto), luego comisión fija (vendedor), luego % (vendedor)
       let montoComision = 0;
       let motivo = '';
-      if (comisionFija > 0) {
+      if (regla && reglaFija > 0) {
+        montoComision = reglaFija * detalle.cantidad;
+        motivo = `${describirRegla(regla, { productoId: detalle.productoId, vendedorId, fecha })}: S/ ${reglaFija.toFixed(2)} × ${detalle.cantidad} und.`;
+      } else if (regla && reglaPct > 0) {
+        montoComision =
+          (reglaPct / 100) * detalle.mtoPrecioUnitario * detalle.cantidad;
+        motivo = `${describirRegla(regla, { productoId: detalle.productoId, vendedorId, fecha })}: ${reglaPct}% del precio (S/ ${detalle.mtoPrecioUnitario.toFixed(2)}) × ${detalle.cantidad} und.`;
+      } else if (comisionFija > 0) {
         montoComision = comisionFija * detalle.cantidad;
         motivo = `Comisión fija del producto: S/ ${comisionFija.toFixed(2)} × ${detalle.cantidad} und.`;
       } else if (comisionPct > 0) {

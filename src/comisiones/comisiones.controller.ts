@@ -1,7 +1,9 @@
 import {
+  Body,
   Controller,
   Get,
   Patch,
+  Put,
   Query,
   Param,
   ParseIntPipe,
@@ -128,5 +130,48 @@ export class ComisionesController {
       fechaInicio,
       fechaFin,
     );
+  }
+
+  /**
+   * GET /comisiones/producto/:id/fin-de-semana
+   * Cuánto paga ese producto los sábados y domingos, o null si no tiene
+   * comisión especial y vale la de siempre.
+   */
+  @Get('producto/:id/fin-de-semana')
+  @Roles('ADMIN_EMPRESA')
+  async verComisionFinDeSemana(
+    @Req() req: any,
+    @Param('id', ParseIntPipe) productoId: number,
+  ) {
+    return {
+      monto: await this.comisionesService.comisionFinDeSemana(
+        req.user.empresaId,
+        productoId,
+      ),
+    };
+  }
+
+  /**
+   * PUT /comisiones/producto/:id/fin-de-semana  { monto: 9 | null }
+   * Vacío o cero quita la comisión especial y el producto vuelve a pagar
+   * igual todos los días.
+   */
+  @Put('producto/:id/fin-de-semana')
+  @Roles('ADMIN_EMPRESA')
+  async fijarComisionFinDeSemana(
+    @Req() req: any,
+    @Param('id', ParseIntPipe) productoId: number,
+    @Body() body: { monto?: number | null },
+  ) {
+    const monto =
+      body?.monto == null || body.monto === ('' as any)
+        ? null
+        : Number(body.monto);
+    await this.comisionesService.fijarComisionFinDeSemana(
+      req.user.empresaId,
+      productoId,
+      Number.isFinite(monto as number) ? (monto as number) : null,
+    );
+    return { ok: true };
   }
 }
