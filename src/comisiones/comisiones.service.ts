@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   describirRegla,
   elegirRegla,
+  periodoEnPeru,
   type ReglaComision,
 } from './regla-comision';
 
@@ -161,8 +162,8 @@ export class ComisionesService {
     });
 
     const fecha = new Date(fechaEmision);
-    const mes = fecha.getMonth() + 1;
-    const anio = fecha.getFullYear();
+    // Período en hora de Perú, no del servidor: ver `periodoEnPeru`.
+    const { mes, anio } = periodoEnPeru(fecha);
 
     const comisionesACrear: Array<{
       vendedorId: number;
