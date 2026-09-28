@@ -27,7 +27,10 @@ describe('ComprobanteService.exportarResumenComprobantes (excel)', () => {
       usuario: { nombre: 'Nicoly' },
       pagos: [],
       envioDespacho: null,
-      detalles: [{ descripcion: 'atornillador total 20v', cantidad: 1 }],
+      detalles: [
+        // 230 con IGV = 194.92 de valor de venta + 35.08 de IGV.
+        { descripcion: 'atornillador total 20v', cantidad: 1, mtoPrecioUnitario: 230, mtoValorVenta: 194.92, igv: 35.08 },
+      ],
     },
     {
       fechaEmision: new Date('2026-09-08T18:58:00Z'),
@@ -45,9 +48,11 @@ describe('ComprobanteService.exportarResumenComprobantes (excel)', () => {
       pagos: [],
       envioDespacho: null,
       detalles: [
-        { descripcion: 'manga azul 2', cantidad: 2 },
-        { descripcion: 'manguera succion 3', cantidad: 1 },
-        { descripcion: 'motobomba 3x3 gp200', cantidad: 3 },
+        // Tres productos a precios distintos que suman los 2640 de la venta:
+        // 300 + 340 + 2000. Es el caso que motivó las columnas por línea.
+        { descripcion: 'manga azul 2', cantidad: 2, mtoPrecioUnitario: 150, mtoValorVenta: 254.24, igv: 45.76 },
+        { descripcion: 'manguera succion 3', cantidad: 1, mtoPrecioUnitario: 340, mtoValorVenta: 288.14, igv: 51.86 },
+        { descripcion: 'motobomba 3x3 gp200', cantidad: 3, mtoPrecioUnitario: 666.67, mtoValorVenta: 1694.92, igv: 305.08 },
       ],
     },
     {
@@ -66,7 +71,7 @@ describe('ComprobanteService.exportarResumenComprobantes (excel)', () => {
       usuario: { nombre: 'Nicoly' },
       pagos: [],
       envioDespacho: null,
-      detalles: [{ descripcion: 'x', cantidad: 5 }],
+      detalles: [{ descripcion: 'x', cantidad: 5, mtoPrecioUnitario: 20, mtoValorVenta: 84.75, igv: 15.25 }],
     },
   ];
 
@@ -105,7 +110,7 @@ describe('ComprobanteService.exportarResumenComprobantes (excel)', () => {
 
     const aoa = leerHoja(res.buffer);
     const headers = aoa[2];
-    expect(headers.slice(-3)).toEqual(['Productos', 'Total Unid.', 'Total S/']);
+    expect(headers.slice(-4)).toEqual(['Precio Unit.', 'Subtotal', 'Total Unid.', 'Total S/']);
     const iDoc = headers.indexOf('Documento');
     const iProd = headers.indexOf('Productos');
     const iUnid = headers.indexOf('Total Unid.');
@@ -130,6 +135,21 @@ describe('ComprobanteService.exportarResumenComprobantes (excel)', () => {
     // Total de unidades y Total S/ de la venta completa, repetidos por fila
     expect(datos.map((r) => r[iUnid])).toEqual([1, 6, 6, 6, 5]);
     expect(datos.map((r) => r[iTotal])).toEqual([230, 2640, 2640, 2640, 100]);
+
+    // Y lo que faltaba: el precio y el importe de CADA producto. Sin esto, una
+    // venta con tres productos a precios distintos solo mostraba 2640 repetido
+    // y no había cómo saber a cuánto salió cada uno.
+    const iPrecio = headers.indexOf('Precio Unit.');
+    const iSub = headers.indexOf('Subtotal');
+    expect(datos.map((r) => r[iPrecio])).toEqual([230, 150, 340, 666.67, 20]);
+    expect(datos.map((r) => r[iSub])).toEqual([230, 300, 340, 2000, 100]);
+
+    // Los subtotales de una misma venta suman su total: se calculan con el
+    // mismo criterio (valor de venta + IGV), no multiplicando el unitario.
+    const deLaVenta = datos.filter((r) => r[iDoc] === 'F0A1-00000008');
+    const suma = deLaVenta.reduce((t, r) => t + Number(r[iSub]), 0);
+    expect(suma).toBeCloseTo(2640, 2);
+    expect(deLaVenta[0][iTotal]).toBe(2640);
     // Ningún producto queda apilado en una sola celda
     expect(datos.some((r) => String(r[iProd]).includes('\n'))).toBe(false);
 

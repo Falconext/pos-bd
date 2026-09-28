@@ -7095,7 +7095,19 @@ export class ComprobanteService {
           },
         },
         // Productos (para la columna Productos del export).
-        detalles: { select: { descripcion: true, cantidad: true } },
+        // `mtoValorVenta` + `igv` dan el importe de la línea con el mismo
+        // criterio que el total de la venta, así que las filas del Excel suman
+        // exacto. `mtoPrecioUnitario` es el precio tal como figura en el
+        // comprobante que recibió el cliente.
+        detalles: {
+          select: {
+            descripcion: true,
+            cantidad: true,
+            mtoPrecioUnitario: true,
+            mtoValorVenta: true,
+            igv: true,
+          },
+        },
       },
     });
 
@@ -7210,9 +7222,21 @@ export class ComprobanteService {
           .map((d) => `${Number(d.cantidad)}x ${d.descripcion}`)
           .join('\n'),
         // Excel: una fila por producto (ver abajo). El PDF sigue usando `productos`.
-        lineasProducto: (c.detalles ?? []).map(
-          (d) => `${Number(d.cantidad)}x ${d.descripcion}`,
-        ),
+        //
+        // Cada línea lleva su propio precio y subtotal, no solo la etiqueta: sin
+        // eso, una venta con cuatro productos a precios distintos solo mostraba
+        // el total repetido y no había forma de saber a cuánto salió cada uno.
+        //
+        // El subtotal se arma como valor de venta + IGV en vez de precio ×
+        // cantidad: es el mismo criterio con que se calcula el total de la
+        // venta, así que las líneas suman exacto y no aparecen centavos de
+        // diferencia por redondear el unitario.
+        lineasProducto: (c.detalles ?? []).map((d) => ({
+          etiqueta: `${Number(d.cantidad)}x ${d.descripcion}`,
+          precioUnitario: Number(d.mtoPrecioUnitario ?? 0) * signo,
+          subtotal:
+            (Number(d.mtoValorVenta ?? 0) + Number(d.igv ?? 0)) * signo,
+        })),
         totalUnidades: (c.detalles ?? []).reduce(
           (s, d) => s + Number(d.cantidad ?? 0),
           0,
@@ -7282,8 +7306,9 @@ export class ComprobanteService {
       // sola vez por venta, así que no se infla por la repetición.
       // Si el usuario ocultó la columna Productos, se mantiene una fila por venta.
       type Fila = (typeof filas)[number];
+      type Linea = Fila['lineasProducto'][number];
       type ColExcel = Omit<ColDef, 'get'> & {
-        get: (f: Fila, producto: string) => any;
+        get: (f: Fila, linea: Linea) => any;
       };
       const explotarPorProducto = columnasExport.some(
         (c) => c.header === 'Productos',
@@ -7291,7 +7316,22 @@ export class ComprobanteService {
       const columnasExcel: ColExcel[] = [];
       for (const col of columnasExport) {
         if (col.header === 'Productos') {
-          columnasExcel.push({ ...col, get: (_f, producto) => producto });
+          columnasExcel.push({ ...col, get: (_f, l) => l.etiqueta });
+          // El precio de ESTA línea, al lado del producto al que corresponde.
+          // "Total S/" sigue siendo el de la venta completa, repetido en cada
+          // fila; sin estas dos columnas no había manera de saber a cuánto se
+          // vendió cada producto cuando la venta tenía varios a precios
+          // distintos.
+          columnasExcel.push({
+            header: 'Precio Unit.',
+            wch: 12,
+            get: (_f, l) => l.precioUnitario,
+          });
+          columnasExcel.push({
+            header: 'Subtotal',
+            wch: 12,
+            get: (_f, l) => l.subtotal,
+          });
           continue;
         }
         if (col.total) {
@@ -7306,17 +7346,24 @@ export class ComprobanteService {
 
       const headers = columnasExcel.map((c) => c.header);
       const rows = filas.flatMap((f) => {
-        const productos =
+        // Sin columna de Productos se mantiene una fila por venta: la línea
+        // "resumen" lleva el texto apilado y los importes de la venta entera,
+        // para que Precio Unit. y Subtotal no queden mintiendo.
+        const lineas: Linea[] =
           explotarPorProducto && f.lineasProducto.length
             ? f.lineasProducto
-            : [f.productos];
-        return productos.map((p) => columnasExcel.map((c) => c.get(f, p)));
+            : [{ etiqueta: f.productos, precioUnitario: f.total, subtotal: f.total }];
+        return lineas.map((l) => columnasExcel.map((c) => c.get(f, l)));
       });
-      // Fila TOTAL alineada bajo la columna de total; la etiqueta va a la
-      // izquierda de "Total Unid." para no confundirla con las unidades.
-      const idxTotal = columnasExcel.findIndex((c) => c.total);
+      // Fila TOTAL alineada bajo la columna de total. La etiqueta va sobre
+      // "Productos", anclada POR NOMBRE y no contando posiciones: al agregar
+      // Precio Unit. y Subtotal, el cálculo por índice la dejó sobre una
+      // columna de importes, donde se lee como si fuera un monto.
+      const idxEtiqueta = columnasExcel.findIndex(
+        (c) => c.header === 'Productos',
+      );
       const totalRow = columnasExcel.map((c, i) =>
-        c.total ? totalGeneral : i === idxTotal - 2 ? 'TOTAL (sin anulados)' : '',
+        c.total ? totalGeneral : i === idxEtiqueta ? 'TOTAL (sin anulados)' : '',
       );
       const aoa = [
         [
