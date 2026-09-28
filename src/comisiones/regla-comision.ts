@@ -48,6 +48,26 @@ export const diaEnPeru = (fecha: Date): number => {
   return dias.indexOf(etiqueta);
 };
 
+/**
+ * Mes y año de la venta, en hora de Perú.
+ *
+ * Es el período por el que se liquida la comisión, así que no puede salir del
+ * reloj del servidor: una venta del 30 a las 23:00 de Lima es el 1 del mes
+ * siguiente en UTC, y se le pagaría al vendedor un mes después. El servidor
+ * hoy corre en hora de Lima (`TZ` en main.ts), pero entonces la plata de un
+ * vendedor depende de una variable de entorno.
+ */
+export const periodoEnPeru = (fecha: Date): { mes: number; anio: number } => {
+  const partes = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Lima',
+    year: 'numeric',
+    month: '2-digit',
+  }).formatToParts(fecha);
+  const valor = (tipo: string) =>
+    Number(partes.find((p) => p.type === tipo)?.value);
+  return { mes: valor('month'), anio: valor('year') };
+};
+
 const diasDeLaRegla = (diasSemana?: string | null): number[] | null => {
   if (diasSemana == null || String(diasSemana).trim() === '') return null;
   const dias = String(diasSemana)
