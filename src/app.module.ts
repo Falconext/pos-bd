@@ -23,7 +23,11 @@ import { NiubizModule } from './niubiz/niubiz.module';
 import { PagoModule } from './pago/pago.module';
 import { CajaModule } from './caja/caja.module';
 import { NotificacionesModule } from './notificaciones/notificaciones.module';
-import { SoporteModule } from './soporte/soporte.module';
+// Soporte queda fuera de esta entrega por decisión del negocio: el módulo
+// está terminado y probado, pero todavía no se abre a los empresarios. Sin
+// registrarlo, sus rutas no existen. Para encenderlo, descomentar acá y en la
+// lista de imports de abajo.
+// import { SoporteModule } from './soporte/soporte.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
 import { S3Module } from './s3/s3.module';
 import { SyncModule } from './sync/sync.module';
@@ -87,7 +91,7 @@ import { MercadoPagoModule } from './mercadopago/mercadopago.module';
     SchedulerModule,
     NiubizModule,
     NotificacionesModule,
-    SoporteModule,
+    // SoporteModule,  // ver nota arriba
     WhatsAppModule,
     S3Module,
     SyncModule,
