@@ -39,6 +39,32 @@ export interface SireCredenciales {
   claveSol: string;
 }
 
+/**
+ * Lo que SUNAT contestó, en una línea legible.
+ *
+ * Antes se devolvía solo `HTTP 422` y el motivo real —que SUNAT sí manda en el
+ * cuerpo— se descartaba. Con un mensaje genérico en pantalla no hay forma de
+ * saber si falta un campo, si el período no existe o si el RUC no coincide, y
+ * cada intento cuesta una ida y vuelta con el contribuyente.
+ */
+const detalleDeSunat = (e: any, status?: number): string => {
+  const cuerpo = e?.response?.data;
+  const texto =
+    typeof cuerpo === 'string'
+      ? cuerpo
+      : cuerpo
+        ? (cuerpo.mensaje ??
+           cuerpo.message ??
+           cuerpo.errors ??
+           JSON.stringify(cuerpo))
+        : null;
+  const recorte =
+    typeof texto === 'string' && texto.length > 400
+      ? `${texto.slice(0, 400)}…`
+      : texto;
+  return recorte ? `HTTP ${status ?? '?'} — ${recorte}` : `HTTP ${status ?? '?'}`;
+};
+
 export class SireError extends Error {
   constructor(
     message: string,
@@ -155,7 +181,7 @@ export class SireClient {
       }
       throw new SireError(
         'El SIRE de SUNAT respondió con un error.',
-        `HTTP ${status ?? '?'}`,
+        detalleDeSunat(e, status),
         status,
       );
     }

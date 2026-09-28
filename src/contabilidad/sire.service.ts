@@ -1673,11 +1673,43 @@ export class SireService {
    * para que el usuario sepa si sus credenciales quedaron bien SIN tener que
    * esperar a una sincronización completa.
    */
+  /** AAAAMM del mes pasado: el período que con más seguridad ya está cerrado. */
+  private periodoAnteriorSire(): string {
+    const partes = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Lima',
+      year: 'numeric',
+      month: '2-digit',
+    }).formatToParts(new Date());
+    const valor = (t: string) => Number(partes.find((p) => p.type === t)?.value);
+    let mes = valor('month') - 1;
+    let anio = valor('year');
+    if (mes === 0) {
+      mes = 12;
+      anio -= 1;
+    }
+    return `${anio}${String(mes).padStart(2, '0')}`;
+  }
+
   async probarConexionSire(empresaId: number) {
     const cred = await this.credencialesSire(empresaId);
     const cliente = new SireClient(cred);
     try {
       const token = await cliente.obtenerToken();
+      // El token solo prueba que el usuario y la credencial son válidos. Antes
+      // la prueba terminaba acá y pintaba verde, pero el acceso al SIRE puede
+      // fallar igual —RUC que no corresponde, servicio no habilitado— y el
+      // empresario se enteraba recién al pedir sus compras. Se hace una lectura
+      // real para que el verde signifique "esto funciona".
+      const periodo = this.periodoAnteriorSire();
+      try {
+        await cliente.solicitarPropuestaRce(periodo);
+      } catch (e: any) {
+        return {
+          ok: false,
+          mensaje: 'Las credenciales son válidas, pero SUNAT no devolvió tus compras.',
+          detalle: e?.detalle ?? e?.message ?? null,
+        };
+      }
       return {
         ok: true,
         mensaje: 'Conexión con el SIRE establecida.',
@@ -1702,7 +1734,37 @@ export class SireService {
    * los errores traducidos; al habilitarse puede hacer falta ajustar las rutas
    * (son configurables por variables de entorno en sire.client.ts).
    */
+  /**
+   * Convierte un fallo del SIRE en una respuesta que el empresario pueda leer.
+   *
+   * El `SireError` lleva un `detalle` con lo que contestó SUNAT, pero si sube
+   * sin traducir Nest lo vuelve un 500 genérico y ese detalle se pierde: en
+   * pantalla quedaba "El SIRE de SUNAT respondió con un error." y nada más, que
+   * no alcanza ni para saber si reintentar.
+   */
+  private comoErrorLegible(e: any): never {
+    const mensaje = e?.message ?? 'No se pudo consultar el SIRE de SUNAT.';
+    const detalle = e?.detalle ? ` ${e.detalle}` : '';
+    throw new BadRequestException(`${mensaje}${detalle}`.trim());
+  }
+
   async sincronizarComprasDesdeSire(
+    empresaId: number,
+    mes: number,
+    anio: number,
+    sedeId?: number,
+  ) {
+    try {
+      return await this.sincronizarComprasDesdeSireInterno(
+        empresaId, mes, anio, sedeId,
+      );
+    } catch (e: any) {
+      if (e?.name === 'SireError') this.comoErrorLegible(e);
+      throw e;
+    }
+  }
+
+  private async sincronizarComprasDesdeSireInterno(
     empresaId: number,
     mes: number,
     anio: number,
@@ -1736,6 +1798,22 @@ export class SireService {
       }
       const archivo = reporte?.nomArchivoReporte ?? null;
       if (!archivo) {
+        // Un ticket "Terminado" sin archivo NO es un archivo que todavía se
+        // está generando: es que SUNAT no tiene comprobantes para el período.
+        // Decir "vuelve a intentar en unos minutos" manda al empresario a
+        // reintentar para siempre por algo que nunca va a cambiar solo.
+        const detalle = registro?.detalleTicket ?? {};
+        const terminado =
+          String(registro?.desEstadoProceso ?? '').toLowerCase() === 'terminado';
+        const informados = Number(detalle?.cntCPInformados ?? 0);
+        if (terminado && !(informados > 0)) {
+          return {
+            vacio: true,
+            numTicket: String(numTicket),
+            mensaje:
+              'SUNAT no tiene comprobantes para este período. Si esperabas ver compras acá, revisa en el SIRE de SUNAT que la propuesta del período siga disponible: una vez que la registras, deja de estar.',
+          };
+        }
         return {
           pendiente: true,
           numTicket: String(numTicket),
