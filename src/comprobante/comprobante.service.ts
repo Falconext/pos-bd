@@ -24,6 +24,7 @@ import {
   EstadoType,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { estadoYSaldoInicial } from './estado-pago';
 import { KardexService } from '../kardex/kardex.service';
 import { InventarioNotificacionesService } from '../notificaciones/inventario-notificaciones.service';
 import { S3Service } from '../s3/s3.service';
@@ -3328,14 +3329,15 @@ export class ComprobanteService {
     let estadoPagoInicial: string;
     let saldoInicial: number;
 
-    if (esPagoContado) {
-      estadoPagoInicial = 'COMPLETADO';
-      saldoInicial = 0;
-    } else {
-      // Crédito: saldo = total - detracción/retención
-      estadoPagoInicial = 'PENDIENTE_PAGO';
-      saldoInicial = Math.max(0, this.round2(mtoImpVenta - montoDescontado));
-    }
+    // La regla vive en `estado-pago.ts` para poder probarse sin Prisma.
+    const inicial = estadoYSaldoInicial({
+      esCredito: esPagoCredito,
+      total: mtoImpVenta,
+      detraccion: montoDescontado,
+      yaCobradoEnOrigen: montoYaCobradoEnOrigen,
+    });
+    estadoPagoInicial = inicial.estado;
+    saldoInicial = inicial.saldo;
 
     if (esPagoContado) {
       await this.validarDetallePago(
