@@ -6,6 +6,21 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
+import { NOMBRE_DEL_BOT, SoporteBotService } from './soporte-bot.service';
+
+/** Con qué nombre se presenta el asistente ante el empresario. */
+const MARCA_SOPORTE = 'Krezka';
+
+/**
+ * El horario que el asistente puede citar.
+ *
+ * Es el mismo texto que muestra el widget (frontend, `soporteHorario.ts`). Si
+ * cambia uno y no el otro, el bot promete una atención distinta de la que
+ * anuncia la pantalla.
+ */
+const HORARIO_SOPORTE =
+  'Lunes a viernes de 9:00 a 6:00 p.m., sábados de 9:00 a 1:00 p.m. Domingos no se atiende. ' +
+  'Lo que se pide se sube al cierre del día; como máximo, la noche siguiente.';
 
 /**
  * Chat de soporte: un hilo continuo por empresa (no un sistema de tickets con
@@ -19,6 +34,7 @@ export class SoporteService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificaciones: NotificacionesService,
+    private readonly bot: SoporteBotService,
   ) {}
 
   /**
@@ -114,7 +130,67 @@ export class SoporteService {
           `[soporte] no se pudo avisar a Krezka del mensaje de la empresa ${empresaId}: ${error?.message}`,
         ),
     );
+
+    // El asistente contesta si le toca. Va al final y sin dejar subir el error
+    // por el mismo motivo que el aviso: el mensaje del empresario ya está
+    // guardado, y que la IA falle no puede hacerle ver un fallo y reintentar.
+    await this.responderConAsistente(actualizada.id, empresaId, texto).catch(
+      (error) =>
+        this.logger.warn(
+          `[soporte] el asistente no pudo responder a la empresa ${empresaId}: ${error?.message}`,
+        ),
+    );
     return actualizada;
+  }
+
+  /**
+   * Deja que el asistente conteste, si corresponde.
+   *
+   * El mensaje se guarda como SISTEMA igual que el de una persona, pero SIN
+   * asignar la conversación: asignarla la marcaría como tomada y el propio bot
+   * se callaría para siempre en ese hilo. Además, una conversación asignada al
+   * bot le escondería al equipo que nadie la atendió de verdad.
+   */
+  private async responderConAsistente(
+    conversacionId: number,
+    empresaId: number,
+    texto: string,
+  ): Promise<void> {
+    const respuesta = await this.bot.responder({
+      conversacionId,
+      mensaje: texto,
+      marca: MARCA_SOPORTE,
+      horario: HORARIO_SOPORTE,
+    });
+    // null es la mitad del diseño: le toca a una persona y no pasa nada más.
+    if (!respuesta) return;
+
+    const [mensaje] = await this.prisma.$transaction([
+      this.prisma.soporteMensaje.create({
+        data: {
+          conversacionId,
+          rol: 'SISTEMA',
+          autorNombre: NOMBRE_DEL_BOT,
+          contenido: respuesta,
+        },
+      }),
+      this.prisma.soporteConversacion.update({
+        where: { id: conversacionId },
+        data: { noLeidosEmpresa: { increment: 1 } },
+      }),
+    ]);
+
+    await this.notificarEmpresa(
+      empresaId,
+      conversacionId,
+      mensaje.id,
+      NOMBRE_DEL_BOT,
+      respuesta,
+    ).catch((error) =>
+      this.logger.warn(
+        `[soporte] no se pudo entregar la respuesta del asistente a la empresa ${empresaId}: ${error?.message}`,
+      ),
+    );
   }
 
   /** Notifica en vivo a los ADMIN_SISTEMA del brand de la empresa (o sin brand = todos). */

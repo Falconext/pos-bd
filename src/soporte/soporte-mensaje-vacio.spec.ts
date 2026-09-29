@@ -6,7 +6,12 @@
 import { SoporteService } from './soporte.service';
 
 const servicio = () =>
-  new SoporteService({} as any, { emitirAEmpresa: jest.fn(), emitirASistema: jest.fn() } as any);
+  new SoporteService(
+    {} as any,
+    { emitirAEmpresa: jest.fn(), emitirASistema: jest.fn() } as any,
+    // Asistente apagado: acá se prueba el flujo de siempre.
+    { responder: async () => null } as any,
+  );
 
 describe('Soporte · mensaje vacío', () => {
   it.each(['', '   ', '\n\t '])('el empresario no puede enviar %j', async (texto) => {
