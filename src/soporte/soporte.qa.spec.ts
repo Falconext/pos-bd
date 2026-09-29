@@ -81,7 +81,7 @@ describeSiHayBase('Chat de soporte · contra base real', () => {
         },
       },
     );
-    soporte = new SoporteService(prisma as any, notificaciones);
+    soporte = new SoporteService(prisma as any, notificaciones, { responder: async () => null } as any);
 
     krezkaId = await crearEmpresa(`qa-soporte-krezka-${Date.now()}`, 'krezka');
     otraMarcaId = await crearEmpresa(`qa-soporte-otra-${Date.now()}`, 'falconext');
@@ -526,7 +526,7 @@ describeSiHayBase('Chat de soporte · contra base real', () => {
           },
         },
       );
-      return new SoporteService(prisma as any, notificaciones);
+      return new SoporteService(prisma as any, notificaciones, { responder: async () => null } as any);
     };
 
     it('el mensaje no se pierde si el aviso revienta', async () => {
@@ -689,7 +689,7 @@ describeSiHayBase('Chat de soporte · contra base real', () => {
         },
         crearNotificacion: () => Promise.resolve(),
       };
-      return { servicio: new SoporteService(prisma as any, notificaciones), emitidos };
+      return { servicio: new SoporteService(prisma as any, notificaciones, { responder: async () => null } as any), emitidos };
     };
 
     it('el aviso lleva el id REAL del mensaje, no uno inventado', async () => {
