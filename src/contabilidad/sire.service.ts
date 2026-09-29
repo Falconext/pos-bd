@@ -1073,12 +1073,15 @@ export class SireService {
     for (const f of filas) {
       const tipo = (f[6] ?? '').trim().padStart(2, '0');
       const serie = (f[7] ?? '').trim();
-      const numero = (f[8] ?? '').trim();
+      // La 8 es el año de la DUA y viene vacía en las facturas normales: el
+      // número del CP está en la 9. Misma regla por fila que en la sincronización.
+      const numero = ((f[9] ?? '').trim() || (f[8] ?? '').trim());
       sunat.set(clave(tipo, serie, numero), {
         comprobante: `${serie}-${numero.replace(/^0+/, '')}`,
-        base: num(f[14]), //  campo 15 BI gravada
-        igv: num(f[16]), //   campo 17 IGV / IPM
-        total: num(f[25]), // campo 26 Total CP
+        // Mismos índices que la sincronización; ver la nota de allá.
+        base: num(f[14]) + num(f[16]) + num(f[18]),
+        igv: num(f[15]) + num(f[17]) + num(f[19]),
+        total: num(f[24]),
       });
     }
 
@@ -1474,16 +1477,30 @@ export class SireService {
       if (!serie && !numero) continue;
       // La base gravada del RCE viene partida en tres pares (gravada, gravada
       // y no gravada, no gravada); para cuadrar con nuestra compra se suman.
-      const base = num(f[13]) + num(f[15]) + num(f[17]);
-      const igv = num(f[14]) + num(f[16]) + num(f[18]);
+      //
+      // Los índices son 0-based sobre las columnas del TXT de la propuesta:
+      //   14 BI Gravado DG   15 IGV/IPM DG
+      //   16 BI Gravado DGNG 17 IGV/IPM DGNG
+      //   18 BI Gravado DNG  19 IGV/IPM DNG
+      //   24 Total CP
+      // Estaban corridos un campo: lo que se mostraba como IGV eran las bases.
+      // Con setiembre 2026 de KREZKA el panel anunciaba S/ 4,728.47 de IGV
+      // cuando SUNAT dice 832.19 — el crédito fiscal salía 5.7 veces inflado.
+      const base = num(f[14]) + num(f[16]) + num(f[18]);
+      const igv = num(f[15]) + num(f[17]) + num(f[19]);
       sunat.set(clave(tipo, serie, numero), {
         comprobante: `${serie}-${numero.replace(/^0+/, '')}`,
-        proveedorDoc: (f[11] ?? '').trim(),
-        proveedor: (f[12] ?? '').trim(),
+        // 11 es el TIPO de documento ("6" = RUC) y 12 el número; el nombre
+        // está en la 13. Con el corrimiento salía el RUC donde va el proveedor,
+        // y la pantalla listaba números en vez de nombres.
+        proveedorDoc: (f[12] ?? '').trim(),
+        proveedor: (f[13] ?? '').trim(),
         fechaEmision: (f[4] ?? '').trim(),
         base: this.r2(base),
         igv: this.r2(igv),
-        total: num(f[23]),
+        // 23 es "Otros Trib/Cargos" y venía casi siempre en 0.00: por eso TODOS
+        // los comprobantes que sí cruzaban salían como "diferencia de importe".
+        total: num(f[24]),
       });
     }
 
