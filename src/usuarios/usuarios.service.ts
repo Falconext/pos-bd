@@ -8,6 +8,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { comprobantesAReemplazar } from './recalculo-comisiones';
 
 @Injectable()
 export class UsersService {
@@ -159,22 +160,34 @@ export class UsersService {
       }
     }
 
-    // 6) Reemplazo atómico: borra las PENDIENTES del vendedor en esos comprobantes
-    //    y crea las recalculadas, todo en una transacción (rápido y consistente).
+    // 6) Reemplazo atómico, pero SOLO de lo que efectivamente se reemplaza.
+    //
+    // Antes borraba las pendientes de TODOS los comprobantes y creaba las que
+    // el recálculo hubiera producido. Si no producía ninguna —porque en ese
+    // momento ni el producto ni el vendedor tenían comisión configurada— el
+    // borrado ya había ocurrido y el histórico pendiente del vendedor
+    // desaparecía sin aviso y sin vuelta atrás. Un clic en "guardar usuario"
+    // podía vaciar meses de comisiones.
+    //
+    // Ahora un comprobante solo pierde su comisión si recibe una nueva. Lo que
+    // el recálculo no sabe calcular se deja como está: preferible una comisión
+    // desactualizada a ninguna, porque la desactualizada se ve y se corrige y
+    // la borrada no deja rastro.
+    const comprobantesRecalculados = comprobantesAReemplazar(nuevas);
+    if (comprobantesRecalculados.length === 0) return 0;
+
     await this.prisma.$transaction([
       this.prisma.comisionVendedor.deleteMany({
         where: {
           vendedorId,
           estado: 'PENDIENTE',
-          comprobanteId: { in: comprobanteIds },
+          comprobanteId: { in: comprobantesRecalculados },
         },
       }),
-      ...(nuevas.length
-        ? [this.prisma.comisionVendedor.createMany({ data: nuevas })]
-        : []),
+      this.prisma.comisionVendedor.createMany({ data: nuevas }),
     ]);
 
-    return comprobanteIds.length;
+    return comprobantesRecalculados.length;
   }
 
   private buildSistemaScope(actor?: {
