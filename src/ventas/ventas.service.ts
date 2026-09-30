@@ -362,6 +362,7 @@ export class VentasService {
           // Cobranza en campo: vendedor de campo atribuido (se muestra en vez del usuario).
           vendedorCampoId: true,
           vendedorCampoNombre: true,
+          clienteId: true,
           cliente: {
             select: { nombre: true, nroDoc: true, telefono: true, email: true },
           },
@@ -451,6 +452,39 @@ export class VentasService {
       this.resumenPorCobrarGlobal({ empresaId, sedeId, usuarioId }),
     ]);
 
+    // ── Cliente recurrente ─────────────────────────────────────────────────
+    // Cuántas compras tiene cada cliente en TODA su historia con la empresa,
+    // no solo en el rango que se está viendo: el panel muestra un día y casi
+    // todos parecerían nuevos.
+    //
+    // Una sola consulta agrupada para todos los clientes de la página. Contar
+    // por fila serían tantas consultas como ventas.
+    const clienteIds = [
+      ...new Set(
+        comprobantesRaw
+          .map((c: any) => c.clienteId)
+          .filter((id: any): id is number => typeof id === 'number'),
+      ),
+    ];
+    const comprasPorCliente = new Map<number, number>();
+    if (clienteIds.length) {
+      const conteo = await this.prisma.comprobante.groupBy({
+        by: ['clienteId'],
+        where: {
+          empresaId,
+          clienteId: { in: clienteIds },
+          tipoDoc: { not: 'COT' },
+          estadoEnvioSunat: {
+            notIn: ['ANULADO', 'RECHAZADO', 'FALLIDO_ENVIO'] as any,
+          },
+        },
+        _count: { _all: true },
+      });
+      for (const c of conteo) {
+        if (c.clienteId != null) comprasPorCliente.set(c.clienteId, c._count._all);
+      }
+    }
+
     const comprobantesNorm = comprobantesRaw.map((c) => {
       const esSunat = TIPOS_SUNAT.includes(c.tipoDoc);
       const pagos = (c.pagos ?? []) as {
@@ -492,6 +526,12 @@ export class VentasService {
         clienteTelefono: c.cliente?.telefono ?? '',
         clienteEmail: c.cliente?.email ?? '',
         cliente: c.cliente?.nombre ?? '—',
+        // Compras totales del cliente con la empresa (incluida ésta). 1 = primera
+        // vez. Se manda el número y no un sí/no para que el panel pueda mostrar
+        // "3ra compra", que dice mucho más que "recurrente".
+        clienteCompras: c.clienteId != null
+          ? (comprasPorCliente.get(c.clienteId) ?? 1)
+          : 0,
         seriesGarantia: (c.productoSeries ?? []).map((s) => s.numeroSerie),
         // Convertido a soles para mostrar: mtoImpVenta se guarda en la moneda nativa
         // del comprobante (p.ej. USD), y el panel siempre muestra montos en soles.
