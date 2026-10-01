@@ -64,6 +64,9 @@ export class ContabilidadService {
         mtoImpVenta: true,
         montoDetraccion: true,
         porcentajeDetraccion: true,
+        // Distingue retención de detracción: comparten columnas y solo la
+        // detracción lleva tipo. Sin esto el export las rotula igual.
+        tipoDetraccionId: true,
         observaciones: true,
         estadoEnvioSunat: true,
         tipDocAfectado: true,

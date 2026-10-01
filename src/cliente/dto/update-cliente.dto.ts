@@ -1,4 +1,11 @@
-import { IsEmail, IsEnum, IsInt, IsOptional, IsString } from 'class-validator';
+import {
+  IsBoolean,
+  IsEmail,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export class UpdateClienteDto {
   @IsInt()
@@ -47,4 +54,9 @@ export class UpdateClienteDto {
   @IsOptional()
   @IsEnum(['CLIENTE', 'CLIENTE_PROVEEDOR', 'PROVEEDOR', 'EMPRESA'])
   persona?: 'CLIENTE' | 'CLIENTE_PROVEEDOR' | 'PROVEEDOR' | 'EMPRESA';
+
+  /// Agente de Retención del IGV: al pagarnos nos retiene el 3% (R.S. 037-2002).
+  @IsOptional()
+  @IsBoolean()
+  esAgenteRetencion?: boolean;
 }

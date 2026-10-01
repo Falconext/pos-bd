@@ -25,6 +25,13 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { estadoYSaldoInicial } from './estado-pago';
+import {
+  baseRetencion,
+  esRetencion,
+  importeNetoACobrar,
+  montoRetenido,
+  porcentajeRetenido,
+} from './retencion';
 import { KardexService } from '../kardex/kardex.service';
 import { InventarioNotificacionesService } from '../notificaciones/inventario-notificaciones.service';
 import { S3Service } from '../s3/s3.service';
@@ -6347,13 +6354,15 @@ export class ComprobanteService {
       Number((full as any).mtoDescuentoGlobal || 0) + totalDescuentoItems
     ).toFixed(2);
 
-    // Retención
-    const obs = (full.observaciones || '').toUpperCase();
-    const hasRetentionText = obs.includes('RETENCIÓN') && obs.includes('3%');
-    const retencionMonto = hasRetentionText
-      ? Number((mtoImpVenta * 0.03).toFixed(2))
-      : 0;
-    const shouldShowRetention = hasRetentionText && retencionMonto > 0;
+    // Retención del 3% de IGV.
+    //
+    // Antes esto se decidía buscando las palabras "RETENCIÓN" y "3%" dentro de
+    // las observaciones, y el monto se recalculaba a mano. Resultado: la única
+    // factura real con retención (MODA & LINEA F0A1-41) fue a SUNAT con sus
+    // S/35.40 y salió impresa sin una sola línea de retención, porque las
+    // observaciones estaban vacías. Ahora sale del dato guardado.
+    const shouldShowRetention = esRetencion(full as any);
+    const retencionMonto = montoRetenido(full as any);
 
     const ahora = new Date();
     const fechaImpresion =
@@ -6457,7 +6466,12 @@ export class ComprobanteService {
       ordenCompraCliente: (full as any).ordenCompraCliente || undefined,
       shouldShowRetention,
       retencionMonto: retencionMonto.toFixed(2),
-      importeNeto: (mtoImpVenta - retencionMonto).toFixed(2),
+      // Base imponible de la retención: el importe TOTAL de la operación, con
+      // IGV. Es lo que exige SUNAT y lo que imprime la factura de referencia
+      // (S/3,100 de base → S/93 retenidos), no el subtotal gravado.
+      retencionBase: baseRetencion(full as any).toFixed(2),
+      retencionPorcentaje: porcentajeRetenido(full as any).toFixed(2),
+      importeNeto: importeNetoACobrar(full as any).toFixed(2),
       qrCode: qrSunat,
       tipoDetraccion: full.tipoDetraccion
         ? `${full.tipoDetraccion.codigo} - ${full.tipoDetraccion.descripcion} (${full.tipoDetraccion.porcentaje}%)`

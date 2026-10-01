@@ -888,6 +888,11 @@ model Cliente {
   provincia             String?
   ubigeo                String?
   persona               PersonaType          @default(CLIENTE)
+  /// Agente de Retención del IGV designado por SUNAT (R.S. 037-2002).
+  /// Va en el CLIENTE porque el que retiene es el que compra: la misma empresa
+  /// le factura a agentes y a clientes comunes, y solo a los primeros les
+  /// corresponde el 3%. Default false = nadie retiene hasta que se marque.
+  esAgenteRetencion     Boolean              @default(false)
   // Campos médicos (farmacia/clínica) — opcionales, no afectan otros rubros
   grupoSanguineo        String?
   alergias              String?

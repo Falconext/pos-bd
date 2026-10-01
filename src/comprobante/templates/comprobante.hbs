@@ -113,6 +113,17 @@
     .totales-box .row.total-final { font-weight: bold; font-size: 14px; border-top: 1px solid #000; padding-top: 4px; margin-top: 4px; }
     .totales-box .row.retencion .lbl { font-weight: bold; }
 
+    /* Bloque del 3% de IGV retenido. Va junto a la detracción, a la izquierda
+       de los totales, para no competir con el importe fiscal: el TOTAL de la
+       factura NO se reduce. */
+    .retencion-block { margin-top: 10px; }
+    .retencion-block .ret-title { font-weight: bold; margin-bottom: 3px; }
+    .retencion-block .ret-grid { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+    .retencion-block .ret-item { display: flex; gap: 5px; }
+    .retencion-block .ret-item .ret-lbl { color: #374151; }
+    .retencion-block .ret-item .ret-val { font-weight: bold; white-space: nowrap; }
+    .retencion-block .ret-neto { margin-top: 4px; }
+
     /* QR de pago y cuentas bancarias (mismo estilo que cotizacion.hbs) */
     .qr-pagos { display: flex; justify-content: flex-end; gap: 24px; margin-top: 12px; }
     .qr-item { display: flex; flex-direction: column; align-items: center; }
@@ -289,6 +300,17 @@
         {{#if medioPagoDetraccion}}<p>Medio de Pago: {{medioPagoDetraccion}}</p>{{/if}}
       </div>
       {{/if}}{{/if}}
+      {{#if shouldShowRetention}}
+      <div class="retencion-block" style="font-size: {{fsz fc 'detraccion' 12}}px;">
+        <p class="ret-title">Información de la retención</p>
+        <div class="ret-grid">
+          <span class="ret-item"><span class="ret-lbl">Base imponible de la retención</span><span class="ret-val">{{simboloMoneda}} {{retencionBase}}</span></span>
+          <span class="ret-item"><span class="ret-lbl">Porcentaje de la retención</span><span class="ret-val">{{retencionPorcentaje}} %</span></span>
+          <span class="ret-item"><span class="ret-lbl">Monto de la retención</span><span class="ret-val">{{simboloMoneda}} {{retencionMonto}}</span></span>
+        </div>
+        <p class="ret-neto">Importe neto a pagar: <b>{{simboloMoneda}} {{importeNeto}}</b></p>
+      </div>
+      {{/if}}
     </div>
 
     <div class="totales-box">
@@ -307,10 +329,6 @@
       <div class="row"><span>DESCUENTO:</span><span>- {{simboloMoneda}} {{descuento}}</span></div>
       {{/if}}{{/unless}}
       {{#if (vis fc 'montoTotal')}}<div class="row total-final" style="font-size: {{fsz fc 'montoTotal' 14}}px;"><span>MONTO TOTAL:</span><span>{{simboloMoneda}} {{mtoImpVenta}}</span></div>{{/if}}
-      {{#if shouldShowRetention}}
-      <div class="row retencion"><span class="lbl">RETENCIÓN (3%):</span><span>{{simboloMoneda}} {{retencionMonto}}</span></div>
-      <div class="row total-final"><span>IMPORTE NETO:</span><span>{{simboloMoneda}} {{importeNeto}}</span></div>
-      {{/if}}
       {{!-- QR de pago (Yape / Plin): oculto por defecto, se activa desde el formato --}}
       {{#if fc.qrPagos.visible}}
       <div class="qr-pagos">
