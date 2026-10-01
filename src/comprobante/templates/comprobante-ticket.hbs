@@ -139,8 +139,11 @@
   {{#if (vis fc 'igv')}}<p class="row" style="font-size:{{tpx tpx 'igv'}}px"><span>I.G.V 18.00 %:</span><span>{{mtoIGV}}</span></p>{{/if}}
   {{#if (vis fc 'montoTotal')}}<p class="row" style="font-size:{{tpx tpx 'montoTotal'}}px"><span>IMPORTE TOTAL:</span><span>{{mtoImpVenta}}</span></p>{{/if}}
   {{#if shouldShowRetention}}
-  <p class="row"><span>RETENCIÓN (3%):</span><span>{{retencionMonto}}</span></p>
-  <p class="row bold"><span>IMPORTE NETO:</span><span>{{importeNeto}}</span></p>
+  <p class="bold" style="margin-top:3px">INFORMACION DE LA RETENCION</p>
+  <p class="row"><span>Base imponible:</span><span>{{simboloMoneda}} {{retencionBase}}</span></p>
+  <p class="row"><span>Porcentaje:</span><span>{{retencionPorcentaje}} %</span></p>
+  <p class="row"><span>Monto retenido:</span><span>{{simboloMoneda}} {{retencionMonto}}</span></p>
+  <p class="row bold"><span>IMPORTE NETO A PAGAR:</span><span>{{simboloMoneda}} {{importeNeto}}</span></p>
   {{/if}}
 
   <hr>

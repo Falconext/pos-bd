@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsEmail,
   IsEnum,
   IsInt,
@@ -80,4 +81,9 @@ export class CreateClienteDto {
   @Type(() => Number)
   @IsInt()
   medicoTratanteId?: number;
+
+  /// Agente de Retención del IGV: al pagarnos nos retiene el 3% (R.S. 037-2002).
+  @IsOptional()
+  @IsBoolean()
+  esAgenteRetencion?: boolean;
 }

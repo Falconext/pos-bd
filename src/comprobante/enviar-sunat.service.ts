@@ -25,6 +25,10 @@ import {
   isJambleProvider,
   resolveBillingProvider,
 } from '../common/utils/billing-provider';
+import {
+  allowanceChargeRetencion,
+  leyendaRetencion,
+} from './retencion';
 
 /**
  * Error de datos: el payload no pudo armarse por datos incorrectos del comprobante.
@@ -656,15 +660,8 @@ export class EnviarSunatService {
                   },
                 ]
               : []),
-            ...(!comp.tipoDetraccionId &&
-            comp.montoDetraccion &&
-            comp.porcentajeDetraccion
-              ? [
-                  {
-                    _text: 'OPERACIÓN SUJETA A RETENCIÓN DEL 3%',
-                    _attributes: { languageLocaleID: '2006' },
-                  },
-                ]
+            ...(leyendaRetencion(comp as any)
+              ? [leyendaRetencion(comp as any)!]
               : []),
           ],
           'cbc:DocumentCurrencyCode': {
@@ -1280,29 +1277,15 @@ export class EnviarSunatService {
         };
       }
 
-      // AllowanceCharge para Retención 3% — en posición correcta (antes de TaxTotal)
-      if (
-        !comp.tipoDetraccionId &&
-        comp.montoDetraccion &&
-        comp.porcentajeDetraccion
-      ) {
-        payload.documentBody['cac:AllowanceCharge'] = [
-          {
-            'cbc:ChargeIndicator': { _text: 'false' },
-            'cbc:AllowanceChargeReasonCode': { _text: '62' },
-            'cbc:MultiplierFactorNumeric': {
-              _text: Number((comp.porcentajeDetraccion / 100).toFixed(4)),
-            },
-            'cbc:Amount': {
-              _attributes: { currencyID: comp.tipoMoneda },
-              _text: Number(Number(comp.montoDetraccion).toFixed(2)),
-            },
-            'cbc:BaseAmount': {
-              _attributes: { currencyID: comp.tipoMoneda },
-              _text: comp.mtoImpVenta,
-            },
-          },
-        ];
+      // AllowanceCharge para Retención 3% — en posición correcta (antes de TaxTotal).
+      // Misma condición que usa el PDF (`esRetencion`): si el XML y el papel se
+      // separan, el cliente recibe un importe y SUNAT otro.
+      const cargoRetencion = allowanceChargeRetencion(
+        comp as any,
+        comp.tipoMoneda,
+      );
+      if (cargoRetencion) {
+        payload.documentBody['cac:AllowanceCharge'] = [cargoRetencion];
       }
 
       if ((comp.tipoDoc === '07' || comp.tipoDoc === '08') && comp.motivo) {

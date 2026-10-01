@@ -132,6 +132,7 @@ export class ClienteService {
       provincia: string;
       distrito: string;
       persona?: string;
+      esAgenteRetencion?: boolean;
     },
     // upsert=true (importación masiva): si el documento ya existe, actualiza sus
     // datos (dirección, correo, teléfono, nombre, ubigeo) en vez de lanzar error.
@@ -232,6 +233,7 @@ export class ClienteService {
         provincia: data.provincia,
         distrito: data.distrito,
         ubigeo: data.ubigeo,
+        esAgenteRetencion: data.esAgenteRetencion ?? false,
       },
     });
   }
@@ -316,6 +318,7 @@ export class ClienteService {
     persona?: string;
     tipoDoc?: 'DNI' | 'RUC' | 'CE' | 'PASAPORTE' | 'OTRO';
     nroDoc?: string;
+    esAgenteRetencion?: boolean;
   }) {
     const cliente = await this.prisma.cliente.findFirst({
       where: { id: data.id, empresaId: data.empresaId },
@@ -354,6 +357,8 @@ export class ClienteService {
         provincia: data.provincia,
         distrito: data.distrito,
         persona: data.persona as PersonaType,
+        // undefined = no se toca; solo se escribe si el formulario lo mandó.
+        esAgenteRetencion: data.esAgenteRetencion,
       },
     });
   }

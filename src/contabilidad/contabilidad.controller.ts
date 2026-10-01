@@ -18,6 +18,11 @@ import { CajaService } from '../caja/caja.service';
 import { SireService } from './sire.service';
 import type { Response } from 'express';
 import * as XLSX from 'xlsx';
+import {
+  esRetencion,
+  montoRetenido,
+  porcentajeRetenido,
+} from '../comprobante/retencion';
 
 // Lima es UTC-5 sin DST — extrae "YYYY-MM-DD" en hora local Lima
 function toFechaLima(d: Date): string {
@@ -122,8 +127,17 @@ export class ContabilidadController {
       DESCUENTO: Number(comp.mtoDescuentoGlobal ?? 0),
       TOTAL: Number(comp.mtoImpVenta ?? 0),
       'SALDO PENDIENTE': Number(comp.saldo ?? 0),
-      'MONTO DETRACCION': Number(comp.montoDetraccion ?? 0),
-      '% DETRACCION': Number(comp.porcentajeDetraccion ?? 0),
+      // Retención y detracción comparten columnas en la base. Antes el export
+      // sacaba toda retención rotulada como "DETRACCION" y el contador la
+      // registraba mal.
+      'MONTO DETRACCION': esRetencion(comp as any)
+        ? 0
+        : Number(comp.montoDetraccion ?? 0),
+      '% DETRACCION': esRetencion(comp as any)
+        ? 0
+        : Number(comp.porcentajeDetraccion ?? 0),
+      'MONTO RETENCION': montoRetenido(comp as any),
+      '% RETENCION': porcentajeRetenido(comp as any),
       'MOTIVO NC/ND': comp.motivo?.descripcion ?? '',
       USUARIO: comp.usuario?.nombre ?? '',
       OBSERVACIONES: comp.observaciones ?? '',
