@@ -30,6 +30,7 @@ import {
 } from '../common/utils/rubro-features';
 import * as XLSX from 'xlsx';
 import axios from 'axios';
+import { estadosAListar } from './vendibilidad';
 
 @Injectable()
 export class ProductoService {
@@ -919,7 +920,10 @@ export class ProductoService {
 
     const where: any = {
       empresaId,
-      estado: { in: [EstadoType.ACTIVO, EstadoType.INACTIVO] },
+      // El POS (`soloVendibles`) solo ofrece ACTIVOS; el Kardex sigue viendo los
+      // desactivados para poder reactivarlos. Antes ambos traían los dos estados
+      // y por eso "Desactivar" no sacaba el producto de la venta.
+      estado: { in: estadosAListar(params.soloVendibles) },
       // Excluir productos del sistema (PENALIDAD, INTERES POR MORA, DESCUENTO GLOBAL)
       codigo: { notIn: productosDelSistema },
       marcaId: marcaId ? Number(marcaId) : undefined,
@@ -1051,7 +1055,9 @@ export class ProductoService {
           opcionesAtributos: true,
           valoresAtributos: true,
           variantes: {
-            where: { estado: { in: [EstadoType.ACTIVO, EstadoType.INACTIVO] } },
+            // Mismo criterio que el padre: una variante desactivada tampoco se
+            // ofrece en el POS.
+            where: { estado: { in: estadosAListar(params.soloVendibles) } },
             select: {
               id: true,
               codigo: true,
