@@ -89,6 +89,33 @@ const check = (n: string, cond: boolean, d = '') => {
   check('filtrando por "Encontrado" sale solo ese', encontrados === 1, `→ ${encontrados}`);
   check('el ajuste sin motivo no se cuela en ningún filtro', todos === 3 && mermas + encontrados === 2);
 
+  console.log('\n5) REPORTE DE MERMAS · tiene que cuadrar con lo de arriba');
+  const rep: any = await kardex.reporteMermas(empresa.id, {});
+  console.log(`     unidades perdidas : ${rep.resumen.unidadesPerdidas}`);
+  console.log(`     valor perdido     : S/${rep.resumen.valorPerdido.toFixed(2)}`);
+  console.log(`     productos afectados: ${rep.resumen.productosAfectados}`);
+  console.log(`     movimientos con motivo: ${rep.resumen.movimientosConMotivo}`);
+  for (const m of rep.porMotivo)
+    console.log(`       · ${m.etiqueta.padEnd(34)} ${m.unidades} und · S/${m.valor.toFixed(2)} · ${m.esPerdida ? 'PÉRDIDA' : 'corrección'}`);
+
+  // Las 9 unidades de merma del paso 1, al costo de 7.20 que tiene el producto.
+  const esperado = Math.round(9 * 7.2 * 100) / 100;
+  check('cuenta las 9 unidades de la merma', rep.resumen.unidadesPerdidas === 9,
+        `→ ${rep.resumen.unidadesPerdidas}`);
+  check(`valora la pérdida en S/${esperado.toFixed(2)}`,
+        Math.abs(rep.resumen.valorPerdido - esperado) < 0.02,
+        `→ S/${rep.resumen.valorPerdido}`);
+  check('la unidad ENCONTRADA no se cuenta como pérdida',
+        rep.porMotivo.find((m: any) => m.codigo === 'ENCONTRADO')?.esPerdida === false);
+  check('pero sí aparece en el desglose por motivo', rep.porMotivo.length === 2,
+        `→ ${rep.porMotivo.length} motivos`);
+  check('el ajuste SIN motivo no entra al reporte',
+        rep.resumen.movimientosConMotivo === 2, `→ ${rep.resumen.movimientosConMotivo}`);
+  check('un solo producto afectado', rep.resumen.productosAfectados === 1);
+  check('el detalle conserva lo que se escribió a mano',
+        rep.detalle.some((d: any) => d.detalle === 'se cayeron de la repisa en el traslado'));
+  check('y quién lo hizo', rep.detalle.every((d: any) => d.responsable === 'AZUCENA SANCHEZ MAURICIO'));
+
   console.log(`\n═══ ${ok} pasaron, ${fallo} fallaron ═══`);
   await prisma.$disconnect();
   process.exit(fallo ? 1 : 0);

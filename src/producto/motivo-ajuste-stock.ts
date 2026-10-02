@@ -36,3 +36,37 @@ export const etiquetaDeMotivo = (codigo?: string | null): string => {
   if (!c) return '';
   return ETIQUETAS[c] ?? c;
 };
+
+/** Separador entre el motivo y el resto del concepto del movimiento. */
+export const SEPARADOR_CONCEPTO = ' · ';
+
+/** Los motivos que representan PÉRDIDA de mercadería, no una corrección. */
+export const MOTIVOS_DE_PERDIDA = ['MERMA', 'VENCIDO', 'PERDIDA'];
+
+/**
+ * El motivo que lleva un movimiento, leído de su concepto.
+ *
+ * El concepto se guarda como "Merma (producto roto o dañado) · Ajuste de
+ * inventario (-9)". Se lee de ahí y no de una columna aparte porque así
+ * funciona también para los movimientos ya registrados.
+ *
+ * Devuelve null para todo lo demás —ventas, compras, traslados, y los ajustes
+ * viejos sin motivo—, que no son mermas y no deben contarse como tales.
+ */
+export const motivoDelConcepto = (
+  concepto?: string | null,
+): { codigo: string; etiqueta: string } | null => {
+  const texto = String(concepto ?? '');
+  const corte = texto.indexOf(SEPARADOR_CONCEPTO);
+  if (corte < 0) return null;
+  const etiqueta = texto.slice(0, corte).trim();
+  if (!etiqueta) return null;
+  const codigo = Object.keys(ETIQUETAS).find((k) => ETIQUETAS[k] === etiqueta);
+  return codigo ? { codigo, etiqueta } : null;
+};
+
+/** ¿Este movimiento es una pérdida de mercadería? */
+export const esPerdida = (concepto?: string | null): boolean => {
+  const m = motivoDelConcepto(concepto);
+  return !!m && MOTIVOS_DE_PERDIDA.includes(m.codigo);
+};
