@@ -4580,6 +4580,15 @@ export class ComprobanteService {
       totalIGV = this.round2(totalIgv);
     }
 
+    // Solo los motivos 01 a 07 arman líneas. Los códigos 08, 09, 10 y 13 existen
+    // en MotivoNota pero no tienen rama acá: sin esta guarda la nota se creaba sin
+    // detalle, consumía el correlativo y SUNAT la rechazaba después.
+    if (detalleFinal.length === 0) {
+      throw new BadRequestException(
+        `El motivo ${motivoNota.codigo} - ${motivoNota.descripcion} no generó líneas para la nota de crédito. No se emitió nada.`,
+      );
+    }
+
     // 7) Montos por tipo de afectación tomados de las líneas de la NC (mismo
     // criterio que la emisión: 20=exonerado, 30=inafecto, 40=exportación).
     // Antes la cabecera solo consideraba gravadas → una NC de un comprobante
