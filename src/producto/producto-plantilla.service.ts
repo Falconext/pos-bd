@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { afectacionPorDefecto } from './afectacion-igv';
 import { PrismaService } from '../prisma/prisma.service'; // Assuming PrismaService exists at common or global
 import { CreateProductoDto } from './dto/create-producto.dto'; // Use if needed, or create specific DTO
 
@@ -225,7 +226,7 @@ export class ProductoPlantillaService {
                   unidadMedidaId: unidad?.id || 1,
                   categoriaId: categoriaId,
                   marcaId: marcaId,
-                  tipoAfectacionIGV: '10',
+                  tipoAfectacionIGV: afectacionPorDefecto(empresa),
                   igvPorcentaje: 18.0,
                   estado: 'ACTIVO',
                   publicarEnTienda: true,
@@ -433,7 +434,7 @@ export class ProductoPlantillaService {
               unidadMedidaId: unidad?.id || 1,
               categoriaId: categoriaId,
               marcaId: marcaId,
-              tipoAfectacionIGV: '10',
+              tipoAfectacionIGV: afectacionPorDefecto(empresa),
               igvPorcentaje: 18.0,
               estado: 'ACTIVO',
               publicarEnTienda: true,

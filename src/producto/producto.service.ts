@@ -1,4 +1,5 @@
 import { num, round3 } from '../common/utils/stock';
+import { afectacionDeCelda } from './afectacion-igv';
 import {
   BadRequestException,
   ForbiddenException,
@@ -4315,6 +4316,13 @@ export class ProductoService {
       empresaId,
       estado: { in: [EstadoType.ACTIVO, EstadoType.INACTIVO] },
       codigo: { notIn: productosDelSistema },
+      // Un modelo con tallas NO es una fila de inventario: su stock ya es la
+      // suma de sus variantes, y las variantes salen como filas propias. Al
+      // listar ambos, el TOTAL del Excel contaba todo dos veces (en una
+      // empresa real: 4,355 unidades reportadas sobre 2,223 reales). Se deja
+      // fuera al padre que tiene variantes; el producto sin variantes es su
+      // propia unidad de inventario y se queda.
+      NOT: { variantes: { some: {} } },
       OR: search
         ? [
             { descripcion: { contains: search, mode: 'insensitive' } },
@@ -4405,10 +4413,20 @@ export class ProductoService {
         .filter((v: any) => v != null && String(v).trim() !== '')
         .join(' | ');
 
+      // "Negro / S" a partir del dato estructurado de la variante, para que el
+      // Excel sirva de reporte de stock por talla sin leer el sufijo del nombre.
+      const variante = Object.values(
+        ((producto as any).valoresAtributos as Record<string, string>) || {},
+      )
+        .map((valor) => String(valor ?? '').trim())
+        .filter((valor) => valor !== '')
+        .join(' / ');
+
       return {
         CÓDIGO: producto.codigo,
         'CÓDIGO DE BARRAS': p?.codigoBarras || '',
         PRODUCTO: producto.descripcion,
+        VARIANTE: variante,
         'U.M': producto.unidadMedida?.nombre || '',
         AFECT: producto.tipoAfectacionIGV,
         'PRECIO UNITARIO CON IGV': Number(producto.precioUnitario),
@@ -4438,6 +4456,7 @@ export class ProductoService {
       CÓDIGO: '',
       'CÓDIGO DE BARRAS': '',
       PRODUCTO: 'TOTAL',
+      VARIANTE: '',
       'U.M': '',
       AFECT: '',
       'PRECIO UNITARIO CON IGV': '',
@@ -4458,6 +4477,7 @@ export class ProductoService {
       { wch: 18 }, // CÓDIGO
       { wch: 20 }, // CÓDIGO DE BARRAS
       { wch: 100 }, // PRODUCTO
+      { wch: 18 }, // VARIANTE
       { wch: 20 }, // U.M
       { wch: 10 }, // AFECT
       { wch: 22 }, // PRECIO UNITARIO CON IGV
@@ -4877,6 +4897,12 @@ export class ProductoService {
       actualizado?: boolean;
     }[] = [];
     const tiposValidos = ['10', '20', '30', '40'];
+    // Se lee una sola vez: decide con qué afectación nacen las filas cuya
+    // columna AFECT viene vacía (Ley de Amazonía → exonerado).
+    const empresaImport = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { leyAmazonia: true },
+    });
 
     for (const [index, row] of rows.entries()) {
       try {
@@ -4990,13 +5016,10 @@ export class ProductoService {
             `Unidad de medida no válida (${unidadNombre}) en la fila ${index + 1}`,
           );
 
-        let tipoAfectacionIGV = afectRaw ? afectRaw.toString().trim() : '10';
-        if (!tiposValidos.includes(tipoAfectacionIGV)) {
-          const n = parseInt(tipoAfectacionIGV, 10);
-          tipoAfectacionIGV = tiposValidos.includes(n.toString())
-            ? n.toString()
-            : '10';
-        }
+        // Celda vacia o ilegible: cae al default de la empresa, no a gravado
+        // fijo. En una empresa amazonica eso convertia cada import en una carga
+        // de productos con IGV.
+        const tipoAfectacionIGV = afectacionDeCelda(afectRaw, empresaImport);
 
         const precioUnitario = parseFloat(precioUnitarioRaw?.toString());
         // Prioriza la columna nueva CON IGV (se des-agrega el IGV con 4 decimales
