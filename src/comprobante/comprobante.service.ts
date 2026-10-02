@@ -2779,8 +2779,17 @@ export class ComprobanteService {
       if (item.productoId) {
         const producto = await this.prisma.producto.findUnique({
           where: { id: item.productoId },
-          select: { stock: true, costoPromedio: true },
+          select: { stock: true, costoPromedio: true, atributosTecnicos: true },
         });
+
+        // Un servicio nunca tuvo SALIDA (ajustarStock lo saltea), así que
+        // devolverle stock lo inventa: una venta de polo + delivery, al
+        // anularse, dejaba el delivery en stock 1. El guard va acá y no en el
+        // `return` de arriba porque en una venta mixta sí hay movimientos
+        // originales —los del producto físico— y el corte no se activa.
+        if (producto && this.esProductoServicio(producto.atributosTecnicos as any)) {
+          continue;
+        }
 
         if (producto) {
           // Registrar movimiento de kardex GLOBAL (siempre se hace para subir el stock del producto)
