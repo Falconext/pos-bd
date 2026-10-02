@@ -31,6 +31,7 @@ import {
 import * as XLSX from 'xlsx';
 import axios from 'axios';
 import { estadosAListar } from './vendibilidad';
+import { etiquetaDeMotivo } from './motivo-ajuste-stock';
 
 @Injectable()
 export class ProductoService {
@@ -2673,6 +2674,9 @@ export class ProductoService {
     data: {
       id: number;
       empresaId: number;
+      /** Motivo del ajuste manual de stock (va al kardex). */
+      motivoAjusteStock?: string;
+      detalleAjusteStock?: string;
       codigo?: string;
       descripcion?: string;
       categoriaId?: number | null;
@@ -2923,16 +2927,28 @@ export class ProductoService {
           const cantidad = round3(Math.abs(diferencia));
 
           try {
+            // El motivo va ADELANTE en el concepto: en la lista de movimientos
+            // esa línea es lo único que se ve, y "por qué" importa más que
+            // "ajuste manual". El detalle libre queda en la observación, que el
+            // detalle del movimiento muestra aparte.
+            //
+            // Antes la observación repetía el stock anterior y el nuevo, que ya
+            // están en sus propias columnas; se desperdiciaba el único campo
+            // donde cabía la explicación.
+            const etiquetaMotivo = etiquetaDeMotivo(data.motivoAjusteStock);
+            const detalle = String(data.detalleAjusteStock ?? '').trim();
             await this.kardexService.registrarMovimiento({
               productoId: data.id,
               empresaId: data.empresaId,
               sedeId: targetSedeId,
               tipoMovimiento: esIngreso ? 'INGRESO' : 'SALIDA',
-              concepto: `Ajuste manual de stock desde inventario (${esIngreso ? '+' : '-'}${cantidad})`,
+              concepto: etiquetaMotivo
+                ? `${etiquetaMotivo} · Ajuste de inventario (${esIngreso ? '+' : '-'}${cantidad})`
+                : `Ajuste manual de stock desde inventario (${esIngreso ? '+' : '-'}${cantidad})`,
               cantidad,
               costoUnitario: Number(producto.costoPromedio) || 0,
               usuarioId,
-              observacion: `Stock anterior: ${currentStock.stock}, Stock nuevo: ${data.stock}`,
+              observacion: detalle || undefined,
             });
           } catch (error) {
             console.error(
