@@ -7,6 +7,14 @@ import { coordenadasDeDestino } from './peru-coordenadas';
 import { CrearGastoDto } from './dto/crear-gasto.dto';
 import { ActualizarGastoDto } from './dto/actualizar-gasto.dto';
 import {
+  CRITERIO_IGV_LABEL,
+  filtroExcluirConvertidos,
+  descuentaIgv as descuentaIgvCompartido,
+  ingresoLineaSinIgv as ingresoLineaSinIgvCompartido,
+  normalizarCriterio,
+  type CriterioIgvVentas,
+} from '../finanzas/igv-ventas';
+import {
   egresosCajaWhere,
   normalizarEgresoCaja,
   mapCategoriaCaja,
@@ -26,19 +34,12 @@ export interface OtroIngreso {
 }
 
 /**
- * Criterio del IGV en las ventas del Análisis Financiero (Empresa.criterioIgvVentas):
- *  - ELECTRONICOS: se descuenta solo el IGV de facturas/boletas/NC/ND; notas de
- *    venta y tickets cuentan íntegros (ese IGV no se declara).
- *  - TODOS: se descuenta el IGV de todos los documentos (valor venta = total ÷ 1.18).
- *  - NINGUNO: no se descuenta IGV (ventas brutas, lo cobrado).
+ * El criterio del IGV vive en `finanzas/igv-ventas.ts`: lo comparten el
+ * Análisis Financiero y el resumen de e-commerce. Antes era privado de este
+ * servicio, y por eso el resumen de e-commerce calculaba su margen con otra
+ * regla —precio con IGV contra costo sin IGV— y las dos pantallas no cuadraban.
  */
-export type CriterioIgvVentas = 'ELECTRONICOS' | 'TODOS' | 'NINGUNO';
-const TIPOS_DOC_ELECTRONICOS = new Set(['01', '03', '07', '08']);
-export const CRITERIO_IGV_LABEL: Record<CriterioIgvVentas, string> = {
-  ELECTRONICOS: 'IGV descontado solo en facturas, boletas y notas de crédito/débito',
-  TODOS: 'IGV descontado en todos los documentos (incluidas notas de venta)',
-  NINGUNO: 'Sin descontar IGV (ventas brutas)',
-};
+export { CRITERIO_IGV_LABEL, type CriterioIgvVentas };
 
 export interface PnlResponse {
   /** Criterio del IGV aplicado (configuración de la empresa). */
@@ -454,25 +455,9 @@ export class AnalisisFinancieroService {
     'CP',
   ];
 
+  /** Vive en `finanzas/igv-ventas.ts`: lo comparte con el resumen de e-commerce. */
   private get filtroExcluirConvertidos() {
-    return {
-      AND: [
-        {
-          NOT: {
-            tipoDoc: { in: this.TIPOS_INFORMALES },
-            comprobantesDerivados: { some: {} },
-          },
-        },
-        {
-          // Excluir SOLO cotizaciones (COT) y órdenes de trabajo (OT): no son
-          // ventas en ningún rubro. La Nota de Pedido (NP) SÍ cuenta como venta
-          // (es el comprobante de venta real de muchos negocios informales); si
-          // se convierte en boleta/factura, la cláusula 1 la excluye por
-          // comprobantesDerivados y no hay doble conteo.
-          tipoDoc: { notIn: ['COT', 'OT'] },
-        },
-      ],
-    };
+    return filtroExcluirConvertidos;
   }
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -848,15 +833,12 @@ export class AnalisisFinancieroService {
       where: { id: empresaId },
       select: { criterioIgvVentas: true },
     });
-    const v = String(e?.criterioIgvVentas ?? '').toUpperCase();
-    return v === 'TODOS' || v === 'NINGUNO' ? v : 'ELECTRONICOS';
+    return normalizarCriterio(e?.criterioIgvVentas);
   }
 
   /** ¿Se descuenta IGV a este tipo de documento con el criterio dado? */
   private descuentaIgv(tipoDoc: string, criterio: CriterioIgvVentas): boolean {
-    if (criterio === 'NINGUNO') return false;
-    if (criterio === 'TODOS') return true;
-    return TIPOS_DOC_ELECTRONICOS.has(String(tipoDoc));
+    return descuentaIgvCompartido(tipoDoc, criterio);
   }
 
   private signoDocumento(tipoDoc: string): 1 | -1 {
@@ -911,13 +893,7 @@ export class AnalisisFinancieroService {
     },
     criterio: CriterioIgvVentas,
   ): number {
-    const bruto = (det.mtoPrecioUnitario ?? 0) * (det.cantidad ?? 0);
-    if (!this.descuentaIgv(tipoDoc, criterio)) return bruto;
-    const afe = Number(det.tipAfeIgv ?? 10);
-    const onerosa = afe === 10 || afe === 20 || afe === 30 || afe === 40;
-    const neto = this.toNumber(det.mtoValorVenta);
-    if (!onerosa || !(neto > 0) || neto > bruto + 0.01) return bruto;
-    return neto;
+    return ingresoLineaSinIgvCompartido(tipoDoc, det, criterio);
   }
 
   /** Total del comprobante en soles, con IGV. */

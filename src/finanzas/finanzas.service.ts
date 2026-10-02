@@ -8,6 +8,11 @@ import {
   EGRESO_CAJA_SELECT,
 } from '../common/utils/egresos-caja.util';
 import { montoCompraEnSoles, pagoCompraEnSoles } from '../common/utils/moneda-compra';
+import {
+  filtroExcluirConvertidos,
+  ingresoLineaSinIgv,
+  normalizarCriterio,
+} from './igv-ventas';
 
 @Injectable()
 export class FinanzasService {
@@ -347,6 +352,9 @@ export class FinanzasService {
       // no son ventas reales y no deben contar en ingresos/rentabilidad.
       tipoDoc: { notIn: ['COT', '07'] },
       fechaEmision: { gte: inicioRango, lte: finRango },
+      // Y no contar dos veces: una nota de venta que ya se convirtió en boleta
+      // deja de sumar, porque suma la boleta. Es el mismo filtro del P&L.
+      ...filtroExcluirConvertidos,
     };
     if (sedeId) {
       comprobanteWhere.sedeId = sedeId;
@@ -366,8 +374,29 @@ export class FinanzasService {
             costoFijo: true,
           },
         },
+        // Del comprobante: el tipo decide si se descuenta IGV, la moneda si hay
+        // que convertir a soles, y el descuento global se reparte entre sus líneas.
+        comprobante: {
+          select: {
+            id: true,
+            tipoDoc: true,
+            tipoMoneda: true,
+            tipoCambio: true,
+            mtoDescuentoGlobal: true,
+          },
+        },
       },
     });
+
+    // Mismo criterio de IGV que el Análisis Financiero. Antes esta pantalla
+    // comparaba el precio CON IGV contra el costo SIN IGV —el costo siempre se
+    // guarda sin IGV, es el unitario de la compra— y el margen salía inflado.
+    // OWENSOFT lo detectó porque sus dos pantallas no cuadraban.
+    const empresaIgv = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { criterioIgvVentas: true },
+    });
+    const criterioIgv = normalizarCriterio(empresaIgv?.criterioIgvVentas);
 
     // Gasto de publicidad real hasta hoy por producto en el rango
     const finReal = hoy < finRango ? hoy : finRango;
@@ -420,9 +449,55 @@ export class FinanzasService {
     };
     const porProducto = new Map<number, ProdEntry>();
 
+    // El descuento global vive en el comprobante, no en sus líneas. Para que la
+    // suma de líneas coincida con el total del documento —que es lo que mira el
+    // P&L— se reparte entre ellas en proporción a cuánto aporta cada una.
+    const brutoPorComprobante = new Map<number, number>();
+    for (const d of detalles) {
+      const prev = brutoPorComprobante.get(d.comprobanteId) ?? 0;
+      brutoPorComprobante.set(
+        d.comprobanteId,
+        prev +
+          ingresoLineaSinIgv(
+            String((d as any).comprobante?.tipoDoc ?? ''),
+            {
+              cantidad: Number(d.cantidad),
+              mtoPrecioUnitario: Number(d.mtoPrecioUnitario),
+              mtoValorVenta: (d as any).mtoValorVenta,
+              tipAfeIgv: (d as any).tipAfeIgv,
+            },
+            criterioIgv,
+          ),
+      );
+    }
+
     for (const d of detalles) {
       const cant = Number(d.cantidad);
-      const ingreso = Number(d.mtoPrecioUnitario) * cant;
+      const comp = (d as any).comprobante;
+      // Sin IGV, para que se pueda restar contra el costo (que va sin IGV).
+      const bruto = ingresoLineaSinIgv(
+        String(comp?.tipoDoc ?? ''),
+        {
+          cantidad: cant,
+          mtoPrecioUnitario: Number(d.mtoPrecioUnitario),
+          mtoValorVenta: (d as any).mtoValorVenta,
+          tipAfeIgv: (d as any).tipAfeIgv,
+        },
+        criterioIgv,
+      );
+      // Su parte del descuento global del comprobante.
+      const totalDoc = brutoPorComprobante.get(d.comprobanteId) ?? 0;
+      const descuentoGlobal = Number(comp?.mtoDescuentoGlobal ?? 0);
+      const suParte =
+        descuentoGlobal > 0 && totalDoc > 0
+          ? (descuentoGlobal * bruto) / totalDoc
+          : 0;
+      // Y en soles: una venta en dólares se convierte con el TC del documento.
+      const ingreso = montoEnPen(
+        bruto - suParte,
+        comp?.tipoMoneda,
+        comp?.tipoCambio,
+      );
       const costo = d.producto
         ? Number(d.producto.costoPromedio ?? 0) * cant
         : 0;
