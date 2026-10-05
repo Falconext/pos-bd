@@ -436,7 +436,13 @@ export class EnvioDespachoService {
 
   async panelUnificado(
     empresaId: number,
-    params?: { fecha?: string; page?: number; limit?: number },
+    params?: {
+      fecha?: string;
+      /** Día de ENTREGA programada. Ver nota abajo. */
+      fechaEnvio?: string;
+      page?: number;
+      limit?: number;
+    },
   ) {
     const page = params?.page ?? 1;
     const limit = params?.limit ?? 50;
@@ -449,11 +455,30 @@ export class EnvioDespachoService {
         }
       : undefined;
 
+    // Filtro por día de ENTREGA: "qué sale el jueves" (pedido de COMERCIAL
+    // LINNA MODA, que despacha por día). `fechaEstimada` se guarda a mediodía
+    // UTC (parseFechaSoloDia), así que el rango va en UTC y no en hora de Lima:
+    // con el offset -05:00 el mediodía UTC del día siguiente también entraría.
+    const envioWhere = params?.fechaEnvio
+      ? {
+          gte: new Date(`${params.fechaEnvio}T00:00:00.000Z`),
+          lte: new Date(`${params.fechaEnvio}T23:59:59.999Z`),
+        }
+      : undefined;
+
+    // Un pedido que sale el jueves pudo tomarse el lunes: cuando se filtra por
+    // día de entrega, el día de creación deja de acotar o no se vería.
+    const filtroDespacho = envioWhere
+      ? { fechaEstimada: envioWhere }
+      : fechaWhere
+        ? { creadoEn: fechaWhere }
+        : {};
+
     const [despachos, pedidos] = await Promise.all([
       this.prisma.envioDespacho.findMany({
         where: {
           comprobante: { empresaId },
-          ...(fechaWhere ? { creadoEn: fechaWhere } : {}),
+          ...filtroDespacho,
         },
         orderBy: { creadoEn: 'desc' },
         take: limit,
