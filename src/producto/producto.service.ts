@@ -1,4 +1,5 @@
 import { num, round3 } from '../common/utils/stock';
+import { colorDe, tallaDe, varianteDe } from './atributos-variante';
 import { afectacionDeCelda } from './afectacion-igv';
 import {
   BadRequestException,
@@ -4322,7 +4323,22 @@ export class ProductoService {
       // empresa real: 4,355 unidades reportadas sobre 2,223 reales). Se deja
       // fuera al padre que tiene variantes; el producto sin variantes es su
       // propia unidad de inventario y se queda.
-      NOT: { variantes: { some: {} } },
+      NOT: [
+        // El modelo con tallas no es unidad de inventario: cuentan sus variantes.
+        { variantes: { some: { estado: 'ACTIVO' } } },
+        // Una variante desactivada SIN stock es ruido: queda de cuando se cambia
+        // la matriz de colores/tallas de un modelo y la combinación vieja sale.
+        // COMERCIAL LINNA MODA veía 12 códigos así en el Excel que no existen en
+        // ninguna otra pantalla. Las que SÍ tienen stock se quedan a propósito:
+        // esconderlas dejaría pares invisibles en todo el sistema.
+        {
+          AND: [
+            { estado: EstadoType.INACTIVO },
+            { productoPadreId: { not: null } },
+            { stock: { lte: 0 } },
+          ],
+        },
+      ],
       OR: search
         ? [
             { descripcion: { contains: search, mode: 'insensitive' } },
@@ -4415,18 +4431,17 @@ export class ProductoService {
 
       // "Negro / S" a partir del dato estructurado de la variante, para que el
       // Excel sirva de reporte de stock por talla sin leer el sufijo del nombre.
-      const variante = Object.values(
-        ((producto as any).valoresAtributos as Record<string, string>) || {},
-      )
-        .map((valor) => String(valor ?? '').trim())
-        .filter((valor) => valor !== '')
-        .join(' / ');
+      const atributos = (producto as any).valoresAtributos as Record<string, string>;
 
       return {
         CÓDIGO: producto.codigo,
         'CÓDIGO DE BARRAS': p?.codigoBarras || '',
         PRODUCTO: producto.descripcion,
-        VARIANTE: variante,
+        // Color y talla en columnas propias: el Excel se exporta justamente
+        // para filtrar por talla, y "Negro / 36" junto no se filtra.
+        COLOR: colorDe(atributos),
+        TALLA: tallaDe(atributos),
+        VARIANTE: varianteDe(atributos),
         'U.M': producto.unidadMedida?.nombre || '',
         AFECT: producto.tipoAfectacionIGV,
         'PRECIO UNITARIO CON IGV': Number(producto.precioUnitario),
@@ -4438,6 +4453,7 @@ export class ProductoService {
         CATEGORIA: producto.categoria?.nombre || '',
         MARCA: p?.marca?.nombre || '',
         LOCALIZACION: localizacion || '',
+        ESTADO: producto.estado === EstadoType.INACTIVO ? 'DESACTIVADO' : 'ACTIVO',
       };
     });
 
@@ -4456,6 +4472,8 @@ export class ProductoService {
       CÓDIGO: '',
       'CÓDIGO DE BARRAS': '',
       PRODUCTO: 'TOTAL',
+      COLOR: '',
+      TALLA: '',
       VARIANTE: '',
       'U.M': '',
       AFECT: '',
@@ -4468,6 +4486,7 @@ export class ProductoService {
       CATEGORIA: '',
       MARCA: '',
       LOCALIZACION: '',
+      ESTADO: '',
     });
 
     const worksheet = XLSX.utils.json_to_sheet(datosExcel);
@@ -4477,6 +4496,8 @@ export class ProductoService {
       { wch: 18 }, // CÓDIGO
       { wch: 20 }, // CÓDIGO DE BARRAS
       { wch: 100 }, // PRODUCTO
+      { wch: 14 }, // COLOR
+      { wch: 8 }, // TALLA
       { wch: 18 }, // VARIANTE
       { wch: 20 }, // U.M
       { wch: 10 }, // AFECT

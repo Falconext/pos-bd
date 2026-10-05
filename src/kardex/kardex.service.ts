@@ -802,6 +802,17 @@ export class KardexService {
     const whereProductos: any = {
       empresaId,
       ...(filtros?.incluirInactivos ? {} : { estado: 'ACTIVO' }),
+      // Un modelo con tallas NO es una unidad de inventario: su stock ya es la
+      // suma de sus variantes, y las variantes cuentan por su cuenta. Al contar
+      // ambos, el Dashboard de Inventario mostraba el doble que la pantalla de
+      // Productos (COMERCIAL LINNA MODA: S/ 11,285 contra S/ 5,642 reales, y
+      // 249 productos contra 55). Es el mismo criterio que usa el Excel de
+      // inventario; el producto sin variantes es su propia unidad y se queda.
+      // Solo cuentan las variantes ACTIVAS: el stock del padre es la suma de
+      // esas (sincronizarStockPadre). Si se mira "tiene alguna variante" sin
+      // más, un modelo cuyas tallas fueron todas desactivadas se excluye y su
+      // stock desaparece del valorizado.
+      NOT: { variantes: { some: { estado: 'ACTIVO' } } },
     };
 
     if (filtros?.categoriaId) {
@@ -853,7 +864,15 @@ export class KardexService {
         sedeId && producto.stocks?.length
           ? costoDeSede(producto.stocks[0].costoPromedio, producto.costoPromedio)
           : Number(producto.costoPromedio) || 0;
-      const valorTotal = stockUsar * costoPromedio;
+      // El costo se guarda NETO, pero el valorizado que ve el empresario es el
+      // "de bolsillo" (con IGV): es el mismo criterio de la pantalla de
+      // Productos, y sin esto el Dashboard mostraba el valor dividido entre
+      // 1.18 respecto de ella aunque el conteo ya coincidiera.
+      const esGravado = String(producto.tipoAfectacionIGV ?? '10') === '10';
+      const costoDeBolsillo = esGravado
+        ? Number((costoPromedio * 1.18).toFixed(2))
+        : costoPromedio;
+      const valorTotal = stockUsar * costoDeBolsillo;
 
       return {
         id: producto.id,
