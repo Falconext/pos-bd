@@ -6,10 +6,27 @@ import { DashboardService } from './dashboard.service';
  * solo usa prisma.
  */
 describe('DashboardService.utilidadBrutaPen', () => {
+  /**
+   * Las líneas se completan como BOLETA: es el documento al que SÍ se le
+   * descuenta IGV, así que la venta vale el neto guardado y las cuentas de
+   * estas pruebas siguen siendo las mismas que antes del criterio por empresa.
+   */
+  const comoBoleta = (d: any) => ({
+    tipAfeIgv: 10,
+    // El bruto tiene que ser mayor o igual al neto para que se use el neto.
+    mtoPrecioUnitario:
+      (Number(d.mtoValorVenta ?? 0) / Math.max(1, Number(d.cantidad ?? 1))) *
+      1.18,
+    ...d,
+    comprobante: { tipoDoc: '03', ...(d.comprobante ?? {}) },
+  });
+
   const crear = (detalles: any[], costosPorSede: any[] = []) => {
     const s = Object.create(DashboardService.prototype) as any;
     s.prisma = {
-      detalleComprobante: { findMany: jest.fn().mockResolvedValue(detalles) },
+      detalleComprobante: {
+        findMany: jest.fn().mockResolvedValue(detalles.map(comoBoleta)),
+      },
       productoStock: { findMany: jest.fn().mockResolvedValue(costosPorSede) },
     };
     return s;
@@ -32,7 +49,7 @@ describe('DashboardService.utilidadBrutaPen', () => {
         comprobante: { tipoMoneda: 'PEN', tipoCambio: null },
       },
     ]);
-    const r = await s.utilidadBrutaPen({ empresaId: 1 });
+    const r = await s.utilidadBrutaPen({ empresaId: 1 }, 'ELECTRONICOS');
     expect(r).toEqual({ venta: 250, costo: 120, utilidad: 130 });
     expect(s.prisma.detalleComprobante.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { comprobante: { empresaId: 1 } } }),
@@ -48,7 +65,7 @@ describe('DashboardService.utilidadBrutaPen', () => {
         comprobante: { tipoMoneda: 'USD', tipoCambio: 3.5 },
       },
     ]);
-    const r = await s.utilidadBrutaPen({});
+    const r = await s.utilidadBrutaPen({}, 'ELECTRONICOS');
     expect(r).toEqual({ venta: 350, costo: 300, utilidad: 50 });
   });
 
@@ -61,12 +78,12 @@ describe('DashboardService.utilidadBrutaPen', () => {
         comprobante: { tipoMoneda: 'PEN', tipoCambio: 1 },
       },
     ]);
-    const r = await s.utilidadBrutaPen({});
+    const r = await s.utilidadBrutaPen({}, 'ELECTRONICOS');
     expect(r.utilidad).toBe(-30);
   });
 
   it('sin ventas devuelve ceros', async () => {
-    const r = await crear([]).utilidadBrutaPen({});
+    const r = await crear([]).utilidadBrutaPen({}, 'ELECTRONICOS');
     expect(r).toEqual({ venta: 0, costo: 0, utilidad: 0 });
   });
 
@@ -82,7 +99,7 @@ describe('DashboardService.utilidadBrutaPen', () => {
         comprobante: { tipoMoneda: 'PEN', tipoCambio: 1 },
       },
     ]);
-    const r = await s.utilidadBrutaPen({});
+    const r = await s.utilidadBrutaPen({}, 'ELECTRONICOS');
     expect(r).toEqual({ venta: 49, costo: 31.1, utilidad: 17.9 });
   });
 
@@ -106,7 +123,7 @@ describe('DashboardService.utilidadBrutaPen', () => {
         [venta(7, 1, 150)],
         [{ productoId: 7, sedeId: 1, costoPromedio: 100 }],
       );
-      const r = await s.utilidadBrutaPen({});
+      const r = await s.utilidadBrutaPen({}, 'ELECTRONICOS');
       // Con el costo global (150) la utilidad sería 150.
       expect(r).toEqual({ venta: 300, costo: 100, utilidad: 200 });
     });
@@ -119,7 +136,7 @@ describe('DashboardService.utilidadBrutaPen', () => {
           { productoId: 7, sedeId: 2, costoPromedio: 200 },
         ],
       );
-      const r = await s.utilidadBrutaPen({});
+      const r = await s.utilidadBrutaPen({}, 'ELECTRONICOS');
       expect(r).toEqual({ venta: 600, costo: 300, utilidad: 300 });
     });
 
@@ -127,7 +144,7 @@ describe('DashboardService.utilidadBrutaPen', () => {
       // Es lo que sostiene la convivencia: mientras la sede esté en NULL, el
       // número que ve el empresario no cambia.
       const s = crear([venta(7, 3, 150)], []);
-      const r = await s.utilidadBrutaPen({});
+      const r = await s.utilidadBrutaPen({}, 'ELECTRONICOS');
       expect(r).toEqual({ venta: 300, costo: 150, utilidad: 150 });
     });
 
@@ -137,7 +154,7 @@ describe('DashboardService.utilidadBrutaPen', () => {
         [venta(7, 1, 150)],
         [{ productoId: 7, sedeId: 1, costoPromedio: 0 }],
       );
-      const r = await s.utilidadBrutaPen({});
+      const r = await s.utilidadBrutaPen({}, 'ELECTRONICOS');
       expect(r).toEqual({ venta: 300, costo: 0, utilidad: 300 });
     });
 
@@ -148,7 +165,7 @@ describe('DashboardService.utilidadBrutaPen', () => {
         [venta(7, 1, 150), venta(8, 1, 150), venta(7, 2, 150)],
         [{ productoId: 7, sedeId: 1, costoPromedio: 100 }],
       );
-      await s.utilidadBrutaPen({});
+      await s.utilidadBrutaPen({}, 'ELECTRONICOS');
       expect(s.prisma.productoStock.findMany).toHaveBeenCalledTimes(1);
       expect(s.prisma.productoStock.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -166,7 +183,7 @@ describe('DashboardService.utilidadBrutaPen', () => {
           comprobante: { tipoMoneda: 'PEN', tipoCambio: 1 },
         },
       ]);
-      const r = await s.utilidadBrutaPen({});
+      const r = await s.utilidadBrutaPen({}, 'ELECTRONICOS');
       expect(s.prisma.productoStock.findMany).not.toHaveBeenCalled();
       expect(r).toEqual({ venta: 50, costo: 0, utilidad: 50 });
     });

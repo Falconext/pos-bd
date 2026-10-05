@@ -6,6 +6,11 @@ import { egresosCajaWhere } from '../common/utils/egresos-caja.util';
 import { excluirNotasCreditoDeAnulacion } from '../common/utils/notas-credito.util';
 import { montoCompraEnSoles } from '../common/utils/moneda-compra';
 import { costoDeSede } from '../kardex/costo-sede';
+import {
+  ingresoLineaSinIgv,
+  normalizarCriterio,
+  type CriterioIgvVentas,
+} from '../finanzas/igv-ventas';
 
 @Injectable()
 export class DashboardService {
@@ -146,6 +151,7 @@ export class DashboardService {
    */
   private async utilidadBrutaPen(
     comprobanteWhere: any,
+    criterio: CriterioIgvVentas,
   ): Promise<{ venta: number; costo: number; utilidad: number }> {
     const detalles = await this.prisma.detalleComprobante.findMany({
       where: { comprobante: comprobanteWhere },
@@ -153,10 +159,19 @@ export class DashboardService {
         cantidad: true,
         unidadesPorPaquete: true,
         mtoValorVenta: true,
+        // Para decidir si a esta línea se le descuenta IGV hace falta el tipo
+        // de documento y el precio bruto; `mtoValorVenta` solo trae el neto.
+        mtoPrecioUnitario: true,
+        tipAfeIgv: true,
         productoId: true,
         producto: { select: { costoPromedio: true } },
         comprobante: {
-          select: { tipoMoneda: true, tipoCambio: true, sedeId: true },
+          select: {
+            tipoMoneda: true,
+            tipoCambio: true,
+            sedeId: true,
+            tipoDoc: true,
+          },
         },
       },
     });
@@ -187,8 +202,22 @@ export class DashboardService {
     let venta = 0;
     let costo = 0;
     for (const d of detalles) {
+      // El IGV se descuenta según el criterio de la empresa, igual que en el
+      // P&L: con ELECTRONICOS una nota de venta cuenta íntegra, porque ese IGV
+      // nunca se declara y se queda en el negocio. Antes el dashboard restaba
+      // IGV a todo por igual y daba una utilidad distinta a la de Rentabilidad
+      // sobre las mismas ventas.
       venta += montoEnPen(
-        d.mtoValorVenta,
+        ingresoLineaSinIgv(
+          String(d.comprobante.tipoDoc ?? ''),
+          {
+            cantidad: Number(d.cantidad ?? 0),
+            mtoPrecioUnitario: Number(d.mtoPrecioUnitario ?? 0),
+            mtoValorVenta: d.mtoValorVenta as any,
+            tipAfeIgv: d.tipAfeIgv as any,
+          },
+          criterio,
+        ),
         d.comprobante.tipoMoneda,
         d.comprobante.tipoCambio,
       );
@@ -246,31 +275,63 @@ export class DashboardService {
       else sumOtros += t;
     }
     if (sumMixtoLump > 0) {
-      const pagosMixtos = await this.prisma.pago.findMany({
-        where: { comprobante: mixtoWhere },
+      const mixtos = await this.prisma.comprobante.findMany({
+        where: mixtoWhere,
         select: {
-          monto: true,
-          medioPago: true,
-          comprobante: { select: { tipoMoneda: true, tipoCambio: true } },
+          mtoImpVenta: true,
+          tipoMoneda: true,
+          tipoCambio: true,
+          pagos: { select: { monto: true, medioPago: true } },
+          // Una nota de venta ya cobrada que se convierte en boleta/factura
+          // deja sus filas de `Pago` en la nota: no se copian al formal a
+          // propósito, para no contar la plata dos veces en caja. El formal
+          // queda entonces sin pagos y su mezcla real vive en el origen, así
+          // que se lee de ahí en vez de mandar la venta entera a "Otros".
+          comprobanteOrigen: {
+            select: { pagos: { select: { monto: true, medioPago: true } } },
+          },
         },
       });
       let sumMixtoDistribuido = 0;
-      for (const p of pagosMixtos) {
-        const mp = (p.medioPago || '').toString().toUpperCase();
-        const monto = montoEnPen(
-          p.monto,
-          p.comprobante?.tipoMoneda,
-          p.comprobante?.tipoCambio,
+      for (const c of mixtos) {
+        const pagos = [
+          ...((c as any).pagos ?? []),
+          ...((c as any).comprobanteOrigen?.pagos ?? []),
+        ];
+        const total = montoEnPen(
+          (c as any).mtoImpVenta,
+          (c as any).tipoMoneda,
+          (c as any).tipoCambio,
         );
-        if (mp === 'TARJETA') sumTarjeta += monto;
-        else if (mp === 'TRANSFERENCIA') sumTransferencia += monto;
-        else if (mp === 'YAPE' || mp === 'PLIN') sumRedes += monto;
-        else if (mp === 'EFECTIVO') sumEfectivo += monto;
-        else sumOtros += monto;
-        sumMixtoDistribuido += monto;
+        const bruto = pagos.reduce(
+          (acc: number, p: any) =>
+            acc +
+            montoEnPen(p.monto, (c as any).tipoMoneda, (c as any).tipoCambio),
+          0,
+        );
+        // Si entre el formal y su origen quedaron pagos por más que la venta
+        // (dato duplicado), se reparte a prorrata: el gráfico nunca puede
+        // sumar más que las Ventas Totales de la cabecera.
+        const factor = bruto > total && bruto > 0 ? total / bruto : 1;
+        let repartido = 0;
+        for (const p of pagos) {
+          const mp = (p.medioPago || '').toString().toUpperCase();
+          const monto =
+            montoEnPen(p.monto, (c as any).tipoMoneda, (c as any).tipoCambio) *
+            factor;
+          if (mp === 'TARJETA') sumTarjeta += monto;
+          else if (mp === 'TRANSFERENCIA') sumTransferencia += monto;
+          else if (mp === 'YAPE' || mp === 'PLIN') sumRedes += monto;
+          else if (mp === 'EFECTIVO') sumEfectivo += monto;
+          else sumOtros += monto;
+          repartido += monto;
+        }
+        sumMixtoDistribuido += repartido;
       }
-      // Si algún comprobante MIXTO no tiene sus filas de Pago (dato viejo o
-      // incompleto), no perder ese monto: cae a "Otros" en vez de desaparecer.
+      // Lo que ni el formal ni su origen explican no se inventa ni se pierde:
+      // queda en "Otros". Cubre la venta a crédito a medio cobrar, la nota
+      // vieja marcada como pagada sin filas de Pago, y el comprobante que el
+      // groupBy contó pero esta consulta no trajo.
       const faltante = sumMixtoLump - sumMixtoDistribuido;
       if (faltante > 0.01) sumOtros += faltante;
     }
@@ -481,21 +542,67 @@ export class DashboardService {
         estadoEnvioSunat: { not: 'ANULADO' as any },
         ...this.filtroExcluirConvertidos,
       },
-      select: { id: true },
+      select: { id: true, tipoDoc: true },
     });
     const compIds = comprobantes.map((c) => c.id);
     if (compIds.length === 0) return [];
+    const tipoDocPorComprobante = new Map(
+      comprobantes.map((c) => [c.id, String(c.tipoDoc ?? '')]),
+    );
+    const criterio = normalizarCriterio(
+      (
+        await this.prisma.empresa.findUnique({
+          where: { id: empresaId },
+          select: { criterioIgvVentas: true },
+        })
+      )?.criterioIgvVentas,
+    );
+
     // NOTA: el ranking y los importes (mtoValorVenta) se suman en moneda nativa
     // del detalle. Para comprobantes en USD (edge case) el monto no se convierte
     // a soles aquí porque la moneda vive en el comprobante padre, no en el
     // detalle. El ranking por unidades (cantidad) no se ve afectado.
-    const detalles = await this.prisma.detalleComprobante.groupBy({
-      by: ['productoId'],
+    //
+    // Se agrupa en memoria y no con groupBy porque descontar el IGV depende del
+    // TIPO DE DOCUMENTO de cada línea, y el groupBy por producto lo pierde. El
+    // conjunto ya viene acotado por los comprobantes del rango.
+    const lineas = await this.prisma.detalleComprobante.findMany({
       where: { comprobanteId: { in: compIds } },
-      _sum: { cantidad: true, mtoValorVenta: true },
-      orderBy: { _sum: { mtoValorVenta: 'desc' } },
-      take: limit,
+      select: {
+        productoId: true,
+        comprobanteId: true,
+        cantidad: true,
+        mtoValorVenta: true,
+        mtoPrecioUnitario: true,
+        tipAfeIgv: true,
+      },
     });
+    const acumulado = new Map<
+      number | null,
+      { cantidad: number; total: number }
+    >();
+    for (const l of lineas) {
+      const previo = acumulado.get(l.productoId) ?? { cantidad: 0, total: 0 };
+      previo.cantidad += Number(l.cantidad ?? 0);
+      previo.total += ingresoLineaSinIgv(
+        tipoDocPorComprobante.get(l.comprobanteId) ?? '',
+        {
+          cantidad: Number(l.cantidad ?? 0),
+          mtoPrecioUnitario: Number(l.mtoPrecioUnitario ?? 0),
+          mtoValorVenta: l.mtoValorVenta as any,
+          tipAfeIgv: l.tipAfeIgv as any,
+        },
+        criterio,
+      );
+      acumulado.set(l.productoId, previo);
+    }
+    const detalles = [...acumulado.entries()]
+      .map(([productoId, v]) => ({
+        productoId,
+        _sum: { cantidad: v.cantidad, mtoValorVenta: v.total },
+      }))
+      .sort((a, b) => b._sum.mtoValorVenta - a._sum.mtoValorVenta)
+      .slice(0, limit);
     if (detalles.length === 0) return [];
     const productoIds = detalles
       .map((d) => d.productoId)
@@ -856,17 +963,33 @@ export class DashboardService {
         : ((pedidosCurr - pedidosPrev) / pedidosPrev) * 100;
 
     // Utilidad bruta de las ventas (KPI "Utilidad" del dashboard).
+    // Un solo lugar del que sale el criterio, para que el KPI y el ranking de
+    // productos no puedan quedar con criterios distintos.
+    const criterioIgv = normalizarCriterio(
+      (
+        await this.prisma.empresa.findUnique({
+          where: { id: empresaId },
+          select: { criterioIgvVentas: true },
+        })
+      )?.criterioIgvVentas,
+    );
     const [utilidadCurr, utilidadPrev] = await Promise.all([
-      this.utilidadBrutaPen({
-        ...baseComprobanteWhere,
-        fechaEmision: currentRange,
-        tipoDoc: { notIn: ['07'] },
-      }),
-      this.utilidadBrutaPen({
-        ...baseComprobanteWhere,
-        fechaEmision: prevRange,
-        tipoDoc: { notIn: ['07'] },
-      }),
+      this.utilidadBrutaPen(
+        {
+          ...baseComprobanteWhere,
+          fechaEmision: currentRange,
+          tipoDoc: { notIn: ['07'] },
+        },
+        criterioIgv,
+      ),
+      this.utilidadBrutaPen(
+        {
+          ...baseComprobanteWhere,
+          fechaEmision: prevRange,
+          tipoDoc: { notIn: ['07'] },
+        },
+        criterioIgv,
+      ),
     ]);
     const utilidadTrend =
       utilidadPrev.utilidad === 0
