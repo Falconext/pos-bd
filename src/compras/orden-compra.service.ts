@@ -7,6 +7,13 @@ import { PrismaService } from '../prisma/prisma.service';
 import { parseFechaSoloDia } from '../common/utils/fecha';
 import { ComprasService } from './compras.service';
 import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
+import {
+  avisoDeLlegada,
+  pedidosQueEsperan,
+  productosRecibidos,
+  type PedidoListo,
+} from './pedidos-por-entregar';
 import {
   ActualizarOrdenCompraDto,
   CrearOrdenCompraDto,
@@ -27,6 +34,7 @@ export class OrdenCompraService {
     private readonly prisma: PrismaService,
     private readonly comprasService: ComprasService,
     private readonly pdfGenerator: PdfGeneratorService,
+    private readonly notificaciones: NotificacionesService,
   ) {}
 
   static formatNumero(numero: number): string {
@@ -368,7 +376,80 @@ export class OrdenCompraService {
       data: { estado: 'RECIBIDA', compraId: (compra as any).id },
     });
 
-    return { ordenId: id, compra };
+    // Cierre del flujo: avisar qué pedidos quedaron listos para entregar.
+    // Sin esto, la Nota de Pedido de hace tres semanas se queda esperando
+    // hasta que el cliente llama a reclamar. No bloquea la recepción: si el
+    // aviso falla, la mercadería igual entró.
+    const pedidosListos = await this.pedidosListosTrasRecibir(
+      empresaId,
+      orden.detalles,
+    );
+    const aviso = avisoDeLlegada(
+      id,
+      OrdenCompraService.formatNumero(orden.numero),
+      pedidosListos,
+    );
+    if (aviso) {
+      try {
+        await this.notificaciones.notificarAdminsEmpresa({
+          empresaId,
+          tipo: 'INFO',
+          titulo: aviso.titulo,
+          mensaje: aviso.mensaje,
+          metaData: aviso.metaData,
+        });
+      } catch (error) {
+        console.warn('[orden-compra] No se pudo avisar los pedidos listos:', (error as any)?.message);
+      }
+    }
+
+    return { ordenId: id, compra, pedidosListos };
+  }
+
+
+  /**
+   * Notas de Pedido sin entregar que incluyen algo de lo que acaba de llegar.
+   *
+   * Mismo criterio que el "comprometido" del inventario: se excluyen las
+   * anuladas, las ya convertidas a comprobante formal y las que se emitieron
+   * descontando stock (esas ya salieron del almacén).
+   */
+  private async pedidosListosTrasRecibir(
+    empresaId: number,
+    lineas: { productoId: number | null }[],
+  ): Promise<PedidoListo[]> {
+    const productoIds = productosRecibidos(lineas as any);
+    if (productoIds.length === 0) return [];
+    const pedidos = await this.prisma.comprobante.findMany({
+      where: {
+        empresaId,
+        tipoDoc: 'NP',
+        estadoEnvioSunat: { not: 'ANULADO' as any },
+        comprobantesDerivados: { none: {} },
+        movimientosKardex: { none: { tipoMovimiento: 'SALIDA' as any } },
+        detalles: { some: { productoId: { in: productoIds } } },
+      },
+      select: {
+        id: true,
+        serie: true,
+        correlativo: true,
+        cliente: { select: { nombre: true } },
+        detalles: {
+          select: { productoId: true, descripcion: true, cantidad: true },
+        },
+      },
+      orderBy: { id: 'asc' },
+    });
+    return pedidosQueEsperan(
+      lineas as any,
+      pedidos.map((p: any) => ({
+        id: p.id,
+        serie: p.serie,
+        correlativo: p.correlativo,
+        cliente: p.cliente?.nombre ?? null,
+        detalles: p.detalles,
+      })),
+    );
   }
 
   /** PDF imprimible de la orden para enviar al proveedor (formato A4 con logo). */

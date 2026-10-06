@@ -34,6 +34,14 @@ import * as XLSX from 'xlsx';
 import axios from 'axios';
 import { estadosAListar } from './vendibilidad';
 import { etiquetaDeMotivo } from './motivo-ajuste-stock';
+import {
+  ESTADO_EN_CAMINO,
+  agruparEnCamino,
+  agregarDeVariantes,
+  cantidadEnCamino,
+  saldoPrometible,
+  type EnCaminoDeProducto,
+} from '../compras/stock-en-camino';
 
 @Injectable()
 export class ProductoService {
@@ -883,6 +891,100 @@ export class ProductoService {
     }));
   }
 
+
+  /**
+   * Lo pedido al proveedor y todavía no recibido, por producto.
+   *
+   * Pedido de KREZKA: la vendedora necesita saber si la talla que no está en
+   * el almacén viene en camino. Sale de las órdenes de compra EMITIDAS (las
+   * RECIBIDAS ya movieron el kardex, las BORRADOR no se mandaron).
+   *
+   * Si se consulta por sede, entran las órdenes de esa sede y las que no
+   * tienen sede asignada: esas últimas llegan al negocio, no a un local.
+   */
+  private async cargarEnCamino(
+    empresaId: number,
+    productoIds: number[],
+    sedeId?: number,
+  ): Promise<Map<number, EnCaminoDeProducto>> {
+    if (!Array.isArray(productoIds) || productoIds.length === 0) {
+      return new Map<number, EnCaminoDeProducto>();
+    }
+    const detalles = await this.prisma.detalleOrdenCompra.findMany({
+      where: {
+        productoId: { in: productoIds },
+        ordenCompra: {
+          empresaId,
+          estado: ESTADO_EN_CAMINO as any,
+          ...(sedeId ? { OR: [{ sedeId }, { sedeId: null }] } : {}),
+        },
+      },
+      select: {
+        productoId: true,
+        cantidad: true,
+        ordenCompra: {
+          select: {
+            numero: true,
+            fechaEntrega: true,
+            proveedor: { select: { nombre: true } },
+          },
+        },
+      },
+    });
+    return agruparEnCamino(
+      detalles.map((d: any) => ({
+        productoId: d.productoId,
+        cantidad: d.cantidad,
+        fechaEntrega: d.ordenCompra?.fechaEntrega ?? null,
+        proveedor: d.ordenCompra?.proveedor?.nombre ?? null,
+        numero: d.ordenCompra?.numero ?? null,
+      })),
+    );
+  }
+
+
+  /**
+   * Lo ya prometido en Notas de Pedido que todavía no se entregaron.
+   *
+   * La NP es el documento con el que se aparta mercadería: no descuenta stock
+   * y el stock recién baja al convertirla en boleta/factura. Entonces lo que
+   * está en NP sin convertir es compromiso vivo con un cliente.
+   *
+   * Se excluyen: las anuladas, las que ya se convirtieron (su comprobante
+   * formal ya tomó el stock) y las que se emitieron marcando "descontar del
+   * stock ahora" —esas ya salieron del almacén y contarlas otra vez sería
+   * restar dos veces la misma unidad—.
+   */
+  private async cargarComprometidoEnPedidos(
+    empresaId: number,
+    productoIds: number[],
+    sedeId?: number,
+  ): Promise<Map<number, number>> {
+    if (!Array.isArray(productoIds) || productoIds.length === 0) {
+      return new Map<number, number>();
+    }
+    const detalles = await this.prisma.detalleComprobante.groupBy({
+      by: ['productoId'],
+      where: {
+        productoId: { in: productoIds },
+        comprobante: {
+          empresaId,
+          tipoDoc: 'NP',
+          estadoEnvioSunat: { not: 'ANULADO' as any },
+          comprobantesDerivados: { none: {} },
+          movimientosKardex: { none: { tipoMovimiento: 'SALIDA' as any } },
+          ...(sedeId ? { sedeId } : {}),
+        },
+      },
+      _sum: { cantidad: true },
+    });
+    return new Map<number, number>(
+      detalles
+        .filter((d) => d.productoId != null)
+        .map((d) => [Number(d.productoId), Number(d._sum.cantidad ?? 0)]),
+    );
+  }
+
   async listar(params: {
     empresaId: number;
     sedeId?: number;
@@ -1146,6 +1248,29 @@ export class ProductoService {
     const reservadoPorProducto = new Map<number, number>(
       reservasAgrupadas.map((r) => [r.productoId, r._sum.cantidad ?? 0]),
     );
+    // Lo pedido al proveedor que todavía no llegó (órdenes de compra EMITIDAS).
+    // Las variantes son productos propios: cada talla tiene su propia orden de
+    // compra, así que sus ids también entran en la consulta.
+    const idsConVariantes = Array.from(
+      new Set([
+        ...productoIds,
+        ...productosRaw.flatMap((p: any) =>
+          Array.isArray(p?.variantes) ? p.variantes.map((v: any) => Number(v?.id)) : [],
+        ),
+      ]),
+    ).filter((id) => Number.isFinite(id) && id > 0);
+    const enCaminoPorProducto = await this.cargarEnCamino(
+      empresaId,
+      idsConVariantes,
+      params.sedeId,
+    );
+    // Lo ya prometido en Notas de Pedido sin entregar: evita que dos
+    // vendedores comprometan las mismas unidades que vienen en camino.
+    const comprometidoPorProducto = await this.cargarComprometidoEnPedidos(
+      empresaId,
+      idsConVariantes,
+      params.sedeId,
+    );
 
     // Lista de precios que aplica al usuario/sede (solo en contexto de venta,
     // igual que el override por sede). Una sola query para todo el listado.
@@ -1223,6 +1348,7 @@ export class ProductoService {
           p.precioOferta != null ? Number(p.precioOferta) : null,
         );
         const reservado = reservadoPorProducto.get(p.id) ?? 0;
+        const enCaminoProducto = enCaminoPorProducto.get(p.id) ?? null;
         const cupoProvision = Math.floor(
           (stockTotal * (p.porcentajeProvision ?? 0)) / 100,
         );
@@ -1268,9 +1394,20 @@ export class ProductoService {
                 : null,
             );
 
+            const varianteEnCamino = enCaminoPorProducto.get(variante.id) ?? null;
             return {
               ...variante,
               stock: varianteStock,
+              // Cada talla sabe lo suyo: es lo que la vendedora necesita ver.
+              enCamino: varianteEnCamino?.cantidad ?? 0,
+              enCaminoProximaEntrega: varianteEnCamino?.proximaEntrega ?? null,
+              comprometido: comprometidoPorProducto.get(variante.id) ?? 0,
+              saldoPrometible: saldoPrometible({
+                stock: varianteStock,
+                reservado: 0,
+                enCamino: varianteEnCamino?.cantidad ?? 0,
+                comprometido: comprometidoPorProducto.get(variante.id) ?? 0,
+              }),
               precioUnitario: variantePrecioUnitario,
               precioOferta: variantePrecioOferta,
               sedeStockConfig: varianteStockSede
@@ -1303,6 +1440,22 @@ export class ProductoService {
           stockBase: stockTotal,
           stockReservado: reservado,
           stockDisponibleVenta,
+          // Pedido al proveedor y aún no recibido (órdenes de compra EMITIDAS).
+          // No es stock: no se vende contra esto ni suma al inventario.
+          // Igual que el stock, el padre agrega lo de sus variantes: un modelo
+          // con tallas pedidas se tiene que ver desde la lista, sin abrir el
+          // desglose una por una.
+          ...agregarDeVariantes(
+            {
+              enCamino: enCaminoProducto?.cantidad ?? 0,
+              enCaminoProximaEntrega: enCaminoProducto?.proximaEntrega ?? null,
+              comprometido: comprometidoPorProducto.get(p.id) ?? 0,
+            },
+            variantes as any,
+            stockTotal,
+            reservado,
+          ),
+          enCaminoOrdenes: enCaminoProducto?.ordenes ?? [],
           stockMinimo: stockMinimo,
           stockMaximo: stockSede?.stockMaximo ?? (p as any).stockMaximo ?? null,
           // Disponible en la sede consultada (sin sede = catálogo completo).
@@ -1590,6 +1743,29 @@ export class ProductoService {
     const reservadoPorProducto = new Map<number, number>(
       reservasAgrupadas.map((r) => [r.productoId, r._sum.cantidad ?? 0]),
     );
+    // Lo pedido al proveedor que todavía no llegó (órdenes de compra EMITIDAS).
+    // Las variantes son productos propios: cada talla tiene su propia orden de
+    // compra, así que sus ids también entran en la consulta.
+    const idsConVariantes = Array.from(
+      new Set([
+        ...productoIds,
+        ...productosRaw.flatMap((p: any) =>
+          Array.isArray(p?.variantes) ? p.variantes.map((v: any) => Number(v?.id)) : [],
+        ),
+      ]),
+    ).filter((id) => Number.isFinite(id) && id > 0);
+    const enCaminoPorProducto = await this.cargarEnCamino(
+      empresaId,
+      idsConVariantes,
+      params.sedeId,
+    );
+    // Lo ya prometido en Notas de Pedido sin entregar: evita que dos
+    // vendedores comprometan las mismas unidades que vienen en camino.
+    const comprometidoPorProducto = await this.cargarComprometidoEnPedidos(
+      empresaId,
+      idsConVariantes,
+      params.sedeId,
+    );
 
     // Lista de precio que aplica al usuario/sede en el catálogo de farmacia
     // (siempre contexto de venta).
@@ -1651,6 +1827,7 @@ export class ProductoService {
         null,
       );
       const reservado = reservadoPorProducto.get(p.id) ?? 0;
+      const enCaminoProducto = enCaminoPorProducto.get(p.id) ?? null;
       const cupoProvision = Math.floor(
         (stockBase * (p.porcentajeProvision ?? 0)) / 100,
       );
@@ -1688,6 +1865,19 @@ export class ProductoService {
         stock: stockDisponibleVenta,
         stockDisponibleVenta,
         stockReservado: reservado,
+        // Pedido al proveedor y aún no recibido. No es stock: no se vende
+        // contra esto ni entra al inventario valorizado. Es para que el
+        // vendedor sepa qué contestar cuando la talla no está en el almacén.
+        enCamino: enCaminoProducto?.cantidad ?? 0,
+        enCaminoProximaEntrega: enCaminoProducto?.proximaEntrega ?? null,
+        enCaminoOrdenes: enCaminoProducto?.ordenes ?? [],
+        comprometido: comprometidoPorProducto.get(p.id) ?? 0,
+        saldoPrometible: saldoPrometible({
+          stock: stockDisponibleVenta,
+          reservado: 0,
+          enCamino: enCaminoProducto?.cantidad ?? 0,
+          comprometido: comprometidoPorProducto.get(p.id) ?? 0,
+        }),
         tieneLotesVencidos,
         stockVencido,
         loteFefoCostoUnitario: loteFefo?.costoUnitario
