@@ -27,7 +27,7 @@ describe('Panel de Ventas', () => {
 
     it('la cajera no puede espiar a otra aunque mande el filtro', async () => {
         const { ctrl, panelVentas } = montar();
-        await (ctrl as any).panel(cajera, '2026-10-05', undefined, '7', '99');
+        await (ctrl as any).panel(cajera, '2026-10-05', undefined, undefined, '7', '99');
         expect(panelVentas).toHaveBeenCalledWith(expect.objectContaining({ usuarioId: 11, sedeId: 5 }));
     });
 
@@ -41,7 +41,7 @@ describe('Panel de Ventas', () => {
 
     it('el supervisor puede filtrar por una vendedora y una sede', async () => {
         const { ctrl, panelVentas } = montar();
-        await (ctrl as any).panel(supervisor, '2026-10-05', undefined, '7', '11');
+        await (ctrl as any).panel(supervisor, '2026-10-05', undefined, undefined, '7', '11');
         expect(panelVentas).toHaveBeenCalledWith(expect.objectContaining({ usuarioId: 11, sedeId: 7 }));
     });
 

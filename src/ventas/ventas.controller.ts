@@ -20,6 +20,7 @@ export class VentasController {
     @User() user: any,
     @Query('fecha') fecha: string,
     @Query('fechaFin') fechaFin?: string,
+    @Query('fechaEnvio') fechaEnvio?: string,
     @Query('sedeId') sedeId?: string,
     @Query('usuarioId') usuarioId?: string,
   ) {
@@ -34,6 +35,8 @@ export class VentasController {
       fecha: fechaFinal,
       // Rango opcional: si no llega fechaFin, el panel sigue siendo de un solo día
       fechaFin: fechaFin || undefined,
+      // "Sale el": lista por día de entrega en vez de por fecha de emisión.
+      fechaEnvio: fechaEnvio || undefined,
       sedeId: sedeIdParaListado(user, sedeId),
       usuarioId: usuarioIdParaListado(user, usuarioId),
     });
