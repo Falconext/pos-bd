@@ -39,6 +39,11 @@ import {
 } from '../common/utils/multer.config';
 import { numeroALetras } from './utils/numero-a-letras';
 import { verificarPuedeAnularComprobante } from './puede-anular-comprobante.util';
+import {
+  puedeLeerVentasDeTodos,
+  sedeIdParaListado,
+  usuarioIdParaListado,
+} from '../common/utils/alcance-lectura';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('comprobante')
@@ -105,17 +110,17 @@ export class ComprobanteController {
         'El parámetro tipoComprobante debe ser FORMAL, INFORMAL, COTIZACION o TODOS',
       );
     }
-    const isAdmin =
-      user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
-    const sedeId = isAdmin ? (query.sedeId ?? null) : user.sedeId;
+    // El supervisor (convertirEnSupervisor) lee las ventas de todos y de todas
+    // las sedes, igual que ya lo trataba el dashboard. Es solo lectura: no le
+    // habilita anular ni editar nada.
+    const sedeId = sedeIdParaListado(user, query.sedeId);
     // Las COTIZACIONES son visibles para todos los vendedores de la empresa (no
     // se restringen a las propias). El resto (FORMAL/INFORMAL) sí se limita al
-    // usuario cuando no es admin.
-    const usuarioId = isAdmin
-      ? query.usuarioId
-      : query.tipoComprobante === 'COTIZACION'
+    // usuario cuando no puede leer las de todos.
+    const usuarioId =
+      query.tipoComprobante === 'COTIZACION' && !puedeLeerVentasDeTodos(user)
         ? undefined
-        : user.id;
+        : usuarioIdParaListado(user, query.usuarioId);
 
     const resultado = await this.service.listar({
       empresaId: user.empresaId,
@@ -150,12 +155,13 @@ export class ComprobanteController {
     @Query('estadoPago') estadoPago?: string,
     @Query('sedeId') sedeId?: string,
   ) {
-    const isAdmin =
-      user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
+    // El supervisor (convertirEnSupervisor) lee las ventas de todos y de todas
+    // las sedes, igual que ya lo trataba el dashboard. Es solo lectura: no le
+    // habilita anular ni editar nada.
     return this.service.cuentasPorCobrar({
       empresaId: user.empresaId,
-      sedeId: isAdmin ? (sedeId ? Number(sedeId) : null) : user.sedeId,
-      usuarioId: isAdmin ? undefined : user.id,
+      sedeId: sedeIdParaListado(user, sedeId) ?? null,
+      usuarioId: usuarioIdParaListado(user, undefined),
       search,
       fechaInicio,
       fechaFin,
@@ -267,8 +273,8 @@ export class ComprobanteController {
     }
     const isAdmin =
       user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
-    const sedeId = isAdmin ? (query.sedeId ?? null) : user.sedeId;
-    const usuarioId = isAdmin ? query.usuarioId : user.id;
+    const sedeId = sedeIdParaListado(user, query.sedeId) ?? null;
+    const usuarioId = usuarioIdParaListado(user, query.usuarioId);
     const formato =
       (query as any).formato === 'pdf' ? 'pdf' : ('zip' as 'zip' | 'pdf');
 
@@ -314,8 +320,8 @@ export class ComprobanteController {
     }
     const isAdmin =
       user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
-    const sedeId = isAdmin ? (query.sedeId ?? null) : user.sedeId;
-    const usuarioId = isAdmin ? query.usuarioId : user.id;
+    const sedeId = sedeIdParaListado(user, query.sedeId) ?? null;
+    const usuarioId = usuarioIdParaListado(user, query.usuarioId);
     const formato =
       (query as any).formato === 'pdf' ? ('pdf' as const) : ('excel' as const);
 
