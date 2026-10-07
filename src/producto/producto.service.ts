@@ -2063,7 +2063,21 @@ export class ProductoService {
     >();
     for (const raw of codigos || []) {
       const esObjeto = typeof raw === 'object' && raw !== null;
-      const codigo = ((esObjeto ? raw.codigo : raw) || '').trim().toUpperCase();
+      const codigoBarra = ((esObjeto ? raw.codigo : raw) || '')
+        .trim()
+        .toUpperCase();
+      const codigoInterno =
+        (esObjeto
+          ? String(raw.codigoInterno || '')
+              .trim()
+              .toUpperCase()
+          : '') || null;
+      // Una presentación vale con código de barras O con código interno: el
+      // interno se busca/escanea en el POS igual que el de barras (ej. METRO,
+      // ROLLO). Como el modelo exige `codigo`, si no hay barras se guarda el
+      // interno como código. Antes se descartaba la fila sin barras en silencio
+      // y se perdían las presentaciones (reportado por TIENDA MINERA).
+      const codigo = codigoBarra || codigoInterno || '';
       if (!codigo || codigo === principal) continue;
       const unidades = Math.max(
         1,
@@ -2074,12 +2088,6 @@ export class ProductoService {
       const precioPaquete =
         Number.isFinite(precioRaw) && precioRaw > 0 ? precioRaw : null;
       const alias = (esObjeto ? String(raw.alias || '').trim() : '') || null;
-      const codigoInterno =
-        (esObjeto
-          ? String(raw.codigoInterno || '')
-              .trim()
-              .toUpperCase()
-          : '') || null;
       const imagenUrl =
         (esObjeto ? String(raw.imagenUrl || '').trim() : '') || null;
       vistos.set(codigo, {

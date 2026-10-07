@@ -87,6 +87,35 @@ describe('ProductoService — códigos de barra múltiples', () => {
       ]);
     });
 
+    it('BUG TIENDA MINERA: una presentación con SOLO código interno (sin barras) se conserva', () => {
+        // El vendedor crea METRO/ROLLO con código interno pero sin código de
+        // barras. Antes se descartaba la fila entera en silencio.
+        const r = norm([
+            { codigo: '', codigoInterno: 'METRO-ALL', unidadesPorPaquete: 100, precioPaquete: 15 },
+            { codigo: '', codigoInterno: 'ROLLO-ALL', unidadesPorPaquete: 2500, precioPaquete: 375 },
+        ]);
+        expect(r).toHaveLength(2);
+        expect(r.map((x: any) => x.codigoInterno)).toEqual(['METRO-ALL', 'ROLLO-ALL']);
+    });
+
+    it('sin barras, el código interno pasa a ser el código (el modelo lo exige)', () => {
+        const r = norm([{ codigo: '', codigoInterno: 'metro-all', unidadesPorPaquete: 100 }]);
+        expect(r[0].codigo).toBe('METRO-ALL');
+        expect(r[0].codigoInterno).toBe('METRO-ALL');
+    });
+
+    it('con barras Y código interno, el código de barras manda', () => {
+        const r = norm([{ codigo: 'ean-metro', codigoInterno: 'METRO-ALL', unidadesPorPaquete: 100 }]);
+        expect(r[0].codigo).toBe('EAN-METRO');
+        expect(r[0].codigoInterno).toBe('METRO-ALL');
+    });
+
+    it('una fila sin barras Y sin código interno sí se descarta', () => {
+        const r = norm([{ codigo: '', codigoInterno: '', unidadesPorPaquete: 5 }, { codigo: 'EAN-A' }]);
+        expect(r).toHaveLength(1);
+        expect(r[0].codigo).toBe('EAN-A');
+    });
+
     it('unidades por paquete nunca baja de 1 ni queda fraccionada', () => {
       const r = norm([
         { codigo: 'A', unidadesPorPaquete: 0 },
