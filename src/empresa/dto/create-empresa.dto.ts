@@ -146,7 +146,9 @@ export class CreateEmpresaDto {
 
   @IsOptional()
   @IsString()
-  @IsIn(['facturacion', 'hotel', 'restaurante', 'logistica'])
+  // `ventas` = solo IA de Ventas; `full` = facturación + IA de Ventas.
+  // `empresa.service` ya los deriva a productoContratado SOLO_VENTAS/AMBOS.
+  @IsIn(['facturacion', 'hotel', 'restaurante', 'logistica', 'ventas', 'full'])
   producto?: string;
 
   @IsOptional()
