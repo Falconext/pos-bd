@@ -12,6 +12,22 @@ import {
   getPlanFeatureKeys,
 } from './plan-feature-catalog';
 
+/**
+ * Producto de destino de un plan. `ventas` = solo la IA de Ventas; `full` =
+ * facturación completa + IA de Ventas. Ambos se arman con el catálogo de
+ * módulos de `facturacion` (ver `catalogoModulosDe`).
+ */
+type ProductoPlan =
+  | 'facturacion'
+  | 'hotel'
+  | 'restaurante'
+  | 'logistica'
+  | 'ventas'
+  | 'full';
+
+/** Catálogo de módulos real contra el que se valida la asignación. */
+type CatalogoModulos = 'facturacion' | 'hotel' | 'restaurante' | 'logistica';
+
 const PLAN_INCLUDE = {
   _count: { select: { empresas: true } },
   modulosAsignados: {
@@ -145,16 +161,28 @@ export class PlanService {
     };
   }
 
-  private normalizeProducto(
-    value?: string | null,
-  ): 'facturacion' | 'hotel' | 'restaurante' | 'logistica' {
+  private normalizeProducto(value?: string | null): ProductoPlan {
     const v = String(value ?? '')
       .trim()
       .toLowerCase();
     if (v === 'hotel') return 'hotel';
     if (v === 'restaurante') return 'restaurante';
     if (v === 'logistica') return 'logistica';
+    if (v === 'ventas') return 'ventas';
+    if (v === 'full') return 'full';
     return 'facturacion';
+  }
+
+  /**
+   * Catálogo de módulos del que se arma un plan. Los productos `ventas` (IA de
+   * Ventas sola) y `full` (facturación + IA de Ventas) no tienen catálogo
+   * propio: se arman con los módulos de `facturacion`, donde vive también el
+   * módulo `leads`.
+   */
+  private catalogoModulosDe(producto: ProductoPlan): CatalogoModulos {
+    return producto === 'ventas' || producto === 'full'
+      ? 'facturacion'
+      : producto;
   }
 
   private normalizePlataforma(value?: string | null): 'falconext' | 'krezka' {
@@ -166,10 +194,11 @@ export class PlanService {
   }
 
   private async validateProductAssignments(
-    producto: 'facturacion' | 'hotel' | 'restaurante' | 'logistica',
+    producto: ProductoPlan,
     moduloIds?: number[],
     subModuloIds?: number[],
   ) {
+    const catalogo = this.catalogoModulosDe(producto);
     const moduloIdsUnicos = moduloIds ? Array.from(new Set(moduloIds)) : [];
     const subModuloIdsUnicos = subModuloIds
       ? Array.from(new Set(subModuloIds))
@@ -184,7 +213,7 @@ export class PlanService {
         throw new BadRequestException('Uno o más módulos no existen');
       }
       const invalid = modulos.find(
-        (modulo) => this.normalizeProducto(modulo.producto) !== producto,
+        (modulo) => this.normalizeProducto(modulo.producto) !== catalogo,
       );
       if (invalid) {
         throw new BadRequestException(
@@ -208,7 +237,7 @@ export class PlanService {
 
       const invalid = subModulos.find(
         (subModulo) =>
-          this.normalizeProducto(subModulo.modulo.producto) !== producto,
+          this.normalizeProducto(subModulo.modulo.producto) !== catalogo,
       );
       if (invalid) {
         throw new BadRequestException(
