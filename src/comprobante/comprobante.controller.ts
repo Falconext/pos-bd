@@ -303,6 +303,33 @@ export class ComprobanteController {
    * Exporta un resumen (listado) de comprobantes filtrados en Excel o PDF
    * imprimible — para cierres de mes de notas de venta / panel de ventas.
    */
+  @Get('exportar-por-producto')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
+  async exportarPorProducto(
+    @User() user: any,
+    @Query() query: ListComprobanteDto,
+    @Res() res: Response,
+  ) {
+    const tipoComprobante = (query.tipoComprobante ?? 'TODOS') as any;
+    // Mismo alcance de lectura que el resto de listados: el supervisor ve todo.
+    const sedeId = sedeIdParaListado(user, query.sedeId) ?? null;
+    const usuarioId = usuarioIdParaListado(user, query.usuarioId);
+    const file = await this.service.exportarVentasPorProducto({
+      empresaId: user.empresaId,
+      sedeId,
+      usuarioId,
+      tipoComprobante,
+      fechaInicio: (query as any).fechaInicio,
+      fechaFin: (query as any).fechaFin,
+    });
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${file.filename}"`,
+    );
+    res.send(file.buffer);
+  }
+
   @Get('exportar-resumen')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
   async exportarResumen(

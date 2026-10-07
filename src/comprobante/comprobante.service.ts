@@ -63,6 +63,10 @@ import * as XLSX from 'xlsx';
 // dentro de una sola celda (wrapText).
 import * as XLSXStyle from 'xlsx-js-style';
 import { XMLParser } from 'fast-xml-parser';
+import {
+  agregarVentasPorProducto,
+  totalesVentasPorProducto,
+} from './ventas-por-producto';
 
 @Injectable()
 export class ComprobanteService {
@@ -7085,6 +7089,86 @@ export class ComprobanteService {
    * anulados). El PDF lleva una fila por comprobante; el Excel, una fila por
    * producto con los datos y totales de la venta repetidos en cada una.
    */
+
+  /**
+   * Excel agregado POR PRODUCTO: Producto, Cantidad, Valor (sin IGV), Valor con
+   * IGV, para el rango y filtros del Panel de Ventas. Reutiliza el mismo filtro
+   * que el resumen por venta (excluye anulados), pero suma por producto en vez
+   * de listar cada venta. Pedido de DENISS LUBRINORT.
+   */
+  async exportarVentasPorProducto(params: {
+    empresaId: number;
+    sedeId?: number | null;
+    usuarioId?: number | null;
+    tipoComprobante: 'FORMAL' | 'INFORMAL' | 'COTIZACION' | 'TODOS';
+    fechaInicio?: string;
+    fechaFin?: string;
+  }): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
+    const where = await this.construirWhereComprobantesMasivo(params);
+    const comprobantes = await this.prisma.comprobante.findMany({
+      where,
+      select: { id: true },
+    });
+    const compIds = comprobantes.map((c) => c.id);
+
+    const lineas = compIds.length
+      ? await this.prisma.detalleComprobante.findMany({
+          where: { comprobanteId: { in: compIds } },
+          select: {
+            productoId: true,
+            descripcion: true,
+            cantidad: true,
+            mtoValorVenta: true,
+            igv: true,
+          },
+        })
+      : [];
+
+    const filas = agregarVentasPorProducto(
+      lineas.map((l) => ({
+        productoId: l.productoId,
+        descripcion: l.descripcion,
+        cantidad: l.cantidad,
+        valorSinIgv: l.mtoValorVenta,
+        igv: l.igv,
+      })),
+    );
+    const totales = totalesVentasPorProducto(filas);
+
+    const aoa: any[][] = [
+      ['Producto', 'Cantidad', 'Valor', 'Valor con IGV'],
+      ...filas.map((f) => [f.producto, f.cantidad, f.valor, f.valorConIgv]),
+      ['TOTAL', totales.cantidad, totales.valor, totales.valorConIgv],
+    ];
+
+    const ws = XLSXStyle.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 55 }, { wch: 12 }, { wch: 14 }, { wch: 16 }];
+    const ultimaFila = aoa.length - 1;
+    for (let r = 0; r < aoa.length; r++) {
+      for (let c = 0; c < 4; c++) {
+        const celda = ws[XLSXStyle.utils.encode_cell({ r, c })];
+        if (!celda) continue;
+        const esCabecera = r === 0;
+        const esTotal = r === ultimaFila;
+        celda.s = {
+          font: { bold: esCabecera || esTotal },
+          alignment: { horizontal: c === 0 ? 'left' : 'right', wrapText: c === 0 },
+          ...(c >= 1 && r > 0 ? { numFmt: c === 1 ? '#,##0' : '#,##0.00' } : {}),
+        };
+      }
+    }
+
+    const wb = XLSXStyle.utils.book_new();
+    XLSXStyle.utils.book_append_sheet(wb, ws, 'Ventas por producto');
+    const buffer = XLSXStyle.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+    return {
+      buffer,
+      filename: 'ventas-por-producto.xlsx',
+      contentType:
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    };
+  }
+
   async exportarResumenComprobantes(params: {
     empresaId: number;
     sedeId?: number | null;
