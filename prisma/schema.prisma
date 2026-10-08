@@ -2434,6 +2434,11 @@ model EnvioDespacho {
   formaPagoCobro           String? // EFECTIVO | YAPE | PLIN | TRANSFERENCIA | POS | NO_COBRAR
   revisarProducto          Boolean        @default(false) // el cliente puede abrir/revisar antes de pagar
   costoEnvio               Float?         @default(0) // Monto cobrado al cliente o absorbido por el negocio
+  /// Lo que el NEGOCIO le paga al courier por este despacho (motorizado, courier
+  /// local, Shalom, Olva). Es el costo real del envío, la contracara de
+  /// `costoEnvio`, que es lo que se le cobra al cliente. Alimenta el reporte de
+  /// gasto de envío por courier.
+  costoCourier             Float?
   pagarFlete               String?        @default("NEGOCIO") // CLIENTE | NEGOCIO
   aplicacionMontoCliente   String?        @default("NEGOCIO") // ITEM_ENVIO | ADELANTO | NEGOCIO
   creadoEn                 DateTime       @default(now())
