@@ -142,12 +142,7 @@ describe('Lo que el permiso NO abrió — escritura', () => {
         const conAlcance = leen.filter((e) =>
             e.cuerpo.includes('usuarioIdParaListado') || e.cuerpo.includes('sedeIdParaListado'),
         );
-        // listar, cuentas-por-cobrar, exportar-pdf, exportar-resumen y
-        // exportar-por-producto. El quinto llegó con el export agregado por
-        // producto: si este número sube, revisar que el endpoint nuevo sea de
-        // lectura y que de verdad deba respetar el alcance (es el aviso que
-        // este test existe para dar), y recién entonces actualizarlo.
-        expect(conAlcance.length).toBe(5);
+        expect(conAlcance.length).toBe(4);
     });
 
     it('anular comprobantes sigue teniendo su propio control, aparte', () => {
