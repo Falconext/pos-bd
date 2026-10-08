@@ -175,6 +175,10 @@ model Empresa {
   whatsappApiToken          String?
   whatsappPhoneNumberId     String?
   whatsappBusinessId        String?
+  // PIN de verificación en dos pasos del número en Cloud API. Se fija al
+  // registrarlo (`POST /{phoneNumberId}/register`) y Meta lo vuelve a pedir
+  // para re-registrar el mismo número, así que hay que conservarlo.
+  whatsappPin               String?
   whatsappActivo            Boolean            @default(true)
   // Rastreo automático Shalom (cron 30 min): opt-in por empresa. Con `false`
   // (default) el cron NO actualiza estados ni envía WhatsApp a los clientes de

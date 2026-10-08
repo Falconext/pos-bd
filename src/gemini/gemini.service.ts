@@ -224,12 +224,30 @@ Responde SOLO con el array JSON, nada más.`;
     const model = this.genAI.getGenerativeModel({
       model: 'gemini-embedding-001',
     });
-    // `outputDimensionality` no está tipado en el SDK 0.21 → cast.
-    const res: any = await (model as any).embedContent({
-      content: { role: 'user', parts: [{ text: text.slice(0, 8000) }] },
-      outputDimensionality: 768,
-    });
-    return res.embedding.values as number[];
+    // Reintentos ante errores transitorios (429 rate-limit / 503 alta demanda).
+    // Sin esto, un solo rechazo de cuota tumba el documento entero que se está
+    // indexando: el RAG lo marca ERROR y hay que recargarlo a mano.
+    let lastErr: any;
+    for (let intento = 1; intento <= 4; intento++) {
+      try {
+        // `outputDimensionality` no está tipado en el SDK 0.21 → cast.
+        const res: any = await (model as any).embedContent({
+          content: { role: 'user', parts: [{ text: text.slice(0, 8000) }] },
+          outputDimensionality: 768,
+        });
+        return res.embedding.values as number[];
+      } catch (e: any) {
+        lastErr = e;
+        const status = e?.status ?? 0;
+        if (status !== 429 && status !== 503 && status !== 500) throw e;
+        this.logger.warn(
+          `Embedding Gemini ${status} (intento ${intento}/4); reintentando…`,
+        );
+        // Backoff creciente: el 429 de embeddings es por cuota/minuto.
+        await new Promise((r) => setTimeout(r, 2000 * intento));
+      }
+    }
+    throw lastErr;
   }
 
   /**
