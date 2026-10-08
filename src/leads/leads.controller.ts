@@ -96,6 +96,19 @@ export class LeadsController {
     return this.service.obtenerConversacion(user.empresaId, id);
   }
 
+  /**
+   * Responder a mano en la conversación, desde el WhatsApp de la empresa.
+   * Tomar el chat pausa la IA automáticamente.
+   */
+  @Post('conversaciones/:id/mensaje')
+  enviarMensajeManual(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { texto: string },
+  ) {
+    return this.service.enviarMensajeManual(user.empresaId, id, body?.texto);
+  }
+
   @Post('prospectos/:id/convertir')
   convertirACliente(
     @User() user: any,

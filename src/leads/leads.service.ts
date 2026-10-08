@@ -7,6 +7,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EstadoLeadProspecto, TipoLeadDocumento } from '@prisma/client';
 import { RagVentasService } from './leads-rag.service';
 import { ClienteService } from '../cliente/cliente.service';
+import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { LIMITE_TEXTO_WHATSAPP } from './leads.constants';
 
 /**
  * Módulo IA de Ventas / Filtro de Leads (portado de salesfilter-ai).
@@ -19,6 +21,7 @@ export class LeadsService {
     private readonly prisma: PrismaService,
     private readonly rag: RagVentasService,
     private readonly clientes: ClienteService,
+    private readonly whatsapp: WhatsAppService,
   ) {}
 
   /**
@@ -325,5 +328,72 @@ export class LeadsService {
       where: { id: prospectoId },
       data: { botActivo: activo },
     });
+  }
+
+  /**
+   * Envía al prospecto un mensaje escrito a mano por el vendedor, desde el
+   * WhatsApp de la empresa, y lo deja en el historial del chat.
+   *
+   * Hasta ahora el panel solo permitía LEER la conversación y pausar la IA: para
+   * responder había que salir a WhatsApp, lo que es imposible si el número se
+   * migró a la Cloud API y la app del celular dejó de funcionar.
+   *
+   * Tomar el chat a mano pausa la IA automáticamente — si el humano ya contestó,
+   * el bot no debe contestar encima.
+   */
+  async enviarMensajeManual(
+    empresaId: number,
+    conversacionId: number,
+    texto: string,
+  ) {
+    const contenido = (texto || '').trim();
+    if (!contenido) throw new BadRequestException('El mensaje está vacío');
+    if (contenido.length > LIMITE_TEXTO_WHATSAPP)
+      throw new BadRequestException(
+        `El mensaje supera los ${LIMITE_TEXTO_WHATSAPP} caracteres que admite WhatsApp`,
+      );
+
+    const conv = await this.prisma.leadConversacion.findFirst({
+      where: { id: conversacionId, empresaId },
+      select: {
+        id: true,
+        telefonoProspecto: true,
+        prospecto: { select: { id: true, botActivo: true } },
+      },
+    });
+    if (!conv) throw new NotFoundException('Conversación no encontrada');
+
+    const envio = await this.whatsapp.enviarTexto(
+      conv.telefonoProspecto,
+      contenido,
+      empresaId,
+    );
+    if (!envio.success)
+      throw new BadRequestException(
+        envio.error || 'No se pudo enviar el mensaje por WhatsApp',
+      );
+
+    // Solo se persiste lo que SÍ salió: un mensaje en el historial que el
+    // prospecto nunca recibió desorienta al vendedor y, al reactivar la IA,
+    // también a la IA (el historial es su contexto).
+    const mensaje = await this.prisma.leadMensaje.create({
+      data: { conversacionId: conv.id, rol: 'SISTEMA', contenido },
+    });
+    await this.prisma.leadConversacion.update({
+      where: { id: conv.id },
+      data: { cantidadMensajes: { increment: 1 } },
+    });
+
+    // Idempotente: si el vendedor ya había tomado el chat, no se reescribe.
+    let botPausado = false;
+    if (conv.prospecto?.botActivo) {
+      await this.prisma.leadProspecto.update({
+        where: { id: conv.prospecto.id },
+        data: { botActivo: false },
+      });
+      botPausado = true;
+    }
+
+    return { mensaje, botPausado };
   }
 }
