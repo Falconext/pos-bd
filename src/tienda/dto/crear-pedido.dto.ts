@@ -25,6 +25,24 @@ export class ItemPedidoDto {
   @IsString()
   @IsOptional()
   observacion?: string;
+
+  /**
+   * Variante elegida (color/talla/medida), si el producto las tiene. Se manda
+   * el id y el precio lo resuelve el servidor: nunca se confía en el del
+   * navegador.
+   */
+  @IsNumber()
+  @IsOptional()
+  varianteId?: number;
+
+  /**
+   * Presentación elegida (ej. el código del rollo de 12 m). Es el `codigo` de
+   * ProductoCodigoBarras; igual que con la variante, el precio y las unidades
+   * las resuelve el servidor a partir de ese código.
+   */
+  @IsString()
+  @IsOptional()
+  presentacionCodigo?: string;
 }
 
 export enum MedioPagoTienda {
