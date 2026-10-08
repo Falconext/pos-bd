@@ -15,8 +15,14 @@ export class CreatePlanDto {
 
   @IsString()
   @IsOptional()
-  @IsIn(['facturacion', 'hotel', 'restaurante', 'logistica'])
-  producto?: 'facturacion' | 'hotel' | 'restaurante' | 'logistica';
+  @IsIn(['facturacion', 'hotel', 'restaurante', 'logistica', 'ventas', 'full'])
+  producto?:
+    | 'facturacion'
+    | 'hotel'
+    | 'restaurante'
+    | 'logistica'
+    | 'ventas'
+    | 'full';
 
   @IsString()
   @IsOptional()
@@ -59,6 +65,13 @@ export class CreatePlanDto {
   @IsNumber()
   @IsOptional()
   maxComprobantes?: number;
+
+  // Tope mensual de conversaciones que atiende la IA de Ventas (módulo `leads`).
+  // null / sin valor = ilimitado. Al superarlo el lead se sigue capturando pero
+  // la IA deja de responder (soft-block).
+  @IsNumber()
+  @IsOptional()
+  maxLeadsMes?: number | null;
 
   // Features
   @IsBoolean()
