@@ -296,6 +296,109 @@ export class WhatsAppService {
     }
   }
 
+  /**
+   * Estado real del número en Meta. `status: CONNECTED` + `platform_type:
+   * CLOUD_API` es lo único que significa que el número puede enviar y recibir;
+   * verificarlo por SMS solo deja `code_verification_status: VERIFIED`.
+   */
+  private async fetchEstadoNumero(
+    phoneNumberId: string,
+    token: string,
+  ): Promise<{ status?: string; platformType?: string; displayNumber?: string }> {
+    try {
+      const res = await axios.get(`${this.apiUrl}/${phoneNumberId}`, {
+        params: { fields: 'display_phone_number,status,platform_type' },
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return {
+        status: res.data?.status,
+        platformType: res.data?.platform_type,
+        displayNumber: res.data?.display_phone_number,
+      };
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * Enciende el número en Cloud API. El Embedded Signup solo lo agrega a la
+   * WABA y verifica su propiedad por SMS; el registro le toca al proveedor y
+   * sin él el número queda `PENDING`: existe, pero no está en WhatsApp y no
+   * recibe un solo mensaje.
+   *
+   * Idempotente: si el número ya estaba registrado Meta responde con un error
+   * que no es un fallo real, así que no rompe la conexión.
+   */
+  private async registrarNumeroCloudApi(
+    phoneNumberId: string,
+    token: string,
+    pin: string,
+  ): Promise<{ registrado: boolean; motivo?: string }> {
+    try {
+      await axios.post(
+        `${this.apiUrl}/${phoneNumberId}/register`,
+        { messaging_product: 'whatsapp', pin },
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      this.logger.log(`Número ${phoneNumberId} registrado en Cloud API.`);
+      return { registrado: true };
+    } catch (e: any) {
+      const err = e.response?.data?.error ?? {};
+      const motivo: string = err.message || e.message || 'error desconocido';
+      // 133005 = PIN incorrecto sobre un número que YA tiene 2FA (o sea, ya
+      // estaba registrado). Lo tratamos como éxito y dejamos que el chequeo de
+      // estado posterior diga la verdad.
+      const yaRegistrado =
+        err.code === 133005 || /already/i.test(motivo) || /registrad/i.test(motivo);
+      if (yaRegistrado) {
+        this.logger.log(`Número ${phoneNumberId} ya estaba registrado.`);
+        return { registrado: true, motivo };
+      }
+      this.logger.warn(`register falló para ${phoneNumberId}: ${motivo}`);
+      return { registrado: false, motivo };
+    }
+  }
+
+  /** PIN de 6 dígitos para la verificación en dos pasos del número. */
+  private generarPin(): string {
+    return String(Math.floor(100000 + Math.random() * 900000));
+  }
+
+  /**
+   * Registra el número y devuelve su estado real, reusando el PIN que ya
+   * tuviera la empresa (Meta exige el mismo para re-registrar).
+   */
+  private async activarNumero(
+    empresaId: number,
+    phoneNumberId: string,
+    token: string,
+  ): Promise<{ estado: string; conectado: boolean; motivo?: string }> {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { whatsappPin: true },
+    });
+    const pin = empresa?.whatsappPin || this.generarPin();
+
+    const reg = await this.registrarNumeroCloudApi(phoneNumberId, token, pin);
+    if (reg.registrado && !empresa?.whatsappPin) {
+      await this.prisma.empresa.update({
+        where: { id: empresaId },
+        data: { whatsappPin: pin },
+      });
+    }
+
+    const { status, platformType } = await this.fetchEstadoNumero(
+      phoneNumberId,
+      token,
+    );
+    const conectado = status === 'CONNECTED' && platformType === 'CLOUD_API';
+    return {
+      estado: status ?? 'DESCONOCIDO',
+      conectado,
+      motivo: conectado ? undefined : reg.motivo,
+    };
+  }
+
   private async fetchDisplayNumber(
     phoneNumberId: string,
     token: string,
@@ -336,7 +439,15 @@ export class WhatsAppService {
   async conectarEmbeddedSignup(
     empresaId: number,
     input: { code?: string; accessToken?: string; phoneNumberId?: string; wabaId?: string },
-  ): Promise<{ phoneNumberId: string; wabaId: string; numeroVisible?: string; plantillas: any }> {
+  ): Promise<{
+    phoneNumberId: string;
+    wabaId: string;
+    numeroVisible?: string;
+    plantillas: any;
+    estado: string;
+    conectado: boolean;
+    motivo?: string;
+  }> {
     await this.validarPlantillasWhatsApp(empresaId);
     if (!this.fbAppId || !this.metaAppSecret) {
       throw new BadRequestException(
@@ -377,6 +488,10 @@ export class WhatsAppService {
 
     // 4) Suscribir la app al webhook de la WABA.
     await this.subscribeApp(wabaId, token);
+
+    // 4.b) Encender el número en Cloud API. Sin este paso queda PENDING: el
+    //      asistente de Meta solo lo agrega y verifica por SMS.
+    const activacion = await this.activarNumero(empresaId, phoneNumberId, token);
     if (!numeroVisible)
       numeroVisible = await this.fetchDisplayNumber(phoneNumberId, token);
 
@@ -405,9 +520,22 @@ export class WhatsAppService {
     const plantillas = await this.crearPlantillasDespacho(wabaId, token);
 
     this.logger.log(
-      `Empresa ${empresaId} conectó WhatsApp propio (${numeroVisible ?? phoneNumberId}) — token ${usaTokenPlataforma ? 'de plataforma (permanente)' : 'del cliente (60 días)'}.`,
+      `Empresa ${empresaId} conectó WhatsApp propio (${numeroVisible ?? phoneNumberId}) — estado ${activacion.estado}, token ${usaTokenPlataforma ? 'de plataforma (permanente)' : 'del cliente (60 días)'}.`,
     );
-    return { phoneNumberId, wabaId, numeroVisible, plantillas };
+    if (!activacion.conectado) {
+      this.logger.warn(
+        `Número ${phoneNumberId} de la empresa ${empresaId} quedó en estado ${activacion.estado}: no podrá enviar ni recibir hasta que se registre.`,
+      );
+    }
+    return {
+      phoneNumberId,
+      wabaId,
+      numeroVisible,
+      plantillas,
+      estado: activacion.estado,
+      conectado: activacion.conectado,
+      motivo: activacion.motivo,
+    };
   }
 
   /**
@@ -418,7 +546,13 @@ export class WhatsAppService {
   async conectarManual(
     empresaId: number,
     input: { phoneNumberId: string; wabaId: string; accessToken: string },
-  ): Promise<{ numeroVisible?: string; plantillas: any }> {
+  ): Promise<{
+    numeroVisible?: string;
+    plantillas: any;
+    estado: string;
+    conectado: boolean;
+    motivo?: string;
+  }> {
     await this.validarPlantillasWhatsApp(empresaId);
     const { phoneNumberId, wabaId, accessToken } = input;
     if (!phoneNumberId || !wabaId || !accessToken) {
@@ -454,8 +588,19 @@ export class WhatsAppService {
       },
     });
     const plantillas = await this.crearPlantillasDespacho(wabaId, accessToken);
-    this.logger.log(`Empresa ${empresaId} conectó WhatsApp manual (${numeroVisible}).`);
-    return { numeroVisible, plantillas };
+    // Mismo encendido que el Embedded Signup: un número pegado a mano también
+    // puede venir sin registrar en Cloud API.
+    const activacion = await this.activarNumero(empresaId, phoneNumberId, accessToken);
+    this.logger.log(
+      `Empresa ${empresaId} conectó WhatsApp manual (${numeroVisible}) — estado ${activacion.estado}.`,
+    );
+    return {
+      numeroVisible,
+      plantillas,
+      estado: activacion.estado,
+      conectado: activacion.conectado,
+      motivo: activacion.motivo,
+    };
   }
 
   // Plantillas de despacho a crear en cada WABA (idioma es). Meta exige ejemplos.
