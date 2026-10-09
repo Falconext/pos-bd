@@ -15,6 +15,11 @@ export class UpdateClienteDto {
   @IsString()
   nombre?: string;
 
+  /** Nombre corto con el que el negocio reconoce al cliente; se busca igual que el nombre. */
+  @IsOptional()
+  @IsString()
+  alias?: string;
+
   @IsOptional()
   @IsEnum(['DNI', 'RUC', 'CE', 'PASAPORTE', 'OTRO'])
   tipoDoc?: 'DNI' | 'RUC' | 'CE' | 'PASAPORTE' | 'OTRO';

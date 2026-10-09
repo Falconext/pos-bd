@@ -16,6 +16,12 @@ export class CreateClienteDto {
   @IsString()
   nombre?: string;
 
+  /** Nombre corto con el que el negocio reconoce al cliente; se busca igual que el nombre. */
+  @IsOptional()
+  @IsString()
+  alias?: string;
+
+
   @IsString()
   @IsNotEmpty()
   @IsEnum(['DNI', 'RUC', 'CE', 'PASAPORTE', 'OTRO'])
