@@ -293,7 +293,20 @@ export class LeadsPedidoService {
       nombrePack,
     );
 
-    const cot = await this.crearCotizacion(empresaId, limpios, borrador.zona);
+    // UNA cotización por conversación, no una por llamada.
+    //
+    // El modelo recotiza varias veces en una misma venta: cuando el cliente
+    // elige la presentación, cuando da sus datos, y otra vez al confirmar.
+    // Medido en el QA del flujo completo: cuatro llamadas en una sola venta.
+    // Emitir un documento por cada una llena el panel de cotizaciones de
+    // basura, y el vendedor no sabe cuál mirar.
+    //
+    // Lo que se lleva el cliente al final queda en la nota de venta, que es
+    // la que vale; la COT es el borrador que el vendedor ve mientras tanto, y
+    // el chat guarda el detalle de cada versión.
+    const cot =
+      borrador.cotizacionId ??
+      (await this.crearCotizacion(empresaId, limpios, borrador.zona));
     await this.prisma.leadPedidoBorrador.update({
       where: { conversacionId },
       data: {

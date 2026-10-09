@@ -394,3 +394,40 @@ describe('la configuración manda sobre los valores por defecto', () => {
     expect(r.costoEnvio).toBe(5);
   });
 });
+
+describe('no ensuciar el panel con cotizaciones duplicadas', () => {
+  // El modelo vuelve a cotizar cuando el cliente confirma. Antes eso creaba
+  // una COT nueva cada vez: dos documentos para la misma venta.
+  it('no emite otra COT si el cliente lleva lo mismo', async () => {
+    const { service, comprobante, verBorrador } = armar({
+      borrador: { ...limaCompleto(), itemsJson: null, cotizacionId: null },
+    });
+    const items = [{ productoId: 1, cantidad: 2 }];
+
+    await service.cotizar(EMPRESA, CONV, items);
+    expect(comprobante.crearInformal).toHaveBeenCalledTimes(1);
+    expect((verBorrador() as any).cotizacionId).toBe(500);
+
+    await service.cotizar(EMPRESA, CONV, items);
+    expect(comprobante.crearInformal).toHaveBeenCalledTimes(1);
+  });
+
+  it('tampoco si cambió lo que lleva: una COT por conversación', async () => {
+    // El QA del flujo completo midió cuatro llamadas a cotizar en una sola
+    // venta. Un documento por cada una deja al vendedor sin saber cuál mirar.
+    // Lo que se lleva de verdad queda en la nota de venta.
+    const { service, comprobante, verBorrador } = armar({
+      borrador: { ...limaCompleto(), itemsJson: null, cotizacionId: null },
+    });
+
+    await service.cotizar(EMPRESA, CONV, [{ productoId: 1, cantidad: 2 }]);
+    await service.cotizar(EMPRESA, CONV, [{ productoId: 1, cantidad: 5 }]);
+    await service.cotizar(EMPRESA, CONV, [{ productoId: 2, cantidad: 1 }]);
+
+    expect(comprobante.crearInformal).toHaveBeenCalledTimes(1);
+    // Pero el borrador sí refleja lo último que pidió.
+    expect((verBorrador() as any).itemsJson).toEqual([
+      { productoId: 2, cantidad: 1 },
+    ]);
+  });
+});

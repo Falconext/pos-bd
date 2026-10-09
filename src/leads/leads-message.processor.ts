@@ -331,7 +331,7 @@ export class LeadsMessageProcessor extends WorkerHost {
     const mensajes = await this.prisma.leadMensaje.findMany({
       where: { conversacionId: conv.id },
       orderBy: { id: 'asc' },
-      select: { rol: true, contenido: true },
+      select: { rol: true, contenido: true, herramientasJson: true },
     });
     // Si lo último que hay es nuestro, este lote ya fue contestado (reintento
     // de BullMQ, o una respuesta manual desde el panel mientras esperábamos).
@@ -355,7 +355,12 @@ export class LeadsMessageProcessor extends WorkerHost {
       contenido,
     );
     const contextoRag = await this.rag.buscarContexto(empresa.id, contenido, 5);
-    const businessContext = [contextoEmpresa, relevantes.contexto, contextoRag]
+    const businessContext = [
+      contextoEmpresa,
+      this.productosYaMostrados(mensajes),
+      relevantes.contexto,
+      contextoRag,
+    ]
       .filter((s) => s && s.trim())
       .join('\n\n');
 
@@ -595,6 +600,56 @@ export class LeadsMessageProcessor extends WorkerHost {
     const posicion = new Map(codigos.map((c, i) => [c, i]));
     return productos.sort(
       (a, b) => (posicion.get(a.codigo) ?? 99) - (posicion.get(b.codigo) ?? 99),
+    );
+  }
+
+  /**
+   * Los productos que la IA ya le enseñó al cliente en esta conversación.
+   *
+   * Hace falta porque el historial que recibe el modelo es SOLO texto: los
+   * resultados de sus búsquedas anteriores no se le devuelven, así que no
+   * puede ver lo que ya buscó y vuelve a buscarlo. Medido en el QA del flujo
+   * completo: hasta tres búsquedas repetidas en un turno, cada una un viaje
+   * entero al modelo.
+   *
+   * De paso resuelve lo que pide el flujo del cliente: que entienda "el
+   * grande", "el segundo" o "ese" refiriéndose a lo que acaba de ofrecer.
+   */
+  private productosYaMostrados(
+    mensajes: { herramientasJson?: unknown }[],
+  ): string {
+    const vistos = new Map<number, string>();
+    // Solo lo reciente: un catálogo entero en el prompt cuesta más de lo que
+    // ahorra.
+    for (const m of mensajes.slice(-12)) {
+      const llamadas = m.herramientasJson;
+      if (!Array.isArray(llamadas)) continue;
+      for (const ll of llamadas as { resultado?: unknown }[]) {
+        const productos = (
+          ll?.resultado as {
+            productos?: {
+              id?: number;
+              nombre?: string;
+              precio?: string;
+              disponibilidad?: string;
+            }[];
+          }
+        )?.productos;
+        for (const p of productos ?? []) {
+          if (typeof p?.id !== 'number') continue;
+          vistos.set(
+            p.id,
+            `- [id ${p.id}] ${p.nombre} — ${p.precio} (${p.disponibilidad})`,
+          );
+        }
+      }
+    }
+    if (vistos.size === 0) return '';
+    return (
+      'PRODUCTOS QUE YA LE MOSTRASTE EN ESTA CONVERSACIÓN. No los vuelvas a ' +
+      'buscar: si el cliente se refiere a "el segundo", "el grande" o "ese", ' +
+      'es uno de estos, y su id es el que va entre corchetes:\n' +
+      [...vistos.values()].slice(0, 20).join('\n')
     );
   }
 
