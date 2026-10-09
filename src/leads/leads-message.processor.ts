@@ -12,12 +12,16 @@ import {
   JOB_RESPONDER,
   LEADS_MESSAGES_QUEUE,
 } from './leads.constants';
-import { Prisma } from '@prisma/client';
+import { DisponibilidadProducto, Prisma } from '@prisma/client';
 import { EjecutorHerramienta } from '../gemini/gemini.service';
 import {
   HERRAMIENTA_BUSCAR_PRODUCTOS,
   HERRAMIENTA_ENVIAR_FOTO,
 } from './leads-herramientas';
+import {
+  disponibilidadEfectiva,
+  textoParaElCliente,
+} from '../producto/disponibilidad.util';
 import {
   RESPUESTAS_A_COMPARAR,
   aportaDatoNuevo,
@@ -793,7 +797,15 @@ export class LeadsMessageProcessor extends WorkerHost {
               id: p.id,
               nombre: p.descripcion,
               precio: `${p.moneda === 'USD' ? 'US$' : 'S/'} ${Number(p.precioUnitario).toFixed(2)}`,
-              disponibilidad: this.textoDisponibilidad(p.stock),
+              disponibilidad: this.textoDisponibilidad(p),
+              // Solo se menciona cuando el negocio marcó el producto para
+              // empujarlo; sin esto el modelo no tiene por qué preferirlo.
+              ...(Number(p.prioridadVenta) >= 2
+                ? {
+                    prioridadDeVenta:
+                      Number(p.prioridadVenta) === 3 ? 'muy alta' : 'alta',
+                  }
+                : {}),
               tieneFoto: !!p.imagenUrl,
             })),
           };
@@ -848,12 +860,15 @@ export class LeadsMessageProcessor extends WorkerHost {
   }
 
   /**
-   * Cómo se le describe la disponibilidad al modelo. Hoy sale del stock; B1 lo
-   * cambia por el campo de disponibilidad real (INMEDIATA / BAJO PEDIDO / NO
-   * DISPONIBLE), y este es el único sitio que hay que tocar.
+   * Cómo se le describe la disponibilidad al modelo: nunca con un número de
+   * stock. Para un negocio que no lleva inventario ese número es ficticio, y
+   * decirle al cliente "quedan 50" es prometer algo que no se sabe.
    */
-  private textoDisponibilidad(stock: unknown): string {
-    return Number(stock) > 0 ? 'disponible' : 'sin stock';
+  private textoDisponibilidad(producto: {
+    disponibilidad?: DisponibilidadProducto | null;
+    stock?: unknown;
+  }): string {
+    return textoParaElCliente(disponibilidadEfectiva(producto));
   }
 
   private async buscarProductosRelevantes(
@@ -876,7 +891,7 @@ export class LeadsMessageProcessor extends WorkerHost {
     const lineas = productos.map((p) => {
       const simbolo = p.moneda === 'USD' ? 'US$' : 'S/';
       const precio = `${simbolo}${Number(p.precioUnitario).toFixed(2)}`;
-      return `- ${p.descripcion}: ${precio} (${this.textoDisponibilidad(p.stock)})`;
+      return `- ${p.descripcion}: ${precio} (${this.textoDisponibilidad(p)})`;
     });
     const contexto =
       'PRODUCTOS QUE COINCIDEN A PRIMERA VISTA con el último mensaje (precio y ' +
@@ -907,6 +922,8 @@ export class LeadsMessageProcessor extends WorkerHost {
       stock: any;
       moneda: string;
       imagenUrl: string | null;
+      disponibilidad: DisponibilidadProducto | null;
+      prioridadVenta: number | null;
     }[]
   > {
     const tokens = (texto || '')
@@ -920,7 +937,7 @@ export class LeadsMessageProcessor extends WorkerHost {
       .slice(0, 5);
     if (tokens.length === 0) return [];
 
-    return this.prisma.producto.findMany({
+    const productos = await this.prisma.producto.findMany({
       where: {
         empresaId,
         estado: 'ACTIVO' as any,
@@ -952,10 +969,30 @@ export class LeadsMessageProcessor extends WorkerHost {
         stock: true,
         moneda: true,
         imagenUrl: true,
+        disponibilidad: true,
+        prioridadVenta: true,
       },
-      orderBy: { stock: 'desc' },
+      // Primero lo que el negocio quiere empujar; entre iguales, lo que tiene
+      // más stock.
+      orderBy: [
+        { prioridadVenta: { sort: 'desc', nulls: 'last' } },
+        { stock: 'desc' },
+      ],
       take: 8,
     });
+
+    // Y entre todos, lo que se puede entregar ya va antes de lo que hay que
+    // encargar. Se ordena aquí y no en la consulta porque la disponibilidad
+    // puede venir del stock cuando nadie la fijó.
+    const rango: Record<DisponibilidadProducto, number> = {
+      INMEDIATA: 0,
+      BAJO_PEDIDO: 1,
+      NO_DISPONIBLE: 2,
+    };
+    return productos.sort(
+      (a, b) =>
+        rango[disponibilidadEfectiva(a)] - rango[disponibilidadEfectiva(b)],
+    );
   }
 
   // ¿El mensaje pide el brochure/catálogo o más información?

@@ -36,8 +36,11 @@ function delEnvFile(clave: string): string | undefined {
 
 async function main() {
   const apiKey =
-    process.argv[2] || process.env.GEMINI_API_KEY || delEnvFile('GEMINI_API_KEY');
-  if (!apiKey) throw new Error('No hay clave: pásala como argumento o en .env.');
+    process.argv[2] ||
+    process.env.GEMINI_API_KEY ||
+    delEnvFile('GEMINI_API_KEY');
+  if (!apiKey)
+    throw new Error('No hay clave: pásala como argumento o en .env.');
   const total = Number(process.argv[3]) || PETICIONES_POR_DEFECTO;
 
   console.log(`Clave: ${apiKey.slice(0, 10)}…${apiKey.slice(-4)}`);
@@ -59,10 +62,13 @@ async function main() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (!msg.includes('429')) {
-        console.log(`\n\n✗ Error distinto del límite en la petición ${i}:\n${msg}`);
+        console.log(
+          `\n\n✗ Error distinto del límite en la petición ${i}:\n${msg}`,
+        );
         process.exit(1);
       }
-      const metrica = /quotaMetric":"([^"]+)"/.exec(msg)?.[1] ?? '(no reportada)';
+      const metrica =
+        /quotaMetric":"([^"]+)"/.exec(msg)?.[1] ?? '(no reportada)';
       const esGratuito = /free_tier/.test(msg);
       console.log(`\n\nLímite alcanzado tras ${ok} petición(es).`);
       console.log(`Métrica: ${metrica}`);

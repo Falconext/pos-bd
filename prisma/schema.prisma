@@ -616,6 +616,21 @@ model Marca {
   @@unique([empresaId, nombre])
 }
 
+/// Qué se le puede prometer al cliente sobre un producto.
+///
+/// Es distinto del stock numérico: hay negocios que no llevan inventario y sí
+/// saben si algo lo tienen a la mano o lo consiguen por encargo. Hierba Sana es
+/// el caso — su catálogo trae disponibilidad, no cantidades.
+enum DisponibilidadProducto {
+  /// Lo tiene a la mano; se despacha sin condiciones.
+  INMEDIATA
+  /// Lo consigue con proveedor. Se ofrece sin prometer fecha y se avisa antes
+  /// de despachar.
+  BAJO_PEDIDO
+  /// No se ofrece, y ningún disparador puede dispararse sobre él.
+  NO_DISPONIBLE
+}
+
 model Producto {
   id                  Int                  @id @default(autoincrement())
   codigo              String
@@ -669,6 +684,14 @@ model Producto {
   localizacion        String?
   porcentajeVenta     Int                  @default(100)
   porcentajeProvision Int                  @default(0)
+  /// Qué se le puede prometer al cliente. Null = se deduce del stock, que es
+  /// lo correcto para quien sí lleva inventario; puesto a mano, manda sobre el
+  /// stock, que es lo que necesita quien no lo lleva.
+  disponibilidad      DisponibilidadProducto?
+  /// Cuánto empujar este producto frente a otros equivalentes: 3 muy alta,
+  /// 2 alta, 1 media. Ordena lo que la IA ve primero; no la obliga a ofrecerlo
+  /// si no calza con lo que el cliente pidió.
+  prioridadVenta      Int?
   detalleCompras      DetalleCompra[]
   detallesOrdenCompra DetalleOrdenCompra[]
   detalleComprobantes DetalleComprobante[]

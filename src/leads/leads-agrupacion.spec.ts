@@ -36,6 +36,7 @@ function armar(
     textosPrevios?: string[];
     embeddingRespuesta?: number[];
     respuestaIa?: string;
+    productos?: any[];
   } = {},
 ) {
   const mensajes = opts.mensajes ?? [];
@@ -98,7 +99,7 @@ function armar(
         return Promise.resolve({ id: proximoId++ });
       }),
     },
-    producto: { findMany: jest.fn().mockResolvedValue([]) },
+    producto: { findMany: jest.fn().mockResolvedValue(opts.productos ?? []) },
   };
 
   const ia: any = {
@@ -400,5 +401,105 @@ describe('una cifra nueva nunca se calla', () => {
     } as any);
 
     expect(whatsapp.enviarTexto).not.toHaveBeenCalled();
+  });
+});
+
+describe('lo que la IA ve del catálogo (B1 y B2)', () => {
+  const tarea = {
+    name: JOB_RESPONDER,
+    data: { empresaId: EMPRESA, conversacionId: CONV },
+  };
+
+  const producto = (extra: any) => ({
+    id: 1,
+    descripcion: 'Moringa 100 cápsulas',
+    precioUnitario: 31,
+    stock: 50,
+    moneda: 'PEN',
+    imagenUrl: null,
+    disponibilidad: null,
+    prioridadVenta: null,
+    ...extra,
+  });
+
+  const contextoDe = (ia: any) =>
+    ia.generarRespuesta.mock.calls[0][1] as string;
+
+  it('nunca le pasa un número de stock', async () => {
+    // Hierba Sana no lleva inventario: su stock es ficticio y decir "quedan
+    // 50" es prometer algo que nadie sabe.
+    const { processor, ia } = armar({
+      mensajes: [{ rol: 'USUARIO', contenido: 'tienen moringa?' }],
+      productos: [producto({ stock: 50 })],
+    });
+
+    await processor.process(tarea as any);
+
+    expect(contextoDe(ia)).not.toContain('stock 50');
+    expect(contextoDe(ia)).toContain('disponible');
+  });
+
+  it('dice "bajo pedido" sin prometer fecha', async () => {
+    const { processor, ia } = armar({
+      mensajes: [{ rol: 'USUARIO', contenido: 'tienen moringa?' }],
+      productos: [producto({ disponibilidad: 'BAJO_PEDIDO' })],
+    });
+
+    await processor.process(tarea as any);
+
+    const contexto = contextoDe(ia);
+    expect(contexto).toContain('bajo pedido');
+    expect(contexto).toContain('sin fecha prometida');
+  });
+
+  it('lo puesto a mano manda sobre el stock', async () => {
+    const { processor, ia } = armar({
+      mensajes: [{ rol: 'USUARIO', contenido: 'tienen moringa?' }],
+      // Stock 50 pero marcado como no disponible: gana el campo.
+      productos: [producto({ disponibilidad: 'NO_DISPONIBLE', stock: 50 })],
+    });
+
+    await processor.process(tarea as any);
+
+    expect(contextoDe(ia)).toContain('no disponible');
+  });
+
+  it('pone lo que se entrega ya por delante de lo que hay que encargar', async () => {
+    const { processor, ia } = armar({
+      mensajes: [{ rol: 'USUARIO', contenido: 'tienen moringa?' }],
+      productos: [
+        producto({
+          id: 1,
+          descripcion: 'Moringa encargo',
+          disponibilidad: 'BAJO_PEDIDO',
+        }),
+        producto({
+          id: 2,
+          descripcion: 'Moringa a la mano',
+          disponibilidad: 'INMEDIATA',
+        }),
+      ],
+    });
+
+    await processor.process(tarea as any);
+
+    const contexto = contextoDe(ia);
+    expect(contexto.indexOf('Moringa a la mano')).toBeLessThan(
+      contexto.indexOf('Moringa encargo'),
+    );
+  });
+
+  it('pide a la base que ordene por prioridad de venta', async () => {
+    const { processor, prisma } = armar({
+      mensajes: [{ rol: 'USUARIO', contenido: 'tienen moringa?' }],
+      productos: [producto({})],
+    });
+
+    await processor.process(tarea as any);
+
+    const orderBy = prisma.producto.findMany.mock.calls[0][0].orderBy;
+    expect(orderBy[0]).toEqual({
+      prioridadVenta: { sort: 'desc', nulls: 'last' },
+    });
   });
 });
