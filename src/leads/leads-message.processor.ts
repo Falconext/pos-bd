@@ -19,6 +19,12 @@ import {
   HERRAMIENTA_ENVIAR_FOTO,
 } from './leads-herramientas';
 import {
+  RESPUESTAS_A_COMPARAR,
+  esCortesiaBreve,
+  esDespedidaClara,
+  esRepetida,
+} from './leads-repeticion';
+import {
   IaVentasService,
   MensajeConversacion,
   RespuestaVenta,
@@ -119,8 +125,17 @@ export class LeadsMessageProcessor extends WorkerHost {
         seguimientos: 0,
         ...(d.nombre ? { nombreProspecto: d.nombre } : {}),
       },
-      select: { id: true },
+      select: { id: true, estado: true },
     });
+
+    // Cerrada y el cliente vuelve a escribir: se reabre. Solo desde CERRADA —
+    // CALIFICADA y TRANSFERIDA las decide otra parte del sistema.
+    if (conv.estado === 'CERRADA') {
+      await this.prisma.leadConversacion.update({
+        where: { id: conv.id },
+        data: { estado: 'ACTIVA' },
+      });
+    }
 
     // 2b) Asegura el prospecto desde el PRIMER contacto (estado FRIO, puntaje 0),
     // así el lead aparece en el panel aunque aún no haya calificación BANT. La
@@ -324,6 +339,21 @@ export class LeadsMessageProcessor extends WorkerHost {
       throw err;
     }
 
+    // El cliente solo dio las gracias o dijo "ok" y lo que íbamos a contestar
+    // es otra vez lo mismo con otras palabras: no se manda. Es el error que el
+    // banco del cliente marca como crítico (insistir tras la despedida).
+    const embedding = await this.embeddingDe(resultado.reply);
+    if (
+      embedding.length &&
+      esCortesiaBreve(contenido) &&
+      esRepetida(embedding, await this.ultimosEmbeddings(conv.id))
+    ) {
+      this.logger.log(
+        `Lead: respuesta omitida en conv ${conv.id} (repetiría un mensaje anterior y el cliente no aportó nada nuevo).`,
+      );
+      return;
+    }
+
     // Persistir la respuesta y enviarla desde el número de la empresa.
     await this.prisma.leadMensaje.create({
       data: {
@@ -333,6 +363,7 @@ export class LeadsMessageProcessor extends WorkerHost {
         herramientasJson: resultado.llamadas.length
           ? (resultado.llamadas as unknown as Prisma.InputJsonValue)
           : undefined,
+        embedding,
       },
     });
     const envio = await this.whatsapp.enviarTexto(
@@ -368,6 +399,47 @@ export class LeadsMessageProcessor extends WorkerHost {
         historial,
       );
     }
+
+    // Despedida clara del cliente: ya se le contestó una vez y la conversación
+    // se cierra, para que el cron de seguimiento (que solo mira las ACTIVA) no
+    // la reabra con otro mensaje comercial. Va al final, después de calificar:
+    // un lead que se despide igual tiene que quedar puntuado en el CRM.
+    if (esDespedidaClara(contenido)) {
+      await this.prisma.leadConversacion.update({
+        where: { id: conv.id },
+        data: { estado: 'CERRADA' },
+      });
+      this.logger.log(
+        `Lead: conv ${conv.id} cerrada por despedida del cliente.`,
+      );
+    }
+  }
+
+  /**
+   * Embedding de un texto, best-effort. Si Gemini falla, se devuelve vacío: el
+   * control de repetición es una mejora, nunca un motivo para dejar al cliente
+   * sin respuesta.
+   */
+  private async embeddingDe(texto: string): Promise<number[]> {
+    try {
+      return await this.ia.generarEmbedding(texto);
+    } catch (e) {
+      this.logger.warn(
+        `No se pudo calcular el embedding de la respuesta: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return [];
+    }
+  }
+
+  /** Embeddings de nuestras últimas respuestas en esta conversación. */
+  private async ultimosEmbeddings(conversacionId: number): Promise<number[][]> {
+    const previas = await this.prisma.leadMensaje.findMany({
+      where: { conversacionId, rol: 'ASISTENTE' },
+      orderBy: { id: 'desc' },
+      take: RESPUESTAS_A_COMPARAR,
+      select: { embedding: true },
+    });
+    return previas.map((m) => m.embedding).filter((v) => v.length > 0);
   }
 
   /**

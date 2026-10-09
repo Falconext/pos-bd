@@ -1,11 +1,14 @@
 /**
- * A2 — una sola respuesta para los mensajes que el cliente manda seguidos.
+ * Cuántas veces habla el asistente, y cuándo se calla (A2 y A3).
  *
- * El banco de pruebas de Hierba Sana marca como error crítico que el bot
- * conteste tres veces a "hola" / "tienen berberina?" / "y cuánto cuesta". Lo
- * que se valida aquí: que los tres mensajes se guarden, que programen UNA sola
- * respuesta (mismo id de trabajo), que esa respuesta los lea todos, y que no
- * se conteste dos veces al mismo lote.
+ * El banco de pruebas de Hierba Sana marca como errores críticos que el bot
+ * conteste tres veces a "hola" / "tienen berberina?" / "y cuánto cuesta", y que
+ * siga insistiendo después de la despedida. Lo que se valida aquí, sobre el
+ * processor entero: que los mensajes seguidos se guarden todos pero programen
+ * UNA sola respuesta que los lea todos; que no se conteste dos veces al mismo
+ * lote; que no se repita un mensaje equivalente cuando el cliente no aportó
+ * nada; y que una despedida clara cierre la conversación, pero un "lo voy a
+ * pensar" no.
  */
 // @nestjs/bullmq se publica como ESM y Jest no transforma node_modules: sin
 // este doble, el import del processor revienta antes de empezar. Solo aporta
@@ -25,7 +28,14 @@ const TELEFONO = '51987654321';
 
 type Mensaje = { rol: 'USUARIO' | 'ASISTENTE'; contenido: string };
 
-function armar(opts: { mensajes?: Mensaje[]; botActivo?: boolean } = {}) {
+function armar(
+  opts: {
+    mensajes?: Mensaje[];
+    botActivo?: boolean;
+    embeddingsPrevios?: number[][];
+    embeddingRespuesta?: number[];
+  } = {},
+) {
   const mensajes = opts.mensajes ?? [];
   let proximoId = 100;
 
@@ -68,7 +78,16 @@ function armar(opts: { mensajes?: Mensaje[]; botActivo?: boolean } = {}) {
     leadMensaje: {
       findUnique: jest.fn().mockResolvedValue(null),
       count: jest.fn().mockResolvedValue(0),
-      findMany: jest.fn().mockResolvedValue(mensajes),
+      // Dos lecturas distintas sobre la misma tabla: el historial completo y
+      // los embeddings de nuestras últimas respuestas.
+      findMany: jest.fn().mockImplementation(({ where, select }: any) => {
+        if (where?.rol === 'ASISTENTE' && select?.embedding) {
+          return Promise.resolve(
+            (opts.embeddingsPrevios ?? []).map((embedding) => ({ embedding })),
+          );
+        }
+        return Promise.resolve(mensajes);
+      }),
       create: jest.fn().mockImplementation(({ data }: any) => {
         mensajes.push({ rol: data.rol, contenido: data.contenido });
         return Promise.resolve({ id: proximoId++ });
@@ -79,6 +98,9 @@ function armar(opts: { mensajes?: Mensaje[]; botActivo?: boolean } = {}) {
 
   const ia: any = {
     disponible: () => true,
+    generarEmbedding: jest
+      .fn()
+      .mockResolvedValue(opts.embeddingRespuesta ?? [1, 0, 0]),
     generarRespuesta: jest.fn().mockResolvedValue({
       reply: 'Sí, tenemos Berberina a S/ 45.00.',
       calificacion: null,
@@ -223,5 +245,98 @@ describe('la respuesta lee todo el lote', () => {
 
     expect(ia.generarRespuesta).not.toHaveBeenCalled();
     expect(whatsapp.enviarTexto).not.toHaveBeenCalled();
+  });
+});
+
+describe('no repetirse ni insistir tras la despedida (A3)', () => {
+  const tarea = {
+    name: JOB_RESPONDER,
+    data: { empresaId: EMPRESA, conversacionId: CONV },
+  };
+
+  it('calla si el cliente solo dio las gracias y la respuesta repetiría otra', async () => {
+    const { processor, whatsapp, prisma } = armar({
+      mensajes: [
+        { rol: 'USUARIO', contenido: 'tienen berberina?' },
+        { rol: 'ASISTENTE', contenido: 'Sí, a S/ 45.00. ¿Te la cotizo?' },
+        { rol: 'USUARIO', contenido: 'gracias' },
+      ],
+      embeddingRespuesta: [1, 0, 0],
+      embeddingsPrevios: [[0.99, 0.05, 0]],
+    });
+
+    await processor.process(tarea as any);
+
+    expect(whatsapp.enviarTexto).not.toHaveBeenCalled();
+    expect(prisma.leadMensaje.create).not.toHaveBeenCalled();
+  });
+
+  it('responde igual si el cliente aportó algo nuevo, aunque se parezca', async () => {
+    const { processor, whatsapp } = armar({
+      mensajes: [
+        { rol: 'ASISTENTE', contenido: 'Sí, a S/ 45.00. ¿Te la cotizo?' },
+        { rol: 'USUARIO', contenido: 'y tienen moringa tambien?' },
+      ],
+      embeddingRespuesta: [1, 0, 0],
+      embeddingsPrevios: [[1, 0, 0]],
+    });
+
+    await processor.process(tarea as any);
+
+    expect(whatsapp.enviarTexto).toHaveBeenCalledTimes(1);
+  });
+
+  it('responde si la respuesta dice algo distinto, aunque el cliente solo diga ok', async () => {
+    // "ok" puede ser un sí al "¿agendamos?": si lo que vamos a decir es nuevo,
+    // se manda.
+    const { processor, whatsapp } = armar({
+      mensajes: [
+        { rol: 'ASISTENTE', contenido: '¿Deseas que agendemos tu entrega?' },
+        { rol: 'USUARIO', contenido: 'ok' },
+      ],
+      embeddingRespuesta: [0, 1, 0],
+      embeddingsPrevios: [[1, 0, 0]],
+    });
+
+    await processor.process(tarea as any);
+
+    expect(whatsapp.enviarTexto).toHaveBeenCalledTimes(1);
+  });
+
+  it('contesta una vez y cierra la conversación ante una despedida clara', async () => {
+    const { processor, whatsapp, prisma } = armar({
+      mensajes: [{ rol: 'USUARIO', contenido: 'gracias por la información' }],
+    });
+
+    await processor.process(tarea as any);
+
+    expect(whatsapp.enviarTexto).toHaveBeenCalledTimes(1);
+    expect(prisma.leadConversacion.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { estado: 'CERRADA' } }),
+    );
+  });
+
+  it('no cierra con un "lo voy a pensar"', async () => {
+    const { processor, prisma } = armar({
+      mensajes: [{ rol: 'USUARIO', contenido: 'lo voy a pensar' }],
+    });
+
+    await processor.process(tarea as any);
+
+    const cierres = prisma.leadConversacion.update.mock.calls.filter(
+      (c: any[]) => c[0]?.data?.estado === 'CERRADA',
+    );
+    expect(cierres).toHaveLength(0);
+  });
+
+  it('un fallo del embedding no deja al cliente sin respuesta', async () => {
+    const { processor, ia, whatsapp } = armar({
+      mensajes: [{ rol: 'USUARIO', contenido: 'gracias' }],
+    });
+    ia.generarEmbedding.mockRejectedValue(new Error('429 cuota'));
+
+    await processor.process(tarea as any);
+
+    expect(whatsapp.enviarTexto).toHaveBeenCalledTimes(1);
   });
 });

@@ -103,6 +103,14 @@ export class IaVentasService {
     return this.gemini.isEnabled();
   }
 
+  /**
+   * Embedding de un texto (768 dims). Lo usa el control de repetición para
+   * comparar una respuesta nueva con las que ya mandamos.
+   */
+  async generarEmbedding(texto: string): Promise<number[]> {
+    return this.gemini.generarEmbedding(texto);
+  }
+
   /** Transcribe una nota de voz de WhatsApp a texto (vía Gemini). */
   async transcribirAudio(buffer: Buffer, mimeType: string): Promise<string> {
     return this.gemini.transcribirAudio(buffer.toString('base64'), mimeType);

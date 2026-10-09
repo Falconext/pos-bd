@@ -4080,6 +4080,10 @@ model LeadMensaje {
   // resultado). Es la caja negra del turno: sin esto no hay forma de saber por
   // qué el asistente dijo lo que dijo, ni de alimentar la analítica de consultas.
   herramientasJson Json?
+  // Embedding de la respuesta del asistente (768 dims). Sirve para no mandar
+  // dos veces el mismo mensaje con otras palabras: se compara contra las
+  // últimas respuestas de la conversación. Vacío en los mensajes del cliente.
+  embedding      Float[]
   creadoEn       DateTime         @default(now())
 
   @@index([conversacionId])
