@@ -16,8 +16,8 @@ async function createUsers() {
         costo: 0,
         esPrueba: true,
         duracionDias: 365,
-        tipoFacturacion: 'MENSUAL',
-      },
+        tipoFacturacion: 'MENSUAL'
+      }
     });
 
     // Crear empresa formal
@@ -31,8 +31,8 @@ async function createUsers() {
         fechaExpiracion: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
         planId: plan.id,
         estado: EstadoType.ACTIVO,
-        nombreComercial: 'EMPRESA DEMO',
-      },
+        nombreComercial: 'EMPRESA DEMO'
+      }
     });
 
     // Crear empresa informal
@@ -46,8 +46,8 @@ async function createUsers() {
         fechaExpiracion: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
         planId: plan.id,
         estado: EstadoType.ACTIVO,
-        nombreComercial: 'JUAN PEREZ',
-      },
+        nombreComercial: 'JUAN PEREZ'
+      }
     });
 
     // Crear usuarios
@@ -60,7 +60,7 @@ async function createUsers() {
         password: await bcrypt.hash('admin123', 12),
         rol: Rol.ADMIN_SISTEMA,
         empresaId: null,
-        estado: EstadoType.ACTIVO,
+        estado: EstadoType.ACTIVO
       },
       {
         nombre: 'Diego Ortega',
@@ -70,7 +70,7 @@ async function createUsers() {
         password: await bcrypt.hash('empresa123', 12),
         rol: Rol.ADMIN_EMPRESA,
         empresaId: empresaFormal.id,
-        estado: EstadoType.ACTIVO,
+        estado: EstadoType.ACTIVO
       },
       {
         nombre: 'Juan Perez',
@@ -80,13 +80,13 @@ async function createUsers() {
         password: await bcrypt.hash('informal123', 12),
         rol: Rol.ADMIN_EMPRESA,
         empresaId: empresaInformal.id,
-        estado: EstadoType.ACTIVO,
-      },
+        estado: EstadoType.ACTIVO
+      }
     ];
 
     for (const userData of usuarios) {
       await prisma.usuario.create({
-        data: userData,
+        data: userData
       });
       console.log(`✅ Usuario creado: ${userData.email}`);
     }
@@ -95,6 +95,7 @@ async function createUsers() {
     console.log('- Admin Sistema: admin@nephi.com / admin123');
     console.log('- Empresa Formal: diego.ortega.dev@gmail.com / empresa123');
     console.log('- Empresa Informal: juan.perez@example.com / informal123');
+
   } catch (error) {
     console.error('❌ Error:', error);
   } finally {

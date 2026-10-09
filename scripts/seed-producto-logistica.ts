@@ -14,9 +14,7 @@ const prisma = new PrismaClient();
  * Uso: npx ts-node -r tsconfig-paths/register scripts/seed-producto-logistica.ts
  */
 async function main() {
-  console.log(
-    '🌱 Registrando módulo Logística bajo el producto "logistica"...',
-  );
+  console.log('🌱 Registrando módulo Logística bajo el producto "logistica"...');
 
   const facturacion = await prisma.modulo.findFirst({
     where: { codigo: 'logistica', producto: 'facturacion' },
@@ -39,9 +37,7 @@ async function main() {
     create: data,
   });
 
-  console.log(
-    `✅ Módulo Logística (producto: logistica) listo (id=${modulo.id}).`,
-  );
+  console.log(`✅ Módulo Logística (producto: logistica) listo (id=${modulo.id}).`);
 
   // ── Plan "Logística" de ejemplo por plataforma (idempotente) ───────────────
   const plataformas = ['falconext', 'krezka'] as const;
@@ -88,12 +84,8 @@ async function main() {
 
   console.log('');
   console.log('👉 Siguiente paso:');
-  console.log(
-    '   1. Sistema → Planes → edita el plan "Logística" (precio/duración/límites).',
-  );
-  console.log(
-    '   2. Crea/edita la empresa con producto "Logística" y ese plan → verá solo Logística.',
-  );
+  console.log('   1. Sistema → Planes → edita el plan "Logística" (precio/duración/límites).');
+  console.log('   2. Crea/edita la empresa con producto "Logística" y ese plan → verá solo Logística.');
   console.log('');
   console.log('   Para el combo facturación+logística: en un plan de producto');
   console.log('   "Facturación" agrega el módulo Logística entre sus módulos.');

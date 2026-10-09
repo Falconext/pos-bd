@@ -9,12 +9,7 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import * as fs from 'fs';
 const RES = '/tmp/cot-e2e-result.txt';
 fs.writeFileSync(RES, '');
-const out = (...a: any[]) =>
-  fs.appendFileSync(
-    RES,
-    a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ') +
-      '\n',
-  );
+const out = (...a: any[]) => fs.appendFileSync(RES, a.map((x) => typeof x === 'string' ? x : JSON.stringify(x)).join(' ') + '\n');
 
 const EMPRESA = 23;
 const DET = [

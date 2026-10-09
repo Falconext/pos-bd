@@ -26,7 +26,7 @@ async function cleanMasterData() {
     await prisma.$executeRaw`TRUNCATE TABLE "TipoOperacion" CASCADE`;
 
     console.log('✅ Limpieza de datos maestros completada exitosamente');
-
+    
     // Verificar que las tablas estén vacías
     const counts = {
       tipoOperacion: await prisma.tipoOperacion.count(),
@@ -41,6 +41,7 @@ async function cleanMasterData() {
     Object.entries(counts).forEach(([tabla, count]) => {
       console.log(`  ${tabla}: ${count} registros`);
     });
+
   } catch (error) {
     console.error('❌ Error durante la limpieza:', error);
   } finally {

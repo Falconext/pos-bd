@@ -35,7 +35,7 @@ async function main() {
 
   const rutas = Object.keys(document.paths ?? {});
   const schemas = Object.keys(document.components?.schemas ?? {});
-
+  // eslint-disable-next-line no-console
   console.log(
     `✅ OpenAPI de Logística emitido: ${outPath}\n` +
       `   ${rutas.length} rutas · ${schemas.length} schemas\n` +
@@ -44,6 +44,7 @@ async function main() {
 }
 
 main().catch((err) => {
+  // eslint-disable-next-line no-console
   console.error('❌ Error emitiendo OpenAPI de Logística:', err);
   process.exit(1);
 });

@@ -17,13 +17,7 @@
  *
  *   npx ts-node --transpile-only scripts/extraer-conocimiento.ts
  */
-import {
-  readFileSync,
-  writeFileSync,
-  readdirSync,
-  statSync,
-  existsSync,
-} from 'fs';
+import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from 'fs';
 import { join, relative } from 'path';
 
 const RAIZ_BACKEND = join(__dirname, '..');
@@ -57,18 +51,12 @@ const extraerRutas = (): Ruta[] => {
   const fuente = readFileSync(archivo, 'utf8');
   // Solo el árbol del panel: desde path="/administrador" hasta el cierre.
   const desde = fuente.indexOf('path="/administrador"');
-  if (desde < 0)
-    throw new Error('No se encontró el árbol de /administrador en App.tsx');
+  if (desde < 0) throw new Error('No se encontró el árbol de /administrador en App.tsx');
   // El bloque TERMINA donde arranca el árbol siguiente. Sin este corte se
   // colaban las rutas del reseller, que repiten paths del panel ("clientes") y
   // hacían que el bot nombrara pantallas que el empresario no tiene.
-  const siguiente = fuente
-    .slice(desde + 1)
-    .search(/path="\/(reseller|tienda|dashboard|diseno-preview)/);
-  const bloque =
-    siguiente > 0
-      ? fuente.slice(desde, desde + 1 + siguiente)
-      : fuente.slice(desde);
+  const siguiente = fuente.slice(desde + 1).search(/path="\/(reseller|tienda|dashboard|diseno-preview)/);
+  const bloque = siguiente > 0 ? fuente.slice(desde, desde + 1 + siguiente) : fuente.slice(desde);
 
   const rutas: Ruta[] = [];
   const re = /<Route\s+path="([^"]+)"\s+element=\{<([A-Za-z0-9_]+)/g;
@@ -80,10 +68,7 @@ const extraerRutas = (): Ruta[] => {
     // Las rutas con parámetro no se pueden dictar por chat.
     if (ruta.includes(':')) continue;
     if (ruta.startsWith('/')) continue; // rutas de otro árbol
-    rutas.push({
-      ruta: `/administrador/${ruta}`,
-      pantalla: nombreDesdeComponente(componente),
-    });
+    rutas.push({ ruta: `/administrador/${ruta}`, pantalla: nombreDesdeComponente(componente) });
   }
   return [...new Map(rutas.map((r) => [r.ruta, r])).values()].sort((a, b) =>
     a.ruta.localeCompare(b.ruta),
@@ -100,13 +85,7 @@ interface Modulo {
 }
 
 const extraerModulos = (): Modulo[] => {
-  const archivo = join(
-    RAIZ_FRONTEND,
-    'src',
-    'layouts',
-    'sidebar',
-    'sidebarMeta.ts',
-  );
+  const archivo = join(RAIZ_FRONTEND, 'src', 'layouts', 'sidebar', 'sidebarMeta.ts');
   if (!existsSync(archivo)) return [];
   const fuente = readFileSync(archivo, 'utf8');
   const bloque = fuente.match(
@@ -121,23 +100,12 @@ const extraerModulos = (): Modulo[] => {
 };
 
 /** Los sub-items que declara el menú por código de módulo. */
-const extraerSubItems = (): {
-  modulo: string;
-  nombre: string;
-  ruta: string;
-}[] => {
-  const archivo = join(
-    RAIZ_FRONTEND,
-    'src',
-    'layouts',
-    'sidebar',
-    'sidebarMeta.ts',
-  );
+const extraerSubItems = (): { modulo: string; nombre: string; ruta: string }[] => {
+  const archivo = join(RAIZ_FRONTEND, 'src', 'layouts', 'sidebar', 'sidebarMeta.ts');
   if (!existsSync(archivo)) return [];
   const fuente = readFileSync(archivo, 'utf8');
   const items: { modulo: string; nombre: string; ruta: string }[] = [];
-  const re =
-    /codigo:\s*'([\w-]+):([\w-]+)'\s*,\s*nombre:\s*'([^']+)'\s*,\s*ruta:\s*'([^']+)'/g;
+  const re = /codigo:\s*'([\w-]+):([\w-]+)'\s*,\s*nombre:\s*'([^']+)'\s*,\s*ruta:\s*'([^']+)'/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(fuente))) {
     items.push({ modulo: m[1], nombre: m[3], ruta: m[4] });
@@ -173,26 +141,14 @@ const archivosTs = (dir: string, acum: string[] = []): string[] => {
 
 /** Módulos que no le sirven de nada al empresario en un chat de soporte. */
 const MODULOS_IGNORADOS = new Set([
-  'prisma',
-  'common',
-  'gemini',
-  's3',
-  'scheduler',
-  'sync',
-  'main.ts',
-  'app.module.ts',
-  'soporte',
-  'leads',
-  'sistema-finanzas',
-  'store-catalog',
+  'prisma', 'common', 'gemini', 's3', 'scheduler', 'sync', 'main.ts',
+  'app.module.ts', 'soporte', 'leads', 'sistema-finanzas', 'store-catalog',
 ]);
 
 /** Mensajes técnicos: no se los puede leer un empresario. */
 const esTecnico = (m: string) =>
-  /\b(id|Id|ID|DTO|dto|token|payload|endpoint|null|undefined|JSON|UUID|S3|axios|prisma)\b/.test(
-    m,
-  ) ||
-  /^[a-z]+[A-Z]/.test(m) || // camelCase suelto: "conductorId es requerido"
+  /\b(id|Id|ID|DTO|dto|token|payload|endpoint|null|undefined|JSON|UUID|S3|axios|prisma)\b/.test(m) ||
+  /^[a-z]+[A-Z]/.test(m) ||           // camelCase suelto: "conductorId es requerido"
   /\.(ts|js|xml|json)\b/.test(m) ||
   // "X no encontrado" es una búsqueda interna que falló, no algo que el
   // empresario pueda entender ni corregir. Hay decenas y solo agregan ruido.
@@ -209,8 +165,7 @@ const extraerValidaciones = (): Validacion[] => {
     const fuente = readFileSync(archivo, 'utf8');
     // Mensajes de una sola cadena; los concatenados en varias líneas se dejan
     // fuera a propósito: partidos pierden sentido y suman ruido.
-    const re =
-      /(?:BadRequest|Forbidden|NotFound|Unauthorized|Conflict)Exception\(\s*'((?:[^'\\]|\\.){20,200})'\s*[,)]/g;
+    const re = /(?:BadRequest|Forbidden|NotFound|Unauthorized|Conflict)Exception\(\s*'((?:[^'\\]|\\.){20,200})'\s*[,)]/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(fuente))) {
       const mensaje = m[1].replace(/\\'/g, "'").trim();
@@ -221,13 +176,8 @@ const extraerValidaciones = (): Validacion[] => {
   // Únicos por mensaje, agrupados por módulo.
   const vistos = new Set<string>();
   return validaciones
-    .filter((v) =>
-      vistos.has(v.mensaje) ? false : (vistos.add(v.mensaje), true),
-    )
-    .sort(
-      (a, b) =>
-        a.modulo.localeCompare(b.modulo) || a.mensaje.localeCompare(b.mensaje),
-    );
+    .filter((v) => (vistos.has(v.mensaje) ? false : (vistos.add(v.mensaje), true)))
+    .sort((a, b) => a.modulo.localeCompare(b.modulo) || a.mensaje.localeCompare(b.mensaje));
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -253,9 +203,7 @@ const nombresDeModulo = async (): Promise<Record<string, string>> => {
       await prisma.$disconnect();
       return {};
     }
-    const modulos = await prisma.modulo.findMany({
-      select: { codigo: true, nombre: true },
-    });
+    const modulos = await prisma.modulo.findMany({ select: { codigo: true, nombre: true } });
     await prisma.$disconnect();
     return Object.fromEntries(modulos.map((m: any) => [m.codigo, m.nombre]));
   } catch {
@@ -281,23 +229,16 @@ const armarDocumento = async (): Promise<string> => {
   for (const r of rutas) lineas.push(`- ${r.pantalla}: ${r.ruta}`);
 
   lineas.push('');
-  lineas.push(
-    'SECCIONES DEL MENÚ — los nombres que el empresario ve y debes usar',
-  );
+  lineas.push('SECCIONES DEL MENÚ — los nombres que el empresario ve y debes usar');
   for (const m of modulos) {
     const visible = nombres[m.codigo];
-    lineas.push(
-      visible
-        ? `- ${visible} (${m.codigo}): ${m.ruta}`
-        : `- ${m.codigo}: ${m.ruta}`,
-    );
+    lineas.push(visible ? `- ${visible} (${m.codigo}): ${m.ruta}` : `- ${m.codigo}: ${m.ruta}`);
   }
 
   if (subItems.length) {
     lineas.push('');
     lineas.push('SUB-SECCIONES DEL MENÚ');
-    for (const s of subItems)
-      lineas.push(`- ${s.modulo} → ${s.nombre}: ${s.ruta}`);
+    for (const s of subItems) lineas.push(`- ${s.modulo} → ${s.nombre}: ${s.ruta}`);
   }
 
   lineas.push('');
@@ -319,9 +260,9 @@ const armarDocumento = async (): Promise<string> => {
 };
 
 (async () => {
-  const documento = await armarDocumento();
+const documento = await armarDocumento();
 
-  const archivo = `/**
+const archivo = `/**
  * GENERADO AUTOMÁTICAMENTE — NO EDITAR A MANO.
  *
  * Lo produce \`scripts/extraer-conocimiento.ts\` leyendo el código: las rutas
@@ -334,14 +275,14 @@ const armarDocumento = async (): Promise<string> => {
 export const CONOCIMIENTO_GENERADO = ${JSON.stringify(documento)};
 `;
 
-  writeFileSync(SALIDA, archivo, 'utf8');
+writeFileSync(SALIDA, archivo, 'utf8');
 
-  const rutas = extraerRutas();
-  const validaciones = extraerValidaciones();
-  console.log('Conocimiento generado en', relative(RAIZ_BACKEND, SALIDA));
-  console.log('  pantallas   :', rutas.length);
-  console.log('  módulos     :', extraerModulos().length);
-  console.log('  sub-items   :', extraerSubItems().length);
-  console.log('  validaciones:', validaciones.length);
-  console.log('  tamaño      :', (documento.length / 1024).toFixed(1), 'KB');
+const rutas = extraerRutas();
+const validaciones = extraerValidaciones();
+console.log('Conocimiento generado en', relative(RAIZ_BACKEND, SALIDA));
+console.log('  pantallas   :', rutas.length);
+console.log('  módulos     :', extraerModulos().length);
+console.log('  sub-items   :', extraerSubItems().length);
+console.log('  validaciones:', validaciones.length);
+console.log('  tamaño      :', (documento.length / 1024).toFixed(1), 'KB');
 })();
