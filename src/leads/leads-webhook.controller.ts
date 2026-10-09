@@ -114,7 +114,11 @@ export class LeadsWebhookController {
           const phoneNumberId = value.metadata?.phone_number_id;
           const contactos: any[] = value.contacts ?? [];
           for (const msg of value.messages ?? []) {
-            if (msg.type !== 'text' && msg.type !== 'audio') continue;
+            // Las imágenes y los documentos se aceptan aunque no se lean: un
+            // cliente que manda el comprobante de pago tiene que llegar al
+            // asesor, y antes ese mensaje se descartaba en silencio.
+            const texto = textoDeMensaje(msg);
+            if (texto === null) continue;
             const contacto = contactos.find((c) => c.wa_id === msg.from);
             await this.queue.add(
               JOB_INGRESAR_MENSAJE,
@@ -122,7 +126,7 @@ export class LeadsWebhookController {
                 phoneNumberId,
                 from: msg.from,
                 messageId: msg.id,
-                text: msg.text?.body ?? '',
+                text: texto,
                 esAudio: msg.type === 'audio',
                 mediaId: msg.audio?.id,
                 nombre: contacto?.profile?.name,
@@ -147,5 +151,37 @@ export class LeadsWebhookController {
     } catch (e: any) {
       this.logger.error(`Webhook leads: error encolando: ${e?.message}`);
     }
+  }
+}
+
+/**
+ * Qué texto representa un mensaje entrante, o `null` si es de un tipo que no
+ * sabemos manejar.
+ *
+ * Las imágenes y documentos no se leen, pero sí se registran: el cliente que
+ * manda su comprobante de pago espera respuesta, y antes su mensaje se
+ * descartaba sin que nadie se enterara.
+ */
+function textoDeMensaje(msg: {
+  type?: string;
+  text?: { body?: string };
+  image?: { caption?: string };
+  document?: { caption?: string; filename?: string };
+}): string | null {
+  switch (msg.type) {
+    case 'text':
+      return msg.text?.body ?? '';
+    case 'audio':
+      return '';
+    case 'image':
+      return msg.image?.caption?.trim()
+        ? `[el cliente envió una imagen] ${msg.image.caption.trim()}`
+        : '[el cliente envió una imagen]';
+    case 'document':
+      return `[el cliente envió un documento${
+        msg.document?.filename ? `: ${msg.document.filename}` : ''
+      }]`;
+    default:
+      return null;
   }
 }

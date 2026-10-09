@@ -1,4 +1,5 @@
 import { FunctionDeclaration, SchemaType } from '@google/generative-ai';
+import { MOTIVOS_DERIVACION } from './pausa-bot';
 
 /**
  * Herramientas que la IA de Ventas puede pedir durante una conversación.
@@ -17,6 +18,7 @@ export const HERRAMIENTA_ENVIAR_FOTO = 'enviar_foto';
 export const HERRAMIENTA_GUARDAR_DATOS = 'guardar_datos_envio';
 export const HERRAMIENTA_COTIZAR = 'cotizar';
 export const HERRAMIENTA_REGISTRAR_PEDIDO = 'registrar_pedido';
+export const HERRAMIENTA_DERIVAR = 'derivar_a_asesor';
 
 const buscarProductos: FunctionDeclaration = {
   name: HERRAMIENTA_BUSCAR_PRODUCTOS,
@@ -161,6 +163,29 @@ const registrarPedido: FunctionDeclaration = {
   parameters: { type: SchemaType.OBJECT, properties: {} },
 };
 
+const derivar: FunctionDeclaration = {
+  name: HERRAMIENTA_DERIVAR,
+  description:
+    'Pasa la conversación a una persona del equipo y deja de responder. Úsala cuando: el cliente es mayorista, revendedor o distribuidor (o compra 6 docenas o más); hay un reclamo, producto dañado, vencido o equivocado, pedido incompleto, cambio, devolución o cancelación con adelanto; manda un comprobante de pago; pregunta por el seguimiento de un pedido ya hecho; pide un descuento fuera de la regla; quiere un producto que no tenemos y pide que lo busquemos con proveedores; o pide hablar con una persona. ' +
+    'ANTES de llamarla, pregúntale lo que el asesor va a necesitar (qué producto, qué pasó, qué cantidades) — después de derivar ya no podrás preguntar nada. ' +
+    'El mensaje con el que derivas no lleva preguntas. Se deriva UNA sola vez.',
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      motivo: {
+        type: SchemaType.STRING,
+        description: `Por qué derivas. Uno de: ${MOTIVOS_DERIVACION.join(', ')}.`,
+      },
+      detalle: {
+        type: SchemaType.STRING,
+        description:
+          'Lo que el asesor necesita saber para retomar sin volver a preguntar: producto, cantidades, ciudad, qué pasó.',
+      },
+    },
+    required: ['motivo'],
+  },
+};
+
 /** Las herramientas disponibles hoy. Los bloques C y F añaden las suyas aquí. */
 export const HERRAMIENTAS_VENTA: FunctionDeclaration[] = [
   buscarProductos,
@@ -168,6 +193,7 @@ export const HERRAMIENTAS_VENTA: FunctionDeclaration[] = [
   guardarDatosEnvio,
   cotizar,
   registrarPedido,
+  derivar,
 ];
 
 /**
@@ -187,4 +213,5 @@ CÓMO SE CIERRA UNA VENTA
 - En cuanto el cliente mencione su distrito, su nombre, su celular o cualquier dato de entrega, guárdalo con ${HERRAMIENTA_GUARDAR_DATOS}. La herramienta te dice qué falta: pide UN dato por mensaje, en el orden en que te los lista, y nunca repreguntes algo que ya está guardado.
 - Para cotizar usa ${HERRAMIENTA_COTIZAR}. El envío y el descuento los calcula ella: tú no sumas ni aplicas descuentos. Copia su texto tal cual.
 - Cuando el cliente acepte y no falte ningún dato, llama a ${HERRAMIENTA_REGISTRAR_PEDIDO}. Solo después de que te confirme puedes decirle que su pedido quedó agendado.
+- Lo que no te toca resolver se deriva con ${HERRAMIENTA_DERIVAR}: mayoristas, reclamos, comprobantes de pago, seguimiento de pedidos ya hechos y quien pida hablar con una persona. Nunca digas que ya informaste a un asesor si en ese mismo turno no la llamaste.
 `.trim();

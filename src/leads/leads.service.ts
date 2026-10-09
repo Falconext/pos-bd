@@ -9,6 +9,7 @@ import { RagVentasService } from './leads-rag.service';
 import { ClienteService } from '../cliente/cliente.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { LIMITE_TEXTO_WHATSAPP } from './leads.constants';
+import { venceEn } from './pausa-bot';
 
 /**
  * Módulo IA de Ventas / Filtro de Leads (portado de salesfilter-ai).
@@ -344,7 +345,13 @@ export class LeadsService {
     if (!prospecto) throw new NotFoundException('Prospecto no encontrado');
     return this.prisma.leadProspecto.update({
       where: { id: prospectoId },
-      data: { botActivo: activo },
+      data: {
+        botActivo: activo,
+        // Encender a mano limpia cualquier pausa; apagar a mano es
+        // deliberado y no vence solo.
+        pausadoHasta: null,
+        motivoPausa: activo ? null : 'apagado desde el panel',
+      },
     });
   }
 
@@ -407,7 +414,13 @@ export class LeadsService {
     if (conv.prospecto?.botActivo) {
       await this.prisma.leadProspecto.update({
         where: { id: conv.prospecto.id },
-        data: { botActivo: false },
+        // Vence sola: una pausa permanente convertía cada respuesta manual en
+        // un bot apagado para siempre en esa conversación.
+        data: {
+          botActivo: false,
+          pausadoHasta: venceEn(),
+          motivoPausa: 'respuesta manual',
+        },
       });
       botPausado = true;
     }

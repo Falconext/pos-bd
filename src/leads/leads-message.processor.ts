@@ -17,10 +17,12 @@ import { EjecutorHerramienta } from '../gemini/gemini.service';
 import {
   HERRAMIENTA_BUSCAR_PRODUCTOS,
   HERRAMIENTA_COTIZAR,
+  HERRAMIENTA_DERIVAR,
   HERRAMIENTA_ENVIAR_FOTO,
   HERRAMIENTA_GUARDAR_DATOS,
   HERRAMIENTA_REGISTRAR_PEDIDO,
 } from './leads-herramientas';
+import { debeReactivarse, estaPausado, venceEn } from './pausa-bot';
 import {
   DatosDelCliente,
   ItemPedido,
@@ -296,12 +298,23 @@ export class LeadsMessageProcessor extends WorkerHost {
     });
     if (!conv) return;
 
-    // Bot pausado en este prospecto (un humano tomó el chat).
+    // Bot pausado en este prospecto (un humano tomó el chat). La pausa por
+    // intervención vence sola; la de una derivación, no — ahí hay una persona
+    // atendiendo y la IA no debe meterse en medio.
     const prospecto = await this.prisma.leadProspecto.findUnique({
       where: { conversacionId: conv.id },
-      select: { botActivo: true },
+      select: { id: true, botActivo: true, pausadoHasta: true },
     });
-    if (prospecto && !prospecto.botActivo) return;
+    if (estaPausado(prospecto)) return;
+    if (debeReactivarse(prospecto) && prospecto) {
+      await this.prisma.leadProspecto.update({
+        where: { id: prospecto.id },
+        data: { botActivo: true, pausadoHasta: null, motivoPausa: null },
+      });
+      this.logger.log(
+        `Lead: venció la pausa de la conv ${conv.id}; la IA retoma.`,
+      );
+    }
 
     // Tope mensual de leads del plan (soft-block): el lead se captura igual, pero
     // si esta conversación supera el tope, la IA no responde y se avisa al admin.
@@ -1011,6 +1024,35 @@ export class LeadsMessageProcessor extends WorkerHost {
               ? argumentos.nombrePack
               : undefined,
           );
+        }
+
+        case HERRAMIENTA_DERIVAR: {
+          const motivo = String(argumentos.motivo ?? 'sin motivo');
+          const detalle =
+            typeof argumentos.detalle === 'string' ? argumentos.detalle : '';
+          // Pausa SIN vencimiento: hay una persona atendiendo y la IA no
+          // puede volver sola a meterse en medio.
+          await this.prisma.leadProspecto.updateMany({
+            where: { conversacionId },
+            data: { botActivo: false, pausadoHasta: null, motivoPausa: motivo },
+          });
+          await this.notificaciones
+            .notificarAdminsEmpresa({
+              empresaId,
+              tipo: 'WARNING',
+              titulo: `🙋 Un cliente necesita a una persona (${motivo})`,
+              mensaje: `${detalle || 'Sin detalle.'}\n\nWhatsApp: ${telefono}`,
+              metaData: { origen: 'ia-ventas-derivacion', motivo, telefono },
+            })
+            .catch(() => undefined);
+          this.logger.log(
+            `Lead: conv ${conversacionId} derivada a un humano (${motivo}).`,
+          );
+          return {
+            derivado: true,
+            instruccion:
+              'Avísale al cliente que ya informaste a un asesor y que se comunicará con él. Sin preguntas y una sola vez: a partir de aquí no vuelvas a responder.',
+          };
         }
 
         case HERRAMIENTA_REGISTRAR_PEDIDO:

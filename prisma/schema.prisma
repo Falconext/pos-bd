@@ -4136,6 +4136,14 @@ model LeadProspecto {
   puntosClave       String[]
   proximaAccion     String?
   botActivo         Boolean             @default(true)
+  /// Hasta cuándo dura la pausa. Cuando un humano toma el chat, la IA se
+  /// calla un rato y vuelve sola: una pausa permanente convierte cada
+  /// intervención manual en un bot apagado para siempre, que es lo que
+  /// pasaba antes. Null con botActivo=false = apagado a propósito.
+  pausadoHasta      DateTime?
+  /// Por qué se pausó: "respuesta manual", "mayorista", "reclamo"… Se ve en
+  /// el panel y explica al equipo qué pasó.
+  motivoPausa       String?
   notificadoEn      DateTime? // idempotencia de alerta lead caliente
   cotizacionId      Int? // COT (comprobante) que la IA generó desde el chat, si aplica
   clienteId         Int? // Cliente de MYPE creado al convertir el prospecto (Fase 3)

@@ -12,6 +12,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { LeadsService } from './leads.service';
 import { LIMITE_TEXTO_WHATSAPP } from './leads.constants';
+import { PAUSA_INTERVENCION_MS } from './pausa-bot';
 
 const EMPRESA = 7;
 const CONVERSACION = 42;
@@ -198,10 +199,15 @@ describe('Mensaje manual del vendedor en una conversación de leads', () => {
         CONVERSACION,
         'hola',
       );
-      expect(prisma.leadProspecto.update).toHaveBeenCalledWith({
-        where: { id: 99 },
-        data: { botActivo: false },
-      });
+      const llamada = prisma.leadProspecto.update.mock.calls[0][0];
+      expect(llamada.where).toEqual({ id: 99 });
+      expect(llamada.data.botActivo).toBe(false);
+      expect(llamada.data.motivoPausa).toBe('respuesta manual');
+      // La pausa VENCE: antes era permanente y una sola respuesta manual
+      // dejaba esa conversación sin IA para siempre.
+      const faltanMs = llamada.data.pausadoHasta.getTime() - Date.now();
+      expect(faltanMs).toBeGreaterThan(PAUSA_INTERVENCION_MS - 5000);
+      expect(faltanMs).toBeLessThanOrEqual(PAUSA_INTERVENCION_MS);
       expect(r.botPausado).toBe(true);
     });
 

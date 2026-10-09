@@ -49,7 +49,16 @@ export class LeadsSeguimientoService {
         estado: 'ACTIVA' as any,
         seguimientos: 0,
         actualizadoEn: { lte: limiteSilencio, gte: limiteVentana },
-        prospecto: { is: { botActivo: true } },
+        // Activo, o con la pausa ya vencida: si no, una intervención manual
+        // dejaba la conversación sin seguimiento para siempre.
+        prospecto: {
+          is: {
+            OR: [
+              { botActivo: true },
+              { botActivo: false, pausadoHasta: { lte: new Date() } },
+            ],
+          },
+        },
         empresa: {
           is: {
             iaVentasActiva: true,
