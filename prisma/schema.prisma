@@ -306,6 +306,11 @@ model Empresa {
   // (se registra la salida aunque el stock quede en 0/negativo). Default false = mantiene
   // el bloqueo por stock insuficiente.
   permitirVentaSinStock         Boolean                       @default(false)
+  // Lo mismo, pero para la TIENDA ONLINE y por separado: el negocio puede querer
+  // aceptar pedidos de lo agotado en la web (lo trae por encargo) sin habilitar
+  // la sobreventa en el mostrador, o al revés. Default false = la tienda sigue
+  // rechazando lo que no hay en stock.
+  tiendaVentaSinStock           Boolean                       @default(false)
   // Modo offline-first de la app móvil (Fase 1): la app puede vender/cajear sin
   // red y sincronizar después vía /sync/operaciones. OFF por defecto (rollout
   // gradual por empresa desde el panel de sistema).
@@ -638,6 +643,11 @@ model Producto {
   stockMaximo         Int?
   stockMinimo         Int?                 @default(0)
   descripcionLarga    String?
+  /// Video del producto (TikTok, YouTube, Instagram, Facebook o mp4 directo).
+  /// Se guarda la URL tal como la pega el negocio; la tienda la convierte a
+  /// reproductor. Para quien vende mostrando el producto real en sus redes, el
+  /// video convence más que una foto.
+  videoUrl            String?
   destacado           Boolean              @default(false)
   imagenUrl           String?
   imagenesExtra       String?
@@ -880,6 +890,10 @@ model TipoDocumento {
 model Cliente {
   id                    Int                  @id @default(autoincrement())
   nombre                String
+  /// Nombre corto con el que el negocio reconoce al cliente ("el de la bodega
+  /// de la esquina", "Panadería Lucho"). Se busca igual que el nombre o el
+  /// documento: el vendedor casi nunca recuerda el RUC, pero sí el apodo.
+  alias                 String?
   nroDoc                String
   direccion             String?
   email                 String?

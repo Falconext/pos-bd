@@ -426,6 +426,7 @@ export class TiendaService {
         minimoCompra: true,
         aceptaRecojo: true,
         aceptaEnvio: true,
+        tiendaVentaSinStock: true,
         direccionRecojo: true,
         tiempoPreparacionMin: true,
         // Información Bancaria
@@ -463,6 +464,7 @@ export class TiendaService {
         minimoCompra: true,
         aceptaRecojo: true,
         aceptaEnvio: true,
+        tiendaVentaSinStock: true,
         direccionRecojo: true,
         tiempoPreparacionMin: true,
         // Información Bancaria
@@ -1275,6 +1277,7 @@ export class TiendaService {
         codigo: true,
         descripcion: true,
         descripcionLarga: true,
+        videoUrl: true,
         precioUnitario: true,
         precioOferta: true,
         fechaInicioOferta: true,
@@ -1689,6 +1692,7 @@ export class TiendaService {
       codigo: true,
       descripcion: true,
       descripcionLarga: true,
+      videoUrl: true,
       precioUnitario: true,
       precioOferta: true,
       fechaInicioOferta: true,
@@ -2324,6 +2328,7 @@ export class TiendaService {
         minimoCompra: true,
         aceptaRecojo: true,
         aceptaEnvio: true,
+        tiendaVentaSinStock: true,
         direccionRecojo: true,
         tiempoPreparacionMin: true,
         direccion: true,
@@ -2349,6 +2354,7 @@ export class TiendaService {
         minimoCompra: true,
         aceptaRecojo: true,
         aceptaEnvio: true,
+        tiendaVentaSinStock: true,
         nombreComercial: true,
         razonSocial: true,
         mpConectado: true,
@@ -2480,7 +2486,14 @@ export class TiendaService {
         String(
           (producto.atributosTecnicos as any)?.tipoProducto || '',
         ).toUpperCase() === 'SERVICIO';
-      if (!esServicio && Number(producto.stock) < cantidadBase) {
+      // Con "aceptar pedidos sin stock" el negocio asume que lo trae por encargo:
+      // el pedido entra igual y el stock puede quedar en negativo, que es la
+      // señal de lo que debe reponer.
+      if (
+        !esServicio &&
+        !empresa.tiendaVentaSinStock &&
+        Number(producto.stock) < cantidadBase
+      ) {
         throw new BadRequestException(
           `Stock insuficiente para ${producto.descripcion}. Disponible: ${producto.stock}`,
         );
@@ -3335,6 +3348,7 @@ export class TiendaService {
         minimoCompra: true,
         aceptaRecojo: true,
         aceptaEnvio: true,
+        tiendaVentaSinStock: true,
         direccionRecojo: true,
         tiempoPreparacionMin: true,
       },
@@ -3357,6 +3371,7 @@ export class TiendaService {
         minimoCompra: true,
         aceptaRecojo: true,
         aceptaEnvio: true,
+        tiendaVentaSinStock: true,
         direccionRecojo: true,
         tiempoPreparacionMin: true,
       },
