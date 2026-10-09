@@ -8,6 +8,12 @@ import { RagVentasService } from './leads-rag.service';
 import { LeadsAlertaService } from './leads-alerta.service';
 import { ComprobanteService } from '../comprobante/comprobante.service';
 import { LEADS_MESSAGES_QUEUE } from './leads.constants';
+import { Prisma } from '@prisma/client';
+import { EjecutorHerramienta } from '../gemini/gemini.service';
+import {
+  HERRAMIENTA_BUSCAR_PRODUCTOS,
+  HERRAMIENTA_ENVIAR_FOTO,
+} from './leads-herramientas';
 import {
   IaVentasService,
   MensajeConversacion,
@@ -96,7 +102,10 @@ export class LeadsMessageProcessor extends WorkerHost {
         cantidadMensajes: 0,
       },
       // El cliente escribió → reinicia el contador de seguimientos (silencio nuevo).
-      update: { seguimientos: 0, ...(d.nombre ? { nombreProspecto: d.nombre } : {}) },
+      update: {
+        seguimientos: 0,
+        ...(d.nombre ? { nombreProspecto: d.nombre } : {}),
+      },
       select: { id: true, creadoEn: true },
     });
 
@@ -184,7 +193,13 @@ export class LeadsMessageProcessor extends WorkerHost {
 
     // Tope mensual de leads del plan (soft-block): el lead se captura igual, pero
     // si esta conversación supera el tope, la IA no responde y se avisa al admin.
-    if (await this.superaTopeLeads(empresa.id, empresa.plan?.maxLeadsMes ?? null, conv.creadoEn)) {
+    if (
+      await this.superaTopeLeads(
+        empresa.id,
+        empresa.plan?.maxLeadsMes ?? null,
+        conv.creadoEn,
+      )
+    ) {
       return;
     }
 
@@ -212,12 +227,18 @@ export class LeadsMessageProcessor extends WorkerHost {
       .filter((s) => s && s.trim())
       .join('\n\n');
 
+    // El modelo puede pedir herramientas (buscar en el catálogo, enviar una
+    // foto). `fotosEnviadas` evita repetir la misma imagen en un turno.
+    const fotosEnviadas = new Set<number>();
+    const ejecutor = this.crearEjecutor(empresa.id, d.from, fotosEnviadas);
+
     let resultado: RespuestaVenta;
     try {
       resultado = await this.ia.generarRespuesta(
         historial,
         businessContext,
         historial.length,
+        ejecutor,
       );
     } catch (err) {
       if (esErrorPermanente(err)) {
@@ -235,6 +256,9 @@ export class LeadsMessageProcessor extends WorkerHost {
         conversacionId: conv.id,
         rol: 'ASISTENTE',
         contenido: resultado.reply,
+        herramientasJson: resultado.llamadas.length
+          ? (resultado.llamadas as unknown as Prisma.InputJsonValue)
+          : undefined,
       },
     });
     const envio = await this.whatsapp.enviarTexto(
@@ -248,23 +272,9 @@ export class LeadsMessageProcessor extends WorkerHost {
       );
     }
 
-    // Si el cliente pidió VER productos y hay coincidencias con foto, enviar
-    // hasta 3 imágenes (con precio en el caption). Dentro de la ventana de 24h
-    // es mensaje de servicio (sin costo). Best-effort: no bloquea la respuesta.
-    if (this.quiereVerProductos(contenido)) {
-      const conFoto = relevantes.productos
-        .filter((p) => p.imagenUrl)
-        .slice(0, 3);
-      for (const p of conFoto) {
-        const simbolo = p.moneda === 'USD' ? 'US$' : 'S/';
-        const caption = `${p.descripcion} — ${simbolo}${Number(
-          p.precioUnitario,
-        ).toFixed(2)}`;
-        await this.whatsapp
-          .enviarImagenUrl(d.from, p.imagenUrl as string, caption, empresa.id)
-          .catch(() => {});
-      }
-    }
+    // Las fotos de producto ya no se adivinan con una expresión regular sobre
+    // el texto: el modelo las pide con la herramienta `enviar_foto` cuando hace
+    // falta, y el ejecutor las manda en ese momento.
 
     // Brochure/catálogo: si el prospecto pide más info y la empresa tiene un
     // enlace configurado, se envía UNA vez por conversación (PDF o imagen).
@@ -286,7 +296,13 @@ export class LeadsMessageProcessor extends WorkerHost {
         } else if (esPdf) {
           // Archivo PDF → documento.
           res = await this.whatsapp
-            .enviarDocumentoUrl(d.from, url, 'Brochure.pdf', undefined, empresa.id)
+            .enviarDocumentoUrl(
+              d.from,
+              url,
+              'Brochure.pdf',
+              undefined,
+              empresa.id,
+            )
             .catch(() => ({ success: false }));
         } else {
           // Página web (no es archivo) → se comparte el enlace en un mensaje.
@@ -437,13 +453,98 @@ export class LeadsMessageProcessor extends WorkerHost {
   // Palabras conversacionales/de consulta que NO son nombres de producto; se
   // descartan para que la búsqueda se quede solo con los términos del producto.
   private static readonly STOPWORDS_PRODUCTO = new Set([
-    'hola','buenas','buenos','dias','días','tardes','noches','quiero','quisiera','necesito','busco',
-    'tienes','tienen','tiene','hay','habra','habrá','me','puedes','podrias','podrías','porfa','porfavor',
-    'favor','cuanto','cuánto','cuestan','cuesta','precio','precios','vale','valen','costo','stock',
-    'disponible','disponibles','disponibilidad','info','informacion','información','sobre','del','de','la',
-    'el','los','las','un','una','unos','unas','y','o','a','en','para','con','que','qué','es','son','tu','tus',
-    'su','sus','mi','mis','gustaria','gustaría','saber','ver','comprar','producto','productos','venden','vende',
-    'cual','cuales','cuál','cuáles','ok','gracias','si','sí','no','al','lo','le','tienes','algun','algún','alguna',
+    'hola',
+    'buenas',
+    'buenos',
+    'dias',
+    'días',
+    'tardes',
+    'noches',
+    'quiero',
+    'quisiera',
+    'necesito',
+    'busco',
+    'tienes',
+    'tienen',
+    'tiene',
+    'hay',
+    'habra',
+    'habrá',
+    'me',
+    'puedes',
+    'podrias',
+    'podrías',
+    'porfa',
+    'porfavor',
+    'favor',
+    'cuanto',
+    'cuánto',
+    'cuestan',
+    'cuesta',
+    'precio',
+    'precios',
+    'vale',
+    'valen',
+    'costo',
+    'stock',
+    'disponible',
+    'disponibles',
+    'disponibilidad',
+    'info',
+    'informacion',
+    'información',
+    'sobre',
+    'del',
+    'de',
+    'la',
+    'el',
+    'los',
+    'las',
+    'un',
+    'una',
+    'unos',
+    'unas',
+    'y',
+    'o',
+    'a',
+    'en',
+    'para',
+    'con',
+    'que',
+    'qué',
+    'es',
+    'son',
+    'tu',
+    'tus',
+    'su',
+    'sus',
+    'mi',
+    'mis',
+    'gustaria',
+    'gustaría',
+    'saber',
+    'ver',
+    'comprar',
+    'producto',
+    'productos',
+    'venden',
+    'vende',
+    'cual',
+    'cuales',
+    'cuál',
+    'cuáles',
+    'ok',
+    'gracias',
+    'si',
+    'sí',
+    'no',
+    'al',
+    'lo',
+    'le',
+    'tienes',
+    'algun',
+    'algún',
+    'alguna',
   ]);
 
   /**
@@ -452,6 +553,114 @@ export class LeadsMessageProcessor extends WorkerHost {
    * para que la IA responda con datos reales (no inventados). Devuelve '' si el
    * mensaje no menciona ningún producto o no hay coincidencias.
    */
+  /**
+   * Ejecuta las herramientas que pide el modelo durante un turno.
+   *
+   * Cada herramienta devuelve datos, nunca texto para el cliente: lo que el
+   * cliente lee lo redacta el modelo con esos datos.
+   */
+  private crearEjecutor(
+    empresaId: number,
+    telefono: string,
+    fotosEnviadas: Set<number>,
+  ): EjecutorHerramienta {
+    return async (nombre, argumentos) => {
+      switch (nombre) {
+        case HERRAMIENTA_BUSCAR_PRODUCTOS: {
+          const consulta = String(argumentos.consulta ?? '').trim();
+          if (!consulta) {
+            return { error: 'Falta la consulta de búsqueda.' };
+          }
+          const categoria =
+            typeof argumentos.categoria === 'string' &&
+            argumentos.categoria.trim()
+              ? argumentos.categoria.trim()
+              : undefined;
+          const inicio = Date.now();
+          const productos = await this.consultarCatalogo(
+            empresaId,
+            consulta,
+            categoria,
+          );
+          const ms = Date.now() - inicio;
+          this.logger.log(
+            `IA buscó "${consulta}"${categoria ? ` [${categoria}]` : ''} en empresa ${empresaId}: ${productos.length} resultado(s) en ${ms} ms.`,
+          );
+          if (productos.length === 0) {
+            return {
+              productos: [],
+              mensaje:
+                'Sin coincidencias. Intenta otra vez con un término distinto: el ingrediente, el órgano o sistema, o la acción que busca el cliente.',
+            };
+          }
+          return {
+            productos: productos.map((p) => ({
+              id: p.id,
+              nombre: p.descripcion,
+              precio: `${p.moneda === 'USD' ? 'US$' : 'S/'} ${Number(p.precioUnitario).toFixed(2)}`,
+              disponibilidad: this.textoDisponibilidad(p.stock),
+              tieneFoto: !!p.imagenUrl,
+            })),
+          };
+        }
+
+        case HERRAMIENTA_ENVIAR_FOTO: {
+          const productoId = Number(argumentos.productoId);
+          if (!Number.isInteger(productoId)) {
+            return { error: 'productoId inválido.' };
+          }
+          if (fotosEnviadas.has(productoId)) {
+            return { enviada: true, nota: 'Ya se envió en este mismo turno.' };
+          }
+          const producto = await this.prisma.producto.findFirst({
+            where: { id: productoId, empresaId },
+            select: {
+              descripcion: true,
+              imagenUrl: true,
+              precioUnitario: true,
+              moneda: true,
+            },
+          });
+          if (!producto)
+            return { error: 'Ese producto no es de este negocio.' };
+          if (!producto.imagenUrl) {
+            return {
+              enviada: false,
+              motivo:
+                'Este producto no tiene foto en el catálogo. No le prometas una al cliente.',
+            };
+          }
+          const simbolo = producto.moneda === 'USD' ? 'US$' : 'S/';
+          const caption = `${producto.descripcion} — ${simbolo}${Number(
+            producto.precioUnitario,
+          ).toFixed(2)}`;
+          const envio = await this.whatsapp
+            .enviarImagenUrl(telefono, producto.imagenUrl, caption, empresaId)
+            .catch((e: unknown) => ({
+              success: false,
+              error: e instanceof Error ? e.message : String(e),
+            }));
+          if (envio.success) fotosEnviadas.add(productoId);
+          return envio.success
+            ? { enviada: true }
+            : { enviada: false, motivo: 'No se pudo enviar la imagen.' };
+        }
+
+        default:
+          return { error: `Herramienta desconocida: ${nombre}` };
+      }
+    };
+  }
+
+  /**
+   * Cómo se le describe la disponibilidad al modelo. Hoy sale del stock; B1 lo
+   * cambia por el campo de disponibilidad real (INMEDIATA / BAJO PEDIDO / NO
+   * DISPONIBLE), y este es el único sitio que hay que tocar.
+   */
+  private textoDisponibilidad(stock: unknown): string {
+    return Number(stock) > 0 ? 'disponible' : 'sin stock';
+  }
+
   private async buscarProductosRelevantes(
     empresaId: number,
     texto: string,
@@ -466,25 +675,77 @@ export class LeadsMessageProcessor extends WorkerHost {
       imagenUrl: string | null;
     }[];
   }> {
-    const vacio = { contexto: '', productos: [] };
+    const productos = await this.consultarCatalogo(empresaId, texto);
+    if (productos.length === 0) return { contexto: '', productos: [] };
+
+    const lineas = productos.map((p) => {
+      const simbolo = p.moneda === 'USD' ? 'US$' : 'S/';
+      const precio = `${simbolo}${Number(p.precioUnitario).toFixed(2)}`;
+      return `- ${p.descripcion}: ${precio} (${this.textoDisponibilidad(p.stock)})`;
+    });
+    const contexto =
+      'PRODUCTOS QUE COINCIDEN A PRIMERA VISTA con el último mensaje (precio y ' +
+      'disponibilidad reales del negocio). Son un adelanto, no el catálogo entero: ' +
+      `si necesitas otros, o el cliente pregunta por algo que no está aquí, llama a ${HERRAMIENTA_BUSCAR_PRODUCTOS}. ` +
+      'Nunca inventes productos ni precios:\n' +
+      lineas.join('\n');
+    return { contexto, productos };
+  }
+
+  /**
+   * Consulta el catálogo real del negocio por tokens del texto. Es la fuente
+   * única de productos: la usan tanto el adelanto que se inyecta al prompt como
+   * la herramienta `buscar_productos`.
+   *
+   * B4 la convierte en cascada (tokens → trigram → RAG); por ahora es el
+   * AND de palabras de siempre.
+   */
+  private async consultarCatalogo(
+    empresaId: number,
+    texto: string,
+    categoria?: string,
+  ): Promise<
+    {
+      id: number;
+      descripcion: string;
+      precioUnitario: any;
+      stock: any;
+      moneda: string;
+      imagenUrl: string | null;
+    }[]
+  > {
     const tokens = (texto || '')
       .toLowerCase()
       .replace(/[¿?¡!.,;:()]/g, ' ')
       .split(/\s+/)
-      .filter((w) => w.length >= 3 && !LeadsMessageProcessor.STOPWORDS_PRODUCTO.has(w))
+      .filter(
+        (w) =>
+          w.length >= 3 && !LeadsMessageProcessor.STOPWORDS_PRODUCTO.has(w),
+      )
       .slice(0, 5);
-    if (tokens.length === 0) return vacio;
+    if (tokens.length === 0) return [];
 
-    const productos = await this.prisma.producto.findMany({
+    return this.prisma.producto.findMany({
       where: {
         empresaId,
         estado: 'ACTIVO' as any,
+        ...(categoria
+          ? {
+              categoria: {
+                nombre: { contains: categoria, mode: 'insensitive' as any },
+              },
+            }
+          : {}),
         AND: tokens.map((tk) => ({
           OR: [
             { descripcion: { contains: tk, mode: 'insensitive' as any } },
             { codigo: { contains: tk, mode: 'insensitive' as any } },
             { codigoBarras: { contains: tk, mode: 'insensitive' as any } },
-            { categoria: { nombre: { contains: tk, mode: 'insensitive' as any } } },
+            {
+              categoria: {
+                nombre: { contains: tk, mode: 'insensitive' as any },
+              },
+            },
             { marca: { nombre: { contains: tk, mode: 'insensitive' as any } } },
           ],
         })),
@@ -500,33 +761,11 @@ export class LeadsMessageProcessor extends WorkerHost {
       orderBy: { stock: 'desc' },
       take: 8,
     });
-    if (productos.length === 0) return vacio;
-
-    const lineas = productos.map((p) => {
-      const simbolo = p.moneda === 'USD' ? 'US$' : 'S/';
-      const precio = `${simbolo}${Number(p.precioUnitario).toFixed(2)}`;
-      const stk = Number(p.stock);
-      const disp = stk > 0 ? `stock ${stk}` : 'sin stock';
-      return `- ${p.descripcion}: ${precio} (${disp})`;
-    });
-    const contexto =
-      'PRODUCTOS DISPONIBLES (precio con IGV y stock actual del negocio). ' +
-      'Usa SOLO estos datos para responder sobre productos, precios y disponibilidad; ' +
-      'NO inventes precios ni stock. Si el cliente pide algo que no está en esta lista, dilo:\n' +
-      lineas.join('\n');
-    return { contexto, productos };
   }
 
   // ¿El mensaje pide el brochure/catálogo o más información?
   private quiereBrochure(texto: string): boolean {
     return /\b(brochure|folleto|cat[aá]logo|pdf|presentaci[oó]n|m[aá]s info|mas info|m[aá]s informaci[oó]n|mas informaci[oó]n|m[aá]s detalles|mas detalles|inform[aá]ci[oó]n completa|mandame info|m[aá]ndame info|env[ií]ame|cu[eé]ntame m[aá]s)\b/i.test(
-      texto || '',
-    );
-  }
-
-  // ¿El mensaje del cliente pide VER los productos (fotos/imágenes/catálogo)?
-  private quiereVerProductos(texto: string): boolean {
-    return /\b(foto|fotos|imagen|imagenes|imágenes|muestr|muéstr|muestrame|muéstrame|mostrar|ver|cat[aá]logo|modelos?|dise[ñn]os?|opciones|colores?|presentaci[oó]n|c[uú]al|cu[aá]les|qu[eé] tienes|que tienes|qu[eé] hay|que hay)\b/i.test(
       texto || '',
     );
   }
@@ -575,8 +814,11 @@ export class LeadsMessageProcessor extends WorkerHost {
 
       // Cotización automática (opt-in): si el prospecto confirmó productos +
       // cantidades, la IA arma un borrador COT (sin stock/caja/SUNAT). Best-effort.
-      let cotizacion: { serie: string; correlativo: number; id: number } | null =
-        null;
+      let cotizacion: {
+        serie: string;
+        correlativo: number;
+        id: number;
+      } | null = null;
       if (empresa.iaVentasCotizacion) {
         cotizacion = await this.intentarCrearCotizacion(
           empresa.id,
@@ -687,7 +929,11 @@ export class LeadsMessageProcessor extends WorkerHost {
         this.logger.log(
           `IA cotización COT ${comp.serie}-${comp.correlativo} creada (empresa ${empresaId}, ${items.length} ítems).`,
         );
-        return { serie: comp.serie, correlativo: comp.correlativo, id: comp.id };
+        return {
+          serie: comp.serie,
+          correlativo: comp.correlativo,
+          id: comp.id,
+        };
       }
       return null;
     } catch (e) {

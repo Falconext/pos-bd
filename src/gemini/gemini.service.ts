@@ -1,6 +1,34 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { GoogleGenerativeAI, GenerativeModel } from '@google/generative-ai';
+import {
+  GoogleGenerativeAI,
+  GenerativeModel,
+  FunctionDeclaration,
+  Part,
+} from '@google/generative-ai';
+
+/** Un turno de conversación tal como lo entiende Gemini. */
+export interface TurnoGemini {
+  role: 'user' | 'model';
+  content: string;
+}
+
+/** Lo que el modelo pidió ejecutar y lo que le devolvimos. */
+export interface LlamadaHerramienta {
+  nombre: string;
+  argumentos: Record<string, unknown>;
+  resultado: unknown;
+}
+
+/**
+ * Ejecuta una herramienta pedida por el modelo. Devuelve lo que el modelo verá
+ * como resultado; si lanza, el error se le entrega como `{ error }` para que
+ * pueda reaccionar en vez de cortarse.
+ */
+export type EjecutorHerramienta = (
+  nombre: string,
+  argumentos: Record<string, unknown>,
+) => Promise<unknown>;
 
 @Injectable()
 export class GeminiService {
@@ -33,10 +61,16 @@ export class GeminiService {
    * @param mimeType    tipo MIME del audio (audio/ogg, audio/mpeg, audio/mp4…)
    * @returns el texto transcrito (cadena vacía si no hay voz entendible)
    */
-  async transcribirAudio(base64Audio: string, mimeType: string): Promise<string> {
-    if (!this.genAI) throw new Error('Gemini no configurado (falta GEMINI_API_KEY)');
+  async transcribirAudio(
+    base64Audio: string,
+    mimeType: string,
+  ): Promise<string> {
+    if (!this.genAI)
+      throw new Error('Gemini no configurado (falta GEMINI_API_KEY)');
     // Modelo multimodal capaz de procesar audio (el lite del constructor puede no soportarlo).
-    const model = this.genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
+    const model = this.genAI.getGenerativeModel({
+      model: 'gemini-flash-latest',
+    });
     const partes = [
       { inlineData: { data: base64Audio, mimeType: mimeType || 'audio/ogg' } },
       {
@@ -279,6 +313,132 @@ Responde SOLO con el array JSON, nada más.`;
       generationConfig: { maxOutputTokens },
     });
     return result.response.text().trim();
+  }
+
+  /**
+   * Deja el historial como lo exige Gemini: tiene que empezar en un turno
+   * 'user' y no repetir rol dos veces seguidas. Lo segundo pasa de verdad
+   * cuando el cliente manda varios mensajes antes de que contestemos (y es la
+   * base de la agrupación de mensajes): esos turnos se funden en uno.
+   */
+  normalizarHistorial(turnos: TurnoGemini[]): TurnoGemini[] {
+    const salida: TurnoGemini[] = [];
+    for (const t of turnos) {
+      const contenido = t.content?.trim();
+      if (!contenido) continue;
+      // Un historial que arranca con nuestra voz (p. ej. un disparador) no es
+      // válido para Gemini: se descartan esos turnos iniciales.
+      if (salida.length === 0 && t.role !== 'user') continue;
+      const ultimo = salida.at(-1);
+      if (ultimo && ultimo.role === t.role) {
+        ultimo.content = `${ultimo.content}\n${contenido}`;
+      } else {
+        salida.push({ role: t.role, content: contenido });
+      }
+    }
+    return salida;
+  }
+
+  /**
+   * Conversación en la que el modelo decide por sí mismo cuándo llamar a una
+   * herramienta (buscar en el catálogo, cotizar, derivar…). Repite el ciclo
+   * pedido → ejecución → resultado hasta que responde con texto o se agotan las
+   * iteraciones.
+   *
+   * Es lo que separa a un bot que improvisa de uno que consulta: sin esto, el
+   * contexto se arma antes de llamar al modelo y el modelo no puede pedir nada
+   * más que lo que ya le adivinamos.
+   */
+  async chatConHerramientas(
+    systemInstruction: string,
+    turnos: TurnoGemini[],
+    herramientas: FunctionDeclaration[],
+    ejecutor: EjecutorHerramienta,
+    opts: { maxIteraciones?: number; maxOutputTokens?: number } = {},
+  ): Promise<{ texto: string; llamadas: LlamadaHerramienta[] }> {
+    if (!this.genAI) {
+      throw new Error('Gemini AI no está configurado (GEMINI_API_KEY ausente)');
+    }
+    const { maxIteraciones = 4, maxOutputTokens = 800 } = opts;
+
+    const historial = this.normalizarHistorial(turnos);
+    const ultimo = historial.at(-1);
+    if (!ultimo || ultimo.role !== 'user') {
+      throw new Error(
+        'chatConHerramientas necesita que el último turno sea del usuario.',
+      );
+    }
+
+    const model = this.genAI.getGenerativeModel({
+      model: 'gemini-flash-lite-latest',
+      systemInstruction,
+      ...(herramientas.length
+        ? { tools: [{ functionDeclarations: herramientas }] }
+        : {}),
+    });
+    const chat = model.startChat({
+      history: historial.slice(0, -1).map((m) => ({
+        role: m.role,
+        parts: [{ text: m.content }],
+      })),
+      generationConfig: { maxOutputTokens },
+    });
+
+    const llamadas: LlamadaHerramienta[] = [];
+    let result = await chat.sendMessage(ultimo.content);
+
+    for (let i = 0; i < maxIteraciones; i++) {
+      const pedidos = result.response.functionCalls();
+      if (!pedidos?.length) break;
+
+      const partes: Part[] = [];
+      for (const pedido of pedidos) {
+        const argumentos = (pedido.args ?? {}) as Record<string, unknown>;
+        let resultado: unknown;
+        try {
+          resultado = await ejecutor(pedido.name, argumentos);
+        } catch (e) {
+          const detalle = e instanceof Error ? e.message : String(e);
+          this.logger.warn(`Herramienta ${pedido.name} falló: ${detalle}`);
+          resultado = { error: detalle };
+        }
+        llamadas.push({ nombre: pedido.name, argumentos, resultado });
+        partes.push({
+          functionResponse: {
+            name: pedido.name,
+            // Gemini exige un objeto: lo que no lo sea viaja envuelto.
+            response:
+              resultado !== null &&
+              typeof resultado === 'object' &&
+              !Array.isArray(resultado)
+                ? resultado
+                : { resultado },
+          },
+        });
+      }
+      result = await chat.sendMessage(partes);
+    }
+
+    let texto = this.textoDe(result);
+    // Se acabaron las iteraciones y el modelo seguía pidiendo herramientas: se
+    // le fuerza a cerrar con lo que ya tiene, para no dejar al cliente sin
+    // respuesta.
+    if (!texto && result.response.functionCalls()?.length) {
+      result = await chat.sendMessage(
+        'Responde al cliente ahora, con la información que ya tienes. No pidas más herramientas.',
+      );
+      texto = this.textoDe(result);
+    }
+    return { texto, llamadas };
+  }
+
+  /** `response.text()` lanza si el turno no trae ninguna parte de texto. */
+  private textoDe(result: { response: { text: () => string } }): string {
+    try {
+      return result.response.text().trim();
+    } catch {
+      return '';
+    }
   }
 
   /**

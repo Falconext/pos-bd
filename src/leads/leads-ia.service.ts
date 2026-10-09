@@ -1,6 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { GeminiService } from '../gemini/gemini.service';
+import {
+  GeminiService,
+  EjecutorHerramienta,
+  LlamadaHerramienta,
+} from '../gemini/gemini.service';
 import { EstadoLeadProspecto } from '@prisma/client';
+import {
+  HERRAMIENTAS_VENTA,
+  INSTRUCCION_HERRAMIENTAS,
+} from './leads-herramientas';
 
 /** Un turno de la conversación, en el formato agnóstico del motor. */
 export interface MensajeConversacion {
@@ -33,6 +41,8 @@ export interface RespuestaVenta {
   reply: string;
   calificacion: CalificacionBant | null;
   debeAnalizar: boolean;
+  /** Herramientas que el modelo pidió en este turno (vacío si no pidió ninguna). */
+  llamadas: LlamadaHerramienta[];
 }
 
 const BANT_SYSTEM_PROMPT = `Eres un asesor comercial experto por WhatsApp. Tu misión es determinar si un prospecto tiene potencial real de compra y guiarlo hacia el cierre.
@@ -107,6 +117,7 @@ export class IaVentasService {
     conversacion: MensajeConversacion[],
     businessContext: string,
     cantidadMensajes: number,
+    ejecutor?: EjecutorHerramienta,
   ): Promise<RespuestaVenta> {
     const systemPrompt = BANT_SYSTEM_PROMPT.replace(
       '{businessContext}',
@@ -121,14 +132,29 @@ export class IaVentasService {
       (cantidadMensajes >= 4 && cantidadMensajes % 3 === 0) ||
       tieneIntencionCierre(ultimoUsuario);
 
-    const reply = await this.gemini.chatConHistorial(
-      systemPrompt,
-      conversacion.map((m) => ({
-        role: m.role === 'user' ? ('user' as const) : ('model' as const),
-        content: m.content,
-      })),
-      500,
-    );
+    const turnos = conversacion.map((m) => ({
+      role: m.role === 'user' ? ('user' as const) : ('model' as const),
+      content: m.content,
+    }));
+
+    // Con ejecutor, el modelo consulta el catálogo por su cuenta; sin él (y si
+    // alguien reutiliza este servicio sin herramientas) se mantiene el turno
+    // único de siempre.
+    let reply: string;
+    let llamadas: LlamadaHerramienta[] = [];
+    if (ejecutor) {
+      const res = await this.gemini.chatConHerramientas(
+        `${systemPrompt}\n\n${INSTRUCCION_HERRAMIENTAS}`,
+        turnos,
+        HERRAMIENTAS_VENTA,
+        ejecutor,
+        { maxOutputTokens: 800 },
+      );
+      reply = res.texto;
+      llamadas = res.llamadas;
+    } else {
+      reply = await this.gemini.chatConHistorial(systemPrompt, turnos, 500);
+    }
 
     let calificacion: CalificacionBant | null = null;
     if (debeAnalizar) {
@@ -138,7 +164,7 @@ export class IaVentasService {
       );
     }
 
-    return { reply: reply.trim(), calificacion, debeAnalizar };
+    return { reply: reply.trim(), calificacion, debeAnalizar, llamadas };
   }
 
   /**
@@ -184,7 +210,10 @@ export class IaVentasService {
       .map((m) => `${m.role === 'user' ? 'PROSPECTO' : 'AGENTE'}: ${m.content}`)
       .join('\n');
     const listaCatalogo = catalogo
-      .map((c) => `- id ${c.id}: ${c.descripcion} (S/${c.precioUnitario.toFixed(2)})`)
+      .map(
+        (c) =>
+          `- id ${c.id}: ${c.descripcion} (S/${c.precioUnitario.toFixed(2)})`,
+      )
       .join('\n');
 
     const prompt = `De esta conversación de ventas, extrae SOLO los productos que el prospecto confirmó o pidió comprar CON una cantidad concreta.
@@ -209,7 +238,9 @@ Responde ÚNICAMENTE con este JSON (sin markdown):
         [{ role: 'user', content: prompt }],
         400,
       );
-      const raw = extraerJson(text) as { items?: { id?: unknown; cantidad?: unknown }[] };
+      const raw = extraerJson(text) as {
+        items?: { id?: unknown; cantidad?: unknown }[];
+      };
       const items = Array.isArray(raw.items) ? raw.items : [];
       const limpios: { id: number; cantidad: number }[] = [];
       for (const it of items) {

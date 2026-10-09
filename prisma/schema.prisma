@@ -4076,6 +4076,10 @@ model LeadMensaje {
   contenido      String
   whatsappMsgId  String?          @unique // dedup de mensajes entrantes
   esAudio        Boolean          @default(false)
+  // Herramientas que la IA pidió al generar ESTE mensaje (nombre, argumentos y
+  // resultado). Es la caja negra del turno: sin esto no hay forma de saber por
+  // qué el asistente dijo lo que dijo, ni de alimentar la analítica de consultas.
+  herramientasJson Json?
   creadoEn       DateTime         @default(now())
 
   @@index([conversacionId])
