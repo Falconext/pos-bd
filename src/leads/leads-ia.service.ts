@@ -3,6 +3,7 @@ import {
   GeminiService,
   EjecutorHerramienta,
   LlamadaHerramienta,
+  UsoTokens,
 } from '../gemini/gemini.service';
 import { EstadoLeadProspecto } from '@prisma/client';
 import {
@@ -43,6 +44,8 @@ export interface RespuestaVenta {
   debeAnalizar: boolean;
   /** Herramientas que el modelo pidió en este turno (vacío si no pidió ninguna). */
   llamadas: LlamadaHerramienta[];
+  /** Tokens que costó el turno. Null si no se usaron herramientas. */
+  uso: UsoTokens | null;
 }
 
 const BANT_SYSTEM_PROMPT = `Eres un asesor comercial experto por WhatsApp. Tu misión es determinar si un prospecto tiene potencial real de compra y guiarlo hacia el cierre.
@@ -150,6 +153,7 @@ export class IaVentasService {
     // único de siempre.
     let reply: string;
     let llamadas: LlamadaHerramienta[] = [];
+    let uso: UsoTokens | null = null;
     if (ejecutor) {
       const res = await this.gemini.chatConHerramientas(
         `${systemPrompt}\n\n${INSTRUCCION_HERRAMIENTAS}`,
@@ -160,6 +164,7 @@ export class IaVentasService {
       );
       reply = res.texto;
       llamadas = res.llamadas;
+      uso = res.uso;
     } else {
       reply = await this.gemini.chatConHistorial(systemPrompt, turnos, 500);
     }
@@ -172,7 +177,7 @@ export class IaVentasService {
       );
     }
 
-    return { reply: reply.trim(), calificacion, debeAnalizar, llamadas };
+    return { reply: reply.trim(), calificacion, debeAnalizar, llamadas, uso };
   }
 
   /**

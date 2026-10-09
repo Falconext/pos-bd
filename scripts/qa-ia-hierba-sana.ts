@@ -130,6 +130,9 @@ async function main() {
   console.log(`Catálogo local: ${total} productos.\n`);
 
   let conHerramienta = 0;
+  let totalEntrada = 0;
+  let totalSalida = 0;
+  let turnos = 0;
   for (const caso of CASOS) {
     enviados.length = 0;
     const ejecutor = (
@@ -164,6 +167,15 @@ async function main() {
         console.log(`  → ${ll.nombre}${args} ⇒ ${resumen}`);
       }
       if (!res.llamadas.length) console.log('  → (ninguna herramienta)');
+      if (res.uso) {
+        totalEntrada += res.uso.entrada;
+        totalSalida += res.uso.salida;
+        turnos++;
+        console.log(
+          `  tokens: ${res.uso.entrada} entrada + ${res.uso.salida} salida` +
+            ` en ${res.uso.llamadasAlModelo} llamada(s) al modelo`,
+        );
+      }
       console.log(
         `  asistente: ${res.reply.replace(/\n/g, '\n             ')}`,
       );
@@ -177,6 +189,16 @@ async function main() {
   console.log(
     `Herramientas usadas en ${conHerramienta}/${CASOS.length} casos.`,
   );
+  if (turnos) {
+    console.log(
+      `\nTokens por turno (promedio de ${turnos}): ` +
+        `${Math.round(totalEntrada / turnos)} entrada + ${Math.round(totalSalida / turnos)} salida.`,
+    );
+    console.log(
+      `Una conversación de 8 turnos costaría ~${Math.round((totalEntrada / turnos) * 8)} tokens de entrada ` +
+        `y ~${Math.round((totalSalida / turnos) * 8)} de salida.`,
+    );
+  }
   await prisma.$disconnect();
 }
 

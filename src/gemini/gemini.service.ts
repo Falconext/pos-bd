@@ -14,6 +14,15 @@ export interface TurnoGemini {
   content: string;
 }
 
+/** Tokens consumidos por un turno completo (todas sus idas y vueltas). */
+export interface UsoTokens {
+  entrada: number;
+  salida: number;
+  total: number;
+  /** Cuántas veces se llamó al modelo en este turno. */
+  llamadasAlModelo: number;
+}
+
 /** Lo que el modelo pidió ejecutar y lo que le devolvimos. */
 export interface LlamadaHerramienta {
   nombre: string;
@@ -356,7 +365,11 @@ Responde SOLO con el array JSON, nada más.`;
     herramientas: FunctionDeclaration[],
     ejecutor: EjecutorHerramienta,
     opts: { maxIteraciones?: number; maxOutputTokens?: number } = {},
-  ): Promise<{ texto: string; llamadas: LlamadaHerramienta[] }> {
+  ): Promise<{
+    texto: string;
+    llamadas: LlamadaHerramienta[];
+    uso: UsoTokens;
+  }> {
     if (!this.genAI) {
       throw new Error('Gemini AI no está configurado (GEMINI_API_KEY ausente)');
     }
@@ -389,7 +402,32 @@ Responde SOLO con el array JSON, nada más.`;
     const generationConfig = { maxOutputTokens };
 
     const llamadas: LlamadaHerramienta[] = [];
+    // El contexto entero viaja en CADA vuelta del ciclo, así que un turno con
+    // herramientas cuesta varias veces lo que uno simple. Por eso se mide.
+    const uso: UsoTokens = {
+      entrada: 0,
+      salida: 0,
+      total: 0,
+      llamadasAlModelo: 0,
+    };
+    const contar = (r: {
+      response: {
+        usageMetadata?: {
+          promptTokenCount?: number;
+          candidatesTokenCount?: number;
+          totalTokenCount?: number;
+        };
+      };
+    }) => {
+      const m = r.response.usageMetadata;
+      uso.entrada += m?.promptTokenCount ?? 0;
+      uso.salida += m?.candidatesTokenCount ?? 0;
+      uso.total += m?.totalTokenCount ?? 0;
+      uso.llamadasAlModelo++;
+    };
+
     let result = await model.generateContent({ contents, generationConfig });
+    contar(result);
 
     for (let i = 0; i < maxIteraciones; i++) {
       const pedidos = result.response.functionCalls();
@@ -432,6 +470,7 @@ Responde SOLO con el array JSON, nada más.`;
       }
       contents.push({ role: 'user', parts: partes });
       result = await model.generateContent({ contents, generationConfig });
+      contar(result);
     }
 
     let texto = this.textoDe(result);
@@ -450,9 +489,10 @@ Responde SOLO con el array JSON, nada más.`;
         ],
       });
       result = await model.generateContent({ contents, generationConfig });
+      contar(result);
       texto = this.textoDe(result);
     }
-    return { texto, llamadas };
+    return { texto, llamadas, uso };
   }
 
   /** `response.text()` lanza si el turno no trae ninguna parte de texto. */

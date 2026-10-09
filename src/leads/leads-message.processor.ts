@@ -340,6 +340,14 @@ export class LeadsMessageProcessor extends WorkerHost {
       throw err;
     }
 
+    if (resultado.uso) {
+      // Queda en el log para poder calcular el costo real por cliente: casi
+      // todo es contexto fijo que se reenvía en cada vuelta del ciclo.
+      this.logger.log(
+        `IA conv ${conv.id}: ${resultado.uso.entrada} tokens de entrada + ${resultado.uso.salida} de salida en ${resultado.uso.llamadasAlModelo} llamada(s).`,
+      );
+    }
+
     // El cliente solo dio las gracias o dijo "ok" y lo que íbamos a contestar
     // es otra vez lo mismo con otras palabras: no se manda. Es el error que el
     // banco del cliente marca como crítico (insistir tras la despedida).
