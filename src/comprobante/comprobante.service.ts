@@ -6129,6 +6129,38 @@ export class ComprobanteService {
    * Obtiene las estadísticas de uso de comprobantes SUNAT para una empresa
    * Solo cuenta Facturas (01) y Boletas (03) con estado EMITIDO o ANULADO
    */
+  /**
+   * Comprobantes de la empresa esperando a que SUNAT responda.
+   *
+   * Solo cuenta los que fallaron por RED: esos se reenvían solos y el
+   * empresario no tiene nada que hacer. Los de datos o configuración quedan
+   * fuera a propósito — ahí sí tiene que actuar, y mezclarlos bajo un cartel
+   * de "tranquilo, es SUNAT" dejaría comprobantes sin emitir.
+   */
+  async incidenciaSunat(empresaId: number) {
+    const atascados = await this.prisma.comprobante.findMany({
+      where: {
+        empresaId,
+        estadoEnvioSunat: { in: ['FALLIDO_ENVIO', 'PENDIENTE'] },
+        sunatErrorMsg: { startsWith: '[RED]' },
+      },
+      select: { serie: true, correlativo: true, creadoEn: true },
+      orderBy: { creadoEn: 'asc' },
+      take: 50,
+    });
+
+    return {
+      // `activa` es lo único que mira la tienda para pintar el aviso: así el
+      // cartel desaparece solo en cuanto el reintento los saca de la cola.
+      activa: atascados.length > 0,
+      cantidad: atascados.length,
+      desde: atascados[0]?.creadoEn ?? null,
+      comprobantes: atascados
+        .slice(0, 10)
+        .map((c) => `${c.serie ?? ''}-${c.correlativo ?? ''}`),
+    };
+  }
+
   async getUsageStats(empresaId: number, sedeId?: number) {
     // Obtener el plan de la empresa
     const empresa = await this.prisma.empresa.findUnique({
