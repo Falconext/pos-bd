@@ -46,6 +46,19 @@ interface WhatsAppCredentials {
   source: 'PLATFORM' | 'EMPRESA';
 }
 
+/** Plantilla a dar de alta en la WABA del negocio (Message Template API). */
+interface PlantillaWhatsApp {
+  name: string;
+  /** Cuerpo con variables {{1}}, {{2}}… Meta rechaza textos que terminan en variable. */
+  body: string;
+  /** Un valor de ejemplo por variable, en orden. Meta los exige. */
+  example: string[];
+  /** UTILITY por defecto; MARKETING para avisos que el cliente no pidió. */
+  category?: 'UTILITY' | 'MARKETING';
+  /** Pie opcional; las MARKETING lo usan para el aviso de baja. */
+  footer?: string;
+}
+
 @Injectable()
 export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
@@ -604,7 +617,7 @@ export class WhatsAppService {
   }
 
   // Plantillas de despacho a crear en cada WABA (idioma es). Meta exige ejemplos.
-  private readonly PLANTILLAS_DESPACHO = [
+  private readonly PLANTILLAS_DESPACHO: PlantillaWhatsApp[] = [
     {
       name: 'pedido_en_camino',
       // Meta rechaza textos con demasiadas variables por palabra o que terminan en
@@ -640,29 +653,135 @@ export class WhatsAppService {
     },
   ];
 
+  /**
+   * Plantillas del módulo de IA de Ventas (disparadores y reenganche).
+   *
+   * Se separan de las de despacho porque dos son MARKETING: Meta las revisa con
+   * más cuidado y tardan más en aprobarse, así que se mandan apenas el negocio
+   * decide encender los disparadores, no al conectar el número.
+   *
+   * Las MARKETING llevan pie de baja porque se envían fuera de la ventana de 24h
+   * y sin que el cliente haya escrito: el processor reconoce "BAJA" y deja de
+   * disparar sobre esa conversación (`LeadConversacion.optOut`).
+   */
+  private readonly PLANTILLAS_IA_VENTAS: PlantillaWhatsApp[] = [
+    {
+      // C4: la IA retoma tras una pausa por intervención manual, con la ventana
+      // de 24h ya cerrada. {{1}} nombre.
+      name: 'reanudar_atencion',
+      body: 'Hola {{1}}, retomamos tu consulta. Seguimos a tu disposición para continuar con tu pedido cuando gustes.',
+      example: ['Juan'],
+    },
+    {
+      // F3: 24h después de la entrega. {{1}} nombre, {{2}} pedido.
+      name: 'post_entrega_resena',
+      body: 'Hola {{1}}, esperamos que estés disfrutando tu pedido {{2}}. ¿Nos cuentas qué te pareció? Tu opinión nos ayuda a mejorar.',
+      example: ['Juan', 'NV01-00000123'],
+    },
+    {
+      // F6: el producto de la lista de espera volvió. {{1}} nombre, {{2}} producto.
+      name: 'producto_disponible',
+      body: 'Hola {{1}}, buenas noticias: {{2}} ya está disponible nuevamente. Escríbenos y coordinamos tu pedido.',
+      example: ['Juan', 'Uña de gato 100 cápsulas'],
+    },
+    {
+      // F4: recompra a los 25 días. {{1}} nombre, {{2}} producto.
+      name: 'recompra_25',
+      category: 'MARKETING',
+      body: 'Hola {{1}}, han pasado unas semanas desde que te llevaste {{2}}. Si ya estás por terminarlo, podemos preparar tu reposición.',
+      example: ['Juan', 'Moringa 90 cápsulas'],
+      footer: 'Responde BAJA para no recibir más avisos',
+    },
+    {
+      // F5: reactivación de inactivos a los 45 días. {{1}} nombre.
+      name: 'reactivacion_45',
+      category: 'MARKETING',
+      body: 'Hola {{1}}, hace un tiempo que no sabemos de ti. Tenemos novedades en nuestro catálogo y seguimos a tu disposición.',
+      example: ['Juan'],
+      footer: 'Responde BAJA para no recibir más avisos',
+    },
+  ];
+
   /** Crea (idempotente) las plantillas de despacho en la WABA vía Message Template API. */
   async crearPlantillasDespacho(
     wabaId: string,
     token: string,
   ): Promise<{ creadas: string[]; existentes: string[]; errores: string[] }> {
+    return this.crearPlantillasEnWaba(wabaId, token, this.PLANTILLAS_DESPACHO);
+  }
+
+  /**
+   * Crea (idempotente) las plantillas de la IA de Ventas. No se llama al conectar
+   * el número: el negocio la dispara desde el panel cuando decide qué triggers
+   * enciende, porque las MARKETING tardan en aprobarse y no todos las usan.
+   */
+  async crearPlantillasIaVentas(
+    wabaId: string,
+    token: string,
+  ): Promise<{ creadas: string[]; existentes: string[]; errores: string[] }> {
+    return this.crearPlantillasEnWaba(wabaId, token, this.PLANTILLAS_IA_VENTAS);
+  }
+
+  /**
+   * Da de alta las plantillas de IA de Ventas en la WABA de una empresa que ya
+   * tiene su número conectado (el alta al conectar solo crea las de despacho).
+   */
+  async crearPlantillasIaVentasEmpresa(empresaId: number): Promise<{
+    creadas: string[];
+    existentes: string[];
+    errores: string[];
+  }> {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { whatsappBusinessId: true, whatsappApiToken: true },
+    });
+    if (!empresa?.whatsappBusinessId) {
+      throw new BadRequestException(
+        'Esta empresa no tiene una cuenta de WhatsApp Business conectada.',
+      );
+    }
+    const token = empresa.whatsappApiToken || this.systemUserToken;
+    if (!token) {
+      throw new BadRequestException(
+        'No hay token para operar la cuenta de WhatsApp de esta empresa.',
+      );
+    }
+    const res = await this.crearPlantillasIaVentas(
+      empresa.whatsappBusinessId,
+      token,
+    );
+    this.logger.log(
+      `Plantillas IA de Ventas (empresa ${empresaId}): ${res.creadas.length} creadas, ${res.existentes.length} ya existían, ${res.errores.length} con error.`,
+    );
+    return res;
+  }
+
+  /** Alta idempotente de un juego de plantillas en una WABA. */
+  private async crearPlantillasEnWaba(
+    wabaId: string,
+    token: string,
+    plantillas: PlantillaWhatsApp[],
+  ): Promise<{ creadas: string[]; existentes: string[]; errores: string[] }> {
     const creadas: string[] = [];
     const existentes: string[] = [];
     const errores: string[] = [];
-    for (const p of this.PLANTILLAS_DESPACHO) {
+    for (const p of plantillas) {
       try {
+        const components: Record<string, unknown>[] = [
+          {
+            type: 'BODY',
+            text: p.body,
+            example: { body_text: [p.example] },
+          },
+        ];
+        if (p.footer) components.push({ type: 'FOOTER', text: p.footer });
         await axios.post(
           `${this.apiUrl}/${wabaId}/message_templates`,
           {
             name: p.name,
             language: 'es',
-            category: 'UTILITY',
-            components: [
-              {
-                type: 'BODY',
-                text: p.body,
-                example: { body_text: [p.example] },
-              },
-            ],
+            category: p.category ?? 'UTILITY',
+            components,
           },
           { headers: { Authorization: `Bearer ${token}` } },
         );
