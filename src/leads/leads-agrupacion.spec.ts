@@ -37,6 +37,7 @@ function armar(
     embeddingRespuesta?: number[];
     respuestaIa?: string;
     productos?: any[];
+    config?: Record<string, unknown>;
   } = {},
 ) {
   const mensajes = opts.mensajes ?? [];
@@ -121,6 +122,16 @@ function armar(
   const queue: any = { add: jest.fn().mockResolvedValue({}) };
 
   const pedido: any = {
+    configDe: jest.fn().mockResolvedValue({
+      envio: { zonas: [], zonaPorDefecto: '' },
+      horario: {},
+      descuento: {
+        precioUnitarioMinimo: 20,
+        envioCuentaEnTotal: true,
+        tramos: [],
+      },
+      ...(opts.config ?? {}),
+    }),
     guardarDatos: jest.fn().mockResolvedValue({ guardado: [], faltan: [] }),
     cotizar: jest.fn().mockResolvedValue({ texto: 'cotización' }),
     registrarPedido: jest.fn().mockResolvedValue({ registrado: true }),
@@ -507,5 +518,89 @@ describe('lo que la IA ve del catálogo (B1 y B2)', () => {
     expect(orderBy[0]).toEqual({
       prioridadVenta: { sort: 'desc', nulls: 'last' },
     });
+  });
+});
+
+describe('el descargo legal lo pone el código, no el modelo (C5)', () => {
+  const tarea = {
+    name: JOB_RESPONDER,
+    data: { empresaId: EMPRESA, conversacionId: CONV },
+  };
+  const DESCARGO = 'No reemplaza el tratamiento médico profesional.';
+
+  const conLlamadas = (
+    llamadas: any[],
+    extra: Record<string, unknown> = {},
+  ) => {
+    const h = armar({
+      mensajes: [{ rol: 'USUARIO', contenido: 'algo para la gastritis' }],
+      respuestaIa: 'Te recomiendo la Moringa a S/ 31.00.',
+      config: { descargoLegal: DESCARGO },
+      ...extra,
+    });
+    h.ia.generarRespuesta.mockResolvedValue({
+      reply: 'Te recomiendo la Moringa a S/ 31.00.',
+      calificacion: null,
+      debeAnalizar: false,
+      llamadas,
+      uso: null,
+    });
+    return h;
+  };
+
+  const enviado = (whatsapp: any) => whatsapp.enviarTexto.mock.calls[0][1];
+
+  it('lo añade cuando el turno recomendó productos', async () => {
+    const { processor, whatsapp } = conLlamadas([
+      {
+        nombre: 'buscar_productos',
+        argumentos: {},
+        resultado: { productos: [{ id: 1 }] },
+      },
+    ]);
+
+    await processor.process(tarea as any);
+
+    expect(enviado(whatsapp)).toContain(DESCARGO);
+  });
+
+  it('NO lo añade en una pregunta comercial', async () => {
+    // "¿dónde están ubicados?" no lleva descargo médico.
+    const { processor, whatsapp } = conLlamadas([]);
+
+    await processor.process(tarea as any);
+
+    expect(enviado(whatsapp)).not.toContain(DESCARGO);
+  });
+
+  it('no lo añade si la búsqueda no encontró nada', async () => {
+    const { processor, whatsapp } = conLlamadas([
+      {
+        nombre: 'buscar_productos',
+        argumentos: {},
+        resultado: { productos: [] },
+      },
+    ]);
+
+    await processor.process(tarea as any);
+
+    expect(enviado(whatsapp)).not.toContain(DESCARGO);
+  });
+
+  it('sin descargo configurado, la respuesta sale tal cual', async () => {
+    const { processor, whatsapp } = conLlamadas(
+      [
+        {
+          nombre: 'buscar_productos',
+          argumentos: {},
+          resultado: { productos: [{ id: 1 }] },
+        },
+      ],
+      { config: {} },
+    );
+
+    await processor.process(tarea as any);
+
+    expect(enviado(whatsapp)).toBe('Te recomiendo la Moringa a S/ 31.00.');
   });
 });

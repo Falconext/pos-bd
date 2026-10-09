@@ -29,6 +29,13 @@ export interface ConfigComercial {
   envio: ConfigEnvio;
   horario: ConfigHorarioEntrega;
   descuento: ReglasDescuento;
+  /** Nombre con el que se presenta quien atiende ("Claudio" en Hierba Sana). */
+  asesor?: string;
+  /**
+   * Texto fijo al pie de toda recomendación de producto. El anexo lo exige
+   * "fijo e invariable", por eso lo pone el código y no el modelo.
+   */
+  descargoLegal?: string;
 }
 
 /** Campos que la IA puede ir guardando a medida que el cliente los dice. */
@@ -79,6 +86,10 @@ export class LeadsPedidoService {
       envio: guardada.envio ?? CONFIG_ENVIO_HIERBA_SANA,
       horario: guardada.horario ?? HORARIO_HIERBA_SANA,
       descuento: guardada.descuento ?? REGLAS_HIERBA_SANA,
+      ...(guardada.asesor ? { asesor: guardada.asesor } : {}),
+      ...(guardada.descargoLegal
+        ? { descargoLegal: guardada.descargoLegal }
+        : {}),
     };
   }
 

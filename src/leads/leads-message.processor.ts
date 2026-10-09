@@ -23,6 +23,7 @@ import {
   HERRAMIENTA_REGISTRAR_PEDIDO,
 } from './leads-herramientas';
 import { debeReactivarse, estaPausado, venceEn } from './pausa-bot';
+import { conDescargoLegal } from './prompt-asesor';
 import {
   DatosDelCliente,
   ItemPedido,
@@ -374,6 +375,8 @@ export class LeadsMessageProcessor extends WorkerHost {
       fotosEnviadas,
     );
 
+    const config = await this.pedido.configDe(empresa.id);
+
     let resultado: RespuestaVenta;
     try {
       resultado = await this.ia.generarRespuesta(
@@ -381,6 +384,12 @@ export class LeadsMessageProcessor extends WorkerHost {
         businessContext,
         historial.length,
         ejecutor,
+        {
+          nombre: empresa.nombreComercial || empresa.razonSocial,
+          rubro: empresa.rubro?.nombre ?? null,
+          asesor: config.asesor ?? null,
+          contexto: businessContext,
+        },
       );
     } catch (err) {
       if (esErrorPermanente(err)) {
@@ -399,6 +408,21 @@ export class LeadsMessageProcessor extends WorkerHost {
         `IA conv ${conv.id}: ${resultado.uso.entrada} tokens de entrada + ${resultado.uso.salida} de salida en ${resultado.uso.llamadasAlModelo} llamada(s).`,
       );
     }
+
+    // El descargo legal lo pone el código, no el modelo: el anexo lo exige
+    // "fijo e invariable" y un modelo lo olvida justo en el mensaje que
+    // importa. Solo cuando el turno recomendó productos de verdad.
+    const recomendoProductos = resultado.llamadas.some((ll) => {
+      const r = ll.resultado as { productos?: unknown[]; texto?: string };
+      return (
+        (Array.isArray(r?.productos) && r.productos.length > 0) || !!r?.texto
+      );
+    });
+    resultado.reply = conDescargoLegal(
+      resultado.reply,
+      config.descargoLegal,
+      recomendoProductos,
+    );
 
     // El cliente solo dio las gracias o dijo "ok" y lo que íbamos a contestar
     // es otra vez lo mismo con otras palabras: no se manda. Es el error que el
