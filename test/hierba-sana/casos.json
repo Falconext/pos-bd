@@ -1,0 +1,125 @@
+{
+  "_nota": "Casos del banco de pruebas de Hierba Sana (funcional V19.1.1, estrés comercial y E01-E25). Las comprobaciones son mecánicas a propósito: un juez con IA cuesta otra llamada por caso y no es reproducible. Donde el criterio es de estilo, se deja la respuesta para revisión humana en vez de fingir que se puede automatizar.",
+  "casos": [
+    {
+      "id": "E01",
+      "criticidad": "alta",
+      "fuente": "banco funcional",
+      "mensajes": ["Hola, tienen berberina?"],
+      "espera": "confirma el producto con su precio real y avanza",
+      "comprueba": { "usaHerramienta": "buscar_productos", "preciosDelCatalogo": true, "respuestas": 1 }
+    },
+    {
+      "id": "E02",
+      "criticidad": "alta",
+      "fuente": "banco funcional",
+      "mensajes": ["Cuánto cuesta la moringa?"],
+      "espera": "responde precio real y siguiente paso comercial",
+      "comprueba": { "usaHerramienta": "buscar_productos", "preciosDelCatalogo": true }
+    },
+    {
+      "id": "CRIT-mensajes-seguidos",
+      "criticidad": "critica",
+      "fuente": "E06/E25 — prueba crítica antes de producción",
+      "mensajes": ["hola", "tienen berberina?", "y cuanto cuesta"],
+      "espera": "UNA sola respuesta que atienda los tres",
+      "comprueba": { "respuestas": 1, "preciosDelCatalogo": true }
+    },
+    {
+      "id": "CRIT-doble-respuesta-dolencia",
+      "criticidad": "critica",
+      "fuente": "E03 — prueba crítica",
+      "mensajes": ["Tengo dolor de rodillas y quiero algo natural."],
+      "espera": "una sola respuesta integrada, sin partirla en dos",
+      "comprueba": { "respuestas": 1 }
+    },
+    {
+      "id": "CRIT-no-inventa",
+      "criticidad": "critica",
+      "fuente": "Func.4 / E16 — prueba crítica",
+      "mensajes": ["¿Tiene un producto llamado NaturPlus Max?"],
+      "espera": "no lo inventa; dice que no lo tiene u ofrece alternativas",
+      "comprueba": { "preciosDelCatalogo": true, "noContiene": "(?i)s[íi],? (lo )?ten(emos|go) .{0,20}naturplus" }
+    },
+    {
+      "id": "CRIT-gracias-no-es-despedida",
+      "criticidad": "critica",
+      "fuente": "prueba 10 y 12 del funcional",
+      "mensajes": ["Cuánto cuesta la moringa?", "__respuesta__", "gracias"],
+      "espera": "no se despide ni vuelve a vender; retoma lo pendiente o calla",
+      "comprueba": { "noContiene": "(?i)(un gusto ayudarte|que tengas un lindo d[íi]a)" }
+    },
+    {
+      "id": "CRIT-despedida-cierra",
+      "criticidad": "critica",
+      "fuente": "E09 — prueba crítica",
+      "mensajes": ["Cuánto cuesta la moringa?", "__respuesta__", "gracias por la información"],
+      "espera": "contesta una vez y cierra la conversación",
+      "comprueba": { "conversacionCerrada": true }
+    },
+    {
+      "id": "E05-no-promete-cura",
+      "criticidad": "alta",
+      "fuente": "E05 / banco funcional 16",
+      "mensajes": ["¿esto me cura la gastritis?"],
+      "espera": "no promete curar; habla de apoyo y bienestar",
+      "comprueba": { "noContiene": "(?i)\\b(te cura|lo cura|cura la|elimina la|garantiza)" }
+    },
+    {
+      "id": "CASO4-comercial",
+      "criticidad": "media",
+      "fuente": "banco maestro, bloque 2",
+      "mensajes": ["¿Dónde están ubicados?"],
+      "espera": "responde del contexto, sin llamar herramientas",
+      "comprueba": { "sinHerramientas": true, "contiene": "(?i)emancipaci[óo]n" }
+    },
+    {
+      "id": "CASO4-delivery",
+      "criticidad": "media",
+      "fuente": "banco maestro, bloque 4",
+      "mensajes": ["¿cuánto cuesta el delivery en Lima?"],
+      "espera": "S/ 15 y contraentrega, del contexto",
+      "comprueba": { "contiene": "15" }
+    },
+    {
+      "id": "ESTRES-21-mayorista",
+      "criticidad": "alta",
+      "fuente": "estrés 21 / CASO 3",
+      "mensajes": ["quiero comprar para revender en mi tienda, ¿me dan precio por mayor?"],
+      "espera": "no da precios mayoristas; recoge datos o deriva",
+      "comprueba": { "noContiene": "(?i)precio (por )?mayor(ista)? es" }
+    },
+    {
+      "id": "ESTRES-20-hablar-con-persona",
+      "criticidad": "alta",
+      "fuente": "estrés 20",
+      "mensajes": ["quiero hablar con una persona"],
+      "espera": "deriva a un asesor",
+      "comprueba": { "usaHerramienta": "derivar_a_asesor" }
+    },
+    {
+      "id": "ANTI-ALUC-mal-escrito",
+      "criticidad": "alta",
+      "fuente": "punto 12 del anexo",
+      "mensajes": ["tienes fenocreco?"],
+      "espera": "sugiere Fenogreco en vez de negar",
+      "comprueba": { "contiene": "(?i)fenogreco", "preciosDelCatalogo": true }
+    },
+    {
+      "id": "DESTINO-provincia",
+      "criticidad": "alta",
+      "fuente": "CASO 5 / cobertura",
+      "mensajes": ["quiero 1 moringa, la entrega es para Huacho"],
+      "espera": "Huacho es provincia: S/ 10 y 50% de adelanto",
+      "comprueba": { "usaHerramienta": "guardar_datos_envio", "zonaResuelta": "Provincia" }
+    },
+    {
+      "id": "DESTINO-lima",
+      "criticidad": "alta",
+      "fuente": "CASO 5 / cobertura",
+      "mensajes": ["quiero 1 moringa, para SJL"],
+      "espera": "SJL es Lima: S/ 15 contraentrega",
+      "comprueba": { "usaHerramienta": "guardar_datos_envio", "zonaResuelta": "Lima" }
+    }
+  ]
+}

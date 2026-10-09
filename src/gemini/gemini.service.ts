@@ -364,6 +364,42 @@ Responde SOLO con el array JSON, nada más.`;
   }
 
   /**
+   * Reintenta una llamada al modelo cuando el fallo es pasajero.
+   *
+   * El 429 por cuota no es un error del código: es la cuenta llegando a su
+   * límite por minuto. Sin esto, un pico de conversaciones simultáneas tumba
+   * respuestas que habrían salido bien tres segundos después. Gemini dice en
+   * la propia respuesta cuánto esperar; si no lo dice, se usa un retroceso
+   * creciente.
+   *
+   * Los errores que NO van a mejorar reintentando (credenciales, modelo
+   * inexistente) se relanzan de inmediato.
+   */
+  private async conReintentos<T>(
+    llamada: () => Promise<T>,
+    intentos = 3,
+  ): Promise<T> {
+    let ultimo: unknown;
+    for (let i = 1; i <= intentos; i++) {
+      try {
+        return await llamada();
+      } catch (e) {
+        ultimo = e;
+        const msg = e instanceof Error ? e.message : String(e);
+        const pasajero = /\b(429|503|500)\b/.test(msg);
+        if (!pasajero || i === intentos) throw e;
+        const pedido = /retryDelay"\s*:\s*"(\d+)s/.exec(msg)?.[1];
+        const esperaMs = pedido ? (Number(pedido) + 1) * 1000 : 5000 * i;
+        this.logger.warn(
+          `Gemini respondió un error pasajero (intento ${i}/${intentos}); reintentando en ${Math.round(esperaMs / 1000)}s.`,
+        );
+        await new Promise((r) => setTimeout(r, esperaMs));
+      }
+    }
+    throw ultimo;
+  }
+
+  /**
    * Deja el historial como lo exige Gemini: tiene que empezar en un turno
    * 'user' y no repetir rol dos veces seguidas. Lo segundo pasa de verdad
    * cuando el cliente manda varios mensajes antes de que contestemos (y es la
@@ -536,7 +572,9 @@ Responde SOLO con el array JSON, nada más.`;
       uso.llamadasAlModelo++;
     };
 
-    let result = await model.generateContent({ contents, generationConfig });
+    let result = await this.conReintentos(() =>
+      model.generateContent({ contents, generationConfig }),
+    );
     contar(result);
 
     for (let i = 0; i < maxIteraciones; i++) {
@@ -579,7 +617,9 @@ Responde SOLO con el array JSON, nada más.`;
         });
       }
       contents.push({ role: 'user', parts: partes });
-      result = await model.generateContent({ contents, generationConfig });
+      result = await this.conReintentos(() =>
+        model.generateContent({ contents, generationConfig }),
+      );
       contar(result);
     }
 
@@ -598,7 +638,9 @@ Responde SOLO con el array JSON, nada más.`;
           },
         ],
       });
-      result = await model.generateContent({ contents, generationConfig });
+      result = await this.conReintentos(() =>
+        model.generateContent({ contents, generationConfig }),
+      );
       contar(result);
       texto = this.textoDe(result);
     }
