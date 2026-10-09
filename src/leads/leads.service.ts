@@ -51,7 +51,9 @@ export class LeadsService {
     }
 
     const cliente = await this.clientes.crear({
-      nombre: prospecto.nombreProspecto?.trim() || `Prospecto ${prospecto.telefonoProspecto}`,
+      nombre:
+        prospecto.nombreProspecto?.trim() ||
+        `Prospecto ${prospecto.telefonoProspecto}`,
       tipoDoc: 'OTRO',
       nroDoc: '00000000', // sin documento: no se deduplica
       telefono: prospecto.telefonoProspecto,
@@ -95,7 +97,12 @@ export class LeadsService {
   /** Crea un documento (texto o URL), lo indexa (RAG) y devuelve su estado. */
   async crearDocumento(
     empresaId: number,
-    dto: { tipo: TipoLeadDocumento; titulo?: string; contenido?: string; url?: string },
+    dto: {
+      tipo: TipoLeadDocumento;
+      titulo?: string;
+      contenido?: string;
+      url?: string;
+    },
   ) {
     let contenido = dto.contenido ?? '';
     let origen: string | null = null;
@@ -106,7 +113,9 @@ export class LeadsService {
       contenido = await this.extraerTextoUrl(dto.url);
     }
     if (!contenido.trim()) {
-      throw new BadRequestException('El documento no tiene contenido para entrenar');
+      throw new BadRequestException(
+        'El documento no tiene contenido para entrenar',
+      );
     }
 
     const doc = await this.prisma.leadDocumento.create({
@@ -174,7 +183,12 @@ export class LeadsService {
         ...(opts.search
           ? {
               OR: [
-                { nombreProspecto: { contains: opts.search, mode: 'insensitive' } },
+                {
+                  nombreProspecto: {
+                    contains: opts.search,
+                    mode: 'insensitive',
+                  },
+                },
                 { telefonoProspecto: { contains: opts.search } },
               ],
             }
@@ -220,7 +234,11 @@ export class LeadsService {
       _count: { _all: true },
     });
     const base: Record<string, number> = {
-      FRIO: 0, TIBIO: 0, CALIENTE: 0, CONVERTIDO: 0, PERDIDO: 0,
+      FRIO: 0,
+      TIBIO: 0,
+      CALIENTE: 0,
+      CONVERTIDO: 0,
+      PERDIDO: 0,
     };
     for (const g of grupos) base[g.estado] = g._count._all;
     return base;

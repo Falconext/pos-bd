@@ -12,7 +12,7 @@ import { Request, Response } from 'express';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import * as crypto from 'crypto';
-import { LEADS_MESSAGES_QUEUE } from './leads.constants';
+import { JOB_INGRESAR_MENSAJE, LEADS_MESSAGES_QUEUE } from './leads.constants';
 
 /**
  * Webhook público de WhatsApp Cloud API para el módulo de leads.
@@ -49,9 +49,13 @@ export class LeadsWebhookController {
     secret: string,
   ): boolean {
     const expected =
-      'sha256=' + crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+      'sha256=' +
+      crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
     if (signature.length !== expected.length) return false;
-    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+    return crypto.timingSafeEqual(
+      Buffer.from(signature),
+      Buffer.from(expected),
+    );
   }
 
   /**
@@ -66,7 +70,10 @@ export class LeadsWebhookController {
    * META_APP_SECRET, la vieja en META_APP_SECRET_PREV, y se borra la segunda
    * cuando el periodo de gracia termina.
    */
-  private firmaValida(rawBody: Buffer | undefined, signature?: string): boolean {
+  private firmaValida(
+    rawBody: Buffer | undefined,
+    signature?: string,
+  ): boolean {
     const secret = process.env.META_APP_SECRET;
     if (!secret) return true; // sin secreto configurado (dev) → no bloquear
     if (!signature) {
@@ -110,7 +117,7 @@ export class LeadsWebhookController {
             if (msg.type !== 'text' && msg.type !== 'audio') continue;
             const contacto = contactos.find((c) => c.wa_id === msg.from);
             await this.queue.add(
-              'incoming',
+              JOB_INGRESAR_MENSAJE,
               {
                 phoneNumberId,
                 from: msg.from,
@@ -121,7 +128,18 @@ export class LeadsWebhookController {
                 nombre: contacto?.profile?.name,
                 timestamp: msg.timestamp,
               },
-              { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
+              {
+                // Meta reentrega el mismo mensaje cuando duda de nuestro 200.
+                jobId: `in-${msg.id}`,
+                attempts: 3,
+                backoff: { type: 'exponential', delay: 2000 },
+                // El id tiene que liberarse al terminar: retenido en completados
+                // o fallidos, una reentrega de Meta se descartaría en silencio.
+                // La deduplicación de verdad la hace el índice único de
+                // LeadMensaje.whatsappMsgId.
+                removeOnComplete: true,
+                removeOnFail: true,
+              },
             );
           }
         }

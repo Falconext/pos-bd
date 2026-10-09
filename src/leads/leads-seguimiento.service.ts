@@ -119,7 +119,10 @@ export class LeadsSeguimientoService {
         if (emp.iaVentasContexto) partes.push(emp.iaVentasContexto);
         const businessContext = partes.join('\n');
 
-        const texto = await this.ia.generarSeguimiento(historial, businessContext);
+        const texto = await this.ia.generarSeguimiento(
+          historial,
+          businessContext,
+        );
         if (!texto) continue;
 
         await this.prisma.leadMensaje.create({
@@ -141,7 +144,10 @@ export class LeadsSeguimientoService {
         }
         await this.prisma.leadConversacion.update({
           where: { id: conv.id },
-          data: { seguimientos: { increment: 1 }, ultimoSeguimientoEn: new Date() },
+          data: {
+            seguimientos: { increment: 1 },
+            ultimoSeguimientoEn: new Date(),
+          },
         });
         enviados++;
       } catch (e: any) {
@@ -152,7 +158,9 @@ export class LeadsSeguimientoService {
     }
 
     if (enviados > 0) {
-      this.logger.log(`Seguimiento automático: ${enviados} reenganche(s) enviados.`);
+      this.logger.log(
+        `Seguimiento automático: ${enviados} reenganche(s) enviados.`,
+      );
     }
   }
 }

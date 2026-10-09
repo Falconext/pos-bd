@@ -102,7 +102,9 @@ describe('chatConHerramientas', () => {
 
   it('ejecuta lo que pide el modelo y devuelve su respuesta final', async () => {
     const falso = chatFalso([
-      { calls: [{ name: 'buscar_productos', args: { consulta: 'berberina' } }] },
+      {
+        calls: [{ name: 'buscar_productos', args: { consulta: 'berberina' } }],
+      },
       { text: 'Sí, tenemos Berberina a S/ 45.00.' },
     ]);
     const gemini = geminiConChat(falso);
@@ -164,7 +166,9 @@ describe('chatConHerramientas', () => {
     );
 
     const partes = falso.enviados[1] as any[];
-    expect(partes[0].functionResponse.response).toEqual({ resultado: [1, 2, 3] });
+    expect(partes[0].functionResponse.response).toEqual({
+      resultado: [1, 2, 3],
+    });
   });
 
   it('corta el bucle y fuerza una respuesta si el modelo no deja de pedir herramientas', async () => {

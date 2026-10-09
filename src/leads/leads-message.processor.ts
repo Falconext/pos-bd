@@ -1,13 +1,17 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
-import { Job, UnrecoverableError } from 'bullmq';
+import { Job, Queue, UnrecoverableError } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { RagVentasService } from './leads-rag.service';
 import { LeadsAlertaService } from './leads-alerta.service';
 import { ComprobanteService } from '../comprobante/comprobante.service';
-import { LEADS_MESSAGES_QUEUE } from './leads.constants';
+import {
+  DEBOUNCE_RESPUESTA_MS,
+  JOB_RESPONDER,
+  LEADS_MESSAGES_QUEUE,
+} from './leads.constants';
 import { Prisma } from '@prisma/client';
 import { EjecutorHerramienta } from '../gemini/gemini.service';
 import {
@@ -21,6 +25,12 @@ import {
   CalificacionBant,
   estadoProspectoDesde,
 } from './leads-ia.service';
+
+/** Lo que necesita el trabajo de respuesta: la conversación, no el mensaje. */
+interface TareaRespuesta {
+  empresaId: number;
+  conversacionId: number;
+}
 
 interface MensajeEntrante {
   phoneNumberId: string;
@@ -56,28 +66,31 @@ export class LeadsMessageProcessor extends WorkerHost {
     private readonly notificaciones: NotificacionesService,
     private readonly alerta: LeadsAlertaService,
     private readonly comprobante: ComprobanteService,
+    @InjectQueue(LEADS_MESSAGES_QUEUE) private readonly queue: Queue,
   ) {
     super();
   }
 
-  async process(job: Job<MensajeEntrante>): Promise<void> {
-    const d = job.data;
+  async process(job: Job<MensajeEntrante | TareaRespuesta>): Promise<void> {
+    if (job.name === JOB_RESPONDER) {
+      return this.responder(job.data as TareaRespuesta);
+    }
+    return this.ingresar(job.data as MensajeEntrante);
+  }
 
+  /**
+   * Guarda un mensaje entrante y programa la respuesta.
+   *
+   * La respuesta va en un trabajo aparte con un id por conversación: si el
+   * cliente manda tres mensajes seguidos, los tres se guardan pero solo se
+   * programa una respuesta, y esa respuesta los lee todos. Antes cada mensaje
+   * disparaba el suyo y el cliente recibía tres contestaciones sueltas.
+   */
+  private async ingresar(d: MensajeEntrante): Promise<void> {
     // 1) ¿Qué empresa tiene conectado este número?
     const empresa = await this.prisma.empresa.findFirst({
       where: { whatsappPhoneNumberId: d.phoneNumberId },
-      select: {
-        id: true,
-        razonSocial: true,
-        nombreComercial: true,
-        descripcionTienda: true,
-        iaVentasActiva: true,
-        iaVentasContexto: true,
-        iaVentasBrochureUrl: true,
-        iaVentasCotizacion: true,
-        rubro: { select: { nombre: true } },
-        plan: { select: { maxLeadsMes: true } },
-      },
+      select: { id: true, iaVentasActiva: true },
     });
     if (!empresa) {
       this.logger.warn(
@@ -106,7 +119,7 @@ export class LeadsMessageProcessor extends WorkerHost {
         seguimientos: 0,
         ...(d.nombre ? { nombreProspecto: d.nombre } : {}),
       },
-      select: { id: true, creadoEn: true },
+      select: { id: true },
     });
 
     // 2b) Asegura el prospecto desde el PRIMER contacto (estado FRIO, puntaje 0),
@@ -164,32 +177,82 @@ export class LeadsMessageProcessor extends WorkerHost {
       `Lead: mensaje de ${d.from} guardado (empresa ${empresa.id}, conv ${conv.id}).`,
     );
 
-    // ─── FASE 1c: respuesta con IA ────────────────────────────────────────────
     // Toggle multi-tenant: si la empresa no activó la IA, sólo capturamos el CRM.
     if (!empresa.iaVentasActiva) return;
+    // Nota de voz que no se pudo transcribir: queda guardada, pero no hay con
+    // qué responder.
+    if (d.esAudio && !audioTranscrito) return;
+
+    await this.programarRespuesta(empresa.id, conv.id);
+  }
+
+  /**
+   * Encola la respuesta a una conversación, una sola vez por lote.
+   *
+   * El `jobId` por conversación es lo que agrupa: mientras haya un trabajo
+   * esperando, los mensajes que lleguen no programan otro. Por eso el trabajo
+   * TIENE que desaparecer al terminar — si se quedara en completados o en
+   * fallidos, su id seguiría ocupado y esa conversación no volvería a recibir
+   * respuesta nunca más.
+   */
+  private async programarRespuesta(
+    empresaId: number,
+    conversacionId: number,
+  ): Promise<void> {
+    const tarea: TareaRespuesta = { empresaId, conversacionId };
+    await this.queue.add(JOB_RESPONDER, tarea, {
+      jobId: `resp-${empresaId}-${conversacionId}`,
+      delay: DEBOUNCE_RESPUESTA_MS,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 2000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    });
+  }
+
+  /**
+   * Responde a todo lo que el cliente haya escrito desde nuestro último
+   * mensaje, en un solo turno.
+   */
+  private async responder(t: TareaRespuesta): Promise<void> {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: t.empresaId },
+      select: {
+        id: true,
+        razonSocial: true,
+        nombreComercial: true,
+        descripcionTienda: true,
+        iaVentasActiva: true,
+        iaVentasContexto: true,
+        iaVentasBrochureUrl: true,
+        iaVentasCotizacion: true,
+        rubro: { select: { nombre: true } },
+        plan: { select: { maxLeadsMes: true } },
+      },
+    });
+    if (!empresa?.iaVentasActiva) return;
     if (!this.ia.disponible()) {
       this.logger.warn('IA de ventas sin GEMINI_API_KEY; no se responde.');
       return;
     }
-    // Si era nota de voz y no se pudo transcribir, solo guardamos (no respondemos).
-    if (d.esAudio && !audioTranscrito) return;
+
+    const conv = await this.prisma.leadConversacion.findUnique({
+      where: { id: t.conversacionId },
+      select: {
+        id: true,
+        creadoEn: true,
+        telefonoProspecto: true,
+        nombreProspecto: true,
+      },
+    });
+    if (!conv) return;
 
     // Bot pausado en este prospecto (un humano tomó el chat).
     const prospecto = await this.prisma.leadProspecto.findUnique({
       where: { conversacionId: conv.id },
-      select: { id: true, botActivo: true, notificadoEn: true },
+      select: { botActivo: true },
     });
     if (prospecto && !prospecto.botActivo) return;
-
-    // Idempotencia de la respuesta: ¿ya contestamos a este mensaje?
-    const yaRespondido = await this.prisma.leadMensaje.count({
-      where: {
-        conversacionId: conv.id,
-        rol: 'ASISTENTE',
-        id: { gt: userMsgId },
-      },
-    });
-    if (yaRespondido > 0) return;
 
     // Tope mensual de leads del plan (soft-block): el lead se captura igual, pero
     // si esta conversación supera el tope, la IA no responde y se avisa al admin.
@@ -203,16 +266,23 @@ export class LeadsMessageProcessor extends WorkerHost {
       return;
     }
 
-    // Historial completo de la conversación (incluye el mensaje recién guardado).
     const mensajes = await this.prisma.leadMensaje.findMany({
       where: { conversacionId: conv.id },
       orderBy: { id: 'asc' },
       select: { rol: true, contenido: true },
     });
+    // Si lo último que hay es nuestro, este lote ya fue contestado (reintento
+    // de BullMQ, o una respuesta manual desde el panel mientras esperábamos).
+    if (mensajes.at(-1)?.rol !== 'USUARIO') return;
+
     const historial: MensajeConversacion[] = mensajes.map((m) => ({
       role: m.rol === 'USUARIO' ? 'user' : 'assistant',
       content: m.contenido,
     }));
+    // Todo lo que el cliente escribió desde nuestra última respuesta: la
+    // búsqueda de productos y la detección de brochure miran el lote entero,
+    // no solo el último mensaje.
+    const contenido = this.ultimoLoteDelCliente(mensajes);
 
     // Contexto = datos de la empresa + fragmentos RAG relevantes al mensaje.
     const contextoEmpresa = this.construirContexto(empresa);
@@ -222,7 +292,7 @@ export class LeadsMessageProcessor extends WorkerHost {
       empresa.id,
       contenido,
     );
-    const contextoRag = await this.rag.buscarContexto(empresa.id, d.text, 5);
+    const contextoRag = await this.rag.buscarContexto(empresa.id, contenido, 5);
     const businessContext = [contextoEmpresa, relevantes.contexto, contextoRag]
       .filter((s) => s && s.trim())
       .join('\n\n');
@@ -230,7 +300,11 @@ export class LeadsMessageProcessor extends WorkerHost {
     // El modelo puede pedir herramientas (buscar en el catálogo, enviar una
     // foto). `fotosEnviadas` evita repetir la misma imagen en un turno.
     const fotosEnviadas = new Set<number>();
-    const ejecutor = this.crearEjecutor(empresa.id, d.from, fotosEnviadas);
+    const ejecutor = this.crearEjecutor(
+      empresa.id,
+      conv.telefonoProspecto,
+      fotosEnviadas,
+    );
 
     let resultado: RespuestaVenta;
     try {
@@ -262,13 +336,13 @@ export class LeadsMessageProcessor extends WorkerHost {
       },
     });
     const envio = await this.whatsapp.enviarTexto(
-      d.from,
+      conv.telefonoProspecto,
       resultado.reply,
       empresa.id,
     );
     if (!envio.success) {
       this.logger.warn(
-        `Lead: envío WhatsApp falló a ${d.from}: ${envio.error}`,
+        `Lead: envío WhatsApp falló a ${conv.telefonoProspecto}: ${envio.error}`,
       );
     }
 
@@ -276,53 +350,9 @@ export class LeadsMessageProcessor extends WorkerHost {
     // el texto: el modelo las pide con la herramienta `enviar_foto` cuando hace
     // falta, y el ejecutor las manda en ese momento.
 
-    // Brochure/catálogo: si el prospecto pide más info y la empresa tiene un
-    // enlace configurado, se envía UNA vez por conversación (PDF o imagen).
-    if (empresa.iaVentasBrochureUrl && this.quiereBrochure(contenido)) {
-      const est = await this.prisma.leadConversacion.findUnique({
-        where: { id: conv.id },
-        select: { brochureEnviado: true },
-      });
-      if (!est?.brochureEnviado) {
-        const url = empresa.iaVentasBrochureUrl;
-        const esImagen = /\.(jpe?g|png|webp|gif)(\?|$)/i.test(url);
-        const esPdf = /\.pdf(\?|$)/i.test(url);
-        let res: { success: boolean };
-        if (esImagen) {
-          // Imagen (foto/afiche del brochure).
-          res = await this.whatsapp
-            .enviarImagenUrl(d.from, url, undefined, empresa.id)
-            .catch(() => ({ success: false }));
-        } else if (esPdf) {
-          // Archivo PDF → documento.
-          res = await this.whatsapp
-            .enviarDocumentoUrl(
-              d.from,
-              url,
-              'Brochure.pdf',
-              undefined,
-              empresa.id,
-            )
-            .catch(() => ({ success: false }));
-        } else {
-          // Página web (no es archivo) → se comparte el enlace en un mensaje.
-          res = await this.whatsapp
-            .enviarTexto(
-              d.from,
-              `📄 Aquí tienes nuestra información completa:\n${url}`,
-              empresa.id,
-            )
-            .catch(() => ({ success: false }));
-        }
-        if (res.success) {
-          await this.prisma.leadConversacion.update({
-            where: { id: conv.id },
-            data: { brochureEnviado: true },
-          });
-        }
-      }
-    }
-    // Solo +1: el mensaje del usuario ya se contó en persistirMensajeUsuario.
+    await this.enviarBrochureSiCorresponde(empresa, conv, contenido);
+
+    // Solo +1: los mensajes del cliente ya se contaron al guardarlos.
     await this.prisma.leadConversacion.update({
       where: { id: conv.id },
       data: { cantidadMensajes: { increment: 1 } },
@@ -333,10 +363,80 @@ export class LeadsMessageProcessor extends WorkerHost {
       await this.aplicarCalificacion(
         empresa,
         conv.id,
-        d,
+        { telefono: conv.telefonoProspecto, nombre: conv.nombreProspecto },
         resultado.calificacion,
         historial,
       );
+    }
+  }
+
+  /**
+   * Lo que el cliente escribió desde nuestra última respuesta, en un solo
+   * texto. Puede ser un mensaje o cinco.
+   */
+  private ultimoLoteDelCliente(
+    mensajes: { rol: string; contenido: string }[],
+  ): string {
+    const lote: string[] = [];
+    for (let i = mensajes.length - 1; i >= 0; i--) {
+      if (mensajes[i].rol !== 'USUARIO') break;
+      lote.unshift(mensajes[i].contenido);
+    }
+    return lote.join('\n');
+  }
+
+  /**
+   * Brochure/catálogo: si el prospecto pide más info y la empresa tiene un
+   * enlace configurado, se envía UNA vez por conversación (PDF o imagen).
+   */
+  private async enviarBrochureSiCorresponde(
+    empresa: { id: number; iaVentasBrochureUrl: string | null },
+    conv: { id: number; telefonoProspecto: string },
+    contenido: string,
+  ): Promise<void> {
+    if (!empresa.iaVentasBrochureUrl || !this.quiereBrochure(contenido)) return;
+
+    const est = await this.prisma.leadConversacion.findUnique({
+      where: { id: conv.id },
+      select: { brochureEnviado: true },
+    });
+    if (est?.brochureEnviado) return;
+
+    const url = empresa.iaVentasBrochureUrl;
+    const esImagen = /\.(jpe?g|png|webp|gif)(\?|$)/i.test(url);
+    const esPdf = /\.pdf(\?|$)/i.test(url);
+    let res: { success: boolean };
+    if (esImagen) {
+      // Imagen (foto/afiche del brochure).
+      res = await this.whatsapp
+        .enviarImagenUrl(conv.telefonoProspecto, url, undefined, empresa.id)
+        .catch(() => ({ success: false }));
+    } else if (esPdf) {
+      // Archivo PDF → documento.
+      res = await this.whatsapp
+        .enviarDocumentoUrl(
+          conv.telefonoProspecto,
+          url,
+          'Brochure.pdf',
+          undefined,
+          empresa.id,
+        )
+        .catch(() => ({ success: false }));
+    } else {
+      // Página web (no es archivo) → se comparte el enlace en un mensaje.
+      res = await this.whatsapp
+        .enviarTexto(
+          conv.telefonoProspecto,
+          `📄 Aquí tienes nuestra información completa:\n${url}`,
+          empresa.id,
+        )
+        .catch(() => ({ success: false }));
+    }
+    if (res.success) {
+      await this.prisma.leadConversacion.update({
+        where: { id: conv.id },
+        data: { brochureEnviado: true },
+      });
     }
   }
 
@@ -779,7 +879,7 @@ export class LeadsMessageProcessor extends WorkerHost {
       iaVentasCotizacion?: boolean;
     },
     conversacionId: number,
-    d: MensajeEntrante,
+    quien: { telefono: string; nombre: string | null },
     cal: CalificacionBant,
     historial: MensajeConversacion[],
   ): Promise<void> {
@@ -799,8 +899,8 @@ export class LeadsMessageProcessor extends WorkerHost {
       where: { conversacionId },
       create: {
         empresaId: empresa.id,
-        telefonoProspecto: d.from,
-        nombreProspecto: d.nombre ?? null,
+        telefonoProspecto: quien.telefono,
+        nombreProspecto: quien.nombre,
         conversacionId,
         ...data,
       },
@@ -810,7 +910,7 @@ export class LeadsMessageProcessor extends WorkerHost {
 
     // Alerta de lead CALIENTE al vendedor (una sola vez, reusa notificaciones de MYPE).
     if (cal.debeTransferir && !prospecto.notificadoEn) {
-      const nombre = d.nombre || d.from;
+      const nombre = quien.nombre || quien.telefono;
 
       // Cotización automática (opt-in): si el prospecto confirmó productos +
       // cantidades, la IA arma un borrador COT (sin stock/caja/SUNAT). Best-effort.
@@ -823,7 +923,7 @@ export class LeadsMessageProcessor extends WorkerHost {
         cotizacion = await this.intentarCrearCotizacion(
           empresa.id,
           nombre,
-          d.from,
+          quien.telefono,
           historial,
         );
         if (cotizacion) {
@@ -842,7 +942,7 @@ export class LeadsMessageProcessor extends WorkerHost {
         metaData: {
           origen: 'ia-ventas',
           prospectoId: prospecto.id,
-          telefono: d.from,
+          telefono: quien.telefono,
           puntaje: cal.score.total,
         },
       });
@@ -852,7 +952,7 @@ export class LeadsMessageProcessor extends WorkerHost {
         empresaNombre: empresa.nombreComercial || empresa.razonSocial,
         prospectoId: prospecto.id,
         nombreProspecto: nombre,
-        telefonoProspecto: d.from,
+        telefonoProspecto: quien.telefono,
         cal,
         cotizacion: cotizacion
           ? {

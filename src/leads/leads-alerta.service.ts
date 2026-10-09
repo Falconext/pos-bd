@@ -96,7 +96,9 @@ export class LeadsAlertaService {
       `⭐ Score *${s.total}/100* (B${s.budget} A${s.authority} N${s.need} T${s.timeline})`,
       '',
       p.cal.interes ? `🛒 *Interés:* ${p.cal.interes}` : null,
-      p.cotizacion ? `📄 *Cotización lista:* ${p.cotizacion.codigo} (borrador en el panel)` : null,
+      p.cotizacion
+        ? `📄 *Cotización lista:* ${p.cotizacion.codigo} (borrador en el panel)`
+        : null,
       p.cal.resumen ? `📋 ${p.cal.resumen}` : null,
       p.cal.proximaAccion ? `👉 ${p.cal.proximaAccion}` : null,
       '',
@@ -122,7 +124,9 @@ export class LeadsAlertaService {
       process.env.RESEND_FROM_EMAIL ||
       'notificaciones@falconext.pe';
     const appName =
-      this.config.get<string>('APP_NAME') || process.env.APP_NAME || 'Falconext';
+      this.config.get<string>('APP_NAME') ||
+      process.env.APP_NAME ||
+      'Falconext';
 
     const { Resend } = await import('resend');
     const { render } = await import('@react-email/components');

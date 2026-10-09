@@ -43,7 +43,10 @@ export class RagVentasService {
    * Indexa un documento: borra sus fragmentos previos, parte el contenido,
    * genera embeddings y los inserta. Marca el documento INDEXADO o ERROR.
    */
-  async indexarDocumento(documentoId: number, contenido: string): Promise<void> {
+  async indexarDocumento(
+    documentoId: number,
+    contenido: string,
+  ): Promise<void> {
     try {
       await this.prisma.leadFragmento.deleteMany({ where: { documentoId } });
       const chunks = this.chunkText(contenido);
