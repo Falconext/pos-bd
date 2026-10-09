@@ -13,6 +13,20 @@ const CHUNK_OVERLAP = 200;
  * El embedding se lee/escribe con SQL crudo porque Prisma no soporta el tipo
  * `vector` de pgvector directamente (columna declarada como Unsupported).
  */
+/**
+ * Hasta dónde puede estar un fragmento para considerarlo pertinente (distancia
+ * coseno de pgvector: 0 es idéntico).
+ *
+ * Sin corte, la búsqueda vectorial SIEMPRE devuelve los vecinos más cercanos
+ * por lejos que estén: "xyzqwerty" traía tres productos reales. Medido contra
+ * las fichas de Hierba Sana, las dolencias de verdad caen entre 0.33 y 0.40 y
+ * lo que no viene a cuento, por encima de 0.44.
+ *
+ * Conviene volver a medirlo cuando esté cargado el catálogo completo de
+ * fichas: con más vecinos, las distancias bajan.
+ */
+export const DISTANCIA_MAXIMA = 0.42;
+
 @Injectable()
 export class RagVentasService {
   private readonly logger = new Logger(RagVentasService.name);
@@ -94,6 +108,23 @@ export class RagVentasService {
     consulta: string,
     limit = 5,
   ): Promise<string> {
+    const fragmentos = await this.buscarFragmentos(empresaId, consulta, limit);
+    return fragmentos.join('\n\n---\n\n');
+  }
+
+  /**
+   * Los fragmentos más parecidos a la consulta, por orden de cercanía.
+   *
+   * Separado de `buscarContexto` porque B4 no quiere el texto pegado para el
+   * prompt: quiere los fragmentos para sacarles los códigos de producto y
+   * resolverlos contra el catálogo vivo.
+   */
+  async buscarFragmentos(
+    empresaId: number,
+    consulta: string,
+    limit = 5,
+    distanciaMaxima = DISTANCIA_MAXIMA,
+  ): Promise<string[]> {
     try {
       const embedding = await this.gemini.generarEmbedding(consulta);
       const lit = this.vectorLiteral(embedding);
@@ -102,15 +133,37 @@ export class RagVentasService {
         FROM "LeadFragmento" f
         JOIN "LeadDocumento" d ON f."documentoId" = d."id"
         WHERE d."empresaId" = ${empresaId} AND d."estado"::text = 'INDEXADO'
+          AND (f."embedding" <=> ${lit}::vector) < ${distanciaMaxima}
         ORDER BY f."embedding" <=> ${lit}::vector
         LIMIT ${limit}
       `;
-      if (!rows.length) return '';
-      return rows.map((r) => r.contenido).join('\n\n---\n\n');
+      return rows.map((r) => r.contenido);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'error';
-      this.logger.warn(`RAG buscarContexto empresa ${empresaId}: ${msg}`);
-      return '';
+      this.logger.warn(`RAG buscarFragmentos empresa ${empresaId}: ${msg}`);
+      return [];
     }
   }
+}
+
+/**
+ * Saca los códigos de producto que menciona una ficha del RAG.
+ *
+ * Las fichas se generan con la forma `NOMBRE — S/ PRECIO (cód. PROD-0428)`.
+ * El código es lo único que vale la pena extraer: el precio del texto queda
+ * viejo en cuanto cambia el catálogo, así que se resuelve contra la base y se
+ * lee el precio vivo. Por eso la ficha sirve para ENCONTRAR el producto, no
+ * para cotizarlo.
+ *
+ * Conserva el orden de aparición, que es el orden de relevancia del RAG, y no
+ * repite códigos.
+ */
+export function codigosDeFichas(fragmentos: string[]): string[] {
+  const vistos = new Set<string>();
+  for (const fragmento of fragmentos) {
+    for (const m of fragmento.matchAll(/\(c[oó]d\.\s*([A-Za-z0-9._-]+)\)/gi)) {
+      vistos.add(m[1].trim());
+    }
+  }
+  return [...vistos];
 }

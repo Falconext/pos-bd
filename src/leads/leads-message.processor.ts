@@ -4,7 +4,7 @@ import { Job, Queue, UnrecoverableError } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
-import { RagVentasService } from './leads-rag.service';
+import { RagVentasService, codigosDeFichas } from './leads-rag.service';
 import { LeadsAlertaService } from './leads-alerta.service';
 import { ComprobanteService } from '../comprobante/comprobante.service';
 import {
@@ -36,6 +36,26 @@ import {
   CalificacionBant,
   estadoProspectoDesde,
 } from './leads-ia.service';
+
+/** Un producto tal como lo necesita la IA. */
+interface ProductoParaIa {
+  id: number;
+  descripcion: string;
+  precioUnitario: any;
+  stock: any;
+  moneda: string;
+  imagenUrl: string | null;
+  disponibilidad: DisponibilidadProducto | null;
+  prioridadVenta: number | null;
+}
+
+/**
+ * Cuánto tiene que parecerse el nombre de un producto a lo que escribió el
+ * cliente. Medido contra el catálogo real de Hierba Sana: a 0.45 "fenocreco"
+ * encuentra Fenogreco (0.538) y una dolencia no devuelve nada. Más bajo
+ * empieza a traer productos que no vienen a cuento.
+ */
+const UMBRAL_PARECIDO = 0.45;
 
 /** Lo que necesita el trabajo de respuesta: la conversación, no el mensaje. */
 interface TareaRespuesta {
@@ -469,6 +489,92 @@ export class LeadsMessageProcessor extends WorkerHost {
     return previas.filter((m) => m.embedding.length > 0);
   }
 
+  /** Las columnas que la IA necesita de un producto. */
+  private static readonly CAMPOS_PRODUCTO = {
+    id: true,
+    descripcion: true,
+    precioUnitario: true,
+    stock: true,
+    moneda: true,
+    imagenUrl: true,
+    disponibilidad: true,
+    prioridadVenta: true,
+  } as const;
+
+  /**
+   * Segundo escalón: productos cuyo NOMBRE se parece a lo que escribió el
+   * cliente, aunque lo haya escrito mal. Trigramas de Postgres (pg_trgm).
+   *
+   * `word_similarity` y no `similarity` porque se compara una palabra suelta
+   * contra un nombre largo: "fenocreco" contra "Fenogreco Alholva - NATURAL
+   * MEDIX ( 100 capsulas )" da 0.54 con la primera y casi nada con la segunda.
+   * El umbral está medido contra el catálogo real: a 0.45, "fenocreco"
+   * encuentra Fenogreco y "dolor de rodillas" no devuelve nada (que es lo
+   * correcto: una dolencia no se parece a ningún nombre de producto).
+   */
+  private async buscarPorParecido(
+    empresaId: number,
+    texto: string,
+    categoria?: string,
+  ): Promise<ProductoParaIa[]> {
+    const consulta = (texto || '').trim().slice(0, 120);
+    if (consulta.length < 3) return [];
+    try {
+      const filtroCategoria = categoria
+        ? Prisma.sql`AND c."nombre" ILIKE ${`%${categoria}%`}`
+        : Prisma.empty;
+      return await this.prisma.$queryRaw<ProductoParaIa[]>`
+        SELECT p."id", p."descripcion", p."precioUnitario", p."stock",
+               p."moneda", p."imagenUrl", p."disponibilidad", p."prioridadVenta"
+        FROM "Producto" p
+        LEFT JOIN "Categoria" c ON c."id" = p."categoriaId"
+        WHERE p."empresaId" = ${empresaId}
+          AND p."estado"::text = 'ACTIVO'
+          AND word_similarity(${consulta}, p."descripcion") > ${UMBRAL_PARECIDO}
+          ${filtroCategoria}
+        ORDER BY word_similarity(${consulta}, p."descripcion") DESC,
+                 p."prioridadVenta" DESC NULLS LAST
+        LIMIT 8
+      `;
+    } catch (e) {
+      // Si falta la extensión pg_trgm, la búsqueda por palabras sigue viva.
+      this.logger.warn(
+        `Búsqueda por parecido no disponible: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Tercer escalón: las fichas del RAG, que sí saben a qué órgano y sistema
+   * apunta cada producto. Es lo que convierte "tengo dolor de rodillas" en
+   * productos concretos.
+   *
+   * De la ficha solo se toma el código; el precio y la disponibilidad se leen
+   * de la base, porque el texto de la ficha envejece en cuanto cambia el
+   * catálogo. Cuesta un embedding, por eso es el último escalón y no se usa en
+   * el adelanto que va al prompt.
+   */
+  private async buscarPorFichas(
+    empresaId: number,
+    consulta: string,
+  ): Promise<ProductoParaIa[]> {
+    const fragmentos = await this.rag.buscarFragmentos(empresaId, consulta, 4);
+    const codigos = codigosDeFichas(fragmentos).slice(0, 12);
+    if (codigos.length === 0) return [];
+
+    const productos = await this.prisma.producto.findMany({
+      where: { empresaId, estado: 'ACTIVO' as any, codigo: { in: codigos } },
+      select: { ...LeadsMessageProcessor.CAMPOS_PRODUCTO, codigo: true },
+      take: 8,
+    });
+    // El RAG ya los ordenó por relevancia; la base los devuelve en otro orden.
+    const posicion = new Map(codigos.map((c, i) => [c, i]));
+    return productos.sort(
+      (a, b) => (posicion.get(a.codigo) ?? 99) - (posicion.get(b.codigo) ?? 99),
+    );
+  }
+
   /**
    * Lo que el cliente escribió desde nuestra última respuesta, en un solo
    * texto. Puede ser un mensaje o cinco.
@@ -776,14 +882,24 @@ export class LeadsMessageProcessor extends WorkerHost {
               ? argumentos.categoria.trim()
               : undefined;
           const inicio = Date.now();
-          const productos = await this.consultarCatalogo(
+          let productos = await this.consultarCatalogo(
             empresaId,
             consulta,
             categoria,
           );
+          let via = 'catálogo';
+          // Una dolencia ("dolor de rodillas") no se parece al nombre de
+          // ningún producto, así que ni las palabras ni los trigramas la
+          // encuentran. Las fichas del RAG sí saben a qué órgano y sistema
+          // apunta cada producto. Va en último lugar porque cuesta un
+          // embedding; las dos primeras son SQL.
+          if (productos.length === 0) {
+            productos = await this.buscarPorFichas(empresaId, consulta);
+            via = 'fichas';
+          }
           const ms = Date.now() - inicio;
           this.logger.log(
-            `IA buscó "${consulta}"${categoria ? ` [${categoria}]` : ''} en empresa ${empresaId}: ${productos.length} resultado(s) en ${ms} ms.`,
+            `IA buscó "${consulta}"${categoria ? ` [${categoria}]` : ''} en empresa ${empresaId}: ${productos.length} resultado(s) por ${via} en ${ms} ms.`,
           );
           if (productos.length === 0) {
             return {
@@ -793,6 +909,15 @@ export class LeadsMessageProcessor extends WorkerHost {
             };
           }
           return {
+            // Las fichas aciertan por significado, no por nombre: si el
+            // cliente pidió algo que no existe, esto trae lo parecido. El
+            // modelo tiene que saberlo o se lo vendería como si fuera lo
+            // pedido.
+            ...(via === 'fichas'
+              ? {
+                  nota: 'Estos NO son el producto exacto que pidió: son productos relacionados con lo que necesita. Ofrécelos como alternativa y dile con honestidad que lo que nombró no lo tenemos.',
+                }
+              : {}),
             productos: productos.map((p) => ({
               id: p.id,
               nombre: p.descripcion,
@@ -937,7 +1062,7 @@ export class LeadsMessageProcessor extends WorkerHost {
       .slice(0, 5);
     if (tokens.length === 0) return [];
 
-    const productos = await this.prisma.producto.findMany({
+    let productos = await this.prisma.producto.findMany({
       where: {
         empresaId,
         estado: 'ACTIVO' as any,
@@ -980,6 +1105,13 @@ export class LeadsMessageProcessor extends WorkerHost {
       ],
       take: 8,
     });
+
+    // Nada por palabras: puede ser una falta de ortografía ("fenocreco" por
+    // "Fenogreco"). El cliente no va a reescribirlo — se va. Los trigramas sí
+    // lo encuentran, y siguen siendo SQL: no cuestan una llamada a la IA.
+    if (productos.length === 0) {
+      productos = await this.buscarPorParecido(empresaId, texto, categoria);
+    }
 
     // Y entre todos, lo que se puede entregar ya va antes de lo que hay que
     // encargar. Se ordena aquí y no en la consulta porque la disponibilidad
