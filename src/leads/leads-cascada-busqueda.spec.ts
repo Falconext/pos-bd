@@ -60,9 +60,11 @@ function armar(opts: {
     {} as any,
     {} as any,
     {} as any,
+    {} as any,
   );
   const ejecutor = (processor as any).crearEjecutor(
     EMPRESA,
+    1,
     '51999999999',
     new Set(),
   );

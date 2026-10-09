@@ -14,6 +14,9 @@ import { FunctionDeclaration, SchemaType } from '@google/generative-ai';
 
 export const HERRAMIENTA_BUSCAR_PRODUCTOS = 'buscar_productos';
 export const HERRAMIENTA_ENVIAR_FOTO = 'enviar_foto';
+export const HERRAMIENTA_GUARDAR_DATOS = 'guardar_datos_envio';
+export const HERRAMIENTA_COTIZAR = 'cotizar';
+export const HERRAMIENTA_REGISTRAR_PEDIDO = 'registrar_pedido';
 
 const buscarProductos: FunctionDeclaration = {
   name: HERRAMIENTA_BUSCAR_PRODUCTOS,
@@ -58,10 +61,113 @@ const enviarFoto: FunctionDeclaration = {
   },
 };
 
+const guardarDatosEnvio: FunctionDeclaration = {
+  name: HERRAMIENTA_GUARDAR_DATOS,
+  description:
+    'Guarda los datos del pedido según el cliente los va diciendo, y te devuelve QUÉ FALTA todavía. ' +
+    'Llámala en cuanto el cliente mencione cualquiera de estos datos, aunque sea de pasada y aunque falten otros: no esperes a tenerlos todos. ' +
+    'Si te dice el distrito o la ciudad, mándalo en `destino` y te devuelve la zona, el costo de envío y la forma de pago que corresponde. ' +
+    'Nunca vuelvas a pedirle un dato que esta herramienta ya tiene guardado. ' +
+    'El nombre se le pregunta: no uses el de su perfil de WhatsApp.',
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      destino: {
+        type: SchemaType.STRING,
+        description:
+          'Distrito o ciudad de entrega, tal como lo escribió el cliente. También "recojo en tienda".',
+      },
+      nombre: {
+        type: SchemaType.STRING,
+        description: 'Nombre completo de quien recibe.',
+      },
+      dni: { type: SchemaType.STRING, description: 'DNI, 8 dígitos.' },
+      celular: {
+        type: SchemaType.STRING,
+        description: 'Celular de contacto, 9 dígitos.',
+      },
+      direccion: {
+        type: SchemaType.STRING,
+        description:
+          'Dirección con calle y número. Solo para entrega a domicilio.',
+      },
+      referencia: {
+        type: SchemaType.STRING,
+        description: 'Referencia para ubicar la dirección.',
+      },
+      horario: {
+        type: SchemaType.STRING,
+        description:
+          'Franja de entrega acordada, en palabras ("mañana de 3 a 4 de la tarde").',
+      },
+      agenciaSede: {
+        type: SchemaType.STRING,
+        description:
+          'Sede de la agencia donde recogerá. Solo para envíos por agencia.',
+      },
+      recibeNombre: {
+        type: SchemaType.STRING,
+        description:
+          'Nombre de un tercero que recibirá, si no es el comprador.',
+      },
+    },
+  },
+};
+
+const cotizar: FunctionDeclaration = {
+  name: HERRAMIENTA_COTIZAR,
+  description:
+    'Arma la cotización con los productos que el cliente confirmó. Calcula el envío y el descuento por pack en código, no los calcules tú: nunca sumes ni apliques descuentos a mano. ' +
+    'Te devuelve el texto de la cotización ya escrito; cópialo tal cual en tu respuesta. ' +
+    'Necesita saber el destino: si todavía no lo sabes, te lo dirá y tendrás que preguntárselo al cliente antes. ' +
+    'Vuelve a llamarla si el cliente agrega o quita productos.',
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      items: {
+        type: SchemaType.ARRAY,
+        description: 'Los productos confirmados, con la cantidad que pidió.',
+        items: {
+          type: SchemaType.OBJECT,
+          properties: {
+            productoId: {
+              type: SchemaType.INTEGER,
+              description: 'Id del producto.',
+            },
+            cantidad: {
+              type: SchemaType.INTEGER,
+              description: 'Cuántas unidades.',
+            },
+          },
+          required: ['productoId', 'cantidad'],
+        },
+      },
+      nombrePack: {
+        type: SchemaType.STRING,
+        description:
+          'Nombre llamativo para la cotización, p. ej. "Pack Detox Hepático".',
+      },
+    },
+    required: ['items'],
+  },
+};
+
+const registrarPedido: FunctionDeclaration = {
+  name: HERRAMIENTA_REGISTRAR_PEDIDO,
+  description:
+    'Registra el pedido en el sistema. Llámala SOLO cuando se cumplan las dos cosas: el cliente aceptó la cotización, y ya tienes todos los datos que guardar_datos_envio pedía. ' +
+    'Si falta algo te lo dirá y no registrará nada: pídeselo y vuelve a intentarlo. ' +
+    'Nunca le digas al cliente que su pedido quedó agendado si esta herramienta no te lo confirmó. Se llama una sola vez por pedido.',
+  parameters: { type: SchemaType.OBJECT, properties: {} },
+};
+
 /** Las herramientas disponibles hoy. Los bloques C y F añaden las suyas aquí. */
 export const HERRAMIENTAS_VENTA: FunctionDeclaration[] = [
   buscarProductos,
   enviarFoto,
+  guardarDatosEnvio,
+  cotizar,
+  registrarPedido,
 ];
 
 /**
@@ -76,4 +182,9 @@ USO DE HERRAMIENTAS (obligatorio)
 - Si el cliente escribe mal un nombre, confirma la coincidencia ("¿Te refieres a Fenogreco?") en vez de decir que no existe.
 - Si el cliente pide ver un producto o una foto, usa ${HERRAMIENTA_ENVIAR_FOTO} con el id que te dio la búsqueda. No escribas en tu respuesta el nombre de una herramienta, sus parámetros ni sus resultados en crudo.
 - Las preguntas sobre el negocio (dirección, horarios, pagos, envíos, políticas) se responden con el contexto que ya tienes, sin llamar a ninguna herramienta.
+
+CÓMO SE CIERRA UNA VENTA
+- En cuanto el cliente mencione su distrito, su nombre, su celular o cualquier dato de entrega, guárdalo con ${HERRAMIENTA_GUARDAR_DATOS}. La herramienta te dice qué falta: pide UN dato por mensaje, en el orden en que te los lista, y nunca repreguntes algo que ya está guardado.
+- Para cotizar usa ${HERRAMIENTA_COTIZAR}. El envío y el descuento los calcula ella: tú no sumas ni aplicas descuentos. Copia su texto tal cual.
+- Cuando el cliente acepte y no falte ningún dato, llama a ${HERRAMIENTA_REGISTRAR_PEDIDO}. Solo después de que te confirme puedes decirle que su pedido quedó agendado.
 `.trim();

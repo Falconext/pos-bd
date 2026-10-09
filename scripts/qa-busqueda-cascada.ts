@@ -61,16 +61,18 @@ async function main() {
     null as never,
     null as never,
     null as never,
+    null as never,
   );
   const ejecutor = (
     processor as unknown as {
       crearEjecutor: (
         e: number,
+        c: number,
         t: string,
         f: Set<number>,
       ) => (n: string, a: Record<string, unknown>) => Promise<unknown>;
     }
-  ).crearEjecutor(EMPRESA_ID, '51999999999', new Set());
+  ).crearEjecutor(EMPRESA_ID, 1, '51999999999', new Set());
 
   const fichas = await prisma.leadDocumento.count({
     where: { empresaId: EMPRESA_ID, estado: 'INDEXADO' },

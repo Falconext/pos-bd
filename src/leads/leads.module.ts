@@ -8,11 +8,13 @@ import { IaVentasService } from './leads-ia.service';
 import { RagVentasService } from './leads-rag.service';
 import { LeadsAlertaService } from './leads-alerta.service';
 import { LeadsSeguimientoService } from './leads-seguimiento.service';
+import { LeadsPedidoService } from './leads-pedido.service';
 import { GeminiModule } from '../gemini/gemini.module';
 import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 import { ClienteModule } from '../cliente/cliente.module';
 import { ComprobanteModule } from '../comprobante/comprobante.module';
+import { EnvioDespachoModule } from '../envio-despacho/envio-despacho.module';
 import { LEADS_MESSAGES_QUEUE, redisConnection } from './leads.constants';
 
 /**
@@ -33,6 +35,7 @@ import { LEADS_MESSAGES_QUEUE, redisConnection } from './leads.constants';
     NotificacionesModule,
     ClienteModule,
     ComprobanteModule,
+    EnvioDespachoModule,
   ],
   controllers: [LeadsController, LeadsWebhookController],
   providers: [
@@ -42,6 +45,7 @@ import { LEADS_MESSAGES_QUEUE, redisConnection } from './leads.constants';
     RagVentasService,
     LeadsAlertaService,
     LeadsSeguimientoService,
+    LeadsPedidoService,
   ],
   exports: [LeadsService],
 })

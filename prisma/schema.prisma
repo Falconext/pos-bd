@@ -233,6 +233,12 @@ model Empresa {
   // stock/caja/SUNAT) cuando el prospecto confirma qué productos y cantidades
   // quiere. Opt-in (default OFF) para no crear documentos sorpresa.
   iaVentasCotizacion        Boolean            @default(false)
+  // Configuración comercial de la IA por empresa: zonas de envío y tarifas,
+  // franjas de entrega y tramos de descuento. Va junta en un JSON y no en
+  // columnas porque son tablas que el negocio edita, no campos que el sistema
+  // consulta: nunca se filtra ni se ordena por ellas. Vacío = los valores por
+  // defecto del código. Ver leads/envio-zonas.ts y leads/reglas-descuento.ts.
+  iaVentasConfigJson        Json?
   // Enlace a un brochure/catálogo (PDF o imagen) que la IA envía cuando el
   // prospecto pide más información. Útil para negocios de servicio (sin fotos de
   // productos), como el mismo Krezka.
@@ -4084,6 +4090,7 @@ model LeadConversacion {
   brochureEnviado     Boolean                @default(false)
   mensajes            LeadMensaje[]
   prospecto           LeadProspecto?
+  borrador            LeadPedidoBorrador?
   creadoEn            DateTime               @default(now())
   actualizadoEn       DateTime               @updatedAt
 
@@ -4139,6 +4146,63 @@ model LeadProspecto {
 
   @@index([empresaId, estado])
   @@index([empresaId, puntaje])
+}
+
+/// Lo que la IA va armando de un pedido mientras conversa.
+///
+/// Existe porque los datos llegan de a uno y en desorden: el cliente dice el
+/// distrito en el mensaje 4, el nombre en el 9 y el celular cuando ya aceptó.
+/// Sin un sitio donde acumularlos, la IA tendría que releer toda la
+/// conversación en cada turno y volvería a preguntar lo ya dicho — que es
+/// justamente lo que el banco de pruebas del cliente castiga.
+///
+/// Uno por conversación. Se completa, se cotiza y al final se convierte en
+/// pedido de verdad (comprobante + despacho).
+model LeadPedidoBorrador {
+  id             Int              @id @default(autoincrement())
+  empresaId      Int
+  conversacionId Int              @unique
+  conversacion   LeadConversacion @relation(fields: [conversacionId], references: [id], onDelete: Cascade)
+
+  // ── Destino: decide la tarifa, la forma de pago y qué datos pedir ────────
+  /// Nombre de la zona resuelta ("Lima", "Provincia"), de la config de envío.
+  zona           String?
+  /// DOMICILIO | AGENCIA | RECOJO
+  tipoZona       String?
+  /// Distrito o ciudad, con su nombre oficial.
+  lugar          String?
+  destinoRegion  String?
+  costoEnvio     Decimal?         @db.Decimal(10, 2)
+
+  // ── Datos de quien recibe ────────────────────────────────────────────────
+  nombre         String?
+  dni            String?
+  celular        String?
+  direccion      String?
+  referencia     String?
+  /// Franja acordada, tal como se la confirmó al cliente.
+  horario        String?
+  /// Sede de la agencia, cuando va por courier.
+  agenciaSede    String?
+  /// Si recibe un tercero.
+  recibeNombre   String?
+  recibeDni      String?
+
+  // ── Lo que lleva ─────────────────────────────────────────────────────────
+  /// [{ productoId, cantidad }] confirmados por el cliente.
+  itemsJson      Json?
+  /// COT generada desde el chat, si ya se cotizó.
+  cotizacionId   Int?
+  cotizadoEn     DateTime?
+  /// Comprobante del pedido ya registrado. Con esto puesto, no se registra
+  /// dos veces por más que el cliente insista.
+  comprobanteId  Int?
+  registradoEn   DateTime?
+
+  creadoEn       DateTime         @default(now())
+  actualizadoEn  DateTime         @updatedAt
+
+  @@index([empresaId])
 }
 
 // ─── RAG: entrenamiento de la IA de ventas (pgvector) ──────────────────────

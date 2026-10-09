@@ -120,6 +120,11 @@ function armar(
   };
   const queue: any = { add: jest.fn().mockResolvedValue({}) };
 
+  const pedido: any = {
+    guardarDatos: jest.fn().mockResolvedValue({ guardado: [], faltan: [] }),
+    cotizar: jest.fn().mockResolvedValue({ texto: 'cotización' }),
+    registrarPedido: jest.fn().mockResolvedValue({ registrado: true }),
+  };
   const processor = new LeadsMessageProcessor(
     prisma,
     ia,
@@ -128,9 +133,10 @@ function armar(
     {} as any,
     {} as any,
     {} as any,
+    pedido,
     queue,
   );
-  return { processor, prisma, ia, whatsapp, queue, mensajes };
+  return { processor, prisma, ia, whatsapp, queue, pedido, mensajes };
 }
 
 const entrante = (messageId: string, text: string) => ({

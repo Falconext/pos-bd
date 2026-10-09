@@ -16,8 +16,16 @@ import { DisponibilidadProducto, Prisma } from '@prisma/client';
 import { EjecutorHerramienta } from '../gemini/gemini.service';
 import {
   HERRAMIENTA_BUSCAR_PRODUCTOS,
+  HERRAMIENTA_COTIZAR,
   HERRAMIENTA_ENVIAR_FOTO,
+  HERRAMIENTA_GUARDAR_DATOS,
+  HERRAMIENTA_REGISTRAR_PEDIDO,
 } from './leads-herramientas';
+import {
+  DatosDelCliente,
+  ItemPedido,
+  LeadsPedidoService,
+} from './leads-pedido.service';
 import {
   disponibilidadEfectiva,
   textoParaElCliente,
@@ -97,6 +105,7 @@ export class LeadsMessageProcessor extends WorkerHost {
     private readonly notificaciones: NotificacionesService,
     private readonly alerta: LeadsAlertaService,
     private readonly comprobante: ComprobanteService,
+    private readonly pedido: LeadsPedidoService,
     @InjectQueue(LEADS_MESSAGES_QUEUE) private readonly queue: Queue,
   ) {
     super();
@@ -342,6 +351,7 @@ export class LeadsMessageProcessor extends WorkerHost {
     const fotosEnviadas = new Set<number>();
     const ejecutor = this.crearEjecutor(
       empresa.id,
+      conv.id,
       conv.telefonoProspecto,
       fotosEnviadas,
     );
@@ -866,6 +876,7 @@ export class LeadsMessageProcessor extends WorkerHost {
    */
   private crearEjecutor(
     empresaId: number,
+    conversacionId: number,
     telefono: string,
     fotosEnviadas: Set<number>,
   ): EjecutorHerramienta {
@@ -977,6 +988,37 @@ export class LeadsMessageProcessor extends WorkerHost {
             ? { enviada: true }
             : { enviada: false, motivo: 'No se pudo enviar la imagen.' };
         }
+
+        case HERRAMIENTA_GUARDAR_DATOS:
+          return this.pedido.guardarDatos(
+            empresaId,
+            conversacionId,
+            argumentos as DatosDelCliente,
+          );
+
+        case HERRAMIENTA_COTIZAR: {
+          const items = Array.isArray(argumentos.items)
+            ? (argumentos.items as ItemPedido[])
+            : [];
+          return this.pedido.cotizar(
+            empresaId,
+            conversacionId,
+            items.map((i) => ({
+              productoId: Number(i.productoId),
+              cantidad: Number(i.cantidad),
+            })),
+            typeof argumentos.nombrePack === 'string'
+              ? argumentos.nombrePack
+              : undefined,
+          );
+        }
+
+        case HERRAMIENTA_REGISTRAR_PEDIDO:
+          return this.pedido.registrarPedido(
+            empresaId,
+            conversacionId,
+            telefono,
+          );
 
         default:
           return { error: `Herramienta desconocida: ${nombre}` };
