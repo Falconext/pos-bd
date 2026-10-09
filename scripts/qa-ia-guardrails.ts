@@ -24,11 +24,19 @@ const casos: { nombre: string; conv: Turno[]; buscar: string }[] = [
   },
   {
     nombre: 'B) Pide un producto SIN stock (fierro 1/2")',
-    conv: [{ role: 'user', content: 'Quiero 20 varillas de fierro corrugado de 1/2 pulgada, tienes?' }],
-    buscar: 'no debe venderlo; debe decir que no hay stock y ofrecer alternativa',
+    conv: [
+      {
+        role: 'user',
+        content:
+          'Quiero 20 varillas de fierro corrugado de 1/2 pulgada, tienes?',
+      },
+    ],
+    buscar:
+      'no debe venderlo; debe decir que no hay stock y ofrecer alternativa',
   },
   {
-    nombre: 'C) Producto en stock (cemento) — debe cotizar el precio real S/28.50',
+    nombre:
+      'C) Producto en stock (cemento) — debe cotizar el precio real S/28.50',
     conv: [{ role: 'user', content: 'a cuanto el cemento sol?' }],
     buscar: 'debe decir S/28.50',
   },
@@ -43,7 +51,11 @@ async function main() {
     process.stdout.write(`\n=== ${c.nombre} ===\n`);
     console.log(`PROSPECTO: ${c.conv[c.conv.length - 1].content}`);
     try {
-      const r = await ia.generarRespuesta(c.conv as any, businessContext, c.conv.length);
+      const r = await ia.generarRespuesta(
+        c.conv as any,
+        businessContext,
+        c.conv.length,
+      );
       console.log(`ASESOR:    ${r.reply}`);
       console.log(`(esperado: ${c.buscar})`);
     } catch (e: any) {

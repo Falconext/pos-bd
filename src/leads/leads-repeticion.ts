@@ -132,3 +132,18 @@ export function esRepetida(
 ): boolean {
   return anteriores.some((v) => similitudCoseno(embedding, v) >= umbral);
 }
+
+/**
+ * ¿La respuesta nueva trae alguna cifra que no estaba en ninguna de las
+ * anteriores? Precios, cantidades y presentaciones viajan en números, así que
+ * una cifra nueva es información nueva aunque la frase se parezca.
+ *
+ * Hace falta porque el coseno solo no distingue "Moringa en cápsulas a S/
+ * 31.00" de "Harina de Moringa a S/ 10.00": miden 0.85, por encima del umbral,
+ * y callar la segunda le ocultaría al cliente una opción real.
+ */
+export function aportaDatoNuevo(nueva: string, anteriores: string[]): boolean {
+  const cifras = (t: string) => t.match(/\d+(?:[.,]\d+)?/g) ?? [];
+  const vistas = new Set(anteriores.flatMap(cifras));
+  return cifras(nueva).some((c) => !vistas.has(c));
+}

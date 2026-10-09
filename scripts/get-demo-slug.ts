@@ -1,4 +1,3 @@
-
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -8,11 +7,11 @@ async function main() {
   const existing = await prisma.empresa.findFirst({
     where: {
       slugTienda: { not: null },
-      estado: 'ACTIVO'
+      estado: 'ACTIVO',
     },
     include: {
-        plan: true
-    }
+      plan: true,
+    },
   });
 
   if (existing) {
@@ -22,22 +21,22 @@ async function main() {
 
   // 2. If not found, create one
   console.log('No store found. Creating demo store...');
-  
+
   // Ensure plan exists
   let plan = await prisma.plan.findFirst({
-      where: { tieneTienda: true }
+    where: { tieneTienda: true },
   });
-  
+
   if (!plan) {
-      plan = await prisma.plan.create({
-          data: {
-              nombre: 'DEMO_TIENDA_PLAN',
-              descripcion: 'Plan Demo',
-              costo: 0,
-              tieneTienda: true,
-              esPrueba: true
-          }
-      });
+    plan = await prisma.plan.create({
+      data: {
+        nombre: 'DEMO_TIENDA_PLAN',
+        descripcion: 'Plan Demo',
+        costo: 0,
+        tieneTienda: true,
+        esPrueba: true,
+      },
+    });
   }
 
   // Create demo company
@@ -47,7 +46,9 @@ async function main() {
       ruc: '20123456781',
       direccion: 'Av. Las Papas 123',
       fechaActivacion: new Date(),
-      fechaExpiracion: new Date(new Date().setFullYear(new Date().getFullYear() + 1)),
+      fechaExpiracion: new Date(
+        new Date().setFullYear(new Date().getFullYear() + 1),
+      ),
       planId: plan.id,
       estado: 'ACTIVO',
       slugTienda: 'don-pepe',
@@ -55,56 +56,59 @@ async function main() {
       whatsappTienda: '999888777',
       colorPrimario: '#FF9900',
       tipoEmpresa: 'INFORMAL',
-      costoEnvioFijo: 5.00
-    }
+      costoEnvioFijo: 5.0,
+    },
   });
 
   // Create some products for the store
   const unidad = await prisma.unidadMedida.upsert({
-      where: { codigo: 'NIU' },
-      update: {},
-      create: { codigo: 'NIU', nombre: 'UNIDAD' }
+    where: { codigo: 'NIU' },
+    update: {},
+    create: { codigo: 'NIU', nombre: 'UNIDAD' },
   });
 
   await prisma.producto.create({
-      data: {
-          codigo: 'SALCHI01',
-          descripcion: 'Salchipapa Clásica',
-          unidadMedidaId: unidad.id,
-          tipoAfectacionIGV: '10',
-          precioUnitario: 12.00,
-          valorUnitario: 10.17,
-          stock: 100,
-          empresaId: demoStore.id,
-          publicarEnTienda: true,
-          descripcionLarga: 'Papas nativas fritas con hotdog frankfurter y cremas de la casa.',
-          imagenUrl: 'https://images.unsplash.com/photo-1585109649139-366815a0d794?q=80&w=2670&auto=format&fit=crop',
-          destacado: true
-      }
+    data: {
+      codigo: 'SALCHI01',
+      descripcion: 'Salchipapa Clásica',
+      unidadMedidaId: unidad.id,
+      tipoAfectacionIGV: '10',
+      precioUnitario: 12.0,
+      valorUnitario: 10.17,
+      stock: 100,
+      empresaId: demoStore.id,
+      publicarEnTienda: true,
+      descripcionLarga:
+        'Papas nativas fritas con hotdog frankfurter y cremas de la casa.',
+      imagenUrl:
+        'https://images.unsplash.com/photo-1585109649139-366815a0d794?q=80&w=2670&auto=format&fit=crop',
+      destacado: true,
+    },
   });
-  
-    await prisma.producto.create({
-      data: {
-          codigo: 'SALCHI02',
-          descripcion: 'Salchipapa Royal',
-          unidadMedidaId: unidad.id,
-          tipoAfectacionIGV: '10',
-          precioUnitario: 18.00,
-          valorUnitario: 15.25,
-          stock: 100,
-          empresaId: demoStore.id,
-          publicarEnTienda: true,
-          descripcionLarga: 'Papas, hotdog, huevo frito y queso montado.',
-          imagenUrl: 'https://images.unsplash.com/photo-1694863762699-aca426550774?q=80&w=2576&auto=format&fit=crop',
-          destacado: true
-      }
+
+  await prisma.producto.create({
+    data: {
+      codigo: 'SALCHI02',
+      descripcion: 'Salchipapa Royal',
+      unidadMedidaId: unidad.id,
+      tipoAfectacionIGV: '10',
+      precioUnitario: 18.0,
+      valorUnitario: 15.25,
+      stock: 100,
+      empresaId: demoStore.id,
+      publicarEnTienda: true,
+      descripcionLarga: 'Papas, hotdog, huevo frito y queso montado.',
+      imagenUrl:
+        'https://images.unsplash.com/photo-1694863762699-aca426550774?q=80&w=2576&auto=format&fit=crop',
+      destacado: true,
+    },
   });
 
   console.log(`FOUND_STORE_SLUG: ${demoStore.slugTienda}`);
 }
 
 main()
-  .catch(e => {
+  .catch((e) => {
     console.error(e);
     process.exit(1);
   })

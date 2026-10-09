@@ -33,7 +33,9 @@ function armar(
     mensajes?: Mensaje[];
     botActivo?: boolean;
     embeddingsPrevios?: number[][];
+    textosPrevios?: string[];
     embeddingRespuesta?: number[];
+    respuestaIa?: string;
   } = {},
 ) {
   const mensajes = opts.mensajes ?? [];
@@ -83,7 +85,10 @@ function armar(
       findMany: jest.fn().mockImplementation(({ where, select }: any) => {
         if (where?.rol === 'ASISTENTE' && select?.embedding) {
           return Promise.resolve(
-            (opts.embeddingsPrevios ?? []).map((embedding) => ({ embedding })),
+            (opts.embeddingsPrevios ?? []).map((embedding, i) => ({
+              embedding,
+              contenido: opts.textosPrevios?.[i] ?? 'mensaje anterior',
+            })),
           );
         }
         return Promise.resolve(mensajes);
@@ -102,7 +107,7 @@ function armar(
       .fn()
       .mockResolvedValue(opts.embeddingRespuesta ?? [1, 0, 0]),
     generarRespuesta: jest.fn().mockResolvedValue({
-      reply: 'Sí, tenemos Berberina a S/ 45.00.',
+      reply: opts.respuestaIa ?? 'Sí, tenemos Berberina a S/ 45.00.',
       calificacion: null,
       debeAnalizar: false,
       llamadas: [],
@@ -258,11 +263,16 @@ describe('no repetirse ni insistir tras la despedida (A3)', () => {
     const { processor, whatsapp, prisma } = armar({
       mensajes: [
         { rol: 'USUARIO', contenido: 'tienen berberina?' },
-        { rol: 'ASISTENTE', contenido: 'Sí, a S/ 45.00. ¿Te la cotizo?' },
+        {
+          rol: 'ASISTENTE',
+          contenido: 'Quedo atento para completar tu pedido.',
+        },
         { rol: 'USUARIO', contenido: 'gracias' },
       ],
+      respuestaIa: 'Estoy aquí para ayudarte a finalizar tu compra.',
       embeddingRespuesta: [1, 0, 0],
       embeddingsPrevios: [[0.99, 0.05, 0]],
+      textosPrevios: ['Quedo atento para completar tu pedido.'],
     });
 
     await processor.process(tarea as any);
@@ -338,5 +348,57 @@ describe('no repetirse ni insistir tras la despedida (A3)', () => {
     await processor.process(tarea as any);
 
     expect(whatsapp.enviarTexto).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('una cifra nueva nunca se calla', () => {
+  // El coseno solo no distingue dos presentaciones del mismo producto: medido
+  // con embeddings reales, "Moringa en cápsulas a S/ 31.00" y "Harina de
+  // Moringa a S/ 10.00" dan 0.85, por encima del umbral. Callar la segunda le
+  // ocultaría al cliente una opción real.
+  it('envía la respuesta si trae un precio que no estaba antes', async () => {
+    const { processor, whatsapp } = armar({
+      mensajes: [
+        {
+          rol: 'ASISTENTE',
+          contenido: 'Tenemos Moringa en cápsulas a S/ 31.00.',
+        },
+        { rol: 'USUARIO', contenido: 'gracias' },
+      ],
+      respuestaIa: 'Tenemos Harina de Moringa de 150 gr a S/ 10.00.',
+      embeddingRespuesta: [1, 0, 0],
+      embeddingsPrevios: [[1, 0, 0]],
+      textosPrevios: ['Tenemos Moringa en cápsulas a S/ 31.00.'],
+    });
+
+    await processor.process({
+      name: JOB_RESPONDER,
+      data: { empresaId: EMPRESA, conversacionId: CONV },
+    } as any);
+
+    expect(whatsapp.enviarTexto).toHaveBeenCalledTimes(1);
+  });
+
+  it('calla si repite el mismo mensaje con las mismas cifras', async () => {
+    const { processor, whatsapp } = armar({
+      mensajes: [
+        {
+          rol: 'ASISTENTE',
+          contenido: 'Quedo atento para completar tu pedido.',
+        },
+        { rol: 'USUARIO', contenido: 'gracias' },
+      ],
+      respuestaIa: 'Estoy aquí para ayudarte a finalizar tu compra.',
+      embeddingRespuesta: [1, 0, 0],
+      embeddingsPrevios: [[1, 0, 0]],
+      textosPrevios: ['Quedo atento para completar tu pedido.'],
+    });
+
+    await processor.process({
+      name: JOB_RESPONDER,
+      data: { empresaId: EMPRESA, conversacionId: CONV },
+    } as any);
+
+    expect(whatsapp.enviarTexto).not.toHaveBeenCalled();
   });
 });

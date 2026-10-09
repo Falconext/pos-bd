@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import {
   GoogleGenerativeAI,
   GenerativeModel,
+  Content,
   FunctionDeclaration,
   Part,
 } from '@google/generative-ai';
@@ -376,20 +377,33 @@ Responde SOLO con el array JSON, nada más.`;
         ? { tools: [{ functionDeclarations: herramientas }] }
         : {}),
     });
-    const chat = model.startChat({
-      history: historial.slice(0, -1).map((m) => ({
-        role: m.role,
-        parts: [{ text: m.content }],
-      })),
-      generationConfig: { maxOutputTokens },
-    });
+
+    // Los turnos se arman a mano en vez de usar startChat().sendMessage().
+    // Motivo: el SDK 0.21 mete los resultados de herramienta en un turno con
+    // rol "function", y el endpoint v1beta lo rechaza con un 400 ("Role
+    // 'function' is not supported"). Como turno del usuario sí los acepta.
+    const contents: Content[] = historial.map((m) => ({
+      role: m.role,
+      parts: [{ text: m.content }],
+    }));
+    const generationConfig = { maxOutputTokens };
 
     const llamadas: LlamadaHerramienta[] = [];
-    let result = await chat.sendMessage(ultimo.content);
+    let result = await model.generateContent({ contents, generationConfig });
 
     for (let i = 0; i < maxIteraciones; i++) {
       const pedidos = result.response.functionCalls();
       if (!pedidos?.length) break;
+
+      // El turno del modelo, tal como lo devolvió: sin él, la siguiente
+      // llamada no sabe a qué pregunta responden los resultados.
+      const turnoModelo = result.response.candidates?.[0]?.content;
+      contents.push(
+        turnoModelo ?? {
+          role: 'model',
+          parts: pedidos.map((p) => ({ functionCall: p })),
+        },
+      );
 
       const partes: Part[] = [];
       for (const pedido of pedidos) {
@@ -416,7 +430,8 @@ Responde SOLO con el array JSON, nada más.`;
           },
         });
       }
-      result = await chat.sendMessage(partes);
+      contents.push({ role: 'user', parts: partes });
+      result = await model.generateContent({ contents, generationConfig });
     }
 
     let texto = this.textoDe(result);
@@ -424,9 +439,17 @@ Responde SOLO con el array JSON, nada más.`;
     // le fuerza a cerrar con lo que ya tiene, para no dejar al cliente sin
     // respuesta.
     if (!texto && result.response.functionCalls()?.length) {
-      result = await chat.sendMessage(
-        'Responde al cliente ahora, con la información que ya tienes. No pidas más herramientas.',
-      );
+      const turnoModelo = result.response.candidates?.[0]?.content;
+      if (turnoModelo) contents.push(turnoModelo);
+      contents.push({
+        role: 'user',
+        parts: [
+          {
+            text: 'Responde al cliente ahora, con la información que ya tienes. No pidas más herramientas.',
+          },
+        ],
+      });
+      result = await model.generateContent({ contents, generationConfig });
       texto = this.textoDe(result);
     }
     return { texto, llamadas };

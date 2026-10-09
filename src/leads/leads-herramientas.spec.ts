@@ -60,40 +60,56 @@ describe('normalizarHistorial', () => {
 });
 
 /**
- * Doble del chat de Gemini: devuelve los turnos que se le programen. Cada
+ * Doble del modelo de Gemini: devuelve los turnos que se le programen. Cada
  * entrada es o una lista de llamadas a herramientas, o un texto final.
+ *
+ * Se dobla `generateContent` y no `startChat` a propósito: el SDK 0.21 manda
+ * los resultados de herramienta con rol "function" y el endpoint v1beta los
+ * rechaza con un 400, así que los turnos se arman a mano. `enviados` guarda
+ * los `contents` de cada llamada para poder mirarlos.
  */
-function chatFalso(turnos: ({ calls: any[] } | { text: string })[]) {
-  const enviados: unknown[] = [];
+function modeloFalso(turnos: ({ calls: any[] } | { text: string })[]) {
+  const enviados: any[][] = [];
   let i = 0;
-  const siguiente = () => {
-    const t = turnos[Math.min(i++, turnos.length - 1)];
-    return {
-      response: {
-        functionCalls: () => ('calls' in t ? t.calls : undefined),
-        text: () => {
-          if ('text' in t) return t.text;
-          throw new Error('sin parte de texto');
-        },
-      },
-    };
-  };
   return {
     enviados,
-    chat: {
-      sendMessage: jest.fn(async (msg: unknown) => {
-        enviados.push(msg);
-        return siguiente();
-      }),
-    },
+    generateContent: jest.fn(async ({ contents }: any) => {
+      enviados.push(contents.map((c: any) => ({ ...c })));
+      const t = turnos[Math.min(i++, turnos.length - 1)];
+      const calls = 'calls' in t ? t.calls : undefined;
+      return {
+        response: {
+          functionCalls: () => calls,
+          candidates: calls
+            ? [
+                {
+                  content: {
+                    role: 'model',
+                    parts: calls.map((c) => ({ functionCall: c })),
+                  },
+                },
+              ]
+            : [
+                {
+                  content: {
+                    role: 'model',
+                    parts: [{ text: (t as any).text }],
+                  },
+                },
+              ],
+          text: () => {
+            if ('text' in t) return t.text;
+            throw new Error('sin parte de texto');
+          },
+        },
+      };
+    }),
   };
 }
 
-function geminiConChat(falso: { chat: any }) {
+function geminiConModelo(falso: { generateContent: any }) {
   const gemini = servicioSinApiKey();
-  (gemini as any).genAI = {
-    getGenerativeModel: () => ({ startChat: () => falso.chat }),
-  };
+  (gemini as any).genAI = { getGenerativeModel: () => falso };
   return gemini;
 }
 
@@ -101,13 +117,13 @@ describe('chatConHerramientas', () => {
   const declaraciones = [{ name: 'buscar_productos' }] as any;
 
   it('ejecuta lo que pide el modelo y devuelve su respuesta final', async () => {
-    const falso = chatFalso([
+    const falso = modeloFalso([
       {
         calls: [{ name: 'buscar_productos', args: { consulta: 'berberina' } }],
       },
       { text: 'Sí, tenemos Berberina a S/ 45.00.' },
     ]);
-    const gemini = geminiConChat(falso);
+    const gemini = geminiConModelo(falso);
     const ejecutor = jest
       .fn()
       .mockResolvedValue({ productos: [{ id: 1, nombre: 'Berberina' }] });
@@ -133,11 +149,11 @@ describe('chatConHerramientas', () => {
   });
 
   it('le pasa el fallo de una herramienta al modelo en vez de cortarse', async () => {
-    const falso = chatFalso([
+    const falso = modeloFalso([
       { calls: [{ name: 'buscar_productos', args: { consulta: 'x' } }] },
       { text: 'Permíteme confirmarlo con un asesor.' },
     ]);
-    const gemini = geminiConChat(falso);
+    const gemini = geminiConModelo(falso);
     const ejecutor = jest.fn().mockRejectedValue(new Error('timeout de BD'));
 
     const res = await gemini.chatConHerramientas(
@@ -152,11 +168,11 @@ describe('chatConHerramientas', () => {
   });
 
   it('envuelve en objeto un resultado que no lo es (Gemini lo exige)', async () => {
-    const falso = chatFalso([
+    const falso = modeloFalso([
       { calls: [{ name: 'buscar_productos', args: {} }] },
       { text: 'listo' },
     ]);
-    const gemini = geminiConChat(falso);
+    const gemini = geminiConModelo(falso);
 
     await gemini.chatConHerramientas(
       'prompt',
@@ -165,15 +181,18 @@ describe('chatConHerramientas', () => {
       jest.fn().mockResolvedValue([1, 2, 3]),
     );
 
-    const partes = falso.enviados[1] as any[];
-    expect(partes[0].functionResponse.response).toEqual({
+    const contents = falso.enviados[1];
+    const ultimo = contents[contents.length - 1];
+    // Va como turno del usuario: el rol "function" del SDK da 400.
+    expect(ultimo.role).toBe('user');
+    expect(ultimo.parts[0].functionResponse.response).toEqual({
       resultado: [1, 2, 3],
     });
   });
 
   it('corta el bucle y fuerza una respuesta si el modelo no deja de pedir herramientas', async () => {
     // Siempre pide, nunca responde: sin el corte el cliente se queda sin nada.
-    const falso = chatFalso([
+    const falso = modeloFalso([
       { calls: [{ name: 'buscar_productos', args: {} }] },
       { calls: [{ name: 'buscar_productos', args: {} }] },
       { calls: [{ name: 'buscar_productos', args: {} }] },
@@ -181,7 +200,7 @@ describe('chatConHerramientas', () => {
       { calls: [{ name: 'buscar_productos', args: {} }] },
       { text: 'Te comparto lo que encontré.' },
     ]);
-    const gemini = geminiConChat(falso);
+    const gemini = geminiConModelo(falso);
 
     const res = await gemini.chatConHerramientas(
       'prompt',
@@ -196,7 +215,7 @@ describe('chatConHerramientas', () => {
   });
 
   it('no acepta un historial cuyo último turno no sea del cliente', async () => {
-    const gemini = geminiConChat(chatFalso([{ text: 'x' }]));
+    const gemini = geminiConModelo(modeloFalso([{ text: 'x' }]));
     await expect(
       gemini.chatConHerramientas(
         'prompt',

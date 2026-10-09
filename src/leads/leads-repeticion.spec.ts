@@ -6,6 +6,7 @@
  * repetición: es cerrar una venta viva por confundir un "gracias" con un adiós.
  */
 import {
+  aportaDatoNuevo,
   esCortesiaBreve,
   esDespedidaClara,
   esRepetida,
@@ -100,5 +101,31 @@ describe('esRepetida', () => {
 
   it('sin respuestas anteriores nunca bloquea', () => {
     expect(esRepetida(base, [])).toBe(false);
+  });
+});
+
+describe('aportaDatoNuevo', () => {
+  it('detecta un precio que no estaba en las respuestas anteriores', () => {
+    expect(
+      aportaDatoNuevo('Harina de Moringa de 150 gr a S/ 10.00.', [
+        'Moringa en cápsulas de 100 unidades a S/ 31.00.',
+      ]),
+    ).toBe(true);
+  });
+
+  it('no ve nada nuevo si repite las mismas cifras', () => {
+    expect(
+      aportaDatoNuevo('Te confirmo: Moringa 100 cápsulas, S/ 31.00.', [
+        'Moringa en cápsulas de 100 unidades a S/ 31.00.',
+      ]),
+    ).toBe(false);
+  });
+
+  it('no ve nada nuevo en un mensaje sin cifras', () => {
+    expect(
+      aportaDatoNuevo('Quedo atento para ayudarte.', [
+        'Estoy a tu disposición.',
+      ]),
+    ).toBe(false);
   });
 });

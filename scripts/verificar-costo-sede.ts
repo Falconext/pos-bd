@@ -25,7 +25,9 @@ if (!URL) {
 // Este script modifica filas antes de revertirlas: una interrupción a mitad
 // dejaría datos a medio camino. Solo contra una base local.
 if (!/@(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(URL)) {
-  console.error('Esta base no es local. El script escribe y revierte: no corre contra producción.');
+  console.error(
+    'Esta base no es local. El script escribe y revierte: no corre contra producción.',
+  );
   process.exit(1);
 }
 
@@ -43,7 +45,10 @@ const n = (v: any) => Number(v ?? 0);
 
   console.log('productos multi-sede con stock en 2+ sedes:', objetivo.length);
 
-  let revisados = 0, descuadres = 0, negativos = 0, inflados = 0;
+  let revisados = 0,
+    descuadres = 0,
+    negativos = 0,
+    inflados = 0;
   const ejemplos: string[] = [];
 
   for (const { id: productoId } of objetivo) {
@@ -64,40 +69,67 @@ const n = (v: any) => Number(v ?? 0);
 
     try {
       await (kardex as any).actualizarStockYCosto(
-        productoId, sede, n(conStock[0].stock) + 7, 'INGRESO', costoCompra, 7,
+        productoId,
+        sede,
+        n(conStock[0].stock) + 7,
+        'INGRESO',
+        costoCompra,
+        7,
       );
       // Y una venta en OTRA sede, que es lo que rompía la identidad.
       const otra = conStock[1];
       await (kardex as any).actualizarStockYCosto(
-        productoId, otra.sedeId, Math.max(0, n(otra.stock) - 2), 'SALIDA', undefined, 2,
+        productoId,
+        otra.sedeId,
+        Math.max(0, n(otra.stock) - 2),
+        'SALIDA',
+        undefined,
+        2,
       );
 
       const filas = await prisma.productoStock.findMany({
-        where: { productoId }, select: { stock: true, costoPromedio: true },
+        where: { productoId },
+        select: { stock: true, costoPromedio: true },
       });
       const prod = await prisma.producto.findUnique({
-        where: { id: productoId }, select: { stock: true, costoPromedio: true },
+        where: { id: productoId },
+        select: { stock: true, costoPromedio: true },
       });
       const globalDespues = n(prod?.costoPromedio);
 
       const porSedes = filas.reduce(
-        (t, f) => t + n(f.stock) * (f.costoPromedio == null ? globalDespues : n(f.costoPromedio)), 0);
+        (t, f) =>
+          t +
+          n(f.stock) *
+            (f.costoPromedio == null ? globalDespues : n(f.costoPromedio)),
+        0,
+      );
       const global = n(prod?.stock) * globalDespues;
 
       revisados++;
       if (Math.abs(porSedes - global) > 0.05) {
         descuadres++;
-        if (ejemplos.length < 5) ejemplos.push(`  producto ${productoId}: descuadre S/${Math.abs(porSedes - global).toFixed(2)}`);
+        if (ejemplos.length < 5)
+          ejemplos.push(
+            `  producto ${productoId}: descuadre S/${Math.abs(porSedes - global).toFixed(2)}`,
+          );
       }
-      if (globalDespues < 0 || filas.some((f) => f.costoPromedio != null && n(f.costoPromedio) < 0)) {
+      if (
+        globalDespues < 0 ||
+        filas.some((f) => f.costoPromedio != null && n(f.costoPromedio) < 0)
+      ) {
         negativos++;
-        if (ejemplos.length < 5) ejemplos.push(`  producto ${productoId}: costo negativo`);
+        if (ejemplos.length < 5)
+          ejemplos.push(`  producto ${productoId}: costo negativo`);
       }
       // El global no puede superar el costo más caro que se pagó nunca.
       const techo = Math.max(globalAntes, costoCompra);
       if (globalDespues > techo + 0.01) {
         inflados++;
-        if (ejemplos.length < 5) ejemplos.push(`  producto ${productoId}: global ${globalDespues.toFixed(2)} > techo ${techo.toFixed(2)}`);
+        if (ejemplos.length < 5)
+          ejemplos.push(
+            `  producto ${productoId}: global ${globalDespues.toFixed(2)} > techo ${techo.toFixed(2)}`,
+          );
       }
     } finally {
       for (const f of filasAntes) {
@@ -108,7 +140,10 @@ const n = (v: any) => Number(v ?? 0);
       }
       await prisma.producto.update({
         where: { id: productoId },
-        data: { stock: prodAntes!.stock, costoPromedio: prodAntes!.costoPromedio },
+        data: {
+          stock: prodAntes!.stock,
+          costoPromedio: prodAntes!.costoPromedio,
+        },
       });
     }
   }
@@ -119,7 +154,9 @@ const n = (v: any) => Number(v ?? 0);
   console.log('COSTOS INFLADOS    :', inflados);
   if (ejemplos.length) console.log(ejemplos.join('\n'));
 
-  const quedaron = await prisma.productoStock.count({ where: { costoPromedio: { not: null } } });
+  const quedaron = await prisma.productoStock.count({
+    where: { costoPromedio: { not: null } },
+  });
   console.log('filas reales que quedaron tocadas:', quedaron);
   await prisma.$disconnect();
 })();

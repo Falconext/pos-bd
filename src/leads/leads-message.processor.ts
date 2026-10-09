@@ -20,6 +20,7 @@ import {
 } from './leads-herramientas';
 import {
   RESPUESTAS_A_COMPARAR,
+  aportaDatoNuevo,
   esCortesiaBreve,
   esDespedidaClara,
   esRepetida,
@@ -343,10 +344,22 @@ export class LeadsMessageProcessor extends WorkerHost {
     // es otra vez lo mismo con otras palabras: no se manda. Es el error que el
     // banco del cliente marca como crítico (insistir tras la despedida).
     const embedding = await this.embeddingDe(resultado.reply);
+    const previas = embedding.length
+      ? await this.respuestasRecientes(conv.id)
+      : [];
     if (
       embedding.length &&
       esCortesiaBreve(contenido) &&
-      esRepetida(embedding, await this.ultimosEmbeddings(conv.id))
+      esRepetida(
+        embedding,
+        previas.map((p) => p.embedding),
+      ) &&
+      // Una cifra que no estaba antes (otro precio, otra presentación) es
+      // información nueva aunque la frase se parezca: eso sí se manda.
+      !aportaDatoNuevo(
+        resultado.reply,
+        previas.map((p) => p.contenido),
+      )
     ) {
       this.logger.log(
         `Lead: respuesta omitida en conv ${conv.id} (repetiría un mensaje anterior y el cliente no aportó nada nuevo).`,
@@ -431,15 +444,17 @@ export class LeadsMessageProcessor extends WorkerHost {
     }
   }
 
-  /** Embeddings de nuestras últimas respuestas en esta conversación. */
-  private async ultimosEmbeddings(conversacionId: number): Promise<number[][]> {
+  /** Nuestras últimas respuestas en esta conversación, con su embedding. */
+  private async respuestasRecientes(
+    conversacionId: number,
+  ): Promise<{ embedding: number[]; contenido: string }[]> {
     const previas = await this.prisma.leadMensaje.findMany({
       where: { conversacionId, rol: 'ASISTENTE' },
       orderBy: { id: 'desc' },
       take: RESPUESTAS_A_COMPARAR,
-      select: { embedding: true },
+      select: { embedding: true, contenido: true },
     });
-    return previas.map((m) => m.embedding).filter((v) => v.length > 0);
+    return previas.filter((m) => m.embedding.length > 0);
   }
 
   /**
