@@ -169,6 +169,9 @@ model Empresa {
   plinNumero                String?
   plinQrUrl                 String?
   slugTienda                String?            @unique
+  /// Pixel de Meta de la tienda online. Sin esto, las campañas pagadas no
+  /// pueden medir qué anuncio trajo la venta: se invierte a ciegas.
+  metaPixelId               String?
   tiktokUrl                 String?
   whatsappTienda            String?
   whatsappProvider          WhatsAppProvider   @default(ZAVU)

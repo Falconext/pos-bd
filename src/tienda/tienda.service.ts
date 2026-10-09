@@ -415,6 +415,7 @@ export class TiendaService {
         horarioAtencion: true,
         colorPrimario: true,
         colorSecundario: true,
+        metaPixelId: true,
         yapeQrUrl: true,
         yapeNumero: true,
         plinQrUrl: true,
@@ -917,6 +918,10 @@ export class TiendaService {
           horarioAtencion: true,
           colorPrimario: true,
           colorSecundario: true,
+          // El pixel se sirve aquí para que la tienda lo cargue sola: si
+          // hubiera que pegarlo a mano en cada plantilla, se olvidaría en
+          // alguna y esa campaña mediría de menos.
+          metaPixelId: true,
           // Campos de envío/recojo visibles en tienda pública
           costoEnvioFijo: true,
           aceptaRecojo: true,
