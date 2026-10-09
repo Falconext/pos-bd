@@ -229,3 +229,96 @@ describe('chatConHerramientas', () => {
     ).rejects.toThrow(/último turno sea del usuario/);
   });
 });
+
+describe('caché del contexto', () => {
+  // El contexto del negocio es el 95% de lo que se paga y es idéntico en cada
+  // mensaje. Cachearlo es la palanca de costo; que falle nunca puede costar
+  // una respuesta al cliente.
+  const declaraciones = [{ name: 'buscar_productos' }] as any;
+
+  function geminiConCache(gestor: any) {
+    const falso = modeloFalso([{ text: 'hola' }]);
+    const gemini = servicioSinApiKey();
+    (gemini as any).genAI = {
+      getGenerativeModel: () => falso,
+      getGenerativeModelFromCachedContent: () => falso,
+    };
+    (gemini as any).gestorCache = gestor;
+    return { gemini, falso };
+  }
+
+  it('responde igual aunque el plan no admita caché', async () => {
+    const gestor = {
+      create: jest
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            'TotalCachedContentStorageTokensPerModelFreeTier limit exceeded: limit=0',
+          ),
+        ),
+    };
+    const { gemini } = geminiConCache(gestor);
+
+    const res = await gemini.chatConHerramientas(
+      'contexto',
+      [{ role: 'user', content: 'hola' }],
+      declaraciones,
+      jest.fn(),
+    );
+    expect(res.texto).toBe('hola');
+  });
+
+  it('deja de intentar cachear tras el rechazo del plan gratuito', async () => {
+    const gestor = {
+      create: jest
+        .fn()
+        .mockRejectedValue(new Error('...FreeTier limit exceeded: limit=0')),
+    };
+    const { gemini } = geminiConCache(gestor);
+
+    for (let i = 0; i < 3; i++) {
+      await gemini.chatConHerramientas(
+        'contexto',
+        [{ role: 'user', content: 'hola' }],
+        declaraciones,
+        jest.fn(),
+      );
+    }
+    // Un intento, no uno por mensaje.
+    expect(gestor.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('reutiliza la caché entre mensajes del mismo contexto', async () => {
+    const gestor = {
+      create: jest.fn().mockResolvedValue({ name: 'cachedContents/abc' }),
+    };
+    const { gemini } = geminiConCache(gestor);
+
+    for (let i = 0; i < 3; i++) {
+      await gemini.chatConHerramientas(
+        'contexto',
+        [{ role: 'user', content: 'hola' }],
+        declaraciones,
+        jest.fn(),
+      );
+    }
+    expect(gestor.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('cachea por separado contextos distintos (una empresa, una caché)', async () => {
+    const gestor = {
+      create: jest.fn().mockResolvedValue({ name: 'cachedContents/abc' }),
+    };
+    const { gemini } = geminiConCache(gestor);
+
+    for (const contexto of ['Hierba Sana', 'Otra empresa']) {
+      await gemini.chatConHerramientas(
+        contexto,
+        [{ role: 'user', content: 'hola' }],
+        declaraciones,
+        jest.fn(),
+      );
+    }
+    expect(gestor.create).toHaveBeenCalledTimes(2);
+  });
+});

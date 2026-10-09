@@ -3,10 +3,29 @@ import { ConfigService } from '@nestjs/config';
 import {
   GoogleGenerativeAI,
   GenerativeModel,
+  CachedContent,
   Content,
   FunctionDeclaration,
   Part,
 } from '@google/generative-ai';
+import { GoogleAICacheManager } from '@google/generative-ai/server';
+import * as crypto from 'crypto';
+
+/**
+ * Modelos, con versión FIJA a propósito.
+ *
+ * Los alias `-latest` los mueve Google cuando quiere: hoy `flash-lite-latest`
+ * resuelve a 3.5-flash-lite y `flash-latest` a 3.8-flash. Para un bot que
+ * atiende clientes bajo contrato, un cambio silencioso de modelo puede alterar
+ * el costo y romper el function calling —que ya demostró ser frágil— sin que
+ * nadie se entere. Fijar la versión convierte ese fallo silencioso en uno
+ * ruidoso y arreglable. Las variables de entorno son la salida de emergencia.
+ */
+const MODELO_CHAT = process.env.GEMINI_MODELO_CHAT ?? 'gemini-3.5-flash-lite';
+const MODELO_MULTIMODAL =
+  process.env.GEMINI_MODELO_MULTIMODAL ?? 'gemini-flash-latest';
+const MODELO_EMBEDDING =
+  process.env.GEMINI_MODELO_EMBEDDING ?? 'gemini-embedding-001';
 
 /** Un turno de conversación tal como lo entiende Gemini. */
 export interface TurnoGemini {
@@ -19,6 +38,12 @@ export interface UsoTokens {
   entrada: number;
   salida: number;
   total: number;
+  /**
+   * Tokens de entrada que Gemini cobró a precio reducido por venir de caché.
+   * El contexto del negocio es idéntico en cada mensaje: si esto es 0, se está
+   * pagando el prefijo entero una y otra vez.
+   */
+  cacheados: number;
   /** Cuántas veces se llamó al modelo en este turno. */
   llamadasAlModelo: number;
 }
@@ -46,14 +71,27 @@ export class GeminiService {
   private genAI: GoogleGenerativeAI | null = null;
   private model: GenerativeModel | null = null;
 
+  // ── Caché del contexto ───────────────────────────────────────────────────
+  // El contexto del negocio son las mismas ~3,300 fichas de tokens en CADA
+  // mensaje: medido, es el 95% de lo que se paga. Gemini cobra mucho menos por
+  // entrada cacheada, así que se cachea una vez por empresa y se reutiliza.
+  /** Una hora: cubre de sobra una conversación y el almacenamiento se paga por hora. */
+  private static readonly CACHE_TTL_SEGUNDOS = 3600;
+  private gestorCache: GoogleAICacheManager | null = null;
+  private readonly cachesPorContexto = new Map<
+    string,
+    { contenido: CachedContent; expiraEn: number }
+  >();
+  /** Se apaga sola: en plan gratuito el almacenamiento de caché tiene límite 0. */
+  private cacheNoDisponible = false;
+
   constructor(private readonly configService: ConfigService) {
     const apiKey = this.configService.get<string>('GEMINI_API_KEY');
     if (apiKey) {
       this.genAI = new GoogleGenerativeAI(apiKey);
       // 'gemini-flash-lite-latest' to attempt a fresh quota bucket after 'flash-latest' exhaustion.
-      this.model = this.genAI.getGenerativeModel({
-        model: 'gemini-flash-lite-latest',
-      });
+      this.model = this.genAI.getGenerativeModel({ model: MODELO_CHAT });
+      this.gestorCache = new GoogleAICacheManager(apiKey);
     } else {
       this.logger.warn(
         '⚠️  GEMINI_API_KEY no configurada. Funciones de IA deshabilitadas.',
@@ -79,7 +117,7 @@ export class GeminiService {
       throw new Error('Gemini no configurado (falta GEMINI_API_KEY)');
     // Modelo multimodal capaz de procesar audio (el lite del constructor puede no soportarlo).
     const model = this.genAI.getGenerativeModel({
-      model: 'gemini-flash-latest',
+      model: MODELO_MULTIMODAL,
     });
     const partes = [
       { inlineData: { data: base64Audio, mimeType: mimeType || 'audio/ogg' } },
@@ -266,7 +304,7 @@ Responde SOLO con el array JSON, nada más.`;
       throw new Error('Gemini AI no está configurado (GEMINI_API_KEY ausente)');
     }
     const model = this.genAI.getGenerativeModel({
-      model: 'gemini-embedding-001',
+      model: MODELO_EMBEDDING,
     });
     // Reintentos ante errores transitorios (429 rate-limit / 503 alta demanda).
     // Sin esto, un solo rechazo de cuota tumba el documento entero que se está
@@ -312,7 +350,7 @@ Responde SOLO con el array JSON, nada más.`;
       throw new Error('Gemini AI no está configurado (GEMINI_API_KEY ausente)');
     }
     const model = this.genAI.getGenerativeModel({
-      model: 'gemini-flash-lite-latest',
+      model: MODELO_CHAT,
       systemInstruction,
     });
     const result = await model.generateContent({
@@ -350,6 +388,70 @@ Responde SOLO con el array JSON, nada más.`;
   }
 
   /**
+   * Devuelve la caché del contexto de esta empresa, creándola si hace falta.
+   *
+   * `null` significa "sigue sin caché": nunca es motivo para no responder. En
+   * plan gratuito Gemini rechaza la creación con límite 0, y a partir de ahí
+   * se deja de intentar en cada mensaje.
+   */
+  private async cacheDelContexto(
+    systemInstruction: string,
+    herramientas: FunctionDeclaration[],
+  ): Promise<CachedContent | null> {
+    if (this.cacheNoDisponible || !this.gestorCache) return null;
+    if (process.env.GEMINI_CACHE === 'off') return null;
+
+    // La clave es el contenido mismo: dos empresas con distinto contexto
+    // tienen cachés distintas, y cambiar el contexto invalida la anterior.
+    const clave = crypto
+      .createHash('sha256')
+      .update(MODELO_CHAT)
+      .update('\u0000')
+      .update(systemInstruction)
+      .update('\u0000')
+      .update(JSON.stringify(herramientas))
+      .digest('hex');
+
+    const guardada = this.cachesPorContexto.get(clave);
+    // Con menos de un minuto por delante no vale la pena: podría caducar a
+    // mitad del turno.
+    if (guardada && guardada.expiraEn > Date.now() + 60_000) {
+      return guardada.contenido;
+    }
+
+    try {
+      const contenido = (await this.gestorCache.create({
+        model: `models/${MODELO_CHAT}`,
+        systemInstruction,
+        ...(herramientas.length
+          ? { tools: [{ functionDeclarations: herramientas }] }
+          : {}),
+        contents: [],
+        ttlSeconds: GeminiService.CACHE_TTL_SEGUNDOS,
+      })) as CachedContent;
+      this.cachesPorContexto.set(clave, {
+        contenido,
+        expiraEn: Date.now() + GeminiService.CACHE_TTL_SEGUNDOS * 1000,
+      });
+      this.logger.log(
+        `Contexto cacheado en Gemini por ${GeminiService.CACHE_TTL_SEGUNDOS}s; los mensajes de esta empresa dejan de pagar el prefijo entero.`,
+      );
+      return contenido;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/FreeTier|limit=0/i.test(msg)) {
+        this.cacheNoDisponible = true;
+        this.logger.warn(
+          'El plan de Gemini no admite caché de contexto (límite 0): se seguirá pagando el contexto completo en cada mensaje. Carga créditos en la cuenta para activarla.',
+        );
+      } else {
+        this.logger.warn(`No se pudo cachear el contexto: ${msg}`);
+      }
+      return null;
+    }
+  }
+
+  /**
    * Conversación en la que el modelo decide por sí mismo cuándo llamar a una
    * herramienta (buscar en el catálogo, cotizar, derivar…). Repite el ciclo
    * pedido → ejecución → resultado hasta que responde con texto o se agotan las
@@ -383,13 +485,18 @@ Responde SOLO con el array JSON, nada más.`;
       );
     }
 
-    const model = this.genAI.getGenerativeModel({
-      model: 'gemini-flash-lite-latest',
-      systemInstruction,
-      ...(herramientas.length
-        ? { tools: [{ functionDeclarations: herramientas }] }
-        : {}),
-    });
+    // Con caché, el prompt y las herramientas viajan por referencia y no se
+    // vuelven a cobrar enteros; sin ella, el camino de siempre.
+    const cache = await this.cacheDelContexto(systemInstruction, herramientas);
+    const model = cache
+      ? this.genAI.getGenerativeModelFromCachedContent(cache)
+      : this.genAI.getGenerativeModel({
+          model: MODELO_CHAT,
+          systemInstruction,
+          ...(herramientas.length
+            ? { tools: [{ functionDeclarations: herramientas }] }
+            : {}),
+        });
 
     // Los turnos se arman a mano en vez de usar startChat().sendMessage().
     // Motivo: el SDK 0.21 mete los resultados de herramienta en un turno con
@@ -408,6 +515,7 @@ Responde SOLO con el array JSON, nada más.`;
       entrada: 0,
       salida: 0,
       total: 0,
+      cacheados: 0,
       llamadasAlModelo: 0,
     };
     const contar = (r: {
@@ -416,6 +524,7 @@ Responde SOLO con el array JSON, nada más.`;
           promptTokenCount?: number;
           candidatesTokenCount?: number;
           totalTokenCount?: number;
+          cachedContentTokenCount?: number;
         };
       };
     }) => {
@@ -423,6 +532,7 @@ Responde SOLO con el array JSON, nada más.`;
       uso.entrada += m?.promptTokenCount ?? 0;
       uso.salida += m?.candidatesTokenCount ?? 0;
       uso.total += m?.totalTokenCount ?? 0;
+      uso.cacheados += m?.cachedContentTokenCount ?? 0;
       uso.llamadasAlModelo++;
     };
 
