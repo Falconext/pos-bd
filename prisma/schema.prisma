@@ -478,6 +478,7 @@ model Empresa {
   leadConversaciones      LeadConversacion[]
   leadProspectos          LeadProspecto[]
   leadDocumentos          LeadDocumento[]
+  leadConsultas             LeadConsulta[]
   soporteConversacion     SoporteConversacion?
   reglasComision          ReglaComision[]
 
@@ -4113,6 +4114,113 @@ enum EstadoLeadConversacion {
   TRANSFERIDA
 }
 
+/// Las 12 etapas operativas del embudo, con los nombres que Hierba Sana
+/// definió en su anexo técnico (punto 26).
+enum EtapaCrmLead {
+  NUEVO
+  DIAGNOSTICADO
+  COTIZADO
+  DATOS_COMPLETOS
+  PENDIENTE_VALIDACION_PAGO
+  POR_DESPACHAR
+  EN_RUTA
+  ENTREGADO
+  REPROGRAMADO
+  FRIO
+  NO_CONTESTA
+  CONSULTADO_NO_HABIDO
+}
+
+/// Cada movimiento del pedido por el embudo: de dónde a dónde, cuándo y quién.
+///
+/// Es tabla porque el candado de pago hay que poder auditarlo: la pregunta
+/// "¿quién dio el OK a este pago?" se responde con una fila, no con un campo
+/// que se sobreescribe en el siguiente movimiento.
+model LeadEtapaHistorial {
+  id            Int           @id @default(autoincrement())
+  prospectoId   Int
+  prospecto     LeadProspecto @relation(fields: [prospectoId], references: [id], onDelete: Cascade)
+  empresaId     Int
+  desde         EtapaCrmLead?
+  hacia         EtapaCrmLead
+  /// `bot` cuando lo movió un automatismo; el nombre de la persona si fue un clic.
+  actor         String
+  usuarioId     Int?
+  nota          String?
+  creadoEn      DateTime      @default(now())
+
+  @@index([prospectoId])
+  @@index([empresaId, hacia])
+}
+
+/// El voucher que el cliente manda por WhatsApp.
+///
+/// El anexo exige que una PERSONA valide el pago antes de despachar. Validar
+/// sin ver el comprobante no es validar, así que la imagen se baja de
+/// WhatsApp y se guarda: si no, el encargado estaría aprobando a ciegas.
+model LeadComprobantePago {
+  id             Int           @id @default(autoincrement())
+  empresaId      Int
+  prospectoId    Int
+  prospecto      LeadProspecto @relation(fields: [prospectoId], references: [id], onDelete: Cascade)
+  conversacionId Int
+  /// URL en S3. Vacía si la imagen no se pudo bajar: la etapa igual avanza,
+  /// porque el cliente SÍ mandó algo y alguien tiene que mirarlo.
+  url            String?
+  /// Id del archivo en WhatsApp, para reintentar la descarga.
+  mediaId        String?
+  /// Lo que el cliente escribió junto a la foto.
+  nota           String?
+  recibidoEn     DateTime      @default(now())
+  validadoEn     DateTime?
+  validadoPor    String?
+  validadoPorId  Int?
+  rechazadoEn    DateTime?
+  rechazadoMotivo String?
+
+  @@index([empresaId, validadoEn])
+  @@index([prospectoId])
+}
+
+/// Cada cosa que un cliente preguntó por el chat: un producto o un malestar.
+///
+/// Es la materia prima de tres puntos del anexo a la vez: los productos más
+/// consultados con disponibilidad vs. no disponibles (27), los malestares más
+/// consultados (27) y el historial de consultas de salud y de productos no
+/// habidos de cada cliente (28).
+///
+/// Se guarda como fila y no se deduce leyendo los chats después: el texto de
+/// la conversación no dice si lo que se buscó existía o no, y reprocesarlo
+/// con IA costaría una llamada por consulta y daría un número distinto cada
+/// vez que se corra.
+model LeadConsulta {
+  id             Int             @id @default(autoincrement())
+  empresaId      Int
+  empresa        Empresa         @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  conversacionId Int
+  prospectoId    Int?
+  telefono       String
+  tipo           TipoLeadConsulta
+  /// Lo que el cliente pidió, tal como lo escribió (normalizado en minúsculas).
+  texto          String
+  /// Si se encontró algo en el catálogo. `false` = "no habido".
+  hubo           Boolean          @default(false)
+  /// El producto que se le ofreció, cuando hubo uno.
+  productoId     Int?
+  /// Disponibilidad del producto en ese momento: lo que el cliente vio.
+  disponibilidad String?
+  creadoEn       DateTime         @default(now())
+
+  @@index([empresaId, tipo, creadoEn])
+  @@index([empresaId, hubo])
+  @@index([telefono])
+}
+
+enum TipoLeadConsulta {
+  PRODUCTO
+  MALESTAR
+}
+
 enum EstadoLeadProspecto {
   FRIO
   TIBIO
@@ -4198,6 +4306,18 @@ model LeadProspecto {
   /// Por qué se pausó: "respuesta manual", "mayorista", "reclamo"… Se ve en
   /// el panel y explica al equipo qué pasó.
   motivoPausa       String?
+  /// Etapa OPERATIVA del pedido, las 12 del anexo. Es otra cosa que `estado`
+  /// (FRÍO/TIBIO/CALIENTE), que mide temperatura del lead: esto es lo que el
+  /// encargado mira para saber qué le toca hacer hoy.
+  etapa             EtapaCrmLead        @default(NUEVO)
+  etapaEn           DateTime            @default(now())
+  historialEtapas   LeadEtapaHistorial[]
+  comprobantesPago  LeadComprobantePago[]
+  /// Sexo y edad: el cliente pide un reporte demográfico. Solo se llenan si
+  /// la persona lo dice (la edad suele salir al preguntar por la dosis); no
+  /// se adivinan por el nombre, que es como se arma un dato falso.
+  sexo              String?
+  edad              Int?
   notificadoEn      DateTime? // idempotencia de alerta lead caliente
   cotizacionId      Int? // COT (comprobante) que la IA generó desde el chat, si aplica
   clienteId         Int? // Cliente de MYPE creado al convertir el prospecto (Fase 3)
@@ -4256,6 +4376,10 @@ model LeadPedidoBorrador {
   /// COT generada desde el chat, si ya se cotizó.
   cotizacionId   Int?
   cotizadoEn     DateTime?
+  /// Descuento por pack que se le aplicó, en soles. El anexo pide el balance
+  /// de descuentos otorgados: sin guardarlo habría que recalcularlo con las
+  /// reglas de HOY sobre pedidos viejos, y daría un número que nunca pasó.
+  descuentoAplicado Decimal?       @db.Decimal(10, 2)
   /// Comprobante del pedido ya registrado. Con esto puesto, no se registra
   /// dos veces por más que el cliente insista.
   comprobanteId  Int?

@@ -60,6 +60,8 @@ function armar(opts: {
     {} as any,
     {} as any,
     {} as any,
+    embudoFalso(),
+    consultasFalsas(),
     {} as any,
   );
   const ejecutor = (processor as any).crearEjecutor(
@@ -171,3 +173,21 @@ describe('la cascada para en el escalón que resuelve', () => {
     ]);
   });
 });
+
+/**
+ * El embudo y el registro de consultas no son lo que estos tests miden, pero
+ * el processor los necesita. Devuelven lo mínimo para que no estorben.
+ */
+function embudoFalso() {
+  return {
+    mover: async () => ({ movido: true }),
+    registrarComprobantePago: async () => ({ registrado: false }),
+  } as never;
+}
+
+function consultasFalsas() {
+  return {
+    registrar: async () => 0,
+    historialDe: async () => ({ malestares: [], productos: [], noHabidos: [] }),
+  } as never;
+}

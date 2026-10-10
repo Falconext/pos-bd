@@ -26,6 +26,8 @@ import { RagVentasService } from '../src/leads/leads-rag.service';
 import { LeadsPedidoService } from '../src/leads/leads-pedido.service';
 import { LeadsMessageProcessor } from '../src/leads/leads-message.processor';
 import { esDespedidaClara } from '../src/leads/leads-repeticion';
+import { LeadsEmbudoService } from '../src/leads/leads-embudo.service';
+import { LeadsConsultasService } from '../src/leads/leads-consultas.service';
 
 const EMPRESA_ID = 89;
 /** El plan gratuito corta a las 15 peticiones por minuto. */
@@ -121,6 +123,10 @@ async function main() {
     null as never,
     null as never,
     pedido,
+    // El embudo y el registro de consultas reales: así el harness también
+    // ejercita el CRM, que es parte de lo que el cliente va a probar.
+    new LeadsEmbudoService(prisma, { isEnabled: () => false } as never),
+    new LeadsConsultasService(prisma),
     null as never,
   );
 

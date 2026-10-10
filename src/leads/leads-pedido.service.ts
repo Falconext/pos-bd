@@ -323,6 +323,11 @@ export class LeadsPedidoService {
       data: {
         itemsJson: limpios as unknown as Prisma.InputJsonValue,
         cotizadoEn: new Date(),
+        // El descuento que de verdad se le aplicó. El anexo pide el balance de
+        // descuentos otorgados: sin guardarlo habría que recalcularlo con las
+        // reglas de HOY sobre pedidos viejos, y el número no sería el que el
+        // cliente vio.
+        descuentoAplicado: calculo.descuento,
         ...(cot ? { cotizacionId: cot } : {}),
       },
     });

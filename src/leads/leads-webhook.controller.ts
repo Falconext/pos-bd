@@ -128,7 +128,11 @@ export class LeadsWebhookController {
                 messageId: msg.id,
                 text: texto,
                 esAudio: msg.type === 'audio',
-                mediaId: msg.audio?.id,
+                esImagen: msg.type === 'image',
+                // El id del archivo sirve para los tres casos: transcribir la
+                // nota de voz y bajar la imagen del voucher para que el
+                // encargado pueda mirarlo antes de validar el pago.
+                mediaId: msg.audio?.id ?? msg.image?.id ?? msg.document?.id,
                 nombre: contacto?.profile?.name,
                 timestamp: msg.timestamp,
               },
@@ -165,8 +169,8 @@ export class LeadsWebhookController {
 function textoDeMensaje(msg: {
   type?: string;
   text?: { body?: string };
-  image?: { caption?: string };
-  document?: { caption?: string; filename?: string };
+  image?: { id?: string; caption?: string };
+  document?: { id?: string; caption?: string; filename?: string };
 }): string | null {
   switch (msg.type) {
     case 'text':

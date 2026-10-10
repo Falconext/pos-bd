@@ -6,6 +6,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  etiquetaDeUsuario,
+  nombreDeUsuario,
+} from '../common/utils/nombre-usuario.util';
 import { S3Service } from '../s3/s3.service';
 import { EnvioDespachoService } from './envio-despacho.service';
 import { EstadoDespacho } from './dto/envio-despacho.dto';
@@ -79,6 +83,12 @@ export class EvidenciaEntregaService {
       );
     }
 
+    // El token no trae el nombre del usuario: se lee de la BD, porque una
+    // evidencia que no dice quién la subió sirve a medias.
+    const quien = etiquetaDeUsuario(
+      usuario.nombre ?? (await nombreDeUsuario(this.prisma, usuario.id)),
+      usuario.id,
+    );
     const repartidorId = dto.repartidorId ?? despacho.repartidorId ?? null;
     const tomadaEn = dto.tomadaEn ? new Date(dto.tomadaEn) : new Date();
     if (Number.isNaN(tomadaEn.getTime())) {
@@ -112,7 +122,7 @@ export class EvidenciaEntregaService {
           tipo: (dto.tipo as never) ?? undefined,
           nota: dto.nota?.trim() || null,
           usuarioId: usuario.id ?? null,
-          usuarioNombre: usuario.nombre ?? null,
+          usuarioNombre: quien,
           repartidorId,
           tomadaEn,
         },
@@ -188,7 +198,10 @@ export class EvidenciaEntregaService {
       where: { id },
       data: {
         anuladaEn: new Date(),
-        anuladaPor: usuario.nombre ?? `usuario ${usuario.id ?? '?'}`,
+        anuladaPor: etiquetaDeUsuario(
+          usuario.nombre ?? (await nombreDeUsuario(this.prisma, usuario.id)),
+          usuario.id,
+        ),
       },
     });
     // El archivo en S3 se deja: es el rastro de lo que se anuló.

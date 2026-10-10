@@ -145,6 +145,8 @@ function armar(
     {} as any,
     {} as any,
     pedido,
+    embudoFalso(),
+    consultasFalsas(),
     queue,
   );
   return { processor, prisma, ia, whatsapp, queue, pedido, mensajes };
@@ -604,3 +606,21 @@ describe('el descargo legal lo pone el código, no el modelo (C5)', () => {
     expect(enviado(whatsapp)).toBe('Te recomiendo la Moringa a S/ 31.00.');
   });
 });
+
+/**
+ * El embudo y el registro de consultas no son lo que estos tests miden, pero
+ * el processor los necesita. Devuelven lo mínimo para que no estorben.
+ */
+function embudoFalso() {
+  return {
+    mover: async () => ({ movido: true }),
+    registrarComprobantePago: async () => ({ registrado: false }),
+  } as never;
+}
+
+function consultasFalsas() {
+  return {
+    registrar: async () => 0,
+    historialDe: async () => ({ malestares: [], productos: [], noHabidos: [] }),
+  } as never;
+}

@@ -215,6 +215,17 @@ export class S3Service implements OnModuleInit {
     return `entregas/empresa-${empresaId}/despacho-${despachoId}/evidencia-${ts}.webp`;
   }
 
+  /**
+   * Voucher que el cliente manda por el chat. Va por conversación: ante una
+   * duda de pago se abre la carpeta de ese cliente y están todos.
+   */
+  generateComprobantePagoLeadKey(
+    empresaId: number,
+    conversacionId: number,
+  ): string {
+    return `pagos-leads/empresa-${empresaId}/conversacion-${conversacionId}/voucher-${Date.now()}.webp`;
+  }
+
   generateProductoImageKey(
     empresaId: number,
     productoId: number,

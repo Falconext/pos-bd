@@ -17,6 +17,8 @@ import { IaVentasService } from '../src/leads/leads-ia.service';
 import { RagVentasService } from '../src/leads/leads-rag.service';
 import { LeadsMessageProcessor } from '../src/leads/leads-message.processor';
 import { HERRAMIENTA_BUSCAR_PRODUCTOS } from '../src/leads/leads-herramientas';
+import { LeadsEmbudoService } from '../src/leads/leads-embudo.service';
+import { LeadsConsultasService } from '../src/leads/leads-consultas.service';
 
 const EMPRESA_ID = 89;
 
@@ -61,6 +63,8 @@ async function main() {
     null as never,
     null as never,
     null as never,
+    new LeadsEmbudoService(prisma, { isEnabled: () => false } as never),
+    new LeadsConsultasService(prisma),
     null as never,
   );
   const ejecutor = (

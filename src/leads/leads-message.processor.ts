@@ -29,6 +29,9 @@ import {
   ItemPedido,
   LeadsPedidoService,
 } from './leads-pedido.service';
+import { LeadsEmbudoService } from './leads-embudo.service';
+import { LeadsConsultasService } from './leads-consultas.service';
+import { EtapaCrm } from './leads-embudo';
 import {
   disponibilidadEfectiva,
   textoParaElCliente,
@@ -80,6 +83,7 @@ interface MensajeEntrante {
   messageId: string;
   text: string;
   esAudio: boolean;
+  esImagen?: boolean;
   mediaId?: string;
   nombre?: string;
   timestamp?: string;
@@ -109,6 +113,8 @@ export class LeadsMessageProcessor extends WorkerHost {
     private readonly alerta: LeadsAlertaService,
     private readonly comprobante: ComprobanteService,
     private readonly pedido: LeadsPedidoService,
+    private readonly embudo: LeadsEmbudoService,
+    private readonly consultas: LeadsConsultasService,
     @InjectQueue(LEADS_MESSAGES_QUEUE) private readonly queue: Queue,
   ) {
     super();
@@ -223,6 +229,15 @@ export class LeadsMessageProcessor extends WorkerHost {
     if (userMsgId === null) {
       // Ya existía y ya fue respondido → nada que hacer.
       return;
+    }
+
+    // Una imagen en una conversación con pedido en curso es, casi siempre, el
+    // voucher. Se guarda y el pedido queda esperando que una persona valide el
+    // pago: el candado del anexo. Si todavía no hay nada que pagar, la imagen
+    // no se toca — puede ser una receta o la foto de un frasco, y archivarla
+    // sin motivo es guardar datos de alguien por nada.
+    if (d.esImagen) {
+      await this.registrarVoucherSiCorresponde(empresa.id, conv.id, d);
     }
 
     this.logger.log(
@@ -789,6 +804,86 @@ export class LeadsMessageProcessor extends WorkerHost {
     return true;
   }
 
+  /**
+   * Avanza la etapa del embudo desde un automatismo.
+   *
+   * Nunca retrocede: si el encargado ya pasó el pedido a despacho y después
+   * entra una consulta suelta, el bot no lo devuelve a "diagnosticado". Y
+   * nunca puede abrir el despacho, porque va sin usuario y esa etapa exige
+   * una persona.
+   */
+  private async marcarEtapa(
+    empresaId: number,
+    conversacionId: number,
+    etapa: EtapaCrm,
+    nota: string,
+  ) {
+    try {
+      const prospecto = await this.prisma.leadProspecto.findFirst({
+        where: { conversacionId, empresaId },
+        select: { id: true },
+      });
+      if (!prospecto) return;
+      await this.embudo.mover(prospecto.id, empresaId, etapa, {
+        nota,
+        soloSiAvanza: true,
+      });
+    } catch (e: any) {
+      this.logger.warn(`Lead: no se pudo mover la etapa: ${e?.message}`);
+    }
+  }
+
+  /**
+   * El cliente mandó una imagen: si hay un pedido en curso, es el voucher.
+   *
+   * La imagen se baja de WhatsApp porque validar un pago sin verlo no es
+   * validar. Todo esto es best-effort: un problema bajando la foto no puede
+   * romper la atención del cliente, que es lo que importa en ese momento.
+   */
+  private async registrarVoucherSiCorresponde(
+    empresaId: number,
+    conversacionId: number,
+    d: MensajeEntrante,
+  ) {
+    try {
+      const borrador = await this.prisma.leadPedidoBorrador.findUnique({
+        where: { conversacionId },
+        select: { cotizacionId: true, comprobanteId: true },
+      });
+      // Sin cotización ni pedido no hay nada que pagar todavía.
+      if (!borrador?.cotizacionId && !borrador?.comprobanteId) return;
+
+      let buffer: Buffer | undefined;
+      let mimeType: string | undefined;
+      if (d.mediaId) {
+        try {
+          const media = await this.whatsapp.descargarMedia(d.mediaId, empresaId);
+          buffer = media.buffer;
+          mimeType = media.mimeType;
+        } catch (e: any) {
+          this.logger.warn(
+            `Lead: no se pudo bajar el voucher de ${d.from}: ${e?.message}`,
+          );
+        }
+      }
+
+      await this.embudo.registrarComprobantePago(empresaId, conversacionId, {
+        mediaId: d.mediaId,
+        // El texto que acompaña a la imagen: "ya transferí", "a nombre de…".
+        nota: d.text?.replace('[el cliente envió una imagen]', '').trim(),
+        buffer,
+        mimeType,
+      });
+      this.logger.log(
+        `Lead: comprobante de pago de ${d.from} registrado (conv ${conversacionId}).`,
+      );
+    } catch (e: any) {
+      this.logger.warn(
+        `Lead: no se pudo registrar el comprobante de pago: ${e?.message}`,
+      );
+    }
+  }
+
   private async persistirMensajeUsuario(
     conversacionId: number,
     whatsappMsgId: string,
@@ -1005,12 +1100,44 @@ export class LeadsMessageProcessor extends WorkerHost {
             `IA buscó "${consulta}"${categoria ? ` [${categoria}]` : ''} en empresa ${empresaId}: ${productos.length} resultado(s) por ${via} en ${ms} ms.`,
           );
           if (productos.length === 0) {
+            // "No habido": lo que el cliente pidió y el negocio no tiene. Es
+            // la lista con la que se decide qué reponer, y uno de los
+            // reportes que pide el anexo.
+            await this.consultas.registrar(empresaId, conversacionId, telefono, [
+              { texto: consulta, hubo: false },
+            ]);
+            await this.marcarEtapa(
+              empresaId,
+              conversacionId,
+              EtapaCrm.CONSULTADO_NO_HABIDO,
+              `Pidió "${consulta}" y no lo tenemos`,
+            );
             return {
               productos: [],
               mensaje:
                 'Sin coincidencias. Intenta otra vez con un término distinto: el ingrediente, el órgano o sistema, o la acción que busca el cliente.',
             };
           }
+
+          // Hubo resultados: queda registrado qué se consultó, con qué
+          // disponibilidad vio el cliente el primer producto ofrecido.
+          await this.consultas.registrar(empresaId, conversacionId, telefono, [
+            {
+              texto: consulta,
+              // Por fichas no se encontró lo pedido, sino algo parecido: para
+              // el reporte de "no habidos" eso sigue siendo un no habido.
+              hubo: via !== 'fichas',
+              productoId: productos[0]?.id ?? null,
+              disponibilidad: productos[0]?.disponibilidad ?? null,
+            },
+          ]);
+          // Preguntar por un malestar es el diagnóstico: el embudo avanza.
+          await this.marcarEtapa(
+            empresaId,
+            conversacionId,
+            EtapaCrm.DIAGNOSTICADO,
+            `Consultó "${consulta}"`,
+          );
           return {
             // Las fichas aciertan por significado, no por nombre: si el
             // cliente pidió algo que no existe, esto trae lo parecido. El
@@ -1081,18 +1208,31 @@ export class LeadsMessageProcessor extends WorkerHost {
             : { enviada: false, motivo: 'No se pudo enviar la imagen.' };
         }
 
-        case HERRAMIENTA_GUARDAR_DATOS:
-          return this.pedido.guardarDatos(
+        case HERRAMIENTA_GUARDAR_DATOS: {
+          const res = await this.pedido.guardarDatos(
             empresaId,
             conversacionId,
             argumentos as DatosDelCliente,
           );
+          // El embudo avanza solo cuando YA no falta nada. Marcar
+          // "datos completos" a medio camino le haría creer al encargado que
+          // puede despachar, y el paquete saldría sin dirección.
+          if (res?.guardado && !res?.faltan?.length) {
+            await this.marcarEtapa(
+              empresaId,
+              conversacionId,
+              EtapaCrm.DATOS_COMPLETOS,
+              'Datos de entrega completos',
+            );
+          }
+          return res;
+        }
 
         case HERRAMIENTA_COTIZAR: {
           const items = Array.isArray(argumentos.items)
             ? (argumentos.items as ItemPedido[])
             : [];
-          return this.pedido.cotizar(
+          const res = await this.pedido.cotizar(
             empresaId,
             conversacionId,
             items.map((i) => ({
@@ -1103,6 +1243,15 @@ export class LeadsMessageProcessor extends WorkerHost {
               ? argumentos.nombrePack
               : undefined,
           );
+          if (res?.texto) {
+            await this.marcarEtapa(
+              empresaId,
+              conversacionId,
+              EtapaCrm.COTIZADO,
+              'Cotización enviada por el chat',
+            );
+          }
+          return res;
         }
 
         case HERRAMIENTA_DERIVAR: {
