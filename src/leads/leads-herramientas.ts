@@ -69,6 +69,7 @@ const guardarDatosEnvio: FunctionDeclaration = {
     'Guarda los datos del pedido según el cliente los va diciendo, y te devuelve QUÉ FALTA todavía. ' +
     'Llámala en cuanto el cliente mencione cualquiera de estos datos, aunque sea de pasada y aunque falten otros: no esperes a tenerlos todos. ' +
     'Si te dice el distrito o la ciudad, mándalo en `destino` y te devuelve la zona, el costo de envío y la forma de pago que corresponde. ' +
+    'Con el nombre de la ciudad alcanza: cualquier lugar fuera de Lima cae en provincia. No le pidas al cliente que precise más de lo que ya resolvió esta herramienta. ' +
     'Nunca vuelvas a pedirle un dato que esta herramienta ya tiene guardado. ' +
     'El nombre se le pregunta: no uses el de su perfil de WhatsApp.',
   parameters: {
@@ -222,6 +223,7 @@ USO DE HERRAMIENTAS (obligatorio)
 
 CÓMO SE CIERRA UNA VENTA
 - En cuanto el cliente mencione su distrito, su nombre, su celular o cualquier dato de entrega, guárdalo con ${HERRAMIENTA_GUARDAR_DATOS}. La herramienta te dice qué falta: pide UN dato por mensaje, en el orden en que te los lista, y nunca repreguntes algo que ya está guardado.
+- Una ciudad basta. Si ${HERRAMIENTA_GUARDAR_DATOS} ya te devolvió la zona y el costo de envío, el destino ESTÁ resuelto: no pidas el distrito exacto ni más precisión "para cotizar mejor". Cotiza. Solo pregunta cuando la herramienta te diga explícitamente que el destino es ambiguo.
 - Para cotizar usa ${HERRAMIENTA_COTIZAR}. El envío y el descuento los calcula ella: tú no sumas ni aplicas descuentos. Copia su texto tal cual.
 - Cuando el cliente acepte y no falte ningún dato, llama a ${HERRAMIENTA_REGISTRAR_PEDIDO} y a nada más: no vuelvas a buscar ni a cotizar lo que ya cotizaste. Solo después de que te confirme puedes decirle que su pedido quedó agendado.
 - Lo que no te toca resolver se deriva con ${HERRAMIENTA_DERIVAR}: mayoristas, reclamos, comprobantes de pago, seguimiento de pedidos ya hechos y quien pida hablar con una persona. Nunca digas que ya informaste a un asesor si en ese mismo turno no la llamaste.
