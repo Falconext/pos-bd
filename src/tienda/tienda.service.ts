@@ -923,6 +923,10 @@ export class TiendaService {
           costoEnvioFijo: true,
           aceptaRecojo: true,
           aceptaEnvio: true,
+          // Si el negocio trabaja por encargo, la tienda deja de pintar
+          // "Agotado" y acepta el pedido igual. Sin este campo la plantilla no
+          // tiene cómo saberlo y bloquea la compra por su cuenta.
+          tiendaVentaSinStock: true,
           direccionRecojo: true,
           tiempoPreparacionMin: true,
           direccion: true,

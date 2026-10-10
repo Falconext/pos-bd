@@ -132,3 +132,24 @@ describe('Tienda · aceptar pedidos sin stock', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 });
+
+/**
+ * La tienda pública tiene que recibir la política, no solo obedecerla.
+ *
+ * El empresario marcó "Acepto pedidos de productos agotados" y sus productos
+ * seguían saliendo "Agotado": el backend habría aceptado el pedido, pero
+ * `/public/store/:slug` no devolvía el campo, así que la plantilla no tenía
+ * cómo enterarse y bloqueaba la compra antes de intentarlo.
+ */
+describe('La tienda pública expone la política de stock', () => {
+  it('obtenerTiendaPorSlug selecciona tiendaVentaSinStock', () => {
+    const fs = require('fs');
+    const src: string = fs.readFileSync(__dirname + '/tienda.service.ts', 'utf-8');
+    const desde = src.indexOf('async obtenerTiendaPorSlug');
+    expect(desde).toBeGreaterThan(-1);
+    // El select del método, hasta donde empieza el siguiente método.
+    const hasta = src.indexOf('\n  async ', desde + 10);
+    const metodo = src.slice(desde, hasta === -1 ? undefined : hasta);
+    expect(metodo).toContain('tiendaVentaSinStock: true');
+  });
+});
