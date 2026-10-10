@@ -2473,11 +2473,62 @@ model EnvioDespacho {
   costoCourier             Float?
   pagarFlete               String?        @default("NEGOCIO") // CLIENTE | NEGOCIO
   aplicacionMontoCliente   String?        @default("NEGOCIO") // ITEM_ENVIO | ADELANTO | NEGOCIO
+  /// Cuándo se marcó ENTREGADO. El historial ya lo guarda, pero adentro de un
+  /// Json no se puede filtrar ni ordenar, y el reclamo "no me llegó" siempre
+  /// se discute con una fecha.
+  entregadoEn              DateTime?
+  evidencias               EvidenciaEntrega[]
   creadoEn                 DateTime       @default(now())
   actualizadoEn            DateTime       @updatedAt
 
   @@index([comprobanteId])
   @@index([repartidorId])
+  @@index([entregadoEn])
+}
+
+/// Lo que prueba que el pedido llegó: la foto del paquete en la puerta, de
+/// quien lo recibió, de la firma o del documento.
+///
+/// Sin esto, el reclamo "no me llegó" se resuelve por quién grita más fuerte:
+/// el negocio pierde la venta o pierde al cliente. Con la foto y su hora, se
+/// resuelve en un mensaje.
+///
+/// Es tabla y no un Json dentro del despacho porque son varias por entrega,
+/// cada una la sube alguien distinto en un momento distinto, y hace falta
+/// poder listar los despachos entregados que NO tienen ninguna.
+model EvidenciaEntrega {
+  id           Int                  @id @default(autoincrement())
+  despachoId   Int
+  despacho     EnvioDespacho        @relation(fields: [despachoId], references: [id], onDelete: Cascade)
+  /// Desnormalizado para filtrar por empresa sin pasar por el comprobante.
+  /// No lleva relación a Empresa: el borrado ya cae en cascada por el
+  /// despacho, que depende del comprobante.
+  empresaId    Int
+  url          String
+  tipo         TipoEvidenciaEntrega @default(FOTO_PAQUETE)
+  nota         String?
+  /// Quién la registró: el usuario del panel o el repartidor en la calle.
+  usuarioId    Int?
+  usuarioNombre String?
+  repartidorId Int?
+  /// Cuándo se tomó la entrega. Por defecto el momento de subirla, pero se
+  /// puede corregir: el motorizado sube las fotos del día al volver.
+  tomadaEn     DateTime             @default(now())
+  /// Una evidencia no se borra: se anula y queda el rastro de quién lo hizo.
+  /// Una prueba que se puede hacer desaparecer sin dejar huella no prueba nada.
+  anuladaEn    DateTime?
+  anuladaPor   String?
+  creadoEn     DateTime             @default(now())
+
+  @@index([despachoId])
+  @@index([empresaId, anuladaEn])
+}
+
+enum TipoEvidenciaEntrega {
+  FOTO_PAQUETE
+  FOTO_RECEPTOR
+  FIRMA
+  DOCUMENTO
 }
 
 model Repartidor {

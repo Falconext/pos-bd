@@ -74,6 +74,21 @@ export const imageUploadOptions = {
   limits: { fileSize: 5 * 1024 * 1024 },
 } as const;
 
+/**
+ * Evidencia de entrega: fotos tomadas con el celular del repartidor, que
+ * pesan bastante más que una imagen de catálogo. Con 5 MB la subida falla en
+ * la calle y la prueba se pierde, que es justo lo que no puede pasar.
+ *
+ * El filtro sigue siendo estricto (no HEIC): el navegador convierte la foto a
+ * JPEG antes de subirla. Aceptar HEIC aquí guardaría archivos que después no
+ * se pueden ver desde el panel.
+ */
+export const evidenciaUploadOptions = {
+  storage: imageStorage,
+  fileFilter: imageFilter,
+  limits: { fileSize: 12 * 1024 * 1024, files: 6 },
+} as const;
+
 // XML SUNAT en memoria
 const xmlFilter = (req: any, file: any, cb: any) => {
   const isXmlMime = ['text/xml', 'application/xml'].includes(file.mimetype);
