@@ -26,8 +26,15 @@ export interface ConfigHorarioEntrega {
 
 const hhmm = (h: number, m = 0): number => h * 60 + m;
 
-/** Lo de Hierba Sana, de su base de conocimiento. Default, no constante. */
-export const HORARIO_HIERBA_SANA: ConfigHorarioEntrega = {
+/**
+ * Horario comercial genérico, para una empresa que no configuró el suyo.
+ *
+ * A diferencia de las zonas de envío y los descuentos, acá un defecto es
+ * aceptable: validar una franja contra 9–19 no le cuesta plata a nadie, y no
+ * tener horario dejaría la validación sin referencia. Son valores de comercio
+ * peruano corriente, no los de un cliente en particular.
+ */
+export const HORARIO_POR_DEFECTO: ConfigHorarioEntrega = {
   desdeMin: hhmm(9),
   hastaMin: hhmm(19),
   hastaDomingoMin: hhmm(13),
@@ -35,6 +42,9 @@ export const HORARIO_HIERBA_SANA: ConfigHorarioEntrega = {
   anticipacionMinimaMin: 180,
   limiteMismoDiaMin: hhmm(17),
 };
+
+/** Alias histórico: lo que se siembra como ejemplo para Hierba Sana. */
+export const HORARIO_HIERBA_SANA = HORARIO_POR_DEFECTO;
 
 export interface Problema {
   campo: string;
@@ -100,7 +110,7 @@ export interface Franja {
 export function validarFranja(
   franja: Franja,
   ahora: Date,
-  config: ConfigHorarioEntrega = HORARIO_HIERBA_SANA,
+  config: ConfigHorarioEntrega = HORARIO_POR_DEFECTO,
 ): Problema | null {
   const esDomingo = franja.fecha.getDay() === 0;
   const hasta =

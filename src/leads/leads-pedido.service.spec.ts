@@ -6,6 +6,8 @@
  * que no registre dos veces si el cliente insiste.
  */
 import { LeadsPedidoService } from './leads-pedido.service';
+import { CONFIG_ENVIO_HIERBA_SANA } from './envio-zonas';
+import { REGLAS_HIERBA_SANA } from './reglas-descuento';
 
 const EMPRESA = 89;
 const CONV = 42;
@@ -20,7 +22,17 @@ function armar(opts: { borrador?: Borrador; config?: unknown } = {}) {
     empresa: {
       findUnique: jest
         .fn()
-        .mockResolvedValue({ iaVentasConfigJson: opts.config ?? null }),
+        // Sin config, la empresa NO tiene zonas ni descuentos: eso se prueba
+        // aparte. Acá se le da la de Hierba Sana, que es lo que tiene un
+        // cliente real una vez configurado.
+        .mockResolvedValue({
+          iaVentasConfigJson:
+            opts.config ??
+            ({
+              envio: CONFIG_ENVIO_HIERBA_SANA,
+              descuento: REGLAS_HIERBA_SANA,
+            } as unknown),
+        }),
     },
     leadPedidoBorrador: {
       findUnique: jest.fn(() => Promise.resolve(borrador)),

@@ -41,6 +41,20 @@ export interface ReglasDescuento {
  * sus documentos, que es la que su bot venía aplicando. Cambiarla es cambiar
  * estos seis números.
  */
+/**
+ * Sin tramos: ninguna empresa regala plata por defecto.
+ *
+ * Es el valor que se usa cuando la empresa no configuró descuentos, y la
+ * razón es concreta: con los tramos de Hierba Sana como defecto, CUALQUIER
+ * otra tienda de la plataforma empezaba a descontar S/ 10 a S/ 30 por pedido
+ * sin que su dueño lo hubiera pedido ni lo supiera.
+ */
+export const SIN_DESCUENTO: ReglasDescuento = {
+  precioUnitarioMinimo: 0,
+  envioCuentaEnTotal: false,
+  tramos: [],
+};
+
 export const REGLAS_HIERBA_SANA: ReglasDescuento = {
   precioUnitarioMinimo: 20,
   envioCuentaEnTotal: true,

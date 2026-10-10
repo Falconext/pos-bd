@@ -25,7 +25,9 @@ import {
 } from '../producto/ficha-tecnica-computo';
 // Los tramos por defecto los define el motor de descuentos de la IA: un solo
 // sitio decide los números, y así el carrito y el chat no pueden discrepar.
-import { REGLAS_HIERBA_SANA as REGLAS_DESCUENTO_POR_DEFECTO } from '../leads/reglas-descuento';
+// Sin tramos configurados no hay descuento. Con los de Hierba Sana como
+// defecto, toda tienda de la plataforma empezaba a descontar sin saberlo.
+import { SIN_DESCUENTO } from '../leads/reglas-descuento';
 
 const ESTADOS_ENVIO_NOTIFICABLES = new Set([
   'EN_CAMINO',
@@ -1022,7 +1024,7 @@ export class TiendaService {
       };
       return {
         ...publico,
-        reglasDescuento: iaVentasConfigJson?.descuento ?? REGLAS_DESCUENTO_POR_DEFECTO,
+        reglasDescuento: iaVentasConfigJson?.descuento ?? SIN_DESCUENTO,
         diseno: this.stripPrivateDesignFields(diseno),
       };
     } catch (e) {
