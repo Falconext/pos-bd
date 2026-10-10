@@ -1135,6 +1135,11 @@ export class LeadsMessageProcessor extends WorkerHost {
     telefono: string,
     fotosEnviadas: Set<number>,
   ): EjecutorHerramienta {
+    // Si una herramienta falla en este turno, el modelo casi siempre deriva a
+    // un asesor. Esa derivación NO es la misma que cuando el cliente pide
+    // hablar con alguien, y hay que distinguirlas: ver `derivar` más abajo.
+    let huboFalloTecnico = false;
+
     return async (nombre, argumentos) => {
       switch (nombre) {
         case HERRAMIENTA_BUSCAR_PRODUCTOS: {
@@ -1337,11 +1342,25 @@ export class LeadsMessageProcessor extends WorkerHost {
           const motivo = String(argumentos.motivo ?? 'sin motivo');
           const detalle =
             typeof argumentos.detalle === 'string' ? argumentos.detalle : '';
-          // Pausa SIN vencimiento: hay una persona atendiendo y la IA no
-          // puede volver sola a meterse en medio.
+          // Dos derivaciones distintas, dos pausas distintas:
+          //
+          // - El cliente necesita a una persona (mayorista, reclamo, "quiero
+          //   hablar con alguien"): pausa SIN vencimiento. Hay alguien a
+          //   cargo y la IA no puede volver sola a meterse en medio.
+          // - Algo se rompió y el modelo derivó por eso: pausa que VENCE. El
+          //   cliente no pidió un humano, y dejar el bot apagado para siempre
+          //   por un error pasajero deja a esa persona sin atención. Pasó de
+          //   verdad: un fallo al registrar el pedido mató la conversación.
+          const pausadoHasta = huboFalloTecnico ? venceEn() : null;
           await this.prisma.leadProspecto.updateMany({
             where: { conversacionId },
-            data: { botActivo: false, pausadoHasta: null, motivoPausa: motivo },
+            data: {
+              botActivo: false,
+              pausadoHasta,
+              motivoPausa: huboFalloTecnico
+                ? `fallo del sistema (${motivo})`
+                : motivo,
+            },
           });
           await this.notificaciones
             .notificarAdminsEmpresa({
@@ -1362,12 +1381,19 @@ export class LeadsMessageProcessor extends WorkerHost {
           };
         }
 
-        case HERRAMIENTA_REGISTRAR_PEDIDO:
-          return this.pedido.registrarPedido(
+        case HERRAMIENTA_REGISTRAR_PEDIDO: {
+          const res = await this.pedido.registrarPedido(
             empresaId,
             conversacionId,
             telefono,
           );
+          // Un "ya estaba registrado" no es un fallo del sistema: es la
+          // idempotencia haciendo su trabajo.
+          if (res?.error && !/ya estaba registrado/i.test(res.error)) {
+            huboFalloTecnico = true;
+          }
+          return res;
+        }
 
         default:
           return { error: `Herramienta desconocida: ${nombre}` };
