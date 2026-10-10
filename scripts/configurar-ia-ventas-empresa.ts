@@ -29,12 +29,52 @@ const PLANTILLAS: Record<string, Record<string, unknown>> = {
   },
 };
 
+/** Todas las empresas con la IA encendida y el estado de su configuración. */
+async function listar(prisma: PrismaService) {
+  const empresas = await prisma.empresa.findMany({
+    where: { iaVentasActiva: true },
+    select: {
+      id: true,
+      nombreComercial: true,
+      razonSocial: true,
+      iaVentasConfigJson: true,
+    },
+    orderBy: { id: 'asc' },
+  });
+  console.log(`Empresas con la IA de Ventas encendida: ${empresas.length}\n`);
+  for (const e of empresas) {
+    const c = (e.iaVentasConfigJson ?? {}) as Record<string, any>;
+    const zonas = c.envio?.zonas?.length ?? 0;
+    const tramos = c.descuento?.tramos?.length ?? 0;
+    const marca = zonas > 0 ? '✔' : '⚠';
+    console.log(
+      `${marca} ${String(e.id).padStart(4)}  ${(e.nombreComercial ?? e.razonSocial ?? '').slice(0, 28).padEnd(28)}` +
+        ` zonas:${String(zonas).padStart(2)}  tramos:${String(tramos).padStart(2)}` +
+        `  asesor:${c.asesor ? 'sí' : 'no '}  descargo:${c.descargoLegal ? 'sí' : 'no'}`,
+    );
+  }
+  const sin = empresas.filter(
+    (e) => !((e.iaVentasConfigJson as any)?.envio?.zonas?.length),
+  );
+  if (sin.length) {
+    console.log(
+      `\n⚠ ${sin.length} sin zonas de envío: su IA no cotiza, deriva a un asesor.`,
+    );
+  }
+}
+
 async function main() {
   const empresaId = Number(process.argv[2]);
   const plantilla = process.argv[3];
+  if (process.argv[2] === '--listar') {
+    const prisma = new PrismaService();
+    await listar(prisma);
+    await prisma.$disconnect();
+    return;
+  }
   if (!empresaId) {
     throw new Error(
-      'Uso: configurar-ia-ventas-empresa.ts <empresaId> <plantilla|--ver>',
+      'Uso: configurar-ia-ventas-empresa.ts <empresaId> <plantilla|--ver|--listar>',
     );
   }
 
