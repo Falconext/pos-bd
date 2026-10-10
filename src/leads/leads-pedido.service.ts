@@ -259,6 +259,82 @@ export class LeadsPedidoService {
     }
   }
 
+  /**
+   * El cliente del pedido: se busca por DNI, luego por teléfono, y si no
+   * existe se crea con lo que el cliente ya dio en el chat.
+   *
+   * Vale la pena crearlo y no usar "CLIENTES VARIOS" porque es la misma
+   * persona que va a volver: su siguiente pedido lo encuentra, y el historial
+   * 360° y los reportes lo cuentan como un cliente y no como un anónimo.
+   *
+   * Si algo falla, devuelve null y el pedido se registra a CLIENTES VARIOS:
+   * una venta no se pierde por no poder crear una ficha.
+   */
+  private async clienteDelPedido(
+    empresaId: number,
+    borrador: { nombre: string | null; dni: string | null; celular: string | null },
+    telefono: string,
+  ): Promise<number | null> {
+    try {
+      const dni = (borrador.dni ?? '').trim();
+      const celular = (borrador.celular ?? '').trim() || telefono;
+      const nombre = (borrador.nombre ?? '').trim();
+
+      if (dni) {
+        const porDni = await this.prisma.cliente.findFirst({
+          where: { empresaId, nroDoc: dni, estado: 'ACTIVO' as never },
+          select: { id: true, telefono: true },
+        });
+        if (porDni) {
+          // Se le completa el celular si no lo tenía: el aviso de entrega sale
+          // del teléfono de la ficha, no del celular del envío.
+          if (!porDni.telefono && celular) {
+            await this.prisma.cliente
+              .update({ where: { id: porDni.id }, data: { telefono: celular } })
+              .catch(() => undefined);
+          }
+          return porDni.id;
+        }
+      }
+
+      if (celular) {
+        const porTelefono = await this.prisma.cliente.findFirst({
+          where: { empresaId, telefono: celular, estado: 'ACTIVO' as never },
+          select: { id: true },
+        });
+        if (porTelefono) return porTelefono.id;
+      }
+
+      if (!nombre) return null;
+
+      const tipoDni = await this.prisma.tipoDocumento.findFirst({
+        where: { codigo: '1' },
+        select: { id: true },
+      });
+      const creado = await this.prisma.cliente.create({
+        data: {
+          empresaId,
+          nombre: nombre.toUpperCase(),
+          // Sin DNI se guarda el celular como documento, que es como el
+          // sistema ya registra a los clientes que llegan por WhatsApp.
+          nroDoc: dni || celular,
+          ...(dni && tipoDni ? { tipoDocumentoId: tipoDni.id } : {}),
+          ...(celular ? { telefono: celular } : {}),
+        },
+        select: { id: true },
+      });
+      this.logger.log(
+        `Lead: cliente ${creado.id} creado desde el chat (${nombre}).`,
+      );
+      return creado.id;
+    } catch (e) {
+      this.logger.warn(
+        `Lead: no se pudo resolver el cliente del pedido: ${(e as Error).message}`,
+      );
+      return null;
+    }
+  }
+
   /** Cómo se paga en la zona del borrador, con las palabras de la empresa. */
   private formaPagoDe(
     zona: string | null,
@@ -551,6 +627,13 @@ export class LeadsPedidoService {
     // contraentrega.
     const adelanto = esAgencia ? Math.round(calculo.montoAPagar * 50) / 100 : 0;
 
+    // El comprobante necesita un cliente REAL, no un nombre suelto:
+    // crearInformal solo resuelve por nombre cuando es exactamente
+    // "CLIENTES VARIOS"; con cualquier otro lanza "clienteId es requerido".
+    // Como el flujo exige el nombre antes de registrar, pasarlo como texto
+    // hacía fallar SIEMPRE el registro del pedido.
+    const clienteId = await this.clienteDelPedido(empresaId, borrador, telefono);
+
     let comprobanteId: number;
     let codigo: string;
     try {
@@ -561,7 +644,9 @@ export class LeadsPedidoService {
           formaPagoTipo: 'CONTADO',
           formaPagoMoneda: 'PEN',
           tipoMoneda: 'PEN',
-          clienteName: borrador.nombre ?? 'CLIENTES VARIOS',
+          ...(clienteId
+            ? { clienteId }
+            : { clienteName: 'CLIENTES VARIOS' }),
           observaciones: this.resumenParaElEquipo(
             borrador,
             calculo,
