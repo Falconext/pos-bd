@@ -13,6 +13,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { User } from '../common/decorators/user.decorator';
 import { LeadsEmbudoService } from './leads-embudo.service';
 import { LeadsBiService } from './leads-bi.service';
+import { LeadsDisparadoresService } from './leads-disparadores.service';
 import { EtapaCrm } from './leads-embudo';
 import { MoverEtapaDto, RechazarPagoDto, RangoBiDto } from './dto/crm.dto';
 
@@ -29,6 +30,7 @@ export class LeadsCrmController {
   constructor(
     private readonly embudo: LeadsEmbudoService,
     private readonly analitica: LeadsBiService,
+    private readonly disparadores: LeadsDisparadoresService,
   ) {}
 
   /** El tablero del embudo: las 12 columnas con sus pedidos. */
@@ -101,6 +103,59 @@ export class LeadsCrmController {
   @Get('cliente/:telefono')
   cliente(@User() user: any, @Param('telefono') telefono: string) {
     return this.analitica.historial360(user.empresaId, telefono);
+  }
+
+  // ── F — disparadores y re-engagement ──────────────────────────────────
+
+  /** Qué avisos están por salir, qué salió y cuántos pidieron la baja. */
+  @Get('disparadores')
+  disparos(
+    @User() user: any,
+    @Query('estado') estado?: string,
+    @Query('tipo') tipo?: string,
+  ) {
+    return this.disparadores.listar(user.empresaId, { estado, tipo });
+  }
+
+  /** La configuración: cuáles están encendidos, demoras, horario y tope. */
+  @Get('disparadores/config')
+  configDisparos(@User() user: any) {
+    return this.disparadores.configDe(user.empresaId);
+  }
+
+  /**
+   * Manda un aviso ya, sin esperar al cron. Igual pasa por TODAS las reglas:
+   * la baja, el horario, el tope y la disponibilidad del producto. El botón
+   * no es una puerta trasera.
+   */
+  @Post('disparadores/:id/enviar')
+  enviarDisparo(@User() user: any, @Param('id', ParseIntPipe) id: number) {
+    return this.disparadores.procesarUno(id);
+  }
+
+  /** Dar de baja a un número a mano, cuando lo pide por teléfono. */
+  @Post('disparadores/baja/:telefono')
+  darDeBaja(@User() user: any, @Param('telefono') telefono: string) {
+    return this.disparadores.registrarBaja(
+      user.empresaId,
+      telefono,
+      'Baja registrada desde el panel',
+    );
+  }
+
+  /**
+   * 33.1 — un producto volvió: avisar a quien lo había pedido. Se dispara
+   * desde el editor de producto al ponerlo disponible.
+   */
+  @Post('disparadores/producto/:productoId/volvio')
+  productoVolvio(
+    @User() user: any,
+    @Param('productoId', ParseIntPipe) productoId: number,
+  ) {
+    return this.disparadores.avisarVueltaDeDisponibilidad(
+      user.empresaId,
+      productoId,
+    );
   }
 
   /** Posibles duplicados por nombre parecido, para que una persona decida. */

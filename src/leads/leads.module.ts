@@ -12,6 +12,7 @@ import { LeadsPedidoService } from './leads-pedido.service';
 import { LeadsEmbudoService } from './leads-embudo.service';
 import { LeadsConsultasService } from './leads-consultas.service';
 import { LeadsBiService } from './leads-bi.service';
+import { LeadsDisparadoresService } from './leads-disparadores.service';
 import { LeadsCrmController } from './leads-crm.controller';
 import { S3Module } from '../s3/s3.module';
 import { GeminiModule } from '../gemini/gemini.module';
@@ -55,7 +56,8 @@ import { LEADS_MESSAGES_QUEUE, redisConnection } from './leads.constants';
     LeadsEmbudoService,
     LeadsConsultasService,
     LeadsBiService,
+    LeadsDisparadoresService,
   ],
-  exports: [LeadsService, LeadsEmbudoService],
+  exports: [LeadsService, LeadsEmbudoService, LeadsDisparadoresService],
 })
 export class LeadsModule {}

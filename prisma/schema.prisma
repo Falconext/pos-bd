@@ -479,6 +479,7 @@ model Empresa {
   leadProspectos          LeadProspecto[]
   leadDocumentos          LeadDocumento[]
   leadConsultas             LeadConsulta[]
+  leadDisparos              LeadDisparo[]
   soporteConversacion     SoporteConversacion?
   reglasComision          ReglaComision[]
 
@@ -4112,6 +4113,84 @@ enum EstadoLeadConversacion {
   CALIFICADA
   CERRADA
   TRANSFERIDA
+}
+
+/// F — un aviso automático programado para un cliente.
+///
+/// El anexo pide 7 disparadores (puntos 33.1 a 33.7). Se guardan como filas
+/// programadas en vez de calcularse al vuelo en cada corrida del cron por dos
+/// razones: hay que poder verlos ANTES de que salgan (y cancelarlos), y hay
+/// que poder demostrar qué se le mandó a quién y cuándo.
+///
+/// La clave única (empresa + tipo + teléfono + referencia) es lo que impide
+/// mandar dos veces el mismo aviso: "la recompra del comprobante 829" es un
+/// solo disparo, por más veces que corra el cron.
+model LeadDisparo {
+  id             Int                @id @default(autoincrement())
+  empresaId      Int
+  empresa        Empresa            @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  tipo           TipoDisparoLead
+  telefono       String
+  prospectoId    Int?
+  conversacionId Int?
+  /// El hecho concreto que lo originó: "comprobante:829", "producto:1204".
+  /// Es la mitad de la idempotencia.
+  referencia     String
+  programadoPara DateTime
+  estado         EstadoDisparoLead  @default(PROGRAMADO)
+  /// Por qué no se envió. Se guarda porque "no salió" sin motivo es un
+  /// reclamo que nadie puede responder.
+  motivo         String?
+  /// Plantilla usada, cuando la ventana de 24 h estaba cerrada.
+  plantilla      String?
+  parametrosJson Json?
+  /// Texto exacto que se envió. Es la prueba de qué recibió el cliente.
+  textoEnviado   String?
+  enviadoEn      DateTime?
+  intentos       Int                @default(0)
+  creadoEn       DateTime           @default(now())
+  actualizadoEn  DateTime           @updatedAt
+
+  @@unique([empresaId, tipo, telefono, referencia])
+  @@index([empresaId, estado, programadoPara])
+  @@index([empresaId, telefono])
+}
+
+enum TipoDisparoLead {
+  VUELTA_DISPONIBILIDAD
+  RECUPERAR_COTIZACION
+  CARRITO_EN_ESPERA
+  POST_ENTREGA
+  RECOMPRA
+  REACTIVACION
+}
+
+enum EstadoDisparoLead {
+  PROGRAMADO
+  ENVIADO
+  /// Ya no corresponde: el cliente contestó, compró o canceló.
+  CANCELADO
+  /// Se evaluó y una regla dijo que no (baja, sin stock, tope).
+  OMITIDO
+  FALLIDO
+}
+
+/// El cliente pidió no recibir más avisos.
+///
+/// El pie de las plantillas de marketing promete "responde BAJA para no
+/// recibir más avisos". Prometerlo y no cumplirlo es exactamente lo que
+/// convierte un número de WhatsApp en un número bloqueado.
+model LeadBajaAvisos {
+  id        Int      @id @default(autoincrement())
+  empresaId Int
+  telefono  String
+  /// El mensaje con el que lo pidió, tal cual. Si alguien reclama que se le
+  /// dejó de avisar, acá está el por qué.
+  mensaje   String?
+  creadoEn  DateTime @default(now())
+
+  @@unique([empresaId, telefono])
+  @@index([empresaId])
 }
 
 /// Las 12 etapas operativas del embudo, con los nombres que Hierba Sana

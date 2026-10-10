@@ -62,6 +62,7 @@ function armar(opts: {
     {} as any,
     embudoFalso(),
     consultasFalsas(),
+    disparadoresFalsos(),
     {} as any,
   );
   const ejecutor = (processor as any).crearEjecutor(
@@ -182,6 +183,15 @@ function embudoFalso() {
   return {
     mover: async () => ({ movido: true }),
     registrarComprobantePago: async () => ({ registrado: false }),
+  } as never;
+}
+
+/** Los disparadores no son lo que estos tests miden: no estorban. */
+function disparadoresFalsos() {
+  return {
+    programar: async () => ({ programado: false }),
+    cancelar: async () => ({ cancelados: 0 }),
+    atenderSiEsBaja: async () => ({ eraBaja: false }),
   } as never;
 }
 

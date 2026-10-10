@@ -31,6 +31,8 @@ import {
 } from './leads-pedido.service';
 import { LeadsEmbudoService } from './leads-embudo.service';
 import { LeadsConsultasService } from './leads-consultas.service';
+import { LeadsDisparadoresService } from './leads-disparadores.service';
+import { TipoDisparo, postergaLaCompra } from './leads-disparadores';
 import { EtapaCrm } from './leads-embudo';
 import {
   disponibilidadEfectiva,
@@ -115,6 +117,7 @@ export class LeadsMessageProcessor extends WorkerHost {
     private readonly pedido: LeadsPedidoService,
     private readonly embudo: LeadsEmbudoService,
     private readonly consultas: LeadsConsultasService,
+    private readonly disparadores: LeadsDisparadoresService,
     @InjectQueue(LEADS_MESSAGES_QUEUE) private readonly queue: Queue,
   ) {
     super();
@@ -229,6 +232,37 @@ export class LeadsMessageProcessor extends WorkerHost {
     if (userMsgId === null) {
       // Ya existía y ya fue respondido → nada que hacer.
       return;
+    }
+
+    // El cliente escribió. Dos cosas, en este orden:
+    //
+    // 1) Si pidió la baja, se respeta ANTES de cualquier otra cosa. El pie de
+    //    las plantillas lo promete, y no cumplirlo es lo que hace que
+    //    reporten el número. Funciona incluso con la IA apagada.
+    // 2) Los recordatorios que esperaban respuesta ya no corresponden:
+    //    escribirle "¿seguimos con tu pedido?" a alguien que acaba de
+    //    contestar deja al negocio como si no leyera sus mensajes.
+    await this.disparadores
+      .atenderSiEsBaja(empresa.id, d.from, contenido)
+      .catch(() => undefined);
+    await this.disparadores
+      .cancelar(
+        empresa.id,
+        d.from,
+        [
+          TipoDisparo.RECUPERAR_COTIZACION,
+          TipoDisparo.CARRITO_EN_ESPERA,
+          TipoDisparo.REACTIVACION,
+        ],
+        'El cliente escribió',
+      )
+      .catch(() => undefined);
+
+    // 33.3 — "te aviso luego" no es un rechazo: es una venta en pausa. Se le
+    // recuerda a la mañana siguiente, que es lo que pide el anexo. Solo tiene
+    // sentido si ya hay algo cotizado; si no, no hay nada que recordar.
+    if (postergaLaCompra(contenido)) {
+      await this.programarCarritoEnEspera(empresa.id, conv.id, d.from);
     }
 
     // Una imagen en una conversación con pedido en curso es, casi siempre, el
@@ -805,6 +839,40 @@ export class LeadsMessageProcessor extends WorkerHost {
   }
 
   /**
+   * 33.3 — el cliente postergó. Se le recuerda a la mañana siguiente, pero
+   * solo si hay un pedido o una cotización en curso: recordarle un carrito
+   * que no existe es escribirle por nada.
+   */
+  private async programarCarritoEnEspera(
+    empresaId: number,
+    conversacionId: number,
+    telefono: string,
+  ) {
+    try {
+      const borrador = await this.prisma.leadPedidoBorrador.findUnique({
+        where: { conversacionId },
+        select: { cotizacionId: true, itemsJson: true, comprobanteId: true },
+      });
+      // Ya comprado no se recuerda; sin nada cotizado, tampoco hay qué.
+      if (borrador?.comprobanteId) return;
+      const tieneItems =
+        Array.isArray(borrador?.itemsJson) &&
+        (borrador?.itemsJson as unknown[]).length > 0;
+      if (!borrador?.cotizacionId && !tieneItems) return;
+
+      await this.disparadores.programar({
+        empresaId,
+        tipo: TipoDisparo.CARRITO_EN_ESPERA,
+        telefono,
+        referencia: `conversacion:${conversacionId}`,
+        conversacionId,
+      });
+    } catch (e: any) {
+      this.logger.warn(`Lead: no se pudo programar el recordatorio: ${e?.message}`);
+    }
+  }
+
+  /**
    * Avanza la etapa del embudo desde un automatismo.
    *
    * Nunca retrocede: si el encargado ya pasó el pedido a despacho y después
@@ -1250,6 +1318,17 @@ export class LeadsMessageProcessor extends WorkerHost {
               EtapaCrm.COTIZADO,
               'Cotización enviada por el chat',
             );
+            // 33.2 — si no concreta, se le recuerda en 3 horas. Se cancela
+            // solo en cuanto el cliente conteste.
+            await this.disparadores
+              .programar({
+                empresaId,
+                tipo: TipoDisparo.RECUPERAR_COTIZACION,
+                telefono,
+                referencia: `conversacion:${conversacionId}`,
+                conversacionId,
+              })
+              .catch(() => undefined);
           }
           return res;
         }

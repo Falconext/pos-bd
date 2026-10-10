@@ -679,6 +679,19 @@ export class WhatsAppService {
       example: ['Juan', 'NV01-00000123'],
     },
     {
+      // 33.2: cotizó y no concretó, a las 3 horas. {{1}} nombre.
+      name: 'recuperar_cotizacion',
+      body: 'Hola {{1}}, ¿seguimos con tu pedido? Te dejé la cotización más temprano y puedo coordinar el despacho cuando me digas.',
+      example: ['Juan'],
+    },
+    {
+      // 33.3: dijo "te aviso luego"; se le escribe a la mañana siguiente.
+      // {{1}} nombre.
+      name: 'carrito_en_espera',
+      body: 'Hola {{1}}, te escribo como quedamos. Tu pedido sigue reservado; dime si lo preparamos hoy.',
+      example: ['Juan'],
+    },
+    {
       // F6: el producto de la lista de espera volvió. {{1}} nombre, {{2}} producto.
       name: 'producto_disponible',
       body: 'Hola {{1}}, buenas noticias: {{2}} ya está disponible nuevamente. Escríbenos y coordinamos tu pedido.',

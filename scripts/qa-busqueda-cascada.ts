@@ -65,6 +65,8 @@ async function main() {
     null as never,
     new LeadsEmbudoService(prisma, { isEnabled: () => false } as never),
     new LeadsConsultasService(prisma),
+    // Los disparadores no se ejercitan en el harness: mandarían WhatsApps.
+    { programar: async () => ({ programado: false }), cancelar: async () => ({ cancelados: 0 }), atenderSiEsBaja: async () => ({ eraBaja: false }) } as never,
     null as never,
   );
   const ejecutor = (

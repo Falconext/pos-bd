@@ -147,6 +147,7 @@ function armar(
     pedido,
     embudoFalso(),
     consultasFalsas(),
+    disparadoresFalsos(),
     queue,
   );
   return { processor, prisma, ia, whatsapp, queue, pedido, mensajes };
@@ -615,6 +616,15 @@ function embudoFalso() {
   return {
     mover: async () => ({ movido: true }),
     registrarComprobantePago: async () => ({ registrado: false }),
+  } as never;
+}
+
+/** Los disparadores no son lo que estos tests miden: no estorban. */
+function disparadoresFalsos() {
+  return {
+    programar: async () => ({ programado: false }),
+    cancelar: async () => ({ cancelados: 0 }),
+    atenderSiEsBaja: async () => ({ eraBaja: false }),
   } as never;
 }
 
