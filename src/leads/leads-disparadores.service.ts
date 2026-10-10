@@ -523,6 +523,57 @@ export class LeadsDisparadoresService {
   }
 
   /**
+   * 33.1 — red de seguridad: productos que volvieron a estar disponibles y
+   * tienen gente esperando a la que nadie avisó.
+   *
+   * El aviso inmediato sale cuando el negocio cambia la disponibilidad desde
+   * el editor. Pero la disponibilidad también cambia por importación de
+   * Excel, desde la app móvil o por una venta que repone stock, y por esos
+   * caminos nadie llama a nada. Esto lo cubre: busca lo que quedó sin avisar
+   * y lo programa. Es idempotente, así que no duplica lo ya avisado.
+   */
+  @Cron('0 14 * * *', { name: 'leads-vueltas-disponibilidad' })
+  async revisarVueltasDeDisponibilidad(): Promise<void> {
+    const empresas = await this.prisma.empresa.findMany({
+      where: { iaVentasActiva: true },
+      select: { id: true },
+    });
+
+    for (const { id: empresaId } of empresas) {
+      const config = await this.configDe(empresaId);
+      if (!config.activos.includes(TipoDisparo.VUELTA_DISPONIBILIDAD)) continue;
+
+      // Productos que alguien pidió y no pudo llevarse en los últimos 90 días.
+      const desde = new Date(Date.now() - 90 * 24 * 3600_000);
+      const esperados = await this.prisma.leadConsulta.findMany({
+        where: {
+          empresaId,
+          creadoEn: { gte: desde },
+          productoId: { not: null },
+          OR: [{ hubo: false }, { disponibilidad: { not: 'INMEDIATA' } }],
+        },
+        distinct: ['productoId'],
+        select: { productoId: true },
+      });
+      if (!esperados.length) continue;
+
+      let programados = 0;
+      for (const e of esperados) {
+        const r = await this.avisarVueltaDeDisponibilidad(
+          empresaId,
+          e.productoId as number,
+        );
+        programados += r.avisados;
+      }
+      if (programados) {
+        this.logger.log(
+          `Vueltas a disponibilidad (empresa ${empresaId}): ${programados} avisos programados.`,
+        );
+      }
+    }
+  }
+
+  /**
    * 33.6 — reactivación de inactivos.
    *
    * Corre una vez al día, no con cada mensaje: la inactividad es una

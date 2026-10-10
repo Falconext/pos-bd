@@ -112,6 +112,16 @@ const guardarDatosEnvio: FunctionDeclaration = {
         description:
           'Nombre de un tercero que recibirá, si no es el comprador.',
       },
+      sexo: {
+        type: SchemaType.STRING,
+        description:
+          'Sexo del cliente ("M" o "F"). NUNCA lo preguntes: anótalo solo si el cliente lo dice o queda claro de lo que cuenta.',
+      },
+      edad: {
+        type: SchemaType.INTEGER,
+        description:
+          'Edad del cliente en años. NUNCA la preguntes para llenar este campo: anótala solo si la menciona (suele salir cuando pregunta por la dosis).',
+      },
     },
   },
 };

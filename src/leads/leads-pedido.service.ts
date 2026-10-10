@@ -49,6 +49,14 @@ export interface DatosDelCliente {
   horario?: string;
   agenciaSede?: string;
   recibeNombre?: string;
+  /**
+   * Sexo y edad del cliente. NO son datos de entrega y nunca se le piden:
+   * solo se anotan si los dice (la edad suele salir al hablar de la dosis).
+   * El anexo pide un reporte demográfico, y la alternativa a esto sería
+   * adivinarlo por el nombre, que es como se arma un dato falso.
+   */
+  sexo?: string;
+  edad?: number | string;
 }
 
 export interface ItemPedido {
@@ -177,6 +185,11 @@ export class LeadsPedidoService {
       update: cambios,
     });
 
+    // Sexo y edad describen a la PERSONA, no al pedido: van al prospecto.
+    // Nunca entran en `faltan`, así que el asistente no los pide: si el
+    // cliente no los dijo, el reporte los cuenta como "sin dato".
+    await this.anotarPerfil(empresaId, conversacionId, datos, guardado);
+
     return {
       ...(borrador.zona ? { zona: borrador.zona } : {}),
       ...(borrador.costoEnvio != null
@@ -187,6 +200,45 @@ export class LeadsPedidoService {
       faltan: this.faltantes(borrador),
       ...(problemas.length ? { problemas } : {}),
     };
+  }
+
+  /**
+   * Anota sexo y edad si el cliente los mencionó.
+   *
+   * Best-effort y silencioso: un dato demográfico que no se pudo guardar no
+   * puede cortarle la atención a quien está por comprar.
+   */
+  private async anotarPerfil(
+    empresaId: number,
+    conversacionId: number,
+    datos: DatosDelCliente,
+    guardado: string[],
+  ): Promise<void> {
+    const cambios: { sexo?: string; edad?: number } = {};
+
+    const sexo = String(datos.sexo ?? '').trim().toUpperCase();
+    if (sexo) {
+      // Se normaliza a M/F: el modelo manda "masculino", "hombre", "varón"…
+      if (/^(M|MASC|MASCULINO|HOMBRE|VARON|VARÓN)$/.test(sexo)) cambios.sexo = 'M';
+      else if (/^(F|FEM|FEMENINO|MUJER|DAMA)$/.test(sexo)) cambios.sexo = 'F';
+    }
+
+    const edad = Math.trunc(Number(datos.edad));
+    // Fuera de este rango es un error de lectura, no una edad: guardarlo
+    // ensuciaría el reporte sin que nadie lo note.
+    if (Number.isFinite(edad) && edad >= 1 && edad <= 110) cambios.edad = edad;
+
+    if (!Object.keys(cambios).length) return;
+    try {
+      await this.prisma.leadProspecto.updateMany({
+        where: { conversacionId, empresaId },
+        data: cambios,
+      });
+      if (cambios.sexo) guardado.push('sexo');
+      if (cambios.edad) guardado.push('edad');
+    } catch {
+      // Silencio a propósito: ver arriba.
+    }
   }
 
   /** Cómo se paga en la zona del borrador, con las palabras de la empresa. */
