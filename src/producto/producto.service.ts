@@ -327,6 +327,8 @@ export class ProductoService {
       stockMinimo?: number;
       stockMaximo?: number;
       imagenUrl?: string;
+      /** Enlace de TikTok/YouTube/Instagram que se incrusta en la ficha de la tienda. */
+      videoUrl?: string | null;
       localizacion?: string;
       porcentajeVenta?: number;
       porcentajeProvision?: number;
@@ -397,6 +399,7 @@ export class ProductoService {
       stockMinimo,
       stockMaximo,
       imagenUrl,
+      videoUrl,
       localizacion,
       porcentajeVenta,
       porcentajeProvision,
@@ -545,6 +548,7 @@ export class ProductoService {
               : undefined,
           marcaId: marcaId && Number(marcaId) > 0 ? Number(marcaId) : undefined,
           imagenUrl: imagenUrl || undefined,
+          videoUrl: videoUrl?.trim() || null,
           localizacion: localizacion || undefined,
           porcentajeVenta: porcentajes.porcentajeVenta,
           porcentajeProvision: porcentajes.porcentajeProvision,
@@ -650,6 +654,7 @@ export class ProductoService {
           marcaId: marcaId && Number(marcaId) > 0 ? Number(marcaId) : undefined,
           empresaId,
           imagenUrl: imagenUrl || undefined,
+          videoUrl: videoUrl?.trim() || null,
           localizacion: localizacion || undefined,
           porcentajeVenta: porcentajes.porcentajeVenta,
           porcentajeProvision: porcentajes.porcentajeProvision,
@@ -1118,6 +1123,9 @@ export class ProductoService {
           igvPorcentaje: true,
           tipoAfectacionIGV: true,
           estado: true,
+          // El modal de edición se llena con la fila del listado: sin esto, el
+          // enlace del video sale vacío al reabrir aunque esté guardado.
+          videoUrl: true,
           localizacion: true,
           porcentajeVenta: true,
           porcentajeProvision: true,
@@ -2894,6 +2902,8 @@ export class ProductoService {
       comisionPorcentaje?: number;
       imagenUrl?: string | null;
       removerImagen?: boolean;
+      /** Enlace del video de la ficha. Cadena vacía = el empresario lo quitó. */
+      videoUrl?: string | null;
       localizacion?: string;
       porcentajeVenta?: number;
       porcentajeProvision?: number;
@@ -3331,6 +3341,11 @@ export class ProductoService {
             : undefined,
         localizacion:
           data.localizacion !== undefined ? data.localizacion : undefined,
+        // Sin esto el enlace se escribe en el formulario y se descarta al
+        // guardar, sin error: el campo existía en el DTO y en la BD, pero este
+        // `data` se arma a mano y nadie lo había agregado aquí.
+        videoUrl:
+          data.videoUrl === undefined ? undefined : data.videoUrl?.trim() || null,
         ...(data.porcentajeVenta !== undefined ||
         data.porcentajeProvision !== undefined
           ? this.normalizarPorcentajes(
