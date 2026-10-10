@@ -17,6 +17,10 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { User } from '../common/decorators/user.decorator';
+import {
+  sedeIdParaListado,
+  usuarioIdParaListado,
+} from '../common/utils/alcance-lectura';
 
 @Controller('finanzas')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -110,13 +114,9 @@ export class FinanzasController {
     @Query('sedeId') sedeIdQuery?: string,
   ) {
     const empresaId = user.empresaId;
-    const isAdmin =
-      user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
-    const sedeId = isAdmin
-      ? sedeIdQuery
-        ? Number(sedeIdQuery)
-        : null
-      : (user.sedeId ?? null);
+    // El supervisor (convertirEnSupervisor) lee de todas las sedes y de todos
+    // los vendedores. Solo lectura.
+    const sedeId = sedeIdParaListado(user, sedeIdQuery) ?? null;
 
     return this.finanzasService.getResumenEcommerce(
       empresaId,
@@ -136,24 +136,17 @@ export class FinanzasController {
     @Query('usuarioId') usuarioIdQuery?: string,
   ) {
     const empresaId = user.empresaId;
-    const isAdmin =
-      user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA';
-    const sedeId = isAdmin
-      ? sedeIdQuery
-        ? Number(sedeIdQuery)
-        : null
-      : (user.sedeId ?? null);
-    // El filtro por vendedor solo aplica para administradores de empresa
-    const usuarioId = isAdmin
-      ? usuarioIdQuery
-        ? Number(usuarioIdQuery)
-        : null
-      : null;
+    // El supervisor (convertirEnSupervisor) lee de todas las sedes y de todos
+    // los vendedores. Solo lectura.
+    const sedeId = sedeIdParaListado(user, sedeIdQuery) ?? null;
+    // El filtro por vendedor: quien puede leer las de todos elige; el resto
+    // queda clavado en sí mismo.
+    const usuarioId = usuarioIdParaListado(user, usuarioIdQuery) ?? null;
     return this.finanzasService.getResumenFinanciero(
       empresaId,
       fechaInicio,
       fechaFin,
-      sedeId,
+      sedeId ?? undefined,
       usuarioId ?? undefined,
     );
   }

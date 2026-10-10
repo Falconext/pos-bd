@@ -278,6 +278,11 @@ export class CreateProductoDto {
   @IsString()
   descripcionLarga?: string;
 
+  /** URL del video del producto (TikTok, YouTube, Instagram, Facebook o mp4). */
+  @IsOptional()
+  @IsString()
+  videoUrl?: string;
+
   @IsOptional()
   atributosTecnicos?: Record<string, any>;
 

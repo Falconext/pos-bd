@@ -19,3 +19,10 @@ export function redisConnection(): Record<string, any> {
     maxRetriesPerRequest: null,
   };
 }
+
+/**
+ * Tope de caracteres del cuerpo de un mensaje de texto en la Cloud API de Meta.
+ * Se valida antes de llamar a la API para fallar con un mensaje claro en vez de
+ * un 400 opaco de Graph.
+ */
+export const LIMITE_TEXTO_WHATSAPP = 4096;

@@ -426,6 +426,7 @@ export class TiendaService {
         minimoCompra: true,
         aceptaRecojo: true,
         aceptaEnvio: true,
+        tiendaVentaSinStock: true,
         direccionRecojo: true,
         tiempoPreparacionMin: true,
         // Información Bancaria
@@ -463,6 +464,7 @@ export class TiendaService {
         minimoCompra: true,
         aceptaRecojo: true,
         aceptaEnvio: true,
+        tiendaVentaSinStock: true,
         direccionRecojo: true,
         tiempoPreparacionMin: true,
         // Información Bancaria
@@ -921,6 +923,10 @@ export class TiendaService {
           costoEnvioFijo: true,
           aceptaRecojo: true,
           aceptaEnvio: true,
+          // Si el negocio trabaja por encargo, la tienda deja de pintar
+          // "Agotado" y acepta el pedido igual. Sin este campo la plantilla no
+          // tiene cómo saberlo y bloquea la compra por su cuenta.
+          tiendaVentaSinStock: true,
           direccionRecojo: true,
           tiempoPreparacionMin: true,
           direccion: true,
@@ -1275,6 +1281,7 @@ export class TiendaService {
         codigo: true,
         descripcion: true,
         descripcionLarga: true,
+        videoUrl: true,
         precioUnitario: true,
         precioOferta: true,
         fechaInicioOferta: true,
@@ -1689,6 +1696,7 @@ export class TiendaService {
       codigo: true,
       descripcion: true,
       descripcionLarga: true,
+      videoUrl: true,
       precioUnitario: true,
       precioOferta: true,
       fechaInicioOferta: true,
@@ -1730,6 +1738,23 @@ export class TiendaService {
           valoresAtributos: true,
           imagenUrl: true,
         },
+      },
+      // Presentaciones del producto (ej. "por metro" / "por rollo de 12 m").
+      // Viven en ProductoCodigoBarras porque nacieron para escanear la caja en
+      // el POS, pero son la misma idea de cara al comprador: una forma distinta
+      // de llevarse el mismo producto, con su precio. Solo se exponen las que
+      // tienen nombre propio (`alias`): un código de barras alterno sin alias
+      // es el mismo producto suelto y no es una opción de compra.
+      codigosBarras: {
+        where: { alias: { not: null } },
+        select: {
+          codigo: true,
+          alias: true,
+          unidadesPorPaquete: true,
+          precioPaquete: true,
+          imagenUrl: true,
+        },
+        orderBy: { unidadesPorPaquete: 'asc' as const },
       },
     } as const;
 
@@ -1807,17 +1832,61 @@ export class TiendaService {
         )
       : (producto as any).variantes;
 
+    // Presentaciones con su precio ya resuelto: `precioPaquete` manda y, si no
+    // lo tiene, se cobra unitario × unidades. La regla se calcula acá para que
+    // la tienda y el checkout no la dupliquen (y no puedan discrepar).
+    const presentaciones = await this.presentacionesPublicas(
+      producto as any,
+      signIfS3,
+    );
+
     return {
       ...producto,
+      codigosBarras: undefined,
       imagenUrl: await signIfS3((producto as any).imagenUrl),
       imagenesExtra: imagenesExtraFirmadas as any,
       atributosTecnicos: atributosTecnicosFirmados,
       variantes: variantesFirmadas,
+      presentaciones,
       fichaTecnica: await this.construirFichaTecnicaPublica(
         empresa,
         producto as any,
       ),
     } as any;
+  }
+
+  /**
+   * Precio efectivo de una presentación: el `precioPaquete` si lo tiene, y si
+   * no, el unitario del producto por las unidades que trae.
+   */
+  private precioDePresentacion(
+    precioUnitarioProducto: unknown,
+    pres: { unidadesPorPaquete?: number | null; precioPaquete?: unknown },
+  ): number {
+    const propio = Number(pres.precioPaquete ?? 0);
+    if (propio > 0) return propio;
+    const unidades = Math.max(1, Number(pres.unidadesPorPaquete ?? 1));
+    return Number(precioUnitarioProducto ?? 0) * unidades;
+  }
+
+  /** Presentaciones listas para la tienda (precio resuelto e imagen firmada). */
+  private async presentacionesPublicas(
+    producto: any,
+    signIfS3: (u?: string | null) => Promise<string | null | undefined>,
+  ) {
+    const filas: any[] = Array.isArray(producto?.codigosBarras)
+      ? producto.codigosBarras
+      : [];
+    if (!filas.length) return [];
+    return Promise.all(
+      filas.map(async (p) => ({
+        codigo: p.codigo,
+        nombre: p.alias,
+        unidadesPorPaquete: Math.max(1, Number(p.unidadesPorPaquete ?? 1)),
+        precio: this.precioDePresentacion(producto?.precioUnitario, p),
+        imagenUrl: await signIfS3(p.imagenUrl),
+      })),
+    );
   }
 
   private getFichaTecnicaComputoDefault(
@@ -2263,6 +2332,7 @@ export class TiendaService {
         minimoCompra: true,
         aceptaRecojo: true,
         aceptaEnvio: true,
+        tiendaVentaSinStock: true,
         direccionRecojo: true,
         tiempoPreparacionMin: true,
         direccion: true,
@@ -2288,6 +2358,7 @@ export class TiendaService {
         minimoCompra: true,
         aceptaRecojo: true,
         aceptaEnvio: true,
+        tiendaVentaSinStock: true,
         nombreComercial: true,
         razonSocial: true,
         mpConectado: true,
@@ -2363,26 +2434,84 @@ export class TiendaService {
         );
       }
 
+      // Variante elegida (color/talla/medida): es un Producto hijo real, así que
+      // la línea pasa a ser suya y el stock y el comprobante salen solos.
+      if (item.varianteId && item.varianteId !== item.productoId) {
+        const variante = await this.prisma.producto.findFirst({
+          where: {
+            id: item.varianteId,
+            empresaId: empresa.id,
+            productoPadreId: producto.id,
+            estado: 'ACTIVO',
+          },
+        });
+        if (!variante) {
+          throw new BadRequestException(
+            `La presentación elegida de ${producto.descripcion} ya no está disponible`,
+          );
+        }
+        producto = variante;
+      }
+
+      // Presentación elegida (ej. "rollo de 12 m"): el producto es el mismo y
+      // lo que cambia es cuánto se lleva. La línea se guarda en UNIDADES BASE
+      // (cantidad × unidadesPorPaquete) para que el stock y el comprobante
+      // cuadren, y el precio del paquete se reparte entre esas unidades: así el
+      // subtotal es exactamente el precio que vio el comprador.
+      let cantidadBase = item.cantidad;
+      let precioUnit = Number(producto.precioUnitario);
+      let observacion = item.observacion;
+
+      if (item.presentacionCodigo) {
+        const pres = await this.prisma.productoCodigoBarras.findFirst({
+          where: {
+            codigo: item.presentacionCodigo,
+            empresaId: empresa.id,
+            productoId: producto.id,
+          },
+        });
+        if (!pres) {
+          throw new BadRequestException(
+            `La presentación elegida de ${producto.descripcion} ya no está disponible`,
+          );
+        }
+        const unidades = Math.max(1, Number(pres.unidadesPorPaquete ?? 1));
+        const precioPresentacion = this.precioDePresentacion(
+          producto.precioUnitario,
+          pres,
+        );
+        cantidadBase = item.cantidad * unidades;
+        precioUnit = precioPresentacion / unidades;
+        const etiqueta = `${item.cantidad} × ${pres.alias || pres.codigo}`;
+        observacion = observacion ? `${etiqueta} — ${observacion}` : etiqueta;
+      }
+
       const esServicio =
         String(
           (producto.atributosTecnicos as any)?.tipoProducto || '',
         ).toUpperCase() === 'SERVICIO';
-      if (!esServicio && Number(producto.stock) < item.cantidad) {
+      // Con "aceptar pedidos sin stock" el negocio asume que lo trae por encargo:
+      // el pedido entra igual y el stock puede quedar en negativo, que es la
+      // señal de lo que debe reponer.
+      if (
+        !esServicio &&
+        !empresa.tiendaVentaSinStock &&
+        Number(producto.stock) < cantidadBase
+      ) {
         throw new BadRequestException(
           `Stock insuficiente para ${producto.descripcion}. Disponible: ${producto.stock}`,
         );
       }
 
-      const precioUnit = Number(producto.precioUnitario);
-      const itemSubtotal = precioUnit * item.cantidad;
+      const itemSubtotal = precioUnit * cantidadBase;
       subtotal += itemSubtotal;
 
       itemsData.push({
-        productoId: item.productoId,
-        cantidad: item.cantidad,
+        productoId: producto.id,
+        cantidad: cantidadBase,
         precioUnit,
         subtotal: itemSubtotal,
-        observacion: item.observacion,
+        observacion,
       });
     }
     // Envío gratis si el subtotal alcanza el umbral configurado (envioGratisDesdeSoles).
@@ -3223,6 +3352,7 @@ export class TiendaService {
         minimoCompra: true,
         aceptaRecojo: true,
         aceptaEnvio: true,
+        tiendaVentaSinStock: true,
         direccionRecojo: true,
         tiempoPreparacionMin: true,
       },
@@ -3245,6 +3375,7 @@ export class TiendaService {
         minimoCompra: true,
         aceptaRecojo: true,
         aceptaEnvio: true,
+        tiendaVentaSinStock: true,
         direccionRecojo: true,
         tiempoPreparacionMin: true,
       },

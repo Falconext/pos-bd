@@ -43,6 +43,12 @@ describe('ComprobanteService - Stock Management', () => {
     pago: {
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
+    // Anular una venta borra además sus comisiones PENDIENTES (las ya pagadas
+    // no se tocan): sin esta tabla en el mock, anularComprobante reventaba
+    // antes de llegar a lo que estas pruebas verifican.
+    comisionVendedor: {
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
     movimientoKardex: {
       findMany: jest.fn().mockResolvedValue([]),
     },
@@ -102,6 +108,7 @@ describe('ComprobanteService - Stock Management', () => {
     jest.clearAllMocks();
     // Restore defaults after clear
     mockPrismaService.pago.deleteMany.mockResolvedValue({ count: 0 });
+    mockPrismaService.comisionVendedor.deleteMany.mockResolvedValue({ count: 0 });
     mockPrismaService.movimientoKardex.findMany.mockResolvedValue([]);
     mockPrismaService.movimientoKardexLote.findMany.mockResolvedValue([]);
     mockPrismaService.sede.findFirst.mockResolvedValue({ id: 1 });
@@ -109,6 +116,36 @@ describe('ComprobanteService - Stock Management', () => {
   });
 
   describe('anularComprobante', () => {
+    it('debería borrar las comisiones PENDIENTES del vendedor (las pagadas no)', async () => {
+      const mockComprobante = {
+        id: 1,
+        tipoDoc: '01',
+        estadoEnvioSunat: 'PENDIENTE',
+        empresaId: 5,
+        detalles: [
+          { id: 1, productoId: 100, cantidad: 5, descripcion: 'Producto A' },
+        ],
+      };
+      mockPrismaService.comprobante.findUnique.mockResolvedValue(mockComprobante);
+      mockPrismaService.producto.findUnique.mockResolvedValue({
+        id: 100,
+        stock: 10,
+        costoPromedio: 20,
+      });
+      mockPrismaService.comprobante.update.mockResolvedValue(mockComprobante);
+      mockPrismaService.movimientoKardex.findMany.mockResolvedValue([
+        { id: 501, productoId: 100, sedeId: 1, tipoMovimiento: 'SALIDA' },
+      ]);
+
+      await service.anularComprobante(1);
+
+      // Una venta anulada no puede seguir generando comisión (inflaba los
+      // reportes). Lo ya PAGADO no se toca: descuadraría pagos hechos.
+      expect(mockPrismaService.comisionVendedor.deleteMany).toHaveBeenCalledWith({
+        where: { comprobanteId: 1, estado: 'PENDIENTE' },
+      });
+    });
+
     it('debería revertir stock para comprobante formal (factura) vía kardexService', async () => {
       const mockComprobante = {
         id: 1,

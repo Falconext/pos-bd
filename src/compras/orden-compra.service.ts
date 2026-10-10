@@ -7,6 +7,13 @@ import { PrismaService } from '../prisma/prisma.service';
 import { parseFechaSoloDia } from '../common/utils/fecha';
 import { ComprasService } from './compras.service';
 import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
+import {
+  avisoDeLlegada,
+  pedidosQueEsperan,
+  productosRecibidos,
+  type PedidoListo,
+} from './pedidos-por-entregar';
 import {
   ActualizarOrdenCompraDto,
   CrearOrdenCompraDto,
@@ -27,6 +34,7 @@ export class OrdenCompraService {
     private readonly prisma: PrismaService,
     private readonly comprasService: ComprasService,
     private readonly pdfGenerator: PdfGeneratorService,
+    private readonly notificaciones: NotificacionesService,
   ) {}
 
   static formatNumero(numero: number): string {
@@ -368,7 +376,80 @@ export class OrdenCompraService {
       data: { estado: 'RECIBIDA', compraId: (compra as any).id },
     });
 
-    return { ordenId: id, compra };
+    // Cierre del flujo: avisar qué pedidos quedaron listos para entregar.
+    // Sin esto, la Nota de Pedido de hace tres semanas se queda esperando
+    // hasta que el cliente llama a reclamar. No bloquea la recepción: si el
+    // aviso falla, la mercadería igual entró.
+    const pedidosListos = await this.pedidosListosTrasRecibir(
+      empresaId,
+      orden.detalles,
+    );
+    const aviso = avisoDeLlegada(
+      id,
+      OrdenCompraService.formatNumero(orden.numero),
+      pedidosListos,
+    );
+    if (aviso) {
+      try {
+        await this.notificaciones.notificarAdminsEmpresa({
+          empresaId,
+          tipo: 'INFO',
+          titulo: aviso.titulo,
+          mensaje: aviso.mensaje,
+          metaData: aviso.metaData,
+        });
+      } catch (error) {
+        console.warn('[orden-compra] No se pudo avisar los pedidos listos:', (error as any)?.message);
+      }
+    }
+
+    return { ordenId: id, compra, pedidosListos };
+  }
+
+
+  /**
+   * Notas de Pedido sin entregar que incluyen algo de lo que acaba de llegar.
+   *
+   * Mismo criterio que el "comprometido" del inventario: se excluyen las
+   * anuladas, las ya convertidas a comprobante formal y las que se emitieron
+   * descontando stock (esas ya salieron del almacén).
+   */
+  private async pedidosListosTrasRecibir(
+    empresaId: number,
+    lineas: { productoId: number | null }[],
+  ): Promise<PedidoListo[]> {
+    const productoIds = productosRecibidos(lineas as any);
+    if (productoIds.length === 0) return [];
+    const pedidos = await this.prisma.comprobante.findMany({
+      where: {
+        empresaId,
+        tipoDoc: 'NP',
+        estadoEnvioSunat: { not: 'ANULADO' as any },
+        comprobantesDerivados: { none: {} },
+        movimientosKardex: { none: { tipoMovimiento: 'SALIDA' as any } },
+        detalles: { some: { productoId: { in: productoIds } } },
+      },
+      select: {
+        id: true,
+        serie: true,
+        correlativo: true,
+        cliente: { select: { nombre: true } },
+        detalles: {
+          select: { productoId: true, descripcion: true, cantidad: true },
+        },
+      },
+      orderBy: { id: 'asc' },
+    });
+    return pedidosQueEsperan(
+      lineas as any,
+      pedidos.map((p: any) => ({
+        id: p.id,
+        serie: p.serie,
+        correlativo: p.correlativo,
+        cliente: p.cliente?.nombre ?? null,
+        detalles: p.detalles,
+      })),
+    );
   }
 
   /** PDF imprimible de la orden para enviar al proveedor (formato A4 con logo). */
@@ -407,6 +488,24 @@ export class OrdenCompraService {
     const prov: any = orden.proveedor ?? {};
     const logo = String(empresa?.logo || '').trim();
 
+    // Total con IGV por línea (misma regla que el modal y que calcularTotales):
+    // exonerados/inafectos y "IGV incluido" van tal cual; los gravados suman 18%.
+    const aplicaIgvPdf = Number(orden.igv ?? 0) > 0;
+    const igvInclPdf = Boolean(orden.igvIncluido);
+    const esGravadoPdf = (taf: any) => {
+      const n = Number(String(taf ?? '10').trim() || '10');
+      return n >= 10 && n <= 17;
+    };
+    const totalConIgvLinea = (d: any) => {
+      const bruto = Number(d.subtotal ?? Number(d.cantidad) * Number(d.precioUnitario));
+      if (!aplicaIgvPdf) return bruto;
+      const grav = d.producto ? esGravadoPdf(d.producto.tipoAfectacionIGV) : true;
+      if (!grav || igvInclPdf) return bruto;
+      return bruto * (1 + IGV_RATE);
+    };
+    // La columna extra solo tiene sentido con precios SIN IGV; con "IGV incluido"
+    // el monto de la línea ya es con IGV y duplicaría la columna Subtotal.
+    const mostrarColIgv = aplicaIgvPdf && !igvInclPdf;
     // Filas reales + relleno hasta un mínimo para que la tabla ocupe la hoja
     const MIN_FILAS = 14;
     const filasReales = orden.detalles.map(
@@ -418,6 +517,7 @@ export class OrdenCompraService {
           <td class="num">${Number(d.cantidad)}</td>
           <td class="num">${fmt(d.precioUnitario)}</td>
           <td class="num">${fmt(d.subtotal)}</td>
+          ${mostrarColIgv ? `<td class="num">${fmt(totalConIgvLinea(d))}</td>` : ''}
         </tr>`,
     );
     const filasVacias = Array.from(
@@ -425,7 +525,7 @@ export class OrdenCompraService {
       (_, i) => `
         <tr class="empty">
           <td class="num">${filasReales.length + i + 1}</td>
-          <td></td><td></td><td></td><td></td><td></td>
+          <td></td><td></td><td></td><td></td><td></td>${mostrarColIgv ? '<td></td>' : ''}
         </tr>`,
     );
     const filas = [...filasReales, ...filasVacias].join('');
@@ -505,11 +605,11 @@ export class OrdenCompraService {
 
       <div class="secthead">Producto o servicio</div>
       <table>
-        <thead><tr><th class="num" style="width:34px">N.º</th><th style="width:80px">Código</th><th>Descripción</th><th class="num" style="width:70px">Cant.</th><th class="num" style="width:95px">P. Unitario${orden.igvIncluido ? ' (con IGV)' : ''}</th><th class="num" style="width:95px">Total</th></tr></thead>
+        <thead><tr><th class="num" style="width:34px">N.º</th><th style="width:80px">Código</th><th>Descripción</th><th class="num" style="width:70px">Cant.</th><th class="num" style="width:90px">P. Unitario${orden.igvIncluido ? ' (con IGV)' : ''}</th>${mostrarColIgv ? '<th class="num" style="width:90px">Subtotal</th><th class="num" style="width:95px">Total c/IGV</th>' : '<th class="num" style="width:95px">Total</th>'}</tr></thead>
         <tbody>${filas}
-          <tr class="tot"><td colspan="4" style="border:none"></td><td class="lblcell">Subtotal</td><td class="num">${fmt(orden.subtotal)}</td></tr>
-          <tr class="tot"><td colspan="4" style="border:none"></td><td class="lblcell">IGV (18%)</td><td class="num">${fmt(orden.igv)}</td></tr>
-          <tr class="tot final"><td colspan="4" style="border:none"></td><td class="lblcell">Total</td><td class="num">${fmt(orden.total)}</td></tr>
+          <tr class="tot"><td colspan="${mostrarColIgv ? 5 : 4}" style="border:none"></td><td class="lblcell">Subtotal</td><td class="num">${fmt(orden.subtotal)}</td></tr>
+          <tr class="tot"><td colspan="${mostrarColIgv ? 5 : 4}" style="border:none"></td><td class="lblcell">IGV (18%)</td><td class="num">${fmt(orden.igv)}</td></tr>
+          <tr class="tot final"><td colspan="${mostrarColIgv ? 5 : 4}" style="border:none"></td><td class="lblcell">Total</td><td class="num">${fmt(orden.total)}</td></tr>
         </tbody>
       </table>
 

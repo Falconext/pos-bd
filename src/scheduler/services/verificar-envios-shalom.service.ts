@@ -58,8 +58,19 @@ export class VerificarEnviosShalomService {
       where: {
         transportista: { in: SHALOM_COURIERS },
         shalomEntregado: false,
-        nroOrden: { not: null },
-        claveOrden: { not: null },
+        // Orden y clave tienen que venir CON CONTENIDO. Un despacho de Shalom
+        // se crea antes de generar la guía, así que estos campos quedan en
+        // cadena vacía hasta que el empresario la emite — y `not: null` las
+        // dejaba pasar. Como esas consultas fallan siempre y nunca graban
+        // `shalomSyncAt`, el `orderBy` de "nunca sincronizados primero" las
+        // devolvía una y otra vez: coparon las plazas de cada corrida y los
+        // envíos con datos buenos dejaron de revisarse.
+        AND: [
+          { nroOrden: { not: null } },
+          { nroOrden: { not: '' } },
+          { claveOrden: { not: null } },
+          { claveOrden: { not: '' } },
+        ],
         // Opt-in por empresa: solo se auto-rastrea (y auto-notifica por WhatsApp)
         // a los clientes de empresas que activaron el rastreo automático. Evita
         // enviar mensajes a clientes sin que el empresario lo sepa al publicar.

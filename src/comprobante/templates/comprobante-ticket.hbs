@@ -91,7 +91,9 @@
     <p>FECHA/HORA: {{#if fechaHoraTicket}}{{fechaHoraTicket}}{{else}}{{fecha}} {{hora}}{{/if}}</p>
     <p>RAZON SOCIAL: {{clienteNombre}}</p>
     <p>NÚMERO DE DOCUMENTO: {{clienteNumDoc}}</p>
+    {{#if clienteCelular}}<p>CELULAR: {{clienteCelular}}</p>{{/if}}
     <p>DIRECCION: {{clienteDireccion}}</p>
+    {{#if fechaEnvioProgramado}}<p>FECHA DE ENVIO: {{fechaEnvioProgramado}}{{#if turnoEnvioProgramado}} ({{turnoEnvioProgramado}}){{/if}}</p>{{/if}}
   </div>
   {{/if}}
 

@@ -159,6 +159,32 @@ export class CatalogoMovilService {
     ]);
 
     const n = (v: any) => (v == null ? null : Number(v));
+    /**
+     * ¿El producto exige número de serie por unidad?
+     *
+     * Misma regla que `ComprobanteService.productoRequiereSerie`: el POS tiene
+     * que saberlo SIN red, porque si no deja vender sin series y la venta
+     * recién se rechaza al sincronizar — con el producto ya entregado.
+     */
+    const requiereSerie = (p: any): boolean => {
+      let attrs = p?.atributosTecnicos;
+      if (typeof attrs === 'string') {
+        try {
+          attrs = JSON.parse(attrs);
+        } catch {
+          attrs = {};
+        }
+      }
+      if (!attrs || typeof attrs !== 'object') return false;
+      const control = String(
+        attrs.controlSeries ?? attrs.requiereSerie ?? '',
+      ).toLowerCase();
+      return (
+        attrs.controlSeries === true ||
+        attrs.requiereSerie === true ||
+        ['true', 'si', 'sí', '1'].includes(control)
+      );
+    };
     const useJamble = isJambleProvider(resolveBillingProvider(empresa as any));
 
     const productos = productosRaw.map((p) => ({
@@ -178,6 +204,7 @@ export class CatalogoMovilService {
       imagenUrl: p.imagenUrl,
       stockGlobal: Number(p.stock),
       requiereReceta: p.requiereReceta,
+      requiereSerie: requiereSerie(p),
       factorConversion: p.factorConversion,
       unidadVenta: p.unidadVenta,
       unidadMedida: p.unidadMedida?.codigo ?? 'NIU',

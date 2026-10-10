@@ -13,9 +13,10 @@ import { GeminiModule } from '../gemini/gemini.module';
 import { S3Module } from '../s3/s3.module';
 import { OrdenCompraController } from './orden-compra.controller';
 import { OrdenCompraService } from './orden-compra.service';
+import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 
 @Module({
-  imports: [PrismaModule, KardexModule, ProductoModule, CajaModule, ComprobanteModule, GeminiModule, S3Module, ClienteModule, TipoCambioModule],
+  imports: [PrismaModule, KardexModule, ProductoModule, CajaModule, ComprobanteModule, GeminiModule, S3Module, ClienteModule, TipoCambioModule, NotificacionesModule],
   controllers: [OrdenCompraController, ComprasController],
   providers: [ComprasService, OrdenCompraService, ImportarComprasService],
 })

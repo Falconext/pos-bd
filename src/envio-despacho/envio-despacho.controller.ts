@@ -66,11 +66,13 @@ export class EnvioDespachoController {
   panel(
     @User() user: any,
     @Query('fecha') fecha?: string,
+    @Query('fechaEnvio') fechaEnvio?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
     return this.service.panelUnificado(user.empresaId, {
       fecha,
+      fechaEnvio,
       page: page ? Number(page) : 1,
       limit: limit ? Number(limit) : 100,
     });

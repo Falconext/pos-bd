@@ -36,6 +36,10 @@ import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
 import { parseFechaSoloDia } from '../common/utils/fecha';
 import { num, round3 } from '../common/utils/stock';
 import * as XLSX from 'xlsx';
+import {
+  esPerdida,
+  motivoDelConcepto,
+} from '../producto/motivo-ajuste-stock';
 
 @Injectable()
 export class KardexService {
@@ -798,6 +802,17 @@ export class KardexService {
     const whereProductos: any = {
       empresaId,
       ...(filtros?.incluirInactivos ? {} : { estado: 'ACTIVO' }),
+      // Un modelo con tallas NO es una unidad de inventario: su stock ya es la
+      // suma de sus variantes, y las variantes cuentan por su cuenta. Al contar
+      // ambos, el Dashboard de Inventario mostraba el doble que la pantalla de
+      // Productos (COMERCIAL LINNA MODA: S/ 11,285 contra S/ 5,642 reales, y
+      // 249 productos contra 55). Es el mismo criterio que usa el Excel de
+      // inventario; el producto sin variantes es su propia unidad y se queda.
+      // Solo cuentan las variantes ACTIVAS: el stock del padre es la suma de
+      // esas (sincronizarStockPadre). Si se mira "tiene alguna variante" sin
+      // más, un modelo cuyas tallas fueron todas desactivadas se excluye y su
+      // stock desaparece del valorizado.
+      NOT: { variantes: { some: { estado: 'ACTIVO' } } },
     };
 
     if (filtros?.categoriaId) {
@@ -849,7 +864,15 @@ export class KardexService {
         sedeId && producto.stocks?.length
           ? costoDeSede(producto.stocks[0].costoPromedio, producto.costoPromedio)
           : Number(producto.costoPromedio) || 0;
-      const valorTotal = stockUsar * costoPromedio;
+      // El costo se guarda NETO, pero el valorizado que ve el empresario es el
+      // "de bolsillo" (con IGV): es el mismo criterio de la pantalla de
+      // Productos, y sin esto el Dashboard mostraba el valor dividido entre
+      // 1.18 respecto de ella aunque el conteo ya coincidiera.
+      const esGravado = String(producto.tipoAfectacionIGV ?? '10') === '10';
+      const costoDeBolsillo = esGravado
+        ? Number((costoPromedio * 1.18).toFixed(2))
+        : costoPromedio;
+      const valorTotal = stockUsar * costoDeBolsillo;
 
       return {
         id: producto.id,
@@ -2738,4 +2761,128 @@ export class KardexService {
 
     return XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
   }
+
+  /**
+   * Reporte de mermas y ajustes de inventario.
+   *
+   * Pedido de DEMENVER. Ver las salidas sueltas en el historial no alcanza para
+   * decidir: lo que sirve es saber cuántas unidades y cuánta plata se perdieron
+   * en el período, y por qué.
+   *
+   * Solo cuenta los movimientos que llevan un motivo —los que se registraron
+   * desde el inventario con su razón—. Las ventas, compras y traslados no son
+   * mermas; los ajustes viejos, sin motivo, tampoco se cuentan: no sabemos qué
+   * fueron, y meterlos inflaría la pérdida con algo que nadie puede explicar.
+   *
+   * La plata sale del `valorTotal` que ya guarda el movimiento (cantidad por el
+   * costo de ese momento). Es el costo, no el precio de venta: lo que se perdió
+   * es lo que costó reponerlo, no lo que se habría ganado.
+   */
+  async reporteMermas(
+    empresaId: number,
+    filtros: { fechaInicio?: string; fechaFin?: string; sedeId?: number } = {},
+  ) {
+    const where: any = { empresaId };
+    if (filtros.sedeId) where.sedeId = filtros.sedeId;
+    if (filtros.fechaInicio || filtros.fechaFin) {
+      where.fecha = {};
+      if (filtros.fechaInicio) {
+        where.fecha.gte = /T/.test(filtros.fechaInicio)
+          ? new Date(filtros.fechaInicio)
+          : new Date(`${filtros.fechaInicio}T00:00:00.000-05:00`);
+      }
+      if (filtros.fechaFin) {
+        where.fecha.lte = /T/.test(filtros.fechaFin)
+          ? new Date(filtros.fechaFin)
+          : new Date(`${filtros.fechaFin}T23:59:59.999-05:00`);
+      }
+    }
+
+    const movimientos = await this.prisma.movimientoKardex.findMany({
+      where,
+      include: {
+        producto: { select: { id: true, codigo: true, descripcion: true } },
+        usuario: { select: { nombre: true } },
+        sede: { select: { nombre: true } },
+      },
+      orderBy: { fecha: 'desc' },
+    });
+
+    const valorDe = (m: any): number => {
+      const total = Number(m.valorTotal ?? 0);
+      if (total > 0) return total;
+      return Number(m.cantidad ?? 0) * Number(m.costoUnitario ?? 0);
+    };
+
+    const porMotivo = new Map<string, { etiqueta: string; esPerdida: boolean; unidades: number; valor: number; movimientos: number }>();
+    const porProducto = new Map<number, { codigo: string; descripcion: string; unidades: number; valor: number }>();
+    const detalle: any[] = [];
+    let unidadesPerdidas = 0;
+    let valorPerdido = 0;
+
+    for (const m of movimientos) {
+      const motivo = motivoDelConcepto(m.concepto);
+      if (!motivo) continue;
+
+      const unidades = Number(m.cantidad ?? 0);
+      const valor = Math.round(valorDe(m) * 100) / 100;
+      const perdida = esPerdida(m.concepto);
+
+      const acumMotivo = porMotivo.get(motivo.codigo) ?? {
+        etiqueta: motivo.etiqueta, esPerdida: perdida,
+        unidades: 0, valor: 0, movimientos: 0,
+      };
+      acumMotivo.unidades += unidades;
+      acumMotivo.valor = Math.round((acumMotivo.valor + valor) * 100) / 100;
+      acumMotivo.movimientos += 1;
+      porMotivo.set(motivo.codigo, acumMotivo);
+
+      if (perdida) {
+        unidadesPerdidas += unidades;
+        valorPerdido = Math.round((valorPerdido + valor) * 100) / 100;
+        if (m.producto) {
+          const acumProd = porProducto.get(m.producto.id) ?? {
+            codigo: m.producto.codigo, descripcion: m.producto.descripcion,
+            unidades: 0, valor: 0,
+          };
+          acumProd.unidades += unidades;
+          acumProd.valor = Math.round((acumProd.valor + valor) * 100) / 100;
+          porProducto.set(m.producto.id, acumProd);
+        }
+      }
+
+      detalle.push({
+        id: m.id,
+        fecha: m.fecha,
+        tipoMovimiento: m.tipoMovimiento,
+        motivo: motivo.etiqueta,
+        esPerdida: perdida,
+        producto: m.producto?.descripcion ?? '',
+        codigo: m.producto?.codigo ?? '',
+        sede: (m as any).sede?.nombre ?? '',
+        cantidad: unidades,
+        costoUnitario: Number(m.costoUnitario ?? 0),
+        valor,
+        detalle: m.observacion ?? '',
+        responsable: (m as any).usuario?.nombre ?? '',
+      });
+    }
+
+    return {
+      resumen: {
+        unidadesPerdidas: Math.round(unidadesPerdidas * 1000) / 1000,
+        valorPerdido,
+        movimientosConMotivo: detalle.length,
+        productosAfectados: porProducto.size,
+      },
+      porMotivo: [...porMotivo.entries()]
+        .map(([codigo, v]) => ({ codigo, ...v }))
+        .sort((a, b) => b.valor - a.valor),
+      porProducto: [...porProducto.entries()]
+        .map(([productoId, v]) => ({ productoId, ...v }))
+        .sort((a, b) => b.valor - a.valor),
+      detalle,
+    };
+  }
+
 }

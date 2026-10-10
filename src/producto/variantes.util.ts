@@ -275,10 +275,15 @@ export async function sincronizarVariantes(
             where: {
               productoId_sedeId: { productoId: varianteId, sedeId: s.id },
             },
-            update: {
-              stock: s.id === stockSedeId ? stock : 0,
-              stockMinimo: 0,
-            },
+            // Solo se escribe la sede que se esta editando. Antes esto ponia
+            // `stock: 0` en TODAS las demas, asi que guardar el producto desde
+            // Sede Principal —aunque solo se cambiara el precio— vaciaba el
+            // stock de la variante en Surco y Miraflores y lo "mudaba" a
+            // Principal, sin aviso. El formulario muestra una sola columna de
+            // stock: no tiene como saber lo que hay en las otras sedes, asi
+            // que no puede decidir por ellas.
+            update:
+              s.id === stockSedeId ? { stock, stockMinimo: 0 } : {},
             create: {
               productoId: varianteId,
               sedeId: s.id,
@@ -288,6 +293,20 @@ export async function sincronizarVariantes(
           }),
         ),
       );
+
+      // El stock global de la variante es la suma de sus sedes, no el numero
+      // del formulario: el formulario solo edita UNA sede. Sin esto, dejar de
+      // pisar las demas sedes arreglaba la perdida de stock pero dejaba la
+      // variante descuadrada (global 8 contra 14 repartidos), y el padre
+      // heredaba el descuadre.
+      const sumaSedes = await prisma.productoStock.aggregate({
+        where: { productoId: varianteId },
+        _sum: { stock: true },
+      });
+      await prisma.producto.update({
+        where: { id: varianteId },
+        data: { stock: Number(sumaSedes._sum.stock ?? 0) },
+      });
     }
   }
   }
@@ -308,37 +327,53 @@ export async function sincronizarVariantes(
   }
 
   if (variantesConfig.length > 0) {
-    const stockTotal = variantesConfig.reduce(
-      (sum, config) => sum + Number(config.stock || 0),
-      0,
-    );
-    await prisma.producto.update({
-      where: { id: productoPadre.id },
-      data: { stock: stockTotal },
+    await recalcularStockPadre(prisma, productoPadre.id);
+  }
+}
+
+/**
+ * Deja el stock del padre igual a la suma de sus variantes ACTIVAS: el total
+ * global y tambien el de cada sede.
+ *
+ * Antes el padre se armaba sumando lo que venia en el formulario y poniendo 0
+ * en las demas sedes. Eso solo era cierto si el negocio tenia una sola tienda:
+ * con varias, el total del modelo dejaba de coincidir con la suma de sus
+ * tallas apenas se guardaba desde cualquier sede.
+ *
+ * Es la misma regla que aplica el kardex despues de cada movimiento
+ * (`sincronizarStockPadre`), para que guardar el formulario y vender dejen el
+ * padre en el mismo estado.
+ */
+export async function recalcularStockPadre(
+  prisma: PrismaClient | any,
+  padreId: number,
+) {
+  const totalGlobal = await prisma.producto.aggregate({
+    where: { productoPadreId: padreId, estado: 'ACTIVO' },
+    _sum: { stock: true },
+  });
+  await prisma.producto.update({
+    where: { id: padreId },
+    data: { stock: Number(totalGlobal._sum.stock ?? 0) },
+  });
+
+  const porSede = await prisma.productoStock.groupBy({
+    by: ['sedeId'],
+    where: { producto: { productoPadreId: padreId, estado: 'ACTIVO' } },
+    _sum: { stock: true },
+  });
+  for (const fila of porSede) {
+    await prisma.productoStock.upsert({
+      where: {
+        productoId_sedeId: { productoId: padreId, sedeId: fila.sedeId },
+      },
+      update: { stock: Number(fila._sum.stock ?? 0) },
+      create: {
+        productoId: padreId,
+        sedeId: fila.sedeId,
+        stock: Number(fila._sum.stock ?? 0),
+        stockMinimo: 0,
+      },
     });
-    if (stockSedeId) {
-      await prisma.productoStock.upsert({
-        where: {
-          productoId_sedeId: {
-            productoId: productoPadre.id,
-            sedeId: stockSedeId,
-          },
-        },
-        update: { stock: stockTotal },
-        create: {
-          productoId: productoPadre.id,
-          sedeId: stockSedeId,
-          stock: stockTotal,
-          stockMinimo: 0,
-        },
-      });
-      await prisma.productoStock.updateMany({
-        where: {
-          productoId: productoPadre.id,
-          sedeId: { not: stockSedeId },
-        },
-        data: { stock: 0 },
-      });
-    }
   }
 }

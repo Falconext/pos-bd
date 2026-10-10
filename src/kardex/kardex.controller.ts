@@ -153,6 +153,26 @@ export class KardexController {
   /**
    * Obtiene el inventario valorizado
    */
+  /**
+   * Reporte de mermas y ajustes: cuántas unidades y cuánta plata se perdieron
+   * en el período, y por qué. Pedido de DEMENVER.
+   */
+  @Get('reporte-mermas')
+  async reporteMermas(
+    @Query(ValidationPipe) filtros: FiltrosReporteDto,
+    @Request() req,
+  ) {
+    const empresaId = req.user.empresaId;
+    if (!empresaId) {
+      throw new BadRequestException('Usuario sin empresa asignada');
+    }
+    return this.kardexService.reporteMermas(empresaId, {
+      fechaInicio: (filtros as any).fechaInicio,
+      fechaFin: (filtros as any).fechaFin,
+      sedeId: (filtros as any).sedeId ?? req.user.sedeId,
+    });
+  }
+
   @Get('inventario-valorizado')
   async obtenerInventarioValorizado(
     @Query(ValidationPipe) filtros: FiltrosReporteDto,

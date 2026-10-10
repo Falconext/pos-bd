@@ -47,6 +47,12 @@ describe('sincronizarVariantes — herencia de costo del padre', () => {
     },
     productoStock: {
       upsert: jest.fn().mockResolvedValue({}),
+      // El stock global de la variante y el del padre se recalculan sumando
+      // las sedes, en vez de confiar en el numero del formulario (que solo
+      // habla de una sede). Este doble solo necesita responder sin romper:
+      // lo que esta prueba vigila es la herencia del costo.
+      aggregate: jest.fn().mockResolvedValue({ _sum: { stock: 0 } }),
+      groupBy: jest.fn().mockResolvedValue([]),
     },
   });
 

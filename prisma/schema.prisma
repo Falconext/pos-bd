@@ -175,6 +175,10 @@ model Empresa {
   whatsappApiToken          String?
   whatsappPhoneNumberId     String?
   whatsappBusinessId        String?
+  // PIN de verificación en dos pasos del número en Cloud API. Se fija al
+  // registrarlo (`POST /{phoneNumberId}/register`) y Meta lo vuelve a pedir
+  // para re-registrar el mismo número, así que hay que conservarlo.
+  whatsappPin               String?
   whatsappActivo            Boolean            @default(true)
   // Rastreo automático Shalom (cron 30 min): opt-in por empresa. Con `false`
   // (default) el cron NO actualiza estados ni envía WhatsApp a los clientes de
@@ -302,6 +306,11 @@ model Empresa {
   // (se registra la salida aunque el stock quede en 0/negativo). Default false = mantiene
   // el bloqueo por stock insuficiente.
   permitirVentaSinStock         Boolean                       @default(false)
+  // Lo mismo, pero para la TIENDA ONLINE y por separado: el negocio puede querer
+  // aceptar pedidos de lo agotado en la web (lo trae por encargo) sin habilitar
+  // la sobreventa en el mostrador, o al revés. Default false = la tienda sigue
+  // rechazando lo que no hay en stock.
+  tiendaVentaSinStock           Boolean                       @default(false)
   // Modo offline-first de la app móvil (Fase 1): la app puede vender/cajear sin
   // red y sincronizar después vía /sync/operaciones. OFF por defecto (rollout
   // gradual por empresa desde el panel de sistema).
@@ -634,6 +643,11 @@ model Producto {
   stockMaximo         Int?
   stockMinimo         Int?                 @default(0)
   descripcionLarga    String?
+  /// Video del producto (TikTok, YouTube, Instagram, Facebook o mp4 directo).
+  /// Se guarda la URL tal como la pega el negocio; la tienda la convierte a
+  /// reproductor. Para quien vende mostrando el producto real en sus redes, el
+  /// video convence más que una foto.
+  videoUrl            String?
   destacado           Boolean              @default(false)
   imagenUrl           String?
   imagenesExtra       String?
@@ -876,6 +890,10 @@ model TipoDocumento {
 model Cliente {
   id                    Int                  @id @default(autoincrement())
   nombre                String
+  /// Nombre corto con el que el negocio reconoce al cliente ("el de la bodega
+  /// de la esquina", "Panadería Lucho"). Se busca igual que el nombre o el
+  /// documento: el vendedor casi nunca recuerda el RUC, pero sí el apodo.
+  alias                 String?
   nroDoc                String
   direccion             String?
   email                 String?
@@ -2430,6 +2448,11 @@ model EnvioDespacho {
   formaPagoCobro           String? // EFECTIVO | YAPE | PLIN | TRANSFERENCIA | POS | NO_COBRAR
   revisarProducto          Boolean        @default(false) // el cliente puede abrir/revisar antes de pagar
   costoEnvio               Float?         @default(0) // Monto cobrado al cliente o absorbido por el negocio
+  /// Lo que el NEGOCIO le paga al courier por este despacho (motorizado, courier
+  /// local, Shalom, Olva). Es el costo real del envío, la contracara de
+  /// `costoEnvio`, que es lo que se le cobra al cliente. Alimenta el reporte de
+  /// gasto de envío por courier.
+  costoCourier             Float?
   pagarFlete               String?        @default("NEGOCIO") // CLIENTE | NEGOCIO
   aplicacionMontoCliente   String?        @default("NEGOCIO") // ITEM_ENVIO | ADELANTO | NEGOCIO
   creadoEn                 DateTime       @default(now())

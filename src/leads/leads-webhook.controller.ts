@@ -42,6 +42,30 @@ export class LeadsWebhookController {
     return res.status(403).send('Forbidden');
   }
 
+  /** Compara la firma contra UN secreto, en tiempo constante. */
+  private coincideFirma(
+    rawBody: Buffer,
+    signature: string,
+    secret: string,
+  ): boolean {
+    const expected =
+      'sha256=' + crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+    if (signature.length !== expected.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  }
+
+  /**
+   * Valida la firma del webhook aceptando también un secreto anterior
+   * (`META_APP_SECRET_PREV`).
+   *
+   * Al restablecer la clave de la app, Meta sigue firmando un rato con la
+   * anterior mientras dura su periodo de gracia. Si solo miramos la nueva,
+   * TODOS los mensajes entrantes de TODOS los clientes se descartan durante esa
+   * ventana — y el fallo es mudo: Meta recibe su 200 y en el panel no pasa nada.
+   * Con las dos claves, la rotación no tiene corte: se pone la nueva en
+   * META_APP_SECRET, la vieja en META_APP_SECRET_PREV, y se borra la segunda
+   * cuando el periodo de gracia termina.
+   */
   private firmaValida(rawBody: Buffer | undefined, signature?: string): boolean {
     const secret = process.env.META_APP_SECRET;
     if (!secret) return true; // sin secreto configurado (dev) → no bloquear
@@ -50,10 +74,16 @@ export class LeadsWebhookController {
       return process.env.NODE_ENV !== 'production';
     }
     if (!rawBody) return false;
-    const expected =
-      'sha256=' + crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
-    if (signature.length !== expected.length) return false;
-    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+    if (this.coincideFirma(rawBody, signature, secret)) return true;
+
+    const anterior = process.env.META_APP_SECRET_PREV;
+    if (anterior && this.coincideFirma(rawBody, signature, anterior)) {
+      this.logger.warn(
+        'Webhook leads: firma válida con META_APP_SECRET_PREV (rotación en curso); quita esa variable cuando Meta deje de usar la clave anterior.',
+      );
+      return true;
+    }
+    return false;
   }
 
   @Post('webhook')

@@ -236,6 +236,11 @@ export class UpdateProductoDto {
   @IsString()
   descripcionLarga?: string | null;
 
+  /** URL del video del producto (TikTok, YouTube, Instagram, Facebook o mp4). */
+  @IsOptional()
+  @IsString()
+  videoUrl?: string | null;
+
   @IsOptional()
   atributosTecnicos?: Record<string, any> | null;
 
@@ -258,4 +263,18 @@ export class UpdateProductoDto {
     codigoBarras?: string | null;
     estado?: 'ACTIVO' | 'INACTIVO';
   }[];
+  /**
+   * Por qué se ajustó el stock a mano (MERMA, ENCONTRADO, ERROR_REGISTRO…).
+   * Queda en el concepto del movimiento de kardex: sin esto el historial solo
+   * decía "Ajuste manual de stock desde inventario" y nadie sabía la razón.
+   */
+  @IsOptional()
+  @IsString()
+  motivoAjusteStock?: string;
+
+  /** El matiz en palabras: a quién, para qué, cuál lote. */
+  @IsOptional()
+  @IsString()
+  detalleAjusteStock?: string;
+
 }

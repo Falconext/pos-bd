@@ -1312,12 +1312,21 @@ export class EnviarSunatService {
         payload.documentBody['cac:CreditNoteLine'] = comp.detalles.map(
           (d: any, index: number) => {
             const tipAfe = Number(d.tipAfeIgv ?? 10);
-            const taxScheme =
-              tipAfe === 20
+            const esGrat = this.esGratuitoAfe(tipAfe);
+            // Catálogo 05 SUNAT — mismo mapeo que cac:InvoiceLine. Sin las ramas de
+            // exportación (40) y gratuito, esas líneas salían bajo el esquema 1000/IGV
+            // con cbc:Percent 0, y SUNAT las rechaza con el error 3462 ("la tasa del
+            // IGV debe ser la misma en todas las líneas y corresponder con una tasa
+            // vigente"): 0 no es una tasa de IGV válida bajo el esquema 1000.
+            const taxScheme = esGrat
+              ? { id: '9996', name: 'GRA', typeCode: 'FRE' }
+              : tipAfe === 20
                 ? { id: '9997', name: 'EXO', typeCode: 'VAT' }
                 : tipAfe === 30
                   ? { id: '9998', name: 'INA', typeCode: 'FRE' }
-                  : { id: '1000', name: 'IGV', typeCode: 'VAT' };
+                  : tipAfe === 40
+                    ? { id: '9995', name: 'EXP', typeCode: 'FRE' }
+                    : { id: '1000', name: 'IGV', typeCode: 'VAT' };
             return {
               'cbc:ID': { _text: (index + 1).toString() },
               'cbc:CreditedQuantity': {
@@ -1354,7 +1363,13 @@ export class EnviarSunatService {
                     },
                     'cac:TaxCategory': {
                       'cbc:Percent': {
-                        _text: tipAfe === 10 ? d.porcentajeIgv || 18 : 0,
+                        // Gravado (10) y gravado gratuito (11-16) llevan la tasa;
+                        // exonerado/inafecto/exportación y los gratuitos no gravados
+                        // van en 0, que es lo que SUNAT espera bajo sus esquemas.
+                        _text:
+                          tipAfe === 10 || (tipAfe >= 11 && tipAfe <= 16)
+                            ? d.porcentajeIgv || 18
+                            : 0,
                       },
                       'cbc:TaxExemptionReasonCode': {
                         _text: String(d.tipAfeIgv || 10),
@@ -1399,10 +1414,32 @@ export class EnviarSunatService {
           'cac:TaxSubtotal': (() => {
             const cur = comp.tipoMoneda;
             const subtotals: any[] = [];
+            // Gratuitas (9996 GRA): se derivan de las líneas, no hay columna propia.
+            const gratLines = (comp.detalles || []).filter((x: any) =>
+              this.esGratuitoAfe(Number(x.tipAfeIgv)),
+            );
+            const round2 = (n: number) => Math.round(n * 100) / 100;
+            const baseGrat = round2(
+              gratLines.reduce(
+                (acc: number, x: any) => acc + Number(x.mtoBaseIgv || 0),
+                0,
+              ),
+            );
+            const igvGrat = round2(
+              gratLines.reduce(
+                (acc: number, x: any) => acc + Number(x.igv || 0),
+                0,
+              ),
+            );
+            // IGV (gravado) — solo si hay base gravada, o si no existe NINGUNA otra
+            // operación. La condición omitía exportación y gratuitas, así que una
+            // nota 100% de exportación emitía igual un subtotal 1000/IGV en cero.
             if (
               Number(comp.mtoOperGravadas) > 0 ||
               (Number(comp.mtoOperExoneradas ?? 0) === 0 &&
-                Number(comp.mtoOperInafectas ?? 0) === 0)
+                Number(comp.mtoOperInafectas ?? 0) === 0 &&
+                Number(comp.mtoOperExportacion ?? 0) === 0 &&
+                baseGrat === 0)
             ) {
               subtotals.push({
                 'cbc:TaxableAmount': {
@@ -1454,12 +1491,59 @@ export class EnviarSunatService {
                 },
               });
             }
+            // Exportación (9995)
+            if (Number(comp.mtoOperExportacion ?? 0) > 0) {
+              subtotals.push({
+                'cbc:TaxableAmount': {
+                  _attributes: { currencyID: cur },
+                  _text: comp.mtoOperExportacion,
+                },
+                'cbc:TaxAmount': { _attributes: { currencyID: cur }, _text: 0 },
+                'cac:TaxCategory': {
+                  'cac:TaxScheme': {
+                    'cbc:ID': { _text: '9995' },
+                    'cbc:Name': { _text: 'EXP' },
+                    'cbc:TaxTypeCode': { _text: 'FRE' },
+                  },
+                },
+              });
+            }
+            // Gratuito (9996 GRA)
+            if (baseGrat > 0) {
+              subtotals.push({
+                'cbc:TaxableAmount': {
+                  _attributes: { currencyID: cur },
+                  _text: baseGrat,
+                },
+                'cbc:TaxAmount': {
+                  _attributes: { currencyID: cur },
+                  _text: igvGrat,
+                },
+                'cac:TaxCategory': {
+                  'cac:TaxScheme': {
+                    'cbc:ID': { _text: '9996' },
+                    'cbc:Name': { _text: 'GRA' },
+                    'cbc:TaxTypeCode': { _text: 'FRE' },
+                  },
+                },
+              });
+            }
             return subtotals;
           })(),
         };
 
-        // Ajustar estructura monetaria para nota de crédito
+        // Estructura monetaria de la nota de crédito. Solo iba PayableAmount: una
+        // nota sin base gravada salía con el total en 0 contra líneas con importe,
+        // y SUNAT no puede cuadrar el documento. Mismos tres nodos que la factura.
         payload.documentBody['cac:LegalMonetaryTotal'] = {
+          'cbc:LineExtensionAmount': {
+            _attributes: { currencyID: comp.tipoMoneda },
+            _text: comp.valorVenta,
+          },
+          'cbc:TaxInclusiveAmount': {
+            _attributes: { currencyID: comp.tipoMoneda },
+            _text: comp.mtoImpVenta,
+          },
           'cbc:PayableAmount': {
             _attributes: { currencyID: comp.tipoMoneda },
             _text: comp.mtoImpVenta,
@@ -1505,12 +1589,17 @@ export class EnviarSunatService {
         // igual que CreditNoteLine, cambiando solo el elemento de cantidad.
         const debitNoteLines = comp.detalles.map((d: any, index: number) => {
           const tipAfe = Number(d.tipAfeIgv ?? 10);
-          const taxScheme =
-            tipAfe === 20
+          const esGrat = this.esGratuitoAfe(tipAfe);
+          // Catálogo 05 SUNAT — ver la nota en cac:CreditNoteLine (error 3462).
+          const taxScheme = esGrat
+            ? { id: '9996', name: 'GRA', typeCode: 'FRE' }
+            : tipAfe === 20
               ? { id: '9997', name: 'EXO', typeCode: 'VAT' }
               : tipAfe === 30
                 ? { id: '9998', name: 'INA', typeCode: 'FRE' }
-                : { id: '1000', name: 'IGV', typeCode: 'VAT' };
+                : tipAfe === 40
+                  ? { id: '9995', name: 'EXP', typeCode: 'FRE' }
+                  : { id: '1000', name: 'IGV', typeCode: 'VAT' };
           return {
             'cbc:ID': { _text: (index + 1).toString() },
             'cbc:DebitedQuantity': {
@@ -1547,7 +1636,10 @@ export class EnviarSunatService {
                   },
                   'cac:TaxCategory': {
                     'cbc:Percent': {
-                      _text: tipAfe === 10 ? d.porcentajeIgv || 18 : 0,
+                      _text:
+                        tipAfe === 10 || (tipAfe >= 11 && tipAfe <= 16)
+                          ? d.porcentajeIgv || 18
+                          : 0,
                     },
                     'cbc:TaxExemptionReasonCode': {
                       _text: String(d.tipAfeIgv || 10),

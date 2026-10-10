@@ -18,6 +18,16 @@ export class ActualizarConfigEnvioDto {
   @IsBoolean()
   aceptaRecojo?: boolean;
 
+  /**
+   * Aceptar pedidos de productos agotados. El negocio que trabaja por encargo
+   * prefiere recibir el pedido y luego traer el producto, antes que perder la
+   * venta por un stock en cero.
+   */
+  @IsOptional()
+  @IsBoolean()
+  tiendaVentaSinStock?: boolean;
+
+
   @IsOptional()
   @IsBoolean()
   aceptaEnvio?: boolean;

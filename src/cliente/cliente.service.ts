@@ -121,6 +121,7 @@ export class ClienteService {
   async crear(
     data: {
       nombre?: string;
+      alias?: string | null;
       tipoDoc: 'DNI' | 'RUC' | 'CE' | 'PASAPORTE' | 'OTRO';
       nroDoc?: string;
       direccion?: string;
@@ -196,6 +197,7 @@ export class ClienteService {
           data: {
             persona: personaFinal,
             ...(data.nombre ? { nombre: data.nombre } : {}),
+            ...(data.alias !== undefined ? { alias: data.alias } : {}),
             ...(data.direccion ? { direccion: data.direccion } : {}),
             ...(data.email ? { email: data.email } : {}),
             ...(data.telefono ? { telefono: data.telefono } : {}),
@@ -222,6 +224,7 @@ export class ClienteService {
     return this.prisma.cliente.create({
       data: {
         nombre: String(data.nombre || '').trim(),
+        alias: data.alias?.trim() || null,
         nroDoc,
         direccion: data.direccion,
         email: data.email,
@@ -274,6 +277,7 @@ export class ClienteService {
         ? {
             OR: [
               { nombre: { contains: search, mode: 'insensitive' } },
+              { alias: { contains: search, mode: 'insensitive' } },
               { nroDoc: { contains: search, mode: 'insensitive' } },
               { telefono: { contains: search } },
             ],
@@ -308,6 +312,7 @@ export class ClienteService {
     id: number;
     empresaId: number;
     nombre?: string;
+    alias?: string | null;
     direccion?: string;
     email?: string;
     telefono?: string;
@@ -347,6 +352,8 @@ export class ClienteService {
       where: { id: data.id },
       data: {
         nombre: data.nombre,
+        // `undefined` deja el alias como estaba; '' lo borra a propósito.
+        ...(data.alias !== undefined ? { alias: data.alias?.trim() || null } : {}),
         nroDoc,
         tipoDocumentoId: tipoDocumento?.id,
         direccion: data.direccion,
@@ -461,6 +468,7 @@ export class ClienteService {
       OR: search
         ? [
             { nombre: { contains: search, mode: 'insensitive' } },
+              { alias: { contains: search, mode: 'insensitive' } },
             { nroDoc: { contains: search, mode: 'insensitive' } },
               { telefono: { contains: search } },
           ]

@@ -87,4 +87,14 @@ export class FiltrosReporteDto {
   @IsOptional()
   @Transform(({ value }) => value === 'true')
   soloStockCritico?: boolean = false;
+
+  /**
+   * Sede a consultar. Sin esto el `ValidationPipe` (whitelist) lo descartaba y
+   * el reporte salía siempre de la sede del usuario.
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  sedeId?: number;
 }

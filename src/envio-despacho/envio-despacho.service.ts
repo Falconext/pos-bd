@@ -56,6 +56,7 @@ const DESPACHO_FIELDS = [
   'pesoKg',
   'montoCOD',
   'costoEnvio',
+  'costoCourier',
   'pagarFlete',
   'aplicacionMontoCliente',
   // Reparto propio / motorizado externo
@@ -436,7 +437,13 @@ export class EnvioDespachoService {
 
   async panelUnificado(
     empresaId: number,
-    params?: { fecha?: string; page?: number; limit?: number },
+    params?: {
+      fecha?: string;
+      /** Día de ENTREGA programada. Ver nota abajo. */
+      fechaEnvio?: string;
+      page?: number;
+      limit?: number;
+    },
   ) {
     const page = params?.page ?? 1;
     const limit = params?.limit ?? 50;
@@ -449,11 +456,30 @@ export class EnvioDespachoService {
         }
       : undefined;
 
+    // Filtro por día de ENTREGA: "qué sale el jueves" (pedido de COMERCIAL
+    // LINNA MODA, que despacha por día). `fechaEstimada` se guarda a mediodía
+    // UTC (parseFechaSoloDia), así que el rango va en UTC y no en hora de Lima:
+    // con el offset -05:00 el mediodía UTC del día siguiente también entraría.
+    const envioWhere = params?.fechaEnvio
+      ? {
+          gte: new Date(`${params.fechaEnvio}T00:00:00.000Z`),
+          lte: new Date(`${params.fechaEnvio}T23:59:59.999Z`),
+        }
+      : undefined;
+
+    // Un pedido que sale el jueves pudo tomarse el lunes: cuando se filtra por
+    // día de entrega, el día de creación deja de acotar o no se vería.
+    const filtroDespacho = envioWhere
+      ? { fechaEstimada: envioWhere }
+      : fechaWhere
+        ? { creadoEn: fechaWhere }
+        : {};
+
     const [despachos, pedidos] = await Promise.all([
       this.prisma.envioDespacho.findMany({
         where: {
           comprobante: { empresaId },
-          ...(fechaWhere ? { creadoEn: fechaWhere } : {}),
+          ...filtroDespacho,
         },
         orderBy: { creadoEn: 'desc' },
         take: limit,
@@ -992,7 +1018,43 @@ export class EnvioDespachoService {
    * entrega programada (`fechaEstimada`); si no se programó, cuenta el día en
    * que se creó el despacho. Por defecto un solo día (hoy en Lima).
    */
-  private async despachosRepartoPropio(
+  /**
+   * A qué `transportista` corresponde cada modo del reporte.
+   *
+   * Shalom se guarda con tres variantes (`SHALOM`, `SHALOM_PRO`, `SHALOM_COD`)
+   * según cómo se creó el envío, así que se filtra por coincidencia parcial —
+   * el mismo criterio que usa `analisis-financiero`. `NO_APLICA` es una venta
+   * que no se despacha: nunca entra al reporte.
+   */
+  private filtroCourier(courier?: string) {
+    switch (courier) {
+      case 'SHALOM':
+        return { transportista: { contains: 'SHALOM' } };
+      case 'OLVA':
+        return { transportista: { contains: 'OLVA' } };
+      case 'TODOS':
+        return {
+          AND: [
+            { transportista: { not: null } },
+            { transportista: { not: 'NO_APLICA' } },
+          ],
+        };
+      default:
+        return { transportista: 'PROPIOS' };
+    }
+  }
+
+  /**
+   * Los envíos por agencia (Shalom/Olva) no se validan ni se agrupan como el
+   * reparto propio: no tienen distrito ni repartidor, su destino es la agencia
+   * y lo que falta para despacharlos es el DNI del destinatario, no el tipo de
+   * venta de la plantilla del motorizado.
+   */
+  private modoReporte(courier?: string): 'PROPIOS' | 'AGENCIA' {
+    return !courier || courier === 'PROPIOS' ? 'PROPIOS' : 'AGENCIA';
+  }
+
+  private async despachosParaReporte(
     empresaId: number,
     q: ExportarRepartoQueryDto,
   ) {
@@ -1019,7 +1081,7 @@ export class EnvioDespachoService {
 
     const items = await this.prisma.envioDespacho.findMany({
       where: {
-        transportista: 'PROPIOS',
+        ...this.filtroCourier(q.courier),
         comprobante: {
           empresaId,
           // Una venta anulada no se reparte ni se cobra.
@@ -1098,12 +1160,42 @@ export class EnvioDespachoService {
     DEVUELTO: 'Devuelto',
   };
 
-  /** Fila de la plantilla del courier + los datos internos, para export y resumen. */
+  /** Etiqueta legible del courier, para agrupar y comparar en el resumen. */
+  private static courierLabel(transportista?: string | null) {
+    const t = String(transportista || '').toUpperCase();
+    if (t === 'PROPIOS') return 'Reparto propio';
+    if (t.includes('SHALOM')) return 'Shalom';
+    if (t.includes('OLVA')) return 'Olva';
+    return t ? t.replace(/_/g, ' ') : '(sin courier)';
+  }
+
+  /**
+   * Fila de la plantilla del courier + los datos internos, para export y resumen.
+   *
+   * Cada fila se interpreta según SU propio transportista, no según el modo del
+   * reporte: en `TODOS` conviven motorizado y agencia en el mismo listado, y
+   * decidirlo por el reporte hacía que los envíos de reparto propio reclamaran
+   * "agencia destino" y que su destino saliera como la dirección del cliente en
+   * vez del distrito.
+   */
   private filaReparto(e: any) {
+    const modo: 'PROPIOS' | 'AGENCIA' =
+      String(e.transportista || '').toUpperCase() === 'PROPIOS'
+        ? 'PROPIOS'
+        : 'AGENCIA';
     const c = e.comprobante;
+    // Qué significa "se cobra en destino" según el modo. El reparto propio lo
+    // declara en `tipoVentaReparto` (campo de su plantilla); un envío por
+    // agencia no tiene ese campo, así que se cobra cuando es un Shalom COD o
+    // cuando se dejó un monto a cobrar — sin esto, todo COD salía en S/0.
     const cobra =
-      e.tipoVentaReparto === 'CONTRAENTREGA' ||
-      e.tipoVentaReparto === 'CONTRAENTREGA_CAMBIO';
+      modo === 'AGENCIA'
+        ? Number(e.montoCOD ?? 0) > 0 ||
+          String(e.transportista || '')
+            .toUpperCase()
+            .includes('COD')
+        : e.tipoVentaReparto === 'CONTRAENTREGA' ||
+          e.tipoVentaReparto === 'CONTRAENTREGA_CAMBIO';
     // Monto a cobrar: el indicado en el despacho; si no se puso y la venta es
     // contraentrega, lo que falta por pagar del comprobante.
     // Monto a cobrar: el indicado en el despacho o, si no se puso, lo que falta
@@ -1166,19 +1258,67 @@ export class EnvioDespachoService {
       ? ''
       : nombreManual || (esGenerico(nombreCliente) ? '' : nombreCliente);
     const distrito = String(e.distrito || '').trim();
+    const agencia = String(e.agenciaDestino || '').trim();
+    const dni = String(e.dniDestinatario || '').replace(/\D/g, '');
     const faltan: string[] = [];
-    if (!e.tipoVentaReparto) faltan.push('tipo de venta');
-    if (!nombre) faltan.push('nombre');
-    if (!/^9\d{8}$/.test(telefono)) faltan.push('teléfono');
-    if (!distrito) faltan.push('distrito');
-    if (!direccion) faltan.push('dirección');
-    if (!detalle) faltan.push('detalle');
+    if (modo === 'AGENCIA') {
+      // Lo que exige `crearGuiaDesdeDespacho` para registrar la guía: sin esto
+      // el envío no se puede emitir. El tipo de venta, el distrito y la forma
+      // de pago son de la plantilla del motorizado y aquí no aplican — pedirlos
+      // marcaría como incompleto a todo envío por agencia.
+      if (!nombre) faltan.push('nombre');
+      if (!/^\d{8}$/.test(dni)) faltan.push('DNI');
+      if (!/^9\d{8}$/.test(telefono)) faltan.push('teléfono');
+      if (!agencia) faltan.push('agencia destino');
+    } else {
+      if (!e.tipoVentaReparto) faltan.push('tipo de venta');
+      if (!nombre) faltan.push('nombre');
+      if (!/^9\d{8}$/.test(telefono)) faltan.push('teléfono');
+      if (!distrito) faltan.push('distrito');
+      if (!direccion) faltan.push('dirección');
+      if (!detalle) faltan.push('detalle');
+    }
     // Un pedido ya entregado no vuelve al motorizado: si además ya se cobró
     // (saldo 0), no es un dato faltante sino un cobro cerrado.
     if (cobra && montoCobrar <= 0 && e.estado !== 'ENTREGADO')
       faltan.push('monto a cobrar');
-    if (cobra && (!e.formaPagoCobro || e.formaPagoCobro === 'NO_COBRAR'))
+    // La forma de pago es una columna de la plantilla del motorizado; en un
+    // Shalom COD el cobro lo hace la agencia y no se elige aquí.
+    if (
+      modo === 'PROPIOS' &&
+      cobra &&
+      (!e.formaPagoCobro || e.formaPagoCobro === 'NO_COBRAR')
+    )
       faltan.push('forma de pago');
+    // Destino del envío: el distrito es el eje del motorizado, la agencia el de
+    // Shalom/Olva. Un solo campo para que "a dónde mando más" funcione igual en
+    // los dos modos y se puedan comparar couriers en el modo TODOS.
+    const destino =
+      (modo === 'AGENCIA' ? agencia || direccion : distrito) || '(sin destino)';
+    // El courier confirma la entrega por su propio rastreo (lo sincroniza el
+    // scheduler); `estado` puede ir atrás si nadie abrió el panel.
+    const entregado =
+      e.estado === 'ENTREGADO' ||
+      e.shalomEntregado === true ||
+      e.olvaEntregado === true;
+    // En agencia el flete real es el que cotizó Shalom al crear la guía;
+    // `costoEnvio` queda en 0 cuando nadie lo tipeó a mano. En reparto propio se
+    // respeta tal cual para no mover los números que ya ve el motorizado.
+    const costoEnvio = this.round2(
+      modo === 'AGENCIA'
+        ? Number(e.costoEnvio ?? 0) || Number(e.shalomFleteCotizado ?? 0)
+        : Number(e.costoEnvio ?? 0),
+    );
+    // Día calendario efectivo, con el mismo criterio que `fechaTxt`: la fecha
+    // programada se lee en UTC y la de creación en hora de Lima. Base del eje
+    // mes a mes.
+    const diaIso = e.fechaEstimada
+      ? new Date(e.fechaEstimada).toISOString().slice(0, 10)
+      : e.creadoEn
+        ? new Date(e.creadoEn).toLocaleDateString('en-CA', {
+            timeZone: 'America/Lima',
+          })
+        : '';
     // Contraentrega con "No cobrar" es contradictorio: se deja vacío (y CARGA lo
     // marca) en vez de mandar "NO COBRAR" junto a un monto.
     const formaPago = cobra
@@ -1217,18 +1357,47 @@ export class EnvioDespachoService {
         'FLETE LO PAGA': e.pagarFlete || '',
         'CÓDIGO GUÍA': e.codigoGuia || '',
       },
+      envio: {
+        DOCUMENTO: documento,
+        FECHA: fechaTxt,
+        COURIER: EnvioDespachoService.courierLabel(e.transportista),
+        DESTINATARIO: nombre,
+        DNI: dni,
+        TELEFONO: telefono,
+        DESTINO: destino,
+        'N° GUÍA / ORDEN': String(e.nroOrden || e.codigoGuia || '').trim(),
+        CLAVE: String(e.claveEnvio || '').trim(),
+        'N° PAQUETES': e.nroPaquetes ?? 1,
+        CONTENIDO: detalle,
+        ESTADO: EnvioDespachoService.ESTADO_LABEL[e.estado] || e.estado,
+        'RASTREO COURIER': String(e.shalomEstado || e.olvaEstado || '').trim(),
+        ENTREGADO: entregado ? 'SI' : 'NO',
+        'TOTAL VENTA': this.round2(totalPen),
+        'MONTO A COBRAR': montoCobrar,
+        'COSTO ENVÍO': costoEnvio,
+        'SEDE ORIGEN': c?.sede?.nombre || '',
+        CARGA: faltan.length ? `FALTAN DATOS: ${faltan.join(', ')}` : 'OK',
+      },
       meta: {
         completo: faltan.length === 0,
         cobra,
         montoCobrar,
         distrito: distrito || '(sin distrito)',
+        destino,
+        courier: EnvioDespachoService.courierLabel(e.transportista),
+        mes: diaIso.slice(0, 7) || '(sin fecha)',
+        entregado,
         tipoVenta: e.tipoVentaReparto || '(sin tipo)',
         formaPago: cobra ? e.formaPagoCobro || '(sin forma)' : 'NO_COBRAR',
         estado: e.estado,
         repartidor: e.repartidor?.nombre || '(sin repartidor)',
         sede: c?.sede?.nombre || '(sin sede)',
         totalVenta: this.round2(totalPen),
-        costoEnvio: this.round2(Number(e.costoEnvio ?? 0)),
+        costoEnvio,
+        // Lo que el negocio PAGA al courier por este despacho. Distinto de
+        // `costoEnvio`, que es lo que se le cobra al cliente: con reparto propio
+        // se puede cobrar S/15 al comprador y pagarle S/8 al motorizado.
+        costoCourier: this.round2(Number(e.costoCourier ?? 0)),
       },
     };
   }
@@ -1236,15 +1405,29 @@ export class EnvioDespachoService {
   /** Agrupa contando pedidos y sumando monto a cobrar; base de las estadísticas. */
   private agrupar(
     filas: ReturnType<EnvioDespachoService['filaReparto']>[],
-    key: 'distrito' | 'tipoVenta' | 'formaPago' | 'estado' | 'repartidor' | 'sede',
+    key:
+      | 'distrito'
+      | 'destino'
+      | 'courier'
+      | 'mes'
+      | 'tipoVenta'
+      | 'formaPago'
+      | 'estado'
+      | 'repartidor'
+      | 'sede',
   ) {
-    const map = new Map<string, { pedidos: number; montoCobrar: number; totalVenta: number }>();
+    const map = new Map<
+      string,
+      { pedidos: number; montoCobrar: number; totalVenta: number; costoCourier: number }
+    >();
     for (const f of filas) {
       const k = f.meta[key];
-      const acc = map.get(k) ?? { pedidos: 0, montoCobrar: 0, totalVenta: 0 };
+      const acc =
+        map.get(k) ?? { pedidos: 0, montoCobrar: 0, totalVenta: 0, costoCourier: 0 };
       acc.pedidos += 1;
       acc.montoCobrar = this.round2(acc.montoCobrar + f.meta.montoCobrar);
       acc.totalVenta = this.round2(acc.totalVenta + f.meta.totalVenta);
+      acc.costoCourier = this.round2(acc.costoCourier + f.meta.costoCourier);
       map.set(k, acc);
     }
     return [...map.entries()]
@@ -1253,7 +1436,10 @@ export class EnvioDespachoService {
   }
 
   async resumenReparto(empresaId: number, q: ExportarRepartoQueryDto) {
-    const { items, fecha, fechaFin } = await this.despachosRepartoPropio(empresaId, q);
+    const { items, fecha, fechaFin } = await this.despachosParaReporte(
+      empresaId,
+      q,
+    );
     const filas = items.map((e) => this.filaReparto(e));
     const totales = filas.reduce(
       (acc, f) => ({
@@ -1263,15 +1449,22 @@ export class EnvioDespachoService {
         montoCobrar: this.round2(acc.montoCobrar + f.meta.montoCobrar),
         totalVenta: this.round2(acc.totalVenta + f.meta.totalVenta),
         costoEnvio: this.round2(acc.costoEnvio + f.meta.costoEnvio),
-        entregados: acc.entregados + (f.meta.estado === 'ENTREGADO' ? 1 : 0),
+        costoCourier: this.round2(acc.costoCourier + f.meta.costoCourier),
+        entregados: acc.entregados + (f.meta.entregado ? 1 : 0),
       }),
-      { pedidos: 0, completos: 0, contraentrega: 0, montoCobrar: 0, totalVenta: 0, costoEnvio: 0, entregados: 0 },
+      { pedidos: 0, completos: 0, contraentrega: 0, montoCobrar: 0, totalVenta: 0, costoEnvio: 0, costoCourier: 0, entregados: 0 },
     );
     return {
       fecha,
       fechaFin,
       totales,
+      courier: q.courier || 'PROPIOS',
       porDistrito: this.agrupar(filas, 'distrito'),
+      porDestino: this.agrupar(filas, 'destino'),
+      porCourier: this.agrupar(filas, 'courier'),
+      porMes: this.agrupar(filas, 'mes').sort((a, b) =>
+        a.nombre.localeCompare(b.nombre),
+      ),
       porTipoVenta: this.agrupar(filas, 'tipoVenta'),
       porFormaPago: this.agrupar(filas, 'formaPago'),
       porEstado: this.agrupar(filas, 'estado'),
@@ -1279,7 +1472,7 @@ export class EnvioDespachoService {
       porSede: this.agrupar(filas, 'sede'),
       incompletos: filas
         .filter((f) => !f.meta.completo)
-        .map((f) => ({ documento: f.interno.DOCUMENTO, falta: f.courier.CARGA })),
+        .map((f) => ({ documento: f.interno.DOCUMENTO, falta: f.envio.CARGA })),
       otrasFechas: await this.pendientesOtrasFechas(empresaId, q, fecha, fechaFin),
     };
   }
@@ -1297,7 +1490,7 @@ export class EnvioDespachoService {
   ) {
     const items = await this.prisma.envioDespacho.findMany({
       where: {
-        transportista: 'PROPIOS',
+        ...this.filtroCourier(q.courier),
         estado: { notIn: ['ENTREGADO', 'DEVUELTO'] as any },
         comprobante: {
           empresaId,
@@ -1323,30 +1516,52 @@ export class EnvioDespachoService {
   }
 
   async exportarReparto(empresaId: number, q: ExportarRepartoQueryDto) {
-    const { items, fecha, fechaFin } = await this.despachosRepartoPropio(empresaId, q);
+    const modo = this.modoReporte(q.courier);
+    const { items, fecha, fechaFin } = await this.despachosParaReporte(
+      empresaId,
+      q,
+    );
     const filas = items.map((e) => this.filaReparto(e));
     const resumen = await this.resumenReparto(empresaId, q);
 
     const wb = XLSX.utils.book_new();
-    // Hoja 1: EXACTAMENTE las 13 columnas de la plantilla del courier, sin extras,
-    // para que se cargue tal cual en su sistema.
-    const wsPedidos = XLSX.utils.json_to_sheet(filas.map((f) => f.courier));
-    wsPedidos['!cols'] = [14, 34, 30, 18, 24, 40, 24, 18, 40, 18, 16, 30, 14].map((wch) => ({ wch }));
-    XLSX.utils.book_append_sheet(wb, wsPedidos, 'PEDIDOS');
-    // Hoja 2: qué documento/sede/repartidor es cada fila (mismo orden que PEDIDOS).
-    const wsInterno = XLSX.utils.json_to_sheet(
-      filas.map((f, i) => ({ FILA: i + 1, ...f.interno, DESTINATARIO: f.courier['NOMBRE DEL DESTINATARIO'], DISTRITO: f.courier['DISTRITO (SELECCIONE SOLO DEL LISTADO)'] })),
-    );
-    XLSX.utils.book_append_sheet(wb, wsInterno, 'DETALLE INTERNO');
-    // Hoja 3: resumen para estadísticas.
+    if (modo === 'AGENCIA') {
+      // Envíos por agencia: una sola hoja de datos, pensada para leer y cruzar.
+      // A propósito NO se emite la plantilla de carga masiva del courier: la
+      // guía se genera desde el sistema (`crearGuiaDesdeDespacho`), y producir
+      // aquí un Excel para subirlo a mano reconstruiría el paso manual que ese
+      // flujo ya reemplaza.
+      const wsEnvios = XLSX.utils.json_to_sheet(filas.map((f) => f.envio));
+      wsEnvios['!cols'] = [
+        16, 12, 14, 30, 11, 12, 34, 18, 10, 12, 40, 14, 16, 11, 14, 16, 14, 20,
+        34,
+      ].map((wch) => ({ wch }));
+      XLSX.utils.book_append_sheet(wb, wsEnvios, 'ENVIOS');
+    } else {
+      // Hoja 1: EXACTAMENTE las 13 columnas de la plantilla del courier, sin extras,
+      // para que se cargue tal cual en su sistema.
+      const wsPedidos = XLSX.utils.json_to_sheet(filas.map((f) => f.courier));
+      wsPedidos['!cols'] = [14, 34, 30, 18, 24, 40, 24, 18, 40, 18, 16, 30, 14].map((wch) => ({ wch }));
+      XLSX.utils.book_append_sheet(wb, wsPedidos, 'PEDIDOS');
+      // Hoja 2: qué documento/sede/repartidor es cada fila (mismo orden que PEDIDOS).
+      const wsInterno = XLSX.utils.json_to_sheet(
+        filas.map((f, i) => ({ FILA: i + 1, ...f.interno, DESTINATARIO: f.courier['NOMBRE DEL DESTINATARIO'], DISTRITO: f.courier['DISTRITO (SELECCIONE SOLO DEL LISTADO)'] })),
+      );
+      XLSX.utils.book_append_sheet(wb, wsInterno, 'DETALLE INTERNO');
+    }
+    // Hoja de resumen para estadísticas.
     const t = resumen.totales;
     const bloque = (titulo: string, grupos: { nombre: string; pedidos: number; montoCobrar: number; totalVenta: number }[]) => [
       [titulo, 'PEDIDOS', 'MONTO A COBRAR', 'TOTAL VENTA'],
       ...grupos.map((g) => [g.nombre, g.pedidos, g.montoCobrar, g.totalVenta]),
       [],
     ];
+    const titulo =
+      modo === 'AGENCIA'
+        ? `RESUMEN ENVÍOS · ${q.courier === 'TODOS' ? 'TODOS LOS COURIERS' : q.courier}`
+        : 'RESUMEN REPARTO PROPIO';
     const aoa: any[][] = [
-      ['RESUMEN REPARTO PROPIO', fecha === fechaFin ? fecha : `${fecha} a ${fechaFin}`],
+      [titulo, fecha === fechaFin ? fecha : `${fecha} a ${fechaFin}`],
       [],
       ['Pedidos', t.pedidos],
       ['Con datos completos', t.completos],
@@ -1356,11 +1571,26 @@ export class EnvioDespachoService {
       ['Costo de envío (S/)', t.costoEnvio],
       ['Entregados', t.entregados],
       [],
-      ...bloque('POR DISTRITO', resumen.porDistrito),
-      ...bloque('POR TIPO DE VENTA', resumen.porTipoVenta),
-      ...bloque('POR FORMA DE PAGO', resumen.porFormaPago),
+      // Mes a mes y destino van primero: son las dos preguntas del empresario
+      // ("a dónde mando más por mes").
+      ...bloque('POR MES', resumen.porMes),
+      ...bloque(
+        modo === 'PROPIOS'
+          ? 'POR DISTRITO'
+          : q.courier === 'TODOS'
+            ? 'POR DESTINO'
+            : 'POR AGENCIA DESTINO',
+        resumen.porDestino,
+      ),
+      ...bloque('POR COURIER', resumen.porCourier),
+      ...(modo === 'AGENCIA'
+        ? []
+        : [
+            ...bloque('POR TIPO DE VENTA', resumen.porTipoVenta),
+            ...bloque('POR FORMA DE PAGO', resumen.porFormaPago),
+            ...bloque('POR REPARTIDOR', resumen.porRepartidor),
+          ]),
       ...bloque('POR ESTADO', resumen.porEstado),
-      ...bloque('POR REPARTIDOR', resumen.porRepartidor),
       ...bloque('POR SEDE', resumen.porSede),
     ];
     const wsResumen = XLSX.utils.aoa_to_sheet(aoa);
@@ -1368,7 +1598,11 @@ export class EnvioDespachoService {
     XLSX.utils.book_append_sheet(wb, wsResumen, 'RESUMEN');
 
     const buffer: Buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' });
-    const nombreArchivo = `reparto_${fecha}${fechaFin !== fecha ? `_a_${fechaFin}` : ''}.xlsx`;
+    const prefijo =
+      modo === 'AGENCIA'
+        ? `envios_${String(q.courier || '').toLowerCase()}`
+        : 'reparto';
+    const nombreArchivo = `${prefijo}_${fecha}${fechaFin !== fecha ? `_a_${fechaFin}` : ''}.xlsx`;
     return { buffer, nombreArchivo };
   }
 
