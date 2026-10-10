@@ -49,6 +49,23 @@ const lima = (nombre: string, ...alias: string[]): LugarZona => ({
  * base de conocimiento. Es el DEFAULT, no una constante del sistema: cada
  * empresa guarda la suya.
  */
+/**
+ * Sin zonas: la empresa no configuró su reparto.
+ *
+ * Es el defecto, y es a propósito que no tenga tarifas. Con las de Hierba
+ * Sana de relleno, cualquier otra empresa que encendiera la IA le cotizaba a
+ * sus clientes "S/ 15 a domicilio en Lima" y "S/ 10 por agencia" con los 37
+ * distritos de otro negocio — precios que su dueño nunca fijó.
+ *
+ * El flujo lo detecta y deriva a una persona en vez de inventar un monto.
+ */
+export const SIN_CONFIG_ENVIO: ConfigEnvio = { zonas: [], zonaPorDefecto: '' };
+
+/** ¿La empresa tiene su reparto configurado? */
+export function tieneEnvioConfigurado(config?: ConfigEnvio | null): boolean {
+  return (config?.zonas?.length ?? 0) > 0;
+}
+
 export const CONFIG_ENVIO_HIERBA_SANA: ConfigEnvio = {
   zonaPorDefecto: 'Provincia',
   zonas: [

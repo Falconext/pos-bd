@@ -5,20 +5,21 @@ import { ComprobanteService } from '../comprobante/comprobante.service';
 import { EnvioDespachoService } from '../envio-despacho/envio-despacho.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import {
-  CONFIG_ENVIO_HIERBA_SANA,
+  SIN_CONFIG_ENVIO,
+  tieneEnvioConfigurado,
   ConfigEnvio,
   TipoZona,
   resolverDestino,
 } from './envio-zonas';
 import {
-  HORARIO_HIERBA_SANA,
+  HORARIO_POR_DEFECTO,
   ConfigHorarioEntrega,
   normalizarCelular,
   validarCelular,
   validarDni,
 } from './validaciones-pedido';
 import {
-  REGLAS_HIERBA_SANA,
+  SIN_DESCUENTO,
   ReglasDescuento,
   calcularDescuento,
   soles,
@@ -91,9 +92,15 @@ export class LeadsPedidoService {
     const guardada = (empresa?.iaVentasConfigJson ??
       {}) as Partial<ConfigComercial>;
     return {
-      envio: guardada.envio ?? CONFIG_ENVIO_HIERBA_SANA,
-      horario: guardada.horario ?? HORARIO_HIERBA_SANA,
-      descuento: guardada.descuento ?? REGLAS_HIERBA_SANA,
+      // Sin configurar, VACÍO: con las zonas y el horario de Hierba Sana de
+      // relleno, otra empresa le cotizaba a sus clientes tarifas y horarios
+      // que su dueño nunca fijó. El flujo lo detecta y deriva a una persona.
+      envio: guardada.envio ?? SIN_CONFIG_ENVIO,
+      horario: guardada.horario ?? HORARIO_POR_DEFECTO,
+      // Sin tramos configurados, ninguno: los de Hierba Sana como defecto
+      // hacían que cualquier otra empresa que encendiera la IA empezara a
+      // regalar S/ 10 a S/ 30 por pedido sin pedirlo.
+      descuento: guardada.descuento ?? SIN_DESCUENTO,
       ...(guardada.asesor ? { asesor: guardada.asesor } : {}),
       ...(guardada.descargoLegal
         ? { descargoLegal: guardada.descargoLegal }
@@ -127,6 +134,17 @@ export class LeadsPedidoService {
     const problemas: string[] = [];
 
     if (datos.destino?.trim()) {
+      // Sin zonas configuradas no se puede decir cuánto cuesta el envío. Antes
+      // se usaban las de Hierba Sana de relleno y la IA le cotizaba a los
+      // clientes de otra empresa tarifas que su dueño nunca fijó.
+      if (!tieneEnvioConfigurado(config.envio)) {
+        return {
+          guardado: [],
+          faltan: [],
+          aclarar:
+            'Este negocio todavía no tiene configuradas sus zonas de envío. NO inventes un costo de envío ni una forma de pago: dile al cliente que un asesor le confirma el envío y deriva la conversación.',
+        };
+      }
       const resuelto = resolverDestino(datos.destino, config.envio);
       if (resuelto === 'ambiguo') {
         return {
@@ -299,6 +317,14 @@ export class LeadsPedidoService {
     nombrePack?: string,
   ): Promise<{ texto?: string; falta?: string; error?: string }> {
     const config = await this.configDe(empresaId);
+    // Lo primero, antes de consultar nada: sin zonas configuradas el costo de
+    // envío sería 0 y el total una promesa de envío gratis que nadie hizo.
+    if (!tieneEnvioConfigurado(config.envio)) {
+      return {
+        error:
+          'Este negocio todavía no tiene configuradas sus zonas de envío. No armes una cotización: deriva a un asesor para que le confirme el total con el envío.',
+      };
+    }
     const borrador = await this.prisma.leadPedidoBorrador.findUnique({
       where: { conversacionId },
     });
