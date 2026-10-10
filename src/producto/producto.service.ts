@@ -2,6 +2,11 @@ import { num, round3 } from '../common/utils/stock';
 import { colorDe, tallaDe, varianteDe } from './atributos-variante';
 import { afectacionDeCelda } from './afectacion-igv';
 import {
+  escribirPrioridadVenta,
+  leerDisponibilidad,
+  leerPrioridadVenta,
+} from './disponibilidad.util';
+import {
   BadRequestException,
   ForbiddenException,
   Injectable,
@@ -9,7 +14,12 @@ import {
   Inject,
   forwardRef,
 } from '@nestjs/common';
-import { Prisma, EstadoReserva, EstadoType } from '@prisma/client';
+import {
+  DisponibilidadProducto,
+  Prisma,
+  EstadoReserva,
+  EstadoType,
+} from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
@@ -381,6 +391,10 @@ export class ProductoService {
       ubicacionSede?: string | null;
       /** Sedes donde queda disponible (ids). Si no viene, aplica el modo de la empresa. */
       sedesDisponibles?: number[] | null;
+      /** Qué prometerle al cliente. Sin valor, se deduce del stock. */
+      disponibilidad?: DisponibilidadProducto;
+      /** Empuje frente a equivalentes: 3 muy alta, 2 alta, 1 media. */
+      prioridadVenta?: number;
     },
     empresaId: number,
     sedeId?: number,
@@ -434,6 +448,8 @@ export class ProductoService {
       precioUnitarioSede,
       precioOfertaSede,
       ubicacionSede,
+      disponibilidad,
+      prioridadVenta,
     } = data;
 
     const porcentajes = this.normalizarPorcentajes(
@@ -542,6 +558,8 @@ export class ProductoService {
           stock,
           stockMinimo: stockMinimo != null ? stockMinimo : undefined,
           stockMaximo: stockMaximo != null ? stockMaximo : undefined,
+          disponibilidad: disponibilidad ?? undefined,
+          prioridadVenta: prioridadVenta ?? undefined,
           categoriaId:
             categoriaId && Number(categoriaId) > 0
               ? Number(categoriaId)
@@ -647,6 +665,8 @@ export class ProductoService {
           stock,
           stockMinimo: stockMinimo != null ? stockMinimo : undefined,
           stockMaximo: stockMaximo != null ? stockMaximo : undefined,
+          disponibilidad: disponibilidad ?? undefined,
+          prioridadVenta: prioridadVenta ?? undefined,
           categoriaId:
             categoriaId && Number(categoriaId) > 0
               ? Number(categoriaId)
@@ -2950,6 +2970,10 @@ export class ProductoService {
       ubicacionSede?: string | null;
       /** Sedes donde queda disponible (ids). Reemplaza la disponibilidad actual. */
       sedesDisponibles?: number[] | null;
+      /** Qué prometerle al cliente. null lo devuelve a deducirse del stock. */
+      disponibilidad?: DisponibilidadProducto | null;
+      /** Empuje frente a equivalentes: 3 muy alta, 2 alta, 1 media. */
+      prioridadVenta?: number | null;
 
       sedeId?: number; // Nueva propiedad opcional para identificar dónde se ajusta el stock
     },
@@ -3321,6 +3345,13 @@ export class ProductoService {
           ? Number(data.unidadMedidaId)
           : undefined,
         tipoAfectacionIGV: data.tipoAfectacionIGV,
+        // null es un valor con significado: devuelve el producto a que su
+        // disponibilidad se deduzca del stock. Por eso se distingue de
+        // undefined (no tocar) en vez de usar `|| undefined`.
+        disponibilidad:
+          data.disponibilidad !== undefined ? data.disponibilidad : undefined,
+        prioridadVenta:
+          data.prioridadVenta !== undefined ? data.prioridadVenta : undefined,
         moneda: data.moneda !== undefined ? data.moneda : undefined,
         valorUnitario:
           data.valorUnitario !== undefined
@@ -4663,6 +4694,8 @@ export class ProductoService {
         STOCK: stockTotal,
         'VALOR INVENTARIO': valorInventario,
         'STOCK MINIMO': stockMinimo,
+        DISPONIBILIDAD: producto.disponibilidad ?? '',
+        PRIORIDAD: escribirPrioridadVenta(producto.prioridadVenta ?? null),
         CATEGORIA: producto.categoria?.nombre || '',
         MARCA: p?.marca?.nombre || '',
         LOCALIZACION: localizacion || '',
@@ -4696,6 +4729,8 @@ export class ProductoService {
       STOCK: totalStock,
       'VALOR INVENTARIO': totalValorInventario,
       'STOCK MINIMO': '',
+      DISPONIBILIDAD: '',
+      PRIORIDAD: '',
       CATEGORIA: '',
       MARCA: '',
       LOCALIZACION: '',
@@ -4720,6 +4755,8 @@ export class ProductoService {
       { wch: 10 }, // STOCK
       { wch: 18 }, // VALOR INVENTARIO
       { wch: 13 }, // STOCK MINIMO
+      { wch: 15 }, // DISPONIBILIDAD
+      { wch: 10 }, // PRIORIDAD
       { wch: 20 }, // CATEGORIA
       { wch: 20 }, // MARCA
       { wch: 30 }, // LOCALIZACION
@@ -4742,6 +4779,8 @@ export class ProductoService {
         IGV: 18,
         STOCK: 100,
         'STOCK MINIMO': 10,
+        DISPONIBILIDAD: 'INMEDIATA',
+        PRIORIDAD: 'ALTA',
         CATEGORIA: 'General',
         MARCA: '',
       },
@@ -4756,6 +4795,8 @@ export class ProductoService {
         IGV: 18,
         STOCK: 50,
         'STOCK MINIMO': 5,
+        DISPONIBILIDAD: 'BAJO PEDIDO',
+        PRIORIDAD: '',
         CATEGORIA: 'Abarrotes',
         MARCA: 'Ejemplo',
       },
@@ -4774,6 +4815,8 @@ export class ProductoService {
       { wch: 6 }, // IGV
       { wch: 8 }, // STOCK
       { wch: 13 }, // STOCK MINIMO
+      { wch: 15 }, // DISPONIBILIDAD
+      { wch: 10 }, // PRIORIDAD
       { wch: 20 }, // CATEGORIA
       { wch: 20 }, // MARCA
     ];
@@ -5204,6 +5247,18 @@ export class ProductoService {
         const categoriaRaw =
           row['CATEGORIA'] ?? row['Categoría'] ?? row['categoria'] ?? null;
         const marcaRaw = row['MARCA'] ?? row['Marca'] ?? row['marca'] ?? null;
+        // Columnas del catálogo de Hierba Sana: qué se le puede prometer al
+        // cliente y cuánto empujar el producto. Si vienen vacías o ilegibles se
+        // ignoran, y la disponibilidad se sigue deduciendo del stock.
+        const disponibilidadImport = leerDisponibilidad(
+          row['DISPONIBILIDAD'] ?? row['Disponibilidad'] ?? row['disponibilidad'],
+        );
+        const prioridadImport = leerPrioridadVenta(
+          row['PRIORIDAD'] ??
+            row['PRIORIDAD DE VENTA'] ??
+            row['Prioridad'] ??
+            row['prioridad'],
+        );
         // Fila sin CÓDIGO: es un producto nuevo que el empresario agregó al final
         // del Excel exportado (caso DEMENVER). Se le genera el siguiente PRxxx en
         // vez de rechazar la fila; si trae código de barras y ese barcode ya existe,
@@ -5426,6 +5481,12 @@ export class ProductoService {
               ...(categoriaId != null ? { categoriaId } : {}),
               ...(marcaId != null ? { marcaId } : {}),
               ...(codigoBarras != null ? { codigoBarras } : {}),
+              ...(disponibilidadImport != null
+                ? { disponibilidad: disponibilidadImport }
+                : {}),
+              ...(prioridadImport != null
+                ? { prioridadVenta: prioridadImport }
+                : {}),
             },
           });
 
@@ -5467,6 +5528,8 @@ export class ProductoService {
               categoriaId,
               marcaId,
               codigoBarras,
+              disponibilidad: disponibilidadImport ?? undefined,
+              prioridadVenta: prioridadImport ?? undefined,
             },
             empresaId,
             sedeDestinoId,

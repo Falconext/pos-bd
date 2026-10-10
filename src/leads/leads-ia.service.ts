@@ -1,6 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { GeminiService } from '../gemini/gemini.service';
+import {
+  GeminiService,
+  EjecutorHerramienta,
+  LlamadaHerramienta,
+  UsoTokens,
+} from '../gemini/gemini.service';
 import { EstadoLeadProspecto } from '@prisma/client';
+import {
+  HERRAMIENTAS_VENTA,
+  INSTRUCCION_HERRAMIENTAS,
+} from './leads-herramientas';
+import { DatosDelNegocio, promptDelAsesor } from './prompt-asesor';
 
 /** Un turno de la conversación, en el formato agnóstico del motor. */
 export interface MensajeConversacion {
@@ -33,47 +43,22 @@ export interface RespuestaVenta {
   reply: string;
   calificacion: CalificacionBant | null;
   debeAnalizar: boolean;
+  /** Herramientas que el modelo pidió en este turno (vacío si no pidió ninguna). */
+  llamadas: LlamadaHerramienta[];
+  /** Tokens que costó el turno. Null si no se usaron herramientas. */
+  uso: UsoTokens | null;
 }
 
-const BANT_SYSTEM_PROMPT = `Eres un asesor comercial experto por WhatsApp. Tu misión es determinar si un prospecto tiene potencial real de compra y guiarlo hacia el cierre.
-
-Usas el framework BANT+SPIN para calificar:
-- Budget (Presupuesto): ¿Tiene capacidad económica?
-- Authority (Autoridad): ¿Es el tomador de decisiones?
-- Need (Necesidad): ¿Tiene un problema real que resolver?
-- Timeline (Tiempo): ¿Cuándo necesita la solución?
-
-REGLAS DE ORO:
-1. NUNCA reveles que eres una IA de calificación ni que sigues un framework.
-2. Sé conversacional, empático y natural — no hagas preguntas como un formulario.
-3. Haz UNA sola pregunta a la vez, de forma natural.
-4. Escucha activamente y adapta tus preguntas según las respuestas.
-5. Si el prospecto da señales de alta intención, acelera hacia el cierre.
-6. Si es un curioso o no califica, dale información útil y cierra amablemente.
-7. Responde SIEMPRE en el idioma del prospecto.
-8. Sé conciso — máximo 2-3 oraciones por respuesta. Es WhatsApp, no un email.
-
-DATOS Y HONESTIDAD (críticas — nunca las rompas):
-- Solo puedes afirmar precios, stock, promociones, tiempos de entrega, formas de pago o características SI aparecen explícitamente en el CONTEXTO DEL NEGOCIO o en la lista de PRODUCTOS DISPONIBLES de abajo.
-- Si no tienes el dato, NO lo inventes: dile con naturalidad que lo confirmas y avanza (p. ej. "déjame confirmarte ese precio", o pide el dato que falta). Prefiere "no lo tengo a la mano" antes que inventar.
-- Nunca ofrezcas descuentos, regalos ni condiciones que no estén en el contexto.
-- Si un producto figura SIN STOCK o no está en la lista, no lo vendas: dilo con tacto y ofrece una alternativa que SÍ esté disponible.
-- No prometas plazos de entrega ni cobertura de zona que no estén confirmados en el contexto.
-
-CIERRE (tu objetivo real es concretar la venta):
-- Cuando haya interés en un producto, guía a capturar: qué producto y cantidad, nombre del cliente, y zona de entrega o si recoge, y forma de pago — de a poco, natural, no como formulario.
-- Termina cada mensaje de venta con UN siguiente paso concreto (confirmar el pedido, agendar, enviar el detalle) en vez de dejar la conversación abierta.
-- Si el prospecto es claramente un HOT LEAD, cierra el pedido o toma sus datos para que un asesor lo contacte de inmediato.
-
-SEÑALES DE HOT LEAD:
-- Menciona presupuesto específico o aprobado.
-- Tiene urgencia real (fecha límite, problema activo).
-- Es el decisor o tiene influencia directa.
-- Necesidad clara y específica del producto/servicio.
-
-{businessContext}
-
-Evalúa internamente el score BANT en cada mensaje pero NUNCA lo menciones al prospecto.`;
+/**
+ * El prompt del turno. La plantilla vive en prompt-asesor.ts; aquí solo se le
+ * pegan el contexto del negocio y las instrucciones de herramientas.
+ *
+ * El BANT dejó de ser el guión de la conversación y pasó a ser lo que
+ * siempre debió: una calificación interna que se calcula aparte
+ * (analizarConversacion) y que el cliente nunca ve. Un asesor que conduce la
+ * charla para rellenar un formulario de presupuesto, autoridad, necesidad y
+ * plazo se nota, y el banco de pruebas lo castiga como "suena a robot".
+ */
 
 /**
  * Motor de IA de ventas (portado de salesfilter-ai) sobre Gemini.
@@ -93,6 +78,14 @@ export class IaVentasService {
     return this.gemini.isEnabled();
   }
 
+  /**
+   * Embedding de un texto (768 dims). Lo usa el control de repetición para
+   * comparar una respuesta nueva con las que ya mandamos.
+   */
+  async generarEmbedding(texto: string): Promise<number[]> {
+    return this.gemini.generarEmbedding(texto);
+  }
+
   /** Transcribe una nota de voz de WhatsApp a texto (vía Gemini). */
   async transcribirAudio(buffer: Buffer, mimeType: string): Promise<string> {
     return this.gemini.transcribirAudio(buffer.toString('base64'), mimeType);
@@ -107,13 +100,17 @@ export class IaVentasService {
     conversacion: MensajeConversacion[],
     businessContext: string,
     cantidadMensajes: number,
+    ejecutor?: EjecutorHerramienta,
+    negocio?: DatosDelNegocio,
   ): Promise<RespuestaVenta> {
-    const systemPrompt = BANT_SYSTEM_PROMPT.replace(
-      '{businessContext}',
-      businessContext
-        ? `CONTEXTO DEL NEGOCIO:\n${businessContext}`
-        : 'Representa un negocio peruano. Adapta tu lenguaje al contexto de la conversación.',
-    );
+    const systemPrompt = promptDelAsesor({
+      nombre: negocio?.nombre ?? 'este negocio',
+      rubro: negocio?.rubro ?? null,
+      asesor: negocio?.asesor ?? null,
+      contexto:
+        businessContext ||
+        'No hay información cargada del negocio: no afirmes nada sobre precios, stock ni políticas.',
+    });
 
     const ultimoUsuario =
       [...conversacion].reverse().find((m) => m.role === 'user')?.content ?? '';
@@ -121,14 +118,31 @@ export class IaVentasService {
       (cantidadMensajes >= 4 && cantidadMensajes % 3 === 0) ||
       tieneIntencionCierre(ultimoUsuario);
 
-    const reply = await this.gemini.chatConHistorial(
-      systemPrompt,
-      conversacion.map((m) => ({
-        role: m.role === 'user' ? ('user' as const) : ('model' as const),
-        content: m.content,
-      })),
-      500,
-    );
+    const turnos = conversacion.map((m) => ({
+      role: m.role === 'user' ? ('user' as const) : ('model' as const),
+      content: m.content,
+    }));
+
+    // Con ejecutor, el modelo consulta el catálogo por su cuenta; sin él (y si
+    // alguien reutiliza este servicio sin herramientas) se mantiene el turno
+    // único de siempre.
+    let reply: string;
+    let llamadas: LlamadaHerramienta[] = [];
+    let uso: UsoTokens | null = null;
+    if (ejecutor) {
+      const res = await this.gemini.chatConHerramientas(
+        `${systemPrompt}\n\n${INSTRUCCION_HERRAMIENTAS}`,
+        turnos,
+        HERRAMIENTAS_VENTA,
+        ejecutor,
+        { maxOutputTokens: 800 },
+      );
+      reply = res.texto;
+      llamadas = res.llamadas;
+      uso = res.uso;
+    } else {
+      reply = await this.gemini.chatConHistorial(systemPrompt, turnos, 500);
+    }
 
     let calificacion: CalificacionBant | null = null;
     if (debeAnalizar) {
@@ -138,7 +152,7 @@ export class IaVentasService {
       );
     }
 
-    return { reply: reply.trim(), calificacion, debeAnalizar };
+    return { reply: reply.trim(), calificacion, debeAnalizar, llamadas, uso };
   }
 
   /**
@@ -148,12 +162,15 @@ export class IaVentasService {
   async generarSeguimiento(
     conversacion: MensajeConversacion[],
     businessContext: string,
+    negocio?: DatosDelNegocio,
   ): Promise<string> {
     const systemPrompt =
-      BANT_SYSTEM_PROMPT.replace(
-        '{businessContext}',
-        businessContext ? `CONTEXTO DEL NEGOCIO:\n${businessContext}` : '',
-      ) +
+      promptDelAsesor({
+        nombre: negocio?.nombre ?? 'este negocio',
+        rubro: negocio?.rubro ?? null,
+        asesor: negocio?.asesor ?? null,
+        contexto: businessContext || 'Sin información cargada del negocio.',
+      }) +
       `\n\nEl prospecto dejó de responder. Escribe UN solo mensaje de seguimiento, breve (máximo 2 frases), cálido y natural, sin sonar insistente ni robótico. Retoma su interés y ofrece ayuda o el siguiente paso (una duda, una promo, agendar). No saludes de nuevo como si fuera la primera vez. No repitas textualmente lo último que ya dijiste. Devuelve SOLO el mensaje, sin comillas.`;
 
     const reply = await this.gemini.chatConHistorial(
@@ -184,7 +201,10 @@ export class IaVentasService {
       .map((m) => `${m.role === 'user' ? 'PROSPECTO' : 'AGENTE'}: ${m.content}`)
       .join('\n');
     const listaCatalogo = catalogo
-      .map((c) => `- id ${c.id}: ${c.descripcion} (S/${c.precioUnitario.toFixed(2)})`)
+      .map(
+        (c) =>
+          `- id ${c.id}: ${c.descripcion} (S/${c.precioUnitario.toFixed(2)})`,
+      )
       .join('\n');
 
     const prompt = `De esta conversación de ventas, extrae SOLO los productos que el prospecto confirmó o pidió comprar CON una cantidad concreta.
@@ -209,7 +229,9 @@ Responde ÚNICAMENTE con este JSON (sin markdown):
         [{ role: 'user', content: prompt }],
         400,
       );
-      const raw = extraerJson(text) as { items?: { id?: unknown; cantidad?: unknown }[] };
+      const raw = extraerJson(text) as {
+        items?: { id?: unknown; cantidad?: unknown }[];
+      };
       const items = Array.isArray(raw.items) ? raw.items : [];
       const limpios: { id: number; cantidad: number }[] = [];
       for (const it of items) {

@@ -110,10 +110,7 @@ export class LeadsController {
   }
 
   @Post('prospectos/:id/convertir')
-  convertirACliente(
-    @User() user: any,
-    @Param('id', ParseIntPipe) id: number,
-  ) {
+  convertirACliente(@User() user: any, @Param('id', ParseIntPipe) id: number) {
     return this.service.convertirACliente(user.empresaId, id);
   }
 

@@ -1272,10 +1272,16 @@ export class ProductoController {
   ) {
     const actualizado = await this.service.actualizar(
       {
+        // El cuerpo va PRIMERO y la identidad de la sesión después, para que
+        // la sobreescriba. Al revés, un `empresaId` mandado en el body pisaba
+        // el del token, y como el servicio filtra el producto por ese valor,
+        // un usuario podía editar productos de OTRA empresa indicando su id.
+        // Verificado en local: PUT con {"empresaId": <otra>} devolvía 200 y
+        // escribía.
+        ...body,
         id,
         empresaId: user.empresaId,
         sedeId: user.sedeId ?? undefined,
-        ...body,
       },
       user.id,
     );

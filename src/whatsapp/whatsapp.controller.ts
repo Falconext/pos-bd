@@ -56,6 +56,21 @@ export class WhatsAppController {
   }
 
   /**
+   * Dar de alta en Meta las plantillas de la IA de Ventas (reenganche y
+   * disparadores). El alta al conectar el número solo crea las de despacho, y
+   * dos de estas son MARKETING: se mandan cuando el negocio decide encender los
+   * disparadores, porque la aprobación tarda. Idempotente.
+   * POST /whatsapp/plantillas-ia-ventas
+   */
+  @Post('plantillas-ia-ventas')
+  @Roles('ADMIN_EMPRESA', 'ADMIN_SISTEMA')
+  async crearPlantillasIaVentas(@User() user: any) {
+    if (!user?.empresaId)
+      throw new BadRequestException('No hay empresa en la sesión.');
+    return this.whatsappService.crearPlantillasIaVentasEmpresa(user.empresaId);
+  }
+
+  /**
    * Enviar comprobante por WhatsApp
    * POST /whatsapp/enviar/:comprobanteId
    */

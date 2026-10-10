@@ -1,6 +1,69 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { GoogleGenerativeAI, GenerativeModel } from '@google/generative-ai';
+import {
+  GoogleGenerativeAI,
+  GenerativeModel,
+  CachedContent,
+  Content,
+  FunctionDeclaration,
+  Part,
+} from '@google/generative-ai';
+import { GoogleAICacheManager } from '@google/generative-ai/server';
+import * as crypto from 'crypto';
+
+/**
+ * Modelos, con versión FIJA a propósito.
+ *
+ * Los alias `-latest` los mueve Google cuando quiere: hoy `flash-lite-latest`
+ * resuelve a 3.5-flash-lite y `flash-latest` a 3.8-flash. Para un bot que
+ * atiende clientes bajo contrato, un cambio silencioso de modelo puede alterar
+ * el costo y romper el function calling —que ya demostró ser frágil— sin que
+ * nadie se entere. Fijar la versión convierte ese fallo silencioso en uno
+ * ruidoso y arreglable. Las variables de entorno son la salida de emergencia.
+ */
+const MODELO_CHAT = process.env.GEMINI_MODELO_CHAT ?? 'gemini-3.5-flash-lite';
+const MODELO_MULTIMODAL =
+  process.env.GEMINI_MODELO_MULTIMODAL ?? 'gemini-flash-latest';
+const MODELO_EMBEDDING =
+  process.env.GEMINI_MODELO_EMBEDDING ?? 'gemini-embedding-001';
+
+/** Un turno de conversación tal como lo entiende Gemini. */
+export interface TurnoGemini {
+  role: 'user' | 'model';
+  content: string;
+}
+
+/** Tokens consumidos por un turno completo (todas sus idas y vueltas). */
+export interface UsoTokens {
+  entrada: number;
+  salida: number;
+  total: number;
+  /**
+   * Tokens de entrada que Gemini cobró a precio reducido por venir de caché.
+   * El contexto del negocio es idéntico en cada mensaje: si esto es 0, se está
+   * pagando el prefijo entero una y otra vez.
+   */
+  cacheados: number;
+  /** Cuántas veces se llamó al modelo en este turno. */
+  llamadasAlModelo: number;
+}
+
+/** Lo que el modelo pidió ejecutar y lo que le devolvimos. */
+export interface LlamadaHerramienta {
+  nombre: string;
+  argumentos: Record<string, unknown>;
+  resultado: unknown;
+}
+
+/**
+ * Ejecuta una herramienta pedida por el modelo. Devuelve lo que el modelo verá
+ * como resultado; si lanza, el error se le entrega como `{ error }` para que
+ * pueda reaccionar en vez de cortarse.
+ */
+export type EjecutorHerramienta = (
+  nombre: string,
+  argumentos: Record<string, unknown>,
+) => Promise<unknown>;
 
 @Injectable()
 export class GeminiService {
@@ -8,14 +71,27 @@ export class GeminiService {
   private genAI: GoogleGenerativeAI | null = null;
   private model: GenerativeModel | null = null;
 
+  // ── Caché del contexto ───────────────────────────────────────────────────
+  // El contexto del negocio son las mismas ~3,300 fichas de tokens en CADA
+  // mensaje: medido, es el 95% de lo que se paga. Gemini cobra mucho menos por
+  // entrada cacheada, así que se cachea una vez por empresa y se reutiliza.
+  /** Una hora: cubre de sobra una conversación y el almacenamiento se paga por hora. */
+  private static readonly CACHE_TTL_SEGUNDOS = 3600;
+  private gestorCache: GoogleAICacheManager | null = null;
+  private readonly cachesPorContexto = new Map<
+    string,
+    { contenido: CachedContent; expiraEn: number }
+  >();
+  /** Se apaga sola: en plan gratuito el almacenamiento de caché tiene límite 0. */
+  private cacheNoDisponible = false;
+
   constructor(private readonly configService: ConfigService) {
     const apiKey = this.configService.get<string>('GEMINI_API_KEY');
     if (apiKey) {
       this.genAI = new GoogleGenerativeAI(apiKey);
       // 'gemini-flash-lite-latest' to attempt a fresh quota bucket after 'flash-latest' exhaustion.
-      this.model = this.genAI.getGenerativeModel({
-        model: 'gemini-flash-lite-latest',
-      });
+      this.model = this.genAI.getGenerativeModel({ model: MODELO_CHAT });
+      this.gestorCache = new GoogleAICacheManager(apiKey);
     } else {
       this.logger.warn(
         '⚠️  GEMINI_API_KEY no configurada. Funciones de IA deshabilitadas.',
@@ -33,10 +109,16 @@ export class GeminiService {
    * @param mimeType    tipo MIME del audio (audio/ogg, audio/mpeg, audio/mp4…)
    * @returns el texto transcrito (cadena vacía si no hay voz entendible)
    */
-  async transcribirAudio(base64Audio: string, mimeType: string): Promise<string> {
-    if (!this.genAI) throw new Error('Gemini no configurado (falta GEMINI_API_KEY)');
+  async transcribirAudio(
+    base64Audio: string,
+    mimeType: string,
+  ): Promise<string> {
+    if (!this.genAI)
+      throw new Error('Gemini no configurado (falta GEMINI_API_KEY)');
     // Modelo multimodal capaz de procesar audio (el lite del constructor puede no soportarlo).
-    const model = this.genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
+    const model = this.genAI.getGenerativeModel({
+      model: MODELO_MULTIMODAL,
+    });
     const partes = [
       { inlineData: { data: base64Audio, mimeType: mimeType || 'audio/ogg' } },
       {
@@ -222,7 +304,7 @@ Responde SOLO con el array JSON, nada más.`;
       throw new Error('Gemini AI no está configurado (GEMINI_API_KEY ausente)');
     }
     const model = this.genAI.getGenerativeModel({
-      model: 'gemini-embedding-001',
+      model: MODELO_EMBEDDING,
     });
     // Reintentos ante errores transitorios (429 rate-limit / 503 alta demanda).
     // Sin esto, un solo rechazo de cuota tumba el documento entero que se está
@@ -268,7 +350,7 @@ Responde SOLO con el array JSON, nada más.`;
       throw new Error('Gemini AI no está configurado (GEMINI_API_KEY ausente)');
     }
     const model = this.genAI.getGenerativeModel({
-      model: 'gemini-flash-lite-latest',
+      model: MODELO_CHAT,
       systemInstruction,
     });
     const result = await model.generateContent({
@@ -279,6 +361,299 @@ Responde SOLO con el array JSON, nada más.`;
       generationConfig: { maxOutputTokens },
     });
     return result.response.text().trim();
+  }
+
+  /**
+   * Reintenta una llamada al modelo cuando el fallo es pasajero.
+   *
+   * El 429 por cuota no es un error del código: es la cuenta llegando a su
+   * límite por minuto. Sin esto, un pico de conversaciones simultáneas tumba
+   * respuestas que habrían salido bien tres segundos después. Gemini dice en
+   * la propia respuesta cuánto esperar; si no lo dice, se usa un retroceso
+   * creciente.
+   *
+   * Los errores que NO van a mejorar reintentando (credenciales, modelo
+   * inexistente) se relanzan de inmediato.
+   */
+  private async conReintentos<T>(
+    llamada: () => Promise<T>,
+    intentos = 3,
+  ): Promise<T> {
+    let ultimo: unknown;
+    for (let i = 1; i <= intentos; i++) {
+      try {
+        return await llamada();
+      } catch (e) {
+        ultimo = e;
+        const msg = e instanceof Error ? e.message : String(e);
+        const pasajero = /\b(429|503|500)\b/.test(msg);
+        if (!pasajero || i === intentos) throw e;
+        const pedido = /retryDelay"\s*:\s*"(\d+)s/.exec(msg)?.[1];
+        const esperaMs = pedido ? (Number(pedido) + 1) * 1000 : 5000 * i;
+        this.logger.warn(
+          `Gemini respondió un error pasajero (intento ${i}/${intentos}); reintentando en ${Math.round(esperaMs / 1000)}s.`,
+        );
+        await new Promise((r) => setTimeout(r, esperaMs));
+      }
+    }
+    throw ultimo;
+  }
+
+  /**
+   * Deja el historial como lo exige Gemini: tiene que empezar en un turno
+   * 'user' y no repetir rol dos veces seguidas. Lo segundo pasa de verdad
+   * cuando el cliente manda varios mensajes antes de que contestemos (y es la
+   * base de la agrupación de mensajes): esos turnos se funden en uno.
+   */
+  normalizarHistorial(turnos: TurnoGemini[]): TurnoGemini[] {
+    const salida: TurnoGemini[] = [];
+    for (const t of turnos) {
+      const contenido = t.content?.trim();
+      if (!contenido) continue;
+      // Un historial que arranca con nuestra voz (p. ej. un disparador) no es
+      // válido para Gemini: se descartan esos turnos iniciales.
+      if (salida.length === 0 && t.role !== 'user') continue;
+      const ultimo = salida.at(-1);
+      if (ultimo && ultimo.role === t.role) {
+        ultimo.content = `${ultimo.content}\n${contenido}`;
+      } else {
+        salida.push({ role: t.role, content: contenido });
+      }
+    }
+    return salida;
+  }
+
+  /**
+   * Devuelve la caché del contexto de esta empresa, creándola si hace falta.
+   *
+   * `null` significa "sigue sin caché": nunca es motivo para no responder. En
+   * plan gratuito Gemini rechaza la creación con límite 0, y a partir de ahí
+   * se deja de intentar en cada mensaje.
+   */
+  private async cacheDelContexto(
+    systemInstruction: string,
+    herramientas: FunctionDeclaration[],
+  ): Promise<CachedContent | null> {
+    if (this.cacheNoDisponible || !this.gestorCache) return null;
+    if (process.env.GEMINI_CACHE === 'off') return null;
+
+    // La clave es el contenido mismo: dos empresas con distinto contexto
+    // tienen cachés distintas, y cambiar el contexto invalida la anterior.
+    const clave = crypto
+      .createHash('sha256')
+      .update(MODELO_CHAT)
+      .update('\u0000')
+      .update(systemInstruction)
+      .update('\u0000')
+      .update(JSON.stringify(herramientas))
+      .digest('hex');
+
+    const guardada = this.cachesPorContexto.get(clave);
+    // Con menos de un minuto por delante no vale la pena: podría caducar a
+    // mitad del turno.
+    if (guardada && guardada.expiraEn > Date.now() + 60_000) {
+      return guardada.contenido;
+    }
+
+    try {
+      const contenido = (await this.gestorCache.create({
+        model: `models/${MODELO_CHAT}`,
+        systemInstruction,
+        ...(herramientas.length
+          ? { tools: [{ functionDeclarations: herramientas }] }
+          : {}),
+        contents: [],
+        ttlSeconds: GeminiService.CACHE_TTL_SEGUNDOS,
+      })) as CachedContent;
+      this.cachesPorContexto.set(clave, {
+        contenido,
+        expiraEn: Date.now() + GeminiService.CACHE_TTL_SEGUNDOS * 1000,
+      });
+      this.logger.log(
+        `Contexto cacheado en Gemini por ${GeminiService.CACHE_TTL_SEGUNDOS}s; los mensajes de esta empresa dejan de pagar el prefijo entero.`,
+      );
+      return contenido;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/FreeTier|limit=0/i.test(msg)) {
+        this.cacheNoDisponible = true;
+        this.logger.warn(
+          'El plan de Gemini no admite caché de contexto (límite 0): se seguirá pagando el contexto completo en cada mensaje. Carga créditos en la cuenta para activarla.',
+        );
+      } else {
+        this.logger.warn(`No se pudo cachear el contexto: ${msg}`);
+      }
+      return null;
+    }
+  }
+
+  /**
+   * Conversación en la que el modelo decide por sí mismo cuándo llamar a una
+   * herramienta (buscar en el catálogo, cotizar, derivar…). Repite el ciclo
+   * pedido → ejecución → resultado hasta que responde con texto o se agotan las
+   * iteraciones.
+   *
+   * Es lo que separa a un bot que improvisa de uno que consulta: sin esto, el
+   * contexto se arma antes de llamar al modelo y el modelo no puede pedir nada
+   * más que lo que ya le adivinamos.
+   */
+  async chatConHerramientas(
+    systemInstruction: string,
+    turnos: TurnoGemini[],
+    herramientas: FunctionDeclaration[],
+    ejecutor: EjecutorHerramienta,
+    opts: { maxIteraciones?: number; maxOutputTokens?: number } = {},
+  ): Promise<{
+    texto: string;
+    llamadas: LlamadaHerramienta[];
+    uso: UsoTokens;
+  }> {
+    if (!this.genAI) {
+      throw new Error('Gemini AI no está configurado (GEMINI_API_KEY ausente)');
+    }
+    const { maxIteraciones = 4, maxOutputTokens = 800 } = opts;
+
+    const historial = this.normalizarHistorial(turnos);
+    const ultimo = historial.at(-1);
+    if (!ultimo || ultimo.role !== 'user') {
+      throw new Error(
+        'chatConHerramientas necesita que el último turno sea del usuario.',
+      );
+    }
+
+    // Con caché, el prompt y las herramientas viajan por referencia y no se
+    // vuelven a cobrar enteros; sin ella, el camino de siempre.
+    const cache = await this.cacheDelContexto(systemInstruction, herramientas);
+    const model = cache
+      ? this.genAI.getGenerativeModelFromCachedContent(cache)
+      : this.genAI.getGenerativeModel({
+          model: MODELO_CHAT,
+          systemInstruction,
+          ...(herramientas.length
+            ? { tools: [{ functionDeclarations: herramientas }] }
+            : {}),
+        });
+
+    // Los turnos se arman a mano en vez de usar startChat().sendMessage().
+    // Motivo: el SDK 0.21 mete los resultados de herramienta en un turno con
+    // rol "function", y el endpoint v1beta lo rechaza con un 400 ("Role
+    // 'function' is not supported"). Como turno del usuario sí los acepta.
+    const contents: Content[] = historial.map((m) => ({
+      role: m.role,
+      parts: [{ text: m.content }],
+    }));
+    const generationConfig = { maxOutputTokens };
+
+    const llamadas: LlamadaHerramienta[] = [];
+    // El contexto entero viaja en CADA vuelta del ciclo, así que un turno con
+    // herramientas cuesta varias veces lo que uno simple. Por eso se mide.
+    const uso: UsoTokens = {
+      entrada: 0,
+      salida: 0,
+      total: 0,
+      cacheados: 0,
+      llamadasAlModelo: 0,
+    };
+    const contar = (r: {
+      response: {
+        usageMetadata?: {
+          promptTokenCount?: number;
+          candidatesTokenCount?: number;
+          totalTokenCount?: number;
+          cachedContentTokenCount?: number;
+        };
+      };
+    }) => {
+      const m = r.response.usageMetadata;
+      uso.entrada += m?.promptTokenCount ?? 0;
+      uso.salida += m?.candidatesTokenCount ?? 0;
+      uso.total += m?.totalTokenCount ?? 0;
+      uso.cacheados += m?.cachedContentTokenCount ?? 0;
+      uso.llamadasAlModelo++;
+    };
+
+    let result = await this.conReintentos(() =>
+      model.generateContent({ contents, generationConfig }),
+    );
+    contar(result);
+
+    for (let i = 0; i < maxIteraciones; i++) {
+      const pedidos = result.response.functionCalls();
+      if (!pedidos?.length) break;
+
+      // El turno del modelo, tal como lo devolvió: sin él, la siguiente
+      // llamada no sabe a qué pregunta responden los resultados.
+      const turnoModelo = result.response.candidates?.[0]?.content;
+      contents.push(
+        turnoModelo ?? {
+          role: 'model',
+          parts: pedidos.map((p) => ({ functionCall: p })),
+        },
+      );
+
+      const partes: Part[] = [];
+      for (const pedido of pedidos) {
+        const argumentos = (pedido.args ?? {}) as Record<string, unknown>;
+        let resultado: unknown;
+        try {
+          resultado = await ejecutor(pedido.name, argumentos);
+        } catch (e) {
+          const detalle = e instanceof Error ? e.message : String(e);
+          this.logger.warn(`Herramienta ${pedido.name} falló: ${detalle}`);
+          resultado = { error: detalle };
+        }
+        llamadas.push({ nombre: pedido.name, argumentos, resultado });
+        partes.push({
+          functionResponse: {
+            name: pedido.name,
+            // Gemini exige un objeto: lo que no lo sea viaja envuelto.
+            response:
+              resultado !== null &&
+              typeof resultado === 'object' &&
+              !Array.isArray(resultado)
+                ? resultado
+                : { resultado },
+          },
+        });
+      }
+      contents.push({ role: 'user', parts: partes });
+      result = await this.conReintentos(() =>
+        model.generateContent({ contents, generationConfig }),
+      );
+      contar(result);
+    }
+
+    let texto = this.textoDe(result);
+    // Se acabaron las iteraciones y el modelo seguía pidiendo herramientas: se
+    // le fuerza a cerrar con lo que ya tiene, para no dejar al cliente sin
+    // respuesta.
+    if (!texto && result.response.functionCalls()?.length) {
+      const turnoModelo = result.response.candidates?.[0]?.content;
+      if (turnoModelo) contents.push(turnoModelo);
+      contents.push({
+        role: 'user',
+        parts: [
+          {
+            text: 'Responde al cliente ahora, con la información que ya tienes. No pidas más herramientas.',
+          },
+        ],
+      });
+      result = await this.conReintentos(() =>
+        model.generateContent({ contents, generationConfig }),
+      );
+      contar(result);
+      texto = this.textoDe(result);
+    }
+    return { texto, llamadas, uso };
+  }
+
+  /** `response.text()` lanza si el turno no trae ninguna parte de texto. */
+  private textoDe(result: { response: { text: () => string } }): string {
+    try {
+      return result.response.text().trim();
+    } catch {
+      return '';
+    }
   }
 
   /**

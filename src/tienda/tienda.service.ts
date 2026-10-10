@@ -23,6 +23,9 @@ import {
   esRubroComputo,
   obtenerPlantillaComputo,
 } from '../producto/ficha-tecnica-computo';
+// Los tramos por defecto los define el motor de descuentos de la IA: un solo
+// sitio decide los números, y así el carrito y el chat no pueden discrepar.
+import { REGLAS_HIERBA_SANA as REGLAS_DESCUENTO_POR_DEFECTO } from '../leads/reglas-descuento';
 
 const ESTADOS_ENVIO_NOTIFICABLES = new Set([
   'EN_CAMINO',
@@ -415,6 +418,7 @@ export class TiendaService {
         horarioAtencion: true,
         colorPrimario: true,
         colorSecundario: true,
+        metaPixelId: true,
         yapeQrUrl: true,
         yapeNumero: true,
         plinQrUrl: true,
@@ -919,6 +923,15 @@ export class TiendaService {
           horarioAtencion: true,
           colorPrimario: true,
           colorSecundario: true,
+          // El pixel se sirve aquí para que la tienda lo cargue sola: si
+          // hubiera que pegarlo a mano en cada plantilla, se olvidaría en
+          // alguna y esa campaña mediría de menos.
+          metaPixelId: true,
+          // Tramos de descuento por pack. Van a la tienda para que el carrito
+          // calcule EN VIVO lo mismo que la IA calcula en el chat: si los dos
+          // sitios no dicen el mismo número, el cliente deja de creerle a uno
+          // de los dos.
+          iaVentasConfigJson: true,
           // Campos de envío/recojo visibles en tienda pública
           costoEnvioFijo: true,
           aceptaRecojo: true,
@@ -1001,8 +1014,15 @@ export class TiendaService {
           return {}; // Fallback en caso de error de diseño
         });
 
+      // La configuración de la IA lleva dentro cosas internas (el nombre del
+      // asesor, el descargo legal, las zonas de reparto). De todo eso, la
+      // tienda pública solo necesita los tramos de descuento: el resto no sale.
+      const { iaVentasConfigJson, ...publico } = empresa as typeof empresa & {
+        iaVentasConfigJson?: { descuento?: unknown } | null;
+      };
       return {
-        ...empresa,
+        ...publico,
+        reglasDescuento: iaVentasConfigJson?.descuento ?? REGLAS_DESCUENTO_POR_DEFECTO,
         diseno: this.stripPrivateDesignFields(diseno),
       };
     } catch (e) {

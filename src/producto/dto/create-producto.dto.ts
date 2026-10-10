@@ -1,11 +1,14 @@
 import {
   IsArray,
   IsBoolean,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
+  Max,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
@@ -111,6 +114,21 @@ export class CreateProductoDto {
   @IsInt()
   @Type(() => Number)
   stockMinimo?: number;
+
+  /**
+   * Qué se le puede prometer al cliente: INMEDIATA, BAJO_PEDIDO o
+   * NO_DISPONIBLE. Omitirlo deja que se deduzca del stock.
+   */
+  @IsOptional()
+  @IsIn(['INMEDIATA', 'BAJO_PEDIDO', 'NO_DISPONIBLE'])
+  disponibilidad?: 'INMEDIATA' | 'BAJO_PEDIDO' | 'NO_DISPONIBLE';
+
+  /** Empuje frente a productos equivalentes: 3 muy alta, 2 alta, 1 media. */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(3)
+  prioridadVenta?: number;
 
   @IsOptional()
   @IsInt()

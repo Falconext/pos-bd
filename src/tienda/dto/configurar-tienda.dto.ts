@@ -22,6 +22,18 @@ export class ConfigurarTiendaDto {
   @IsOptional()
   descripcionTienda?: string;
 
+  /**
+   * Pixel de Meta de la tienda. Son solo dígitos: si el negocio pega el
+   * script entero en vez del id, se rechaza aquí en vez de romper la tienda
+   * en silencio.
+   */
+  @IsString()
+  @IsOptional()
+  @Matches(/^\d{10,20}$/, {
+    message: 'El Pixel de Meta es solo el número de id, sin el script.',
+  })
+  metaPixelId?: string;
+
   @IsString()
   @IsOptional()
   whatsappTienda?: string;

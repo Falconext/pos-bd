@@ -169,6 +169,9 @@ model Empresa {
   plinNumero                String?
   plinQrUrl                 String?
   slugTienda                String?            @unique
+  /// Pixel de Meta de la tienda online. Sin esto, las campañas pagadas no
+  /// pueden medir qué anuncio trajo la venta: se invierte a ciegas.
+  metaPixelId               String?
   tiktokUrl                 String?
   whatsappTienda            String?
   whatsappProvider          WhatsAppProvider   @default(ZAVU)
@@ -233,6 +236,12 @@ model Empresa {
   // stock/caja/SUNAT) cuando el prospecto confirma qué productos y cantidades
   // quiere. Opt-in (default OFF) para no crear documentos sorpresa.
   iaVentasCotizacion        Boolean            @default(false)
+  // Configuración comercial de la IA por empresa: zonas de envío y tarifas,
+  // franjas de entrega y tramos de descuento. Va junta en un JSON y no en
+  // columnas porque son tablas que el negocio edita, no campos que el sistema
+  // consulta: nunca se filtra ni se ordena por ellas. Vacío = los valores por
+  // defecto del código. Ver leads/envio-zonas.ts y leads/reglas-descuento.ts.
+  iaVentasConfigJson        Json?
   // Enlace a un brochure/catálogo (PDF o imagen) que la IA envía cuando el
   // prospecto pide más información. Útil para negocios de servicio (sin fotos de
   // productos), como el mismo Krezka.
@@ -474,7 +483,10 @@ model Empresa {
   leadConversaciones      LeadConversacion[]
   leadProspectos          LeadProspecto[]
   leadDocumentos          LeadDocumento[]
+  leadConsultas             LeadConsulta[]
+  leadDisparos              LeadDisparo[]
   soporteConversacion     SoporteConversacion?
+  reglasComision          ReglaComision[]
 
   @@index([providerToken])
   @@index([slugTienda])
@@ -482,7 +494,6 @@ model Empresa {
   @@index([producto])
   @@index([brand, producto])
   @@index([whatsappProvider])
-  reglasComision       ReglaComision[]
 }
 
 model EmpresaSerie {
@@ -567,7 +578,7 @@ model Usuario {
   historialEstadosPedidoLogistica   HistorialEstadoPedidoLogistica[]
   historialEstadosDespachoLogistica HistorialEstadoDespachoLogistica[]
   listasPrecio                      ListaPrecioUsuario[]
-  reglasComision       ReglaComision[]
+  reglasComision                    ReglaComision[]
 }
 
 model Categoria {
@@ -619,6 +630,21 @@ model Marca {
   productos Producto[]
 
   @@unique([empresaId, nombre])
+}
+
+/// Qué se le puede prometer al cliente sobre un producto.
+///
+/// Es distinto del stock numérico: hay negocios que no llevan inventario y sí
+/// saben si algo lo tienen a la mano o lo consiguen por encargo. Hierba Sana es
+/// el caso — su catálogo trae disponibilidad, no cantidades.
+enum DisponibilidadProducto {
+  /// Lo tiene a la mano; se despacha sin condiciones.
+  INMEDIATA
+  /// Lo consigue con proveedor. Se ofrece sin prometer fecha y se avisa antes
+  /// de despachar.
+  BAJO_PEDIDO
+  /// No se ofrece, y ningún disparador puede dispararse sobre él.
+  NO_DISPONIBLE
 }
 
 model Producto {
@@ -679,6 +705,14 @@ model Producto {
   localizacion        String?
   porcentajeVenta     Int                  @default(100)
   porcentajeProvision Int                  @default(0)
+  /// Qué se le puede prometer al cliente. Null = se deduce del stock, que es
+  /// lo correcto para quien sí lleva inventario; puesto a mano, manda sobre el
+  /// stock, que es lo que necesita quien no lo lleva.
+  disponibilidad      DisponibilidadProducto?
+  /// Cuánto empujar este producto frente a otros equivalentes: 3 muy alta,
+  /// 2 alta, 1 media. Ordena lo que la IA ve primero; no la obliga a ofrecerlo
+  /// si no calza con lo que el cliente pidió.
+  prioridadVenta      Int?
   detalleCompras      DetalleCompra[]
   detallesOrdenCompra DetalleOrdenCompra[]
   detalleComprobantes DetalleComprobante[]
@@ -713,13 +747,13 @@ model Producto {
   reviews                  ProductoReview[]
   contratosVehiculares     ContratoVehicular[]
   listaPrecioItems         ListaPrecioItem[]
+  reglasComision           ReglaComision[]
 
   @@unique([empresaId, codigo])
   @@unique([empresaId, codigoDigemid])
   @@index([empresaId, publicarEnTienda])
   @@index([marcaId])
   @@index([empresaId, codigoBarras])
-  reglasComision           ReglaComision[]
 }
 
 enum EstadoProductoReview {
@@ -1919,7 +1953,7 @@ model ProductoStock {
   /// costo propio y se usa el de Producto.costoPromedio. Mantenerlo nullable
   /// es lo que permite convivir con el costo global mientras dure la
   /// migración: ninguna consulta cambia de resultado por agregar la columna.
-  costoPromedio          Decimal?
+  costoPromedio Decimal?
 
   producto Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
   sede     Sede     @relation(fields: [sedeId], references: [id], onDelete: Cascade)
@@ -2455,11 +2489,62 @@ model EnvioDespacho {
   costoCourier             Float?
   pagarFlete               String?        @default("NEGOCIO") // CLIENTE | NEGOCIO
   aplicacionMontoCliente   String?        @default("NEGOCIO") // ITEM_ENVIO | ADELANTO | NEGOCIO
+  /// Cuándo se marcó ENTREGADO. El historial ya lo guarda, pero adentro de un
+  /// Json no se puede filtrar ni ordenar, y el reclamo "no me llegó" siempre
+  /// se discute con una fecha.
+  entregadoEn              DateTime?
+  evidencias               EvidenciaEntrega[]
   creadoEn                 DateTime       @default(now())
   actualizadoEn            DateTime       @updatedAt
 
   @@index([comprobanteId])
   @@index([repartidorId])
+  @@index([entregadoEn])
+}
+
+/// Lo que prueba que el pedido llegó: la foto del paquete en la puerta, de
+/// quien lo recibió, de la firma o del documento.
+///
+/// Sin esto, el reclamo "no me llegó" se resuelve por quién grita más fuerte:
+/// el negocio pierde la venta o pierde al cliente. Con la foto y su hora, se
+/// resuelve en un mensaje.
+///
+/// Es tabla y no un Json dentro del despacho porque son varias por entrega,
+/// cada una la sube alguien distinto en un momento distinto, y hace falta
+/// poder listar los despachos entregados que NO tienen ninguna.
+model EvidenciaEntrega {
+  id           Int                  @id @default(autoincrement())
+  despachoId   Int
+  despacho     EnvioDespacho        @relation(fields: [despachoId], references: [id], onDelete: Cascade)
+  /// Desnormalizado para filtrar por empresa sin pasar por el comprobante.
+  /// No lleva relación a Empresa: el borrado ya cae en cascada por el
+  /// despacho, que depende del comprobante.
+  empresaId    Int
+  url          String
+  tipo         TipoEvidenciaEntrega @default(FOTO_PAQUETE)
+  nota         String?
+  /// Quién la registró: el usuario del panel o el repartidor en la calle.
+  usuarioId    Int?
+  usuarioNombre String?
+  repartidorId Int?
+  /// Cuándo se tomó la entrega. Por defecto el momento de subirla, pero se
+  /// puede corregir: el motorizado sube las fotos del día al volver.
+  tomadaEn     DateTime             @default(now())
+  /// Una evidencia no se borra: se anula y queda el rastro de quién lo hizo.
+  /// Una prueba que se puede hacer desaparecer sin dejar huella no prueba nada.
+  anuladaEn    DateTime?
+  anuladaPor   String?
+  creadoEn     DateTime             @default(now())
+
+  @@index([despachoId])
+  @@index([empresaId, anuladaEn])
+}
+
+enum TipoEvidenciaEntrega {
+  FOTO_PAQUETE
+  FOTO_RECEPTOR
+  FIRMA
+  DOCUMENTO
 }
 
 model Repartidor {
@@ -3063,21 +3148,21 @@ model ComisionVendedor {
 /// que el próximo pedido —un feriado, un vendedor con trato propio, un canal—
 /// entre como una columna anulable más y no como otro nivel en la cascada.
 model ReglaComision {
-  id         Int      @id @default(autoincrement())
-  empresaId  Int
+  id            Int      @id @default(autoincrement())
+  empresaId     Int
   /// NULL = cualquier producto.
-  productoId Int?
+  productoId    Int?
   /// NULL = cualquier vendedor.
-  vendedorId Int?
+  vendedorId    Int?
   /// Días en que aplica, 0=domingo … 6=sábado, separados por coma ("0,6").
   /// NULL = todos los días. Se evalúa en hora de Perú, no del servidor.
-  diasSemana String?
+  diasSemana    String?
   /// Monto fijo por unidad. Tiene prioridad sobre el porcentaje.
-  montoFijo  Decimal?
+  montoFijo     Decimal?
   /// Porcentaje del precio unitario.
-  porcentaje Decimal?
-  activa     Boolean  @default(true)
-  creadoEn   DateTime @default(now())
+  porcentaje    Decimal?
+  activa        Boolean  @default(true)
+  creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt
 
   empresa  Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade)
@@ -4044,6 +4129,191 @@ enum EstadoLeadConversacion {
   TRANSFERIDA
 }
 
+/// F — un aviso automático programado para un cliente.
+///
+/// El anexo pide 7 disparadores (puntos 33.1 a 33.7). Se guardan como filas
+/// programadas en vez de calcularse al vuelo en cada corrida del cron por dos
+/// razones: hay que poder verlos ANTES de que salgan (y cancelarlos), y hay
+/// que poder demostrar qué se le mandó a quién y cuándo.
+///
+/// La clave única (empresa + tipo + teléfono + referencia) es lo que impide
+/// mandar dos veces el mismo aviso: "la recompra del comprobante 829" es un
+/// solo disparo, por más veces que corra el cron.
+model LeadDisparo {
+  id             Int                @id @default(autoincrement())
+  empresaId      Int
+  empresa        Empresa            @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  tipo           TipoDisparoLead
+  telefono       String
+  prospectoId    Int?
+  conversacionId Int?
+  /// El hecho concreto que lo originó: "comprobante:829", "producto:1204".
+  /// Es la mitad de la idempotencia.
+  referencia     String
+  programadoPara DateTime
+  estado         EstadoDisparoLead  @default(PROGRAMADO)
+  /// Por qué no se envió. Se guarda porque "no salió" sin motivo es un
+  /// reclamo que nadie puede responder.
+  motivo         String?
+  /// Plantilla usada, cuando la ventana de 24 h estaba cerrada.
+  plantilla      String?
+  parametrosJson Json?
+  /// Texto exacto que se envió. Es la prueba de qué recibió el cliente.
+  textoEnviado   String?
+  enviadoEn      DateTime?
+  intentos       Int                @default(0)
+  creadoEn       DateTime           @default(now())
+  actualizadoEn  DateTime           @updatedAt
+
+  @@unique([empresaId, tipo, telefono, referencia])
+  @@index([empresaId, estado, programadoPara])
+  @@index([empresaId, telefono])
+}
+
+enum TipoDisparoLead {
+  VUELTA_DISPONIBILIDAD
+  RECUPERAR_COTIZACION
+  CARRITO_EN_ESPERA
+  POST_ENTREGA
+  RECOMPRA
+  REACTIVACION
+}
+
+enum EstadoDisparoLead {
+  PROGRAMADO
+  ENVIADO
+  /// Ya no corresponde: el cliente contestó, compró o canceló.
+  CANCELADO
+  /// Se evaluó y una regla dijo que no (baja, sin stock, tope).
+  OMITIDO
+  FALLIDO
+}
+
+/// El cliente pidió no recibir más avisos.
+///
+/// El pie de las plantillas de marketing promete "responde BAJA para no
+/// recibir más avisos". Prometerlo y no cumplirlo es exactamente lo que
+/// convierte un número de WhatsApp en un número bloqueado.
+model LeadBajaAvisos {
+  id        Int      @id @default(autoincrement())
+  empresaId Int
+  telefono  String
+  /// El mensaje con el que lo pidió, tal cual. Si alguien reclama que se le
+  /// dejó de avisar, acá está el por qué.
+  mensaje   String?
+  creadoEn  DateTime @default(now())
+
+  @@unique([empresaId, telefono])
+  @@index([empresaId])
+}
+
+/// Las 12 etapas operativas del embudo, con los nombres que Hierba Sana
+/// definió en su anexo técnico (punto 26).
+enum EtapaCrmLead {
+  NUEVO
+  DIAGNOSTICADO
+  COTIZADO
+  DATOS_COMPLETOS
+  PENDIENTE_VALIDACION_PAGO
+  POR_DESPACHAR
+  EN_RUTA
+  ENTREGADO
+  REPROGRAMADO
+  FRIO
+  NO_CONTESTA
+  CONSULTADO_NO_HABIDO
+}
+
+/// Cada movimiento del pedido por el embudo: de dónde a dónde, cuándo y quién.
+///
+/// Es tabla porque el candado de pago hay que poder auditarlo: la pregunta
+/// "¿quién dio el OK a este pago?" se responde con una fila, no con un campo
+/// que se sobreescribe en el siguiente movimiento.
+model LeadEtapaHistorial {
+  id            Int           @id @default(autoincrement())
+  prospectoId   Int
+  prospecto     LeadProspecto @relation(fields: [prospectoId], references: [id], onDelete: Cascade)
+  empresaId     Int
+  desde         EtapaCrmLead?
+  hacia         EtapaCrmLead
+  /// `bot` cuando lo movió un automatismo; el nombre de la persona si fue un clic.
+  actor         String
+  usuarioId     Int?
+  nota          String?
+  creadoEn      DateTime      @default(now())
+
+  @@index([prospectoId])
+  @@index([empresaId, hacia])
+}
+
+/// El voucher que el cliente manda por WhatsApp.
+///
+/// El anexo exige que una PERSONA valide el pago antes de despachar. Validar
+/// sin ver el comprobante no es validar, así que la imagen se baja de
+/// WhatsApp y se guarda: si no, el encargado estaría aprobando a ciegas.
+model LeadComprobantePago {
+  id             Int           @id @default(autoincrement())
+  empresaId      Int
+  prospectoId    Int
+  prospecto      LeadProspecto @relation(fields: [prospectoId], references: [id], onDelete: Cascade)
+  conversacionId Int
+  /// URL en S3. Vacía si la imagen no se pudo bajar: la etapa igual avanza,
+  /// porque el cliente SÍ mandó algo y alguien tiene que mirarlo.
+  url            String?
+  /// Id del archivo en WhatsApp, para reintentar la descarga.
+  mediaId        String?
+  /// Lo que el cliente escribió junto a la foto.
+  nota           String?
+  recibidoEn     DateTime      @default(now())
+  validadoEn     DateTime?
+  validadoPor    String?
+  validadoPorId  Int?
+  rechazadoEn    DateTime?
+  rechazadoMotivo String?
+
+  @@index([empresaId, validadoEn])
+  @@index([prospectoId])
+}
+
+/// Cada cosa que un cliente preguntó por el chat: un producto o un malestar.
+///
+/// Es la materia prima de tres puntos del anexo a la vez: los productos más
+/// consultados con disponibilidad vs. no disponibles (27), los malestares más
+/// consultados (27) y el historial de consultas de salud y de productos no
+/// habidos de cada cliente (28).
+///
+/// Se guarda como fila y no se deduce leyendo los chats después: el texto de
+/// la conversación no dice si lo que se buscó existía o no, y reprocesarlo
+/// con IA costaría una llamada por consulta y daría un número distinto cada
+/// vez que se corra.
+model LeadConsulta {
+  id             Int             @id @default(autoincrement())
+  empresaId      Int
+  empresa        Empresa         @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  conversacionId Int
+  prospectoId    Int?
+  telefono       String
+  tipo           TipoLeadConsulta
+  /// Lo que el cliente pidió, tal como lo escribió (normalizado en minúsculas).
+  texto          String
+  /// Si se encontró algo en el catálogo. `false` = "no habido".
+  hubo           Boolean          @default(false)
+  /// El producto que se le ofreció, cuando hubo uno.
+  productoId     Int?
+  /// Disponibilidad del producto en ese momento: lo que el cliente vio.
+  disponibilidad String?
+  creadoEn       DateTime         @default(now())
+
+  @@index([empresaId, tipo, creadoEn])
+  @@index([empresaId, hubo])
+  @@index([telefono])
+}
+
+enum TipoLeadConsulta {
+  PRODUCTO
+  MALESTAR
+}
+
 enum EstadoLeadProspecto {
   FRIO
   TIBIO
@@ -4075,6 +4345,7 @@ model LeadConversacion {
   brochureEnviado     Boolean                @default(false)
   mensajes            LeadMensaje[]
   prospecto           LeadProspecto?
+  borrador            LeadPedidoBorrador?
   creadoEn            DateTime               @default(now())
   actualizadoEn       DateTime               @updatedAt
 
@@ -4090,6 +4361,14 @@ model LeadMensaje {
   contenido      String
   whatsappMsgId  String?          @unique // dedup de mensajes entrantes
   esAudio        Boolean          @default(false)
+  // Herramientas que la IA pidió al generar ESTE mensaje (nombre, argumentos y
+  // resultado). Es la caja negra del turno: sin esto no hay forma de saber por
+  // qué el asistente dijo lo que dijo, ni de alimentar la analítica de consultas.
+  herramientasJson Json?
+  // Embedding de la respuesta del asistente (768 dims). Sirve para no mandar
+  // dos veces el mismo mensaje con otras palabras: se compara contra las
+  // últimas respuestas de la conversación. Vacío en los mensajes del cliente.
+  embedding      Float[]
   creadoEn       DateTime         @default(now())
 
   @@index([conversacionId])
@@ -4112,6 +4391,26 @@ model LeadProspecto {
   puntosClave       String[]
   proximaAccion     String?
   botActivo         Boolean             @default(true)
+  /// Hasta cuándo dura la pausa. Cuando un humano toma el chat, la IA se
+  /// calla un rato y vuelve sola: una pausa permanente convierte cada
+  /// intervención manual en un bot apagado para siempre, que es lo que
+  /// pasaba antes. Null con botActivo=false = apagado a propósito.
+  pausadoHasta      DateTime?
+  /// Por qué se pausó: "respuesta manual", "mayorista", "reclamo"… Se ve en
+  /// el panel y explica al equipo qué pasó.
+  motivoPausa       String?
+  /// Etapa OPERATIVA del pedido, las 12 del anexo. Es otra cosa que `estado`
+  /// (FRÍO/TIBIO/CALIENTE), que mide temperatura del lead: esto es lo que el
+  /// encargado mira para saber qué le toca hacer hoy.
+  etapa             EtapaCrmLead        @default(NUEVO)
+  etapaEn           DateTime            @default(now())
+  historialEtapas   LeadEtapaHistorial[]
+  comprobantesPago  LeadComprobantePago[]
+  /// Sexo y edad: el cliente pide un reporte demográfico. Solo se llenan si
+  /// la persona lo dice (la edad suele salir al preguntar por la dosis); no
+  /// se adivinan por el nombre, que es como se arma un dato falso.
+  sexo              String?
+  edad              Int?
   notificadoEn      DateTime? // idempotencia de alerta lead caliente
   cotizacionId      Int? // COT (comprobante) que la IA generó desde el chat, si aplica
   clienteId         Int? // Cliente de MYPE creado al convertir el prospecto (Fase 3)
@@ -4122,6 +4421,67 @@ model LeadProspecto {
 
   @@index([empresaId, estado])
   @@index([empresaId, puntaje])
+}
+
+/// Lo que la IA va armando de un pedido mientras conversa.
+///
+/// Existe porque los datos llegan de a uno y en desorden: el cliente dice el
+/// distrito en el mensaje 4, el nombre en el 9 y el celular cuando ya aceptó.
+/// Sin un sitio donde acumularlos, la IA tendría que releer toda la
+/// conversación en cada turno y volvería a preguntar lo ya dicho — que es
+/// justamente lo que el banco de pruebas del cliente castiga.
+///
+/// Uno por conversación. Se completa, se cotiza y al final se convierte en
+/// pedido de verdad (comprobante + despacho).
+model LeadPedidoBorrador {
+  id             Int              @id @default(autoincrement())
+  empresaId      Int
+  conversacionId Int              @unique
+  conversacion   LeadConversacion @relation(fields: [conversacionId], references: [id], onDelete: Cascade)
+
+  // ── Destino: decide la tarifa, la forma de pago y qué datos pedir ────────
+  /// Nombre de la zona resuelta ("Lima", "Provincia"), de la config de envío.
+  zona           String?
+  /// DOMICILIO | AGENCIA | RECOJO
+  tipoZona       String?
+  /// Distrito o ciudad, con su nombre oficial.
+  lugar          String?
+  destinoRegion  String?
+  costoEnvio     Decimal?         @db.Decimal(10, 2)
+
+  // ── Datos de quien recibe ────────────────────────────────────────────────
+  nombre         String?
+  dni            String?
+  celular        String?
+  direccion      String?
+  referencia     String?
+  /// Franja acordada, tal como se la confirmó al cliente.
+  horario        String?
+  /// Sede de la agencia, cuando va por courier.
+  agenciaSede    String?
+  /// Si recibe un tercero.
+  recibeNombre   String?
+  recibeDni      String?
+
+  // ── Lo que lleva ─────────────────────────────────────────────────────────
+  /// [{ productoId, cantidad }] confirmados por el cliente.
+  itemsJson      Json?
+  /// COT generada desde el chat, si ya se cotizó.
+  cotizacionId   Int?
+  cotizadoEn     DateTime?
+  /// Descuento por pack que se le aplicó, en soles. El anexo pide el balance
+  /// de descuentos otorgados: sin guardarlo habría que recalcularlo con las
+  /// reglas de HOY sobre pedidos viejos, y daría un número que nunca pasó.
+  descuentoAplicado Decimal?       @db.Decimal(10, 2)
+  /// Comprobante del pedido ya registrado. Con esto puesto, no se registra
+  /// dos veces por más que el cliente insista.
+  comprobanteId  Int?
+  registradoEn   DateTime?
+
+  creadoEn       DateTime         @default(now())
+  actualizadoEn  DateTime         @updatedAt
+
+  @@index([empresaId])
 }
 
 // ─── RAG: entrenamiento de la IA de ventas (pgvector) ──────────────────────

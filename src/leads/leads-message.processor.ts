@@ -1,13 +1,50 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
-import { Job, UnrecoverableError } from 'bullmq';
+import { Job, Queue, UnrecoverableError } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
-import { RagVentasService } from './leads-rag.service';
+import { RagVentasService, codigosDeFichas } from './leads-rag.service';
 import { LeadsAlertaService } from './leads-alerta.service';
 import { ComprobanteService } from '../comprobante/comprobante.service';
-import { LEADS_MESSAGES_QUEUE } from './leads.constants';
+import {
+  DEBOUNCE_RESPUESTA_MS,
+  JOB_RESPONDER,
+  LEADS_MESSAGES_QUEUE,
+} from './leads.constants';
+import { DisponibilidadProducto, Prisma } from '@prisma/client';
+import { EjecutorHerramienta } from '../gemini/gemini.service';
+import {
+  HERRAMIENTA_BUSCAR_PRODUCTOS,
+  HERRAMIENTA_COTIZAR,
+  HERRAMIENTA_DERIVAR,
+  HERRAMIENTA_ENVIAR_FOTO,
+  HERRAMIENTA_GUARDAR_DATOS,
+  HERRAMIENTA_REGISTRAR_PEDIDO,
+} from './leads-herramientas';
+import { debeReactivarse, estaPausado, venceEn } from './pausa-bot';
+import { conDescargoLegal } from './prompt-asesor';
+import {
+  DatosDelCliente,
+  ItemPedido,
+  LeadsPedidoService,
+} from './leads-pedido.service';
+import { LeadsEmbudoService } from './leads-embudo.service';
+import { LeadsConsultasService } from './leads-consultas.service';
+import { LeadsDisparadoresService } from './leads-disparadores.service';
+import { TipoDisparo, postergaLaCompra } from './leads-disparadores';
+import { EtapaCrm } from './leads-embudo';
+import {
+  disponibilidadEfectiva,
+  textoParaElCliente,
+} from '../producto/disponibilidad.util';
+import {
+  RESPUESTAS_A_COMPARAR,
+  aportaDatoNuevo,
+  esCortesiaBreve,
+  esDespedidaClara,
+  esRepetida,
+} from './leads-repeticion';
 import {
   IaVentasService,
   MensajeConversacion,
@@ -16,12 +53,39 @@ import {
   estadoProspectoDesde,
 } from './leads-ia.service';
 
+/** Un producto tal como lo necesita la IA. */
+interface ProductoParaIa {
+  id: number;
+  descripcion: string;
+  precioUnitario: any;
+  stock: any;
+  moneda: string;
+  imagenUrl: string | null;
+  disponibilidad: DisponibilidadProducto | null;
+  prioridadVenta: number | null;
+}
+
+/**
+ * Cuánto tiene que parecerse el nombre de un producto a lo que escribió el
+ * cliente. Medido contra el catálogo real de Hierba Sana: a 0.45 "fenocreco"
+ * encuentra Fenogreco (0.538) y una dolencia no devuelve nada. Más bajo
+ * empieza a traer productos que no vienen a cuento.
+ */
+const UMBRAL_PARECIDO = 0.45;
+
+/** Lo que necesita el trabajo de respuesta: la conversación, no el mensaje. */
+interface TareaRespuesta {
+  empresaId: number;
+  conversacionId: number;
+}
+
 interface MensajeEntrante {
   phoneNumberId: string;
   from: string;
   messageId: string;
   text: string;
   esAudio: boolean;
+  esImagen?: boolean;
   mediaId?: string;
   nombre?: string;
   timestamp?: string;
@@ -50,28 +114,35 @@ export class LeadsMessageProcessor extends WorkerHost {
     private readonly notificaciones: NotificacionesService,
     private readonly alerta: LeadsAlertaService,
     private readonly comprobante: ComprobanteService,
+    private readonly pedido: LeadsPedidoService,
+    private readonly embudo: LeadsEmbudoService,
+    private readonly consultas: LeadsConsultasService,
+    private readonly disparadores: LeadsDisparadoresService,
+    @InjectQueue(LEADS_MESSAGES_QUEUE) private readonly queue: Queue,
   ) {
     super();
   }
 
-  async process(job: Job<MensajeEntrante>): Promise<void> {
-    const d = job.data;
+  async process(job: Job<MensajeEntrante | TareaRespuesta>): Promise<void> {
+    if (job.name === JOB_RESPONDER) {
+      return this.responder(job.data as TareaRespuesta);
+    }
+    return this.ingresar(job.data as MensajeEntrante);
+  }
 
+  /**
+   * Guarda un mensaje entrante y programa la respuesta.
+   *
+   * La respuesta va en un trabajo aparte con un id por conversación: si el
+   * cliente manda tres mensajes seguidos, los tres se guardan pero solo se
+   * programa una respuesta, y esa respuesta los lee todos. Antes cada mensaje
+   * disparaba el suyo y el cliente recibía tres contestaciones sueltas.
+   */
+  private async ingresar(d: MensajeEntrante): Promise<void> {
     // 1) ¿Qué empresa tiene conectado este número?
     const empresa = await this.prisma.empresa.findFirst({
       where: { whatsappPhoneNumberId: d.phoneNumberId },
-      select: {
-        id: true,
-        razonSocial: true,
-        nombreComercial: true,
-        descripcionTienda: true,
-        iaVentasActiva: true,
-        iaVentasContexto: true,
-        iaVentasBrochureUrl: true,
-        iaVentasCotizacion: true,
-        rubro: { select: { nombre: true } },
-        plan: { select: { maxLeadsMes: true } },
-      },
+      select: { id: true, iaVentasActiva: true },
     });
     if (!empresa) {
       this.logger.warn(
@@ -96,9 +167,21 @@ export class LeadsMessageProcessor extends WorkerHost {
         cantidadMensajes: 0,
       },
       // El cliente escribió → reinicia el contador de seguimientos (silencio nuevo).
-      update: { seguimientos: 0, ...(d.nombre ? { nombreProspecto: d.nombre } : {}) },
-      select: { id: true, creadoEn: true },
+      update: {
+        seguimientos: 0,
+        ...(d.nombre ? { nombreProspecto: d.nombre } : {}),
+      },
+      select: { id: true, estado: true },
     });
+
+    // Cerrada y el cliente vuelve a escribir: se reabre. Solo desde CERRADA —
+    // CALIFICADA y TRANSFERIDA las decide otra parte del sistema.
+    if (conv.estado === 'CERRADA') {
+      await this.prisma.leadConversacion.update({
+        where: { id: conv.id },
+        data: { estado: 'ACTIVA' },
+      });
+    }
 
     // 2b) Asegura el prospecto desde el PRIMER contacto (estado FRIO, puntaje 0),
     // así el lead aparece en el panel aunque aún no haya calificación BANT. La
@@ -151,53 +234,167 @@ export class LeadsMessageProcessor extends WorkerHost {
       return;
     }
 
+    // El cliente escribió. Dos cosas, en este orden:
+    //
+    // 1) Si pidió la baja, se respeta ANTES de cualquier otra cosa. El pie de
+    //    las plantillas lo promete, y no cumplirlo es lo que hace que
+    //    reporten el número. Funciona incluso con la IA apagada.
+    // 2) Los recordatorios que esperaban respuesta ya no corresponden:
+    //    escribirle "¿seguimos con tu pedido?" a alguien que acaba de
+    //    contestar deja al negocio como si no leyera sus mensajes.
+    await this.disparadores
+      .atenderSiEsBaja(empresa.id, d.from, contenido)
+      .catch(() => undefined);
+    await this.disparadores
+      .cancelar(
+        empresa.id,
+        d.from,
+        [
+          TipoDisparo.RECUPERAR_COTIZACION,
+          TipoDisparo.CARRITO_EN_ESPERA,
+          TipoDisparo.REACTIVACION,
+        ],
+        'El cliente escribió',
+      )
+      .catch(() => undefined);
+
+    // 33.3 — "te aviso luego" no es un rechazo: es una venta en pausa. Se le
+    // recuerda a la mañana siguiente, que es lo que pide el anexo. Solo tiene
+    // sentido si ya hay algo cotizado; si no, no hay nada que recordar.
+    if (postergaLaCompra(contenido)) {
+      await this.programarCarritoEnEspera(empresa.id, conv.id, d.from);
+    }
+
+    // Una imagen en una conversación con pedido en curso es, casi siempre, el
+    // voucher. Se guarda y el pedido queda esperando que una persona valide el
+    // pago: el candado del anexo. Si todavía no hay nada que pagar, la imagen
+    // no se toca — puede ser una receta o la foto de un frasco, y archivarla
+    // sin motivo es guardar datos de alguien por nada.
+    if (d.esImagen) {
+      await this.registrarVoucherSiCorresponde(empresa.id, conv.id, d);
+    }
+
     this.logger.log(
       `Lead: mensaje de ${d.from} guardado (empresa ${empresa.id}, conv ${conv.id}).`,
     );
 
-    // ─── FASE 1c: respuesta con IA ────────────────────────────────────────────
     // Toggle multi-tenant: si la empresa no activó la IA, sólo capturamos el CRM.
     if (!empresa.iaVentasActiva) return;
+    // Nota de voz que no se pudo transcribir: queda guardada, pero no hay con
+    // qué responder.
+    if (d.esAudio && !audioTranscrito) return;
+
+    await this.programarRespuesta(empresa.id, conv.id);
+  }
+
+  /**
+   * Encola la respuesta a una conversación, una sola vez por lote.
+   *
+   * El `jobId` por conversación es lo que agrupa: mientras haya un trabajo
+   * esperando, los mensajes que lleguen no programan otro. Por eso el trabajo
+   * TIENE que desaparecer al terminar — si se quedara en completados o en
+   * fallidos, su id seguiría ocupado y esa conversación no volvería a recibir
+   * respuesta nunca más.
+   */
+  private async programarRespuesta(
+    empresaId: number,
+    conversacionId: number,
+  ): Promise<void> {
+    const tarea: TareaRespuesta = { empresaId, conversacionId };
+    await this.queue.add(JOB_RESPONDER, tarea, {
+      jobId: `resp-${empresaId}-${conversacionId}`,
+      delay: DEBOUNCE_RESPUESTA_MS,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 2000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    });
+  }
+
+  /**
+   * Responde a todo lo que el cliente haya escrito desde nuestro último
+   * mensaje, en un solo turno.
+   */
+  private async responder(t: TareaRespuesta): Promise<void> {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: t.empresaId },
+      select: {
+        id: true,
+        razonSocial: true,
+        nombreComercial: true,
+        descripcionTienda: true,
+        iaVentasActiva: true,
+        iaVentasContexto: true,
+        iaVentasBrochureUrl: true,
+        iaVentasCotizacion: true,
+        rubro: { select: { nombre: true } },
+        plan: { select: { maxLeadsMes: true } },
+      },
+    });
+    if (!empresa?.iaVentasActiva) return;
     if (!this.ia.disponible()) {
       this.logger.warn('IA de ventas sin GEMINI_API_KEY; no se responde.');
       return;
     }
-    // Si era nota de voz y no se pudo transcribir, solo guardamos (no respondemos).
-    if (d.esAudio && !audioTranscrito) return;
 
-    // Bot pausado en este prospecto (un humano tomó el chat).
-    const prospecto = await this.prisma.leadProspecto.findUnique({
-      where: { conversacionId: conv.id },
-      select: { id: true, botActivo: true, notificadoEn: true },
-    });
-    if (prospecto && !prospecto.botActivo) return;
-
-    // Idempotencia de la respuesta: ¿ya contestamos a este mensaje?
-    const yaRespondido = await this.prisma.leadMensaje.count({
-      where: {
-        conversacionId: conv.id,
-        rol: 'ASISTENTE',
-        id: { gt: userMsgId },
+    const conv = await this.prisma.leadConversacion.findUnique({
+      where: { id: t.conversacionId },
+      select: {
+        id: true,
+        creadoEn: true,
+        telefonoProspecto: true,
+        nombreProspecto: true,
       },
     });
-    if (yaRespondido > 0) return;
+    if (!conv) return;
+
+    // Bot pausado en este prospecto (un humano tomó el chat). La pausa por
+    // intervención vence sola; la de una derivación, no — ahí hay una persona
+    // atendiendo y la IA no debe meterse en medio.
+    const prospecto = await this.prisma.leadProspecto.findUnique({
+      where: { conversacionId: conv.id },
+      select: { id: true, botActivo: true, pausadoHasta: true },
+    });
+    if (estaPausado(prospecto)) return;
+    if (debeReactivarse(prospecto) && prospecto) {
+      await this.prisma.leadProspecto.update({
+        where: { id: prospecto.id },
+        data: { botActivo: true, pausadoHasta: null, motivoPausa: null },
+      });
+      this.logger.log(
+        `Lead: venció la pausa de la conv ${conv.id}; la IA retoma.`,
+      );
+    }
 
     // Tope mensual de leads del plan (soft-block): el lead se captura igual, pero
     // si esta conversación supera el tope, la IA no responde y se avisa al admin.
-    if (await this.superaTopeLeads(empresa.id, empresa.plan?.maxLeadsMes ?? null, conv.creadoEn)) {
+    if (
+      await this.superaTopeLeads(
+        empresa.id,
+        empresa.plan?.maxLeadsMes ?? null,
+        conv.creadoEn,
+      )
+    ) {
       return;
     }
 
-    // Historial completo de la conversación (incluye el mensaje recién guardado).
     const mensajes = await this.prisma.leadMensaje.findMany({
       where: { conversacionId: conv.id },
       orderBy: { id: 'asc' },
-      select: { rol: true, contenido: true },
+      select: { rol: true, contenido: true, herramientasJson: true },
     });
+    // Si lo último que hay es nuestro, este lote ya fue contestado (reintento
+    // de BullMQ, o una respuesta manual desde el panel mientras esperábamos).
+    if (mensajes.at(-1)?.rol !== 'USUARIO') return;
+
     const historial: MensajeConversacion[] = mensajes.map((m) => ({
       role: m.rol === 'USUARIO' ? 'user' : 'assistant',
       content: m.contenido,
     }));
+    // Todo lo que el cliente escribió desde nuestra última respuesta: la
+    // búsqueda de productos y la detección de brochure miran el lote entero,
+    // no solo el último mensaje.
+    const contenido = this.ultimoLoteDelCliente(mensajes);
 
     // Contexto = datos de la empresa + fragmentos RAG relevantes al mensaje.
     const contextoEmpresa = this.construirContexto(empresa);
@@ -207,10 +404,27 @@ export class LeadsMessageProcessor extends WorkerHost {
       empresa.id,
       contenido,
     );
-    const contextoRag = await this.rag.buscarContexto(empresa.id, d.text, 5);
-    const businessContext = [contextoEmpresa, relevantes.contexto, contextoRag]
+    const contextoRag = await this.rag.buscarContexto(empresa.id, contenido, 5);
+    const businessContext = [
+      contextoEmpresa,
+      this.productosYaMostrados(mensajes),
+      relevantes.contexto,
+      contextoRag,
+    ]
       .filter((s) => s && s.trim())
       .join('\n\n');
+
+    // El modelo puede pedir herramientas (buscar en el catálogo, enviar una
+    // foto). `fotosEnviadas` evita repetir la misma imagen en un turno.
+    const fotosEnviadas = new Set<number>();
+    const ejecutor = this.crearEjecutor(
+      empresa.id,
+      conv.id,
+      conv.telefonoProspecto,
+      fotosEnviadas,
+    );
+
+    const config = await this.pedido.configDe(empresa.id);
 
     let resultado: RespuestaVenta;
     try {
@@ -218,6 +432,13 @@ export class LeadsMessageProcessor extends WorkerHost {
         historial,
         businessContext,
         historial.length,
+        ejecutor,
+        {
+          nombre: empresa.nombreComercial || empresa.razonSocial,
+          rubro: empresa.rubro?.nombre ?? null,
+          asesor: config.asesor ?? null,
+          contexto: businessContext,
+        },
       );
     } catch (err) {
       if (esErrorPermanente(err)) {
@@ -229,84 +450,86 @@ export class LeadsMessageProcessor extends WorkerHost {
       throw err;
     }
 
+    if (resultado.uso) {
+      // Queda en el log para poder calcular el costo real por cliente: casi
+      // todo es contexto fijo que se reenvía en cada vuelta del ciclo.
+      this.logger.log(
+        `IA conv ${conv.id}: ${resultado.uso.entrada} tokens de entrada + ${resultado.uso.salida} de salida en ${resultado.uso.llamadasAlModelo} llamada(s).`,
+      );
+    }
+
+    // El descargo legal lo pone el código, no el modelo: el anexo lo exige
+    // "fijo e invariable" y un modelo lo olvida justo en el mensaje que
+    // importa. Solo cuando el turno recomendó productos de verdad.
+    const recomendoProductos = resultado.llamadas.some((ll) => {
+      const r = ll.resultado as { productos?: unknown[]; texto?: string };
+      return (
+        (Array.isArray(r?.productos) && r.productos.length > 0) || !!r?.texto
+      );
+    });
+    resultado.reply = conDescargoLegal(
+      resultado.reply,
+      config.descargoLegal,
+      recomendoProductos,
+    );
+
+    // El cliente solo dio las gracias o dijo "ok" y lo que íbamos a contestar
+    // es otra vez lo mismo con otras palabras: no se manda. Es el error que el
+    // banco del cliente marca como crítico (insistir tras la despedida).
+    const embedding = await this.embeddingDe(resultado.reply);
+    const previas = embedding.length
+      ? await this.respuestasRecientes(conv.id)
+      : [];
+    if (
+      embedding.length &&
+      esCortesiaBreve(contenido) &&
+      esRepetida(
+        embedding,
+        previas.map((p) => p.embedding),
+      ) &&
+      // Una cifra que no estaba antes (otro precio, otra presentación) es
+      // información nueva aunque la frase se parezca: eso sí se manda.
+      !aportaDatoNuevo(
+        resultado.reply,
+        previas.map((p) => p.contenido),
+      )
+    ) {
+      this.logger.log(
+        `Lead: respuesta omitida en conv ${conv.id} (repetiría un mensaje anterior y el cliente no aportó nada nuevo).`,
+      );
+      return;
+    }
+
     // Persistir la respuesta y enviarla desde el número de la empresa.
     await this.prisma.leadMensaje.create({
       data: {
         conversacionId: conv.id,
         rol: 'ASISTENTE',
         contenido: resultado.reply,
+        herramientasJson: resultado.llamadas.length
+          ? (resultado.llamadas as unknown as Prisma.InputJsonValue)
+          : undefined,
+        embedding,
       },
     });
     const envio = await this.whatsapp.enviarTexto(
-      d.from,
+      conv.telefonoProspecto,
       resultado.reply,
       empresa.id,
     );
     if (!envio.success) {
       this.logger.warn(
-        `Lead: envío WhatsApp falló a ${d.from}: ${envio.error}`,
+        `Lead: envío WhatsApp falló a ${conv.telefonoProspecto}: ${envio.error}`,
       );
     }
 
-    // Si el cliente pidió VER productos y hay coincidencias con foto, enviar
-    // hasta 3 imágenes (con precio en el caption). Dentro de la ventana de 24h
-    // es mensaje de servicio (sin costo). Best-effort: no bloquea la respuesta.
-    if (this.quiereVerProductos(contenido)) {
-      const conFoto = relevantes.productos
-        .filter((p) => p.imagenUrl)
-        .slice(0, 3);
-      for (const p of conFoto) {
-        const simbolo = p.moneda === 'USD' ? 'US$' : 'S/';
-        const caption = `${p.descripcion} — ${simbolo}${Number(
-          p.precioUnitario,
-        ).toFixed(2)}`;
-        await this.whatsapp
-          .enviarImagenUrl(d.from, p.imagenUrl as string, caption, empresa.id)
-          .catch(() => {});
-      }
-    }
+    // Las fotos de producto ya no se adivinan con una expresión regular sobre
+    // el texto: el modelo las pide con la herramienta `enviar_foto` cuando hace
+    // falta, y el ejecutor las manda en ese momento.
 
-    // Brochure/catálogo: si el prospecto pide más info y la empresa tiene un
-    // enlace configurado, se envía UNA vez por conversación (PDF o imagen).
-    if (empresa.iaVentasBrochureUrl && this.quiereBrochure(contenido)) {
-      const est = await this.prisma.leadConversacion.findUnique({
-        where: { id: conv.id },
-        select: { brochureEnviado: true },
-      });
-      if (!est?.brochureEnviado) {
-        const url = empresa.iaVentasBrochureUrl;
-        const esImagen = /\.(jpe?g|png|webp|gif)(\?|$)/i.test(url);
-        const esPdf = /\.pdf(\?|$)/i.test(url);
-        let res: { success: boolean };
-        if (esImagen) {
-          // Imagen (foto/afiche del brochure).
-          res = await this.whatsapp
-            .enviarImagenUrl(d.from, url, undefined, empresa.id)
-            .catch(() => ({ success: false }));
-        } else if (esPdf) {
-          // Archivo PDF → documento.
-          res = await this.whatsapp
-            .enviarDocumentoUrl(d.from, url, 'Brochure.pdf', undefined, empresa.id)
-            .catch(() => ({ success: false }));
-        } else {
-          // Página web (no es archivo) → se comparte el enlace en un mensaje.
-          res = await this.whatsapp
-            .enviarTexto(
-              d.from,
-              `📄 Aquí tienes nuestra información completa:\n${url}`,
-              empresa.id,
-            )
-            .catch(() => ({ success: false }));
-        }
-        if (res.success) {
-          await this.prisma.leadConversacion.update({
-            where: { id: conv.id },
-            data: { brochureEnviado: true },
-          });
-        }
-      }
-    }
-    // Solo +1: el mensaje del usuario ya se contó en persistirMensajeUsuario.
+    await this.enviarBrochureSiCorresponde(empresa, conv, contenido);
+
+    // Solo +1: los mensajes del cliente ya se contaron al guardarlos.
     await this.prisma.leadConversacion.update({
       where: { id: conv.id },
       data: { cantidadMensajes: { increment: 1 } },
@@ -317,10 +540,259 @@ export class LeadsMessageProcessor extends WorkerHost {
       await this.aplicarCalificacion(
         empresa,
         conv.id,
-        d,
+        { telefono: conv.telefonoProspecto, nombre: conv.nombreProspecto },
         resultado.calificacion,
         historial,
       );
+    }
+
+    // Despedida clara del cliente: ya se le contestó una vez y la conversación
+    // se cierra, para que el cron de seguimiento (que solo mira las ACTIVA) no
+    // la reabra con otro mensaje comercial. Va al final, después de calificar:
+    // un lead que se despide igual tiene que quedar puntuado en el CRM.
+    if (esDespedidaClara(contenido)) {
+      await this.prisma.leadConversacion.update({
+        where: { id: conv.id },
+        data: { estado: 'CERRADA' },
+      });
+      this.logger.log(
+        `Lead: conv ${conv.id} cerrada por despedida del cliente.`,
+      );
+    }
+  }
+
+  /**
+   * Embedding de un texto, best-effort. Si Gemini falla, se devuelve vacío: el
+   * control de repetición es una mejora, nunca un motivo para dejar al cliente
+   * sin respuesta.
+   */
+  private async embeddingDe(texto: string): Promise<number[]> {
+    try {
+      return await this.ia.generarEmbedding(texto);
+    } catch (e) {
+      this.logger.warn(
+        `No se pudo calcular el embedding de la respuesta: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return [];
+    }
+  }
+
+  /** Nuestras últimas respuestas en esta conversación, con su embedding. */
+  private async respuestasRecientes(
+    conversacionId: number,
+  ): Promise<{ embedding: number[]; contenido: string }[]> {
+    const previas = await this.prisma.leadMensaje.findMany({
+      where: { conversacionId, rol: 'ASISTENTE' },
+      orderBy: { id: 'desc' },
+      take: RESPUESTAS_A_COMPARAR,
+      select: { embedding: true, contenido: true },
+    });
+    return previas.filter((m) => m.embedding.length > 0);
+  }
+
+  /** Las columnas que la IA necesita de un producto. */
+  private static readonly CAMPOS_PRODUCTO = {
+    id: true,
+    descripcion: true,
+    precioUnitario: true,
+    stock: true,
+    moneda: true,
+    imagenUrl: true,
+    disponibilidad: true,
+    prioridadVenta: true,
+  } as const;
+
+  /**
+   * Segundo escalón: productos cuyo NOMBRE se parece a lo que escribió el
+   * cliente, aunque lo haya escrito mal. Trigramas de Postgres (pg_trgm).
+   *
+   * `word_similarity` y no `similarity` porque se compara una palabra suelta
+   * contra un nombre largo: "fenocreco" contra "Fenogreco Alholva - NATURAL
+   * MEDIX ( 100 capsulas )" da 0.54 con la primera y casi nada con la segunda.
+   * El umbral está medido contra el catálogo real: a 0.45, "fenocreco"
+   * encuentra Fenogreco y "dolor de rodillas" no devuelve nada (que es lo
+   * correcto: una dolencia no se parece a ningún nombre de producto).
+   */
+  private async buscarPorParecido(
+    empresaId: number,
+    texto: string,
+    categoria?: string,
+  ): Promise<ProductoParaIa[]> {
+    const consulta = (texto || '').trim().slice(0, 120);
+    if (consulta.length < 3) return [];
+    try {
+      const filtroCategoria = categoria
+        ? Prisma.sql`AND c."nombre" ILIKE ${`%${categoria}%`}`
+        : Prisma.empty;
+      return await this.prisma.$queryRaw<ProductoParaIa[]>`
+        SELECT p."id", p."descripcion", p."precioUnitario", p."stock",
+               p."moneda", p."imagenUrl", p."disponibilidad", p."prioridadVenta"
+        FROM "Producto" p
+        LEFT JOIN "Categoria" c ON c."id" = p."categoriaId"
+        WHERE p."empresaId" = ${empresaId}
+          AND p."estado"::text = 'ACTIVO'
+          AND word_similarity(${consulta}, p."descripcion") > ${UMBRAL_PARECIDO}
+          ${filtroCategoria}
+        ORDER BY word_similarity(${consulta}, p."descripcion") DESC,
+                 p."prioridadVenta" DESC NULLS LAST
+        LIMIT 8
+      `;
+    } catch (e) {
+      // Si falta la extensión pg_trgm, la búsqueda por palabras sigue viva.
+      this.logger.warn(
+        `Búsqueda por parecido no disponible: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Tercer escalón: las fichas del RAG, que sí saben a qué órgano y sistema
+   * apunta cada producto. Es lo que convierte "tengo dolor de rodillas" en
+   * productos concretos.
+   *
+   * De la ficha solo se toma el código; el precio y la disponibilidad se leen
+   * de la base, porque el texto de la ficha envejece en cuanto cambia el
+   * catálogo. Cuesta un embedding, por eso es el último escalón y no se usa en
+   * el adelanto que va al prompt.
+   */
+  private async buscarPorFichas(
+    empresaId: number,
+    consulta: string,
+  ): Promise<ProductoParaIa[]> {
+    const fragmentos = await this.rag.buscarFragmentos(empresaId, consulta, 4);
+    const codigos = codigosDeFichas(fragmentos).slice(0, 12);
+    if (codigos.length === 0) return [];
+
+    const productos = await this.prisma.producto.findMany({
+      where: { empresaId, estado: 'ACTIVO' as any, codigo: { in: codigos } },
+      select: { ...LeadsMessageProcessor.CAMPOS_PRODUCTO, codigo: true },
+      take: 8,
+    });
+    // El RAG ya los ordenó por relevancia; la base los devuelve en otro orden.
+    const posicion = new Map(codigos.map((c, i) => [c, i]));
+    return productos.sort(
+      (a, b) => (posicion.get(a.codigo) ?? 99) - (posicion.get(b.codigo) ?? 99),
+    );
+  }
+
+  /**
+   * Los productos que la IA ya le enseñó al cliente en esta conversación.
+   *
+   * Hace falta porque el historial que recibe el modelo es SOLO texto: los
+   * resultados de sus búsquedas anteriores no se le devuelven, así que no
+   * puede ver lo que ya buscó y vuelve a buscarlo. Medido en el QA del flujo
+   * completo: hasta tres búsquedas repetidas en un turno, cada una un viaje
+   * entero al modelo.
+   *
+   * De paso resuelve lo que pide el flujo del cliente: que entienda "el
+   * grande", "el segundo" o "ese" refiriéndose a lo que acaba de ofrecer.
+   */
+  private productosYaMostrados(
+    mensajes: { herramientasJson?: unknown }[],
+  ): string {
+    const vistos = new Map<number, string>();
+    // Solo lo reciente: un catálogo entero en el prompt cuesta más de lo que
+    // ahorra.
+    for (const m of mensajes.slice(-12)) {
+      const llamadas = m.herramientasJson;
+      if (!Array.isArray(llamadas)) continue;
+      for (const ll of llamadas as { resultado?: unknown }[]) {
+        const productos = (
+          ll?.resultado as {
+            productos?: {
+              id?: number;
+              nombre?: string;
+              precio?: string;
+              disponibilidad?: string;
+            }[];
+          }
+        )?.productos;
+        for (const p of productos ?? []) {
+          if (typeof p?.id !== 'number') continue;
+          vistos.set(
+            p.id,
+            `- [id ${p.id}] ${p.nombre} — ${p.precio} (${p.disponibilidad})`,
+          );
+        }
+      }
+    }
+    if (vistos.size === 0) return '';
+    return (
+      'PRODUCTOS QUE YA LE MOSTRASTE EN ESTA CONVERSACIÓN. No los vuelvas a ' +
+      'buscar: si el cliente se refiere a "el segundo", "el grande" o "ese", ' +
+      'es uno de estos, y su id es el que va entre corchetes:\n' +
+      [...vistos.values()].slice(0, 20).join('\n')
+    );
+  }
+
+  /**
+   * Lo que el cliente escribió desde nuestra última respuesta, en un solo
+   * texto. Puede ser un mensaje o cinco.
+   */
+  private ultimoLoteDelCliente(
+    mensajes: { rol: string; contenido: string }[],
+  ): string {
+    const lote: string[] = [];
+    for (let i = mensajes.length - 1; i >= 0; i--) {
+      if (mensajes[i].rol !== 'USUARIO') break;
+      lote.unshift(mensajes[i].contenido);
+    }
+    return lote.join('\n');
+  }
+
+  /**
+   * Brochure/catálogo: si el prospecto pide más info y la empresa tiene un
+   * enlace configurado, se envía UNA vez por conversación (PDF o imagen).
+   */
+  private async enviarBrochureSiCorresponde(
+    empresa: { id: number; iaVentasBrochureUrl: string | null },
+    conv: { id: number; telefonoProspecto: string },
+    contenido: string,
+  ): Promise<void> {
+    if (!empresa.iaVentasBrochureUrl || !this.quiereBrochure(contenido)) return;
+
+    const est = await this.prisma.leadConversacion.findUnique({
+      where: { id: conv.id },
+      select: { brochureEnviado: true },
+    });
+    if (est?.brochureEnviado) return;
+
+    const url = empresa.iaVentasBrochureUrl;
+    const esImagen = /\.(jpe?g|png|webp|gif)(\?|$)/i.test(url);
+    const esPdf = /\.pdf(\?|$)/i.test(url);
+    let res: { success: boolean };
+    if (esImagen) {
+      // Imagen (foto/afiche del brochure).
+      res = await this.whatsapp
+        .enviarImagenUrl(conv.telefonoProspecto, url, undefined, empresa.id)
+        .catch(() => ({ success: false }));
+    } else if (esPdf) {
+      // Archivo PDF → documento.
+      res = await this.whatsapp
+        .enviarDocumentoUrl(
+          conv.telefonoProspecto,
+          url,
+          'Brochure.pdf',
+          undefined,
+          empresa.id,
+        )
+        .catch(() => ({ success: false }));
+    } else {
+      // Página web (no es archivo) → se comparte el enlace en un mensaje.
+      res = await this.whatsapp
+        .enviarTexto(
+          conv.telefonoProspecto,
+          `📄 Aquí tienes nuestra información completa:\n${url}`,
+          empresa.id,
+        )
+        .catch(() => ({ success: false }));
+    }
+    if (res.success) {
+      await this.prisma.leadConversacion.update({
+        where: { id: conv.id },
+        data: { brochureEnviado: true },
+      });
     }
   }
 
@@ -364,6 +836,120 @@ export class LeadsMessageProcessor extends WorkerHost {
         .catch(() => {});
     }
     return true;
+  }
+
+  /**
+   * 33.3 — el cliente postergó. Se le recuerda a la mañana siguiente, pero
+   * solo si hay un pedido o una cotización en curso: recordarle un carrito
+   * que no existe es escribirle por nada.
+   */
+  private async programarCarritoEnEspera(
+    empresaId: number,
+    conversacionId: number,
+    telefono: string,
+  ) {
+    try {
+      const borrador = await this.prisma.leadPedidoBorrador.findUnique({
+        where: { conversacionId },
+        select: { cotizacionId: true, itemsJson: true, comprobanteId: true },
+      });
+      // Ya comprado no se recuerda; sin nada cotizado, tampoco hay qué.
+      if (borrador?.comprobanteId) return;
+      const tieneItems =
+        Array.isArray(borrador?.itemsJson) &&
+        (borrador?.itemsJson as unknown[]).length > 0;
+      if (!borrador?.cotizacionId && !tieneItems) return;
+
+      await this.disparadores.programar({
+        empresaId,
+        tipo: TipoDisparo.CARRITO_EN_ESPERA,
+        telefono,
+        referencia: `conversacion:${conversacionId}`,
+        conversacionId,
+      });
+    } catch (e: any) {
+      this.logger.warn(`Lead: no se pudo programar el recordatorio: ${e?.message}`);
+    }
+  }
+
+  /**
+   * Avanza la etapa del embudo desde un automatismo.
+   *
+   * Nunca retrocede: si el encargado ya pasó el pedido a despacho y después
+   * entra una consulta suelta, el bot no lo devuelve a "diagnosticado". Y
+   * nunca puede abrir el despacho, porque va sin usuario y esa etapa exige
+   * una persona.
+   */
+  private async marcarEtapa(
+    empresaId: number,
+    conversacionId: number,
+    etapa: EtapaCrm,
+    nota: string,
+  ) {
+    try {
+      const prospecto = await this.prisma.leadProspecto.findFirst({
+        where: { conversacionId, empresaId },
+        select: { id: true },
+      });
+      if (!prospecto) return;
+      await this.embudo.mover(prospecto.id, empresaId, etapa, {
+        nota,
+        soloSiAvanza: true,
+      });
+    } catch (e: any) {
+      this.logger.warn(`Lead: no se pudo mover la etapa: ${e?.message}`);
+    }
+  }
+
+  /**
+   * El cliente mandó una imagen: si hay un pedido en curso, es el voucher.
+   *
+   * La imagen se baja de WhatsApp porque validar un pago sin verlo no es
+   * validar. Todo esto es best-effort: un problema bajando la foto no puede
+   * romper la atención del cliente, que es lo que importa en ese momento.
+   */
+  private async registrarVoucherSiCorresponde(
+    empresaId: number,
+    conversacionId: number,
+    d: MensajeEntrante,
+  ) {
+    try {
+      const borrador = await this.prisma.leadPedidoBorrador.findUnique({
+        where: { conversacionId },
+        select: { cotizacionId: true, comprobanteId: true },
+      });
+      // Sin cotización ni pedido no hay nada que pagar todavía.
+      if (!borrador?.cotizacionId && !borrador?.comprobanteId) return;
+
+      let buffer: Buffer | undefined;
+      let mimeType: string | undefined;
+      if (d.mediaId) {
+        try {
+          const media = await this.whatsapp.descargarMedia(d.mediaId, empresaId);
+          buffer = media.buffer;
+          mimeType = media.mimeType;
+        } catch (e: any) {
+          this.logger.warn(
+            `Lead: no se pudo bajar el voucher de ${d.from}: ${e?.message}`,
+          );
+        }
+      }
+
+      await this.embudo.registrarComprobantePago(empresaId, conversacionId, {
+        mediaId: d.mediaId,
+        // El texto que acompaña a la imagen: "ya transferí", "a nombre de…".
+        nota: d.text?.replace('[el cliente envió una imagen]', '').trim(),
+        buffer,
+        mimeType,
+      });
+      this.logger.log(
+        `Lead: comprobante de pago de ${d.from} registrado (conv ${conversacionId}).`,
+      );
+    } catch (e: any) {
+      this.logger.warn(
+        `Lead: no se pudo registrar el comprobante de pago: ${e?.message}`,
+      );
+    }
   }
 
   private async persistirMensajeUsuario(
@@ -437,13 +1023,98 @@ export class LeadsMessageProcessor extends WorkerHost {
   // Palabras conversacionales/de consulta que NO son nombres de producto; se
   // descartan para que la búsqueda se quede solo con los términos del producto.
   private static readonly STOPWORDS_PRODUCTO = new Set([
-    'hola','buenas','buenos','dias','días','tardes','noches','quiero','quisiera','necesito','busco',
-    'tienes','tienen','tiene','hay','habra','habrá','me','puedes','podrias','podrías','porfa','porfavor',
-    'favor','cuanto','cuánto','cuestan','cuesta','precio','precios','vale','valen','costo','stock',
-    'disponible','disponibles','disponibilidad','info','informacion','información','sobre','del','de','la',
-    'el','los','las','un','una','unos','unas','y','o','a','en','para','con','que','qué','es','son','tu','tus',
-    'su','sus','mi','mis','gustaria','gustaría','saber','ver','comprar','producto','productos','venden','vende',
-    'cual','cuales','cuál','cuáles','ok','gracias','si','sí','no','al','lo','le','tienes','algun','algún','alguna',
+    'hola',
+    'buenas',
+    'buenos',
+    'dias',
+    'días',
+    'tardes',
+    'noches',
+    'quiero',
+    'quisiera',
+    'necesito',
+    'busco',
+    'tienes',
+    'tienen',
+    'tiene',
+    'hay',
+    'habra',
+    'habrá',
+    'me',
+    'puedes',
+    'podrias',
+    'podrías',
+    'porfa',
+    'porfavor',
+    'favor',
+    'cuanto',
+    'cuánto',
+    'cuestan',
+    'cuesta',
+    'precio',
+    'precios',
+    'vale',
+    'valen',
+    'costo',
+    'stock',
+    'disponible',
+    'disponibles',
+    'disponibilidad',
+    'info',
+    'informacion',
+    'información',
+    'sobre',
+    'del',
+    'de',
+    'la',
+    'el',
+    'los',
+    'las',
+    'un',
+    'una',
+    'unos',
+    'unas',
+    'y',
+    'o',
+    'a',
+    'en',
+    'para',
+    'con',
+    'que',
+    'qué',
+    'es',
+    'son',
+    'tu',
+    'tus',
+    'su',
+    'sus',
+    'mi',
+    'mis',
+    'gustaria',
+    'gustaría',
+    'saber',
+    'ver',
+    'comprar',
+    'producto',
+    'productos',
+    'venden',
+    'vende',
+    'cual',
+    'cuales',
+    'cuál',
+    'cuáles',
+    'ok',
+    'gracias',
+    'si',
+    'sí',
+    'no',
+    'al',
+    'lo',
+    'le',
+    'tienes',
+    'algun',
+    'algún',
+    'alguna',
   ]);
 
   /**
@@ -452,6 +1123,270 @@ export class LeadsMessageProcessor extends WorkerHost {
    * para que la IA responda con datos reales (no inventados). Devuelve '' si el
    * mensaje no menciona ningún producto o no hay coincidencias.
    */
+  /**
+   * Ejecuta las herramientas que pide el modelo durante un turno.
+   *
+   * Cada herramienta devuelve datos, nunca texto para el cliente: lo que el
+   * cliente lee lo redacta el modelo con esos datos.
+   */
+  private crearEjecutor(
+    empresaId: number,
+    conversacionId: number,
+    telefono: string,
+    fotosEnviadas: Set<number>,
+  ): EjecutorHerramienta {
+    return async (nombre, argumentos) => {
+      switch (nombre) {
+        case HERRAMIENTA_BUSCAR_PRODUCTOS: {
+          const consulta = String(argumentos.consulta ?? '').trim();
+          if (!consulta) {
+            return { error: 'Falta la consulta de búsqueda.' };
+          }
+          const categoria =
+            typeof argumentos.categoria === 'string' &&
+            argumentos.categoria.trim()
+              ? argumentos.categoria.trim()
+              : undefined;
+          const inicio = Date.now();
+          let productos = await this.consultarCatalogo(
+            empresaId,
+            consulta,
+            categoria,
+          );
+          let via = 'catálogo';
+          // Una dolencia ("dolor de rodillas") no se parece al nombre de
+          // ningún producto, así que ni las palabras ni los trigramas la
+          // encuentran. Las fichas del RAG sí saben a qué órgano y sistema
+          // apunta cada producto. Va en último lugar porque cuesta un
+          // embedding; las dos primeras son SQL.
+          if (productos.length === 0) {
+            productos = await this.buscarPorFichas(empresaId, consulta);
+            via = 'fichas';
+          }
+          const ms = Date.now() - inicio;
+          this.logger.log(
+            `IA buscó "${consulta}"${categoria ? ` [${categoria}]` : ''} en empresa ${empresaId}: ${productos.length} resultado(s) por ${via} en ${ms} ms.`,
+          );
+          if (productos.length === 0) {
+            // "No habido": lo que el cliente pidió y el negocio no tiene. Es
+            // la lista con la que se decide qué reponer, y uno de los
+            // reportes que pide el anexo.
+            await this.consultas.registrar(empresaId, conversacionId, telefono, [
+              { texto: consulta, hubo: false },
+            ]);
+            await this.marcarEtapa(
+              empresaId,
+              conversacionId,
+              EtapaCrm.CONSULTADO_NO_HABIDO,
+              `Pidió "${consulta}" y no lo tenemos`,
+            );
+            return {
+              productos: [],
+              mensaje:
+                'Sin coincidencias. Intenta otra vez con un término distinto: el ingrediente, el órgano o sistema, o la acción que busca el cliente.',
+            };
+          }
+
+          // Hubo resultados: queda registrado qué se consultó, con qué
+          // disponibilidad vio el cliente el primer producto ofrecido.
+          await this.consultas.registrar(empresaId, conversacionId, telefono, [
+            {
+              texto: consulta,
+              // Por fichas no se encontró lo pedido, sino algo parecido: para
+              // el reporte de "no habidos" eso sigue siendo un no habido.
+              hubo: via !== 'fichas',
+              productoId: productos[0]?.id ?? null,
+              disponibilidad: productos[0]?.disponibilidad ?? null,
+            },
+          ]);
+          // Preguntar por un malestar es el diagnóstico: el embudo avanza.
+          await this.marcarEtapa(
+            empresaId,
+            conversacionId,
+            EtapaCrm.DIAGNOSTICADO,
+            `Consultó "${consulta}"`,
+          );
+          return {
+            // Las fichas aciertan por significado, no por nombre: si el
+            // cliente pidió algo que no existe, esto trae lo parecido. El
+            // modelo tiene que saberlo o se lo vendería como si fuera lo
+            // pedido.
+            ...(via === 'fichas'
+              ? {
+                  nota: 'Estos NO son el producto exacto que pidió: son productos relacionados con lo que necesita. Ofrécelos como alternativa y dile con honestidad que lo que nombró no lo tenemos.',
+                }
+              : {}),
+            productos: productos.map((p) => ({
+              id: p.id,
+              nombre: p.descripcion,
+              precio: `${p.moneda === 'USD' ? 'US$' : 'S/'} ${Number(p.precioUnitario).toFixed(2)}`,
+              disponibilidad: this.textoDisponibilidad(p),
+              // Solo se menciona cuando el negocio marcó el producto para
+              // empujarlo; sin esto el modelo no tiene por qué preferirlo.
+              ...(Number(p.prioridadVenta) >= 2
+                ? {
+                    prioridadDeVenta:
+                      Number(p.prioridadVenta) === 3 ? 'muy alta' : 'alta',
+                  }
+                : {}),
+              tieneFoto: !!p.imagenUrl,
+            })),
+          };
+        }
+
+        case HERRAMIENTA_ENVIAR_FOTO: {
+          const productoId = Number(argumentos.productoId);
+          if (!Number.isInteger(productoId)) {
+            return { error: 'productoId inválido.' };
+          }
+          if (fotosEnviadas.has(productoId)) {
+            return { enviada: true, nota: 'Ya se envió en este mismo turno.' };
+          }
+          const producto = await this.prisma.producto.findFirst({
+            where: { id: productoId, empresaId },
+            select: {
+              descripcion: true,
+              imagenUrl: true,
+              precioUnitario: true,
+              moneda: true,
+            },
+          });
+          if (!producto)
+            return { error: 'Ese producto no es de este negocio.' };
+          if (!producto.imagenUrl) {
+            return {
+              enviada: false,
+              motivo:
+                'Este producto no tiene foto en el catálogo. No le prometas una al cliente.',
+            };
+          }
+          const simbolo = producto.moneda === 'USD' ? 'US$' : 'S/';
+          const caption = `${producto.descripcion} — ${simbolo}${Number(
+            producto.precioUnitario,
+          ).toFixed(2)}`;
+          const envio = await this.whatsapp
+            .enviarImagenUrl(telefono, producto.imagenUrl, caption, empresaId)
+            .catch((e: unknown) => ({
+              success: false,
+              error: e instanceof Error ? e.message : String(e),
+            }));
+          if (envio.success) fotosEnviadas.add(productoId);
+          return envio.success
+            ? { enviada: true }
+            : { enviada: false, motivo: 'No se pudo enviar la imagen.' };
+        }
+
+        case HERRAMIENTA_GUARDAR_DATOS: {
+          const res = await this.pedido.guardarDatos(
+            empresaId,
+            conversacionId,
+            argumentos as DatosDelCliente,
+          );
+          // El embudo avanza solo cuando YA no falta nada. Marcar
+          // "datos completos" a medio camino le haría creer al encargado que
+          // puede despachar, y el paquete saldría sin dirección.
+          if (res?.guardado && !res?.faltan?.length) {
+            await this.marcarEtapa(
+              empresaId,
+              conversacionId,
+              EtapaCrm.DATOS_COMPLETOS,
+              'Datos de entrega completos',
+            );
+          }
+          return res;
+        }
+
+        case HERRAMIENTA_COTIZAR: {
+          const items = Array.isArray(argumentos.items)
+            ? (argumentos.items as ItemPedido[])
+            : [];
+          const res = await this.pedido.cotizar(
+            empresaId,
+            conversacionId,
+            items.map((i) => ({
+              productoId: Number(i.productoId),
+              cantidad: Number(i.cantidad),
+            })),
+            typeof argumentos.nombrePack === 'string'
+              ? argumentos.nombrePack
+              : undefined,
+          );
+          if (res?.texto) {
+            await this.marcarEtapa(
+              empresaId,
+              conversacionId,
+              EtapaCrm.COTIZADO,
+              'Cotización enviada por el chat',
+            );
+            // 33.2 — si no concreta, se le recuerda en 3 horas. Se cancela
+            // solo en cuanto el cliente conteste.
+            await this.disparadores
+              .programar({
+                empresaId,
+                tipo: TipoDisparo.RECUPERAR_COTIZACION,
+                telefono,
+                referencia: `conversacion:${conversacionId}`,
+                conversacionId,
+              })
+              .catch(() => undefined);
+          }
+          return res;
+        }
+
+        case HERRAMIENTA_DERIVAR: {
+          const motivo = String(argumentos.motivo ?? 'sin motivo');
+          const detalle =
+            typeof argumentos.detalle === 'string' ? argumentos.detalle : '';
+          // Pausa SIN vencimiento: hay una persona atendiendo y la IA no
+          // puede volver sola a meterse en medio.
+          await this.prisma.leadProspecto.updateMany({
+            where: { conversacionId },
+            data: { botActivo: false, pausadoHasta: null, motivoPausa: motivo },
+          });
+          await this.notificaciones
+            .notificarAdminsEmpresa({
+              empresaId,
+              tipo: 'WARNING',
+              titulo: `🙋 Un cliente necesita a una persona (${motivo})`,
+              mensaje: `${detalle || 'Sin detalle.'}\n\nWhatsApp: ${telefono}`,
+              metaData: { origen: 'ia-ventas-derivacion', motivo, telefono },
+            })
+            .catch(() => undefined);
+          this.logger.log(
+            `Lead: conv ${conversacionId} derivada a un humano (${motivo}).`,
+          );
+          return {
+            derivado: true,
+            instruccion:
+              'Avísale al cliente que ya informaste a un asesor y que se comunicará con él. Sin preguntas y una sola vez: a partir de aquí no vuelvas a responder.',
+          };
+        }
+
+        case HERRAMIENTA_REGISTRAR_PEDIDO:
+          return this.pedido.registrarPedido(
+            empresaId,
+            conversacionId,
+            telefono,
+          );
+
+        default:
+          return { error: `Herramienta desconocida: ${nombre}` };
+      }
+    };
+  }
+
+  /**
+   * Cómo se le describe la disponibilidad al modelo: nunca con un número de
+   * stock. Para un negocio que no lleva inventario ese número es ficticio, y
+   * decirle al cliente "quedan 50" es prometer algo que no se sabe.
+   */
+  private textoDisponibilidad(producto: {
+    disponibilidad?: DisponibilidadProducto | null;
+    stock?: unknown;
+  }): string {
+    return textoParaElCliente(disponibilidadEfectiva(producto));
+  }
+
   private async buscarProductosRelevantes(
     empresaId: number,
     texto: string,
@@ -466,25 +1401,79 @@ export class LeadsMessageProcessor extends WorkerHost {
       imagenUrl: string | null;
     }[];
   }> {
-    const vacio = { contexto: '', productos: [] };
+    const productos = await this.consultarCatalogo(empresaId, texto);
+    if (productos.length === 0) return { contexto: '', productos: [] };
+
+    const lineas = productos.map((p) => {
+      const simbolo = p.moneda === 'USD' ? 'US$' : 'S/';
+      const precio = `${simbolo}${Number(p.precioUnitario).toFixed(2)}`;
+      return `- ${p.descripcion}: ${precio} (${this.textoDisponibilidad(p)})`;
+    });
+    const contexto =
+      'PRODUCTOS QUE COINCIDEN A PRIMERA VISTA con el último mensaje (precio y ' +
+      'disponibilidad reales del negocio). Son un adelanto, no el catálogo entero: ' +
+      `si necesitas otros, o el cliente pregunta por algo que no está aquí, llama a ${HERRAMIENTA_BUSCAR_PRODUCTOS}. ` +
+      'Nunca inventes productos ni precios:\n' +
+      lineas.join('\n');
+    return { contexto, productos };
+  }
+
+  /**
+   * Consulta el catálogo real del negocio por tokens del texto. Es la fuente
+   * única de productos: la usan tanto el adelanto que se inyecta al prompt como
+   * la herramienta `buscar_productos`.
+   *
+   * B4 la convierte en cascada (tokens → trigram → RAG); por ahora es el
+   * AND de palabras de siempre.
+   */
+  private async consultarCatalogo(
+    empresaId: number,
+    texto: string,
+    categoria?: string,
+  ): Promise<
+    {
+      id: number;
+      descripcion: string;
+      precioUnitario: any;
+      stock: any;
+      moneda: string;
+      imagenUrl: string | null;
+      disponibilidad: DisponibilidadProducto | null;
+      prioridadVenta: number | null;
+    }[]
+  > {
     const tokens = (texto || '')
       .toLowerCase()
       .replace(/[¿?¡!.,;:()]/g, ' ')
       .split(/\s+/)
-      .filter((w) => w.length >= 3 && !LeadsMessageProcessor.STOPWORDS_PRODUCTO.has(w))
+      .filter(
+        (w) =>
+          w.length >= 3 && !LeadsMessageProcessor.STOPWORDS_PRODUCTO.has(w),
+      )
       .slice(0, 5);
-    if (tokens.length === 0) return vacio;
+    if (tokens.length === 0) return [];
 
-    const productos = await this.prisma.producto.findMany({
+    let productos = await this.prisma.producto.findMany({
       where: {
         empresaId,
         estado: 'ACTIVO' as any,
+        ...(categoria
+          ? {
+              categoria: {
+                nombre: { contains: categoria, mode: 'insensitive' as any },
+              },
+            }
+          : {}),
         AND: tokens.map((tk) => ({
           OR: [
             { descripcion: { contains: tk, mode: 'insensitive' as any } },
             { codigo: { contains: tk, mode: 'insensitive' as any } },
             { codigoBarras: { contains: tk, mode: 'insensitive' as any } },
-            { categoria: { nombre: { contains: tk, mode: 'insensitive' as any } } },
+            {
+              categoria: {
+                nombre: { contains: tk, mode: 'insensitive' as any },
+              },
+            },
             { marca: { nombre: { contains: tk, mode: 'insensitive' as any } } },
           ],
         })),
@@ -496,37 +1485,42 @@ export class LeadsMessageProcessor extends WorkerHost {
         stock: true,
         moneda: true,
         imagenUrl: true,
+        disponibilidad: true,
+        prioridadVenta: true,
       },
-      orderBy: { stock: 'desc' },
+      // Primero lo que el negocio quiere empujar; entre iguales, lo que tiene
+      // más stock.
+      orderBy: [
+        { prioridadVenta: { sort: 'desc', nulls: 'last' } },
+        { stock: 'desc' },
+      ],
       take: 8,
     });
-    if (productos.length === 0) return vacio;
 
-    const lineas = productos.map((p) => {
-      const simbolo = p.moneda === 'USD' ? 'US$' : 'S/';
-      const precio = `${simbolo}${Number(p.precioUnitario).toFixed(2)}`;
-      const stk = Number(p.stock);
-      const disp = stk > 0 ? `stock ${stk}` : 'sin stock';
-      return `- ${p.descripcion}: ${precio} (${disp})`;
-    });
-    const contexto =
-      'PRODUCTOS DISPONIBLES (precio con IGV y stock actual del negocio). ' +
-      'Usa SOLO estos datos para responder sobre productos, precios y disponibilidad; ' +
-      'NO inventes precios ni stock. Si el cliente pide algo que no está en esta lista, dilo:\n' +
-      lineas.join('\n');
-    return { contexto, productos };
+    // Nada por palabras: puede ser una falta de ortografía ("fenocreco" por
+    // "Fenogreco"). El cliente no va a reescribirlo — se va. Los trigramas sí
+    // lo encuentran, y siguen siendo SQL: no cuestan una llamada a la IA.
+    if (productos.length === 0) {
+      productos = await this.buscarPorParecido(empresaId, texto, categoria);
+    }
+
+    // Y entre todos, lo que se puede entregar ya va antes de lo que hay que
+    // encargar. Se ordena aquí y no en la consulta porque la disponibilidad
+    // puede venir del stock cuando nadie la fijó.
+    const rango: Record<DisponibilidadProducto, number> = {
+      INMEDIATA: 0,
+      BAJO_PEDIDO: 1,
+      NO_DISPONIBLE: 2,
+    };
+    return productos.sort(
+      (a, b) =>
+        rango[disponibilidadEfectiva(a)] - rango[disponibilidadEfectiva(b)],
+    );
   }
 
   // ¿El mensaje pide el brochure/catálogo o más información?
   private quiereBrochure(texto: string): boolean {
     return /\b(brochure|folleto|cat[aá]logo|pdf|presentaci[oó]n|m[aá]s info|mas info|m[aá]s informaci[oó]n|mas informaci[oó]n|m[aá]s detalles|mas detalles|inform[aá]ci[oó]n completa|mandame info|m[aá]ndame info|env[ií]ame|cu[eé]ntame m[aá]s)\b/i.test(
-      texto || '',
-    );
-  }
-
-  // ¿El mensaje del cliente pide VER los productos (fotos/imágenes/catálogo)?
-  private quiereVerProductos(texto: string): boolean {
-    return /\b(foto|fotos|imagen|imagenes|imágenes|muestr|muéstr|muestrame|muéstrame|mostrar|ver|cat[aá]logo|modelos?|dise[ñn]os?|opciones|colores?|presentaci[oó]n|c[uú]al|cu[aá]les|qu[eé] tienes|que tienes|qu[eé] hay|que hay)\b/i.test(
       texto || '',
     );
   }
@@ -540,7 +1534,7 @@ export class LeadsMessageProcessor extends WorkerHost {
       iaVentasCotizacion?: boolean;
     },
     conversacionId: number,
-    d: MensajeEntrante,
+    quien: { telefono: string; nombre: string | null },
     cal: CalificacionBant,
     historial: MensajeConversacion[],
   ): Promise<void> {
@@ -560,8 +1554,8 @@ export class LeadsMessageProcessor extends WorkerHost {
       where: { conversacionId },
       create: {
         empresaId: empresa.id,
-        telefonoProspecto: d.from,
-        nombreProspecto: d.nombre ?? null,
+        telefonoProspecto: quien.telefono,
+        nombreProspecto: quien.nombre,
         conversacionId,
         ...data,
       },
@@ -571,17 +1565,20 @@ export class LeadsMessageProcessor extends WorkerHost {
 
     // Alerta de lead CALIENTE al vendedor (una sola vez, reusa notificaciones de MYPE).
     if (cal.debeTransferir && !prospecto.notificadoEn) {
-      const nombre = d.nombre || d.from;
+      const nombre = quien.nombre || quien.telefono;
 
       // Cotización automática (opt-in): si el prospecto confirmó productos +
       // cantidades, la IA arma un borrador COT (sin stock/caja/SUNAT). Best-effort.
-      let cotizacion: { serie: string; correlativo: number; id: number } | null =
-        null;
+      let cotizacion: {
+        serie: string;
+        correlativo: number;
+        id: number;
+      } | null = null;
       if (empresa.iaVentasCotizacion) {
         cotizacion = await this.intentarCrearCotizacion(
           empresa.id,
           nombre,
-          d.from,
+          quien.telefono,
           historial,
         );
         if (cotizacion) {
@@ -600,7 +1597,7 @@ export class LeadsMessageProcessor extends WorkerHost {
         metaData: {
           origen: 'ia-ventas',
           prospectoId: prospecto.id,
-          telefono: d.from,
+          telefono: quien.telefono,
           puntaje: cal.score.total,
         },
       });
@@ -610,7 +1607,7 @@ export class LeadsMessageProcessor extends WorkerHost {
         empresaNombre: empresa.nombreComercial || empresa.razonSocial,
         prospectoId: prospecto.id,
         nombreProspecto: nombre,
-        telefonoProspecto: d.from,
+        telefonoProspecto: quien.telefono,
         cal,
         cotizacion: cotizacion
           ? {
@@ -687,7 +1684,11 @@ export class LeadsMessageProcessor extends WorkerHost {
         this.logger.log(
           `IA cotización COT ${comp.serie}-${comp.correlativo} creada (empresa ${empresaId}, ${items.length} ítems).`,
         );
-        return { serie: comp.serie, correlativo: comp.correlativo, id: comp.id };
+        return {
+          serie: comp.serie,
+          correlativo: comp.correlativo,
+          id: comp.id,
+        };
       }
       return null;
     } catch (e) {

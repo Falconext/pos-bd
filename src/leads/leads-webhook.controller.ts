@@ -12,7 +12,7 @@ import { Request, Response } from 'express';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import * as crypto from 'crypto';
-import { LEADS_MESSAGES_QUEUE } from './leads.constants';
+import { JOB_INGRESAR_MENSAJE, LEADS_MESSAGES_QUEUE } from './leads.constants';
 
 /**
  * Webhook público de WhatsApp Cloud API para el módulo de leads.
@@ -49,9 +49,13 @@ export class LeadsWebhookController {
     secret: string,
   ): boolean {
     const expected =
-      'sha256=' + crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+      'sha256=' +
+      crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
     if (signature.length !== expected.length) return false;
-    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+    return crypto.timingSafeEqual(
+      Buffer.from(signature),
+      Buffer.from(expected),
+    );
   }
 
   /**
@@ -66,7 +70,10 @@ export class LeadsWebhookController {
    * META_APP_SECRET, la vieja en META_APP_SECRET_PREV, y se borra la segunda
    * cuando el periodo de gracia termina.
    */
-  private firmaValida(rawBody: Buffer | undefined, signature?: string): boolean {
+  private firmaValida(
+    rawBody: Buffer | undefined,
+    signature?: string,
+  ): boolean {
     const secret = process.env.META_APP_SECRET;
     if (!secret) return true; // sin secreto configurado (dev) → no bloquear
     if (!signature) {
@@ -107,21 +114,40 @@ export class LeadsWebhookController {
           const phoneNumberId = value.metadata?.phone_number_id;
           const contactos: any[] = value.contacts ?? [];
           for (const msg of value.messages ?? []) {
-            if (msg.type !== 'text' && msg.type !== 'audio') continue;
+            // Las imágenes y los documentos se aceptan aunque no se lean: un
+            // cliente que manda el comprobante de pago tiene que llegar al
+            // asesor, y antes ese mensaje se descartaba en silencio.
+            const texto = textoDeMensaje(msg);
+            if (texto === null) continue;
             const contacto = contactos.find((c) => c.wa_id === msg.from);
             await this.queue.add(
-              'incoming',
+              JOB_INGRESAR_MENSAJE,
               {
                 phoneNumberId,
                 from: msg.from,
                 messageId: msg.id,
-                text: msg.text?.body ?? '',
+                text: texto,
                 esAudio: msg.type === 'audio',
-                mediaId: msg.audio?.id,
+                esImagen: msg.type === 'image',
+                // El id del archivo sirve para los tres casos: transcribir la
+                // nota de voz y bajar la imagen del voucher para que el
+                // encargado pueda mirarlo antes de validar el pago.
+                mediaId: msg.audio?.id ?? msg.image?.id ?? msg.document?.id,
                 nombre: contacto?.profile?.name,
                 timestamp: msg.timestamp,
               },
-              { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
+              {
+                // Meta reentrega el mismo mensaje cuando duda de nuestro 200.
+                jobId: `in-${msg.id}`,
+                attempts: 3,
+                backoff: { type: 'exponential', delay: 2000 },
+                // El id tiene que liberarse al terminar: retenido en completados
+                // o fallidos, una reentrega de Meta se descartaría en silencio.
+                // La deduplicación de verdad la hace el índice único de
+                // LeadMensaje.whatsappMsgId.
+                removeOnComplete: true,
+                removeOnFail: true,
+              },
             );
           }
         }
@@ -129,5 +155,37 @@ export class LeadsWebhookController {
     } catch (e: any) {
       this.logger.error(`Webhook leads: error encolando: ${e?.message}`);
     }
+  }
+}
+
+/**
+ * Qué texto representa un mensaje entrante, o `null` si es de un tipo que no
+ * sabemos manejar.
+ *
+ * Las imágenes y documentos no se leen, pero sí se registran: el cliente que
+ * manda su comprobante de pago espera respuesta, y antes su mensaje se
+ * descartaba sin que nadie se enterara.
+ */
+function textoDeMensaje(msg: {
+  type?: string;
+  text?: { body?: string };
+  image?: { id?: string; caption?: string };
+  document?: { id?: string; caption?: string; filename?: string };
+}): string | null {
+  switch (msg.type) {
+    case 'text':
+      return msg.text?.body ?? '';
+    case 'audio':
+      return '';
+    case 'image':
+      return msg.image?.caption?.trim()
+        ? `[el cliente envió una imagen] ${msg.image.caption.trim()}`
+        : '[el cliente envió una imagen]';
+    case 'document':
+      return `[el cliente envió un documento${
+        msg.document?.filename ? `: ${msg.document.filename}` : ''
+      }]`;
+    default:
+      return null;
   }
 }

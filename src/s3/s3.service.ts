@@ -201,6 +201,31 @@ export class S3Service implements OnModuleInit {
     return `compras/empresa-${empresaId}/foto-${ts}.webp`;
   }
 
+  /**
+   * Evidencia de entrega. Va por despacho y no por empresa suelta para que,
+   * ante un reclamo, los archivos de ese pedido estén todos juntos.
+   */
+  generateEvidenciaEntregaKey(
+    empresaId: number,
+    despachoId: number,
+    _contentType?: string,
+  ): string {
+    const ts = Date.now();
+    // Guardamos siempre como WEBP (uploadImage convierte).
+    return `entregas/empresa-${empresaId}/despacho-${despachoId}/evidencia-${ts}.webp`;
+  }
+
+  /**
+   * Voucher que el cliente manda por el chat. Va por conversación: ante una
+   * duda de pago se abre la carpeta de ese cliente y están todos.
+   */
+  generateComprobantePagoLeadKey(
+    empresaId: number,
+    conversacionId: number,
+  ): string {
+    return `pagos-leads/empresa-${empresaId}/conversacion-${conversacionId}/voucher-${Date.now()}.webp`;
+  }
+
   generateProductoImageKey(
     empresaId: number,
     productoId: number,

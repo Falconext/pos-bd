@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Post,
@@ -9,11 +10,20 @@ import {
   Body,
   ParseIntPipe,
   UseGuards,
+  UseInterceptors,
+  UploadedFiles,
   Query,
   Res,
 } from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { EnvioDespachoService } from './envio-despacho.service';
+import { EvidenciaEntregaService } from './evidencia-entrega.service';
+import { evidenciaUploadOptions } from '../common/utils/multer.config';
+import {
+  RegistrarEvidenciaDto,
+  EntregasSinEvidenciaQueryDto,
+} from './dto/evidencia-entrega.dto';
 
 class ActualizarSaldoDto {
   saldo: number;
@@ -30,7 +40,69 @@ import { User } from '../common/decorators/user.decorator';
 @UseGuards(JwtAuthGuard)
 @Controller('envio-despacho')
 export class EnvioDespachoController {
-  constructor(private readonly service: EnvioDespachoService) {}
+  constructor(
+    private readonly service: EnvioDespachoService,
+    private readonly evidencias: EvidenciaEntregaService,
+  ) {}
+
+  /**
+   * D3 — evidencia de entrega.
+   *
+   * Entregas marcadas como ENTREGADO sin ninguna foto: son los pedidos donde,
+   * si el cliente reclama, el negocio no tiene nada que mostrar. Va antes de
+   * las rutas con :comprobanteId para que Nest no lea "evidencias" como id.
+   */
+  @Get('evidencias/faltantes')
+  entregasSinEvidencia(
+    @User() user: any,
+    @Query() q: EntregasSinEvidenciaQueryDto,
+  ) {
+    return this.evidencias.entregasSinEvidencia(user.empresaId, q);
+  }
+
+  @Get('comprobante/:comprobanteId/evidencias')
+  listarEvidencias(
+    @User() user: any,
+    @Param('comprobanteId', ParseIntPipe) comprobanteId: number,
+  ) {
+    return this.evidencias.listar(comprobanteId, user.empresaId);
+  }
+
+  /**
+   * Las fotos llegan ya convertidas a JPEG y reducidas por el navegador: el
+   * repartidor sube desde la calle con datos móviles.
+   */
+  @Post('comprobante/:comprobanteId/evidencias')
+  @UseInterceptors(FilesInterceptor('fotos', 6, evidenciaUploadOptions))
+  registrarEvidencias(
+    @User() user: any,
+    @Param('comprobanteId', ParseIntPipe) comprobanteId: number,
+    @UploadedFiles() fotos: Express.Multer.File[],
+    @Body() dto: RegistrarEvidenciaDto,
+  ) {
+    if (!fotos?.length) {
+      throw new BadRequestException('No se adjuntó ninguna foto.');
+    }
+    return this.evidencias.registrar(
+      comprobanteId,
+      user.empresaId,
+      fotos,
+      dto,
+      { id: user.sub ?? user.id, nombre: user.nombre, rol: user.rol },
+    );
+  }
+
+  @Delete('evidencias/:id')
+  anularEvidencia(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.evidencias.anular(id, user.empresaId, {
+      id: user.sub ?? user.id,
+      nombre: user.nombre,
+      rol: user.rol,
+    });
+  }
 
   @Get()
   listAll(

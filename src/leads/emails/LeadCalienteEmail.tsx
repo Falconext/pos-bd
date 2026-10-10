@@ -139,7 +139,10 @@ const bantRow: React.CSSProperties = {
   fontSize: '14px',
   margin: '0 0 4px 0',
 };
-const ctaWrap: React.CSSProperties = { textAlign: 'center', padding: '8px 0 4px' };
+const ctaWrap: React.CSSProperties = {
+  textAlign: 'center',
+  padding: '8px 0 4px',
+};
 const ctaBtn: React.CSSProperties = {
   backgroundColor: '#7c3aed',
   color: '#ffffff',
@@ -208,7 +211,8 @@ export function LeadCalienteEmail(props: LeadCalienteEmailProps) {
                 <Section style={cotizBox}>
                   <Text style={interesLabel}>📄 Cotización lista</Text>
                   <Text style={interesText}>
-                    {cotizacionCodigo} — borrador generado por la IA, revísalo en el panel.
+                    {cotizacionCodigo} — borrador generado por la IA, revísalo
+                    en el panel.
                   </Text>
                 </Section>
               ) : null}
@@ -222,7 +226,9 @@ export function LeadCalienteEmail(props: LeadCalienteEmailProps) {
 
               <Text style={sectionLabel}>Calificación BANT</Text>
               <Section style={{ margin: '0 0 20px 0' }}>
-                <Text style={bantRow}>💰 Presupuesto: {presupuesto ?? '—'}/30</Text>
+                <Text style={bantRow}>
+                  💰 Presupuesto: {presupuesto ?? '—'}/30
+                </Text>
                 <Text style={bantRow}>👔 Autoridad: {autoridad ?? '—'}/20</Text>
                 <Text style={bantRow}>🎯 Necesidad: {necesidad ?? '—'}/25</Text>
                 <Text style={bantRow}>⏱️ Plazo: {plazo ?? '—'}/25</Text>

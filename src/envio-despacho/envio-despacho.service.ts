@@ -114,6 +114,20 @@ export class EnvioDespachoService {
       where: { comprobanteId },
       include: {
         repartidor: true,
+        // La prueba de entrega viaja con el despacho: quien abre la ficha por
+        // un reclamo la necesita ahí mismo, no en otra pestaña.
+        evidencias: {
+          where: { anuladaEn: null },
+          orderBy: { tomadaEn: 'asc' },
+          select: {
+            id: true,
+            url: true,
+            tipo: true,
+            nota: true,
+            tomadaEn: true,
+            usuarioNombre: true,
+          },
+        },
         // Sede desde la que sale el pedido: el reparto propio la muestra y la
         // exporta como origen (no es editable, es la del comprobante).
         comprobante: {
@@ -254,6 +268,13 @@ export class EnvioDespachoService {
       where: { comprobanteId },
       data: {
         ...(dto.estado !== undefined && { estado: dto.estado as any }),
+        // La hora de la entrega se sella cuando pasa a ENTREGADO: el reclamo
+        // "no me llegó" siempre se discute con una fecha, y dentro del
+        // historial Json no se puede filtrar ni ordenar.
+        ...(estadoCambia &&
+          dto.estado === EstadoDespacho.ENTREGADO && {
+            entregadoEn: new Date(),
+          }),
         ...(dto.fechaEstimada !== undefined && {
           fechaEstimada: parseFechaSoloDia(dto.fechaEstimada),
         }),
