@@ -87,6 +87,8 @@ async function main() {
       razonSocial: true,
       iaVentasActiva: true,
       iaVentasConfigJson: true,
+      slugTienda: true,
+      whatsappTienda: true,
     },
   });
   if (!empresa) throw new Error(`No existe la empresa ${empresaId}.`);
@@ -103,6 +105,12 @@ async function main() {
     console.log(`  tramos de descuento: ${desc?.tramos?.length ?? 0}`);
     console.log(`  asesor: ${actual.asesor ?? '(sin nombre)'}`);
     console.log(`  descargo legal: ${actual.descargoLegal ? 'sí' : 'NO'}`);
+    // Los dos datos que deciden si la tienda y el paso del carrito al chat
+    // están de verdad en vivo para este cliente.
+    console.log(`  tienda pública: ${empresa.slugTienda ?? 'NO publicada'}`);
+    console.log(
+      `  WhatsApp de la tienda: ${empresa.whatsappTienda ?? 'VACÍO — el carrito no ofrece "Pedir por WhatsApp"'}`,
+    );
     if (!envio?.zonas?.length) {
       console.log(
         '\n  ⚠ Sin zonas de envío la IA NO cotiza: deriva a un asesor.',
