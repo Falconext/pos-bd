@@ -40,12 +40,15 @@ describe('leerDisponibilidad', () => {
 });
 
 describe('leerPrioridadVenta', () => {
+  // Cuatro niveles: el negocio pidió sumar BAJA, que antes no existía y
+  // dejaba a un producto "de poco empuje" igual que a uno sin preferencia.
   it.each([
-    ['MUY ALTA', 3],
-    ['muy alta', 3],
-    ['Alta', 2],
-    ['media', 1],
-    ['3', 3],
+    ['MUY ALTA', 4],
+    ['muy alta', 4],
+    ['Alta', 3],
+    ['media', 2],
+    ['BAJA', 1],
+    ['4', 4],
     [2, 2],
   ])('entiende %p', (entrada, esperado) => {
     expect(leerPrioridadVenta(entrada)).toBe(esperado);
@@ -56,12 +59,13 @@ describe('leerPrioridadVenta', () => {
     ['altísima', null],
     [9, null],
     [0, null],
+    [5, null],
   ])('ignora %p', (entrada, esperado) => {
     expect(leerPrioridadVenta(entrada)).toBe(esperado);
   });
 
   it('va y vuelve del Excel sin perder nada', () => {
-    for (const texto of ['MUY ALTA', 'ALTA', 'MEDIA']) {
+    for (const texto of ['MUY ALTA', 'ALTA', 'MEDIA', 'BAJA']) {
       expect(escribirPrioridadVenta(leerPrioridadVenta(texto))).toBe(texto);
     }
     expect(escribirPrioridadVenta(null)).toBe('');

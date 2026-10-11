@@ -125,14 +125,18 @@ export class UpdateProductoDto {
    * NO_DISPONIBLE. Omitirlo deja que se deduzca del stock.
    */
   @IsOptional()
-  @IsIn(['INMEDIATA', 'BAJO_PEDIDO', 'NO_DISPONIBLE'])
-  disponibilidad?: 'INMEDIATA' | 'BAJO_PEDIDO' | 'NO_DISPONIBLE';
+  @IsIn(['INMEDIATA', 'BAJO_PEDIDO', 'NO_DISPONIBLE', 'NO_COMERCIAL'])
+  disponibilidad?:
+    | 'INMEDIATA'
+    | 'BAJO_PEDIDO'
+    | 'NO_DISPONIBLE'
+    | 'NO_COMERCIAL';
 
-  /** Empuje frente a productos equivalentes: 3 muy alta, 2 alta, 1 media. */
+  /** Empuje frente a productos equivalentes: 4 muy alta, 3 alta, 2 media, 1 baja. */
   @IsOptional()
   @IsInt()
   @Min(1)
-  @Max(3)
+  @Max(4)
   prioridadVenta?: number;
 
   @IsOptional()
@@ -253,6 +257,11 @@ export class UpdateProductoDto {
   @IsOptional()
   @IsString()
   descripcionLarga?: string | null;
+
+  /** URL del video del producto (TikTok, YouTube, Instagram, Facebook o mp4). */
+  @IsOptional()
+  @IsString()
+  videoUrl?: string | null;
 
   @IsOptional()
   atributosTecnicos?: Record<string, any> | null;

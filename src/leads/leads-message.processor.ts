@@ -1537,6 +1537,9 @@ export class LeadsMessageProcessor extends WorkerHost {
       INMEDIATA: 0,
       BAJO_PEDIDO: 1,
       NO_DISPONIBLE: 2,
+      // Lo descontinuado va último: no va a volver, así que es lo que menos
+      // sentido tiene mostrarle a alguien que quiere comprar hoy.
+      NO_COMERCIAL: 3,
     };
     return productos.sort(
       (a, b) =>

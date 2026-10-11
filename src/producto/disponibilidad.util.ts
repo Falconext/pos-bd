@@ -33,6 +33,13 @@ const DISPONIBILIDADES: Record<string, DisponibilidadProducto> = {
   agotado: 'NO_DISPONIBLE',
   'sin stock': 'NO_DISPONIBLE',
   no: 'NO_DISPONIBLE',
+  // Descontinuado: distinto de agotado. Agotado puede volver; esto no, y por
+  // eso no genera lista de espera.
+  'no comercial': 'NO_COMERCIAL',
+  descontinuado: 'NO_COMERCIAL',
+  discontinuado: 'NO_COMERCIAL',
+  'ya no se vende': 'NO_COMERCIAL',
+  'fuera de catalogo': 'NO_COMERCIAL',
 };
 
 /**
@@ -48,11 +55,18 @@ export function leerDisponibilidad(
   return DISPONIBILIDADES[limpio] ?? null;
 }
 
+/**
+ * Cuatro niveles, como los pidió el negocio. Antes eran tres y "baja" no
+ * existía: un producto que se quiere mover poco quedaba igual que uno sin
+ * preferencia.
+ */
 const PRIORIDADES: Record<string, number> = {
-  'muy alta': 3,
-  alta: 2,
-  media: 1,
-  normal: 1,
+  'muy alta': 4,
+  alta: 3,
+  media: 2,
+  normal: 2,
+  baja: 1,
+  '4': 4,
   '3': 3,
   '2': 2,
   '1': 1,
@@ -72,9 +86,10 @@ export function leerPrioridadVenta(valor: unknown): number | null {
 
 /** Cómo se escribe de vuelta en el Excel exportado (ida y vuelta sin pérdida). */
 export function escribirPrioridadVenta(prioridad: number | null): string {
-  if (prioridad === 3) return 'MUY ALTA';
-  if (prioridad === 2) return 'ALTA';
-  if (prioridad === 1) return 'MEDIA';
+  if (prioridad === 4) return 'MUY ALTA';
+  if (prioridad === 3) return 'ALTA';
+  if (prioridad === 2) return 'MEDIA';
+  if (prioridad === 1) return 'BAJA';
   return '';
 }
 
@@ -105,8 +120,12 @@ export function textoParaElCliente(
     case 'INMEDIATA':
       return '✅ disponible';
     case 'BAJO_PEDIDO':
-      return '🕐 bajo pedido: lo conseguimos y confirmamos la disponibilidad antes de despachar, sin fecha prometida';
+      return '🕐 bajo reserva: lo conseguimos y confirmamos la disponibilidad antes de despachar, sin fecha prometida';
     case 'NO_DISPONIBLE':
-      return 'no disponible: no lo ofrezcas';
+      return 'agotado: no lo ofrezcas. Si el cliente pregunta por él, dile que por ahora no hay y que le avisamos cuando vuelva';
+    case 'NO_COMERCIAL':
+      // Distinto de agotado: no va a volver, así que no se puede prometer
+      // aviso. Mejor decirlo y ofrecer otra cosa que dejar al cliente esperando.
+      return 'descontinuado: ya no se vende. No lo ofrezcas ni prometas avisar cuando vuelva; si lo pide, dilo y ofrece una alternativa';
   }
 }

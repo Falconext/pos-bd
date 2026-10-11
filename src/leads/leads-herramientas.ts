@@ -108,6 +108,11 @@ const guardarDatosEnvio: FunctionDeclaration = {
         description:
           'Sede de la agencia donde recogerá. Solo para envíos por agencia.',
       },
+      sintomas: {
+        type: SchemaType.STRING,
+        description:
+          'Qué le pasa al cliente, en sus palabras ("acidez por las noches hace 2 meses"). Se guarda para que el negocio arme su guía de consumo personalizada; no lo inventes ni lo interpretes de más.',
+      },
       recibeNombre: {
         type: SchemaType.STRING,
         description:
@@ -116,12 +121,12 @@ const guardarDatosEnvio: FunctionDeclaration = {
       sexo: {
         type: SchemaType.STRING,
         description:
-          'Sexo del cliente ("M" o "F"). NUNCA lo preguntes: anótalo solo si el cliente lo dice o queda claro de lo que cuenta.',
+          'Sexo del cliente ("M" o "F"). Cuando la consulta es por un malestar, pregúntalo con naturalidad: sirve para armarle su guía de consumo personalizada. Si no quiere decirlo, sigue sin insistir.',
       },
       edad: {
         type: SchemaType.INTEGER,
         description:
-          'Edad del cliente en años. NUNCA la preguntes para llenar este campo: anótala solo si la menciona (suele salir cuando pregunta por la dosis).',
+          'Edad del cliente en años. Cuando la consulta es por un malestar, pregúntala con naturalidad junto con el sexo: la dosis y la guía de consumo dependen de eso. Si no quiere decirla, sigue sin insistir.',
       },
     },
   },
