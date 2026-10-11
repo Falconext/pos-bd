@@ -4307,9 +4307,13 @@ model LeadConsulta {
   productoId     Int?
   /// Disponibilidad del producto en ese momento: lo que el cliente vio.
   disponibilidad String?
+  /// Cuándo se le avisó al negocio que esto se pidió y no se pudo vender.
+  /// Null = todavía no se avisó. Evita repetirle lo mismo cada día.
+  avisadoEn      DateTime?
   creadoEn       DateTime         @default(now())
 
   @@index([empresaId, tipo, creadoEn])
+  @@index([empresaId, avisadoEn])
   @@index([empresaId, hubo])
   @@index([telefono])
 }
