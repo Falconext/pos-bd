@@ -37,6 +37,12 @@ export interface ConfigComercial {
    * "fijo e invariable", por eso lo pone el código y no el modelo.
    */
   descargoLegal?: string;
+  /**
+   * Cómo cobra el negocio cuando hay adelanto, tal como se le dice al
+   * cliente ("Yape: 955 947 892 · BCP: …"). Es dato de cada empresa, no del
+   * sistema: los de una no pueden salir en el chat de otra.
+   */
+  mediosPago?: string;
 }
 
 /** Campos que la IA puede ir guardando a medida que el cliente los dice. */
@@ -102,6 +108,7 @@ export class LeadsPedidoService {
       // regalar S/ 10 a S/ 30 por pedido sin pedirlo.
       descuento: guardada.descuento ?? SIN_DESCUENTO,
       ...(guardada.asesor ? { asesor: guardada.asesor } : {}),
+      ...(guardada.mediosPago ? { mediosPago: guardada.mediosPago } : {}),
       ...(guardada.descargoLegal
         ? { descargoLegal: guardada.descargoLegal }
         : {}),
@@ -722,6 +729,20 @@ export class LeadsPedidoService {
       pedido: codigo,
       montoAPagar: calculo.montoAPagar,
       ...(adelanto > 0 ? { adelanto } : {}),
+      // Con adelanto, los medios de pago van UNA vez y aquí. El flujo del
+      // cliente lo pide así y prohíbe insistir después: "indica una sola vez
+      // el monto y los medios de pago y pide que envíe el comprobante".
+      //
+      // El asistente NO verifica el pago ni espera el voucher para confirmar:
+      // el pedido queda agendado igual y la validación la hace una persona
+      // antes de despachar. Es lo que decidió el negocio.
+      ...(adelanto > 0 && config.mediosPago
+        ? {
+            mediosPago: config.mediosPago,
+            instruccion:
+              'Confirma el pedido con su número. Luego, UNA sola vez, dile el monto del adelanto y los medios de pago, y pídele que mande el comprobante por aquí. No insistas después ni vuelvas a repetirlos si no te los pide.',
+          }
+        : {}),
     };
   }
 

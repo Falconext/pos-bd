@@ -24,6 +24,10 @@ const PLANTILLAS: Record<string, Record<string, unknown>> = {
     horario: HORARIO_POR_DEFECTO,
     descuento: REGLAS_HIERBA_SANA,
     asesor: 'Claudio',
+    // Decidido por el negocio el 10-10: la IA los da sola cuando hay
+    // adelanto, sin esperar a un asesor.
+    mediosPago:
+      'Yape: 955 947 892 · Cuenta BCP: 191 99295336017 (titular: Edwing Tony Cayo Huerta)',
     descargoLegal:
       'Los productos naturales son un complemento y no reemplazan un tratamiento médico. Ante cualquier condición de salud, consulta a tu médico.',
   },
@@ -104,6 +108,9 @@ async function main() {
     console.log(`  zonas de envío: ${envio?.zonas?.length ?? 0}`);
     console.log(`  tramos de descuento: ${desc?.tramos?.length ?? 0}`);
     console.log(`  asesor: ${actual.asesor ?? '(sin nombre)'}`);
+    console.log(
+      `  medios de pago: ${actual.mediosPago ?? 'NO configurados — la IA no los puede dar'}`,
+    );
     console.log(`  descargo legal: ${actual.descargoLegal ? 'sí' : 'NO'}`);
     // Los dos datos que deciden si la tienda y el paso del carrito al chat
     // están de verdad en vivo para este cliente.
@@ -146,6 +153,7 @@ async function main() {
   console.log(`  zonas de envío: ${envio.zonas.length}`);
   console.log(`  tramos de descuento: ${desc.tramos.length}`);
   console.log(`  asesor: ${nueva.asesor}`);
+  console.log(`  medios de pago: ${nueva.mediosPago ? 'configurados' : 'no'}`);
   await prisma.$disconnect();
 }
 
