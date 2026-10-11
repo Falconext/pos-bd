@@ -643,8 +643,13 @@ enum DisponibilidadProducto {
   /// Lo consigue con proveedor. Se ofrece sin prometer fecha y se avisa antes
   /// de despachar.
   BAJO_PEDIDO
-  /// No se ofrece, y ningún disparador puede dispararse sobre él.
+  /// Agotado: no se ofrece, pero PUEDE volver. Quien lo pidió entra en la
+  /// lista de espera y se le avisa cuando entre stock (33.1).
   NO_DISPONIBLE
+  /// Descontinuado: ya no se vende y no va a volver. No se ofrece y NO genera
+  /// lista de espera — avisar "ya llegó" de algo que nunca llegará es peor
+  /// que no avisar.
+  NO_COMERCIAL
 }
 
 model Producto {

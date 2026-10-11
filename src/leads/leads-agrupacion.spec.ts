@@ -459,7 +459,7 @@ describe('lo que la IA ve del catálogo (B1 y B2)', () => {
     expect(contextoDe(ia)).toContain('disponible');
   });
 
-  it('dice "bajo pedido" sin prometer fecha', async () => {
+  it('dice "bajo reserva" sin prometer fecha', async () => {
     const { processor, ia } = armar({
       mensajes: [{ rol: 'USUARIO', contenido: 'tienen moringa?' }],
       productos: [producto({ disponibilidad: 'BAJO_PEDIDO' })],
@@ -468,7 +468,7 @@ describe('lo que la IA ve del catálogo (B1 y B2)', () => {
     await processor.process(tarea as any);
 
     const contexto = contextoDe(ia);
-    expect(contexto).toContain('bajo pedido');
+    expect(contexto).toContain('bajo reserva');
     expect(contexto).toContain('sin fecha prometida');
   });
 
@@ -481,7 +481,9 @@ describe('lo que la IA ve del catálogo (B1 y B2)', () => {
 
     await processor.process(tarea as any);
 
-    expect(contextoDe(ia)).toContain('no disponible');
+    // El texto dice "agotado" desde que se distinguió de "descontinuado":
+    // agotado puede volver y se avisa; descontinuado no.
+    expect(contextoDe(ia)).toContain('agotado');
   });
 
   it('pone lo que se entrega ya por delante de lo que hay que encargar', async () => {

@@ -64,6 +64,11 @@ export interface DatosDelCliente {
    */
   sexo?: string;
   edad?: number | string;
+  /**
+   * Lo que le pasa al cliente, en sus palabras. El negocio lo necesita para
+   * armar la guía de consumo personalizada que entrega tras agendar.
+   */
+  sintomas?: string;
 }
 
 export interface ItemPedido {
@@ -239,7 +244,7 @@ export class LeadsPedidoService {
     datos: DatosDelCliente,
     guardado: string[],
   ): Promise<void> {
-    const cambios: { sexo?: string; edad?: number } = {};
+    const cambios: { sexo?: string; edad?: number; resumen?: string } = {};
 
     const sexo = String(datos.sexo ?? '').trim().toUpperCase();
     if (sexo) {
@@ -248,10 +253,14 @@ export class LeadsPedidoService {
       else if (/^(F|FEM|FEMENINO|MUJER|DAMA)$/.test(sexo)) cambios.sexo = 'F';
     }
 
+    const sintomas = String(datos.sintomas ?? '').trim();
     const edad = Math.trunc(Number(datos.edad));
     // Fuera de este rango es un error de lectura, no una edad: guardarlo
     // ensuciaría el reporte sin que nadie lo note.
     if (Number.isFinite(edad) && edad >= 1 && edad <= 110) cambios.edad = edad;
+    // Los síntomas van al resumen del prospecto, que es lo que el negocio lee
+    // para armar la guía de consumo personalizada.
+    if (sintomas.length >= 4) cambios.resumen = sintomas.slice(0, 400);
 
     if (!Object.keys(cambios).length) return;
     try {
@@ -261,6 +270,7 @@ export class LeadsPedidoService {
       });
       if (cambios.sexo) guardado.push('sexo');
       if (cambios.edad) guardado.push('edad');
+      if (cambios.resumen) guardado.push('síntomas');
     } catch {
       // Silencio a propósito: ver arriba.
     }
@@ -640,6 +650,24 @@ export class LeadsPedidoService {
     // Como el flujo exige el nombre antes de registrar, pasarlo como texto
     // hacía fallar SIEMPRE el registro del pedido.
     const clienteId = await this.clienteDelPedido(empresaId, borrador, telefono);
+    // El perfil va en el resumen para que el negocio pueda armar la guía de
+    // consumo personalizada sin volver a leer toda la conversación.
+    // Es dato decorativo del resumen: si no se puede leer, la venta se
+    // registra igual. Un try/catch y no `.catch()` porque el acceso mismo
+    // puede fallar, no solo la promesa.
+    let perfil: {
+      sexo: string | null;
+      edad: number | null;
+      resumen: string | null;
+    } | null = null;
+    try {
+      perfil = await this.prisma.leadProspecto.findFirst({
+        where: { conversacionId, empresaId },
+        select: { sexo: true, edad: true, resumen: true },
+      });
+    } catch {
+      perfil = null;
+    }
 
     let comprobanteId: number;
     let codigo: string;
@@ -655,6 +683,7 @@ export class LeadsPedidoService {
             ? { clienteId }
             : { clienteName: 'CLIENTES VARIOS' }),
           observaciones: this.resumenParaElEquipo(
+            perfil,
             borrador,
             calculo,
             adelanto,
@@ -711,6 +740,7 @@ export class LeadsPedidoService {
         tipo: 'INFO',
         titulo: `🛒 Pedido nuevo por WhatsApp: ${codigo}`,
         mensaje: this.resumenParaElEquipo(
+          perfil,
           borrador,
           calculo,
           adelanto,
@@ -748,6 +778,7 @@ export class LeadsPedidoService {
 
   /** El detalle que necesita quien va a despachar, en una sola lectura. */
   private resumenParaElEquipo(
+    perfil: { sexo: string | null; edad: number | null; resumen: string | null } | null,
     b: {
       zona: string | null;
       lugar: string | null;
@@ -768,6 +799,14 @@ export class LeadsPedidoService {
     ];
     if (b.nombre) l.push(`Cliente: ${b.nombre}`);
     if (b.dni) l.push(`DNI: ${b.dni}`);
+    // Para la guía de consumo personalizada: el negocio la arma a mano tras
+    // agendar, y sin estos datos no puede.
+    if (perfil?.sexo || perfil?.edad) {
+      l.push(
+        `Perfil: ${[perfil.sexo === 'F' ? 'mujer' : perfil.sexo === 'M' ? 'hombre' : null, perfil.edad ? `${perfil.edad} años` : null].filter(Boolean).join(', ')}`,
+      );
+    }
+    if (perfil?.resumen) l.push(`Síntomas: ${perfil.resumen}`);
     if (b.celular) l.push(`Celular: ${b.celular}`);
     if (b.zona) l.push(`Destino: ${b.zona}${b.lugar ? ` — ${b.lugar}` : ''}`);
     if (b.direccion) l.push(`Dirección: ${b.direccion}`);
