@@ -708,8 +708,17 @@ export class LeadsPedidoService {
     // El despacho es best-effort: si falla, el pedido YA existe y perderlo
     // sería peor. Queda el aviso para que alguien lo complete a mano.
     try {
+      // El courier sale de la zona configurada. Sin él, el despacho quedaba
+      // en blanco y el botón "Coordinar envío" del panel no sabía con quién
+      // iba el paquete.
+      const zonaDelPedido = config.envio.zonas.find(
+        (z) => z.nombre === borrador.zona,
+      );
       await this.despacho.create(comprobanteId, empresaId, {
         tipoEnvio: (esAgencia ? 'AGENCIA' : 'DOMICILIO') as never,
+        ...(zonaDelPedido?.courier
+          ? { transportista: zonaDelPedido.courier }
+          : {}),
         ...(borrador.agenciaSede
           ? { agenciaDestino: borrador.agenciaSede }
           : {}),

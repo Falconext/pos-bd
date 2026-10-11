@@ -31,6 +31,15 @@ export interface ZonaEnvio {
   lugares?: LugarZona[];
   /** Lo que la IA le dice al cliente sobre cómo se paga en esta zona. */
   notaPago?: string;
+  /**
+   * Con qué courier sale esta zona: SHALOM_PRO, SHALOM_COD, OLVA, URBANO,
+   * CRUZ_SUR, PROPIOS u OTRO.
+   *
+   * Va en la configuración y no en el código porque cada empresa trabaja con
+   * los suyos. Sin esto, el despacho que crea la IA quedaba sin courier y el
+   * botón "Coordinar envío" del panel arrancaba en blanco.
+   */
+  courier?: string;
 }
 
 export interface ConfigEnvio {
@@ -73,6 +82,7 @@ export const CONFIG_ENVIO_HIERBA_SANA: ConfigEnvio = {
       nombre: 'Lima',
       tipo: 'DOMICILIO',
       tarifa: 15,
+      courier: 'PROPIOS',
       notaPago: 'el pago es contraentrega',
       lugares: [
         lima('La Victoria'),
@@ -118,6 +128,7 @@ export const CONFIG_ENVIO_HIERBA_SANA: ConfigEnvio = {
       nombre: 'Provincia',
       tipo: 'AGENCIA',
       tarifa: 10,
+      courier: 'SHALOM_PRO',
       notaPago:
         'pagas el 50% para reservar y el resto cuando tu pedido llegue a la agencia de destino',
     },
