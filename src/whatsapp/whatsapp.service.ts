@@ -693,7 +693,14 @@ export class WhatsAppService {
     },
     {
       // F6: el producto de la lista de espera volvió. {{1}} nombre, {{2}} producto.
+      //
+      // MARKETING porque es lo que Meta decide igual: la mandamos como UTILITY
+      // y nos la reclasificó al revisarla. Avisar que un producto volvió es
+      // promoción para ellos, aunque el cliente lo haya pedido. Declararlo de
+      // frente evita la discrepancia entre lo que el panel dice y lo que Meta
+      // cobra, y que el cliente cuente con un precio de UTILITY que no es.
       name: 'producto_disponible',
+      category: 'MARKETING',
       body: 'Hola {{1}}, buenas noticias: {{2}} ya está disponible nuevamente. Escríbenos y coordinamos tu pedido.',
       example: ['Juan', 'Uña de gato 100 cápsulas'],
     },

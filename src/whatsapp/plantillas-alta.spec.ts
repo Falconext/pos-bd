@@ -69,6 +69,25 @@ describe('dar de alta las plantillas de IA de Ventas', () => {
     expect(r.errores).toEqual([]);
   });
 
+  it('las que Meta trata como promoción van declaradas MARKETING', async () => {
+    // Las mandábamos como UTILITY y Meta las reclasificaba al revisarlas, con
+    // lo cual el panel prometía un precio de UTILITY que no era el real.
+    post.mockResolvedValue({ data: {} });
+
+    await alta(servicio());
+
+    const categoria = (nombre: string) =>
+      post.mock.calls.find((c) => c[1].name === nombre)?.[1].category;
+    expect(categoria('producto_disponible')).toBe('MARKETING');
+    expect(categoria('recompra_25')).toBe('MARKETING');
+    expect(categoria('reactivacion_45')).toBe('MARKETING');
+    // Estas sí son UTILITY: hablan de un pedido que el cliente ya empezó.
+    expect(categoria('reanudar_atencion')).toBe('UTILITY');
+    expect(categoria('recuperar_cotizacion')).toBe('UTILITY');
+    expect(categoria('carrito_en_espera')).toBe('UTILITY');
+    expect(categoria('post_entrega_resena')).toBe('UTILITY');
+  });
+
   it('"ya existe" es idempotencia, no un error', async () => {
     post.mockRejectedValue({
       response: { data: { error: { error_subcode: 2388023 } } },
