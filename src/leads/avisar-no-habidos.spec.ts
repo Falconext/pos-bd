@@ -90,8 +90,9 @@ describe('no repetirse', () => {
     // alguien lo atienda, y un aviso que se repite se ignora.
     const a = armar([c(1, 'x'), c(2, 'y')]);
     await a.servicio.avisarLoQuePidieronYNoHabia();
-    expect(a.marcadas[0].where).toEqual({ id: { in: [1, 2] } });
-    expect(a.marcadas[0].data.avisadoEn).toBeInstanceOf(Date);
+    const marca = a.marcadas[0] as { where: unknown; data: { avisadoEn: Date } };
+    expect(marca.where).toEqual({ id: { in: [1, 2] } });
+    expect(marca.data.avisadoEn).toBeInstanceOf(Date);
   });
 
   it('solo mira las que nunca se avisaron', async () => {

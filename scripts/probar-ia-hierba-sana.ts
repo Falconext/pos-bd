@@ -126,7 +126,7 @@ async function main() {
     // El embudo y el registro de consultas reales: así el harness también
     // ejercita el CRM, que es parte de lo que el cliente va a probar.
     new LeadsEmbudoService(prisma, { isEnabled: () => false } as never),
-    new LeadsConsultasService(prisma),
+    new LeadsConsultasService(prisma, { notificarAdminsEmpresa: async () => ({}) } as never),
     // Los disparadores no se ejercitan en el harness: mandarían WhatsApps.
     { programar: async () => ({ programado: false }), cancelar: async () => ({ cancelados: 0 }), atenderSiEsBaja: async () => ({ eraBaja: false }) } as never,
     null as never,

@@ -38,7 +38,7 @@ async function main() {
   }
   const prisma = new PrismaService();
   const embudo = new LeadsEmbudoService(prisma, s3Falso);
-  const consultas = new LeadsConsultasService(prisma);
+  const consultas = new LeadsConsultasService(prisma, { notificarAdminsEmpresa: async () => ({}) } as never);
   const bi = new LeadsBiService(prisma, consultas);
 
   // ── Limpiar y preparar dos clientes con el MISMO DNI ──

@@ -59,7 +59,7 @@ async function main() {
     SELECT "empresaId" FROM "Comprobante" GROUP BY "empresaId"
     ORDER BY COUNT(*) DESC LIMIT 1`;
 
-  const consultas = new LeadsConsultasService(prisma);
+  const consultas = new LeadsConsultasService(prisma, { notificarAdminsEmpresa: async () => ({}) } as never);
   const embudo = new LeadsEmbudoService(prisma, s3Falso);
   const bi = new LeadsBiService(prisma, consultas);
   const disparos = new LeadsDisparadoresService(prisma, whatsappFalso, embudo);
