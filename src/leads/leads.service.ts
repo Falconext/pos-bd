@@ -139,6 +139,46 @@ export class LeadsService {
     });
   }
 
+  /**
+   * Vuelve a indexar un documento que quedó en ERROR.
+   *
+   * Hasta ahora la única salida era borrarlo y volver a subirlo, y eso con un
+   * PDF de 40 páginas o una URL larga es rehacer el trabajo. La mayoría de
+   * los errores son pasajeros —la cuota de Gemini, un timeout— así que
+   * reintentar suele bastar.
+   *
+   * El contenido ya está extraído y guardado: solo se rehacen los embeddings.
+   */
+  async reindexarDocumento(empresaId: number, id: number) {
+    const doc = await this.prisma.leadDocumento.findFirst({
+      where: { id, empresaId },
+      select: { id: true, contenido: true, estado: true, titulo: true },
+    });
+    if (!doc) throw new NotFoundException('Documento no encontrado.');
+    if (!doc.contenido?.trim()) {
+      // Sin texto no hay nada que indexar: el fallo fue al extraerlo y hay
+      // que volver a subir el archivo.
+      throw new BadRequestException(
+        'Este documento no tiene texto extraído. Vuelve a subirlo.',
+      );
+    }
+
+    // Los fragmentos viejos se borran: si quedó a medias, reindexar sin
+    // limpiar dejaría el documento duplicado en las búsquedas.
+    await this.prisma.leadFragmento.deleteMany({ where: { documentoId: id } });
+    await this.prisma.leadDocumento.update({
+      where: { id },
+      data: { estado: 'PENDIENTE', error: null },
+    });
+
+    await this.rag.indexarDocumento(id, doc.contenido);
+
+    return this.prisma.leadDocumento.findUnique({
+      where: { id },
+      select: this.docSelect,
+    });
+  }
+
   /** Elimina un documento y sus fragmentos (cascade). */
   async eliminarDocumento(empresaId: number, id: number) {
     const doc = await this.prisma.leadDocumento.findFirst({

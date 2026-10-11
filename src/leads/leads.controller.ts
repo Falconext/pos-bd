@@ -63,6 +63,18 @@ export class LeadsController {
   ) {
     return this.service.crearDocumento(user.empresaId, body);
   }
+  /**
+   * Reintenta indexar un documento que quedó en ERROR, sin tener que
+   * borrarlo y volver a subirlo.
+   */
+  @Post('entrenamiento/:id/reindexar')
+  reindexarDocumento(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.service.reindexarDocumento(user.empresaId, id);
+  }
+
 
   @Delete('entrenamiento/:id')
   eliminarDocumento(@User() user: any, @Param('id', ParseIntPipe) id: number) {
