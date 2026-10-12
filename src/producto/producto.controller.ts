@@ -1010,6 +1010,7 @@ export class ProductoController {
       soloStockBajo: query.soloStockBajo,
       priorizarStock: query.priorizarStock,
       incluirOcultos: query.incluirOcultos,
+      incluirVariantes: query.incluirVariantes,
     });
     res.locals.message = 'Productos listados correctamente';
     return resultado;
