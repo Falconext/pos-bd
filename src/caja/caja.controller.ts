@@ -63,6 +63,20 @@ export class CajaController {
     );
   }
 
+  // Todo lo que pasó en un turno ya cerrado, para imprimir el arqueo.
+  @Get('turno/:cierreId/detalle')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async detalleTurno(
+    @User() user: any,
+    @Param('cierreId', ParseIntPipe) cierreId: number,
+  ) {
+    return await this.cajaService.detalleTurno(
+      cierreId,
+      user.empresaId,
+      user.sedeId,
+    );
+  }
+
   @Post('cerrar')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async cerrarCaja(@User() user: any, @Body() cierreCajaDto: CierreCajaDto) {

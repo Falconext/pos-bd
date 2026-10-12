@@ -450,6 +450,158 @@ export class CajaService {
     };
   }
 
+  /**
+   * Todo lo que pasó en un turno ya cerrado, para imprimirlo.
+   *
+   * Los montos que manda son los que quedaron GRABADOS en el cierre, no un
+   * recálculo: el arqueo es lo que la persona declaró ese día y lo que el
+   * sistema esperaba en ese momento. Recalcularlo hoy daría otro número si
+   * después se anuló una venta, y el papel dejaría de coincidir con lo que se
+   * firmó.
+   *
+   * La lista de documentos sí se arma ahora, y es el detalle de respaldo: si no
+   * cuadra con el total grabado, eso mismo es información (algo se anuló o se
+   * registró después).
+   */
+  async detalleTurno(cierreId: number, empresaId: number, sedeId?: number) {
+    const cierre = await this.prisma.movimientoCaja.findFirst({
+      where: {
+        id: cierreId,
+        empresaId,
+        tipoMovimiento: 'CIERRE',
+        estado: 'ACTIVO',
+      },
+      include: {
+        usuario: { select: { nombre: true, email: true } },
+        sede: { select: { nombre: true } },
+        empresa: { select: { razonSocial: true, nombreComercial: true, ruc: true } },
+      },
+    });
+    if (!cierre) throw new NotFoundException('Cierre de turno no encontrado');
+
+    // La apertura del turno es la última anterior al cierre en la misma sede.
+    // Se busca así y no por día porque se permiten varios turnos por día.
+    const apertura = await this.prisma.movimientoCaja.findFirst({
+      where: {
+        empresaId,
+        ...(cierre.sedeId ? { sedeId: cierre.sedeId } : {}),
+        tipoMovimiento: 'APERTURA',
+        estado: 'ACTIVO',
+        fecha: { lte: cierre.fecha },
+      },
+      orderBy: { fecha: 'desc' },
+      include: { usuario: { select: { nombre: true } } },
+    });
+
+    const desde = apertura?.fecha ?? cierre.fecha;
+    const hasta = cierre.fechaCierre ?? cierre.fecha;
+    const sedeDelTurno = cierre.sedeId ?? sedeId;
+
+    // Mismos criterios que usa el arqueo para contar ventas del turno, acá con
+    // los datos de identificación para poder listarlos uno por uno.
+    const seleccion = {
+      id: true,
+      tipoDoc: true,
+      serie: true,
+      correlativo: true,
+      mtoImpVenta: true,
+      medioPago: true,
+      tipoMoneda: true,
+      creadoEn: true,
+      cliente: { select: { nombre: true, nroDoc: true } },
+    } as const;
+
+    const [informales, formales, egresos] = await Promise.all([
+      this.prisma.comprobante.findMany({
+        where: {
+          empresaId,
+          ...(sedeDelTurno ? { sedeId: sedeDelTurno } : {}),
+          tipoDoc: { in: ['TICKET', 'NV', 'RH', 'CP', 'NP', 'OT'] },
+          creadoEn: { gte: desde, lte: hasta },
+          estadoPago: 'COMPLETADO',
+          estadoEnvioSunat: { not: 'ANULADO' as any },
+        },
+        select: seleccion,
+        orderBy: { creadoEn: 'asc' },
+      }),
+      this.prisma.comprobante.findMany({
+        where: {
+          empresaId,
+          ...(sedeDelTurno ? { sedeId: sedeDelTurno } : {}),
+          tipoDoc: { in: ['01', '03', '07', '08'] },
+          creadoEn: { gte: desde, lte: hasta },
+          estadoEnvioSunat: { not: 'ANULADO' as any },
+        },
+        select: seleccion,
+        orderBy: { creadoEn: 'asc' },
+      }),
+      this.prisma.movimientoCaja.findMany({
+        where: {
+          empresaId,
+          ...(sedeDelTurno ? { sedeId: sedeDelTurno } : {}),
+          tipoMovimiento: 'EGRESO',
+          estado: 'ACTIVO',
+          fecha: { gte: desde, lte: hasta },
+        },
+        include: { usuario: { select: { nombre: true } } },
+        orderBy: { fecha: 'asc' },
+      }),
+    ]);
+
+    const documentos = [...informales, ...formales]
+      .sort((a, b) => a.creadoEn.getTime() - b.creadoEn.getTime())
+      .map((c) => ({
+        id: c.id,
+        documento: `${c.serie}-${String(c.correlativo).padStart(8, '0')}`,
+        tipoDoc: c.tipoDoc,
+        cliente: c.cliente?.nombre ?? 'CLIENTES VARIOS',
+        clienteDoc: c.cliente?.nroDoc ?? '',
+        medioPago: c.medioPago ?? '',
+        moneda: c.tipoMoneda ?? 'PEN',
+        total: Number(c.mtoImpVenta ?? 0),
+        fecha: c.creadoEn,
+      }));
+
+    return {
+      empresa: cierre.empresa,
+      sede: cierre.sede?.nombre ?? null,
+      turno: cierre.turno,
+      apertura: apertura
+        ? {
+            id: apertura.id,
+            fecha: apertura.fecha,
+            montoInicial: Number(apertura.montoInicial ?? 0),
+            usuario: apertura.usuario?.nombre ?? null,
+            observaciones: apertura.observaciones ?? null,
+          }
+        : null,
+      cierre: {
+        id: cierre.id,
+        fecha: cierre.fecha,
+        fechaCierre: cierre.fechaCierre,
+        usuario: cierre.usuario?.nombre ?? null,
+        montoEfectivo: Number(cierre.montoEfectivo ?? 0),
+        montoYape: Number(cierre.montoYape ?? 0),
+        montoPlin: Number(cierre.montoPlin ?? 0),
+        montoTransferencia: Number(cierre.montoTransferencia ?? 0),
+        montoTarjeta: Number(cierre.montoTarjeta ?? 0),
+        montoFinal: Number(cierre.montoFinal ?? 0),
+        totalVentas: Number(cierre.totalVentas ?? 0),
+        diferencia: Number(cierre.diferencia ?? 0),
+        observaciones: cierre.observaciones ?? null,
+      },
+      documentos,
+      egresos: egresos.map((e) => ({
+        id: e.id,
+        fecha: e.fecha,
+        monto: Number(e.monto ?? 0),
+        concepto: e.descripcionGasto ?? e.observaciones ?? '',
+        esTransferencia: e.esTransferencia ?? false,
+        usuario: e.usuario?.nombre ?? null,
+      })),
+    };
+  }
+
   async cerrarCaja(
     usuarioId: number,
     empresaId: number,
