@@ -314,6 +314,142 @@ export class CajaService {
   }
 
   // Cerrar caja
+
+  /**
+   * El arqueo de un turno: qué debería haber en el cajón entre dos instantes.
+   *
+   * Vive aparte porque lo necesitan dos caminos —cerrar el turno y mostrar el
+   * esperado antes de cerrarlo— y si cada uno hiciera su propia cuenta, el
+   * número de la pantalla y el del cierre se separarían sin que nadie se entere.
+   */
+  private async calcularArqueoTurno(
+    empresaId: number,
+    desde: Date,
+    hasta: Date,
+    sedeId: number | undefined,
+    montoInicial: unknown = 0,
+  ) {
+    const ventasDelTurno = await this.obtenerVentasDelDia(
+      empresaId,
+      desde,
+      hasta,
+      sedeId,
+    );
+
+    // Egresos en efectivo del turno (dinero que salió de la caja) — sin
+    // contar las transferencias a otra sede, que se calculan aparte para no
+    // mezclarlas con gastos reales del negocio.
+    const [egresosTurno, transferenciasEnviadas, transferenciasRecibidas] =
+      await Promise.all([
+        this.prisma.movimientoCaja.aggregate({
+          where: {
+            empresaId,
+            ...(sedeId ? { sedeId } : {}),
+            tipoMovimiento: 'EGRESO',
+            esTransferencia: false,
+            fecha: { gte: desde, lte: hasta },
+            estado: 'ACTIVO',
+            // Gastos pendientes/rechazados (maker-checker) no cuentan en el
+            // cierre. Lista blanca explícita: null = sin flujo (legacy/admin).
+            // OJO: NOT { in } excluiría también los null (trampa SQL de NULL).
+            OR: [{ estadoAprobacion: null }, { estadoAprobacion: 'APROBADO' }],
+          },
+          _sum: { monto: true },
+        }),
+        this.prisma.movimientoCaja.aggregate({
+          where: {
+            empresaId,
+            ...(sedeId ? { sedeId } : {}),
+            tipoMovimiento: 'EGRESO',
+            esTransferencia: true,
+            fecha: { gte: desde, lte: hasta },
+            estado: 'ACTIVO',
+          },
+          _sum: { monto: true },
+        }),
+        this.prisma.movimientoCaja.aggregate({
+          where: {
+            empresaId,
+            ...(sedeId ? { sedeId } : {}),
+            tipoMovimiento: 'INGRESO',
+            esTransferencia: true,
+            fecha: { gte: desde, lte: hasta },
+            estado: 'ACTIVO',
+          },
+          _sum: { monto: true },
+        }),
+      ]);
+    const totalEgresos = Number(egresosTurno._sum.monto || 0);
+    const totalTransferenciasEnviadas = Number(
+      transferenciasEnviadas._sum.monto || 0,
+    );
+    const totalTransferenciasRecibidas = Number(
+      transferenciasRecibidas._sum.monto || 0,
+    );
+    const fondoInicial = Number(montoInicial || 0);
+
+    // Lo que DEBERÍA haber al cierre = fondo de apertura + ventas del turno
+    // + transferencias recibidas de otra sede − egresos − transferencias
+    // enviadas a otra sede.
+    const montoEsperado =
+      fondoInicial +
+      ventasDelTurno.totalIngresos +
+      totalTransferenciasRecibidas -
+      totalEgresos -
+      totalTransferenciasEnviadas;
+    return {
+      ventasDelTurno,
+      fondoInicial,
+      totalEgresos,
+      totalTransferenciasEnviadas,
+      totalTransferenciasRecibidas,
+      montoEsperado,
+    };
+  }
+
+  /**
+   * Qué debería haber en el cajón de un turno pendiente, para mostrarlo antes
+   * de cuadrarlo.
+   *
+   * Se devuelve con la misma forma que `obtenerEstadoCaja` para que la pantalla
+   * de cierre haga la misma cuenta que ya hace con el turno de hoy, en vez de
+   * tener una fórmula propia para este caso.
+   */
+  async estadoTurnoPendiente(
+    aperturaId: number,
+    empresaId: number,
+    usuarioId: number,
+    sedeId?: number,
+    usuarioRol?: string,
+  ) {
+    const apertura = await this.buscarTurnoPendiente(
+      aperturaId,
+      empresaId,
+      usuarioId,
+      sedeId,
+      usuarioRol,
+    );
+    // Mismo corte que usa el cierre: el final del día del turno.
+    const fechaCorte = this.finDelDiaLima(apertura.fecha);
+    const arqueo = await this.calcularArqueoTurno(
+      empresaId,
+      apertura.fecha,
+      fechaCorte,
+      apertura.sedeId ?? sedeId,
+      apertura.montoInicial,
+    );
+
+    return {
+      movimiento: apertura,
+      fechaCorte,
+      ventasDelDia: arqueo.ventasDelTurno,
+      totalEgresos: arqueo.totalEgresos,
+      totalTransferenciasEnviadas: arqueo.totalTransferenciasEnviadas,
+      totalTransferenciasRecibidas: arqueo.totalTransferenciasRecibidas,
+      montoEsperado: arqueo.montoEsperado,
+    };
+  }
+
   async cerrarCaja(
     usuarioId: number,
     empresaId: number,
@@ -363,12 +499,14 @@ export class CajaService {
       ? this.finDelDiaLima(fechaApertura)
       : (opts?.realizadoEn ?? new Date());
 
-    const ventasDelTurno = await this.obtenerVentasDelDia(
+    const arqueo = await this.calcularArqueoTurno(
       empresaId,
       fechaApertura,
       fechaActual,
       sedeId,
+      cajaAbierta.montoInicial,
     );
+    const ventasDelTurno = arqueo.ventasDelTurno;
 
     const montoDeclarado =
       cierreCajaDto.montoEfectivo +
@@ -377,67 +515,14 @@ export class CajaService {
       cierreCajaDto.montoTransferencia +
       cierreCajaDto.montoTarjeta;
 
-    // Egresos en efectivo del turno (dinero que salió de la caja) — sin
-    // contar las transferencias a otra sede, que se calculan aparte para no
-    // mezclarlas con gastos reales del negocio.
-    const [egresosTurno, transferenciasEnviadas, transferenciasRecibidas] =
-      await Promise.all([
-        this.prisma.movimientoCaja.aggregate({
-          where: {
-            empresaId,
-            ...(sedeId ? { sedeId } : {}),
-            tipoMovimiento: 'EGRESO',
-            esTransferencia: false,
-            fecha: { gte: fechaApertura, lte: fechaActual },
-            estado: 'ACTIVO',
-            // Gastos pendientes/rechazados (maker-checker) no cuentan en el
-            // cierre. Lista blanca explícita: null = sin flujo (legacy/admin).
-            // OJO: NOT { in } excluiría también los null (trampa SQL de NULL).
-            OR: [{ estadoAprobacion: null }, { estadoAprobacion: 'APROBADO' }],
-          },
-          _sum: { monto: true },
-        }),
-        this.prisma.movimientoCaja.aggregate({
-          where: {
-            empresaId,
-            ...(sedeId ? { sedeId } : {}),
-            tipoMovimiento: 'EGRESO',
-            esTransferencia: true,
-            fecha: { gte: fechaApertura, lte: fechaActual },
-            estado: 'ACTIVO',
-          },
-          _sum: { monto: true },
-        }),
-        this.prisma.movimientoCaja.aggregate({
-          where: {
-            empresaId,
-            ...(sedeId ? { sedeId } : {}),
-            tipoMovimiento: 'INGRESO',
-            esTransferencia: true,
-            fecha: { gte: fechaApertura, lte: fechaActual },
-            estado: 'ACTIVO',
-          },
-          _sum: { monto: true },
-        }),
-      ]);
-    const totalEgresos = Number(egresosTurno._sum.monto || 0);
-    const totalTransferenciasEnviadas = Number(
-      transferenciasEnviadas._sum.monto || 0,
-    );
-    const totalTransferenciasRecibidas = Number(
-      transferenciasRecibidas._sum.monto || 0,
-    );
-    const fondoInicial = Number(cajaAbierta.montoInicial || 0);
+    const {
+      fondoInicial,
+      totalEgresos,
+      totalTransferenciasEnviadas,
+      totalTransferenciasRecibidas,
+      montoEsperado,
+    } = arqueo;
 
-    // Lo que DEBERÍA haber al cierre = fondo de apertura + ventas del turno
-    // + transferencias recibidas de otra sede − egresos − transferencias
-    // enviadas a otra sede.
-    const montoEsperado =
-      fondoInicial +
-      ventasDelTurno.totalIngresos +
-      totalTransferenciasRecibidas -
-      totalEgresos -
-      totalTransferenciasEnviadas;
     const diferencia = montoDeclarado - montoEsperado;
 
     // Usar el mismo turno que la apertura

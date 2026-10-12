@@ -45,6 +45,24 @@ export class CajaController {
     );
   }
 
+  // Lo que el sistema espera en el cajón de un turno de un día anterior que
+  // quedó sin cerrar. La pantalla de cierre lo pide para no mostrar los números
+  // de HOY como referencia de un turno de otro día.
+  @Get('turno-pendiente/:aperturaId/estado')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async estadoTurnoPendiente(
+    @User() user: any,
+    @Param('aperturaId', ParseIntPipe) aperturaId: number,
+  ) {
+    return await this.cajaService.estadoTurnoPendiente(
+      aperturaId,
+      user.empresaId,
+      user.id,
+      user.sedeId,
+      user.rol,
+    );
+  }
+
   @Post('cerrar')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async cerrarCaja(@User() user: any, @Body() cierreCajaDto: CierreCajaDto) {
