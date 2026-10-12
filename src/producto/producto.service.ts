@@ -916,6 +916,70 @@ export class ProductoService {
     }));
   }
 
+  /** Tope de ids a traer por palabra; más que eso deja de valer la pena. */
+  private static readonly TOPE_IDS_ATRIBUTO = 5000;
+
+  /**
+   * Variantes cuyos atributos contienen la palabra, en el nombre o en el valor.
+   *
+   * El cliente busca "Victoria azul talla 35": "talla" es el NOMBRE del
+   * atributo y "35" su valor, y ninguno de los dos está garantizado en la
+   * descripción (según cómo se creó el producto, la variante a veces se llama
+   * igual que el modelo). Comparar contra el JSON como texto cubre el nombre y
+   * el valor de una sola vez.
+   *
+   * Va en SQL crudo porque Prisma no sabe filtrar un Json por substring.
+   */
+  private async condicionPorAtributoVariante(
+    empresaId: number,
+    palabra: string,
+  ): Promise<any | null> {
+    // En LIKE, % y _ son comodines: se escapan para que una búsqueda literal
+    // no termine trayendo cualquier cosa.
+    const like = `%${palabra.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const filas = await this.prisma.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "Producto"
+      WHERE "empresaId" = ${empresaId}
+        AND "productoPadreId" IS NOT NULL
+        AND "valoresAtributos" IS NOT NULL
+        AND "valoresAtributos"::text ILIKE ${like}
+      LIMIT ${ProductoService.TOPE_IDS_ATRIBUTO}`;
+
+    if (filas.length === 0) return null;
+    // Palabra que comparten casi todas las variantes (típicamente el nombre de
+    // la dimensión: "talla", "color"). Si se truncara la lista, esa palabra
+    // excluiría variantes por azar; se la da por cumplida para toda variante.
+    if (filas.length >= ProductoService.TOPE_IDS_ATRIBUTO) {
+      return { productoPadreId: { not: null } };
+    }
+    return { id: { in: filas.map((f) => f.id) } };
+  }
+
+  /**
+   * Igual que `busquedaPorPalabras`, pero una palabra también vale si aparece
+   * en los atributos de la variante. Solo se usa cuando el listado incluye
+   * variantes; sin ellas el trabajo extra no cambiaría ningún resultado.
+   */
+  private async busquedaPorPalabrasConAtributos(
+    searchTerm: string | undefined,
+    empresaId: number,
+  ): Promise<any[] | undefined> {
+    const t = searchTerm?.trim();
+    if (!t) return undefined;
+    const palabras = t.split(/\s+/).filter(Boolean);
+    return Promise.all(
+      palabras.map(async (palabra) => {
+        const OR = this.camposBusquedaProducto(palabra);
+        const porAtributo = await this.condicionPorAtributoVariante(
+          empresaId,
+          palabra,
+        );
+        if (porAtributo) OR.push(porAtributo);
+        return { OR };
+      }),
+    );
+  }
+
 
   /**
    * Lo pedido al proveedor y todavía no recibido, por producto.
@@ -1060,11 +1124,15 @@ export class ProductoService {
       categoriaId: categoriaId ? Number(categoriaId) : undefined,
     };
 
+    const conVariantes = String(params.incluirVariantes) === 'true';
+
     // Búsqueda flexible por palabras (cada palabra debe aparecer en algún campo).
-    const searchAnd = this.busquedaPorPalabras(searchTerm);
+    const searchAnd = conVariantes
+      ? await this.busquedaPorPalabrasConAtributos(searchTerm, empresaId)
+      : this.busquedaPorPalabras(searchTerm);
     if (searchAnd) where.AND = searchAnd;
 
-    if (String(params.incluirVariantes) !== 'true') {
+    if (!conVariantes) {
       where.productoPadreId = null;
     }
 
