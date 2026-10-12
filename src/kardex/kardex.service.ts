@@ -555,7 +555,20 @@ export class KardexService {
         whereMovimientos.fecha.lte = toLocalEnd(filtros.fechaFin);
     }
 
-    if (filtros?.productoId) whereMovimientos.productoId = filtros.productoId;
+    // Las tallas y colores son productos hijos: una venta de "Victoria Azul
+    // talla 35" queda registrada contra la variante, nunca contra el modelo.
+    // Filtrando solo por el id del padre la lista salía vacía — el cliente lo
+    // reportó como "solo me aparece el producto en general". Elegir el modelo
+    // trae ahora todas sus variantes; elegir una talla trae solo esa.
+    if (filtros?.productoId) {
+      const variantes = await this.prisma.producto.findMany({
+        where: { productoPadreId: filtros.productoId, empresaId },
+        select: { id: true },
+      });
+      whereMovimientos.productoId = variantes.length
+        ? { in: [filtros.productoId, ...variantes.map((v) => v.id)] }
+        : filtros.productoId;
+    }
     if (filtros?.tipoMovimiento)
       whereMovimientos.tipoMovimiento = filtros.tipoMovimiento;
     if (filtros?.concepto) {
@@ -584,6 +597,9 @@ export class KardexService {
             include: {
               unidadMedida: true,
               categoria: true,
+              // Para que la fila pueda decir de qué talla/color se trata y no
+              // repetir el nombre del modelo en todas.
+              productoPadre: { select: { descripcion: true } },
             },
           },
           usuario: { select: { id: true, nombre: true } },
