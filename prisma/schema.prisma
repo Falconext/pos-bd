@@ -570,6 +570,10 @@ model Usuario {
   convertirEnSupervisor             Boolean                            @default(false)
   noPermitirVentaProductosGratuitos Boolean                            @default(false)
   restringirTransferenciasASuSede   Boolean                            @default(false)
+  // Pedido de un minimarket: la cajera no debe poder dar de alta ni borrar
+  // productos del inventario. No alcanza a editar los que ya existen ni a
+  // vender: es solo el alta y la baja del catálogo.
+  bloquearCrearEliminarProductos    Boolean                            @default(false)
   // Único permiso opt-in en el sentido contrario (default false = SIN el
   // permiso, igual que el comportamiento actual): anular/eliminar
   // comprobantes queda reservado a ADMIN_EMPRESA salvo que se active aquí.

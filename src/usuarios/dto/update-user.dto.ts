@@ -83,6 +83,11 @@ export class UpdateUserDto {
   @IsOptional()
   restringirTransferenciasASuSede?: boolean;
 
+  /** La cajera no puede dar de alta ni borrar productos del inventario. */
+  @IsBoolean()
+  @IsOptional()
+  bloquearCrearEliminarProductos?: boolean;
+
   @IsBoolean()
   @IsOptional()
   puedeAnularComprobantes?: boolean;

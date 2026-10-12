@@ -66,6 +66,20 @@ export class UsersController {
 
   @UseGuards(PermissionsGuard)
   @RequiresPermission('usuarios')
+  @Get('email-disponible')
+  async emailDisponible(
+    @Query('email') email: string,
+    @Query('usuarioId') usuarioId?: string,
+  ) {
+    // Va antes de @Get() y de cualquier ruta con parámetro para que no la tape.
+    return this.usersService.emailDisponible(
+      email,
+      usuarioId ? Number(usuarioId) : undefined,
+    );
+  }
+
+  @UseGuards(PermissionsGuard)
+  @RequiresPermission('usuarios')
   @Post()
   async crear(
     @Body() dto: CreateUserDto,
