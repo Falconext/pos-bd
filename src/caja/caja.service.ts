@@ -38,6 +38,84 @@ export class CajaService {
     return fecha.toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
   }
 
+  /**
+   * El último instante del día (hora Lima) al que pertenece esa fecha.
+   *
+   * Es el corte del arqueo de un turno que quedó sin cerrar: las ventas y
+   * gastos que cuentan son los de ESE día, no los de los días que pasaron
+   * hasta que alguien se acordó de cerrarlo.
+   */
+  private finDelDiaLima(fecha: Date): Date {
+    return new Date(`${this.diaLima(fecha)}T23:59:59.999-05:00`);
+  }
+
+  /**
+   * Busca una APERTURA de un día anterior que nunca se cerró, para poder
+   * cuadrarla ahora.
+   *
+   * `verificarCajaAbierta` solo mira hoy, así que un turno olvidado quedaba
+   * abierto para siempre y sin forma de cerrarlo desde la pantalla: el cierre
+   * respondía "no hay una caja abierta" y el panel no lo mostraba. Esto es la
+   * puerta de salida de ese callejón.
+   */
+  private async buscarTurnoPendiente(
+    aperturaId: number,
+    empresaId: number,
+    usuarioId: number,
+    sedeId?: number,
+    usuarioRol?: string,
+  ) {
+    const apertura = await this.prisma.movimientoCaja.findFirst({
+      where: {
+        id: aperturaId,
+        empresaId,
+        ...(sedeId ? { sedeId } : {}),
+        tipoMovimiento: 'APERTURA',
+        estado: 'ACTIVO',
+      },
+    });
+    if (!apertura) {
+      throw new BadRequestException(
+        'No se encontró ese turno de caja, o ya no está activo.',
+      );
+    }
+
+    // El arqueo lo cuenta quien tuvo el cajón. Lo cierra quien lo abrió o un
+    // administrador: si solo pudiera el que lo abrió, un turno de alguien que
+    // ya no trabaja ahí volvería a quedar trabado para siempre.
+    const esAdmin =
+      usuarioRol === 'ADMIN_EMPRESA' || usuarioRol === 'ADMIN_SISTEMA';
+    if (!esAdmin && apertura.usuarioId !== usuarioId) {
+      throw new BadRequestException(
+        'Ese turno lo abrió otra persona. Pídele a un administrador que lo cierre.',
+      );
+    }
+
+    // Que siga pendiente de verdad: si ya tiene cierre en ese día y sede, no
+    // hay nada que cuadrar y un segundo CIERRE duplicaría el arqueo.
+    const { gte, lte } = this.parseRangeDates(
+      this.diaLima(apertura.fecha),
+      this.diaLima(apertura.fecha),
+    );
+    const cierre = await this.prisma.movimientoCaja.findFirst({
+      where: {
+        empresaId,
+        ...(apertura.sedeId ? { sedeId: apertura.sedeId } : {}),
+        tipoMovimiento: 'CIERRE',
+        estado: 'ACTIVO',
+        fecha: { gte, lte },
+      },
+      select: { id: true },
+    });
+    if (cierre) {
+      throw new BadRequestException(
+        'Ese turno ya tiene un cierre registrado; no hay nada pendiente de cuadrar.',
+      );
+    }
+
+    return apertura;
+  }
+
   private parseRangeDates(fechaInicio?: string, fechaFin?: string) {
     const today = new Date().toLocaleDateString('en-CA', {
       timeZone: 'America/Lima',
@@ -243,15 +321,31 @@ export class CajaService {
     sedeId?: number,
     // Sync offline: el cierre ocurrió en `realizadoEn`; el esperado se calcula
     // con lo registrado entre la apertura y ese instante.
-    opts?: { realizadoEn?: Date; origenSyncUuid?: string },
+    // `usuarioRol` solo se usa para decidir quién puede cerrar un turno ajeno
+    // que quedó pendiente.
+    opts?: {
+      realizadoEn?: Date;
+      origenSyncUuid?: string;
+      usuarioRol?: string;
+    },
   ) {
-    // Verificar si hay una caja abierta
-    const cajaAbierta = await this.verificarCajaAbierta(
-      usuarioId,
-      empresaId,
-      sedeId,
-      opts?.realizadoEn,
-    );
+    // Con `aperturaId` se está cuadrando un turno de un día anterior que quedó
+    // sin cerrar; sin él, el turno de hoy, que es el caso de siempre.
+    const cerrandoPendiente = cierreCajaDto.aperturaId != null;
+    const cajaAbierta = cerrandoPendiente
+      ? await this.buscarTurnoPendiente(
+          cierreCajaDto.aperturaId as number,
+          empresaId,
+          usuarioId,
+          sedeId,
+          opts?.usuarioRol,
+        )
+      : await this.verificarCajaAbierta(
+          usuarioId,
+          empresaId,
+          sedeId,
+          opts?.realizadoEn,
+        );
     if (!cajaAbierta) {
       throw new BadRequestException(
         'No hay una caja abierta para cerrar en el día de hoy',
@@ -262,7 +356,12 @@ export class CajaService {
 
     // Calcular totales de ventas del turno actual (desde la apertura hasta ahora)
     const fechaApertura = cajaAbierta.fecha;
-    const fechaActual = opts?.realizadoEn ?? new Date();
+    // En un turno pendiente la ventana se corta al final de SU día: lo que se
+    // vendió los días siguientes no es de ese cajón, y meterlo en el arqueo
+    // produciría una diferencia inventada.
+    const fechaActual = cerrandoPendiente
+      ? this.finDelDiaLima(fechaApertura)
+      : (opts?.realizadoEn ?? new Date());
 
     const ventasDelTurno = await this.obtenerVentasDelDia(
       empresaId,
@@ -344,6 +443,18 @@ export class CajaService {
     // Usar el mismo turno que la apertura
     const turnoApertura = cajaAbierta.turno || this.detectarTurno();
 
+    // Un arqueo cuadrado días después no puede parecer hecho en su momento:
+    // queda escrito en las observaciones quién lo cerró y cuándo. Sin esto, el
+    // cierre del 10 hecho el 12 se vería idéntico a uno hecho a tiempo.
+    const observaciones = cerrandoPendiente
+      ? [
+          cierreCajaDto.observaciones?.trim(),
+          `[Cierre tardío] Turno del ${this.diaLima(fechaApertura)} cuadrado el ${this.diaLima(new Date())}.`,
+        ]
+          .filter(Boolean)
+          .join(' ')
+      : cierreCajaDto.observaciones;
+
     // Crear movimiento de cierre
     const cierre = await this.prisma.movimientoCaja.create({
       data: {
@@ -360,11 +471,19 @@ export class CajaService {
         totalVentas: ventasDelTurno.totalIngresos,
         totalIngresos: ventasDelTurno.totalIngresos,
         diferencia,
-        observaciones: cierreCajaDto.observaciones,
+        observaciones,
         fechaCierre: fechaActual,
         turno: turnoApertura,
         estado: 'ACTIVO',
-        ...(opts?.realizadoEn ? { fecha: opts.realizadoEn } : {}),
+        // El CIERRE se fecha dentro del día del turno, no en el día en que se
+        // cuadró: todo lo que agrupa por día (el aviso de turnos pendientes, el
+        // historial, los reportes) lo busca ahí. Con la fecha de hoy, el turno
+        // seguiría apareciendo como pendiente después de cerrarlo.
+        ...(cerrandoPendiente
+          ? { fecha: fechaActual }
+          : opts?.realizadoEn
+            ? { fecha: opts.realizadoEn }
+            : {}),
         ...(opts?.origenSyncUuid ? { origenSyncUuid: opts.origenSyncUuid } : {}),
       },
       include: {

@@ -53,6 +53,9 @@ export class CajaController {
       user.empresaId,
       cierreCajaDto,
       user.sedeId,
+      // Para cerrar un turno pendiente que abrió otra persona hace falta ser
+      // administrador; el servicio lo decide con esto.
+      { usuarioRol: user.rol },
     );
   }
 
