@@ -74,6 +74,17 @@ export class ComprobanteController {
   }
 
   /**
+   * ¿Hay comprobantes esperando a que SUNAT responda? Lo consulta la lista de
+   * comprobantes para avisar al empresario en el mismo sitio donde ve el
+   * "Fallido Envío" en rojo, y así evitar que reemita o anule.
+   */
+  @Get('incidencia-sunat')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async incidenciaSunat(@User() user: any) {
+    return this.service.incidenciaSunat(user.empresaId);
+  }
+
+  /**
    * Obtiene las estadísticas de uso de comprobantes SUNAT del mes actual
    */
   @Get('usage')

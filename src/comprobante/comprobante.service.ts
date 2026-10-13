@@ -942,6 +942,9 @@ export class ComprobanteService {
         tipoDoc,
         tipDocAfectado ?? null,
         empresaId,
+        // La pantalla pide el número ANTES de emitir: se asume hoy, que es la
+        // fecha con la que se va a emitir salvo que la cambien a mano.
+        new Date(),
       );
       console.log(
         '[ComprobanteService.siguienteCorrelativo] Success - serie:',
@@ -1537,6 +1540,7 @@ export class ComprobanteService {
         tipoDoc,
         tipDocAfectado,
         empresaId,
+        data?.fechaEmision ?? null,
       );
       try {
         return await this.prisma.comprobante.create({
@@ -1803,10 +1807,73 @@ export class ComprobanteService {
     };
   }
 
+  /** El día (sin hora) de una fecha, en hora Lima, para comparar cronología. */
+  private diaDe(valor: Date | string): string {
+    return new Date(valor).toLocaleDateString('en-CA', {
+      timeZone: 'America/Lima',
+    });
+  }
+
+  /**
+   * El correlativo libre más bajo de la serie, SI llenarlo no rompe el orden.
+   *
+   * Los huecos se abren cuando SUNAT rechaza un comprobante por datos: el
+   * sistema lo borra, pero si la persona ya rehizo la venta —suele ser en
+   * segundos— la nueva se llevó el número siguiente y el rechazado deja su
+   * número vacío para siempre.
+   *
+   * Rellenarlo sin mirar la fecha sería peor que el hueco: un comprobante de
+   * hoy con el número de junio queda fuera de orden cronológico, que es
+   * justamente lo que SUNAT exige dentro de una serie. Por eso el hueco solo se
+   * toma cuando la fecha del comprobante nuevo cae entre la de su número
+   * anterior y la del siguiente.
+   *
+   * En la práctica: el hueco recién abierto se rellena (sus vecinos son de hoy)
+   * y el hueco viejo se deja quieto, para justificarlo ante SUNAT en vez de
+   * taparlo con un documento fuera de fecha.
+   */
+  private async correlativoDeHueco(
+    empresaId: number,
+    tipoDoc: string,
+    serie: string,
+    fechaEmision: Date,
+  ): Promise<number | null> {
+    const filas = await this.prisma.$queryRaw<
+      { hueco: number; fecha_antes: Date; fecha_despues: Date }[]
+    >`
+      WITH s AS (
+        SELECT correlativo, "fechaEmision"
+        FROM "Comprobante"
+        WHERE "empresaId" = ${empresaId} AND "tipoDoc" = ${tipoDoc} AND serie = ${serie}
+      ),
+      huecos AS (
+        SELECT s.correlativo + 1 AS hueco,
+               s."fechaEmision"  AS fecha_antes,
+               (SELECT min(n.correlativo) FROM s n WHERE n.correlativo > s.correlativo) AS sig
+        FROM s
+        WHERE NOT EXISTS (SELECT 1 FROM s n WHERE n.correlativo = s.correlativo + 1)
+          AND EXISTS     (SELECT 1 FROM s n WHERE n.correlativo > s.correlativo)
+      )
+      SELECT h.hueco::int AS hueco, h.fecha_antes, s2."fechaEmision" AS fecha_despues
+      FROM huecos h JOIN s s2 ON s2.correlativo = h.sig
+      ORDER BY h.hueco
+      LIMIT 1`;
+
+    const hueco = filas[0];
+    if (!hueco) return null;
+
+    const dia = this.diaDe(fechaEmision);
+    const entra =
+      dia >= this.diaDe(hueco.fecha_antes) &&
+      dia <= this.diaDe(hueco.fecha_despues);
+    return entra ? Number(hueco.hueco) : null;
+  }
+
   private async obtenerSerieYCorrelativo(
     tipoDoc: string,
     tipDocAfectado: string | null,
     empresaId: number,
+    fechaEmision?: Date | string | null,
   ) {
     console.log(
       '[obtenerSerieYCorrelativo] tipoDoc:',
@@ -1931,6 +1998,18 @@ export class ComprobanteService {
         orderBy: { correlativo: 'desc' },
       });
       let correlativo = ultimo ? Number(ultimo.correlativo) + 1 : 1;
+
+      // Antes de seguir por el final, ver si hay un hueco que se pueda llenar
+      // sin romper la cronología (ver `correlativoDeHueco`).
+      if (ultimo && fechaEmision) {
+        const hueco = await this.correlativoDeHueco(
+          empresaId,
+          tipoDoc,
+          serie,
+          new Date(fechaEmision),
+        );
+        if (hueco) correlativo = hueco;
+      }
 
       // El correlativo inicial configurado solo vale si su serie fue la que se
       // usó. Arrastrarlo desde una serie descartada numeraría la serie nueva
@@ -6129,6 +6208,38 @@ export class ComprobanteService {
    * Obtiene las estadísticas de uso de comprobantes SUNAT para una empresa
    * Solo cuenta Facturas (01) y Boletas (03) con estado EMITIDO o ANULADO
    */
+  /**
+   * Comprobantes de la empresa esperando a que SUNAT responda.
+   *
+   * Solo cuenta los que fallaron por RED: esos se reenvían solos y el
+   * empresario no tiene nada que hacer. Los de datos o configuración quedan
+   * fuera a propósito — ahí sí tiene que actuar, y mezclarlos bajo un cartel
+   * de "tranquilo, es SUNAT" dejaría comprobantes sin emitir.
+   */
+  async incidenciaSunat(empresaId: number) {
+    const atascados = await this.prisma.comprobante.findMany({
+      where: {
+        empresaId,
+        estadoEnvioSunat: { in: ['FALLIDO_ENVIO', 'PENDIENTE'] },
+        sunatErrorMsg: { startsWith: '[RED]' },
+      },
+      select: { serie: true, correlativo: true, creadoEn: true },
+      orderBy: { creadoEn: 'asc' },
+      take: 50,
+    });
+
+    return {
+      // `activa` es lo único que mira la tienda para pintar el aviso: así el
+      // cartel desaparece solo en cuanto el reintento los saca de la cola.
+      activa: atascados.length > 0,
+      cantidad: atascados.length,
+      desde: atascados[0]?.creadoEn ?? null,
+      comprobantes: atascados
+        .slice(0, 10)
+        .map((c) => `${c.serie ?? ''}-${c.correlativo ?? ''}`),
+    };
+  }
+
   async getUsageStats(empresaId: number, sedeId?: number) {
     // Obtener el plan de la empresa
     const empresa = await this.prisma.empresa.findUnique({
