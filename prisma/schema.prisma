@@ -315,6 +315,11 @@ model Empresa {
   // (se registra la salida aunque el stock quede en 0/negativo). Default false = mantiene
   // el bloqueo por stock insuficiente.
   permitirVentaSinStock         Boolean                       @default(false)
+  /// Una salida sin stock suficiente descuenta igual y deja el saldo en
+  /// negativo ("debo N unidades"), en vez de recortarlo a 0 y perder el
+  /// descuento. Apagado = comportamiento histórico. Lo enciende el negocio que
+  /// lleva inventario; el que factura siempre contra stock 0 lo deja apagado.
+  permitirStockNegativo         Boolean                       @default(false)
   // Lo mismo, pero para la TIENDA ONLINE y por separado: el negocio puede querer
   // aceptar pedidos de lo agotado en la web (lo trae por encargo) sin habilitar
   // la sobreventa en el mostrador, o al revés. Default false = la tienda sigue

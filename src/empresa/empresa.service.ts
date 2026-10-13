@@ -1553,6 +1553,8 @@ export class EmpresaService {
         updateData.requiereCajaParaEmitir = dto.requiereCajaParaEmitir;
       if (dto.cajaPrellenarMontosCierre !== undefined)
         updateData.cajaPrellenarMontosCierre = dto.cajaPrellenarMontosCierre;
+      if (dto.permitirStockNegativo !== undefined)
+        updateData.permitirStockNegativo = dto.permitirStockNegativo;
       if (dto.directorTecnico !== undefined)
         updateData.directorTecnico = dto.directorTecnico;
       if (dto.logo !== undefined) updateData.logo = dto.logo;

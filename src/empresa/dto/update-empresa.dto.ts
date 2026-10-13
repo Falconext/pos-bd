@@ -278,6 +278,10 @@ export class UpdateEmpresaDto {
   @IsOptional()
   cajaPrellenarMontosCierre?: boolean;
 
+  @IsBoolean()
+  @IsOptional()
+  permitirStockNegativo?: boolean;
+
   @IsOptional()
   @IsString()
   directorTecnico?: string;
