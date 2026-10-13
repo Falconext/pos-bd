@@ -1807,11 +1807,27 @@ export class ComprobanteService {
     };
   }
 
-  /** El día (sin hora) de una fecha, en hora Lima, para comparar cronología. */
+  /**
+   * El día que la fecha REPRESENTA, para comparar cronología.
+   *
+   * `fechaEmision` es `timestamp without time zone` y convive con dos formas:
+   * el formulario manda "2026-10-13" (sin hora), que queda como medianoche UTC
+   * y significa ese día literal; otros caminos guardan el instante real.
+   *
+   * Convertir a Lima sin distinguirlas corre un día para atrás las primeras
+   * (medianoche UTC = 19:00 del día anterior en Lima), y una boleta emitida hoy
+   * dejaba de calzar con un hueco cuyo vecino era de hoy.
+   */
   private diaDe(valor: Date | string): string {
-    return new Date(valor).toLocaleDateString('en-CA', {
-      timeZone: 'America/Lima',
-    });
+    const d = new Date(valor);
+    const esFechaSuelta =
+      d.getUTCHours() === 0 &&
+      d.getUTCMinutes() === 0 &&
+      d.getUTCSeconds() === 0 &&
+      d.getUTCMilliseconds() === 0;
+    return esFechaSuelta
+      ? d.toISOString().slice(0, 10)
+      : d.toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
   }
 
   /**

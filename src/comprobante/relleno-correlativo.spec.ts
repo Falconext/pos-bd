@@ -27,7 +27,8 @@ describe('Relleno de huecos en el correlativo', () => {
           : [],
       ),
     };
-    return new ComprobanteService(prisma as any, ...([{}, {}, {}, {}, {}, {}, {}, {}] as any));
+    const deps = Array(7).fill({}) as [any, any, any, any, any, any, any];
+    return new ComprobanteService(prisma as any, ...deps);
   };
 
   const pedir = (service: any, fecha: string) =>
@@ -55,6 +56,23 @@ describe('Relleno de huecos en el correlativo', () => {
   it('una fecha entre los dos vecinos sí entra', async () => {
     const s = montar({ hueco: 10, antes: '2026-06-12T12:00:00Z', despues: '2026-06-15T12:00:00Z' });
     await expect(pedir(s, '2026-06-14T09:00:00Z')).resolves.toBe(10);
+  });
+
+  it('una fecha guardada SIN hora no se corre un día al compararla', async () => {
+    /**
+     * El que se me escapó y encontró la prueba en el navegador.
+     *
+     * El formulario manda "2026-10-13" y eso queda como medianoche UTC. Al
+     * convertirlo a Lima daba 2026-10-12 — un día antes — así que una boleta
+     * emitida hoy no calzaba con un hueco cuyo vecino siguiente era de hoy, y
+     * el relleno no ocurría nunca en el caso real.
+     */
+    const s = montar({
+      hueco: 52,
+      antes: '2026-10-06T05:11:19Z',   // instante real
+      despues: '2026-10-13T00:00:00Z', // fecha suelta: significa el 13
+    });
+    await expect(pedir(s, '2026-10-13T19:30:00Z')).resolves.toBe(52);
   });
 
   it('sin huecos no devuelve nada y la serie sigue por el final', async () => {
