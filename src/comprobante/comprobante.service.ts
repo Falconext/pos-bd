@@ -1593,6 +1593,13 @@ export class ComprobanteService {
         empresaId,
         data?.fechaEmision ?? null,
       );
+      await this.validarOrdenCronologico(
+        empresaId,
+        tipoDoc,
+        serie,
+        correlativo,
+        data?.fechaEmision,
+      );
       try {
         return await this.prisma.comprobante.create({
           data: { ...data, serie, correlativo },
@@ -1613,6 +1620,50 @@ export class ComprobanteService {
     }
     throw new BadRequestException(
       'No se pudo generar el correlativo. Intente de nuevo.',
+    );
+  }
+
+  /**
+   * Dentro de una serie, a número mayor le toca fecha igual o posterior.
+   *
+   * Lo levantó la contadora de un cliente: encontró boletas con un correlativo
+   * mayor fechado ANTES que el anterior —hasta 4 días— porque el número se
+   * asigna por orden de creación pero la fecha la elige quien factura, y la
+   * estaban poniendo para atrás para calzar con el día de la venta real. En
+   * esa empresa pasó 11 veces.
+   *
+   * SUNAT las aceptó igual (su validación no cruza la fecha contra el
+   * correlativo anterior), pero el desorden aparece en una fiscalización o al
+   * cuadrar el registro de ventas. Se corta al emitir, que es el único momento
+   * en que todavía se puede.
+   *
+   * Solo Factura y Boleta: son las series que SUNAT fiscaliza por este lado, y
+   * acotarlo deja fuera del cambio a las notas y los documentos internos.
+   */
+  private async validarOrdenCronologico(
+    empresaId: number,
+    tipoDoc: string,
+    serie: string,
+    correlativo: number,
+    fechaEmision?: Date | string | null,
+  ): Promise<void> {
+    if (!['01', '03'].includes(tipoDoc) || !fechaEmision) return;
+
+    const previo = await this.prisma.comprobante.findFirst({
+      where: { empresaId, tipoDoc, serie, correlativo: { lt: correlativo } },
+      orderBy: { correlativo: 'desc' },
+      select: { correlativo: true, fechaEmision: true },
+    });
+    if (!previo?.fechaEmision) return;
+
+    const dia = this.diaDe(fechaEmision);
+    const diaPrevio = this.diaDe(previo.fechaEmision);
+    if (dia >= diaPrevio) return;
+
+    throw new BadRequestException(
+      `La fecha ${dia} es anterior a la de ${serie}-${previo.correlativo} (${diaPrevio}). ` +
+        `Dentro de una serie el número mayor no puede tener fecha anterior: SUNAT exige que vayan en orden. ` +
+        `Usá una fecha desde ${diaPrevio} en adelante.`,
     );
   }
 
