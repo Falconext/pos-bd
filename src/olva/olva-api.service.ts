@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
+import { separarGuiaOlva } from './olva.util';
 
 /** Agencia Olva normalizada para el frontend (misma forma que ShalomAgencia). */
 export interface OlvaAgencia {
@@ -314,7 +315,18 @@ export class OlvaApiService {
   }
 
   // ─── Tracking ──────────────────────────────────────────────────────────────
-  // GET /tracking/{nro} → { success, data: { trackingNumber, status, events[] } }
+  // POST /track { orderNumber, orderCode } → { success, data: { status, events[] } }
+  //
+  // Olva renombró estas rutas: `GET /tracking/{nro}` y `POST /tracking/bulk`
+  // devuelven 404 "Ruta no encontrada" y pasaron a ser `POST /track` y
+  // `POST /track/batch`. El cron de rastreo quedó un mes fallando en silencio,
+  // con los envíos avanzando en Olva y el panel mostrando "Preparando".
+  //
+  // El sufijo de dos dígitos de la guía ("2741554-26") es el `orderCode`; lo
+  // separa `separarGuiaOlva` y acá llega como `opts.year`.
+  //
+  // `fresh` ya no existe en el proveedor: se conserva en la clave de deduplicación
+  // para no fusionar una consulta forzada con una normal en vuelo.
 
   private async obtenerTrackingRaw(
     trackingNumber: string,
@@ -324,15 +336,12 @@ export class OlvaApiService {
     const enCurso = this.trackInFlight.get(dedupeKey);
     if (enCurso) return enCurso;
 
-    const qs = new URLSearchParams({
-      ...(opts.fresh ? { fresh: 'true' } : {}),
-      ...(opts.year ? { year: opts.year } : {}),
-    }).toString();
-    const path = `/tracking/${encodeURIComponent(trackingNumber)}${qs ? `?${qs}` : ''}`;
-
-    const promesa = this.requestConReintento('GET', path).then((res) =>
-      res.json(),
-    );
+    const promesa = this.requestConReintento('POST', '/track', {
+      body: {
+        orderNumber: trackingNumber,
+        ...(opts.year ? { orderCode: opts.year } : {}),
+      },
+    }).then((res) => res.json());
     this.trackInFlight.set(dedupeKey, promesa);
     try {
       return await promesa;
@@ -357,24 +366,27 @@ export class OlvaApiService {
     }
   }
 
-  /** POST /tracking/bulk → hasta 50 guías en una sola llamada (lo usa el cron). */
+  /** POST /track/batch → hasta 50 guías en una sola llamada. */
   async trackBulk(
     trackingNumbers: string[],
     opts: { year?: string; fresh?: boolean } = {},
   ): Promise<any[]> {
     if (!trackingNumbers.length) return [];
     try {
-      const res = await this.requestConReintento('POST', '/tracking/bulk', {
-        body: {
-          trackingNumbers: trackingNumbers.slice(0, 50),
-          ...(opts.fresh ? { fresh: true } : {}),
-          ...(opts.year ? { year: opts.year } : {}),
-        },
+      // Cada guía puede venir entera ("2741554-26") o ya partida; el sufijo es
+      // el `orderCode`. `opts.year` sirve de respaldo para las que no lo traen.
+      const shipments = trackingNumbers.slice(0, 50).map((guia) => {
+        const { numero, year } = separarGuiaOlva(guia);
+        const orderCode = year ?? opts.year;
+        return { orderNumber: numero, ...(orderCode ? { orderCode } : {}) };
+      });
+      const res = await this.requestConReintento('POST', '/track/batch', {
+        body: { shipments },
       });
       const raw = await res.json();
       return Array.isArray(raw) ? raw : (raw?.data ?? []);
     } catch (error: any) {
-      this.logger.error('Error Olva /tracking/bulk', error?.message);
+      this.logger.error('Error Olva /track/batch', error?.message);
       if (error instanceof HttpException) throw error;
       throw new BadRequestException(
         this.mensajeOlva(error, 'el tracking del lote'),
@@ -383,16 +395,27 @@ export class OlvaApiService {
   }
 
   // ─── Cotización ────────────────────────────────────────────────────────────
-  // POST /catalog/calculate { ubigeo_code_origin, ubigeo_code_destiny,
-  //                           delivery_type, shipment_type, weight, partner_rate }
+  // POST /quotes { origin, destination, delivery_type, shipment_type, weight,
+  //                partner_rate } — antes era `/catalog/calculate`, que hoy da 404.
+  //
+  // La interfaz de entrada se deja igual (los ubigeos siguen llamándose
+  // `ubigeo_code_*` puertas adentro); la traducción a los nombres del proveedor
+  // vive acá, que es el único lugar que habla su idioma.
   async cotizar(input: OlvaCotizacionInput): Promise<any> {
     try {
-      const res = await this.requestConReintento('POST', '/catalog/calculate', {
-        body: input,
+      const res = await this.requestConReintento('POST', '/quotes', {
+        body: {
+          origin: input.ubigeo_code_origin,
+          destination: input.ubigeo_code_destiny,
+          delivery_type: input.delivery_type,
+          shipment_type: input.shipment_type,
+          weight: input.weight,
+          partner_rate: input.partner_rate,
+        },
       });
       return await res.json();
     } catch (error: any) {
-      this.logger.error('Error Olva /catalog/calculate', error?.message);
+      this.logger.error('Error Olva /quotes', error?.message);
       if (error instanceof HttpException) throw error;
       throw new BadRequestException(this.mensajeOlva(error, 'la cotización'));
     }
