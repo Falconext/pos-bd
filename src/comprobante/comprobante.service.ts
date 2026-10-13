@@ -903,6 +903,57 @@ export class ComprobanteService {
     };
   }
 
+  /**
+   * Los correlativos que faltan en cada serie de la empresa.
+   *
+   * Un número que falta hay que poder EXPLICARLO ante SUNAT. Los huecos se
+   * abren cuando SUNAT rechaza un comprobante por datos y la persona rehace la
+   * venta antes de que el rechazado se borre: la nueva ya se llevó el número
+   * siguiente. Desde que la emisión rellena huecos eso casi no vuelve a pasar,
+   * pero los que ya existen quedan, y el contador necesita la lista con las
+   * fechas entre las que se abrió cada uno para justificarlos.
+   *
+   * Solo mira Factura y Boleta: son las series que SUNAT fiscaliza.
+   */
+  async huecosDeCorrelativo(empresaId: number) {
+    const filas = await this.prisma.$queryRaw<
+      {
+        serie: string;
+        tipoDoc: string;
+        desde: number;
+        hasta: number;
+        fecha_antes: Date;
+        fecha_despues: Date;
+      }[]
+    >`
+      WITH s AS (
+        SELECT "tipoDoc", serie, correlativo, "fechaEmision",
+               lead(correlativo)    OVER (PARTITION BY "tipoDoc", serie ORDER BY correlativo) AS sig,
+               lead("fechaEmision") OVER (PARTITION BY "tipoDoc", serie ORDER BY correlativo) AS fecha_sig
+        FROM "Comprobante"
+        WHERE "empresaId" = ${empresaId} AND "tipoDoc" IN ('01', '03')
+      )
+      SELECT serie, "tipoDoc" AS "tipoDoc",
+             (correlativo + 1)::int AS desde,
+             (sig - 1)::int         AS hasta,
+             "fechaEmision"         AS fecha_antes,
+             fecha_sig              AS fecha_despues
+      FROM s
+      WHERE sig IS NOT NULL AND sig - correlativo > 1
+      ORDER BY serie, desde`;
+
+    return filas.map((f) => ({
+      serie: f.serie,
+      tipoDoc: f.tipoDoc,
+      // Un rechazo seguido de varios reintentos puede dejar más de un número
+      // junto, por eso es un rango y no un número suelto.
+      desde: Number(f.desde),
+      hasta: Number(f.hasta),
+      cuantos: Number(f.hasta) - Number(f.desde) + 1,
+      entre: [this.diaDe(f.fecha_antes), this.diaDe(f.fecha_despues)],
+    }));
+  }
+
   async siguienteCorrelativo(
     empresaId: number,
     tipoDoc: string,
@@ -942,6 +993,9 @@ export class ComprobanteService {
         tipoDoc,
         tipDocAfectado ?? null,
         empresaId,
+        // La pantalla pide el número ANTES de emitir: se asume hoy, que es la
+        // fecha con la que se va a emitir salvo que la cambien a mano.
+        new Date(),
       );
       console.log(
         '[ComprobanteService.siguienteCorrelativo] Success - serie:',
@@ -1537,6 +1591,14 @@ export class ComprobanteService {
         tipoDoc,
         tipDocAfectado,
         empresaId,
+        data?.fechaEmision ?? null,
+      );
+      await this.validarOrdenCronologico(
+        empresaId,
+        tipoDoc,
+        serie,
+        correlativo,
+        data?.fechaEmision,
       );
       try {
         return await this.prisma.comprobante.create({
@@ -1558,6 +1620,50 @@ export class ComprobanteService {
     }
     throw new BadRequestException(
       'No se pudo generar el correlativo. Intente de nuevo.',
+    );
+  }
+
+  /**
+   * Dentro de una serie, a número mayor le toca fecha igual o posterior.
+   *
+   * Lo levantó la contadora de un cliente: encontró boletas con un correlativo
+   * mayor fechado ANTES que el anterior —hasta 4 días— porque el número se
+   * asigna por orden de creación pero la fecha la elige quien factura, y la
+   * estaban poniendo para atrás para calzar con el día de la venta real. En
+   * esa empresa pasó 11 veces.
+   *
+   * SUNAT las aceptó igual (su validación no cruza la fecha contra el
+   * correlativo anterior), pero el desorden aparece en una fiscalización o al
+   * cuadrar el registro de ventas. Se corta al emitir, que es el único momento
+   * en que todavía se puede.
+   *
+   * Solo Factura y Boleta: son las series que SUNAT fiscaliza por este lado, y
+   * acotarlo deja fuera del cambio a las notas y los documentos internos.
+   */
+  private async validarOrdenCronologico(
+    empresaId: number,
+    tipoDoc: string,
+    serie: string,
+    correlativo: number,
+    fechaEmision?: Date | string | null,
+  ): Promise<void> {
+    if (!['01', '03'].includes(tipoDoc) || !fechaEmision) return;
+
+    const previo = await this.prisma.comprobante.findFirst({
+      where: { empresaId, tipoDoc, serie, correlativo: { lt: correlativo } },
+      orderBy: { correlativo: 'desc' },
+      select: { correlativo: true, fechaEmision: true },
+    });
+    if (!previo?.fechaEmision) return;
+
+    const dia = this.diaDe(fechaEmision);
+    const diaPrevio = this.diaDe(previo.fechaEmision);
+    if (dia >= diaPrevio) return;
+
+    throw new BadRequestException(
+      `La fecha ${dia} es anterior a la de ${serie}-${previo.correlativo} (${diaPrevio}). ` +
+        `Dentro de una serie el número mayor no puede tener fecha anterior: SUNAT exige que vayan en orden. ` +
+        `Usá una fecha desde ${diaPrevio} en adelante.`,
     );
   }
 
@@ -1803,10 +1909,89 @@ export class ComprobanteService {
     };
   }
 
+  /**
+   * El día que la fecha REPRESENTA, para comparar cronología.
+   *
+   * `fechaEmision` es `timestamp without time zone` y convive con dos formas:
+   * el formulario manda "2026-10-13" (sin hora), que queda como medianoche UTC
+   * y significa ese día literal; otros caminos guardan el instante real.
+   *
+   * Convertir a Lima sin distinguirlas corre un día para atrás las primeras
+   * (medianoche UTC = 19:00 del día anterior en Lima), y una boleta emitida hoy
+   * dejaba de calzar con un hueco cuyo vecino era de hoy.
+   */
+  private diaDe(valor: Date | string): string {
+    const d = new Date(valor);
+    const esFechaSuelta =
+      d.getUTCHours() === 0 &&
+      d.getUTCMinutes() === 0 &&
+      d.getUTCSeconds() === 0 &&
+      d.getUTCMilliseconds() === 0;
+    return esFechaSuelta
+      ? d.toISOString().slice(0, 10)
+      : d.toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+  }
+
+  /**
+   * El correlativo libre más bajo de la serie, SI llenarlo no rompe el orden.
+   *
+   * Los huecos se abren cuando SUNAT rechaza un comprobante por datos: el
+   * sistema lo borra, pero si la persona ya rehizo la venta —suele ser en
+   * segundos— la nueva se llevó el número siguiente y el rechazado deja su
+   * número vacío para siempre.
+   *
+   * Rellenarlo sin mirar la fecha sería peor que el hueco: un comprobante de
+   * hoy con el número de junio queda fuera de orden cronológico, que es
+   * justamente lo que SUNAT exige dentro de una serie. Por eso el hueco solo se
+   * toma cuando la fecha del comprobante nuevo cae entre la de su número
+   * anterior y la del siguiente.
+   *
+   * En la práctica: el hueco recién abierto se rellena (sus vecinos son de hoy)
+   * y el hueco viejo se deja quieto, para justificarlo ante SUNAT en vez de
+   * taparlo con un documento fuera de fecha.
+   */
+  private async correlativoDeHueco(
+    empresaId: number,
+    tipoDoc: string,
+    serie: string,
+    fechaEmision: Date,
+  ): Promise<number | null> {
+    const filas = await this.prisma.$queryRaw<
+      { hueco: number; fecha_antes: Date; fecha_despues: Date }[]
+    >`
+      WITH s AS (
+        SELECT correlativo, "fechaEmision"
+        FROM "Comprobante"
+        WHERE "empresaId" = ${empresaId} AND "tipoDoc" = ${tipoDoc} AND serie = ${serie}
+      ),
+      huecos AS (
+        SELECT s.correlativo + 1 AS hueco,
+               s."fechaEmision"  AS fecha_antes,
+               (SELECT min(n.correlativo) FROM s n WHERE n.correlativo > s.correlativo) AS sig
+        FROM s
+        WHERE NOT EXISTS (SELECT 1 FROM s n WHERE n.correlativo = s.correlativo + 1)
+          AND EXISTS     (SELECT 1 FROM s n WHERE n.correlativo > s.correlativo)
+      )
+      SELECT h.hueco::int AS hueco, h.fecha_antes, s2."fechaEmision" AS fecha_despues
+      FROM huecos h JOIN s s2 ON s2.correlativo = h.sig
+      ORDER BY h.hueco
+      LIMIT 1`;
+
+    const hueco = filas[0];
+    if (!hueco) return null;
+
+    const dia = this.diaDe(fechaEmision);
+    const entra =
+      dia >= this.diaDe(hueco.fecha_antes) &&
+      dia <= this.diaDe(hueco.fecha_despues);
+    return entra ? Number(hueco.hueco) : null;
+  }
+
   private async obtenerSerieYCorrelativo(
     tipoDoc: string,
     tipDocAfectado: string | null,
     empresaId: number,
+    fechaEmision?: Date | string | null,
   ) {
     console.log(
       '[obtenerSerieYCorrelativo] tipoDoc:',
@@ -1931,6 +2116,18 @@ export class ComprobanteService {
         orderBy: { correlativo: 'desc' },
       });
       let correlativo = ultimo ? Number(ultimo.correlativo) + 1 : 1;
+
+      // Antes de seguir por el final, ver si hay un hueco que se pueda llenar
+      // sin romper la cronología (ver `correlativoDeHueco`).
+      if (ultimo && fechaEmision) {
+        const hueco = await this.correlativoDeHueco(
+          empresaId,
+          tipoDoc,
+          serie,
+          new Date(fechaEmision),
+        );
+        if (hueco) correlativo = hueco;
+      }
 
       // El correlativo inicial configurado solo vale si su serie fue la que se
       // usó. Arrastrarlo desde una serie descartada numeraría la serie nueva

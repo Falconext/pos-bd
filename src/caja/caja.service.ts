@@ -598,6 +598,11 @@ export class CajaService {
         concepto: e.descripcionGasto ?? e.observaciones ?? '',
         esTransferencia: e.esTransferencia ?? false,
         usuario: e.usuario?.nombre ?? null,
+        // El arqueo separa COMPRAS de GASTOS, como lo hace el corte de caja
+        // que usan los contadores. El pago de una compra entra acá con
+        // categoriaGasto 'COMPRA' (ver compras.service).
+        categoria: e.categoriaGasto ?? null,
+        metodoPago: e.metodoPago ?? null,
       })),
     };
   }

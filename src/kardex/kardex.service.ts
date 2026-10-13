@@ -369,14 +369,33 @@ export class KardexService {
     });
 
     // Actualizar el stock en la sede y costo promedio del producto
-    await this.actualizarStockYCosto(
+    const faltante = await this.actualizarStockYCosto(
       data.productoId,
       data.sedeId,
       stockActual,
       data.tipoMovimiento,
       costoUnitario,
       data.cantidad,
+      data.empresaId,
     );
+
+    // El descuento no alcanzó y la empresa no permite negativo: el saldo quedó
+    // recortado a 0 y esas unidades NO se descontaron nunca. Queda anotado en
+    // el movimiento, porque si no el error es invisible: la fila diría
+    // "salieron 3" con el stock intacto y nadie podría explicar la diferencia.
+    if (faltante > 0) {
+      await this.prisma.movimientoKardex.update({
+        where: { id: movimiento.id },
+        data: {
+          observacion: [
+            movimiento.observacion,
+            `No se descontaron ${faltante} unidad(es): no había stock suficiente y la empresa no permite saldo negativo.`,
+          ]
+            .filter(Boolean)
+            .join(' · '),
+        },
+      });
+    }
 
     // El stockActual del movimiento se calculó desde una lectura previa; bajo
     // concurrencia el descuento atómico puede dejar un valor real distinto. Se
@@ -1069,6 +1088,11 @@ export class KardexService {
     };
   }
 
+  /**
+   * Aplica el movimiento al stock de la sede.
+   *
+   * Devuelve cuántas unidades NO se pudieron descontar (0 si descontó todo).
+   */
   private async actualizarStockYCosto(
     productoId: number,
     sedeId: number,
@@ -1076,7 +1100,8 @@ export class KardexService {
     tipoMovimiento: string,
     costoUnitario?: number,
     cantidad?: number,
-  ) {
+    empresaId?: number,
+  ): Promise<number> {
     // Actualizar stock en la sede específica.
     const esSalida =
       tipoMovimiento === 'SALIDA' || tipoMovimiento === 'TRANSFERENCIA';
@@ -1090,13 +1115,42 @@ export class KardexService {
         data: { stock: { decrement: qty } },
       });
       if (dec.count === 0) {
-        // No alcanzaba el stock (venta sin stock permitida / servicio): se deja
-        // en 0, idéntico al comportamiento previo (Math.max(0, ...)). No bloquea.
+        // No alcanzaba el stock. Qué se hace depende del negocio:
+        //
+        //  - Permite saldo negativo: se descuenta igual. El −N significa "debo
+        //    N unidades" y se neta solo cuando entra la compra. Es lo correcto
+        //    para quien lleva inventario: antes el descuento se perdía y el
+        //    stock quedaba inflado para siempre.
+        //  - No lo permite: se recorta a 0, como siempre. Lo necesita quien
+        //    factura contra stock 0 de forma permanente y no carga compras:
+        //    ahí el negativo solo sería ruido.
+        const previo = await this.prisma.productoStock.findUnique({
+          where: { productoId_sedeId: { productoId, sedeId } },
+          select: { stock: true },
+        });
+        const disponible = round3(num(previo?.stock ?? 0));
+        const empresa = empresaId
+          ? await this.prisma.empresa.findUnique({
+              where: { id: empresaId },
+              select: { permitirStockNegativo: true },
+            })
+          : null;
+
+        if (empresa?.permitirStockNegativo) {
+          await this.prisma.productoStock.update({
+            where: { productoId_sedeId: { productoId, sedeId } },
+            data: { stock: { decrement: qty } },
+          });
+          return 0;
+        }
+
         await this.prisma.productoStock.update({
           where: { productoId_sedeId: { productoId, sedeId } },
           data: { stock: 0 },
         });
+        return round3(Math.max(0, qty - disponible));
       }
+      return 0;
     } else {
       await this.prisma.productoStock.update({
         where: { productoId_sedeId: { productoId, sedeId } },
@@ -1167,6 +1221,8 @@ export class KardexService {
     // también cambia la mezcla, y vender en la sede barata deja el producto
     // concentrado en la cara. Con una sola sede el resultado es el de siempre.
     await alinearCostoGlobal(this.prisma, productoId, producto?.costoPromedio);
+    // Un ingreso o un ajuste nunca dejan unidades sin aplicar.
+    return 0;
   }
 
   /**
