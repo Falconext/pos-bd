@@ -216,6 +216,18 @@ export class ComprobanteController {
     });
   }
 
+  /**
+   * Los correlativos que faltan en las series de la empresa.
+   *
+   * Lo pide el contador: un número faltante hay que justificarlo ante SUNAT, y
+   * hasta ahora no había forma de verlos sin revisar la lista a mano.
+   */
+  @Get('huecos-correlativo')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async huecosCorrelativo(@User() user: any) {
+    return this.service.huecosDeCorrelativo(user.empresaId);
+  }
+
   // Alternativa con path params
   @Get('empresa/:empresaId/siguiente-correlativo/:tipoDoc')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')

@@ -903,6 +903,57 @@ export class ComprobanteService {
     };
   }
 
+  /**
+   * Los correlativos que faltan en cada serie de la empresa.
+   *
+   * Un número que falta hay que poder EXPLICARLO ante SUNAT. Los huecos se
+   * abren cuando SUNAT rechaza un comprobante por datos y la persona rehace la
+   * venta antes de que el rechazado se borre: la nueva ya se llevó el número
+   * siguiente. Desde que la emisión rellena huecos eso casi no vuelve a pasar,
+   * pero los que ya existen quedan, y el contador necesita la lista con las
+   * fechas entre las que se abrió cada uno para justificarlos.
+   *
+   * Solo mira Factura y Boleta: son las series que SUNAT fiscaliza.
+   */
+  async huecosDeCorrelativo(empresaId: number) {
+    const filas = await this.prisma.$queryRaw<
+      {
+        serie: string;
+        tipoDoc: string;
+        desde: number;
+        hasta: number;
+        fecha_antes: Date;
+        fecha_despues: Date;
+      }[]
+    >`
+      WITH s AS (
+        SELECT "tipoDoc", serie, correlativo, "fechaEmision",
+               lead(correlativo)    OVER (PARTITION BY "tipoDoc", serie ORDER BY correlativo) AS sig,
+               lead("fechaEmision") OVER (PARTITION BY "tipoDoc", serie ORDER BY correlativo) AS fecha_sig
+        FROM "Comprobante"
+        WHERE "empresaId" = ${empresaId} AND "tipoDoc" IN ('01', '03')
+      )
+      SELECT serie, "tipoDoc" AS "tipoDoc",
+             (correlativo + 1)::int AS desde,
+             (sig - 1)::int         AS hasta,
+             "fechaEmision"         AS fecha_antes,
+             fecha_sig              AS fecha_despues
+      FROM s
+      WHERE sig IS NOT NULL AND sig - correlativo > 1
+      ORDER BY serie, desde`;
+
+    return filas.map((f) => ({
+      serie: f.serie,
+      tipoDoc: f.tipoDoc,
+      // Un rechazo seguido de varios reintentos puede dejar más de un número
+      // junto, por eso es un rango y no un número suelto.
+      desde: Number(f.desde),
+      hasta: Number(f.hasta),
+      cuantos: Number(f.hasta) - Number(f.desde) + 1,
+      entre: [this.diaDe(f.fecha_antes), this.diaDe(f.fecha_despues)],
+    }));
+  }
+
   async siguienteCorrelativo(
     empresaId: number,
     tipoDoc: string,
