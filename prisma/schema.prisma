@@ -341,6 +341,10 @@ model Empresa {
   // (facturas/boletas/notas de venta/tickets) sin tener SU caja abierta en la
   // sede. Las cotizaciones están exentas (no mueven stock ni caja).
   requiereCajaParaEmitir        Boolean                       @default(false)
+  /// Al cerrar caja, los montos por medio de pago vienen ya puestos con lo que
+  /// calculó el sistema. Hay negocios que no arquean y confían en el sistema;
+  /// apagado, la persona los escribe a ciegas y la diferencia tiene sentido.
+  cajaPrellenarMontosCierre     Boolean                       @default(true)
   // Análisis Financiero: qué IGV se descuenta de las ventas para llegar a las
   // ventas netas del P&L (cada negocio lleva su criterio):
   //   ELECTRONICOS (default) = solo facturas/boletas/NC/ND; notas de venta y

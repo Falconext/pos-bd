@@ -274,6 +274,10 @@ export class UpdateEmpresaDto {
   @IsBoolean()
   requiereCajaParaEmitir?: boolean;
 
+  @IsBoolean()
+  @IsOptional()
+  cajaPrellenarMontosCierre?: boolean;
+
   @IsOptional()
   @IsString()
   directorTecnico?: string;

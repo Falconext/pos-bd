@@ -1551,6 +1551,8 @@ export class EmpresaService {
         updateData.leyAmazonia = Boolean(dto.leyAmazonia);
       if (dto.requiereCajaParaEmitir !== undefined)
         updateData.requiereCajaParaEmitir = dto.requiereCajaParaEmitir;
+      if (dto.cajaPrellenarMontosCierre !== undefined)
+        updateData.cajaPrellenarMontosCierre = dto.cajaPrellenarMontosCierre;
       if (dto.directorTecnico !== undefined)
         updateData.directorTecnico = dto.directorTecnico;
       if (dto.logo !== undefined) updateData.logo = dto.logo;
