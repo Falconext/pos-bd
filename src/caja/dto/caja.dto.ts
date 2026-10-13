@@ -1,15 +1,4 @@
-import {
-  IsOptional,
-  IsString,
-  IsNumber,
-  IsInt,
-  IsEnum,
-  IsIn,
-  IsArray,
-  ArrayMinSize,
-  Min,
-  IsNotEmpty,
-} from 'class-validator';
+import { ArrayMinSize, IsArray, IsEnum, IsIn, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 import { Transform } from 'class-transformer';
 
 export enum TipoCaja {
@@ -37,6 +26,16 @@ export class AperturaCajaDto {
 }
 
 export class CierreCajaDto {
+  /**
+   * Id de la APERTURA que se está cerrando, cuando es un turno de un día
+   * anterior que quedó sin cuadrar. Sin este campo se cierra el turno de hoy,
+   * que es el caso de siempre.
+   */
+  @IsOptional()
+  @IsNumber()
+  @Transform(({ value }) => (value == null || value === '' ? undefined : Number(value)))
+  aperturaId?: number;
+
   @IsNumber()
   @Min(0, { message: 'El monto de efectivo no puede ser negativo' })
   @Transform(({ value }) => parseFloat(value) || 0)

@@ -200,6 +200,38 @@ export class UsersService {
     return where;
   }
 
+
+  /**
+   * ¿Se puede usar este correo para un usuario nuevo?
+   *
+   * El correo es único en toda la plataforma porque es con lo que se entra al
+   * sistema: dos cuentas con el mismo correo no se podrían distinguir al
+   * iniciar sesión. Por eso un vendedor que ya trabaja para otro negocio no
+   * puede repetirse aquí, aunque sean empresas distintas.
+   *
+   * Hasta ahora eso se descubría recién al guardar, con el formulario lleno.
+   * Esto permite avisarlo mientras se escribe.
+   *
+   * Se compara sin distinguir mayúsculas: hay correos guardados con mayúsculas
+   * y dos cuentas que solo difieran en eso serían indistinguibles para quien
+   * las usa, aunque la base las acepte como distintas.
+   *
+   * Responde solo si está libre o no. Nunca de quién es: quien pregunta
+   * administra SU negocio y no tiene por qué saber de los demás.
+   */
+  async emailDisponible(email: string, excluirUsuarioId?: number) {
+    const limpio = String(email ?? '').trim();
+    if (!limpio) return { disponible: true };
+    const existente = await this.prisma.usuario.findFirst({
+      where: { email: { equals: limpio, mode: 'insensitive' } },
+      select: { id: true },
+    });
+    const disponible =
+      !existente ||
+      (!!excluirUsuarioId && existente.id === Number(excluirUsuarioId));
+    return { disponible };
+  }
+
   async create(dto: CreateUserDto, empresaIdFromToken: number) {
     const {
       nombre,
@@ -279,6 +311,7 @@ export class UsersService {
           dto.noPermitirVentaProductosGratuitos ?? false,
         restringirTransferenciasASuSede:
           dto.restringirTransferenciasASuSede ?? false,
+        bloquearCrearEliminarProductos: dto.bloquearCrearEliminarProductos ?? false,
         puedeAnularComprobantes: dto.puedeAnularComprobantes ?? false,
       },
       select: {
@@ -301,6 +334,7 @@ export class UsersService {
         convertirEnSupervisor: true,
         noPermitirVentaProductosGratuitos: true,
         restringirTransferenciasASuSede: true,
+        bloquearCrearEliminarProductos: true,
         puedeAnularComprobantes: true,
       },
     });
@@ -389,6 +423,7 @@ export class UsersService {
           convertirEnSupervisor: true,
           noPermitirVentaProductosGratuitos: true,
           restringirTransferenciasASuSede: true,
+          bloquearCrearEliminarProductos: true,
           puedeAnularComprobantes: true,
           sedesAsignadas: {
             select: {
@@ -522,6 +557,7 @@ export class UsersService {
         noPermitirVentaProductosGratuitos:
           dto.noPermitirVentaProductosGratuitos,
         restringirTransferenciasASuSede: dto.restringirTransferenciasASuSede,
+        bloquearCrearEliminarProductos: dto.bloquearCrearEliminarProductos,
         puedeAnularComprobantes: dto.puedeAnularComprobantes,
       },
       select: {
@@ -544,6 +580,7 @@ export class UsersService {
         convertirEnSupervisor: true,
         noPermitirVentaProductosGratuitos: true,
         restringirTransferenciasASuSede: true,
+        bloquearCrearEliminarProductos: true,
         puedeAnularComprobantes: true,
       },
     });
@@ -621,6 +658,7 @@ export class UsersService {
         convertirEnSupervisor: true,
         noPermitirVentaProductosGratuitos: true,
         restringirTransferenciasASuSede: true,
+        bloquearCrearEliminarProductos: true,
         puedeAnularComprobantes: true,
         sedesAsignadas: {
           select: {

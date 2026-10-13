@@ -69,4 +69,11 @@ export class ListProductoDto {
   @IsOptional()
   @Transform(({ value }) => value === true || value === 'true' || value === '1')
   incluirOcultos?: boolean;
+
+  // Incluye las variantes (tallas, colores), que son productos hijos y por
+  // defecto el catálogo esconde para no repetir el modelo en cada fila. Lo pide
+  // el filtro del kardex, donde hay que poder elegir una talla concreta.
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === '1')
+  incluirVariantes?: boolean;
 }

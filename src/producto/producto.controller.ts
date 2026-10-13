@@ -24,6 +24,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { User } from '../common/decorators/user.decorator';
 import type { Response } from 'express';
+import { verificarPuedeCrearOEliminarProductos } from './puede-gestionar-productos.util';
 import { CreateProductoDto } from './dto/create-producto.dto';
 import { ListProductoDto } from './dto/list-producto.dto';
 import { ResumenProductoDto } from './dto/resumen-producto.dto';
@@ -73,6 +74,7 @@ export class ProductoController {
     @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
+    verificarPuedeCrearOEliminarProductos(user);
     const producto = await this.service.crear(
       dto,
       user.empresaId,
@@ -1010,6 +1012,7 @@ export class ProductoController {
       soloStockBajo: query.soloStockBajo,
       priorizarStock: query.priorizarStock,
       incluirOcultos: query.incluirOcultos,
+      incluirVariantes: query.incluirVariantes,
     });
     res.locals.message = 'Productos listados correctamente';
     return resultado;
@@ -1351,6 +1354,7 @@ export class ProductoController {
     @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
+    verificarPuedeCrearOEliminarProductos(user);
     const eliminado = await this.service.eliminar(id, user.empresaId);
     res.locals.message = 'Producto eliminado correctamente';
     return eliminado;
@@ -1365,6 +1369,8 @@ export class ProductoController {
     @Body() body: any,
     @Query('sedeId') sedeIdQuery: string | undefined,
   ) {
+    // La carga masiva da de alta productos: mismo permiso que el alta de a uno.
+    verificarPuedeCrearOEliminarProductos(user);
     if (!file) {
       return {
         total: 0,

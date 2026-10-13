@@ -546,6 +546,7 @@ export class AuthService {
         convertirEnSupervisor: true,
         noPermitirVentaProductosGratuitos: true,
         restringirTransferenciasASuSede: true,
+        bloquearCrearEliminarProductos: true,
         puedeAnularComprobantes: true,
         sedesAsignadas: {
           select: {
