@@ -72,3 +72,36 @@ export const MOTIVOS_DERIVACION = [
 ] as const;
 
 export type MotivoDerivacion = (typeof MOTIVOS_DERIVACION)[number];
+
+/**
+ * El motivo que trae el modelo, si es uno de los de verdad.
+ *
+ * La lista de arriba es cerrada a propósito: derivar apaga el bot sin
+ * vencimiento, así que una derivación de más deja a un cliente esperando a
+ * una persona que no sabe que lo esperan. El primer cliente en producción lo
+ * vio con las preguntas por el registro sanitario: el modelo las pasaba al
+ * supervisor en vez de contestarlas con la respuesta oficial que ya tenía.
+ *
+ * Se normaliza antes de comparar —tildes, mayúsculas, espacios por guiones
+ * bajos— porque el modelo escribe "Pide hablar con persona" tan seguido como
+ * el valor exacto, y rechazar eso sería rechazar una derivación buena.
+ */
+export function motivoDerivacionValido(
+  motivo: string | null | undefined,
+): MotivoDerivacion | null {
+  const n = String(motivo ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+    .replace(/[\s-]+/g, '_');
+  if (!n) return null;
+  return (
+    MOTIVOS_DERIVACION.find((m) => m === n || n.includes(m)) ??
+    // "pide hablar con una persona" / "quiere un asesor": el valor exacto no
+    // llega, pero la intención es inequívoca y no conviene perderla.
+    (/hablar_con|con_(una_)?persona|asesor_humano|supervisor/.test(n)
+      ? 'pide_hablar_con_persona'
+      : null)
+  );
+}

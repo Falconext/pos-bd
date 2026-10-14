@@ -358,6 +358,11 @@ export class OrdenCompraService {
       throw new BadRequestException('La orden está anulada');
     }
 
+    // ¿La orden se emitió sin IGV? No hay columna `aplicaIgv`: se deduce del
+    // monto guardado, el mismo criterio que ya usa el PDF de la orden. Si el
+    // proveedor no cobra IGV (RUS, exonerado) la compra tampoco debe sumarlo.
+    const ordenSinIgv = Number(orden.igv ?? 0) <= 0;
+
     const compra = await this.comprasService.crear(
       empresaId,
       usuarioId,
@@ -385,6 +390,11 @@ export class OrdenCompraService {
           cantidad: Number(d.cantidad),
           precioUnitario: Number(d.precioUnitario),
           incluyeIgv: orden.igvIncluido,
+          // Lo que se pactó en la orden manda sobre la afectación del producto.
+          // Sin esto, una orden emitida SIN IGV se convertía en una compra que
+          // sí lo sumaba: S/ 72 acordados entraban como S/ 84.96, y el saldo
+          // por pagar al proveedor nacía mal.
+          ...(ordenSinIgv ? { gravado: false } : {}),
         })),
       } as any,
       reqSedeId,
@@ -527,18 +537,39 @@ export class OrdenCompraService {
     const mostrarColIgv = aplicaIgvPdf && !igvInclPdf;
     // Filas reales + relleno hasta un mínimo para que la tabla ocupe la hoja
     const MIN_FILAS = 14;
-    const filasReales = orden.detalles.map(
-      (d: any, i: number) => `
+    // Si la línea se pidió por cajas, al proveedor se le muestra en CAJAS: es
+    // lo que él despacha y lo que las dos partes acordaron. Antes el PDF decía
+    // "12 unidades a S/ 6.00" donde el pedido era "2 cajas a S/ 36", que es la
+    // misma plata pero no es lo que nadie habló.
+    const filaEnCajas = (d: any) => {
+      const u = Number(d.unidadesPorPaquete) || 1;
+      if (u <= 1) {
+        return {
+          cantidad: String(Number(d.cantidad)),
+          precio: fmt(d.precioUnitario),
+          detalle: '',
+        };
+      }
+      const cajas = Number(d.cantidad) / u;
+      return {
+        cantidad: `${Number(cajas.toFixed(3))} caja(s)`,
+        precio: fmt(Number(d.precioUnitario) * u),
+        detalle: `<br><span class="sub">× ${u} unidades = ${Number(d.cantidad)} unidades · ${fmt(d.precioUnitario)} c/u</span>`,
+      };
+    };
+    const filasReales = orden.detalles.map((d: any, i: number) => {
+      const c = filaEnCajas(d);
+      return `
         <tr>
           <td class="num">${i + 1}</td>
           <td>${esc(d.producto?.codigo ?? '')}</td>
-          <td>${esc(d.descripcion)}</td>
-          <td class="num">${Number(d.cantidad)}</td>
-          <td class="num">${fmt(d.precioUnitario)}</td>
+          <td>${esc(d.descripcion)}${c.detalle}</td>
+          <td class="num">${c.cantidad}</td>
+          <td class="num">${c.precio}</td>
           <td class="num">${fmt(d.subtotal)}</td>
           ${mostrarColIgv ? `<td class="num">${fmt(totalConIgvLinea(d))}</td>` : ''}
-        </tr>`,
-    );
+        </tr>`;
+    });
     const filasVacias = Array.from(
       { length: Math.max(0, MIN_FILAS - filasReales.length) },
       (_, i) => `
@@ -578,6 +609,9 @@ export class OrdenCompraService {
       td { padding: 6px 9px; border: 1px solid #d1d5db; vertical-align: top; }
       tr.empty td { height: 22px; }
       .num { text-align: right; white-space: nowrap; }
+      /* Equivalencia en unidades debajo del producto, para que el proveedor
+         vea las cajas y el almacén sepa cuántas unidades entran. */
+      .sub { font-size: 9px; color: #6b7280; }
       thead th.num { text-align: right; }
       .tot td { border: 1px solid #d1d5db; font-weight: 800; }
       .tot .lblcell { text-align: right; text-transform: uppercase; font-size: 10.5px; }

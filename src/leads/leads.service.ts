@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
@@ -18,6 +19,8 @@ import { venceEn } from './pausa-bot';
  */
 @Injectable()
 export class LeadsService {
+  private readonly logger = new Logger(LeadsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly rag: RagVentasService,
@@ -306,6 +309,58 @@ export class LeadsService {
     });
     if (!conv) throw new NotFoundException('Conversación no encontrada');
     return conv;
+  }
+
+  /**
+   * Borra una conversación entera: mensajes, prospecto, borrador y rastros.
+   *
+   * Existe para poder PROBAR. El empresario y su equipo prueban la IA
+   * escribiéndole como clientes, y hasta ahora cada prueba quedaba pegada
+   * para siempre: la siguiente arrancaba con el historial de la anterior, así
+   * que no se podía volver a ver el primer saludo ni repetir un flujo desde
+   * cero. Borrar el chat es lo que permite probar el mismo caso dos veces.
+   *
+   * Mensajes, prospecto, borrador y el historial de etapas se van solos por
+   * las claves foráneas. Las otras tres NO: `LeadDisparo`,
+   * `LeadComprobantePago` y `LeadConsulta` guardan el `conversacionId` sin
+   * clave foránea, así que sin borrarlas a mano quedarían apuntando a una
+   * conversación que ya no existe — y siguen saliendo en los reportes de
+   * consultas no habidas, en los disparadores pendientes y en los
+   * comprobantes por validar.
+   */
+  async eliminarConversacion(empresaId: number, id: number) {
+    // El `empresaId` del token, no el del cuerpo: sin esto, cualquier empresa
+    // podría borrarle las conversaciones a otra sabiendo un id.
+    const conv = await this.prisma.leadConversacion.findFirst({
+      where: { id, empresaId },
+      select: { id: true, telefonoProspecto: true, cantidadMensajes: true },
+    });
+    if (!conv) throw new NotFoundException('Conversación no encontrada');
+
+    const [disparos, pagos, consultas] = await this.prisma.$transaction([
+      this.prisma.leadDisparo.deleteMany({
+        where: { empresaId, conversacionId: id },
+      }),
+      this.prisma.leadComprobantePago.deleteMany({
+        where: { empresaId, conversacionId: id },
+      }),
+      this.prisma.leadConsulta.deleteMany({
+        where: { empresaId, conversacionId: id },
+      }),
+      this.prisma.leadConversacion.delete({ where: { id } }),
+    ]);
+
+    this.logger.log(
+      `Lead: conversación ${id} (${conv.telefonoProspecto}) borrada por la empresa ${empresaId}.`,
+    );
+    return {
+      eliminada: true,
+      telefono: conv.telefonoProspecto,
+      mensajes: conv.cantidadMensajes,
+      disparos: disparos.count,
+      comprobantes: pagos.count,
+      consultas: consultas.count,
+    };
   }
 
   /** Configuración de la IA de ventas de la empresa (toggle + contexto). */

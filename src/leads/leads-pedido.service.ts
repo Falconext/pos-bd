@@ -43,6 +43,17 @@ export interface ConfigComercial {
    * sistema: los de una no pueden salir en el chat de otra.
    */
   mediosPago?: string;
+  /**
+   * Quién atiende las derivaciones, para avisarle por WhatsApp apenas la IA
+   * se calla. Si no está, se avisa a los administradores de la empresa.
+   */
+  supervisorTelefono?: string;
+  /**
+   * Números del propio negocio que prueban el bot. La IA les responde, pero
+   * no entran al embudo: ver `numeros-internos.ts`. Los celulares de los
+   * administradores se agregan solos; esta lista es para el resto.
+   */
+  numerosInternos?: string[];
 }
 
 /** Campos que la IA puede ir guardando a medida que el cliente los dice. */
@@ -116,6 +127,12 @@ export class LeadsPedidoService {
       ...(guardada.mediosPago ? { mediosPago: guardada.mediosPago } : {}),
       ...(guardada.descargoLegal
         ? { descargoLegal: guardada.descargoLegal }
+        : {}),
+      ...(guardada.supervisorTelefono
+        ? { supervisorTelefono: guardada.supervisorTelefono }
+        : {}),
+      ...(Array.isArray(guardada.numerosInternos)
+        ? { numerosInternos: guardada.numerosInternos }
         : {}),
     };
   }

@@ -452,8 +452,15 @@ export class ComprasService {
     for (const item of data.detalles) {
       // costoNeto = precio sin IGV, usado para actualizar costoPromedio en kardex
       // Si incluyeIgv=true el precio ingresado ya trae el IGV embebido → extraerlo
+      // `item.gravado` permite al llamador decidir por la línea, por encima de
+      // la afectación del producto. Lo usa la recepción de una orden de compra
+      // emitida SIN IGV: ahí lo pactado con el proveedor manda, y si no, la
+      // compra le sumaba 18% a un total ya cerrado (una orden de S/ 72 entraba
+      // como S/ 84.96).
       const gravado =
-        gravadoPorProducto.get(Number(item.productoId)) ?? true;
+        typeof (item as any).gravado === 'boolean'
+          ? (item as any).gravado
+          : (gravadoPorProducto.get(Number(item.productoId)) ?? true);
       const { costoNeto, sub, totalLinea } = this.montosLinea(item, gravado);
 
       subtotal += sub;
