@@ -121,6 +121,18 @@ export class LeadsController {
     return this.service.enviarMensajeManual(user.empresaId, id, body?.texto);
   }
 
+  /**
+   * Borra la conversación entera. Es lo que permite volver a probar el mismo
+   * flujo desde cero: sin esto, cada prueba arrastra el historial anterior.
+   */
+  @Delete('conversaciones/:id')
+  eliminarConversacion(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.service.eliminarConversacion(user.empresaId, id);
+  }
+
   @Post('prospectos/:id/convertir')
   convertirACliente(@User() user: any, @Param('id', ParseIntPipe) id: number) {
     return this.service.convertirACliente(user.empresaId, id);

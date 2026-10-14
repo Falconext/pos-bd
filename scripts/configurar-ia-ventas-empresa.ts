@@ -12,12 +12,14 @@
  *   npx ts-node --transpile-only scripts/configurar-ia-ventas-empresa.ts 89 hierba-sana
  *   npx ts-node --transpile-only scripts/configurar-ia-ventas-empresa.ts 89 --ver
  *   npx ts-node --transpile-only scripts/configurar-ia-ventas-empresa.ts 89 --limpiar-internos
+ *   npx ts-node --transpile-only scripts/configurar-ia-ventas-empresa.ts 89 --borrar-chats
  */
 import { PrismaService } from '../src/prisma/prisma.service';
 import { CONFIG_ENVIO_HIERBA_SANA } from '../src/leads/envio-zonas';
 import { HORARIO_POR_DEFECTO } from '../src/leads/validaciones-pedido';
 import { REGLAS_HIERBA_SANA } from '../src/leads/reglas-descuento';
 import { esNumeroInterno, numerosInternos } from '../src/leads/numeros-internos';
+import { LeadsService } from '../src/leads/leads.service';
 
 /** Los juegos de configuración que ya están escritos en código. */
 const PLANTILLAS: Record<string, Record<string, unknown>> = {
@@ -107,6 +109,11 @@ async function main() {
 
   const nombre = empresa.nombreComercial ?? empresa.razonSocial;
   const actual = (empresa.iaVentasConfigJson ?? {}) as Record<string, unknown>;
+
+  if (plantilla === '--borrar-chats') {
+    await borrarChats(prisma, empresaId);
+    return;
+  }
 
   if (plantilla === '--limpiar-internos') {
     await limpiarInternos(prisma, empresaId);
@@ -245,6 +252,54 @@ async function limpiarInternos(prisma: PrismaService, empresaId: number) {
   console.log(
     `✔ ${count} prospecto(s) fuera del embudo. Las conversaciones quedan para poder leerlas.`,
   );
+  await prisma.$disconnect();
+}
+
+/**
+ * Borra TODAS las conversaciones de una empresa, para empezar las pruebas
+ * desde cero.
+ *
+ * Usa el mismo camino que el botón "Borrar chat" del panel —no una consulta
+ * aparte— para que las dos formas de borrar se lleven exactamente lo mismo:
+ * si mañana aparece otra tabla que guarda el `conversacionId` sin clave
+ * foránea, se arregla en un solo sitio.
+ */
+async function borrarChats(prisma: PrismaService, empresaId: number) {
+  const convs = await prisma.leadConversacion.findMany({
+    where: { empresaId },
+    select: {
+      id: true,
+      telefonoProspecto: true,
+      nombreProspecto: true,
+      cantidadMensajes: true,
+    },
+    orderBy: { id: 'asc' },
+  });
+  if (convs.length === 0) {
+    console.log('No hay conversaciones que borrar.');
+    await prisma.$disconnect();
+    return;
+  }
+
+  // `eliminarConversacion` solo toca prisma; las otras dependencias del
+  // servicio no entran en juego en este camino.
+  const servicio = new LeadsService(
+    prisma,
+    null as never,
+    null as never,
+    null as never,
+  );
+  console.log(`Borrando ${convs.length} conversación(es) de la empresa ${empresaId}:`);
+  for (const c of convs) {
+    const r = await servicio.eliminarConversacion(empresaId, c.id);
+    console.log(
+      `  - ${c.nombreProspecto ?? 'sin nombre'} (${c.telefonoProspecto}) · ${c.cantidadMensajes} mensajes` +
+        `${r.consultas ? ` · ${r.consultas} consulta(s)` : ''}` +
+        `${r.disparos ? ` · ${r.disparos} disparador(es)` : ''}` +
+        `${r.comprobantes ? ` · ${r.comprobantes} comprobante(s)` : ''}`,
+    );
+  }
+  console.log('✔ Listo. El empresario puede volver a escribir y la IA lo atiende desde cero.');
   await prisma.$disconnect();
 }
 
