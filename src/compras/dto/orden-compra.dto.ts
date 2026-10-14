@@ -25,6 +25,12 @@ export class DetalleOrdenCompraDto {
   // igvIncluido=true (en ese caso ya trae el IGV embebido).
   @IsNumber()
   precioUnitario: number;
+
+  // Tamaño de la caja que se le pidió al proveedor. La cantidad de arriba ya
+  // viene en unidades; esto solo sirve para mostrar la orden en cajas.
+  @IsOptional()
+  @IsNumber()
+  unidadesPorPaquete?: number;
 }
 
 export class CrearOrdenCompraDto {
