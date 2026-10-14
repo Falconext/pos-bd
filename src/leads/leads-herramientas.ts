@@ -182,7 +182,8 @@ const registrarPedido: FunctionDeclaration = {
 const derivar: FunctionDeclaration = {
   name: HERRAMIENTA_DERIVAR,
   description:
-    'Pasa la conversación a una persona del equipo y deja de responder. Úsala cuando: el cliente es mayorista, revendedor o distribuidor (o compra 6 docenas o más); hay un reclamo, producto dañado, vencido o equivocado, pedido incompleto, cambio, devolución o cancelación con adelanto; manda un comprobante de pago; pregunta por el seguimiento de un pedido ya hecho; pide un descuento fuera de la regla; quiere un producto que no tenemos y pide que lo busquemos con proveedores; o pide hablar con una persona. ' +
+    'Pasa la conversación a una persona del equipo y deja de responder. Úsala SOLO cuando: el cliente es mayorista, revendedor o distribuidor (o compra 6 docenas o más); hay un reclamo, producto dañado, vencido o equivocado, pedido incompleto, cambio, devolución o cancelación con adelanto; manda un comprobante de pago; pregunta por el seguimiento de un pedido ya hecho; pide un descuento fuera de la regla; quiere un producto que no tenemos y pide que lo busquemos con proveedores; o pide hablar con una persona. ' +
+    'Esa lista es CERRADA. Lo que no está en ella se responde, no se deriva: una pregunta difícil o incómoda —certificaciones, registros, permisos, composición, garantía, si el producto es original, desconfianza— se contesta con el contexto del negocio y la conversación sigue. Que no tengas el dato exacto a la mano tampoco es motivo: di lo que sí puedes confirmar y ofrece conseguir el resto. ' +
     'ANTES de llamarla, pregúntale lo que el asesor va a necesitar (qué producto, qué pasó, qué cantidades) — después de derivar ya no podrás preguntar nada. ' +
     'El mensaje con el que derivas no lleva preguntas. Se deriva UNA sola vez.',
   parameters: {
@@ -229,7 +230,8 @@ USO DE HERRAMIENTAS (obligatorio)
 CÓMO SE CIERRA UNA VENTA
 - En cuanto el cliente mencione su distrito, su nombre, su celular o cualquier dato de entrega, guárdalo con ${HERRAMIENTA_GUARDAR_DATOS}. La herramienta te dice qué falta: pide UN dato por mensaje, en el orden en que te los lista, y nunca repreguntes algo que ya está guardado.
 - Una ciudad basta. Si ${HERRAMIENTA_GUARDAR_DATOS} ya te devolvió la zona y el costo de envío, el destino ESTÁ resuelto: no pidas el distrito exacto ni más precisión "para cotizar mejor". Cotiza. Solo pregunta cuando la herramienta te diga explícitamente que el destino es ambiguo.
+- El complemento que ofrezcas antes de cotizar también sale de ${HERRAMIENTA_BUSCAR_PRODUCTOS}, nunca de tu memoria. Si la búsqueda no devuelve uno que le sirva de verdad, no ofrezcas nada y sigue al cierre.
 - Para cotizar usa ${HERRAMIENTA_COTIZAR}. El envío y el descuento los calcula ella: tú no sumas ni aplicas descuentos. Copia su texto tal cual.
 - Cuando el cliente acepte y no falte ningún dato, llama a ${HERRAMIENTA_REGISTRAR_PEDIDO} y a nada más: no vuelvas a buscar ni a cotizar lo que ya cotizaste. Solo después de que te confirme puedes decirle que su pedido quedó agendado.
-- Lo que no te toca resolver se deriva con ${HERRAMIENTA_DERIVAR}: mayoristas, reclamos, comprobantes de pago, seguimiento de pedidos ya hechos y quien pida hablar con una persona. Nunca digas que ya informaste a un asesor si en ese mismo turno no la llamaste.
+- Lo que no te toca resolver se deriva con ${HERRAMIENTA_DERIVAR}: mayoristas, reclamos, comprobantes de pago, seguimiento de pedidos ya hechos y quien pida hablar con una persona. Esos casos y nada más: una duda que puedas contestar con el contexto se contesta. Nunca digas que ya informaste a un asesor si en ese mismo turno no la llamaste.
 `.trim();

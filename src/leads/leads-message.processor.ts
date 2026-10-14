@@ -22,7 +22,12 @@ import {
   HERRAMIENTA_GUARDAR_DATOS,
   HERRAMIENTA_REGISTRAR_PEDIDO,
 } from './leads-herramientas';
-import { debeReactivarse, estaPausado, venceEn } from './pausa-bot';
+import {
+  debeReactivarse,
+  estaPausado,
+  motivoDerivacionValido,
+  venceEn,
+} from './pausa-bot';
 import { conDescargoLegal } from './prompt-asesor';
 import {
   DatosDelCliente,
@@ -1339,9 +1344,35 @@ export class LeadsMessageProcessor extends WorkerHost {
         }
 
         case HERRAMIENTA_DERIVAR: {
-          const motivo = String(argumentos.motivo ?? 'sin motivo');
+          const motivoCrudo = String(argumentos.motivo ?? '');
           const detalle =
             typeof argumentos.detalle === 'string' ? argumentos.detalle : '';
+
+          // La lista de motivos es cerrada, y acá se hace cumplir: derivar
+          // apaga el bot sin vencimiento, así que una derivación inventada
+          // deja al cliente esperando a una persona que no sabe que lo
+          // espera. Pasó con las preguntas por el registro sanitario: el
+          // modelo las mandaba al supervisor en vez de contestarlas con la
+          // respuesta oficial que ya tenía en el contexto.
+          //
+          // Un fallo técnico es la excepción: ahí el modelo no puede seguir
+          // aunque el motivo no encaje en ninguna etiqueta, y la pausa vence
+          // sola (ver más abajo).
+          const motivoValido = motivoDerivacionValido(motivoCrudo);
+          if (!motivoValido && !huboFalloTecnico) {
+            this.logger.log(
+              `Lead: conv ${conversacionId} NO derivada, motivo fuera de lista ("${motivoCrudo}").`,
+            );
+            return {
+              derivado: false,
+              instruccion:
+                'Eso no se deriva: respóndelo tú con la información del negocio que ya tienes. ' +
+                'Si te falta un dato puntual, di lo que sí puedes confirmar, ofrece conseguir el resto y sigue atendiendo. ' +
+                'No le digas al cliente que lo pasaste con nadie.',
+            };
+          }
+          const motivo =
+            motivoValido ?? (motivoCrudo.trim() || 'sin motivo');
           // Dos derivaciones distintas, dos pausas distintas:
           //
           // - El cliente necesita a una persona (mayorista, reclamo, "quiero

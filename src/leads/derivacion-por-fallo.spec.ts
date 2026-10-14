@@ -92,6 +92,34 @@ describe('la pausa que deja una derivación', () => {
     expect(pausas[0]).toMatchObject({ pausadoHasta: null, motivoPausa: 'reclamo' });
   });
 
+  it('un motivo que el modelo se inventó NO apaga el bot', async () => {
+    // Lo reportó el cliente: "sobre el registro sanitario... lo derivó en una
+    // al supervisor". Esa derivación apagaba el bot sin vencimiento por una
+    // pregunta que el contexto ya sabía contestar.
+    const { ejecutor, pausas } = armar({ registrado: true });
+    const r = (await ejecutor(HERRAMIENTA_DERIVAR, {
+      motivo: 'registro_sanitario',
+    })) as { derivado: boolean; instruccion: string };
+
+    expect(pausas).toHaveLength(0);
+    expect(r.derivado).toBe(false);
+    // Y se le dice qué hacer en su lugar, no solo que no.
+    expect(r.instruccion).toMatch(/respóndelo tú/i);
+    expect(r.instruccion).toMatch(/no le digas al cliente que lo pasaste/i);
+  });
+
+  it('pero un fallo técnico deriva igual, con cualquier motivo', async () => {
+    // Acá el modelo no puede seguir aunque la etiqueta no encaje: lo que
+    // importa es que esa pausa venza sola.
+    const { ejecutor, pausas } = armar({
+      error: 'No se pudo registrar el pedido en el sistema.',
+    });
+    await ejecutor(HERRAMIENTA_REGISTRAR_PEDIDO, {});
+    await ejecutor(HERRAMIENTA_DERIVAR, { motivo: 'algo_raro' });
+    expect(pausas[0]).toMatchObject({ botActivo: false });
+    expect((pausas[0] as any).pausadoHasta).toBeInstanceOf(Date);
+  });
+
   it('el fallo de un turno no contamina al siguiente', async () => {
     // Cada turno arma su propio ejecutor: un error de hace tres mensajes no
     // debe cambiar cómo se pausa hoy.

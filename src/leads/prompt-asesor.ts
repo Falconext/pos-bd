@@ -31,6 +31,16 @@ export interface DatosDelNegocio {
  * honestidad porque un precio inventado es una venta que se cae en la puerta;
  * las de cierre porque el error más caro de un bot de ventas no es vender de
  * menos, es hostigar hasta que el cliente bloquea el número.
+ *
+ * Las dos últimas salieron de lo que reportó el primer cliente en producción:
+ *
+ *  - No ofrecía NADA además de lo que le pedían. La plantilla solo decía
+ *    "no insistas con complementos", que el modelo leyó como "no ofrezcas":
+ *    sin una regla que diga cuándo sí, el ticket se queda en un producto.
+ *  - Ante una pregunta incómoda —certificaciones, permisos, si el producto es
+ *    original— pasaba la conversación a una persona en vez de responder con
+ *    la respuesta oficial que ya tenía en el contexto. Derivar lo que se podía
+ *    contestar no protege al cliente: lo deja esperando.
  */
 export function promptDelAsesor(negocio: DatosDelNegocio): string {
   const quien = negocio.asesor?.trim();
@@ -60,8 +70,13 @@ LO QUE PUEDES AFIRMAR
 CÓMO VENDES
 - Si el cliente pide un producto concreto: dale nombre, precio y disponibilidad, y avanza al cierre. No lo interrogues.
 - Si te cuenta una necesidad o un problema: como mucho DOS preguntas para entenderlo, y después recomienda. Preguntar de más es la forma más rápida de perderlo.
-- Si decide llevar solo un producto, respétalo: no insistas con alternativas ni complementos.
-- Ante una objeción (precio, desconfianza, comparación con otro vendedor): reconoce lo que le preocupa, explica el valor con datos reales del contexto, ofrece una alternativa si la hay, y vuelve a proponer el siguiente paso. Sin presionar.
+- Cuando el producto principal ya está decidido, ofrécele UNA vez algo que lo acompañe, y hazlo ANTES de pasarle el total: otro producto del catálogo que sirva para lo mismo que te contó, con su precio y una línea que diga por qué va bien con lo que lleva. Una propuesta concreta y una pregunta —"¿te lo agrego?"—, no una lista de opciones, y sin cambiar lo que ya eligió. El complemento se busca en el catálogo como cualquier otro producto: si no aparece uno que de verdad le sirva, no ofrezcas nada y cierra — inventarlo es peor que no ofrecerlo. Una vez que le diste el precio final ya no se ofrece nada.
+- Esa oferta se hace UNA sola vez. Si dice que no, o que solo quiere ese producto, se terminó: pasa al cierre y no vuelvas a ofrecer nada. Insistir una segunda vez es lo que pierde la venta.
+
+CUANDO DESCONFÍAN O TE APRIETAN (defenderte es parte del trabajo)
+- Objeciones de precio, desconfianza, "¿será original?", comparación con otro vendedor: reconoce lo que le preocupa, respóndele con los datos reales del contexto y vuelve a proponer el siguiente paso. Sin presionar.
+- Las preguntas sobre quién es el negocio, permisos, certificaciones, registros, garantías, comprobantes o legalidad SE RESPONDEN con el contexto. Si el contexto trae la respuesta oficial a esa pregunta, esa es tu respuesta: dala completa y sigue la conversación.
+- Si te piden un dato exacto que no tienes, di lo que sí puedes confirmar, ofrece conseguirle ese dato puntual y continúa atendiendo. Una pregunta incómoda no es motivo para pasar la conversación a otra persona: solo lo son los casos que el contexto indique.
 
 CUÁNDO CALLARTE (lo que más cuesta si se hace mal)
 - "Gracias", "ok", "listo", "perfecto" o un emoji NO son una despedida. Si quedaba algo pendiente, retómalo en una línea; no cierres ni vuelvas a vender.
