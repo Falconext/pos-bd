@@ -3,6 +3,22 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import type { CalificacionBant } from './leads-ia.service';
+import { numerosInternos } from './numeros-internos';
+
+export interface AvisoDerivacionParams {
+  empresaId: number;
+  telefonoProspecto: string;
+  nombreProspecto?: string | null;
+  /** Uno de MOTIVOS_DERIVACION. */
+  motivo: string;
+  /** Lo que el asesor necesita para retomar sin volver a preguntar. */
+  detalle?: string;
+  /**
+   * Número del supervisor de ventas, si el negocio configuró uno distinto del
+   * de sus administradores. En Hierba Sana coinciden.
+   */
+  supervisorTelefono?: string | null;
+}
 
 export interface AlertaLeadParams {
   empresaId: number;
@@ -75,6 +91,80 @@ export class LeadsAlertaService {
     }
 
     await Promise.allSettled(tareas);
+  }
+
+  /**
+   * Avisa por WhatsApp a quien atiende las derivaciones.
+   *
+   * La notificación in-app no alcanza: cuando la IA deriva deja de responder,
+   * y si nadie mira el panel en ese momento el cliente se queda esperando a
+   * una persona que no sabe que lo espera. El empresario de Hierba Sana lo
+   * pidió con esas palabras — "que las notificaciones lleguen a casa
+   * naturista", al 955947892, su supervisor de ventas.
+   *
+   * Va al supervisor configurado y, si no hay, a los administradores: el
+   * número tiene que salir de la configuración de cada empresa, nunca del
+   * código, o el siguiente cliente necesita un despliegue para recibir sus
+   * propios avisos.
+   *
+   * Best-effort, como el resto de este servicio: una derivación no puede
+   * fallar porque WhatsApp esté caído.
+   */
+  async avisarDerivacion(p: AvisoDerivacionParams): Promise<void> {
+    const admins = await this.prisma.usuario.findMany({
+      where: { empresaId: p.empresaId, rol: 'ADMIN_EMPRESA' },
+      select: { celular: true },
+    });
+    // El supervisor manda; los admins son el respaldo para que una empresa
+    // que no configuró nada igual se entere.
+    const destinos = p.supervisorTelefono?.trim()
+      ? numerosInternos([p.supervisorTelefono])
+      : numerosInternos(admins.map((a) => a.celular));
+    if (destinos.length === 0) {
+      this.logger.warn(
+        `Derivación de la empresa ${p.empresaId} sin número a quién avisar: configura el supervisor o el celular del administrador.`,
+      );
+      return;
+    }
+
+    const texto = this.mensajeDerivacion(p);
+    await Promise.allSettled(
+      destinos.map((numero) =>
+        this.whatsapp
+          .enviarTexto(numero, texto, p.empresaId)
+          .then((r) => {
+            if (!r.success) {
+              this.logger.warn(
+                `Aviso de derivación a ${numero} falló: ${r.error}`,
+              );
+            }
+          })
+          .catch((e) =>
+            this.logger.warn(
+              `Aviso de derivación a ${numero} error: ${e?.message}`,
+            ),
+          ),
+      ),
+    );
+  }
+
+  private mensajeDerivacion(p: AvisoDerivacionParams): string {
+    const wa = `https://wa.me/${String(p.telefonoProspecto).replace(/\D/g, '')}`;
+    return [
+      '🙋 *UN CLIENTE NECESITA UNA PERSONA*',
+      '',
+      `👤 *${p.nombreProspecto?.trim() || 'Sin nombre'}*`,
+      `📱 ${wa}`,
+      `📌 Motivo: *${p.motivo.replace(/_/g, ' ')}*`,
+      '',
+      p.detalle?.trim() ? `📝 ${p.detalle.trim()}` : null,
+      '',
+      'La IA dejó de responder en ese chat. Escríbele tú:',
+      wa,
+      `Ver en el panel: ${this.frontendUrl()}/administrador/leads`,
+    ]
+      .filter((l) => l !== null)
+      .join('\n');
   }
 
   private frontendUrl(): string {

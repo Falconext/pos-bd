@@ -29,6 +29,7 @@ import {
   venceEn,
 } from './pausa-bot';
 import { conDescargoLegal } from './prompt-asesor';
+import { esNumeroInterno, numerosInternos } from './numeros-internos';
 import {
   DatosDelCliente,
   ItemPedido,
@@ -191,16 +192,25 @@ export class LeadsMessageProcessor extends WorkerHost {
     // 2b) Asegura el prospecto desde el PRIMER contacto (estado FRIO, puntaje 0),
     // así el lead aparece en el panel aunque aún no haya calificación BANT. La
     // calificación posterior (aplicarCalificacion) solo actualiza su score.
-    await this.prisma.leadProspecto.upsert({
-      where: { conversacionId: conv.id },
-      create: {
-        empresaId: empresa.id,
-        telefonoProspecto: d.from,
-        nombreProspecto: d.nombre ?? null,
-        conversacionId: conv.id,
-      },
-      update: d.nombre ? { nombreProspecto: d.nombre } : {},
-    });
+    //
+    // Salvo que escriba el propio negocio. El dueño y su equipo prueban la IA
+    // haciéndose pasar por clientes —es la única forma de probarla— y cada
+    // prueba quedaba en el embudo como un lead más: en Hierba Sana, dos de
+    // las tres conversaciones del tablero eran suyas, con puntaje 82 y 96.
+    // Se les responde igual; lo que no se hace es contarlos como clientes.
+    const interno = await this.esDeLaEmpresa(empresa.id, d.from);
+    if (!interno) {
+      await this.prisma.leadProspecto.upsert({
+        where: { conversacionId: conv.id },
+        create: {
+          empresaId: empresa.id,
+          telefonoProspecto: d.from,
+          nombreProspecto: d.nombre ?? null,
+          conversacionId: conv.id,
+        },
+        update: d.nombre ? { nombreProspecto: d.nombre } : {},
+      });
+    }
 
     // 3) Si es nota de voz, transcribir con Gemini (para responder y para el CRM).
     let contenido = d.text;
@@ -1006,6 +1016,41 @@ export class LeadsMessageProcessor extends WorkerHost {
     }
   }
 
+  /**
+   * ¿El que escribe es el propio negocio probando su bot?
+   *
+   * Son dos fuentes: los celulares de los administradores —que ya están
+   * cargados y son los que prueban— y los que la empresa agregue a su
+   * configuración, para el resto del equipo o para un número de pruebas que
+   * no pertenece a ningún usuario del sistema.
+   */
+  private async esDeLaEmpresa(
+    empresaId: number,
+    telefono: string,
+  ): Promise<boolean> {
+    try {
+      const [admins, cfg] = await Promise.all([
+        this.prisma.usuario.findMany({
+          where: { empresaId, rol: 'ADMIN_EMPRESA' },
+          select: { celular: true },
+        }),
+        this.pedido.configDe(empresaId),
+      ]);
+      const internos = numerosInternos(
+        admins.map((a) => a.celular),
+        cfg.numerosInternos ?? [],
+      );
+      return esNumeroInterno(telefono, internos);
+    } catch (e: any) {
+      // Ante la duda, es un cliente: perder un lead real es mucho peor que
+      // dejar entrar una prueba al embudo.
+      this.logger.warn(
+        `No se pudo saber si ${telefono} es interno de la empresa ${empresaId}: ${e?.message}`,
+      );
+      return false;
+    }
+  }
+
   /** Construye el contexto de negocio que la IA usa como conocimiento base. */
   private construirContexto(empresa: {
     razonSocial: string;
@@ -1402,6 +1447,29 @@ export class LeadsMessageProcessor extends WorkerHost {
               metaData: { origen: 'ia-ventas-derivacion', motivo, telefono },
             })
             .catch(() => undefined);
+          // Aviso por WhatsApp a quien atiende. La notificación in-app sola
+          // no alcanza: desde acá la IA deja de responder, y si nadie mira el
+          // panel el cliente se queda esperando a alguien que no sabe que lo
+          // espera.
+          const conv = await this.prisma.leadConversacion.findUnique({
+            where: { id: conversacionId },
+            select: { nombreProspecto: true },
+          });
+          const cfg = await this.pedido.configDe(empresaId);
+          await this.alerta
+            .avisarDerivacion({
+              empresaId,
+              telefonoProspecto: telefono,
+              nombreProspecto: conv?.nombreProspecto ?? null,
+              motivo,
+              detalle,
+              supervisorTelefono: cfg.supervisorTelefono ?? null,
+            })
+            .catch((e) =>
+              this.logger.warn(
+                `Aviso de derivación de la conv ${conversacionId} falló: ${e?.message}`,
+              ),
+            );
           this.logger.log(
             `Lead: conv ${conversacionId} derivada a un humano (${motivo}).`,
           );
@@ -1598,6 +1666,17 @@ export class LeadsMessageProcessor extends WorkerHost {
     cal: CalificacionBant,
     historial: MensajeConversacion[],
   ): Promise<void> {
+    // El propio negocio probando su bot no se califica ni se alerta. Sin esto
+    // el upsert de abajo volvería a crear el prospecto que `ingresar` no creó
+    // —la guarda del embudo duraría hasta la primera calificación— y además
+    // el dueño recibiría una alerta de "lead caliente" por sí mismo.
+    if (await this.esDeLaEmpresa(empresa.id, quien.telefono)) {
+      this.logger.log(
+        `Lead: conv ${conversacionId} es del propio negocio; no se califica ni entra al embudo.`,
+      );
+      return;
+    }
+
     const data = {
       puntaje: cal.score.total,
       estado: estadoProspectoDesde(cal.status),

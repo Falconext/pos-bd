@@ -11,11 +11,13 @@
  *
  *   npx ts-node --transpile-only scripts/configurar-ia-ventas-empresa.ts 89 hierba-sana
  *   npx ts-node --transpile-only scripts/configurar-ia-ventas-empresa.ts 89 --ver
+ *   npx ts-node --transpile-only scripts/configurar-ia-ventas-empresa.ts 89 --limpiar-internos
  */
 import { PrismaService } from '../src/prisma/prisma.service';
 import { CONFIG_ENVIO_HIERBA_SANA } from '../src/leads/envio-zonas';
 import { HORARIO_POR_DEFECTO } from '../src/leads/validaciones-pedido';
 import { REGLAS_HIERBA_SANA } from '../src/leads/reglas-descuento';
+import { esNumeroInterno, numerosInternos } from '../src/leads/numeros-internos';
 
 /** Los juegos de configuración que ya están escritos en código. */
 const PLANTILLAS: Record<string, Record<string, unknown>> = {
@@ -30,6 +32,12 @@ const PLANTILLAS: Record<string, Record<string, unknown>> = {
       'Yape: 955 947 892 · Cuenta BCP: 191 99295336017 (titular: Edwing Tony Cayo Huerta)',
     descargoLegal:
       'Los productos naturales son un complemento y no reemplazan un tratamiento médico. Ante cualquier condición de salud, consulta a tu médico.',
+    // A quién avisarle por WhatsApp apenas la IA deriva. Es Tony Cayo, el
+    // supervisor de ventas, y coincide con el celular del administrador.
+    supervisorTelefono: '955947892',
+    // Sus números de prueba: escriben al bot haciéndose pasar por clientes y
+    // no deben aparecer en el embudo. "StiloColecta" es uno de ellos.
+    numerosInternos: ['51919755320'],
   },
 };
 
@@ -100,6 +108,11 @@ async function main() {
   const nombre = empresa.nombreComercial ?? empresa.razonSocial;
   const actual = (empresa.iaVentasConfigJson ?? {}) as Record<string, unknown>;
 
+  if (plantilla === '--limpiar-internos') {
+    await limpiarInternos(prisma, empresaId);
+    return;
+  }
+
   if (plantilla === '--ver' || !plantilla) {
     console.log(`Empresa ${empresa.id} — ${nombre}`);
     console.log(`  IA de Ventas: ${empresa.iaVentasActiva ? 'activa' : 'apagada'}`);
@@ -112,6 +125,13 @@ async function main() {
       `  medios de pago: ${actual.mediosPago ?? 'NO configurados — la IA no los puede dar'}`,
     );
     console.log(`  descargo legal: ${actual.descargoLegal ? 'sí' : 'NO'}`);
+    console.log(
+      `  avisos de derivación a: ${actual.supervisorTelefono ?? 'los administradores (sin supervisor configurado)'}`,
+    );
+    const internos = (actual.numerosInternos as string[] | undefined) ?? [];
+    console.log(
+      `  números de prueba fuera del embudo: ${internos.length ? internos.join(', ') : 'ninguno (solo los celulares de los admins)'}`,
+    );
     // Los dos datos que deciden si la tienda y el paso del carrito al chat
     // están de verdad en vivo para este cliente.
     console.log(`  tienda pública: ${empresa.slugTienda ?? 'NO publicada'}`);
@@ -154,6 +174,77 @@ async function main() {
   console.log(`  tramos de descuento: ${desc.tramos.length}`);
   console.log(`  asesor: ${nueva.asesor}`);
   console.log(`  medios de pago: ${nueva.mediosPago ? 'configurados' : 'no'}`);
+  await prisma.$disconnect();
+}
+
+/**
+ * Saca del embudo las pruebas del propio negocio.
+ *
+ * De aquí en adelante no vuelven a entrar —el procesador ya no les crea
+ * prospecto— pero las que entraron antes siguen ahí. En Hierba Sana eran dos
+ * de tres tarjetas del tablero, con puntajes de 82 y 96.
+ *
+ * Borra el PROSPECTO, no la conversación: el chat de prueba se puede seguir
+ * leyendo, lo que desaparece es la tarjeta que competía por la atención del
+ * vendedor.
+ */
+async function limpiarInternos(prisma: PrismaService, empresaId: number) {
+  const [admins, empresa] = await Promise.all([
+    prisma.usuario.findMany({
+      where: { empresaId, rol: 'ADMIN_EMPRESA' },
+      select: { celular: true },
+    }),
+    prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { iaVentasConfigJson: true },
+    }),
+  ]);
+  const cfg = (empresa?.iaVentasConfigJson ?? {}) as {
+    numerosInternos?: string[];
+  };
+  const internos = numerosInternos(
+    admins.map((a) => a.celular),
+    cfg.numerosInternos ?? [],
+  );
+  if (internos.length === 0) {
+    console.log(
+      'No hay números internos: ni celulares de administradores ni numerosInternos configurados.',
+    );
+    await prisma.$disconnect();
+    return;
+  }
+
+  const prospectos = await prisma.leadProspecto.findMany({
+    where: { empresaId },
+    select: {
+      id: true,
+      telefonoProspecto: true,
+      nombreProspecto: true,
+      puntaje: true,
+    },
+  });
+  const aBorrar = prospectos.filter((p) =>
+    esNumeroInterno(p.telefonoProspecto, internos),
+  );
+
+  console.log(`Números internos: ${internos.join(', ')}`);
+  console.log(`Prospectos en el embudo: ${prospectos.length}`);
+  if (aBorrar.length === 0) {
+    console.log('Ninguno es del propio negocio. Nada que limpiar.');
+    await prisma.$disconnect();
+    return;
+  }
+  for (const p of aBorrar) {
+    console.log(
+      `  - ${p.nombreProspecto ?? 'sin nombre'} (${p.telefonoProspecto}) puntaje ${p.puntaje}`,
+    );
+  }
+  const { count } = await prisma.leadProspecto.deleteMany({
+    where: { id: { in: aBorrar.map((p) => p.id) } },
+  });
+  console.log(
+    `✔ ${count} prospecto(s) fuera del embudo. Las conversaciones quedan para poder leerlas.`,
+  );
   await prisma.$disconnect();
 }
 

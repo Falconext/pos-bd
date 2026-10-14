@@ -42,6 +42,8 @@ correr('QA en vivo sobre la empresa real', () => {
   let processor: LeadsMessageProcessor;
   let conversacionId: number;
   let empresa: any;
+  /** Avisos de derivación que se HABRÍAN mandado por WhatsApp. */
+  const avisos: any[] = [];
 
   beforeAll(async () => {
     prisma = new PrismaService();
@@ -84,7 +86,13 @@ correr('QA en vivo sobre la empresa real', () => {
       rag,
       nada, // whatsapp: no se envía nada
       { notificarAdminsEmpresa: async () => ({}) } as never,
-      nada,
+      // El aviso NO se manda de verdad: el 955947892 es el celular del
+      // supervisor de Hierba Sana y un QA no puede escribirle.
+      {
+        avisarDerivacion: async (p: unknown) => {
+          avisos.push(p);
+        },
+      } as never,
       nada,
       {
         // Dobles del flujo de pedido: lo que se prueba acá es qué DICE el
@@ -101,7 +109,16 @@ correr('QA en vivo sobre la empresa real', () => {
             'Te adjunto la Cotización 📋\n(cotización calculada por el sistema)',
         }),
         registrarPedido: async () => ({ registrado: true }),
-        configDe: async () => ({ asesor: 'Claudio' }),
+        // La configuración SÍ sale de la base: es lo que decide a qué número
+        // se avisa al derivar y qué teléfonos quedan fuera del embudo, y un
+        // doble que la invente no probaría nada.
+        configDe: async () => {
+          const e = await prisma.empresa.findUnique({
+            where: { id: EMPRESA_ID },
+            select: { iaVentasConfigJson: true },
+          });
+          return { ...((e?.iaVentasConfigJson as object) ?? {}) };
+        },
       } as never,
       { marcar: async () => undefined } as never,
       { registrar: async () => undefined } as never,
@@ -297,5 +314,16 @@ correr('QA en vivo sobre la empresa real', () => {
     ]);
     console.log('\n[CASO 5b]', texto, '\nherramientas:', usadas);
     expect(usadas).toContain(HERRAMIENTA_DERIVAR);
+
+    // Y el supervisor se entera por WhatsApp, no solo por el panel: desde
+    // acá la IA deja de responder y el cliente le escribe a nadie.
+    const aviso = avisos.at(-1);
+    console.log('[CASO 5b] aviso al supervisor:', aviso);
+    expect(aviso).toMatchObject({
+      empresaId: EMPRESA_ID,
+      motivo: 'mayorista',
+      supervisorTelefono: '955947892',
+    });
+    expect(String(aviso.detalle ?? '')).toMatch(/trujillo|botica|docena/i);
   });
 });

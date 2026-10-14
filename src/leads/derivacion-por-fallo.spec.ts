@@ -24,6 +24,7 @@ import {
 
 function armar(resultadoRegistrar: Record<string, unknown>) {
   const pausas: Record<string, unknown>[] = [];
+  const avisos: Record<string, unknown>[] = [];
   const prisma = {
     leadProspecto: {
       updateMany: jest.fn(({ data }: any) => {
@@ -31,12 +32,21 @@ function armar(resultadoRegistrar: Record<string, unknown>) {
         return Promise.resolve({ count: 1 });
       }),
     },
+    leadConversacion: {
+      findUnique: jest.fn().mockResolvedValue({ nombreProspecto: 'Diego' }),
+    },
   } as never;
   const pedido = {
     registrarPedido: jest.fn().mockResolvedValue(resultadoRegistrar),
+    configDe: jest.fn().mockResolvedValue({ supervisorTelefono: '955947892' }),
   } as never;
   const notificaciones = {
     notificarAdminsEmpresa: jest.fn().mockResolvedValue({}),
+  } as never;
+  const alerta = {
+    avisarDerivacion: jest.fn(async (p: Record<string, unknown>) => {
+      avisos.push(p);
+    }),
   } as never;
 
   const processor = new LeadsMessageProcessor(
@@ -45,7 +55,7 @@ function armar(resultadoRegistrar: Record<string, unknown>) {
     {} as never,
     {} as never,
     notificaciones,
-    {} as never,
+    alerta,
     {} as never,
     pedido,
     {} as never,
@@ -54,7 +64,7 @@ function armar(resultadoRegistrar: Record<string, unknown>) {
     {} as never,
   );
   const ejecutor = (processor as any).crearEjecutor(89, 52, '51999', new Set());
-  return { ejecutor, pausas };
+  return { ejecutor, pausas, avisos };
 }
 
 describe('la pausa que deja una derivación', () => {
@@ -118,6 +128,33 @@ describe('la pausa que deja una derivación', () => {
     await ejecutor(HERRAMIENTA_DERIVAR, { motivo: 'algo_raro' });
     expect(pausas[0]).toMatchObject({ botActivo: false });
     expect((pausas[0] as any).pausadoHasta).toBeInstanceOf(Date);
+  });
+
+  it('avisa por WhatsApp a quien atiende, no solo en el panel', async () => {
+    // Derivar apaga el bot: si el único aviso es la notificación in-app y
+    // nadie está mirando el panel, el cliente le escribe a nadie.
+    const { ejecutor, avisos } = armar({ registrado: true });
+    await ejecutor(HERRAMIENTA_DERIVAR, {
+      motivo: 'mayorista',
+      detalle: 'Botica en Trujillo, 10 docenas',
+    });
+    expect(avisos).toHaveLength(1);
+    expect(avisos[0]).toMatchObject({
+      empresaId: 89,
+      telefonoProspecto: '51999',
+      nombreProspecto: 'Diego',
+      motivo: 'mayorista',
+      detalle: 'Botica en Trujillo, 10 docenas',
+      supervisorTelefono: '955947892',
+    });
+  });
+
+  it('una derivación rechazada no avisa a nadie', async () => {
+    // El motivo inventado no deriva; mandar el aviso igual haría que el
+    // supervisor persiguiera a un cliente al que la IA le sigue hablando.
+    const { ejecutor, avisos } = armar({ registrado: true });
+    await ejecutor(HERRAMIENTA_DERIVAR, { motivo: 'registro_sanitario' });
+    expect(avisos).toHaveLength(0);
   });
 
   it('el fallo de un turno no contamina al siguiente', async () => {
