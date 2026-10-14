@@ -4976,6 +4976,7 @@ export class ComprobanteService {
         estadoPago: true,
         estadoEnvioSunat: true,
         mtoImpVenta: true,
+        saldo: true,
       },
     });
     if (!origen) {
@@ -4996,6 +4997,27 @@ export class ComprobanteService {
     if (origen.estadoEnvioSunat === 'ANULADO') {
       throw new BadRequestException(
         `${origen.serie}-${origen.correlativo} está anulada y no puede convertirse.`,
+      );
+    }
+    // Solo se convierte una orden ya cobrada.
+    //
+    // El taller cobra el saldo cuando entrega el trabajo, que es el mismo
+    // momento en que pide la nota. Cobrar primero y convertir después deja el
+    // ingreso en caja a la hora real y con el monto real; al revés había que
+    // cobrar el saldo dentro de la emisión de la nota, y el modal de pago
+    // terminaba mostrando el total como "recibido" cuando en la mano entraba
+    // solo el saldo.
+    //
+    // El saldo se cobra desde Gestión de Pagos, que es donde se cobra todo lo
+    // demás. Esto NO aplica a la conversión de un informal a Factura/Boleta:
+    // ahí el crédito pendiente se traslada al documento formal a propósito
+    // (ver `estadoYSaldoInicial` y el caso de OWENSOFT).
+    const saldoPendiente = this.round2(Number(origen.saldo || 0));
+    if (saldoPendiente > 0) {
+      throw new BadRequestException(
+        `${origen.serie}-${origen.correlativo} tiene un saldo pendiente de ` +
+          `S/ ${saldoPendiente.toFixed(2)}. Regístrale el cobro en Gestión de ` +
+          'Pagos y después conviértela en Nota de venta.',
       );
     }
     // Ya convertida: una segunda nota duplicaría la venta en los reportes, en

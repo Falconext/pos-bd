@@ -8,8 +8,10 @@
  * Lo que de verdad hay que proteger son tres cuentas que, si se equivocan,
  * dejan plata o inventario mal:
  *
- *  1. El adelanto de la OT ya entró a caja. Volver a registrarlo lo cuenta dos
- *     veces en el cierre de turno y en el flujo de caja.
+ *  1. Lo que la OT ya cobró entró a caja cuando se cobró. Volver a registrarlo
+ *     lo cuenta dos veces en el cierre de turno y en el flujo de caja. Y como
+ *     solo se convierte una orden ya saldada, el saldo se cobra ANTES, desde
+ *     Gestión de Pagos: así el ingreso queda a la hora y por el monto reales.
  *  2. Una OT emitida desde el POS YA descontó stock. Descontar otra vez al
  *     convertir deja el inventario corto. Por eso el descuento del origen se
  *     MIDE contra el kardex y no se deduce del tipo de documento.
@@ -27,6 +29,7 @@ type Origen = {
   estadoPago: string;
   estadoEnvioSunat: string;
   mtoImpVenta: number;
+  saldo: number;
 };
 
 const OT: Origen = {
@@ -34,9 +37,10 @@ const OT: Origen = {
   tipoDoc: 'OT',
   serie: 'OT01',
   correlativo: 1,
-  estadoPago: 'PAGO_PARCIAL',
+  estadoPago: 'COMPLETADO',
   estadoEnvioSunat: 'NO_APLICA',
   mtoImpVenta: 24,
+  saldo: 0,
 };
 
 /**
@@ -112,6 +116,25 @@ describe('qué origen se acepta', () => {
     ).rejects.toThrow(/anulada/i);
   });
 
+  it('no una OT con saldo: primero se cobra, después se convierte', async () => {
+    // El taller cobra al entregar, que es cuando pide la nota. Cobrar dentro
+    // de la emisión obligaba al modal a mostrar el total como "recibido"
+    // cuando en la mano entraba solo el saldo.
+    await expect(
+      validarOrigen({
+        origen: { ...OT, estadoPago: 'PAGO_PARCIAL', saldo: 14.01 },
+      }),
+    ).rejects.toThrow(/saldo pendiente de S\/ 14\.01/i);
+  });
+
+  it('el mensaje dice dónde cobrarlo, no solo que no se puede', async () => {
+    await expect(
+      validarOrigen({
+        origen: { ...OT, estadoPago: 'PAGO_PARCIAL', saldo: 14.01 },
+      }),
+    ).rejects.toThrow(/Gestión de Pagos/i);
+  });
+
   it('no una OT ya convertida: duplicaría la venta', async () => {
     await expect(
       validarOrigen({
@@ -132,25 +155,24 @@ describe('qué se arrastra de la OT', () => {
     expect(sinSalidas.origenYaDescontoStock).toBe(false);
   });
 
-  it('el adelanto cobrado sale de los pagos de la OT', async () => {
-    const r = await validarOrigen({ sumaPagos: 9.99 });
-    expect(r.montoYaCobradoEnOrigen).toBeCloseTo(9.99, 2);
-  });
-
-  it('una OT marcada COMPLETADO sin filas de Pago igual cuenta como cobrada', async () => {
-    // Órdenes viejas quedaron así; su cobro figura en caja por mtoImpVenta.
+  it('lo cobrado sale de los pagos de la OT', async () => {
+    // Una OT se convierte ya saldada, pero el monto no se asume igual al total:
+    // puede haberse cobrado en varias veces y lo que vale es lo registrado.
     const r = await validarOrigen({
-      origen: { ...OT, estadoPago: 'COMPLETADO' },
-      sumaPagos: 0,
+      origen: { ...OT, estadoPago: 'PAGO_PARCIAL', saldo: 0 },
+      sumaPagos: 24,
     });
     expect(r.montoYaCobradoEnOrigen).toBeCloseTo(24, 2);
   });
 
+  it('una OT marcada COMPLETADO sin filas de Pago igual cuenta como cobrada', async () => {
+    // Órdenes viejas quedaron así; su cobro figura en caja por mtoImpVenta.
+    const r = await validarOrigen({ sumaPagos: 0 });
+    expect(r.montoYaCobradoEnOrigen).toBeCloseTo(24, 2);
+  });
+
   it('entre pagos y total cobrado manda el mayor, no la suma', async () => {
-    const r = await validarOrigen({
-      origen: { ...OT, estadoPago: 'COMPLETADO' },
-      sumaPagos: 24,
-    });
+    const r = await validarOrigen({ sumaPagos: 24 });
     expect(r.montoYaCobradoEnOrigen).toBeCloseTo(24, 2);
   });
 
