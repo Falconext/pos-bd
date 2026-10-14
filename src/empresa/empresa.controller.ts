@@ -437,15 +437,30 @@ export class EmpresaController {
     return result;
   }
 
+  /**
+   * Qué se perdería al eliminar la empresa. No borra nada.
+   *
+   * La pantalla lo pide antes de mostrar la confirmación: el borrado abarca
+   * más de cien tablas y es irreversible, así que el admin tiene que poder ver
+   * el tamaño de lo que se va antes de decidir.
+   */
+  @Get(':id/eliminar/previsualizar')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  previsualizarEliminacion(@Param('id', ParseIntPipe) id: number) {
+    return this.empresaService.previsualizarEliminacion(id);
+  }
+
   @Delete(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN_SISTEMA')
   async eliminar(
     @Param('id', ParseIntPipe) id: number,
+    @Query('ruc') ruc: string | undefined,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.empresaService.eliminar(id);
-    res.locals.message = 'Empresa eliminada correctamente';
+    const result = await this.empresaService.eliminar(id, ruc);
+    res.locals.message = `Empresa eliminada: ${result.filasEliminadas} registros en ${result.tablasAfectadas} tablas`;
     return result;
   }
 

@@ -1237,6 +1237,10 @@ export class DashboardService {
           tipoDoc: { notIn: ['NP', 'COT', '07'] },
           estadoEnvioSunat: { not: EstadoSunat.ANULADO },
           saldo: { gt: 0 },
+          // Ya convertido: la deuda viva es la del documento que salió de él.
+          // Mismo criterio que `cuentasPorCobrar`; si los dos no coinciden, el
+          // total del tablero no cuadra con la lista que se abre al tocarlo.
+          comprobantesDerivados: { none: {} },
         },
       }),
       this.prisma.pedidoTienda.count({

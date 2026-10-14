@@ -2387,8 +2387,16 @@ model DetalleOrdenCompra {
   ordenCompraId  Int
   productoId     Int?
   descripcion    String
+  // SIEMPRE en unidades sueltas, igual que el stock: si se pidieron 5 cajas de
+  // 6, acá van 30. Así `recibir` no tiene que convertir nada.
   cantidad       Decimal
+  // Costo de UNA unidad.
   precioUnitario Decimal
+  // Cuántas unidades trae la caja que se le pidió al proveedor. null o 1 = se
+  // pidió por unidad. No cambia la cantidad (que ya viene en unidades): sirve
+  // para mostrar "5 paq. x6" en la orden y en el PDF del proveedor, y para que
+  // al reabrir la orden se vea en cajas y no en 30 sueltas.
+  unidadesPorPaquete Int?
   subtotal       Decimal
   ordenCompra    OrdenCompra @relation(fields: [ordenCompraId], references: [id], onDelete: Cascade)
   producto       Producto?   @relation(fields: [productoId], references: [id])

@@ -136,6 +136,12 @@ export class OrdenCompraService {
             descripcion: d.descripcion,
             cantidad: d.cantidad,
             precioUnitario: d.precioUnitario,
+            // Tamaño de la caja pedida. Solo se guarda si de verdad es una caja:
+            // un 1 guardado es ruido que después hay que distinguir de null.
+            unidadesPorPaquete:
+              Number(d.unidadesPorPaquete) > 1
+                ? Math.trunc(Number(d.unidadesPorPaquete))
+                : null,
             subtotal: Number(
               (Number(d.cantidad) * Number(d.precioUnitario)).toFixed(2),
             ),
@@ -220,6 +226,13 @@ export class OrdenCompraService {
                 codigo: true,
                 descripcion: true,
                 tipoAfectacionIGV: true,
+                // Las cajas configuradas del producto: al reabrir una orden
+                // pedida por cajas, la pantalla tiene que poder volver a
+                // ofrecer la misma presentación.
+                codigosBarras: {
+                  where: { unidadesPorPaquete: { gt: 1 } },
+                  select: { codigo: true, alias: true, unidadesPorPaquete: true },
+                },
               },
             },
           },
@@ -288,6 +301,12 @@ export class OrdenCompraService {
             descripcion: d.descripcion,
             cantidad: d.cantidad,
             precioUnitario: d.precioUnitario,
+            // Tamaño de la caja pedida. Solo se guarda si de verdad es una caja:
+            // un 1 guardado es ruido que después hay que distinguir de null.
+            unidadesPorPaquete:
+              Number(d.unidadesPorPaquete) > 1
+                ? Math.trunc(Number(d.unidadesPorPaquete))
+                : null,
             subtotal: Number(
               (Number(d.cantidad) * Number(d.precioUnitario)).toFixed(2),
             ),

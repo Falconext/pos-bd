@@ -661,6 +661,12 @@ export class PdfGeneratorService {
         d.esCredito = String(d.formaPago || '').toUpperCase().includes('CRÉDITO');
       }
 
+      // A5 usa la MISMA plantilla que A4 con otro tamaño de página, así que la
+      // plantilla necesita saber en cuál está: los títulos de las columnas
+      // miden lo mismo en píxeles en las dos hojas, pero A5 es un 31% más
+      // angosta y con el reparto de A4 "MONEDA" se monta sobre P.UNIT.
+      (data as any).esA5 = formato === 'a5';
+
       const html = usaTicket ? this.ticketTemplate!(data) : this.template(data);
 
       return this.renderPdfBuffer(
@@ -766,6 +772,10 @@ export class PdfGeneratorService {
       }
 
       // Generar HTML desde template
+      // Igual que el comprobante: A5 comparte plantilla con A4 y necesita su
+      // propio reparto de columnas.
+      (data as any).esA5 = formato === 'a5';
+
       const html = template(data);
 
       return this.renderPdfBuffer(

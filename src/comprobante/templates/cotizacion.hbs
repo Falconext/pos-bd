@@ -3,7 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cotización</title>
+    <!-- El nombre que ve el cliente al abrir o guardar el PDF. Esta plantilla
+         la usan TODOS los informales (nota de venta, orden de trabajo, nota de
+         pedido…), no solo la cotización: con el título fijo, una nota de venta
+         se abría y se descargaba como "Cotización". -->
+    <title>{{#if tituloDocumento}}{{tituloDocumento}}{{else}}Cotización{{/if}}{{#if numeroDocumento}} {{numeroDocumento}}{{/if}}</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -69,8 +73,8 @@
             border-collapse: collapse;
             margin-bottom: 16px;
         }
+        /* Sin fondo en la cabecera: lo pidió el cliente y así quedó el web. */
         .productos-table thead {
-            background-color: #d1d5db;
             border-bottom: 1px solid #999;
         }
         .productos-table th {
@@ -86,15 +90,38 @@
             border-right: 1px solid #d1d5db;
         }
         .productos-table td:last-child { border-right: none; }
-        .col-n    { width: 8%;  text-align: center; }
-        .col-cant { width: 10%; text-align: center; }
-        .col-um   { width: 10%; text-align: center; }
-        .col-img  { width: 10%; text-align: center; }
+        /* Mismos anchos que la impresión web (comprobanteImprimir.tsx). El ancho
+           de cada columna angosta lo manda el MAYOR entre su título y su dato:
+           "MONEDA" es más ancho que "S/", y un código de 13 caracteres es más
+           ancho que la palabra "CÓDIGO". La descripción se queda con el resto;
+           dejarla sin ancho —como estaba— le daba solo lo que sobrara. */
+        .col-cod  { width: 18%; text-align: center; word-break: break-all; }
+        .col-cant { width: 6%;  text-align: center; }
+        .col-um   { width: 7%;  text-align: center; }
+        .col-img  { width: 9%;  text-align: center; }
         .col-img img { width: 34px; height: 34px; object-fit: cover; }
-        .col-desc { text-align: left; }
-        .col-moneda { width: 9%; text-align: center; }
-        .col-pu   { width: 10%; text-align: right; }
-        .col-tot  { width: 10%; text-align: right; }
+        .col-desc { width: 43%; text-align: left; }
+        .col-moneda { width: 8%; text-align: center; }
+        .col-pu   { width: 9%; text-align: right; }
+        .col-tot  { width: 9%; text-align: right; }
+        /* Con la columna IMAGEN el 9% sale de la descripción, no del resto. */
+        {{#if includeProductImages}}
+        .col-desc { width: 34%; }
+        {{/if}}
+        /* A5 es un 31% más angosta pero los títulos miden lo mismo: con el
+           reparto de A4, "MONEDA" se monta sobre P.UNIT. y el código se corta. */
+        {{#if esA5}}
+        .col-cod  { width: 24%; }
+        .col-cant { width: 8%;  }
+        .col-um   { width: 10%; }
+        .col-desc { width: 26%; }
+        .col-moneda { width: 12%; }
+        .col-pu   { width: 10%; }
+        .col-tot  { width: 10%; }
+        {{#if includeProductImages}}
+        .col-desc { width: 17%; }
+        {{/if}}
+        {{/if}}
 
         /* ── SON ────────────────────────────────────────────────── */
         .son-section {
@@ -270,7 +297,7 @@
     <table class="productos-table" style="font-size: {{fc.productos.size}}px;">
         <thead>
             <tr>
-                <th class="col-n">N°</th>
+                <th class="col-cod">CÓDIGO</th>
                 <th class="col-cant">CANT.</th>
                 <th class="col-um">UNIDAD</th>
                 {{#if includeProductImages}}<th class="col-img">IMAGEN</th>{{/if}}
@@ -283,7 +310,7 @@
         <tbody>
             {{#each productos}}
             <tr>
-                <td class="col-n">{{inc @index}}</td>
+                <td class="col-cod">{{codigo}}</td>
                 <td class="col-cant">{{cantidad}}</td>
                 <td class="col-um">{{unidadMedida}}</td>
                 {{#if ../includeProductImages}}
