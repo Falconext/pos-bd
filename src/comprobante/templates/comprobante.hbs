@@ -62,19 +62,36 @@
 
     /* ── PRODUCTS TABLE ──────────────────────────────────────── */
     .productos-table { width: 100%; border: 1.5px solid #999; border-collapse: collapse; margin-bottom: 16px; }
-    .productos-table thead { background-color: #d1d5db; border-bottom: 1px solid #999; }
+    /* Sin fondo en la cabecera: lo pidió el cliente y así quedó el web. */
+    .productos-table thead { border-bottom: 1px solid #999; }
     .productos-table th { padding: 6px 5px; font-weight: bold; text-align: center; border-right: 1px solid #9ca3af; font-size: inherit; }
     .productos-table th:last-child { border-right: none; }
     .productos-table td { padding: 5px 5px; border-bottom: 1px solid #d1d5db; border-right: 1px solid #d1d5db; font-size: inherit; }
     .productos-table td:last-child { border-right: none; }
-    .col-n    { width: 8%;  text-align: center; }
-    .col-cant { width: 10%; text-align: center; }
-    .col-um   { width: 10%; text-align: center; }
-    .col-desc { text-align: left; }
+    /* Mismos anchos que la impresión web (comprobanteImprimir.tsx). El ancho de
+       cada columna angosta lo manda el MAYOR entre su título y su dato: "MONEDA"
+       es más ancho que "S/", y un código de 13 caracteres es más ancho que la
+       palabra "CÓDIGO". La descripción se queda con el resto. Dejarla sin ancho
+       —como estaba— hacía que el navegador le diera solo lo que sobrara. */
+    .col-cod  { width: 18%; text-align: center; word-break: break-all; }
+    .col-cant { width: 6%;  text-align: center; }
+    .col-um   { width: 7%;  text-align: center; }
+    .col-desc { width: 43%; text-align: left; }
     .desc-text { white-space: pre-line; line-height: 1.7; }
-    .col-moneda { width: 9%; text-align: center; }
-    .col-pu   { width: 11%; text-align: right; }
-    .col-tot  { width: 11%; text-align: right; }
+    .col-moneda { width: 8%; text-align: center; }
+    .col-pu   { width: 9%; text-align: right; }
+    .col-tot  { width: 9%; text-align: right; }
+    /* A5 es un 31% más angosta pero los títulos miden lo mismo: con el reparto
+       de A4, "MONEDA" se monta sobre P.UNIT. y el código se corta. */
+    {{#if esA5}}
+    .col-cod  { width: 24%; }
+    .col-cant { width: 8%;  }
+    .col-um   { width: 10%; }
+    .col-desc { width: 26%; }
+    .col-moneda { width: 12%; }
+    .col-pu   { width: 10%; }
+    .col-tot  { width: 10%; }
+    {{/if}}
     .lote-info { font-size: 9px; color: #555; margin-top: 2px; }
     .gratis-tag { display: inline-block; font-size: 8px; font-weight: 700; color: #059669; border: 1px solid #059669; border-radius: 3px; padding: 1px 4px; margin-left: 5px; vertical-align: middle; }
 
@@ -236,7 +253,7 @@
   <table class="productos-table" style="font-size: {{fsz fc 'productos' 11}}px;">
     <thead>
       <tr>
-        <th class="col-n">N°</th>
+        <th class="col-cod">CÓDIGO</th>
         <th class="col-cant">CANT.</th>
         <th class="col-um">UNIDAD</th>
         <th class="col-desc">DESCRIPCIÓN</th>
@@ -248,7 +265,7 @@
     <tbody>
       {{#each productos}}
       <tr>
-        <td class="col-n">{{this.index}}</td>
+        <td class="col-cod">{{this.codigo}}</td>
         <td class="col-cant">{{this.cantidad}}</td>
         <td class="col-um">{{this.unidadMedida}}</td>
         <td class="col-desc">

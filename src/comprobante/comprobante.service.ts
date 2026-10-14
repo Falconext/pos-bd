@@ -6690,7 +6690,17 @@ export class ComprobanteService {
             },
           },
         },
-        detalles: { include: { producto: { select: { imagenUrl: true } } } },
+        // `codigo` y `codigoBarras`: el PDF imprime el código del producto en la
+        // primera columna (antes imprimía un correlativo de línea, que al
+        // cliente no le sirve para nada). El detalle no lo guarda, sale del
+        // producto.
+        detalles: {
+          include: {
+            producto: {
+              select: { imagenUrl: true, codigo: true, codigoBarras: true },
+            },
+          },
+        },
         // La fecha de entrega programada se imprime en el ticket: el cliente se
         // lleva el papel y quiere saber cuándo le llega (pedido de COMERCIAL
         // LINNA MODA, que despacha por día).
@@ -6786,6 +6796,10 @@ export class ComprobanteService {
       const esGrat = this.esGratuito(Number(d.tipAfeIgv ?? 10));
       return {
       index: i + 1,
+      // Código del producto. Un ítem de servicio (sin productoId) no tiene, y
+      // la celda queda vacía: es preferible al correlativo de línea, que no
+      // identifica nada.
+      codigo: (d.producto?.codigo || d.producto?.codigoBarras || '').toString(),
       cantidad: formatCantidad(d.cantidad),
       unidadMedida: (d.unidad || 'NIU').toUpperCase(),
       descripcion: (d.descripcion || '').toUpperCase(),
@@ -7148,7 +7162,12 @@ export class ComprobanteService {
         cotizTerminos: esNotaVenta ? undefined : full.cotizTerminos || undefined,
         // Bloque de pago de la nota de venta (la cotización usa CONDICIÓN/VALIDEZ).
         esNotaVenta,
-        tituloDocumento: esNotaVenta ? 'NOTA DE VENTA' : 'COTIZACIÓN',
+        // Esta plantilla la usan TODOS los informales, no solo la nota de venta:
+        // orden de trabajo, nota de pedido, ticket, recibo por honorarios. Con
+        // el ternario anterior, una Orden de Trabajo salía titulada
+        // "COTIZACIÓN". El mapa ya tiene el nombre de cada uno.
+        tituloDocumento: tipoDocMap[full.tipoDoc] || 'COTIZACIÓN',
+        numeroDocumento: `${full.serie}-${String(full.correlativo).padStart(8, '0')}`,
         esCredito: esVentaCredito,
         pagoInicial: montoPagado.toFixed(2),
         saldoCredito: saldoPendiente > 0 ? saldoPendiente.toFixed(2) : '0.00',
