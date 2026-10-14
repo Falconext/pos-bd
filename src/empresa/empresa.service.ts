@@ -14,7 +14,7 @@ import {
   ClaveForanea,
   planDeBorrado,
   sqlDeBorrado,
-  sqlDeConteo,
+  sqlDeConteoUnico,
 } from './borrado-cascada';
 import bcrypt from 'bcrypt';
 import { CreateEmpresaDto } from './dto/create-empresa.dto';
@@ -1878,21 +1878,18 @@ export class EmpresaService {
     if (!empresa) throw new NotFoundException('Empresa no encontrada');
 
     const plan = await this.armarPlan();
-    const detalle: { tabla: string; filas: number }[] = [];
-    for (const paso of plan) {
-      if (paso.tabla === 'Empresa') continue;
-      try {
-        const r = await this.prisma.$queryRawUnsafe<{ n: number }[]>(
-          sqlDeConteo(paso),
-          id,
-        );
-        const n = Number(r?.[0]?.n ?? 0);
-        if (n > 0) detalle.push({ tabla: paso.tabla, filas: n });
-      } catch {
-        // Una tabla que no se puede contar no debe tumbar la vista previa:
-        // el borrado la reportará si de verdad estorba.
-      }
-    }
+    const pasos = plan.filter((p) => p.tabla !== 'Empresa');
+
+    // Los 118 conteos van en UNA sola consulta. Uno por uno eran 118 idas y
+    // vueltas a la base: contra Railway tardaba más de los 12 s que espera el
+    // navegador, y la pantalla mostraba "timeout" en vez de la vista previa.
+    const filas = await this.prisma.$queryRawUnsafe<
+      { tabla: string; n: number }[]
+    >(sqlDeConteoUnico(pasos), id);
+
+    const detalle = filas
+      .map((f) => ({ tabla: f.tabla, filas: Number(f.n) }))
+      .filter((f) => f.filas > 0);
     detalle.sort((a, b) => b.filas - a.filas);
     return {
       empresa,

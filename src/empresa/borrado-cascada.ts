@@ -145,3 +145,18 @@ export const sqlDeBorrado = (paso: PasoDeBorrado): string =>
 /** El conteo equivalente, para la vista previa. No toca nada. */
 export const sqlDeConteo = (paso: PasoDeBorrado): string =>
   `SELECT COUNT(*)::int AS n FROM ${comillas(paso.tabla)} WHERE ${paso.donde}`;
+
+/**
+ * Todos los conteos en UNA sola consulta.
+ *
+ * Uno por uno son 118 idas y vueltas a la base. Contra una base remota eso
+ * pasa de los 12 segundos que espera el navegador, y el admin ve "timeout of
+ * 12000ms exceeded" donde debería ver la vista previa.
+ */
+export const sqlDeConteoUnico = (pasos: PasoDeBorrado[]): string =>
+  pasos
+    .map(
+      (p) =>
+        `SELECT '${p.tabla.replace(/'/g, "''")}' AS tabla, (SELECT COUNT(*)::int FROM ${comillas(p.tabla)} WHERE ${p.donde}) AS n`,
+    )
+    .join(' UNION ALL ');
