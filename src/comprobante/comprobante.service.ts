@@ -791,6 +791,12 @@ export class ComprobanteService {
       tipoDoc: { notIn: ['NP', 'COT', '07'] },
       estadoEnvioSunat: { not: EstadoSunat.ANULADO },
       saldo: { gt: 0 },
+      // Ya convertido: la deuda viva es la del documento que salió de él, no la
+      // suya. Una Orden de Trabajo con adelanto queda en PAGO_PARCIAL para
+      // siempre —su saldo se cobra al emitir la nota, no en la orden—, así que
+      // sin esto el cliente aparecía debiendo dos veces lo mismo: una en la OT
+      // y otra en la nota. Vale para cualquier conversión, no solo la de OT.
+      comprobantesDerivados: { none: {} },
       ...(search
         ? {
             OR: [
@@ -4933,6 +4939,117 @@ export class ComprobanteService {
     return nota;
   }
 
+  /**
+   * Valida la Orden de Trabajo de origen de una conversión y mide lo que ya
+   * dejó hecho: stock descontado, plata cobrada y comisión generada.
+   *
+   * Vive aparte de `crearInformal` para poder probarse de verdad. Las reglas
+   * que se quedaron embebidas en ese método solo se pudieron probar
+   * reimplementándolas en el test, que es como no probarlas.
+   *
+   * Lo que NO puede pasar al convertir: cobrar dos veces el adelanto que la OT
+   * ya metió a caja, y descontar dos veces el stock.
+   *
+   * Cuidado con el stock: una OT emitida desde el POS SÍ descuenta (pasa por
+   * `crearInformal`, donde `afectaStock` es true para OT). La que no descuenta
+   * es la del endpoint `crearOT`. Por eso el descuento se MIDE contra el kardex
+   * en vez de deducirse del tipo de documento — asumirlo habría descontado dos
+   * veces toda OT hecha desde el POS, que son todas las que existen hoy.
+   */
+  private async validarOrigenDeConversion(
+    comprobanteOrigenId: number,
+    empresaId: number,
+    tipoDocDestino: string,
+  ): Promise<{
+    ok: true;
+    origenYaDescontoStock: boolean;
+    montoYaCobradoEnOrigen: number;
+    origenYaGeneroComision: boolean;
+  }> {
+    const origen = await this.prisma.comprobante.findFirst({
+      where: { id: Number(comprobanteOrigenId), empresaId },
+      select: {
+        id: true,
+        tipoDoc: true,
+        serie: true,
+        correlativo: true,
+        estadoPago: true,
+        estadoEnvioSunat: true,
+        mtoImpVenta: true,
+      },
+    });
+    if (!origen) {
+      throw new BadRequestException(
+        'El comprobante de origen no existe o no pertenece a esta empresa',
+      );
+    }
+    if (origen.tipoDoc !== 'OT') {
+      throw new BadRequestException(
+        'Solo una Orden de Trabajo puede convertirse en Nota de venta.',
+      );
+    }
+    if (tipoDocDestino !== 'NV') {
+      throw new BadRequestException(
+        'Una Orden de Trabajo solo puede convertirse en Nota de venta.',
+      );
+    }
+    if (origen.estadoEnvioSunat === 'ANULADO') {
+      throw new BadRequestException(
+        `${origen.serie}-${origen.correlativo} está anulada y no puede convertirse.`,
+      );
+    }
+    // Ya convertida: una segunda nota duplicaría la venta en los reportes, en
+    // el stock y en las comisiones.
+    const yaConvertido = await this.prisma.comprobante.findFirst({
+      where: { comprobanteOrigenId: Number(comprobanteOrigenId) },
+      select: { serie: true, correlativo: true },
+    });
+    if (yaConvertido) {
+      throw new BadRequestException(
+        `${origen.serie}-${origen.correlativo} ya fue convertida a ` +
+          `${yaConvertido.serie}-${yaConvertido.correlativo}. ` +
+          'Emitir otra nota duplicaría la venta.',
+      );
+    }
+
+    const origenYaDescontoStock =
+      (await this.prisma.movimientoKardex.count({
+        where: {
+          comprobanteId: Number(comprobanteOrigenId),
+          tipoMovimiento: 'SALIDA',
+        },
+      })) > 0;
+
+    const pagosOrigen = await this.prisma.pago.aggregate({
+      where: { comprobanteId: Number(comprobanteOrigenId) },
+      _sum: { monto: true },
+    });
+    // Una OT marcada COMPLETADO sin filas de Pago igual figura cobrada en caja
+    // (los reportes la suman por mtoImpVenta), así que también cuenta. Se toma
+    // el MAYOR de los dos, nunca la suma: serían el mismo cobro contado doble.
+    const montoYaCobradoEnOrigen = Math.max(
+      this.round2(Number(pagosOrigen._sum.monto || 0)),
+      origen.estadoPago === 'COMPLETADO'
+        ? this.round2(Number(origen.mtoImpVenta || 0))
+        : 0,
+    );
+
+    // Si la OT ya generó comisión, la nota no vuelve a generarla: se pagaría
+    // dos veces la misma venta. Hoy `crearOT` no genera, pero se consulta en
+    // vez de asumirse.
+    const origenYaGeneroComision =
+      (await this.prisma.comisionVendedor.count({
+        where: { comprobanteId: Number(comprobanteOrigenId) },
+      })) > 0;
+
+    return {
+      ok: true,
+      origenYaDescontoStock,
+      montoYaCobradoEnOrigen,
+      origenYaGeneroComision,
+    };
+  }
+
   async crearInformal(
     input: any,
     empresaId: number,
@@ -5018,9 +5135,39 @@ export class ComprobanteService {
     // - Resto de informales (NV, TICKET, RH, CP, OT): siempre descuentan.
     // En modo importado el stock solo se toca si afectarStock === true. En
     // emisión normal se conserva la regla por tipo de documento.
+    //
+    // Conversión de una Orden de Trabajo a Nota de venta.
+    //
+    // El taller levanta una OT cuando entra un trabajo, y recién cuando el
+    // trabajo sale quiere la Nota de venta para programar la entrega. Hasta
+    // ahora había que tipear la venta de nuevo: la OT no movía stock ni dejaba
+    // rastro de que esa nota venía de ella.
+    //
+    // Lo que NO puede pasar al convertir: cobrar dos veces el adelanto que la
+    // OT ya metió a caja, y descontar dos veces el stock.
+    //
+    // Cuidado con el stock: una OT emitida desde el POS SÍ descuenta (cae en
+    // este mismo método y `afectaStock` es true para OT). La que no descuenta
+    // es la del endpoint `crearOT`. Por eso el descuento del origen se MIDE
+    // contra el kardex en vez de deducirse del tipo de documento — asumirlo
+    // habría descontado dos veces toda OT hecha desde el POS, que son todas
+    // las que existen hoy.
+    const comprobanteOrigenId = input.comprobanteOrigenId;
+    const esConversionDesdeOT = !importado && comprobanteOrigenId != null;
+    const conv = esConversionDesdeOT
+      ? await this.validarOrigenDeConversion(
+          Number(comprobanteOrigenId),
+          empresaId,
+          tipoDoc,
+        )
+      : null;
+    const origenYaDescontoStock = conv?.origenYaDescontoStock ?? false;
+    const montoYaCobradoEnOrigen = conv?.montoYaCobradoEnOrigen ?? 0;
+
     const afectaStock = importado
       ? afectarStockImport
-      : tipoDoc !== 'COT' &&
+      : !origenYaDescontoStock &&
+        tipoDoc !== 'COT' &&
         (tipoDoc !== 'NP' || input.descontarStock === true);
     // Resolver cliente
     let finalClienteId: number | null = clienteId ?? null;
@@ -5141,6 +5288,19 @@ export class ComprobanteService {
       saldoInicial = mtoImpVenta;
     }
 
+    // Lo que la OT ya cobró baja el saldo de la nota. Solo toca el caso en que
+    // la nota queda con saldo: si se emite al contado el cliente está pagando
+    // el resto en este momento y la nota sale COMPLETADO igual.
+    if (esConversionDesdeOT && montoYaCobradoEnOrigen > 0 && saldoInicial > 0) {
+      // Se toma el MAYOR, no la suma: la pantalla de conversión ya manda el
+      // adelanto de la OT como `adelanto` de la nota, así que restar las dos
+      // cosas descontaría el mismo pago dos veces y la nota nacería saldada.
+      const yaCobrado = Math.max(adelantoNormalizado, montoYaCobradoEnOrigen);
+      saldoInicial = Math.max(0, this.round2(mtoImpVenta - yaCobrado));
+      estadoPagoInicial =
+        saldoInicial > 0 ? ('PAGO_PARCIAL' as any) : ('COMPLETADO' as any);
+    }
+
     const montoPagadoInicial =
       tipoDoc !== 'COT'
         ? adelantoNormalizado > 0
@@ -5149,12 +5309,18 @@ export class ComprobanteService {
             ? mtoImpVenta
             : 0
         : 0;
+    // A caja entra solo lo que se cobra AHORA. El adelanto de la OT ya entró
+    // cuando se levantó la orden: volver a registrarlo lo contaría dos veces en
+    // el cierre de turno, en el flujo de caja y en la conciliación.
+    const montoPagadoDeEmision = esConversionDesdeOT
+      ? Math.max(0, this.round2(montoPagadoInicial - montoYaCobradoEnOrigen))
+      : montoPagadoInicial;
     // En importado sin caja no se exige caja abierta (documento histórico).
-    if (montoPagadoInicial > 0 && registrarEnCaja) {
+    if (montoPagadoDeEmision > 0 && registrarEnCaja) {
       await this.validarDetallePago(
         paymentDetails,
         medioPagoValido,
-        montoPagadoInicial,
+        montoPagadoDeEmision,
         empresaId,
       );
     }
@@ -5227,10 +5393,17 @@ export class ComprobanteService {
       estadoEnvioSunat: 'NO_APLICA' as string,
       estadoPago: estadoPagoInicial,
       saldo: saldoInicial,
+      // Vínculo con la OT de origen: es lo que hace que la orden figure como
+      // "convertida" en el listado y que no se pueda convertir dos veces.
+      ...(esConversionDesdeOT
+        ? { comprobanteOrigenId: Number(comprobanteOrigenId) }
+        : {}),
       adelanto:
         tipoDoc !== 'COT' && adelantoNormalizado > 0
           ? adelantoNormalizado
-          : undefined,
+          : esConversionDesdeOT && montoYaCobradoEnOrigen > 0
+            ? montoYaCobradoEnOrigen
+            : undefined,
       fechaRecojo:
         (tipoDoc === 'NP' || tipoDoc === 'OT') && fechaRecojo
           ? new Date(fechaRecojo)
@@ -5290,7 +5463,7 @@ export class ComprobanteService {
           empresaId,
         );
 
-    if (montoPagadoInicial > 0 && registrarEnCaja) {
+    if (montoPagadoDeEmision > 0 && registrarEnCaja) {
       await this.registrarPagosDeEmision({
         comprobanteId: comp.id,
         empresaId,
@@ -5298,7 +5471,7 @@ export class ComprobanteService {
         medioPago: medioPagoValido,
         paymentDetails,
         splitPayments,
-        montoPagado: montoPagadoInicial,
+        montoPagado: montoPagadoDeEmision,
         documento: `${tipoDoc}-${comp.serie}-${comp.correlativo}`,
         fecha: realizadoEn ?? fecha,
       });
@@ -5322,11 +5495,16 @@ export class ComprobanteService {
     // no se generan comisiones. La comisión se atribuye al vendedor apuntado
     // (vendedorCampoId); si no hay, cae al emisor (usuarioId).
     const vendedorComisionId = input.vendedorCampoId ?? usuarioId;
+    // Si la OT de origen ya generó comisión, la nota no vuelve a generarla: se
+    // pagaría dos veces la misma venta. Hoy `crearOT` no genera comisión, pero
+    // se consulta en vez de asumirse.
+    const origenYaGeneroComision = conv?.origenYaGeneroComision ?? false;
     if (
       vendedorComisionId &&
       this.comisionesService &&
       tipoDoc !== 'COT' &&
-      !importado
+      !importado &&
+      !origenYaGeneroComision
     ) {
       try {
         await this.comisionesService.registrarComisionesDesdeComprobante({
