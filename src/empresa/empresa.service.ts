@@ -10,6 +10,12 @@ import { cifrarSecreto } from '../common/utils/secreto.util';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  ClaveForanea,
+  planDeBorrado,
+  sqlDeBorrado,
+  sqlDeConteo,
+} from './borrado-cascada';
 import bcrypt from 'bcrypt';
 import { CreateEmpresaDto } from './dto/create-empresa.dto';
 import { UpdateEmpresaDto } from './dto/update-empresa.dto';
@@ -1820,84 +1826,133 @@ export class EmpresaService {
     return result;
   }
 
-  async eliminar(id: number) {
+  /**
+   * Metadatos de claves foráneas de la base. Se leen en el momento porque el
+   * esquema cambia con cada módulo nuevo y una lista escrita a mano se queda
+   * corta sin avisar (fue exactamente lo que rompió el borrado anterior).
+   */
+  private async leerClavesForaneas(): Promise<ClaveForanea[]> {
+    return this.prisma.$queryRawUnsafe<ClaveForanea[]>(`
+      SELECT tc.table_name AS hija,
+             kcu.column_name AS columna,
+             ccu.table_name AS padre,
+             ccu.column_name AS "padreColumna"
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.key_column_usage kcu
+        ON tc.constraint_name = kcu.constraint_name
+       AND tc.table_schema = kcu.table_schema
+      JOIN information_schema.constraint_column_usage ccu
+        ON ccu.constraint_name = tc.constraint_name
+       AND ccu.table_schema = tc.table_schema
+      WHERE tc.constraint_type = 'FOREIGN KEY'
+        AND tc.table_schema = 'public'`);
+  }
+
+  private async tablasConEmpresaId(): Promise<Set<string>> {
+    const filas = await this.prisma.$queryRawUnsafe<{ tabla: string }[]>(`
+      SELECT table_name AS tabla FROM information_schema.columns
+      WHERE column_name = 'empresaId' AND table_schema = 'public'`);
+    return new Set(filas.map((f) => f.tabla));
+  }
+
+  private async armarPlan() {
+    const [fks, conEmpresaId] = await Promise.all([
+      this.leerClavesForaneas(),
+      this.tablasConEmpresaId(),
+    ]);
+    return planDeBorrado(fks, (t) => conEmpresaId.has(t));
+  }
+
+  /**
+   * Qué se perdería al eliminar la empresa, sin tocar nada.
+   *
+   * El borrado es irreversible y abarca más de cien tablas: antes de
+   * confirmarlo hay que poder ver de qué tamaño es lo que se va. Devuelve solo
+   * las tablas con filas, de mayor a menor.
+   */
+  async previsualizarEliminacion(id: number) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id },
+      select: { id: true, razonSocial: true, ruc: true },
+    });
+    if (!empresa) throw new NotFoundException('Empresa no encontrada');
+
+    const plan = await this.armarPlan();
+    const detalle: { tabla: string; filas: number }[] = [];
+    for (const paso of plan) {
+      if (paso.tabla === 'Empresa') continue;
+      try {
+        const r = await this.prisma.$queryRawUnsafe<{ n: number }[]>(
+          sqlDeConteo(paso),
+          id,
+        );
+        const n = Number(r?.[0]?.n ?? 0);
+        if (n > 0) detalle.push({ tabla: paso.tabla, filas: n });
+      } catch {
+        // Una tabla que no se puede contar no debe tumbar la vista previa:
+        // el borrado la reportará si de verdad estorba.
+      }
+    }
+    detalle.sort((a, b) => b.filas - a.filas);
+    return {
+      empresa,
+      totalFilas: detalle.reduce((s, d) => s + d.filas, 0),
+      tablasAfectadas: detalle.length,
+      detalle,
+    };
+  }
+
+  /**
+   * Elimina la empresa y todo lo suyo.
+   *
+   * Va en UNA transacción: si algo falla, no queda una empresa a medio borrar
+   * —con los comprobantes idos y los productos todavía ahí— que es peor que no
+   * haber borrado nada.
+   *
+   * `confirmacionRuc` existe porque esto no se deshace y la pantalla lo
+   * disparaba con un solo clic. Que el admin escriba el RUC obliga a mirar
+   * cuál empresa está borrando.
+   */
+  async eliminar(id: number, confirmacionRuc?: string) {
     const empresa = await this.prisma.empresa.findUnique({ where: { id } });
     if (!empresa) throw new NotFoundException('Empresa no encontrada');
 
-    // Eliminar en orden para respetar las relaciones FK
-    try {
-      // 1. Eliminar detalles de comprobantes
-      await this.prisma.detalleComprobante.deleteMany({
-        where: { comprobante: { empresaId: id } },
-      });
-
-      // 2. Eliminar leyendas de comprobantes
-      await this.prisma.leyenda.deleteMany({
-        where: { comprobante: { empresaId: id } },
-      });
-
-      // 3. Eliminar pagos
-      await this.prisma.pago.deleteMany({
-        where: { empresaId: id },
-      });
-
-      // 4. Eliminar comprobantes
-      await this.prisma.comprobante.deleteMany({
-        where: { empresaId: id },
-      });
-
-      // 5. Eliminar movimientos de kardex (referencia productos)
-      await this.prisma.movimientoKardex.deleteMany({
-        where: { producto: { empresaId: id } },
-      });
-
-      // 6. Eliminar items de pedidos tienda (referencia productos)
-      await this.prisma.itemPedidoTienda.deleteMany({
-        where: { producto: { empresaId: id } },
-      });
-
-      // 7. Eliminar pedidos tienda
-      await this.prisma.pedidoTienda.deleteMany({
-        where: { empresaId: id },
-      });
-
-      // 8. Eliminar productos
-      await this.prisma.producto.deleteMany({
-        where: { empresaId: id },
-      });
-
-      // 9. Eliminar clientes
-      await this.prisma.cliente.deleteMany({
-        where: { empresaId: id },
-      });
-
-      // 10. Eliminar refresh tokens (referencia usuarios)
-      await this.prisma.refreshToken.deleteMany({
-        where: { usuario: { empresaId: id } },
-      });
-
-      // 11. Eliminar movimientos de caja (referencia usuarios)
-      await this.prisma.movimientoCaja.deleteMany({
-        where: { usuario: { empresaId: id } },
-      });
-
-      // 12. Eliminar usuarios
-      await this.prisma.usuario.deleteMany({
-        where: { empresaId: id },
-      });
-
-      // 13. Eliminar categorías
-      await this.prisma.categoria.deleteMany({
-        where: { empresaId: id },
-      });
-
-      // 14. Finalmente eliminar la empresa
-      return this.prisma.empresa.delete({ where: { id } });
-    } catch (error: any) {
+    const esperado = String(empresa.ruc ?? '').trim();
+    if (esperado && String(confirmacionRuc ?? '').trim() !== esperado) {
       throw new ForbiddenException(
-        `Error al eliminar empresa: ${error.message}. Puede tener datos relacionados que deben eliminarse primero.`,
+        `Para eliminar "${empresa.razonSocial}" escribe su RUC (${esperado}) para confirmar. La acción no se puede deshacer.`,
       );
     }
+
+    const plan = await this.armarPlan();
+    const borradas: { tabla: string; filas: number }[] = [];
+
+    await this.prisma.$transaction(
+      async (tx) => {
+        for (const paso of plan) {
+          try {
+            const n = await tx.$executeRawUnsafe(sqlDeBorrado(paso), id);
+            if (n > 0) borradas.push({ tabla: paso.tabla, filas: n });
+          } catch (error: any) {
+            // El mensaje anterior decía "puede tener datos relacionados" y no
+            // servía para nada: ahora se nombra la tabla que estorbó.
+            throw new ForbiddenException(
+              `No se pudo eliminar "${empresa.razonSocial}": falló el borrado de ${paso.tabla}. ${error?.message ?? ''}`.trim(),
+            );
+          }
+        }
+      },
+      { timeout: 120_000, maxWait: 20_000 },
+    );
+
+    return {
+      id,
+      razonSocial: empresa.razonSocial,
+      ruc: empresa.ruc,
+      tablasAfectadas: borradas.length,
+      filasEliminadas: borradas.reduce((s, b) => s + b.filas, 0),
+      detalle: borradas.sort((a, b) => b.filas - a.filas),
+    };
   }
 
   /**
