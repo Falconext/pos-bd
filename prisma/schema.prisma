@@ -434,18 +434,39 @@ model Empresa {
   documentosLogistica           DocumentoLogistica[]
   dispositivosGpsLogistica      DispositivoGpsLogistica[]
   geocercasLogistica            GeocercaLogistica[]
-  apiKeysLogistica              ApiKeyLogistica[]
+  apiKeys                       ApiKey[]
+  idempotenciaApi               IdempotenciaApi[]
   webhookEndpointsLogistica     WebhookEndpointLogistica[]
 
   repartidores            Repartidor[]
   despachoMensajeTemplate DespachoMensajeTemplate?
 
-  bancoNombre             String?
-  numeroCuenta            String?
-  cci                     String?
-  monedaCuenta            String?                        @default("SOLES")
-  resellerId              Int?
-  reseller                Reseller?                      @relation(fields: [resellerId], references: [id])
+  bancoNombre  String?
+  numeroCuenta String?
+  cci          String?
+  monedaCuenta String?   @default("SOLES")
+  resellerId   Int?
+  reseller     Reseller? @relation(fields: [resellerId], references: [id])
+
+  /// Integrador de la API que dio de alta a esta empresa como EMISOR.
+  ///
+  /// Un integrador es otra Empresa: la que paga la factura mensual por el
+  /// consumo de todos sus emisores. Se modela como auto-relación y no
+  /// reusando `Reseller` porque son cosas distintas — un reseller revende el
+  /// ERP con su marca y tiene saldo y descuentos; un integrador consume la
+  /// API y se le cobra por comprobante.
+  ///
+  /// Nulo en las empresas que son clientes directos de Krezka.
+  integradorId Int?
+  integrador   Empresa?  @relation("IntegradorEmisores", fields: [integradorId], references: [id])
+  emisores     Empresa[] @relation("IntegradorEmisores")
+
+  /// Identificador público del emisor en la API (`iss_…`).
+  ///
+  /// No se expone el id numérico: es secuencial, y decirle a un integrador
+  /// que es el emisor 412 le dice cuántos clientes tiene Krezka. Se genera al
+  /// darla de alta como emisor; nulo en las empresas que no lo son.
+  apiPublicId             String?                        @unique
   resellerMovimientos     ResellerMovimiento[]
   brand                   String                         @default("falconext")
   producto                String                         @default("facturacion")
@@ -508,8 +529,8 @@ model Empresa {
   leadConversaciones      LeadConversacion[]
   leadProspectos          LeadProspecto[]
   leadDocumentos          LeadDocumento[]
-  leadConsultas             LeadConsulta[]
-  leadDisparos              LeadDisparo[]
+  leadConsultas           LeadConsulta[]
+  leadDisparos            LeadDisparo[]
   soporteConversacion     SoporteConversacion?
   reglasComision          ReglaComision[]
   cobros                  CobroEmpresa[]
@@ -684,7 +705,7 @@ enum DisponibilidadProducto {
 }
 
 model Producto {
-  id                  Int                  @id @default(autoincrement())
+  id                  Int                     @id @default(autoincrement())
   codigo              String
   descripcion         String
   categoriaId         Int?
@@ -692,55 +713,55 @@ model Producto {
   tipoAfectacionIGV   String
   precioUnitario      Decimal
   valorUnitario       Decimal
-  igvPorcentaje       Decimal              @default(18.00)
-  moneda              String               @default("PEN") // "PEN" (soles) o "USD" (dólares). Al facturar, USD se convierte a PEN con el TC del día.
-  stock               Decimal              @default(0) @db.Decimal(12, 3)
-  estado              EstadoType           @default(ACTIVO)
-  creadoEn            DateTime             @default(now())
+  igvPorcentaje       Decimal                 @default(18.00)
+  moneda              String                  @default("PEN") // "PEN" (soles) o "USD" (dólares). Al facturar, USD se convierte a PEN con el TC del día.
+  stock               Decimal                 @default(0) @db.Decimal(12, 3)
+  estado              EstadoType              @default(ACTIVO)
+  creadoEn            DateTime                @default(now())
   empresaId           Int?
-  costoPromedio       Decimal?             @default(0)
-  costoFijo           Decimal?             @default(0)
+  costoPromedio       Decimal?                @default(0)
+  costoFijo           Decimal?                @default(0)
   comisionPorVenta    Decimal?
   comisionPorcentaje  Decimal?
   stockMaximo         Int?
-  stockMinimo         Int?                 @default(0)
+  stockMinimo         Int?                    @default(0)
   descripcionLarga    String?
   /// Video del producto (TikTok, YouTube, Instagram, Facebook o mp4 directo).
   /// Se guarda la URL tal como la pega el negocio; la tienda la convierte a
   /// reproductor. Para quien vende mostrando el producto real en sus redes, el
   /// video convence más que una foto.
   videoUrl            String?
-  destacado           Boolean              @default(false)
+  destacado           Boolean                 @default(false)
   imagenUrl           String?
   imagenesExtra       String?
-  publicarEnTienda    Boolean              @default(true)
+  publicarEnTienda    Boolean                 @default(true)
   marcaId             Int?
-  ratingAvg           Decimal?             @default(0)
-  ratingCount         Int?                 @default(0)
+  ratingAvg           Decimal?                @default(0)
+  ratingCount         Int?                    @default(0)
   codigoBarras        String?
   codigoDigemid       String?
   codProdSunat        String?
   concentracion       String?
-  controlado          Boolean              @default(false)
-  factorConversion    Int                  @default(1)
+  controlado          Boolean                 @default(false)
+  factorConversion    Int                     @default(1)
   fechaFinOferta      DateTime?
   fechaInicioOferta   DateTime?
   laboratorio         String?
-  ofertaActiva        Boolean              @default(false)
+  ofertaActiva        Boolean                 @default(false)
   pesoGramos          Decimal?
   precioOferta        Decimal?
   presentacion        String?
   principioActivo     String?
-  refrigerado         Boolean              @default(false)
-  requiereReceta      Boolean              @default(false)
+  refrigerado         Boolean                 @default(false)
+  requiereReceta      Boolean                 @default(false)
   unidadCompra        String?
   unidadVenta         String?
   volumenMl           Decimal?
   preciosMayorista    Json?
   atributosTecnicos   Json?
   localizacion        String?
-  porcentajeVenta     Int                  @default(100)
-  porcentajeProvision Int                  @default(0)
+  porcentajeVenta     Int                     @default(100)
+  porcentajeProvision Int                     @default(0)
   /// Qué se le puede prometer al cliente. Null = se deduce del stock, que es
   /// lo correcto para quien sí lleva inventario; puesto a mano, manda sobre el
   /// stock, que es lo que necesita quien no lo lleva.
@@ -2401,23 +2422,23 @@ model OrdenCompra {
 }
 
 model DetalleOrdenCompra {
-  id             Int         @id @default(autoincrement())
-  ordenCompraId  Int
-  productoId     Int?
-  descripcion    String
+  id                 Int         @id @default(autoincrement())
+  ordenCompraId      Int
+  productoId         Int?
+  descripcion        String
   // SIEMPRE en unidades sueltas, igual que el stock: si se pidieron 5 cajas de
   // 6, acá van 30. Así `recibir` no tiene que convertir nada.
-  cantidad       Decimal
+  cantidad           Decimal
   // Costo de UNA unidad.
-  precioUnitario Decimal
+  precioUnitario     Decimal
   // Cuántas unidades trae la caja que se le pidió al proveedor. null o 1 = se
   // pidió por unidad. No cambia la cantidad (que ya viene en unidades): sirve
   // para mostrar "5 paq. x6" en la orden y en el PDF del proveedor, y para que
   // al reabrir la orden se vea en cajas y no en 30 sueltas.
   unidadesPorPaquete Int?
-  subtotal       Decimal
-  ordenCompra    OrdenCompra @relation(fields: [ordenCompraId], references: [id], onDelete: Cascade)
-  producto       Producto?   @relation(fields: [productoId], references: [id])
+  subtotal           Decimal
+  ordenCompra        OrdenCompra @relation(fields: [ordenCompraId], references: [id], onDelete: Cascade)
+  producto           Producto?   @relation(fields: [productoId], references: [id])
 
   @@index([ordenCompraId])
 }
@@ -2466,12 +2487,12 @@ enum TipoRepartidor {
 }
 
 model EnvioDespacho {
-  id                       Int            @id @default(autoincrement())
-  comprobanteId            Int            @unique
-  comprobante              Comprobante    @relation(fields: [comprobanteId], references: [id], onDelete: Cascade)
+  id                       Int                @id @default(autoincrement())
+  comprobanteId            Int                @unique
+  comprobante              Comprobante        @relation(fields: [comprobanteId], references: [id], onDelete: Cascade)
   transportista            String?
   codigoGuia               String?
-  estado                   EstadoDespacho @default(PREPARANDO)
+  estado                   EstadoDespacho     @default(PREPARANDO)
   observaciones            String?
   direccionDestino         String?
   fechaEstimada            DateTime?
@@ -2480,7 +2501,7 @@ model EnvioDespacho {
   tipoEnvio                String? // AGENCIA | DOMICILIO
   agenciaDestino           String? // Nombre de agencia destino (ej: "Shalom Cusco Centro")
   celularDest              String? // Celular del destinatario
-  nroPaquetes              Int?           @default(1)
+  nroPaquetes              Int?               @default(1)
   turnoEnvio               String? // MANANA | TARDE | NOCHE
   tipoMercaderia           String? // Clasificación para el courier (Shalom)
   claveEnvio               String?
@@ -2488,7 +2509,7 @@ model EnvioDespacho {
   claveOrden               String?
   // Estado de rastreo Shalom (persistido: read-through cache + scheduler)
   shalomEstado             String? // etapa actual: registrado|origen|transito|destino|entregado
-  shalomEntregado          Boolean        @default(false)
+  shalomEntregado          Boolean            @default(false)
   shalomTrackingJson       Json? // último snapshot normalizado { search, statuses, ose_id }
   shalomOseId              String? // ose_id resuelto (para descargar comprobante/etiqueta)
   shalomSyncAt             DateTime? // última sincronización con Shalom
@@ -2500,7 +2521,7 @@ model EnvioDespacho {
   // Estado de rastreo Olva (persistido: read-through cache + scheduler).
   // El N° de guía Olva vive en `nroOrden` (Olva no usa clave, solo el número).
   olvaEstado               String? // etapa actual: registrado|transito|reparto|destino|entregado
-  olvaEntregado            Boolean        @default(false)
+  olvaEntregado            Boolean            @default(false)
   olvaTrackingJson         Json? // último snapshot { success, data: { status, events[] } }
   olvaSyncAt               DateTime? // última sincronización con Olva
   olvaAgenciaDestinoCodigo String? // code de la agencia destino (para crear la guía)
@@ -2510,7 +2531,7 @@ model EnvioDespacho {
   pesoKg                   Float?
   establecimiento          String? // Local/sucursal desde donde despacha
   repartidorId             Int?
-  repartidor               Repartidor?    @relation(fields: [repartidorId], references: [id], onDelete: SetNull)
+  repartidor               Repartidor?        @relation(fields: [repartidorId], references: [id], onDelete: SetNull)
   empaquetador             String? // Nombre del empaquetador
   // Datos del destinatario (Shalom)
   nombreDestinatario       String? // Nombre completo del destinatario
@@ -2524,22 +2545,22 @@ model EnvioDespacho {
   distrito                 String? // nombre del distrito (como lo lista el courier)
   coordenadas              String? // "lat,lng" de la dirección de entrega (opcional)
   formaPagoCobro           String? // EFECTIVO | YAPE | PLIN | TRANSFERENCIA | POS | NO_COBRAR
-  revisarProducto          Boolean        @default(false) // el cliente puede abrir/revisar antes de pagar
-  costoEnvio               Float?         @default(0) // Monto cobrado al cliente o absorbido por el negocio
+  revisarProducto          Boolean            @default(false) // el cliente puede abrir/revisar antes de pagar
+  costoEnvio               Float?             @default(0) // Monto cobrado al cliente o absorbido por el negocio
   /// Lo que el NEGOCIO le paga al courier por este despacho (motorizado, courier
   /// local, Shalom, Olva). Es el costo real del envío, la contracara de
   /// `costoEnvio`, que es lo que se le cobra al cliente. Alimenta el reporte de
   /// gasto de envío por courier.
   costoCourier             Float?
-  pagarFlete               String?        @default("NEGOCIO") // CLIENTE | NEGOCIO
-  aplicacionMontoCliente   String?        @default("NEGOCIO") // ITEM_ENVIO | ADELANTO | NEGOCIO
+  pagarFlete               String?            @default("NEGOCIO") // CLIENTE | NEGOCIO
+  aplicacionMontoCliente   String?            @default("NEGOCIO") // ITEM_ENVIO | ADELANTO | NEGOCIO
   /// Cuándo se marcó ENTREGADO. El historial ya lo guarda, pero adentro de un
   /// Json no se puede filtrar ni ordenar, y el reclamo "no me llegó" siempre
   /// se discute con una fecha.
   entregadoEn              DateTime?
   evidencias               EvidenciaEntrega[]
-  creadoEn                 DateTime       @default(now())
-  actualizadoEn            DateTime       @updatedAt
+  creadoEn                 DateTime           @default(now())
+  actualizadoEn            DateTime           @updatedAt
 
   @@index([comprobanteId])
   @@index([repartidorId])
@@ -2557,28 +2578,28 @@ model EnvioDespacho {
 /// cada una la sube alguien distinto en un momento distinto, y hace falta
 /// poder listar los despachos entregados que NO tienen ninguna.
 model EvidenciaEntrega {
-  id           Int                  @id @default(autoincrement())
-  despachoId   Int
-  despacho     EnvioDespacho        @relation(fields: [despachoId], references: [id], onDelete: Cascade)
+  id            Int                  @id @default(autoincrement())
+  despachoId    Int
+  despacho      EnvioDespacho        @relation(fields: [despachoId], references: [id], onDelete: Cascade)
   /// Desnormalizado para filtrar por empresa sin pasar por el comprobante.
   /// No lleva relación a Empresa: el borrado ya cae en cascada por el
   /// despacho, que depende del comprobante.
-  empresaId    Int
-  url          String
-  tipo         TipoEvidenciaEntrega @default(FOTO_PAQUETE)
-  nota         String?
+  empresaId     Int
+  url           String
+  tipo          TipoEvidenciaEntrega @default(FOTO_PAQUETE)
+  nota          String?
   /// Quién la registró: el usuario del panel o el repartidor en la calle.
-  usuarioId    Int?
+  usuarioId     Int?
   usuarioNombre String?
-  repartidorId Int?
+  repartidorId  Int?
   /// Cuándo se tomó la entrega. Por defecto el momento de subirla, pero se
   /// puede corregir: el motorizado sube las fotos del día al volver.
-  tomadaEn     DateTime             @default(now())
+  tomadaEn      DateTime             @default(now())
   /// Una evidencia no se borra: se anula y queda el rastro de quién lo hizo.
   /// Una prueba que se puede hacer desaparecer sin dejar huella no prueba nada.
-  anuladaEn    DateTime?
-  anuladaPor   String?
-  creadoEn     DateTime             @default(now())
+  anuladaEn     DateTime?
+  anuladaPor    String?
+  creadoEn      DateTime             @default(now())
 
   @@index([despachoId])
   @@index([empresaId, anuladaEn])
@@ -2996,25 +3017,25 @@ model IngresoManual {
 }
 
 model IngresoSistema {
-  id            Int      @id @default(autoincrement())
-  concepto      String
-  tipo          String // SUSCRIPCION, ACTIVACION, SOPORTE, PERSONALIZADO, OTROS
-  monto         Decimal
-  fecha         DateTime
-  descripcion   String?
+  id             Int      @id @default(autoincrement())
+  concepto       String
+  tipo           String // SUSCRIPCION, ACTIVACION, SOPORTE, PERSONALIZADO, OTROS
+  monto          Decimal
+  fecha          DateTime
+  descripcion    String?
   /// Empresa que pagó, cuando el ingreso viene de una mensualidad. Sin esto el
   /// panel de finanzas solo sabía sumar lo cobrado por el canal reseller y la
   /// plata de los clientes directos no aparecía en ningún lado.
-  empresaId     Int?
+  empresaId      Int?
   /// Cobro que originó el ingreso. Es 1-a-1: un cobro aplicado deja exactamente
   /// un ingreso, y por eso registrar dos veces el mismo pago falla en la BD en
   /// vez de duplicar la cifra del mes.
-  cobroEmpresaId Int?    @unique
-  creadoEn      DateTime @default(now())
-  actualizadoEn DateTime @updatedAt
+  cobroEmpresaId Int?     @unique
+  creadoEn       DateTime @default(now())
+  actualizadoEn  DateTime @updatedAt
 
-  empresa       Empresa?      @relation(fields: [empresaId], references: [id])
-  cobroEmpresa  CobroEmpresa? @relation(fields: [cobroEmpresaId], references: [id])
+  empresa      Empresa?      @relation(fields: [empresaId], references: [id])
+  cobroEmpresa CobroEmpresa? @relation(fields: [cobroEmpresaId], references: [id])
 
   @@index([fecha])
   @@index([tipo])
@@ -3036,7 +3057,7 @@ model IngresoSistema {
 /// administrador. Esa separación entre "se debe" y "se pagó" es la que permite
 /// enchufar el cobro automático después sin rehacer nada.
 model CobroEmpresa {
-  id               Int      @id @default(autoincrement())
+  id               Int       @id @default(autoincrement())
   empresaId        Int
   /// Mes que cubre el cobro, "YYYY-MM". Junto al índice único de abajo es lo
   /// que impide que el cron cobre dos veces el mismo mes si corre dos veces.
@@ -3045,9 +3066,9 @@ model CobroEmpresa {
   /// la empresa cambia de plan, el cobro de este mes sigue diciendo lo que se
   /// cobró de verdad.
   planNombre       String?
-  monto            Decimal  @db.Decimal(10, 2)
-  estado           String   @default("PENDIENTE") // PENDIENTE | APLICADO | RECHAZADO | ANULADO
-  intento          Int      @default(1)
+  monto            Decimal   @db.Decimal(10, 2)
+  estado           String    @default("PENDIENTE") // PENDIENTE | APLICADO | RECHAZADO | ANULADO
+  intento          Int       @default(1)
   motivo           String?
   /// Cómo pagó: MERCADO_PAGO, YAPE, TRANSFERENCIA, EFECTIVO, OTRO.
   medioPago        String?
@@ -3060,11 +3081,11 @@ model CobroEmpresa {
   /// Hasta dónde quedó la suscripción al aplicarlo.
   cubreHasta       DateTime?
   descripcion      String?
-  creadoEn         DateTime @default(now())
-  actualizadoEn    DateTime @updatedAt
+  creadoEn         DateTime  @default(now())
+  actualizadoEn    DateTime  @updatedAt
 
-  empresa          Empresa         @relation(fields: [empresaId], references: [id])
-  ingreso          IngresoSistema?
+  empresa Empresa         @relation(fields: [empresaId], references: [id])
+  ingreso IngresoSistema?
 
   @@unique([empresaId, periodo])
   @@index([empresaId, estado])
@@ -4185,9 +4206,49 @@ model HistorialEstadoDespachoLogistica {
 /// Claves de API para la API pública de Logística. Se guarda SOLO el hash
 /// (SHA-256) de la clave, nunca el texto plano. `prefijo` y `ultimosCuatro`
 /// permiten identificarla en la UI sin poder reconstruirla.
-model ApiKeyLogistica {
+/// Claves de idempotencia de la API pública. Una fila por (empresa, clave):
+/// mientras viva, repetir la clave con el mismo cuerpo devuelve la respuesta
+/// guardada en vez de volver a ejecutar. Es lo que impide que un reintento de
+/// red emita dos facturas, las dos válidas ante SUNAT.
+///
+/// `respuesta` nula = la primera llamada sigue en curso; un segundo intento
+/// recibe 409 en vez de ejecutarse en paralelo. El índice único compuesto es
+/// la pieza de seguridad: hace que dos requests simultáneos con la misma
+/// clave colisionen en la base y solo uno ejecute.
+model IdempotenciaApi {
+  id         Int      @id @default(autoincrement())
+  empresaId  Int
+  clave      String
+  metodo     String
+  ruta       String
+  /// SHA-256 del cuerpo canonizado (claves ordenadas).
+  huella     String
+  estadoHttp Int?
+  respuesta  Json?
+  creadoEn   DateTime @default(now())
+  expiraEn   DateTime
+
+  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  @@unique([empresaId, clave])
+  @@index([expiraEn])
+}
+
+/// API keys de las APIs públicas de Falconext, de todos los productos.
+///
+/// Nació como `ApiKeyLogistica` y se generalizó al abrir Facturación: la
+/// mecánica —hash, entornos, revocación, rate limit— es idéntica, y duplicarla
+/// por producto habría significado dos sitios donde arreglar el día que algo
+/// falle en la autenticación.
+///
+/// Solo se guarda el SHA-256 de la clave, nunca el texto plano: la clave
+/// completa se muestra una sola vez al crearla. `producto` ata la key a una
+/// API; una de logística no puede emitir facturas aunque sea válida.
+model ApiKey {
   id            Int       @id @default(autoincrement())
   empresaId     Int
+  /// "logistica" | "facturacion". Una key sirve para un solo producto.
+  producto      String    @default("logistica")
   nombre        String?
   entorno       String    @default("live") // "live" | "test"
   prefijo       String // p.ej. "sk_live_a1b2" (display)
@@ -4201,8 +4262,17 @@ model ApiKeyLogistica {
 
   empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
 
-  @@index([empresaId])
+  @@index([empresaId, producto])
   @@index([hash])
+  /// La tabla conserva su nombre de origen a propósito.
+  ///
+  /// El despliegue sincroniza el esquema con `prisma db push
+  /// --accept-data-loss`, no con migraciones. `db push` no detecta
+  /// renombrados: ante un modelo con otro nombre haría DROP + CREATE y se
+  /// perderían TODAS las API keys en uso, sin preguntar. El nombre físico es
+  /// cosmético; el del modelo es el que usa el código. Se renombra la tabla
+  /// el día que el historial de migraciones esté sano.
+  @@map("ApiKeyLogistica")
 }
 
 /// Endpoints de webhook registrados por una empresa para recibir eventos
@@ -4246,9 +4316,9 @@ enum EstadoLeadConversacion {
 /// mandar dos veces el mismo aviso: "la recompra del comprobante 829" es un
 /// solo disparo, por más veces que corra el cron.
 model LeadDisparo {
-  id             Int                @id @default(autoincrement())
+  id             Int               @id @default(autoincrement())
   empresaId      Int
-  empresa        Empresa            @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  empresa        Empresa           @relation(fields: [empresaId], references: [id], onDelete: Cascade)
   tipo           TipoDisparoLead
   telefono       String
   prospectoId    Int?
@@ -4257,7 +4327,7 @@ model LeadDisparo {
   /// Es la mitad de la idempotencia.
   referencia     String
   programadoPara DateTime
-  estado         EstadoDisparoLead  @default(PROGRAMADO)
+  estado         EstadoDisparoLead @default(PROGRAMADO)
   /// Por qué no se envió. Se guarda porque "no salió" sin motivo es un
   /// reclamo que nadie puede responder.
   motivo         String?
@@ -4267,9 +4337,9 @@ model LeadDisparo {
   /// Texto exacto que se envió. Es la prueba de qué recibió el cliente.
   textoEnviado   String?
   enviadoEn      DateTime?
-  intentos       Int                @default(0)
-  creadoEn       DateTime           @default(now())
-  actualizadoEn  DateTime           @updatedAt
+  intentos       Int               @default(0)
+  creadoEn       DateTime          @default(now())
+  actualizadoEn  DateTime          @updatedAt
 
   @@unique([empresaId, tipo, telefono, referencia])
   @@index([empresaId, estado, programadoPara])
@@ -4336,17 +4406,17 @@ enum EtapaCrmLead {
 /// "¿quién dio el OK a este pago?" se responde con una fila, no con un campo
 /// que se sobreescribe en el siguiente movimiento.
 model LeadEtapaHistorial {
-  id            Int           @id @default(autoincrement())
-  prospectoId   Int
-  prospecto     LeadProspecto @relation(fields: [prospectoId], references: [id], onDelete: Cascade)
-  empresaId     Int
-  desde         EtapaCrmLead?
-  hacia         EtapaCrmLead
+  id          Int           @id @default(autoincrement())
+  prospectoId Int
+  prospecto   LeadProspecto @relation(fields: [prospectoId], references: [id], onDelete: Cascade)
+  empresaId   Int
+  desde       EtapaCrmLead?
+  hacia       EtapaCrmLead
   /// `bot` cuando lo movió un automatismo; el nombre de la persona si fue un clic.
-  actor         String
-  usuarioId     Int?
-  nota          String?
-  creadoEn      DateTime      @default(now())
+  actor       String
+  usuarioId   Int?
+  nota        String?
+  creadoEn    DateTime      @default(now())
 
   @@index([prospectoId])
   @@index([empresaId, hacia])
@@ -4358,23 +4428,23 @@ model LeadEtapaHistorial {
 /// sin ver el comprobante no es validar, así que la imagen se baja de
 /// WhatsApp y se guarda: si no, el encargado estaría aprobando a ciegas.
 model LeadComprobantePago {
-  id             Int           @id @default(autoincrement())
-  empresaId      Int
-  prospectoId    Int
-  prospecto      LeadProspecto @relation(fields: [prospectoId], references: [id], onDelete: Cascade)
-  conversacionId Int
+  id              Int           @id @default(autoincrement())
+  empresaId       Int
+  prospectoId     Int
+  prospecto       LeadProspecto @relation(fields: [prospectoId], references: [id], onDelete: Cascade)
+  conversacionId  Int
   /// URL en S3. Vacía si la imagen no se pudo bajar: la etapa igual avanza,
   /// porque el cliente SÍ mandó algo y alguien tiene que mirarlo.
-  url            String?
+  url             String?
   /// Id del archivo en WhatsApp, para reintentar la descarga.
-  mediaId        String?
+  mediaId         String?
   /// Lo que el cliente escribió junto a la foto.
-  nota           String?
-  recibidoEn     DateTime      @default(now())
-  validadoEn     DateTime?
-  validadoPor    String?
-  validadoPorId  Int?
-  rechazadoEn    DateTime?
+  nota            String?
+  recibidoEn      DateTime      @default(now())
+  validadoEn      DateTime?
+  validadoPor     String?
+  validadoPorId   Int?
+  rechazadoEn     DateTime?
   rechazadoMotivo String?
 
   @@index([empresaId, validadoEn])
@@ -4393,9 +4463,9 @@ model LeadComprobantePago {
 /// con IA costaría una llamada por consulta y daría un número distinto cada
 /// vez que se corra.
 model LeadConsulta {
-  id             Int             @id @default(autoincrement())
+  id             Int              @id @default(autoincrement())
   empresaId      Int
-  empresa        Empresa         @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  empresa        Empresa          @relation(fields: [empresaId], references: [id], onDelete: Cascade)
   conversacionId Int
   prospectoId    Int?
   telefono       String
@@ -4464,13 +4534,13 @@ model LeadConversacion {
 }
 
 model LeadMensaje {
-  id             Int              @id @default(autoincrement())
-  conversacionId Int
-  conversacion   LeadConversacion @relation(fields: [conversacionId], references: [id], onDelete: Cascade)
-  rol            RolLeadMensaje
-  contenido      String
-  whatsappMsgId  String?          @unique // dedup de mensajes entrantes
-  esAudio        Boolean          @default(false)
+  id               Int              @id @default(autoincrement())
+  conversacionId   Int
+  conversacion     LeadConversacion @relation(fields: [conversacionId], references: [id], onDelete: Cascade)
+  rol              RolLeadMensaje
+  contenido        String
+  whatsappMsgId    String?          @unique // dedup de mensajes entrantes
+  esAudio          Boolean          @default(false)
   // Herramientas que la IA pidió al generar ESTE mensaje (nombre, argumentos y
   // resultado). Es la caja negra del turno: sin esto no hay forma de saber por
   // qué el asistente dijo lo que dijo, ni de alimentar la analítica de consultas.
@@ -4478,20 +4548,20 @@ model LeadMensaje {
   // Embedding de la respuesta del asistente (768 dims). Sirve para no mandar
   // dos veces el mismo mensaje con otras palabras: se compara contra las
   // últimas respuestas de la conversación. Vacío en los mensajes del cliente.
-  embedding      Float[]
-  creadoEn       DateTime         @default(now())
+  embedding        Float[]
+  creadoEn         DateTime         @default(now())
 
   @@index([conversacionId])
 }
 
 model LeadProspecto {
-  id                Int                 @id @default(autoincrement())
+  id                Int                   @id @default(autoincrement())
   empresaId         Int
-  empresa           Empresa             @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  empresa           Empresa               @relation(fields: [empresaId], references: [id], onDelete: Cascade)
   telefonoProspecto String
   nombreProspecto   String?
-  puntaje           Int                 @default(0)
-  estado            EstadoLeadProspecto @default(FRIO)
+  puntaje           Int                   @default(0)
+  estado            EstadoLeadProspecto   @default(FRIO)
   // BANT (0-30 / 0-20 / 0-25 / 0-25)
   presupuesto       Int?
   autoridad         Int?
@@ -4500,7 +4570,7 @@ model LeadProspecto {
   resumen           String?
   puntosClave       String[]
   proximaAccion     String?
-  botActivo         Boolean             @default(true)
+  botActivo         Boolean               @default(true)
   /// Hasta cuándo dura la pausa. Cuando un humano toma el chat, la IA se
   /// calla un rato y vuelve sola: una pausa permanente convierte cada
   /// intervención manual en un bot apagado para siempre, que es lo que
@@ -4512,8 +4582,8 @@ model LeadProspecto {
   /// Etapa OPERATIVA del pedido, las 12 del anexo. Es otra cosa que `estado`
   /// (FRÍO/TIBIO/CALIENTE), que mide temperatura del lead: esto es lo que el
   /// encargado mira para saber qué le toca hacer hoy.
-  etapa             EtapaCrmLead        @default(NUEVO)
-  etapaEn           DateTime            @default(now())
+  etapa             EtapaCrmLead          @default(NUEVO)
+  etapaEn           DateTime              @default(now())
   historialEtapas   LeadEtapaHistorial[]
   comprobantesPago  LeadComprobantePago[]
   /// Sexo y edad: el cliente pide un reporte demográfico. Solo se llenan si
@@ -4524,10 +4594,10 @@ model LeadProspecto {
   notificadoEn      DateTime? // idempotencia de alerta lead caliente
   cotizacionId      Int? // COT (comprobante) que la IA generó desde el chat, si aplica
   clienteId         Int? // Cliente de MYPE creado al convertir el prospecto (Fase 3)
-  conversacionId    Int                 @unique
-  conversacion      LeadConversacion    @relation(fields: [conversacionId], references: [id], onDelete: Cascade)
-  creadoEn          DateTime            @default(now())
-  actualizadoEn     DateTime            @updatedAt
+  conversacionId    Int                   @unique
+  conversacion      LeadConversacion      @relation(fields: [conversacionId], references: [id], onDelete: Cascade)
+  creadoEn          DateTime              @default(now())
+  actualizadoEn     DateTime              @updatedAt
 
   @@index([empresaId, estado])
   @@index([empresaId, puntaje])
@@ -4551,45 +4621,45 @@ model LeadPedidoBorrador {
 
   // ── Destino: decide la tarifa, la forma de pago y qué datos pedir ────────
   /// Nombre de la zona resuelta ("Lima", "Provincia"), de la config de envío.
-  zona           String?
+  zona          String?
   /// DOMICILIO | AGENCIA | RECOJO
-  tipoZona       String?
+  tipoZona      String?
   /// Distrito o ciudad, con su nombre oficial.
-  lugar          String?
-  destinoRegion  String?
-  costoEnvio     Decimal?         @db.Decimal(10, 2)
+  lugar         String?
+  destinoRegion String?
+  costoEnvio    Decimal? @db.Decimal(10, 2)
 
   // ── Datos de quien recibe ────────────────────────────────────────────────
-  nombre         String?
-  dni            String?
-  celular        String?
-  direccion      String?
-  referencia     String?
+  nombre       String?
+  dni          String?
+  celular      String?
+  direccion    String?
+  referencia   String?
   /// Franja acordada, tal como se la confirmó al cliente.
-  horario        String?
+  horario      String?
   /// Sede de la agencia, cuando va por courier.
-  agenciaSede    String?
+  agenciaSede  String?
   /// Si recibe un tercero.
-  recibeNombre   String?
-  recibeDni      String?
+  recibeNombre String?
+  recibeDni    String?
 
   // ── Lo que lleva ─────────────────────────────────────────────────────────
   /// [{ productoId, cantidad }] confirmados por el cliente.
-  itemsJson      Json?
+  itemsJson         Json?
   /// COT generada desde el chat, si ya se cotizó.
-  cotizacionId   Int?
-  cotizadoEn     DateTime?
+  cotizacionId      Int?
+  cotizadoEn        DateTime?
   /// Descuento por pack que se le aplicó, en soles. El anexo pide el balance
   /// de descuentos otorgados: sin guardarlo habría que recalcularlo con las
   /// reglas de HOY sobre pedidos viejos, y daría un número que nunca pasó.
-  descuentoAplicado Decimal?       @db.Decimal(10, 2)
+  descuentoAplicado Decimal?  @db.Decimal(10, 2)
   /// Comprobante del pedido ya registrado. Con esto puesto, no se registra
   /// dos veces por más que el cliente insista.
-  comprobanteId  Int?
-  registradoEn   DateTime?
+  comprobanteId     Int?
+  registradoEn      DateTime?
 
-  creadoEn       DateTime         @default(now())
-  actualizadoEn  DateTime         @updatedAt
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
 
   @@index([empresaId])
 }
