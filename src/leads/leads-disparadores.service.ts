@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
+import { esNumeroInterno, numerosInternos } from './numeros-internos';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { EtapaCrm, etapaDesdeDespacho } from './leads-embudo';
 import { LeadsEmbudoService } from './leads-embudo.service';
@@ -69,6 +70,14 @@ export class LeadsDisparadoresService {
     const config = await this.configDe(datos.empresaId);
     if (!config.activos.includes(datos.tipo)) {
       return { programado: false, motivo: 'disparador apagado' };
+    }
+    // Los números del propio negocio no reciben avisos automáticos. Ya no
+    // entran al embudo; recibir recordatorios de recompra tampoco tiene
+    // sentido, y mientras el dueño prueba el bot le caerían a él mismo.
+    // Se corta acá y no al enviar: así no se acumulan disparos que nunca van
+    // a salir y que después hay que explicar en el panel.
+    if (await this.esNumeroDeLaEmpresa(datos.empresaId, datos.telefono)) {
+      return { programado: false, motivo: 'número interno del negocio' };
     }
 
     const programadoPara = cuandoDisparar(
@@ -156,6 +165,47 @@ export class LeadsDisparadoresService {
   }
 
   /** ¿Este número pidió la baja? */
+  /**
+   * ¿El número es del propio negocio (el dueño, su equipo, un número de
+   * pruebas)? Esos no son clientes: no se les manda publicidad ni
+   * recordatorios.
+   *
+   * Ante un error de consulta devuelve false: dejar de avisarle a un cliente
+   * de verdad es peor que mandarle un aviso al dueño.
+   */
+  async esNumeroDeLaEmpresa(
+    empresaId: number,
+    telefono: string,
+  ): Promise<boolean> {
+    try {
+      const [admins, empresa] = await Promise.all([
+        this.prisma.usuario.findMany({
+          where: { empresaId, rol: 'ADMIN_EMPRESA' },
+          select: { celular: true },
+        }),
+        this.prisma.empresa.findUnique({
+          where: { id: empresaId },
+          select: { iaVentasConfigJson: true },
+        }),
+      ]);
+      const cfg = (empresa?.iaVentasConfigJson ?? {}) as {
+        numerosInternos?: string[];
+      };
+      return esNumeroInterno(
+        telefono,
+        numerosInternos(
+          admins.map((a) => a.celular),
+          cfg.numerosInternos ?? [],
+        ),
+      );
+    } catch (e: any) {
+      this.logger.warn(
+        `No se pudo saber si ${telefono} es interno de la empresa ${empresaId}: ${e?.message}`,
+      );
+      return false;
+    }
+  }
+
   async estaDeBaja(empresaId: number, telefono: string): Promise<boolean> {
     const fila = await this.prisma.leadBajaAvisos.findUnique({
       where: { empresaId_telefono: { empresaId, telefono } },
@@ -236,7 +286,12 @@ export class LeadsDisparadoresService {
 
     const [deBaja, situacionChat, marketingRecientes, disponible] =
       await Promise.all([
-        this.estaDeBaja(empresaId, d.telefono),
+        // Los internos cuentan como baja al enviar: cubre lo que quedó
+        // programado antes de marcar el número como interno.
+        Promise.all([
+          this.estaDeBaja(empresaId, d.telefono),
+          this.esNumeroDeLaEmpresa(empresaId, d.telefono),
+        ]).then(([baja, interno]) => baja || interno),
         this.situacionDelChat(empresaId, d.telefono),
         this.marketingRecientes(empresaId, d.telefono, config),
         def.exigeProductoDisponible
