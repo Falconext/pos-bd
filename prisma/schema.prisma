@@ -441,12 +441,32 @@ model Empresa {
   repartidores            Repartidor[]
   despachoMensajeTemplate DespachoMensajeTemplate?
 
-  bancoNombre             String?
-  numeroCuenta            String?
-  cci                     String?
-  monedaCuenta            String?                        @default("SOLES")
-  resellerId              Int?
-  reseller                Reseller?                      @relation(fields: [resellerId], references: [id])
+  bancoNombre  String?
+  numeroCuenta String?
+  cci          String?
+  monedaCuenta String?   @default("SOLES")
+  resellerId   Int?
+  reseller     Reseller? @relation(fields: [resellerId], references: [id])
+
+  /// Integrador de la API que dio de alta a esta empresa como EMISOR.
+  ///
+  /// Un integrador es otra Empresa: la que paga la factura mensual por el
+  /// consumo de todos sus emisores. Se modela como auto-relación y no
+  /// reusando `Reseller` porque son cosas distintas — un reseller revende el
+  /// ERP con su marca y tiene saldo y descuentos; un integrador consume la
+  /// API y se le cobra por comprobante.
+  ///
+  /// Nulo en las empresas que son clientes directos de Krezka.
+  integradorId Int?
+  integrador   Empresa?  @relation("IntegradorEmisores", fields: [integradorId], references: [id])
+  emisores     Empresa[] @relation("IntegradorEmisores")
+
+  /// Identificador público del emisor en la API (`iss_…`).
+  ///
+  /// No se expone el id numérico: es secuencial, y decirle a un integrador
+  /// que es el emisor 412 le dice cuántos clientes tiene Krezka. Se genera al
+  /// darla de alta como emisor; nulo en las empresas que no lo son.
+  apiPublicId             String?                        @unique
   resellerMovimientos     ResellerMovimiento[]
   brand                   String                         @default("falconext")
   producto                String                         @default("facturacion")
