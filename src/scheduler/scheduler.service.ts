@@ -6,6 +6,7 @@ import { VerificarEnviosOlvaService } from './services/verificar-envios-olva.ser
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { InventarioNotificacionesService } from '../notificaciones/inventario-notificaciones.service';
 import { ResellerService } from '../reseller/reseller.service';
+import { CobroEmpresaService } from '../suscripcion/cobro-empresa.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 
@@ -18,6 +19,8 @@ export class SchedulerService {
 
   private olvaJobsDisabledLogged = false;
 
+  private cobrosJobsDisabledLogged = false;
+
   constructor(
     private readonly verificarSunat: VerificarPendientesSunatService,
     private readonly verificarEnviosShalom: VerificarEnviosShalomService,
@@ -25,9 +28,32 @@ export class SchedulerService {
     private readonly notificacionesService: NotificacionesService,
     private readonly inventarioNotificacionesService: InventarioNotificacionesService,
     private readonly resellerService: ResellerService,
+    private readonly cobroEmpresaService: CobroEmpresaService,
     private readonly prisma: PrismaService,
     private readonly whatsappService: WhatsAppService,
   ) {}
+
+  /**
+   * El ciclo de cobro de clientes directos nace APAGADO y se enciende con
+   * COBROS_JOBS_ENABLED=true, al revés que los demás jobs.
+   *
+   * La razón es la misma que llevó a apagar los de SUNAT y Shalom por entorno
+   * —varios backends contra la misma base— pero acá lo que está en juego es
+   * otra cosa: este job emite mensualidades y SUSPENDE cuentas. Un backend de
+   * desarrollo apuntando a producción dejaría a empresas reales sin sistema.
+   * Entre olvidar encenderlo en producción (se nota, y se corre a mano desde el
+   * panel) y que se dispare donde no debe, el error barato es el primero.
+   */
+  private cobrosJobsEnabled(): boolean {
+    const enabled = process.env.COBROS_JOBS_ENABLED === 'true';
+    if (!enabled && !this.cobrosJobsDisabledLogged) {
+      this.cobrosJobsDisabledLogged = true;
+      this.logger.warn(
+        '⏸️ Ciclo de cobro de clientes directos deshabilitado (falta COBROS_JOBS_ENABLED=true).',
+      );
+    }
+    return enabled;
+  }
 
   /**
    * El rastreo automático de Shalom se puede apagar por entorno con
@@ -225,6 +251,26 @@ export class SchedulerService {
       );
     } catch (error) {
       this.logger.error('❌ Error al alertar vencimientos de lotes:', error);
+    }
+  }
+
+  // Mensualidades de los clientes directos (sin reseller) — 9:20 AM, después
+  // de la renovación de resellers para que los logs del ciclo queden juntos.
+  @Cron('20 9 * * *', {
+    name: 'cobrar-empresas-directas',
+    timeZone: 'America/Lima',
+  })
+  async cobrarEmpresasDirectas(): Promise<void> {
+    if (!this.cobrosJobsEnabled()) return;
+    this.logger.log('🧾 Iniciando ciclo de cobro de clientes directos...');
+    try {
+      const emitidos = await this.cobroEmpresaService.generarCobrosDelCiclo();
+      const vencidos = await this.cobroEmpresaService.procesarVencidos();
+      this.logger.log(
+        `✅ Cobros: ${emitidos.emitidos} emitidos de ${emitidos.evaluadas} evaluadas. Vencidos: ${vencidos.avisados} avisados, ${vencidos.suspendidas} suspendidas.`,
+      );
+    } catch (error) {
+      this.logger.error('❌ Error en el ciclo de cobro de clientes directos:', error);
     }
   }
 

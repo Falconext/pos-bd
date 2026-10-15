@@ -200,8 +200,39 @@ export class SistemaFinanzasService {
       }),
     ]);
 
-    const ingMes = Number(ingresosMes._sum.monto ?? 0);
-    const ingAnio = Number(ingresosAnio._sum.monto ?? 0);
+    // Mensualidades cobradas a clientes directos (sin reseller). Antes esta
+    // plata no aparecía en ningún lado: "ingresos cobrados" solo miraba
+    // ResellerMovimiento, así que el panel mostraba el canal reseller como si
+    // fuera todo el ingreso de la plataforma.
+    const [cobrosDirectosMes, cobrosDirectosAnio] = await Promise.all([
+      this.prisma.ingresoSistema.aggregate({
+        where: {
+          tipo: 'SUSCRIPCION',
+          cobroEmpresaId: { not: null },
+          fecha: { gte: inicioMes },
+          ...(empresaIds.length > 0 && (sistemaNegocio || sistemaProducto)
+            ? { empresaId: { in: empresaIds } }
+            : {}),
+        },
+        _sum: { monto: true },
+      }),
+      this.prisma.ingresoSistema.aggregate({
+        where: {
+          tipo: 'SUSCRIPCION',
+          cobroEmpresaId: { not: null },
+          fecha: { gte: inicioAnio },
+          ...(empresaIds.length > 0 && (sistemaNegocio || sistemaProducto)
+            ? { empresaId: { in: empresaIds } }
+            : {}),
+        },
+        _sum: { monto: true },
+      }),
+    ]);
+
+    const ingMes =
+      Number(ingresosMes._sum.monto ?? 0) + Number(cobrosDirectosMes._sum.monto ?? 0);
+    const ingAnio =
+      Number(ingresosAnio._sum.monto ?? 0) + Number(cobrosDirectosAnio._sum.monto ?? 0);
 
     // Gastos reales del negocio propio de Krezka (los registra en su cuenta-empresa,
     // no en GastoSistema): se suman a los gastos de la plataforma.
