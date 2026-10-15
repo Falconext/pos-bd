@@ -3072,6 +3072,35 @@ export class ComprobanteService {
     }
   }
 
+  /**
+   * Las cuotas heredadas, si sirven para este saldo; si no, una sola por el
+   * saldo entero.
+   *
+   * Conserva la fecha de vencimiento que traía —es lo que se pactó con el
+   * cliente— y solo corrige el monto, que es lo que quedó viejo.
+   */
+  private cuotasParaElSaldo(
+    saldo: number,
+    cuotas: any[] | undefined,
+    fechaVencimientoCredito?: string | Date,
+  ): any[] | undefined {
+    const lista = Array.isArray(cuotas) ? cuotas : [];
+    if (lista.length === 0) return cuotas;
+    const suma = this.round2(
+      lista.reduce((a, c) => a + Number(c?.monto ?? 0), 0),
+    );
+    if (Math.abs(suma - this.round2(saldo)) <= 0.01) return cuotas;
+    const fecha =
+      lista[0]?.fechaVencimiento ?? fechaVencimientoCredito ?? undefined;
+    // Sin saldo no hay nada que financiar: `normalizarCuotasCredito` devuelve
+    // [] y el documento nace cobrado.
+    if (this.round2(saldo) <= 0) return [];
+    this.logger.warn(
+      `Conversión: las cuotas heredadas sumaban S/ ${suma.toFixed(2)} y el saldo es S/ ${this.round2(saldo).toFixed(2)}; se reemplazan por una sola cuota.`,
+    );
+    return [{ monto: this.round2(saldo), fechaVencimiento: fecha }];
+  }
+
   private normalizarCuotasCredito(
     montoCredito: number,
     cuotas?: any[],
@@ -3564,7 +3593,21 @@ export class ComprobanteService {
     const cuotasCredito = esPagoCredito
       ? this.normalizarCuotasCredito(
           saldoInicial,
-          cuotas,
+          // Al convertir, las cuotas vienen del documento de origen y fueron
+          // calculadas para OTRO monto. Si el origen cobró un adelanto
+          // DESPUÉS de emitirse —en Gestión de Pagos, que es donde se cobra
+          // todo— su `saldo` bajó pero sus `cuotas` no: el registro de pagos
+          // no las toca. Heredarlas tal cual hace que la emisión muera con
+          // "La suma de cuotas (S/ 275.00) debe ser igual al saldo a crédito
+          // (S/ 205.00)", un error que el usuario no puede resolver porque
+          // nunca escribió esas cuotas: las generó el POS.
+          //
+          // Solo se rehacen al convertir. En una venta normal, unas cuotas
+          // que no suman el saldo SÍ son un error de quien las tipeó y tiene
+          // que verlo.
+          comprobanteOrigenId
+            ? this.cuotasParaElSaldo(saldoInicial, cuotas, fechaVencimientoCredito)
+            : cuotas,
           fechaVencimientoCredito,
         )
       : null;

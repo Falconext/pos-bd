@@ -86,3 +86,73 @@ describe('una nota al contado sigue siendo al contado', () => {
     ).toEqual({ estado: 'COMPLETADO', saldo: 0 });
   });
 });
+
+/**
+ * Las cuotas que el origen trae viejas.
+ *
+ * Pasa por un camino que nosotros mismos le recomendamos al cliente: emitir
+ * la orden al crédito y cobrar el adelanto después, en Gestión de Pagos.
+ * `pago.service` actualiza el `saldo` del comprobante pero NO sus `cuotas`,
+ * así que la orden queda con un cronograma calculado para el total viejo.
+ *
+ * Al convertir, heredar ese cronograma tal cual mataba la emisión con "La
+ * suma de cuotas (S/ 275.00) debe ser igual al saldo a crédito (S/ 205.00)"
+ * — un error que el usuario no puede resolver, porque nunca escribió esas
+ * cuotas: se las generó el POS.
+ */
+const cuotasParaElSaldo = (
+  saldo: number,
+  cuotas: { monto: number; fechaVencimiento?: string }[] | undefined,
+  fechaVencimientoCredito?: string,
+) => {
+  const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+  const lista = Array.isArray(cuotas) ? cuotas : [];
+  if (lista.length === 0) return cuotas;
+  const suma = r2(lista.reduce((a, c) => a + Number(c?.monto ?? 0), 0));
+  if (Math.abs(suma - r2(saldo)) <= 0.01) return cuotas;
+  const fecha = lista[0]?.fechaVencimiento ?? fechaVencimientoCredito;
+  if (r2(saldo) <= 0) return [];
+  return [{ monto: r2(saldo), fechaVencimiento: fecha }];
+};
+
+describe('cuotas heredadas de la orden', () => {
+  const VIEJAS = [{ monto: 275, fechaVencimiento: '2026-10-16' }];
+
+  it('si ya no suman el saldo, se rehacen por el saldo real', () => {
+    expect(cuotasParaElSaldo(205, VIEJAS)).toEqual([
+      { monto: 205, fechaVencimiento: '2026-10-16' },
+    ]);
+  });
+
+  it('conserva la fecha pactada: lo viejo es el monto, no el plazo', () => {
+    const r = cuotasParaElSaldo(205, VIEJAS) as any[];
+    expect(r[0].fechaVencimiento).toBe('2026-10-16');
+  });
+
+  it('si ya cuadran, no se tocan', () => {
+    // Es el caso de LINNA MODA hoy: el adelanto se tomó en la emisión, así
+    // que el POS ya escribió la cuota por el saldo.
+    const buenas = [{ monto: 105, fechaVencimiento: '2026-10-24' }];
+    expect(cuotasParaElSaldo(105, buenas)).toBe(buenas);
+  });
+
+  it('sin saldo no queda ninguna cuota: el documento nace cobrado', () => {
+    expect(cuotasParaElSaldo(0, VIEJAS)).toEqual([]);
+  });
+
+  it('sin cuotas en el origen no inventa ninguna', () => {
+    expect(cuotasParaElSaldo(205, undefined)).toBeUndefined();
+    expect(cuotasParaElSaldo(205, [])).toEqual([]);
+  });
+
+  it('varias cuotas que ya no suman se colapsan en una por el saldo', () => {
+    const tres = [
+      { monto: 100, fechaVencimiento: '2026-11-01' },
+      { monto: 100, fechaVencimiento: '2026-12-01' },
+      { monto: 75, fechaVencimiento: '2027-01-01' },
+    ];
+    expect(cuotasParaElSaldo(205, tres)).toEqual([
+      { monto: 205, fechaVencimiento: '2026-11-01' },
+    ]);
+  });
+});
