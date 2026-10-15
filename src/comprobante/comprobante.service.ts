@@ -5405,7 +5405,22 @@ export class ComprobanteService {
       esCreditoPorTipo && saldoInicial > 0 && tieneInfoCredito
         ? this.normalizarCuotasCredito(
             saldoInicial,
-            cuotas,
+            // Igual que en el camino formal: al convertir, las cuotas vienen
+            // del origen y fueron calculadas para otro monto. Si la orden
+            // cobró un adelanto DESPUÉS de emitirse, su saldo bajó pero sus
+            // cuotas no —registrar un pago no las toca— y heredarlas tal
+            // cual mata la emisión con "La suma de cuotas debe ser igual al
+            // saldo a crédito".
+            //
+            // Esta rama es la de los informales, que es por donde pasa la
+            // Orden de Trabajo → Nota de venta: el camino de LINNA MODA.
+            esConversionDesdeOT
+              ? this.cuotasParaElSaldo(
+                  saldoInicial,
+                  cuotas,
+                  fechaVencimientoCredito,
+                )
+              : cuotas,
             fechaVencimientoCredito,
           )
         : null;
