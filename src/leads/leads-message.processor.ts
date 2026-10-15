@@ -30,6 +30,7 @@ import {
 } from './pausa-bot';
 import { conDescargoLegal } from './prompt-asesor';
 import { esNumeroInterno, numerosInternos } from './numeros-internos';
+import { bloqueComercial } from './tarifas-y-descuentos';
 import {
   DatosDelCliente,
   ItemPedido,
@@ -413,6 +414,12 @@ export class LeadsMessageProcessor extends WorkerHost {
 
     // Contexto = datos de la empresa + fragmentos RAG relevantes al mensaje.
     const contextoEmpresa = this.construirContexto(empresa);
+    // La configuración se lee ANTES de armar el contexto: las tarifas y los
+    // descuentos entran en el prompt escritos desde ella, no copiados a mano
+    // en el texto del empresario. Así lo que la IA dice es, por
+    // construcción, lo que el sistema va a cobrar.
+    const config = await this.pedido.configDe(empresa.id);
+    const comercial = bloqueComercial(config);
     // Productos REALES del ERP que coinciden con lo que pregunta el cliente
     // (precio + stock en vivo). Lo que diferencia a la IA de un bot "ciego".
     const relevantes = await this.buscarProductosRelevantes(
@@ -422,6 +429,10 @@ export class LeadsMessageProcessor extends WorkerHost {
     const contextoRag = await this.rag.buscarContexto(empresa.id, contenido, 5);
     const businessContext = [
       contextoEmpresa,
+      // Mientras un cliente siga teniendo los números copiados en su texto
+      // libre, las dos versiones conviven en el prompt. Por eso el bloque
+      // dice de sí mismo que es el que manda.
+      comercial,
       this.productosYaMostrados(mensajes),
       relevantes.contexto,
       contextoRag,
@@ -438,8 +449,6 @@ export class LeadsMessageProcessor extends WorkerHost {
       conv.telefonoProspecto,
       fotosEnviadas,
     );
-
-    const config = await this.pedido.configDe(empresa.id);
 
     let resultado: RespuestaVenta;
     try {
