@@ -116,23 +116,29 @@ describe('qué origen se acepta', () => {
     ).rejects.toThrow(/anulada/i);
   });
 
-  it('no una OT con saldo: primero se cobra, después se convierte', async () => {
-    // El taller cobra al entregar, que es cuando pide la nota. Cobrar dentro
-    // de la emisión obligaba al modal a mostrar el total como "recibido"
-    // cuando en la mano entraba solo el saldo.
+  it('SÍ una OT con saldo pendiente: el saldo viaja a la nota', async () => {
+    // Esto estuvo al revés y bloqueaba un negocio entero. Se exigía cobrar
+    // antes de convertir, razonando que el taller cobra al entregar. Pero
+    // LINNA MODA cobra CONTRAENTREGA: la nota tiene que existir ANTES de la
+    // entrega, porque es con ella que se programa el envío. Con la regla
+    // anterior ninguna de sus órdenes podía convertirse nunca — y en el
+    // panel la opción ni siquiera aparecía, así que el cliente lo reportó
+    // como "no está habilitada la opción".
     await expect(
       validarOrigen({
         origen: { ...OT, estadoPago: 'PAGO_PARCIAL', saldo: 14.01 },
       }),
-    ).rejects.toThrow(/saldo pendiente de S\/ 14\.01/i);
+    ).resolves.toMatchObject({ ok: true });
   });
 
-  it('el mensaje dice dónde cobrarlo, no solo que no se puede', async () => {
+  it('tampoco bloquea una OT sin un solo pago', async () => {
+    // Contraentrega puro: no entró nada todavía.
     await expect(
       validarOrigen({
-        origen: { ...OT, estadoPago: 'PAGO_PARCIAL', saldo: 14.01 },
+        origen: { ...OT, estadoPago: 'PENDIENTE_PAGO', saldo: 24 },
+        pagos: { _sum: { monto: null } },
       }),
-    ).rejects.toThrow(/Gestión de Pagos/i);
+    ).resolves.toMatchObject({ ok: true, montoYaCobradoEnOrigen: 0 });
   });
 
   it('no una OT ya convertida: duplicaría la venta', async () => {

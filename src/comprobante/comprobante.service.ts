@@ -4999,27 +4999,22 @@ export class ComprobanteService {
         `${origen.serie}-${origen.correlativo} está anulada y no puede convertirse.`,
       );
     }
-    // Solo se convierte una orden ya cobrada.
+    // Una orden con saldo SÍ se convierte: el saldo viaja a la nota.
     //
-    // El taller cobra el saldo cuando entrega el trabajo, que es el mismo
-    // momento en que pide la nota. Cobrar primero y convertir después deja el
-    // ingreso en caja a la hora real y con el monto real; al revés había que
-    // cobrar el saldo dentro de la emisión de la nota, y el modal de pago
-    // terminaba mostrando el total como "recibido" cuando en la mano entraba
-    // solo el saldo.
+    // Esto estuvo al revés y bloqueaba un negocio entero. Se exigía cobrar
+    // antes de convertir, razonando que el taller cobra al entregar. Pero
+    // LINNA MODA cobra CONTRAENTREGA: la nota de venta tiene que existir
+    // ANTES de la entrega, porque es con ella que se programa el envío. Con
+    // la regla anterior ninguna de sus órdenes podía convertirse nunca, y en
+    // el panel la opción ni siquiera aparecía.
     //
-    // El saldo se cobra desde Gestión de Pagos, que es donde se cobra todo lo
-    // demás. Esto NO aplica a la conversión de un informal a Factura/Boleta:
-    // ahí el crédito pendiente se traslada al documento formal a propósito
-    // (ver `estadoYSaldoInicial` y el caso de OWENSOFT).
-    const saldoPendiente = this.round2(Number(origen.saldo || 0));
-    if (saldoPendiente > 0) {
-      throw new BadRequestException(
-        `${origen.serie}-${origen.correlativo} tiene un saldo pendiente de ` +
-          `S/ ${saldoPendiente.toFixed(2)}. Regístrale el cobro en Gestión de ` +
-          'Pagos y después conviértela en Nota de venta.',
-      );
-    }
+    // No hace falta elegir entre los dos negocios. Una nota con saldo es una
+    // venta a crédito, que es lo que el sistema ya sabe manejar: el saldo
+    // nace en la nota, aparece en cuentas por cobrar y se cobra al entregar.
+    // Lo que se cobró en la orden viaja en `montoYaCobradoEnOrigen` y
+    // `estadoYSaldoInicial` lo descuenta, así que el adelanto no se cobra
+    // dos veces ni infla la caja. Es el mismo camino que ya usa la
+    // conversión de un informal a Factura/Boleta (caso OWENSOFT).
     // Ya convertida: una segunda nota duplicaría la venta en los reportes, en
     // el stock y en las comisiones.
     const yaConvertido = await this.prisma.comprobante.findFirst({
