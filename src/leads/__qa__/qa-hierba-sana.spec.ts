@@ -158,7 +158,16 @@ correr('QA en vivo sobre la empresa real', () => {
       ultimo.content,
       5,
     );
-    const businessContext = [contextoEmpresa, relevantes.contexto, contextoRag]
+    // Igual que en producción: el bloque de tarifas y descuentos se escribe
+    // desde la configuración, no se copia del texto del empresario.
+    const { bloqueComercial } = await import('../tarifas-y-descuentos');
+    const cfg = await p.pedido.configDe(EMPRESA_ID);
+    const businessContext = [
+      contextoEmpresa,
+      bloqueComercial(cfg),
+      relevantes.contexto,
+      contextoRag,
+    ]
       .filter((s: string) => s && s.trim())
       .join('\n\n');
 
