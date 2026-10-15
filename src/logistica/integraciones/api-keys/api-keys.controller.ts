@@ -10,7 +10,7 @@ import {
   Request,
 } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
-import { ApiKeysService } from './api-keys.service';
+import { ApiKeysService } from '../../../integraciones/api-keys/api-keys.service';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { ModuleAccessGuard } from '../../../common/guards/module-access.guard';
 import { RequiresModule } from '../../../common/decorators/module.decorator';
@@ -36,7 +36,7 @@ export class ApiKeysController {
     @Request() req: any,
     @Body() body: { nombre?: string; entorno?: 'live' | 'test' },
   ) {
-    return this.apiKeys.generateKey(req.user.empresaId, {
+    return this.apiKeys.generateKey(req.user.empresaId, 'logistica', {
       nombre: body?.nombre,
       entorno: body?.entorno,
     });
@@ -45,12 +45,12 @@ export class ApiKeysController {
   /** Lista las API keys activas de la empresa (sin exponer el secreto). */
   @Get()
   listar(@Request() req: any) {
-    return this.apiKeys.listKeys(req.user.empresaId);
+    return this.apiKeys.listKeys(req.user.empresaId, 'logistica');
   }
 
   /** Revoca una API key de la empresa. */
   @Delete(':id')
   revocar(@Request() req: any, @Param('id', ParseIntPipe) id: number) {
-    return this.apiKeys.revokeKey(req.user.empresaId, id);
+    return this.apiKeys.revokeKey(req.user.empresaId, 'logistica', id);
   }
 }

@@ -434,7 +434,7 @@ model Empresa {
   documentosLogistica           DocumentoLogistica[]
   dispositivosGpsLogistica      DispositivoGpsLogistica[]
   geocercasLogistica            GeocercaLogistica[]
-  apiKeysLogistica              ApiKeyLogistica[]
+  apiKeys                       ApiKey[]
   idempotenciaApi               IdempotenciaApi[]
   webhookEndpointsLogistica     WebhookEndpointLogistica[]
 
@@ -4214,9 +4214,21 @@ model IdempotenciaApi {
   @@index([expiraEn])
 }
 
-model ApiKeyLogistica {
+/// API keys de las APIs públicas de Falconext, de todos los productos.
+///
+/// Nació como `ApiKeyLogistica` y se generalizó al abrir Facturación: la
+/// mecánica —hash, entornos, revocación, rate limit— es idéntica, y duplicarla
+/// por producto habría significado dos sitios donde arreglar el día que algo
+/// falle en la autenticación.
+///
+/// Solo se guarda el SHA-256 de la clave, nunca el texto plano: la clave
+/// completa se muestra una sola vez al crearla. `producto` ata la key a una
+/// API; una de logística no puede emitir facturas aunque sea válida.
+model ApiKey {
   id            Int       @id @default(autoincrement())
   empresaId     Int
+  /// "logistica" | "facturacion". Una key sirve para un solo producto.
+  producto      String    @default("logistica")
   nombre        String?
   entorno       String    @default("live") // "live" | "test"
   prefijo       String // p.ej. "sk_live_a1b2" (display)
@@ -4230,7 +4242,7 @@ model ApiKeyLogistica {
 
   empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
 
-  @@index([empresaId])
+  @@index([empresaId, producto])
   @@index([hash])
 }
 

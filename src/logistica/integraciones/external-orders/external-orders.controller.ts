@@ -19,8 +19,9 @@ import {
 } from '@nestjs/swagger';
 import { ExternalOrdersService } from './external-orders.service';
 import { SandboxService } from '../sandbox/sandbox.service';
-import { RateLimitsService } from '../rate-limits/rate-limits.service';
-import { ApiKeyAuthGuard } from '../api-keys/api-key-auth.guard';
+import { RateLimitsService } from '../../../integraciones/rate-limits/rate-limits.service';
+import { ApiKeyAuthGuard } from '../../../integraciones/api-keys/api-key-auth.guard';
+import { ApiProducto } from '../../../integraciones/api-keys/producto-api';
 import {
   OrderCreate,
   Order,
@@ -36,6 +37,7 @@ import {
 @ApiTags('Pedidos')
 @ApiBearerAuth('bearerAuth')
 @ApiExtraModels(Order, OrderList, Tracking, ProofOfDelivery, ErrorResponse)
+@ApiProducto('logistica')
 @UseGuards(ApiKeyAuthGuard)
 @Controller('v1/logistics/orders')
 export class ExternalOrdersController {
@@ -173,6 +175,7 @@ export class ExternalOrdersController {
 
 @ApiTags('Rastreo')
 @ApiBearerAuth('bearerAuth')
+@ApiProducto('logistica')
 @UseGuards(ApiKeyAuthGuard)
 @Controller('v1/logistics/tracking')
 export class TrackingController {

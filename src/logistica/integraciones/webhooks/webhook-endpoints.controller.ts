@@ -8,7 +8,8 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { WebhooksService } from './webhooks.service';
-import { ApiKeyAuthGuard } from '../api-keys/api-key-auth.guard';
+import { ApiKeyAuthGuard } from '../../../integraciones/api-keys/api-key-auth.guard';
+import { ApiProducto } from '../../../integraciones/api-keys/producto-api';
 import {
   WebhookEndpointCreate,
   WebhookEndpoint,
@@ -21,6 +22,7 @@ import {
 @ApiTags('Webhooks')
 @ApiBearerAuth('bearerAuth')
 @ApiExtraModels(WebhookEndpoint, ErrorResponse)
+@ApiProducto('logistica')
 @UseGuards(ApiKeyAuthGuard)
 @Controller('v1/logistics/webhook_endpoints')
 export class WebhookEndpointsController {
