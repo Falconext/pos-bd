@@ -4264,6 +4264,15 @@ model ApiKey {
 
   @@index([empresaId, producto])
   @@index([hash])
+  /// La tabla conserva su nombre de origen a propósito.
+  ///
+  /// El despliegue sincroniza el esquema con `prisma db push
+  /// --accept-data-loss`, no con migraciones. `db push` no detecta
+  /// renombrados: ante un modelo con otro nombre haría DROP + CREATE y se
+  /// perderían TODAS las API keys en uso, sin preguntar. El nombre físico es
+  /// cosmético; el del modelo es el que usa el código. Se renombra la tabla
+  /// el día que el historial de migraciones esté sano.
+  @@map("ApiKeyLogistica")
 }
 
 /// Endpoints de webhook registrados por una empresa para recibir eventos
