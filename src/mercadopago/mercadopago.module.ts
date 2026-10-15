@@ -5,10 +5,14 @@ import { MercadoPagoService } from './mercadopago.service';
 import { MercadoPagoController } from './mercadopago.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { resolveJwtSecret } from '../auth/jwt-secret';
+import { SuscripcionModule } from '../suscripcion/suscripcion.module';
 
 @Module({
   imports: [
     PrismaModule,
+    // Para despachar los webhooks de suscripción al ciclo de cobro. La
+    // dependencia va en un solo sentido: suscripción no conoce a mercadopago.
+    SuscripcionModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

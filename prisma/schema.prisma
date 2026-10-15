@@ -107,6 +107,22 @@ model Empresa {
   bienvenidaRedes           Boolean            @default(false)
   planId                    Int
   estado                    EstadoType         @default(ACTIVO)
+  /// Débito automático de la mensualidad: la empresa autorizó una vez y la
+  /// pasarela cobra sola cada mes.
+  ///
+  /// OJO: no confundir con `billingProvider`, que es el proveedor de
+  /// facturación SUNAT (QPSE/Jamble). Esto es con qué le cobra Falconext a
+  /// ella, no con qué factura ella a sus clientes.
+  cobroAutomatico           Boolean            @default(false)
+  /// Pasarela que tiene la autorización. Hoy solo MERCADO_PAGO.
+  pasarelaCobro             String?
+  /// Id de la suscripción (preapproval) en Mercado Pago. Es por donde el
+  /// webhook ubica a la empresa cuando llega un cobro.
+  mpPreapprovalId           String?            @unique
+  /// Último estado que reportó la pasarela: authorized, pending, paused,
+  /// cancelled. Se guarda para poder mostrarlo sin preguntarle a MP en cada
+  /// carga de pantalla.
+  mpPreapprovalEstado       String?
   departamento              String?
   distrito                  String?
   provincia                 String?
@@ -496,6 +512,8 @@ model Empresa {
   leadDisparos              LeadDisparo[]
   soporteConversacion     SoporteConversacion?
   reglasComision          ReglaComision[]
+  cobros                  CobroEmpresa[]
+  ingresosSistema         IngresoSistema[]
 
   @@index([providerToken])
   @@index([slugTienda])
@@ -2984,11 +3002,73 @@ model IngresoSistema {
   monto         Decimal
   fecha         DateTime
   descripcion   String?
+  /// Empresa que pagó, cuando el ingreso viene de una mensualidad. Sin esto el
+  /// panel de finanzas solo sabía sumar lo cobrado por el canal reseller y la
+  /// plata de los clientes directos no aparecía en ningún lado.
+  empresaId     Int?
+  /// Cobro que originó el ingreso. Es 1-a-1: un cobro aplicado deja exactamente
+  /// un ingreso, y por eso registrar dos veces el mismo pago falla en la BD en
+  /// vez de duplicar la cifra del mes.
+  cobroEmpresaId Int?    @unique
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt
 
+  empresa       Empresa?      @relation(fields: [empresaId], references: [id])
+  cobroEmpresa  CobroEmpresa? @relation(fields: [cobroEmpresaId], references: [id])
+
   @@index([fecha])
   @@index([tipo])
+  @@index([empresaId])
+}
+
+/// Una mensualidad de una empresa que le compra directo a Falconext (sin
+/// reseller de por medio).
+///
+/// Los clientes de reseller ya tenían su ciclo resuelto en
+/// `ResellerMovimiento`: se cobra del saldo del reseller, hay días de gracia y
+/// al final se suspende. Los directos no tenían nada — vencían y alguien se
+/// acordaba (o no) de cobrarles por WhatsApp, y la plata cobrada no quedaba
+/// registrada en ningún sitio. Esta tabla es el equivalente para ellos.
+///
+/// El cobro nace PENDIENTE unos días antes del vencimiento y se vuelve APLICADO
+/// cuando el pago se confirma: ahí, y solo ahí, se extiende la suscripción. Con
+/// una pasarela conectada el que confirma es el webhook; hoy lo confirma un
+/// administrador. Esa separación entre "se debe" y "se pagó" es la que permite
+/// enchufar el cobro automático después sin rehacer nada.
+model CobroEmpresa {
+  id               Int      @id @default(autoincrement())
+  empresaId        Int
+  /// Mes que cubre el cobro, "YYYY-MM". Junto al índice único de abajo es lo
+  /// que impide que el cron cobre dos veces el mismo mes si corre dos veces.
+  periodo          String
+  /// Nombre y costo del plan congelados al emitir: si mañana sube el precio o
+  /// la empresa cambia de plan, el cobro de este mes sigue diciendo lo que se
+  /// cobró de verdad.
+  planNombre       String?
+  monto            Decimal  @db.Decimal(10, 2)
+  estado           String   @default("PENDIENTE") // PENDIENTE | APLICADO | RECHAZADO | ANULADO
+  intento          Int      @default(1)
+  motivo           String?
+  /// Cómo pagó: MERCADO_PAGO, YAPE, TRANSFERENCIA, EFECTIVO, OTRO.
+  medioPago        String?
+  /// Referencia externa del pago (id de Mercado Pago, nº de operación).
+  referencia       String?
+  /// Vencimiento que tenía la suscripción cuando se emitió el cobro.
+  fechaVencimiento DateTime
+  /// Cuándo se confirmó el pago.
+  fechaCobro       DateTime?
+  /// Hasta dónde quedó la suscripción al aplicarlo.
+  cubreHasta       DateTime?
+  descripcion      String?
+  creadoEn         DateTime @default(now())
+  actualizadoEn    DateTime @updatedAt
+
+  empresa          Empresa         @relation(fields: [empresaId], references: [id])
+  ingreso          IngresoSistema?
+
+  @@unique([empresaId, periodo])
+  @@index([empresaId, estado])
+  @@index([estado, fechaVencimiento])
 }
 
 model DigemidProducto {

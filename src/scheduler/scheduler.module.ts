@@ -8,6 +8,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 import { ComprobanteModule } from '../comprobante/comprobante.module';
 import { ResellerModule } from '../reseller/reseller.module';
+import { SuscripcionModule } from '../suscripcion/suscripcion.module';
 import { S3Module } from '../s3/s3.module';
 import { GuiaRemisionModule } from '../guia-remision/guia-remision.module';
 import { WhatsAppModule } from '../whatsapp/whatsapp.module';
@@ -22,6 +23,7 @@ import { EnvioDespachoModule } from '../envio-despacho/envio-despacho.module';
     forwardRef(() => ComprobanteModule),
     forwardRef(() => GuiaRemisionModule),
     ResellerModule,
+    SuscripcionModule,
     S3Module,
     WhatsAppModule,
     ShalomModule,

@@ -8,6 +8,7 @@ import { JwtService } from '@nestjs/jwt';
 import axios from 'axios';
 import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { MpSuscripcionService } from '../suscripcion/mp-suscripcion.service';
 
 // Endpoints Mercado Pago (Perú / global)
 const MP_AUTH_URL = 'https://auth.mercadopago.com.pe/authorization';
@@ -30,6 +31,7 @@ export class MercadoPagoService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
+    private readonly mpSuscripcion: MpSuscripcionService,
   ) {}
 
   // ── Config helpers ─────────────────────────────────────────────────────────
@@ -389,7 +391,38 @@ export class MercadoPagoService {
       const tipo = query?.type || query?.topic || body?.type;
       const paymentId =
         query?.['data.id'] || body?.data?.id || query?.id || body?.id;
-      if (tipo !== 'payment' || !paymentId) return;
+      if (!paymentId) return;
+
+      // A esta misma URL llegan dos cosas distintas: los pagos de las tiendas
+      // (marketplace) y los de las suscripciones con las que Falconext le cobra
+      // a sus empresas. Antes todo lo que no fuera `payment` se descartaba en
+      // silencio, así que un cobro automático nunca se habría registrado.
+      const esSuscripcion =
+        tipo === 'subscription_preapproval' ||
+        tipo === 'subscription_authorized_payment' ||
+        tipo === 'preapproval';
+      if (tipo !== 'payment' && !esSuscripcion) return;
+
+      if (esSuscripcion) {
+        if (
+          !this.firmaWebhookValida(
+            String(query?.['data.id'] || paymentId),
+            headers?.xSignature,
+            headers?.xRequestId,
+          )
+        ) {
+          this.logger.warn(
+            `Webhook MP rechazado: firma inválida (suscripción ${paymentId})`,
+          );
+          return;
+        }
+        if (tipo === 'subscription_authorized_payment') {
+          await this.mpSuscripcion.procesarCuota(String(paymentId));
+        } else {
+          await this.mpSuscripcion.procesarCambioDeSuscripcion(String(paymentId));
+        }
+        return;
+      }
 
       // Validación de firma: si hay secreto configurado, la notificación DEBE venir
       // firmada correctamente por Mercado Pago; si no, se ignora (posible fraude).

@@ -4,6 +4,10 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { resolveJwtSecret } from '../jwt-secret';
+import {
+  MENSAJE_PLAN_VENCIDO,
+  evaluarGracia,
+} from '../../common/utils/gracia-suscripcion';
 
 export type JwtPayload = {
   sub: number;
@@ -66,8 +70,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       if (!user.empresa || user.empresa.estado !== 'ACTIVO') {
         throw new UnauthorizedException('Empresa inactiva');
       }
-      if (user.empresa.fechaExpiracion < new Date()) {
-        throw new UnauthorizedException('Plan vencido');
+      // Vencer ya no corta en seco: hay unos días de gracia para que un pago en
+      // camino (una transferencia del viernes, un cobro que se reintenta) no
+      // deje afuera a un cliente que sí está pagando. Pasada la ventana sí se
+      // bloquea, aunque el cron de cobros no haya corrido todavía.
+      if (evaluarGracia(user.empresa.fechaExpiracion).bloqueada) {
+        throw new UnauthorizedException(MENSAJE_PLAN_VENCIDO);
       }
     }
 

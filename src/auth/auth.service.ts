@@ -12,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
+import { evaluarGracia } from '../common/utils/gracia-suscripcion';
 
 interface LoginPayload {
   email: string;
@@ -90,12 +91,14 @@ export class AuthService {
       );
     }
 
+    // Mismo criterio que el guard: dentro de los días de gracia se entra (el
+    // aviso de deuda lo da la campana de notificaciones), después no.
     if (
       user.empresa?.fechaExpiracion &&
-      user.empresa.fechaExpiracion < new Date()
+      evaluarGracia(user.empresa.fechaExpiracion).bloqueada
     ) {
       throw new ForbiddenException(
-        'Tu plan venció. Contacta a tu asesor o proveedor para renovarlo y seguir usando el sistema.',
+        'Tu plan venció y pasó el periodo de gracia. Contacta a tu asesor o proveedor para renovarlo y seguir usando el sistema.',
       );
     }
 
