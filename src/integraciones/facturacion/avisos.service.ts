@@ -2,7 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WebhooksService } from '../../logistica/integraciones/webhooks/webhooks.service';
-import { EstadoPublico, esFinal, estadoPublico } from './estado-publico';
+import { EstadoPublico, esFinal, estadoPublico, codigoDelCdr } from './estado-publico';
+import { estadoSegunRespuesta } from './habilitacion';
 import { serializarComprobante } from './serializador';
 
 /**
@@ -71,7 +72,7 @@ export class AvisosFacturacionService {
       include: {
         cliente: { include: { tipoDocumento: { select: { codigo: true } } } },
         detalles: true,
-        empresa: { select: { apiPublicId: true, integradorId: true } },
+        empresa: { select: { apiPublicId: true, integradorId: true, apiEmisorEstado: true } },
       },
       orderBy: { id: 'asc' },
       take: limite,
@@ -94,6 +95,7 @@ export class AvisosFacturacionService {
         where: { id: c.id },
         data: { apiEstadoNotificado: estado },
       });
+      await this.actualizarHabilitacion(c, estado);
     }
     return avisados;
   }
@@ -124,5 +126,39 @@ export class AvisosFacturacionService {
   /** Expuesto para la QA: que `esFinal` y la lista no se separen con el tiempo. */
   static get finales(): string[] {
     return AvisosFacturacionService.FINALES.filter((e) => esFinal(e as EstadoPublico));
+  }
+
+  /**
+   * Aprende del resultado si el RUC está habilitado ante SUNAT.
+   *
+   * Vive acá y no en la emisión porque este barrido ya mira cada cambio de
+   * estado con su CDR, venga del envío directo, del reintento del scheduler o
+   * de la conciliación manual. Engancharlo en la emisión dejaría afuera
+   * justamente los casos que llegan tarde.
+   *
+   * Que SUNAT acepte es la única prueba real de que el alta funcionó. Y un
+   * rechazo por falta de habilitación no se arregla reintentando —lo tiene
+   * que resolver el contribuyente—, así que se corta ahí: en producción hubo
+   * un RUC que insistió siete veces en nueve días, quemando un correlativo
+   * cada vez.
+   */
+  private async actualizarHabilitacion(c: any, estado: EstadoPublico) {
+    const cambio = estadoSegunRespuesta(estado, codigoDelCdr(c.sunatCdrResponse));
+    if (!cambio) return;
+    if (c.empresa?.apiEmisorEstado === cambio.estado && !cambio.motivo) return;
+    try {
+      await this.prisma.empresa.update({
+        where: { id: c.empresaId },
+        data: {
+          apiEmisorEstado: cambio.estado,
+          apiEmisorMotivo: cambio.motivo ?? null,
+        },
+      });
+      if (cambio.estado === 'bloqueado') {
+        console.warn(`[api-facturacion] emisor ${c.empresa?.apiPublicId} bloqueado: ${cambio.motivo}`);
+      }
+    } catch (e: any) {
+      console.error('[api-facturacion] no se pudo actualizar la habilitación del emisor:', e?.message);
+    }
   }
 }

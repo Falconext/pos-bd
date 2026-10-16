@@ -64,7 +64,7 @@ correr('avisos por webhook, contra Postgres real', () => {
     }
     await prisma.$executeRawUnsafe(`INSERT INTO "TipoDocumento" (id,codigo,descripcion) VALUES (2,'6','RUC') ON CONFLICT (id) DO NOTHING`);
     await prisma.$executeRawUnsafe(`INSERT INTO "TipoOperacion" (id,codigo,descripcion) VALUES (1,'0101','VENTA INTERNA') ON CONFLICT (id) DO NOTHING`);
-    await prisma.$executeRawUnsafe(`UPDATE "Empresa" SET "integradorId"=$1,"apiPublicId"='iss_qaAvisos' WHERE id=$2`, INTEGRADOR, EMISOR);
+    await prisma.$executeRawUnsafe(`UPDATE "Empresa" SET "integradorId"=$1,"apiPublicId"='iss_qaAvisos',"usuarioPse"='QA01',"apiEmisorEstado"='activo' WHERE id=$2`, INTEGRADOR, EMISOR);
     avisos = new AvisosFacturacionService(prisma as never, webhooksFalsos as never);
   });
 

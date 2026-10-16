@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ComprobanteService } from '../../comprobante/comprobante.service';
 import { EnviarSunatService } from '../../comprobante/enviar-sunat.service';
@@ -12,6 +12,7 @@ import {
 import { nuevoIdPublico, serializarComprobante } from './serializador';
 import { ErrorDeContrato } from './fachada';
 import { esFinal, estadoPublico } from './estado-publico';
+import { puedeEmitir } from './habilitacion';
 
 /**
  * La API de facturación, apoyada en el motor que ya factura para 61 empresas.
@@ -114,6 +115,18 @@ export class FacturacionApiService {
       integradorId,
       String(entrada.issuer_id ?? ''),
     );
+
+    // La puerta va antes que todo lo demás: el correlativo se asigna al crear
+    // el comprobante, así que un emisor no habilitado quema uno por intento.
+    const paso = puedeEmitir(emisor as any);
+    if (!paso.puede) {
+      throw new ConflictException({
+        code: paso.codigo,
+        message: paso.mensaje,
+        param: 'issuer_id',
+        ...(paso.disponibleEn ? { available_at: paso.disponibleEn.toISOString() } : {}),
+      });
+    }
 
     // Validar ANTES de resolver el cliente. Al revés, una factura a un DNI
     // —que siempre va a ser rechazada— dejaba igual un cliente nuevo en la

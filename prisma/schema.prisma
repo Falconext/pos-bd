@@ -468,6 +468,22 @@ model Empresa {
   /// que es el emisor 412 le dice cuántos clientes tiene Krezka. Se genera al
   /// darla de alta como emisor; nulo en las empresas que no lo son.
   apiPublicId             String?                        @unique
+
+  /// Ciclo de vida del emisor dentro de la API: `pendiente`, `activo` o
+  /// `bloqueado`. Null = esta empresa no es emisor de ningún integrador.
+  ///
+  /// Existe por un costo medido: 4 RUCs de producción quemaron 15 correlativos
+  /// intentando emitir sin estar habilitados ante SUNAT —uno de ellos 7 veces
+  /// en nueve días—. El correlativo se asigna al crear el comprobante, así que
+  /// cada intento fallido gasta uno que ya no vuelve. Bloqueando al primer
+  /// rechazo de habilitación, esos 7 intentos habrían sido 1.
+  apiEmisorEstado         String?
+  /// Cuándo se vinculó. QPSE completa el alta ante SUNAT en ~24 h, así que
+  /// antes de eso emitir es tirar correlativos a la basura.
+  apiEmisorDesde          DateTime?
+  /// Por qué quedó bloqueado, en las palabras de SUNAT. Se le devuelve al
+  /// integrador para que sepa qué tiene que arreglar su cliente.
+  apiEmisorMotivo         String?
   resellerMovimientos     ResellerMovimiento[]
   brand                   String                         @default("falconext")
   producto                String                         @default("facturacion")
