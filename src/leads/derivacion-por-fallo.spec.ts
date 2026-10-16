@@ -25,16 +25,20 @@ import {
 function armar(resultadoRegistrar: Record<string, unknown>) {
   const pausas: Record<string, unknown>[] = [];
   const avisos: Record<string, unknown>[] = [];
+  // La derivación apaga la IA en la conversación (que es lo que mira el
+  // processor) y lo refleja en el prospecto (que es lo que pinta el embudo).
+  // Ambas escrituras van juntas, así que se recogen las dos en `pausas`.
+  const anota = ({ data }: any) => {
+    pausas.push(data);
+    return Promise.resolve({ count: 1 });
+  };
   const prisma = {
-    leadProspecto: {
-      updateMany: jest.fn(({ data }: any) => {
-        pausas.push(data);
-        return Promise.resolve({ count: 1 });
-      }),
-    },
+    leadProspecto: { updateMany: jest.fn(anota) },
     leadConversacion: {
+      update: jest.fn(anota),
       findUnique: jest.fn().mockResolvedValue({ nombreProspecto: 'Diego' }),
     },
+    $transaction: jest.fn((ops: any[]) => Promise.all(ops)),
   } as never;
   const pedido = {
     registrarPedido: jest.fn().mockResolvedValue(resultadoRegistrar),

@@ -435,19 +435,61 @@ export class LeadsService {
   async setBotActivo(empresaId: number, prospectoId: number, activo: boolean) {
     const prospecto = await this.prisma.leadProspecto.findFirst({
       where: { id: prospectoId, empresaId },
-      select: { id: true },
+      select: { id: true, conversacionId: true },
     });
     if (!prospecto) throw new NotFoundException('Prospecto no encontrado');
-    return this.prisma.leadProspecto.update({
-      where: { id: prospectoId },
-      data: {
-        botActivo: activo,
-        // Encender a mano limpia cualquier pausa; apagar a mano es
-        // deliberado y no vence solo.
-        pausadoHasta: null,
-        motivoPausa: activo ? null : 'apagado desde el panel',
-      },
+    return this.pausarConversacion(
+      empresaId,
+      prospecto.conversacionId,
+      activo,
+      'apagado desde el panel',
+    );
+  }
+
+  /**
+   * Tomar (o devolver) el chat por conversación.
+   *
+   * Es la vía general: la pausa es de la CONVERSACIÓN, no del prospecto. Los
+   * chats de prueba del propio negocio no generan prospecto a propósito —para
+   * que no ensucien el embudo, ver numeros-internos.ts— y durante un tiempo
+   * fueron los únicos chats donde no se podía apagar la IA. Justo los que usa
+   * el dueño para probar.
+   *
+   * Cuando SÍ hay prospecto se escribe también ahí: su `botActivo` es lo que
+   * pinta "IA en pausa" en la tarjeta del embudo y en la lista.
+   */
+  async pausarConversacion(
+    empresaId: number,
+    conversacionId: number,
+    activo: boolean,
+    motivo = 'apagado desde el panel',
+  ) {
+    const conv = await this.prisma.leadConversacion.findFirst({
+      where: { id: conversacionId, empresaId },
+      select: { id: true, prospecto: { select: { id: true } } },
     });
+    if (!conv) throw new NotFoundException('Conversación no encontrada');
+
+    // Encender a mano limpia cualquier pausa; apagar a mano es deliberado y
+    // no vence solo.
+    const data = {
+      botActivo: activo,
+      pausadoHasta: null,
+      motivoPausa: activo ? null : motivo,
+    };
+
+    const [conversacion] = await this.prisma.$transaction([
+      this.prisma.leadConversacion.update({ where: { id: conv.id }, data }),
+      ...(conv.prospecto
+        ? [
+            this.prisma.leadProspecto.update({
+              where: { id: conv.prospecto.id },
+              data,
+            }),
+          ]
+        : []),
+    ]);
+    return conversacion;
   }
 
   /**
@@ -478,7 +520,8 @@ export class LeadsService {
       select: {
         id: true,
         telefonoProspecto: true,
-        prospecto: { select: { id: true, botActivo: true } },
+        botActivo: true,
+        prospecto: { select: { id: true } },
       },
     });
     if (!conv) throw new NotFoundException('Conversación no encontrada');
@@ -506,17 +549,25 @@ export class LeadsService {
 
     // Idempotente: si el vendedor ya había tomado el chat, no se reescribe.
     let botPausado = false;
-    if (conv.prospecto?.botActivo) {
-      await this.prisma.leadProspecto.update({
-        where: { id: conv.prospecto.id },
-        // Vence sola: una pausa permanente convertía cada respuesta manual en
-        // un bot apagado para siempre en esa conversación.
-        data: {
-          botActivo: false,
-          pausadoHasta: venceEn(),
-          motivoPausa: 'respuesta manual',
-        },
-      });
+    if (conv.botActivo) {
+      // Vence sola: una pausa permanente convertía cada respuesta manual en
+      // un bot apagado para siempre en esa conversación.
+      const data = {
+        botActivo: false,
+        pausadoHasta: venceEn(),
+        motivoPausa: 'respuesta manual',
+      };
+      await this.prisma.$transaction([
+        this.prisma.leadConversacion.update({ where: { id: conv.id }, data }),
+        ...(conv.prospecto
+          ? [
+              this.prisma.leadProspecto.update({
+                where: { id: conv.prospecto.id },
+                data,
+              }),
+            ]
+          : []),
+      ]);
       botPausado = true;
     }
 

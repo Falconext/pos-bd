@@ -122,6 +122,24 @@ export class LeadsController {
   }
 
   /**
+   * Tomar (o devolver) el chat. Va por conversación y no por prospecto porque
+   * los chats de prueba del negocio no tienen prospecto, y eran justo los que
+   * se quedaban sin interruptor.
+   */
+  @Patch('conversaciones/:id/bot')
+  pausarConversacion(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { activo: boolean },
+  ) {
+    return this.service.pausarConversacion(
+      user.empresaId,
+      id,
+      Boolean(body?.activo),
+    );
+  }
+
+  /**
    * Borra la conversación entera. Es lo que permite volver a probar el mismo
    * flujo desde cero: sin esto, cada prueba arrastra el historial anterior.
    */
