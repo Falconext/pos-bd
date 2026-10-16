@@ -56,6 +56,32 @@ correr('API de facturación contra Postgres real', () => {
   };
   const sunatFalso = { execute: jest.fn(async () => ({ ok: true })) };
 
+  /** Anular y emitir notas también pasan por el motor real; acá se simulan. */
+  (comprobantesFalsos as any).anularComprobante = jest.fn(
+    async (id: number) =>
+      prisma.$executeRawUnsafe(
+        `UPDATE "Comprobante" SET "estadoEnvioSunat"='ANULADO' WHERE id=$1`, id),
+  );
+  (comprobantesFalsos as any).crearNotaCredito = jest.fn(
+    async (dto: any, empresaId: number) => {
+      const f: any = await prisma.$queryRawUnsafe(
+        `INSERT INTO "Comprobante"
+          ("tipoDoc",serie,correlativo,"fechaEmision","formaPagoTipo","formaPagoMoneda","tipoMoneda",
+           "mtoOperGravadas","mtoIGV","valorVenta","totalImpuestos","subTotal","mtoImpVenta",
+           "clienteId","empresaId","estadoEnvioSunat","tipoOperacionId")
+         VALUES ('07','FC01',(SELECT coalesce(max(correlativo),0)+1 FROM "Comprobante" WHERE "empresaId"=$1),
+                 now(),'Contado','PEN','PEN',1000,180,1000,180,1000,1180,$2,$1,'PENDIENTE',1)
+         RETURNING id`, empresaId, dto.clienteId);
+      return { id: f[0].id, empresaId };
+    },
+  );
+
+  /** Lleva un comprobante al estado en que SUNAT ya lo aceptó. */
+  const aceptar = (apiPublicId: string) =>
+    prisma.$executeRawUnsafe(
+      `UPDATE "Comprobante" SET "estadoEnvioSunat"='EMITIDO',"sunatCdrResponse"=$1,"sunatCdrZip"='UEsDBBQ='
+       WHERE "apiPublicId"=$2`, JSON.stringify({ code: '0', message: 'aceptada' }), apiPublicId);
+
   const emitirEn = (integrador: number, issuer: string, extra: any = {}) =>
     servicio.emitir(integrador, {
       issuer_id: issuer,
@@ -284,5 +310,156 @@ correr('API de facturación contra Postgres real', () => {
 
   it('el id público no colisiona en 20,000 generaciones', () => {
     expect(new Set(Array.from({ length: 20_000 }, () => nuevoIdPublico())).size).toBe(20_000);
+  });
+
+  describe('la comunicación de baja', () => {
+    it('no se puede anular algo que SUNAT todavía no vio', async () => {
+      // No es un error del integrador: llegó temprano. El mensaje lo dice.
+      const r: any = await emitirEn(INTEGRADOR_A, ISS_A);
+      const e = await servicio.anular(INTEGRADOR_A, r.id, 'Error en el cliente').catch((x) => x);
+      expect(e.codigo).toBe('invalid_state');
+      expect(e.message).toContain('pending');
+    });
+
+    it('un rechazado no se anula: nunca existió para SUNAT', async () => {
+      const r: any = await emitirEn(INTEGRADOR_A, ISS_A);
+      await prisma.$executeRawUnsafe(
+        `UPDATE "Comprobante" SET "estadoEnvioSunat"='RECHAZADO' WHERE "apiPublicId"=$1`, r.id);
+      const e = await servicio.anular(INTEGRADOR_A, r.id, 'ya no va').catch((x) => x);
+      expect(e.codigo).toBe('invalid_state');
+      expect(e.message).toContain('nuevo'); // dice qué hacer en su lugar
+    });
+
+    it('sobre un aceptado funciona y queda voided', async () => {
+      const r: any = await emitirEn(INTEGRADOR_A, ISS_A);
+      await aceptar(r.id);
+      const anulado: any = await servicio.anular(INTEGRADOR_A, r.id, 'Error en los datos del cliente');
+      expect(anulado.status).toBe('voided');
+    });
+
+    it('anular dos veces se rechaza', async () => {
+      const r: any = await emitirEn(INTEGRADOR_A, ISS_A);
+      await aceptar(r.id);
+      await servicio.anular(INTEGRADOR_A, r.id, 'motivo');
+      const e = await servicio.anular(INTEGRADOR_A, r.id, 'motivo').catch((x) => x);
+      expect(e.codigo).toBe('already_voided');
+    });
+
+    it('SUNAT exige el motivo, y de hasta 100 caracteres', async () => {
+      const r: any = await emitirEn(INTEGRADOR_A, ISS_A);
+      await aceptar(r.id);
+      expect((await servicio.anular(INTEGRADOR_A, r.id, '   ').catch((x) => x)).parametro).toBe('reason');
+      expect((await servicio.anular(INTEGRADOR_A, r.id, 'x'.repeat(101)).catch((x) => x)).parametro).toBe('reason');
+    });
+
+    it('un integrador no anula el comprobante de otro', async () => {
+      const r: any = await emitirEn(INTEGRADOR_A, ISS_A);
+      await aceptar(r.id);
+      await expect(servicio.anular(INTEGRADOR_B, r.id, 'motivo')).rejects.toThrow();
+      // Y sigue vivo.
+      expect((await servicio.obtener(INTEGRADOR_A, r.id) as any).status).toBe('accepted');
+    });
+  });
+
+  describe('las notas de crédito', () => {
+    const nota = (integrador: number, issuer: string, invoiceId: string, extra: any = {}) =>
+      servicio.crearNotaCredito(integrador, {
+        issuer_id: issuer, affects_invoice_id: invoiceId,
+        reason_code: '06', description: 'Devolución total', ...extra,
+      });
+
+    it('contra un comprobante aceptado se emite', async () => {
+      const r: any = await emitirEn(INTEGRADOR_A, ISS_A);
+      await aceptar(r.id);
+      const n: any = await nota(INTEGRADOR_A, ISS_A, r.id);
+      expect(n.id).toMatch(/^cn_/);
+      expect(n.object).toBe('credit_note');
+      expect(n.affects_invoice_id).toBe(r.id);
+      expect(n.reason_code).toBe('06');
+    });
+
+    it('contra uno que SUNAT no aceptó se rechaza', async () => {
+      const r: any = await emitirEn(INTEGRADOR_A, ISS_A);
+      const e = await nota(INTEGRADOR_A, ISS_A, r.id).catch((x) => x);
+      expect(e.codigo).toBe('invalid_state');
+      expect(e.parametro).toBe('affects_invoice_id');
+    });
+
+    it('un integrador no emite notas contra las ventas de otro', async () => {
+      // Sin esta verificación, conocer un inv_ ajeno bastaría para anularle
+      // la venta a otro integrador.
+      const r: any = await emitirEn(INTEGRADOR_A, ISS_A);
+      await aceptar(r.id);
+      await expect(nota(INTEGRADOR_B, ISS_B, r.id)).rejects.toThrow();
+    });
+
+    it('el motivo tiene que ser del catálogo 09', async () => {
+      const r: any = await emitirEn(INTEGRADOR_A, ISS_A);
+      await aceptar(r.id);
+      expect((await nota(INTEGRADOR_A, ISS_A, r.id, { reason_code: '99' }).catch((x) => x)).parametro)
+        .toBe('reason_code');
+      expect((await nota(INTEGRADOR_A, ISS_A, r.id, { reason_code: 'devolucion' }).catch((x) => x)).parametro)
+        .toBe('reason_code');
+    });
+
+    it('el sustento es obligatorio: va impreso en la nota', async () => {
+      const r: any = await emitirEn(INTEGRADOR_A, ISS_A);
+      await aceptar(r.id);
+      expect((await nota(INTEGRADOR_A, ISS_A, r.id, { description: '  ' }).catch((x) => x)).parametro)
+        .toBe('description');
+    });
+
+    it('se consulta por su propio id', async () => {
+      const r: any = await emitirEn(INTEGRADOR_A, ISS_A);
+      await aceptar(r.id);
+      const n: any = await nota(INTEGRADOR_A, ISS_A, r.id);
+      expect((await servicio.obtenerNotaCredito(INTEGRADOR_A, n.id) as any).object).toBe('credit_note');
+      await expect(servicio.obtenerNotaCredito(INTEGRADOR_B, n.id)).rejects.toThrow();
+    });
+  });
+
+  describe('las descargas', () => {
+    it('el CDR de un comprobante en reconciling dice que NO lo reemita', async () => {
+      // Es el mensaje que evita el duplicado. Un 404 pelado invitaría a
+      // reintentar la emisión.
+      const r: any = await emitirEn(INTEGRADOR_A, ISS_A);
+      await prisma.$executeRawUnsafe(
+        `UPDATE "Comprobante" SET "estadoEnvioSunat"='PENDIENTE_CONCILIACION',"sunatCdrResponse"=$1 WHERE "apiPublicId"=$2`,
+        JSON.stringify({ code: '1033' }), r.id);
+      const e = await servicio.cdr(INTEGRADOR_A, r.id).catch((x) => x);
+      expect(e.response?.message ?? e.message).toContain('No lo reemitas');
+    });
+
+    it('el CDR de uno recién emitido avisa que todavía no está', async () => {
+      const r: any = await emitirEn(INTEGRADOR_A, ISS_A);
+      const e = await servicio.cdr(INTEGRADOR_A, r.id).catch((x) => x);
+      expect(e.response?.code ?? e.code).toBe('file_not_ready');
+    });
+
+    it('el CDR de un aceptado se descarga como zip', async () => {
+      const r: any = await emitirEn(INTEGRADOR_A, ISS_A);
+      await aceptar(r.id);
+      const f = await servicio.cdr(INTEGRADOR_A, r.id);
+      expect(f.contentType).toBe('application/zip');
+      expect(f.filename).toMatch(/^F001-\d{8}-CDR\.zip$/);
+    });
+
+    it('el XML avisa claro cuando todavía no se firmó', async () => {
+      const r: any = await emitirEn(INTEGRADOR_A, ISS_A);
+      const e = await servicio.xml(INTEGRADOR_A, r.id).catch((x) => x);
+      expect(e.response?.code ?? e.code).toBe('file_not_ready');
+    });
+
+    it('ninguna descarga sirve para leer lo de otro integrador', async () => {
+      const r: any = await emitirEn(INTEGRADOR_A, ISS_A);
+      await aceptar(r.id);
+      for (const fn of [
+        () => servicio.cdr(INTEGRADOR_B, r.id),
+        () => servicio.xml(INTEGRADOR_B, r.id),
+        () => servicio.pdf(INTEGRADOR_B, r.id),
+      ]) {
+        await expect(fn()).rejects.toThrow();
+      }
+    });
   });
 });

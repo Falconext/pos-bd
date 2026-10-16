@@ -10,6 +10,8 @@ import {
   validarEntrada,
 } from './fachada';
 import { nuevoIdPublico, serializarComprobante } from './serializador';
+import { ErrorDeContrato } from './fachada';
+import { esFinal, estadoPublico } from './estado-publico';
 
 /**
  * La API de facturación, apoyada en el motor que ya factura para 61 empresas.
@@ -157,18 +159,10 @@ export class FacturacionApiService {
    * — y con él, el nombre y el documento de su cliente.
    */
   async obtener(integradorId: number, invoiceId: string) {
-    const c = await this.prisma.comprobante.findFirst({
-      where: { apiPublicId: invoiceId, empresa: { integradorId } },
-      include: { ...this.incluirParaSerializar, empresa: { select: { apiPublicId: true } } },
-    });
-    if (!c) {
-      throw new NotFoundException({
-        code: 'resource_missing',
-        message: `No existe el comprobante ${invoiceId}.`,
-      });
-    }
-    return serializarComprobante(c as any, (c as any).empresa.apiPublicId);
+    const c = await this.comprobanteDelIntegrador(integradorId, invoiceId);
+    return serializarComprobante(c, c.empresa.apiPublicId);
   }
+
 
   /**
    * El listado, siempre acotado al integrador y opcionalmente a un emisor.
@@ -208,5 +202,230 @@ export class FacturacionApiService {
       has_more: hayMas,
       next_cursor: hayMas ? String(pagina[pagina.length - 1].id) : null,
     };
+  }
+
+  /**
+   * El comprobante interno detrás de un id público, ya verificado.
+   *
+   * Todas las operaciones sobre un comprobante pasan por acá: si la condición
+   * del integrador se olvidara en una sola de ellas, esa sería la que deje
+   * leer o anular lo ajeno.
+   */
+  private async comprobanteDelIntegrador(integradorId: number, invoiceId: string) {
+    const c = await this.prisma.comprobante.findFirst({
+      where: { apiPublicId: invoiceId, empresa: { integradorId } },
+      include: { ...this.incluirParaSerializar, empresa: { select: { apiPublicId: true } } },
+    });
+    if (!c) {
+      throw new NotFoundException({
+        code: 'resource_missing',
+        message: `No existe el comprobante ${invoiceId}.`,
+      });
+    }
+    return c as any;
+  }
+
+  /**
+   * El XML firmado.
+   *
+   * Existe desde que el comprobante se firma, incluso si SUNAT todavía no
+   * contestó: es lo que prueba qué se envió.
+   */
+  async xml(integradorId: number, invoiceId: string) {
+    const c = await this.comprobanteDelIntegrador(integradorId, invoiceId);
+    if (!c.sunatXml && !c.s3XmlUrl) {
+      throw new NotFoundException({
+        code: 'file_not_ready',
+        message: 'El XML todavía no está listo. Llega cuando el comprobante se firma.',
+      });
+    }
+    return this.comprobantes.obtenerXmlComprobante(c.empresaId, c.id);
+  }
+
+  /**
+   * El CDR, la constancia de SUNAT.
+   *
+   * Se niega explícitamente cuando el estado no lo tiene —`pending`, `sent`,
+   * `reconciling`— en vez de devolver un 404 pelado. La diferencia importa:
+   * en `reconciling` el comprobante EXISTE para SUNAT y lo que falta es el
+   * papel, así que el integrador tiene que esperar, no reemitir.
+   */
+  async cdr(integradorId: number, invoiceId: string) {
+    const c = await this.comprobanteDelIntegrador(integradorId, invoiceId);
+    const estado = estadoPublico(c);
+    if (!c.sunatCdrZip && !c.s3CdrUrl) {
+      throw new NotFoundException({
+        code: 'file_not_ready',
+        message:
+          estado === 'reconciling'
+            ? 'SUNAT da el comprobante por registrado pero todavía no entregó el CDR. No lo reemitas: te avisamos por webhook cuando llegue.'
+            : 'El CDR todavía no está. Llega cuando SUNAT responde.',
+      });
+    }
+    return {
+      buffer: Buffer.from(c.sunatCdrZip ?? '', 'base64'),
+      filename: `${c.serie}-${String(c.correlativo).padStart(8, '0')}-CDR.zip`,
+      contentType: 'application/zip',
+    };
+  }
+
+  /** El PDF. Se genera a demanda, así que está desde el primer momento. */
+  async pdf(integradorId: number, invoiceId: string, formato: 'a4' | 'a5' | 'ticket' = 'a4') {
+    const c = await this.comprobanteDelIntegrador(integradorId, invoiceId);
+    const { buffer } = await this.comprobantes.generarBufferPdf(c.id, formato as any);
+    return {
+      buffer,
+      filename: `${c.serie}-${String(c.correlativo).padStart(8, '0')}.pdf`,
+      contentType: 'application/pdf',
+    };
+  }
+
+  /**
+   * La comunicación de baja.
+   *
+   * Solo se puede anular lo que SUNAT aceptó: pedirlo sobre algo que todavía
+   * está en camino no es un error del integrador, es que llegó temprano, y el
+   * mensaje lo dice así. Sobre un rechazado directamente no tiene sentido —
+   * ese comprobante nunca existió para SUNAT.
+   */
+  async anular(integradorId: number, invoiceId: string, motivo: string) {
+    const c = await this.comprobanteDelIntegrador(integradorId, invoiceId);
+    const estado = estadoPublico(c);
+
+    if (estado === 'voided') {
+      throw new ErrorDeContrato('already_voided', 'Este comprobante ya fue dado de baja.');
+    }
+    if (estado !== 'accepted' && estado !== 'observed') {
+      throw new ErrorDeContrato(
+        'invalid_state',
+        estado === 'rejected'
+          ? 'Un comprobante rechazado no se da de baja: SUNAT nunca lo registró. Emite uno nuevo.'
+          : `Solo se da de baja un comprobante aceptado por SUNAT. Este está en "${estado}"; espera el webhook.`,
+        'status',
+      );
+    }
+    const texto = String(motivo ?? '').trim();
+    if (!texto) {
+      throw new ErrorDeContrato('parameter_missing', 'El campo reason es obligatorio: SUNAT exige el motivo de la baja.', 'reason');
+    }
+    if (texto.length > 100) {
+      throw new ErrorDeContrato('parameter_invalid', 'El campo reason no puede superar los 100 caracteres.', 'reason');
+    }
+
+    await this.comprobantes.anularComprobante(c.id, texto, c.empresaId);
+    const actualizado = await this.comprobanteDelIntegrador(integradorId, invoiceId);
+    return serializarComprobante(actualizado, actualizado.empresa.apiPublicId);
+  }
+
+  /** Lo que el contrato admite como sustento de una nota de crédito. */
+  private static readonly MOTIVOS_NOTA = new Set(
+    ['01','02','03','04','05','06','07','08','09','10','11','12','13'],
+  );
+
+  /**
+   * Una nota de crédito contra un comprobante ya aceptado.
+   *
+   * El comprobante afectado se resuelve por su id público y se verifica que
+   * sea del integrador: sin eso, conocer un `inv_…` ajeno bastaría para
+   * emitir notas contra las ventas de otro.
+   */
+  async crearNotaCredito(integradorId: number, entrada: any) {
+    const emisor = await this.emisores.resolverParaIntegrador(
+      integradorId,
+      String(entrada?.issuer_id ?? ''),
+    );
+    const afectado = await this.comprobanteDelIntegrador(
+      integradorId,
+      String(entrada?.affects_invoice_id ?? ''),
+    );
+    if (afectado.empresaId !== emisor.id) {
+      throw new ErrorDeContrato(
+        'parameter_invalid',
+        'El comprobante afectado pertenece a otro emisor.',
+        'affects_invoice_id',
+      );
+    }
+
+    const estado = estadoPublico(afectado);
+    if (estado !== 'accepted' && estado !== 'observed') {
+      throw new ErrorDeContrato(
+        'invalid_state',
+        `Solo se emite una nota de crédito contra un comprobante aceptado. El afectado está en "${estado}".`,
+        'affects_invoice_id',
+      );
+    }
+
+    const motivo = String(entrada?.reason_code ?? '');
+    if (!FacturacionApiService.MOTIVOS_NOTA.has(motivo)) {
+      throw new ErrorDeContrato(
+        'parameter_invalid',
+        'reason_code debe ser un código del catálogo 09 de SUNAT (01 a 13).',
+        'reason_code',
+      );
+    }
+    const descripcion = String(entrada?.description ?? '').trim();
+    if (!descripcion) {
+      throw new ErrorDeContrato('parameter_missing', 'El campo description es obligatorio: es el sustento de la nota.', 'description');
+    }
+
+    const creada = await this.comprobantes.crearNotaCredito(
+      {
+        tipoDoc: '07',
+        serie: entrada?.series?.trim() || undefined,
+        fechaEmision: entrada?.issue_date,
+        tipoMoneda: afectado.tipoMoneda ?? 'PEN',
+        formaPagoMoneda: afectado.tipoMoneda ?? 'PEN',
+        formaPagoTipo: 'Contado',
+        clienteId: afectado.clienteId,
+        clienteName: afectado.cliente?.nombre ?? '',
+        tipoOperacionId: await this.tipoOperacionPorDefecto(),
+        motivoId: Number(motivo),
+        tipDocAfectado: afectado.tipoDoc,
+        numDocAfectado: `${afectado.serie}-${afectado.correlativo}`,
+        leyenda: descripcion,
+        observaciones: descripcion,
+        // Sin líneas propias, la nota afecta el total del comprobante.
+        detalles: (afectado.detalles ?? []).map((d: any) => ({
+          productoId: d.productoId ?? null,
+          descripcion: d.descripcion,
+          cantidad: d.cantidad,
+          nuevoValorUnitario: d.mtoValorUnitario,
+          unidadVenta: d.unidad,
+          tipoAfectacionIGV: String(d.tipAfeIgv ?? '10'),
+        })),
+      },
+      emisor.id,
+    );
+
+    const apiPublicId = nuevoIdPublico('cn');
+    await this.prisma.comprobante.update({
+      where: { id: creada.id },
+      data: { apiPublicId },
+    });
+    void this.enviarSunat.execute(creada.id).catch((e) => {
+      console.error(`[api-facturacion] envío de nota ${apiPublicId} falló:`, e?.message);
+    });
+
+    const completa = await this.prisma.comprobante.findUnique({
+      where: { id: creada.id },
+      include: this.incluirParaSerializar,
+    });
+    return {
+      ...serializarComprobante(completa as any, emisor.apiPublicId!),
+      affects_invoice_id: afectado.apiPublicId,
+      reason_code: motivo,
+      description: descripcion,
+    };
+  }
+
+  /** Una nota de crédito por su id público. */
+  async obtenerNotaCredito(integradorId: number, id: string) {
+    const c = await this.comprobanteDelIntegrador(integradorId, id);
+    return serializarComprobante(c, c.empresa.apiPublicId);
+  }
+
+  /** Lo usa el serializador de estado para decidir si vale la pena reconsultar. */
+  static estadoEsFinal(estado: string): boolean {
+    return esFinal(estado as any);
   }
 }

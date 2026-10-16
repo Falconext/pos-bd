@@ -145,6 +145,30 @@ describe('la forma pública', () => {
   });
 });
 
+describe('las notas', () => {
+  // Olvidarlas hacía que el serializador devolviera null para un 07 y la nota
+  // saliera sin `id`. Solo lo vio la QA funcional; esto lo fija acá.
+  it('una nota de crédito se serializa y se marca como tal', () => {
+    const r = serializarComprobante({ ...COMPROBANTE, tipoDoc: '07', apiPublicId: 'cn_7Hd2Lp9q' }, 'i')!;
+    expect(r).not.toBeNull();
+    expect(r.id).toBe('cn_7Hd2Lp9q');
+    expect(r.object).toBe('credit_note');
+    expect(r.document_type).toBe('credit_note');
+  });
+
+  it('una nota de débito también', () => {
+    expect(serializarComprobante({ ...COMPROBANTE, tipoDoc: '08' }, 'i')!.object).toBe('debit_note');
+  });
+
+  it('una factura sigue siendo object invoice', () => {
+    expect(serializarComprobante(COMPROBANTE, 'i')!.object).toBe('invoice');
+    // Y una boleta también: `object` agrupa, `document_type` distingue.
+    const b = serializarComprobante({ ...COMPROBANTE, tipoDoc: '03' }, 'i')!;
+    expect(b.object).toBe('invoice');
+    expect(b.document_type).toBe('receipt');
+  });
+});
+
 describe('lo que no es comprobante electrónico no se publica', () => {
   it('una nota de venta devuelve null', () => {
     // Confundirla con algo que tiene valor tributario sería peor que no

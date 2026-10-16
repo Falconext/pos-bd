@@ -2,6 +2,8 @@ import {
   Body,
   Controller,
   Get,
+  Header,
+  Res,
   HttpCode,
   Param,
   Post,
@@ -73,6 +75,59 @@ export class FacturacionApiController {
   }
 
   /** Los emisores (RUCs) por los que este integrador puede emitir. */
+  /**
+   * Las descargas.
+   *
+   * Van como archivo y no como base64 en un JSON: un XML de 40 líneas pesa
+   * poco, pero un PDF de varias páginas en base64 infla la respuesta un 33% y
+   * obliga al integrador a decodificar antes de poder guardarlo.
+   */
+  @Get('invoices/:id/xml')
+  async descargarXml(@Param('id') id: string, @Request() req: any, @Res() res: any) {
+    return this.enviarArchivo(res, await this.facturacion.xml(req.apiEmpresaId, id));
+  }
+
+  @Get('invoices/:id/cdr')
+  async descargarCdr(@Param('id') id: string, @Request() req: any, @Res() res: any) {
+    return this.enviarArchivo(res, await this.facturacion.cdr(req.apiEmpresaId, id));
+  }
+
+  @Get('invoices/:id/pdf')
+  async descargarPdf(
+    @Param('id') id: string,
+    @Query('format') formato: string,
+    @Request() req: any,
+    @Res() res: any,
+  ) {
+    const f = ['a4', 'a5', 'ticket'].includes(formato) ? (formato as any) : 'a4';
+    return this.enviarArchivo(res, await this.facturacion.pdf(req.apiEmpresaId, id, f));
+  }
+
+  /**
+   * La comunicación de baja.
+   *
+   * Lleva `Idempotency-Key` como la emisión: un reintento tras un timeout no
+   * puede terminar en dos comunicaciones de baja por el mismo comprobante.
+   */
+  @Post('invoices/:id/void')
+  @HttpCode(202)
+  @UseInterceptors(IdempotenciaInterceptor)
+  async anular(@Param('id') id: string, @Body() cuerpo: any, @Request() req: any) {
+    return this.facturacion.anular(req.apiEmpresaId, id, cuerpo?.reason);
+  }
+
+  @Post('credit_notes')
+  @HttpCode(202)
+  @UseInterceptors(IdempotenciaInterceptor)
+  async crearNotaCredito(@Body() cuerpo: any, @Request() req: any) {
+    return this.facturacion.crearNotaCredito(req.apiEmpresaId, cuerpo);
+  }
+
+  @Get('credit_notes/:id')
+  async obtenerNotaCredito(@Param('id') id: string, @Request() req: any) {
+    return this.facturacion.obtenerNotaCredito(req.apiEmpresaId, id);
+  }
+
   @Get('issuers')
   async listarEmisores(@Request() req: any) {
     return { object: 'list', data: await this.emisores.listar(req.apiEmpresaId) };
@@ -103,5 +158,22 @@ export class FacturacionApiController {
       object: 'list',
       data: await this.webhooks.listEndpoints(req.apiEmpresaId, 'facturacion'),
     };
+  }
+
+  /**
+   * Manda el archivo tal cual, sin pasar por el interceptor que envuelve todo
+   * en `{ code, message, data }`. Un XML envuelto en JSON no lo puede abrir
+   * ningún lector de comprobantes.
+   */
+  private enviarArchivo(
+    res: any,
+    archivo: { buffer: Buffer; filename: string; contentType: string },
+  ) {
+    res.set({
+      'Content-Type': archivo.contentType,
+      'Content-Disposition': `attachment; filename="${archivo.filename}"`,
+      'Content-Length': String(archivo.buffer.length),
+    });
+    return res.send(archivo.buffer);
   }
 }

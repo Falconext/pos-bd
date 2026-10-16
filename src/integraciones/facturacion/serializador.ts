@@ -20,8 +20,28 @@ import {
   estadoPublico,
 } from './estado-publico';
 
-/** Catálogo 01 de SUNAT, de vuelta al nombre público. */
-const TIPO_PUBLICO: Record<string, string> = { '01': 'invoice', '03': 'receipt' };
+/**
+ * Catálogo 01 de SUNAT, de vuelta al nombre público.
+ *
+ * Las notas van acá y no en un mapa aparte: olvidarlas hacía que
+ * `serializarComprobante` devolviera null para un `07` y la nota saliera sin
+ * `id`, con el resto de los campos puestos a mano por encima. Lo encontró la
+ * QA funcional.
+ */
+const TIPO_PUBLICO: Record<string, string> = {
+  '01': 'invoice',
+  '03': 'receipt',
+  '07': 'credit_note',
+  '08': 'debit_note',
+};
+
+/** El `object` que lleva cada uno en la respuesta. */
+const OBJETO_PUBLICO: Record<string, string> = {
+  '01': 'invoice',
+  '03': 'invoice',
+  '07': 'credit_note',
+  '08': 'debit_note',
+};
 
 /** Catálogo 07, de vuelta. */
 const AFECTACION_PUBLICA: Record<string, string> = {
@@ -157,7 +177,7 @@ export const serializarComprobante = (
 
   return {
     id: c.apiPublicId,
-    object: 'invoice',
+    object: OBJETO_PUBLICO[c.tipoDoc] ?? 'invoice',
     issuer_id: issuerId,
     document_type: tipo,
     series: c.serie,
