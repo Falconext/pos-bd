@@ -43,8 +43,8 @@ describe('ProductoService — códigos de barra múltiples', () => {
   });
 
   describe('normalizarCodigosExtra', () => {
-    const norm = (codigos: any[], principal?: string) =>
-      (service as any).normalizarCodigosExtra(codigos, principal);
+    const norm = (codigos: any[], principal?: string | null, codigoProducto?: string | null) =>
+      (service as any).normalizarCodigosExtra(codigos, principal, codigoProducto);
 
     it('trim + uppercase', () => {
       expect(norm([' ean-a ', 'ean-b'])).toEqual([suelto('EAN-A'), suelto('EAN-B')]);
@@ -110,8 +110,21 @@ describe('ProductoService — códigos de barra múltiples', () => {
         expect(r[0].codigoInterno).toBe('METRO-ALL');
     });
 
-    it('una fila sin barras Y sin código interno sí se descarta', () => {
-        const r = norm([{ codigo: '', codigoInterno: '', unidadesPorPaquete: 5 }, { codigo: 'EAN-A' }]);
+    // CAMBIO DE COMPORTAMIENTO (2026-10-16): antes esta fila se descartaba en
+    // silencio. Desde el panel eso se vivía como "no me deja guardar si no le
+    // pongo un código de barras": el producto respondía OK y el paquete
+    // desaparecía. Una fila con paquete o precio propio es una presentación
+    // real, así que ahora se le deriva un código del SKU en vez de perderla.
+    it('una fila con paquete pero sin ningún código conserva la presentación', () => {
+        const r = norm([{ codigo: '', codigoInterno: '', unidadesPorPaquete: 5 }, { codigo: 'EAN-A' }], null, 'SKU1');
+        expect(r).toHaveLength(2);
+        expect(r[0].codigo).toBe('SKU1-X5');
+        expect(r[1].codigo).toBe('EAN-A');
+    });
+
+    it('una fila sin ningún código y sin paquete ni precio sí se descarta', () => {
+        // Un renglón que se agregó y no se llenó no debe crear nada.
+        const r = norm([{ codigo: '', codigoInterno: '', unidadesPorPaquete: 1 }, { codigo: 'EAN-A' }]);
         expect(r).toHaveLength(1);
         expect(r[0].codigo).toBe('EAN-A');
     });

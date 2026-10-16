@@ -55,6 +55,19 @@ export class ListProductoDto {
   @Transform(({ value }) => value === true || value === 'true' || value === '1')
   usarPrecioSede?: boolean;
 
+  // Lista de precios elegida a mano en el POS. Pisa la resolución automática
+  // por usuario/sede: el cajero decide si cobra "para llevar" o "para la mesa".
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  listaPrecioId?: number;
+
+  // Cliente de la venta: su lista pactada gana sobre la del vendedor.
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  clienteId?: number;
+
   @IsOptional()
   @Transform(({ value }) => value === true || value === 'true' || value === '1')
   soloStockBajo?: boolean;

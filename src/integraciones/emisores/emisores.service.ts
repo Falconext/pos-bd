@@ -70,6 +70,9 @@ export class EmisoresService {
         usuarioPse: true,
         usaDemo: true,
         fechaActivacion: true,
+        apiEmisorEstado: true,
+        apiEmisorDesde: true,
+        apiEmisorMotivo: true,
       },
     });
     if (!emisor) {
@@ -116,8 +119,16 @@ export class EmisoresService {
         // Si ya tenía uno, se conserva: cambiarlo rompería las referencias
         // que el integrador guardó de sus comprobantes.
         apiPublicId: empresa.apiPublicId ?? EmisoresService.nuevoPublicId(),
+        // Nace pendiente: QPSE tarda ~24 h en completar el alta ante SUNAT y
+        // emitir antes quema correlativos que no vuelven.
+        apiEmisorEstado: 'pendiente',
+        apiEmisorDesde: new Date(),
+        apiEmisorMotivo: null,
       },
-      select: { id: true, apiPublicId: true, ruc: true, integradorId: true },
+      select: {
+        id: true, apiPublicId: true, ruc: true, integradorId: true,
+        apiEmisorEstado: true, apiEmisorDesde: true,
+      },
     });
   }
 
@@ -146,6 +157,9 @@ export class EmisoresService {
     usuarioPse: string | null;
     usaDemo: boolean | null;
     fechaActivacion: Date;
+    apiEmisorEstado?: string | null;
+    apiEmisorDesde?: Date | null;
+    apiEmisorMotivo?: string | null;
   }) {
     const listo = !!f.usuarioPse?.trim();
     return {
@@ -156,7 +170,22 @@ export class EmisoresService {
       trade_name: f.nombreComercial,
       address: f.direccion,
       environment: f.usaDemo ? ('test' as const) : ('live' as const),
-      status: listo ? ('active' as const) : ('pending_setup' as const),
+      // El estado que importa es el del ciclo de vida: tener credenciales no
+      // significa que SUNAT ya habilitó el RUC.
+      status: !listo
+        ? ('pending_setup' as const)
+        : f.apiEmisorEstado === 'bloqueado'
+          ? ('not_authorized' as const)
+          : f.apiEmisorEstado === 'pendiente'
+            ? ('pending' as const)
+            : ('active' as const),
+      status_detail: f.apiEmisorMotivo ?? undefined,
+      // Cuándo se espera que SUNAT lo tenga listo. Orientativo: QPSE dice
+      // ~24 h "aunque pueden demorar más si SUNAT presenta intermitencias".
+      available_at:
+        f.apiEmisorEstado === 'pendiente' && f.apiEmisorDesde
+          ? new Date(f.apiEmisorDesde.getTime() + 24 * 60 * 60 * 1000)
+          : undefined,
       created_at: f.fechaActivacion,
     };
   }

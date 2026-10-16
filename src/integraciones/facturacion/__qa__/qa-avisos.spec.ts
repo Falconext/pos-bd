@@ -64,7 +64,7 @@ correr('avisos por webhook, contra Postgres real', () => {
     }
     await prisma.$executeRawUnsafe(`INSERT INTO "TipoDocumento" (id,codigo,descripcion) VALUES (2,'6','RUC') ON CONFLICT (id) DO NOTHING`);
     await prisma.$executeRawUnsafe(`INSERT INTO "TipoOperacion" (id,codigo,descripcion) VALUES (1,'0101','VENTA INTERNA') ON CONFLICT (id) DO NOTHING`);
-    await prisma.$executeRawUnsafe(`UPDATE "Empresa" SET "integradorId"=$1,"apiPublicId"='iss_qaAvisos' WHERE id=$2`, INTEGRADOR, EMISOR);
+    await prisma.$executeRawUnsafe(`UPDATE "Empresa" SET "integradorId"=$1,"apiPublicId"='iss_qaAvisos',"usuarioPse"='QA01',"apiEmisorEstado"='activo' WHERE id=$2`, INTEGRADOR, EMISOR);
     avisos = new AvisosFacturacionService(prisma as never, webhooksFalsos as never);
   });
 
@@ -236,6 +236,65 @@ correr('avisos por webhook, contra Postgres real', () => {
         'invoice.sent', 'invoice.accepted', 'invoice.observed',
         'invoice.rejected', 'invoice.reconciling', 'invoice.voided',
       ]);
+    });
+  });
+
+  describe('la habilitación del emisor se aprende del resultado', () => {
+    const estadoEmisor = () =>
+      prisma.empresa.findUnique({ where: { id: EMISOR }, select: { apiEmisorEstado: true, apiEmisorMotivo: true } });
+    const ponerEstado = (e: string | null) =>
+      prisma.$executeRawUnsafe(`UPDATE "Empresa" SET "apiEmisorEstado"=$1,"apiEmisorMotivo"=NULL WHERE id=$2`, e, EMISOR);
+
+    afterEach(() => ponerEstado('activo'));
+
+    it('una aceptación marca al emisor como activo', async () => {
+      await ponerEstado('pendiente');
+      await comprobante('EMITIDO', 'inv_hab001');
+      await avisos.avisarPendientes();
+      expect((await estadoEmisor())!.apiEmisorEstado).toBe('activo');
+    });
+
+    it('un 0111 bloquea al emisor que NUNCA emitió bien', async () => {
+      await ponerEstado('pendiente');
+      const id = await comprobante('RECHAZADO', 'inv_hab002', JSON.stringify({ code: '0111' }));
+      await avisos.avisarPendientes();
+      const e = await estadoEmisor();
+      expect(e!.apiEmisorEstado).toBe('bloqueado');
+      expect(e!.apiEmisorMotivo).toContain('emisor electrónico');
+    });
+
+    it('pero NO al que ya venía facturando: para él es una caída de SUNAT', async () => {
+      // El caso MATERIALES ORTEGA: 1,165 comprobantes aceptados y después un
+      // 0154. Bloquearlo habría dejado sin facturar a un cliente sano.
+      await ponerEstado('activo');
+      await comprobante('RECHAZADO', 'inv_hab003', JSON.stringify({ code: '0154' }));
+      await avisos.avisarPendientes();
+      expect((await estadoEmisor())!.apiEmisorEstado).toBe('activo');
+    });
+
+    it('y el 0111 de M3-RAKI tampoco, que llevaba 201 aceptados', async () => {
+      await ponerEstado('activo');
+      await comprobante('RECHAZADO', 'inv_hab004', JSON.stringify({ code: '0111' }));
+      await avisos.avisarPendientes();
+      expect((await estadoEmisor())!.apiEmisorEstado).toBe('activo');
+    });
+
+    it('un rechazo por datos no toca al emisor en ningún caso', async () => {
+      // Si un 2116 bloqueara el RUC, un error de tipeo dejaría a la empresa
+      // entera sin poder facturar.
+      await ponerEstado('pendiente');
+      await comprobante('RECHAZADO', 'inv_hab005', JSON.stringify({ code: '2116' }));
+      await avisos.avisarPendientes();
+      expect((await estadoEmisor())!.apiEmisorEstado).toBe('pendiente');
+    });
+
+    it('un emisor bloqueado se reactiva solo cuando SUNAT acepta', async () => {
+      await ponerEstado('bloqueado');
+      await comprobante('EMITIDO', 'inv_hab006');
+      await avisos.avisarPendientes();
+      const e = await estadoEmisor();
+      expect(e!.apiEmisorEstado).toBe('activo');
+      expect(e!.apiEmisorMotivo).toBeNull();
     });
   });
 });

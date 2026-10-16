@@ -69,9 +69,9 @@ correr('medidor y cierre mensual, contra Postgres real', () => {
                             [EMISOR_A1,'EMISOR A1'],[EMISOR_A2,'EMISOR A2'],[EMISOR_B1,'EMISOR B1']] as [number,string][]) {
       await sembrarEmpresa(prisma, id, n);
     }
-    await prisma.$executeRawUnsafe(`UPDATE "Empresa" SET "integradorId"=$1,"apiPublicId"='iss_qaA1' WHERE id=$2`, INT_A, EMISOR_A1);
-    await prisma.$executeRawUnsafe(`UPDATE "Empresa" SET "integradorId"=$1,"apiPublicId"='iss_qaA2' WHERE id=$2`, INT_A, EMISOR_A2);
-    await prisma.$executeRawUnsafe(`UPDATE "Empresa" SET "integradorId"=$1,"apiPublicId"='iss_qaB1' WHERE id=$2`, INT_B, EMISOR_B1);
+    await prisma.$executeRawUnsafe(`UPDATE "Empresa" SET "integradorId"=$1,"apiPublicId"='iss_qaA1',"usuarioPse"='QA01',"apiEmisorEstado"='activo' WHERE id=$2`, INT_A, EMISOR_A1);
+    await prisma.$executeRawUnsafe(`UPDATE "Empresa" SET "integradorId"=$1,"apiPublicId"='iss_qaA2',"usuarioPse"='QA01',"apiEmisorEstado"='activo' WHERE id=$2`, INT_A, EMISOR_A2);
+    await prisma.$executeRawUnsafe(`UPDATE "Empresa" SET "integradorId"=$1,"apiPublicId"='iss_qaB1',"usuarioPse"='QA01',"apiEmisorEstado"='activo' WHERE id=$2`, INT_B, EMISOR_B1);
     clienteA1 = await cliente(EMISOR_A1);
     clienteA2 = await cliente(EMISOR_A2);
     clienteB1 = await cliente(EMISOR_B1);

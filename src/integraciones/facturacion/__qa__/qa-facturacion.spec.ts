@@ -113,9 +113,9 @@ correr('API de facturación contra Postgres real', () => {
     }
     // Cada emisor bajo SU integrador.
     await prisma.$executeRawUnsafe(
-      `UPDATE "Empresa" SET "integradorId"=$1,"apiPublicId"=$2 WHERE id=$3`, INTEGRADOR_A, ISS_A, EMISOR_A);
+      `UPDATE "Empresa" SET "integradorId"=$1,"apiPublicId"=$2,"usuarioPse"='QA01',"apiEmisorEstado"='activo' WHERE id=$3`, INTEGRADOR_A, ISS_A, EMISOR_A);
     await prisma.$executeRawUnsafe(
-      `UPDATE "Empresa" SET "integradorId"=$1,"apiPublicId"=$2 WHERE id=$3`, INTEGRADOR_B, ISS_B, EMISOR_B);
+      `UPDATE "Empresa" SET "integradorId"=$1,"apiPublicId"=$2,"usuarioPse"='QA01',"apiEmisorEstado"='activo' WHERE id=$3`, INTEGRADOR_B, ISS_B, EMISOR_B);
 
     for (const [id, cod, desc] of [[1,'1','DNI'],[2,'6','RUC'],[3,'4','CE'],[4,'0','OTROS'],[5,'7','PASAPORTE']] as any[]) {
       await prisma.$executeRawUnsafe(
@@ -459,6 +459,89 @@ correr('API de facturación contra Postgres real', () => {
         () => servicio.pdf(INTEGRADOR_B, r.id),
       ]) {
         await expect(fn()).rejects.toThrow();
+      }
+    });
+  });
+
+  describe('la habilitación del emisor ante SUNAT', () => {
+    /** Deja al emisor A en el estado pedido. */
+    const estado = (e: string | null, desdeHoras = 0, motivo: string | null = null) =>
+      prisma.$executeRawUnsafe(
+        `UPDATE "Empresa" SET "apiEmisorEstado"=$1,"apiEmisorDesde"=now() - ($2 || ' hours')::interval,"apiEmisorMotivo"=$3 WHERE id=$4`,
+        e, String(desdeHoras), motivo, EMISOR_A);
+
+    const cuantosComprobantes = () =>
+      prisma.comprobante.count({ where: { empresaId: EMISOR_A } });
+
+    afterEach(() => estado('activo'));
+
+    it('recién vinculado no deja emitir, y NO gasta un correlativo', async () => {
+      // Es el punto de todo: el correlativo se asigna al crear, así que la
+      // puerta tiene que cerrarse ANTES de tocar la base.
+      await estado('pendiente', 1);
+      const antes = await cuantosComprobantes();
+      const e = await emitirEn(INTEGRADOR_A, ISS_A).catch((x) => x);
+      expect(e.response?.code ?? e.code).toBe('issuer_not_ready');
+      expect(await cuantosComprobantes()).toBe(antes);
+    });
+
+    it('dice cuándo va a estar listo, no solo que no se puede', async () => {
+      await estado('pendiente', 2);
+      const e = await emitirEn(INTEGRADOR_A, ISS_A).catch((x) => x);
+      const r = e.response ?? e;
+      expect(r.available_at).toBeTruthy();
+      expect(new Date(r.available_at).getTime()).toBeGreaterThan(Date.now());
+    });
+
+    it('pasadas las 24 h deja intentar', async () => {
+      await estado('pendiente', 30);
+      await expect(emitirEn(INTEGRADOR_A, ISS_A)).resolves.toBeTruthy();
+    });
+
+    it('un emisor bloqueado no emite más, y el motivo le dice qué arreglar', async () => {
+      await estado('bloqueado', 48, 'SUNAT responde 0111: el RUC no tiene el perfil para enviar comprobantes electrónicos.');
+      const antes = await cuantosComprobantes();
+      const e = await emitirEn(INTEGRADOR_A, ISS_A).catch((x) => x);
+      const r = e.response ?? e;
+      expect(r.code).toBe('issuer_not_authorized');
+      expect(r.message).toContain('0111');
+      expect(await cuantosComprobantes()).toBe(antes);
+    });
+
+    it('el caso real: 7 intentos pasan a costar 1 correlativo', async () => {
+      // M3-RAKI quemó 7 correlativos en nueve días insistiendo contra un RUC
+      // sin habilitar. Con la puerta, el primero falla y los demás ni llegan.
+      await estado('pendiente', 30); // ya pasó la ventana: se permite intentar
+      const antes = await cuantosComprobantes();
+      await emitirEn(INTEGRADOR_A, ISS_A);                       // 1º: se crea
+      expect(await cuantosComprobantes()).toBe(antes + 1);
+
+      // SUNAT responde 0111 y el barrido bloquea al emisor.
+      await estado('bloqueado', 30, 'SUNAT responde 0111: el RUC no tiene el perfil.');
+
+      for (let i = 0; i < 6; i++) {
+        await emitirEn(INTEGRADOR_A, ISS_A).catch(() => undefined);
+      }
+      // Los 6 reintentos no crearon nada: 7 intentos, 1 correlativo.
+      expect(await cuantosComprobantes()).toBe(antes + 1);
+    });
+
+    it('un emisor sin credenciales de firma tampoco emite', async () => {
+      await prisma.$executeRawUnsafe(`UPDATE "Empresa" SET "usuarioPse"=NULL WHERE id=$1`, EMISOR_A);
+      const e = await emitirEn(INTEGRADOR_A, ISS_A).catch((x) => x);
+      expect(e.response?.code ?? e.code).toBe('issuer_not_configured');
+      await prisma.$executeRawUnsafe(`UPDATE "Empresa" SET "usuarioPse"='QA01' WHERE id=$1`, EMISOR_A);
+    });
+
+    it('vincular deja al emisor en pendiente, no activo', async () => {
+      // Nace cerrado: lo contrario invitaría a emitir durante el alta.
+      await prisma.$executeRawUnsafe(`UPDATE "Empresa" SET "integradorId"=NULL WHERE id=$1`, 9011);
+      await emisores.vincular(INTEGRADOR_A, 9011).catch(() => undefined);
+      const e = await prisma.empresa.findUnique({
+        where: { id: 9011 }, select: { apiEmisorEstado: true, apiEmisorDesde: true } });
+      if (e?.apiEmisorEstado) {
+        expect(e.apiEmisorEstado).toBe('pendiente');
+        expect(e.apiEmisorDesde).toBeTruthy();
       }
     });
   });
