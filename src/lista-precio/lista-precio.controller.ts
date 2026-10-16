@@ -16,6 +16,11 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { ListaPrecioService } from './lista-precio.service';
+import {
+  ReprecioMasivoService,
+  type FiltroReprecio,
+  type OperacionDto,
+} from './reprecio-masivo.service';
 import { CreateListaPrecioDto } from './dto/create-lista-precio.dto';
 import { UpdateListaPrecioDto } from './dto/update-lista-precio.dto';
 
@@ -23,7 +28,53 @@ import { UpdateListaPrecioDto } from './dto/update-lista-precio.dto';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('lista-precio')
 export class ListaPrecioController {
-  constructor(private readonly service: ListaPrecioService) {}
+  constructor(
+    private readonly service: ListaPrecioService,
+    private readonly reprecio: ReprecioMasivoService,
+  ) {}
+
+  // ── Reprecio masivo: subir/bajar el precio de muchos productos de una vez ──
+  // Solo el ADMIN_EMPRESA: mueve cientos de precios de golpe.
+
+  @Post('reprecio-masivo/previsualizar')
+  @HttpCode(200)
+  @Roles('ADMIN_EMPRESA')
+  previsualizarReprecio(
+    @Body() body: { filtro: FiltroReprecio; operacion: OperacionDto },
+    @Request() req,
+  ) {
+    return this.reprecio.previsualizar(
+      req.user.empresaId,
+      body.filtro || {},
+      body.operacion,
+    );
+  }
+
+  @Post('reprecio-masivo/aplicar')
+  @Roles('ADMIN_EMPRESA')
+  aplicarReprecio(
+    @Body() body: { filtro: FiltroReprecio; operacion: OperacionDto },
+    @Request() req,
+  ) {
+    return this.reprecio.aplicar(
+      req.user.empresaId,
+      req.user.id,
+      body.filtro || {},
+      body.operacion,
+    );
+  }
+
+  @Get('reprecio-masivo/lotes')
+  @Roles('ADMIN_EMPRESA')
+  lotesReprecio(@Request() req, @Query('limit') limit?: string) {
+    return this.reprecio.lotes(req.user.empresaId, limit ? Number(limit) : 10);
+  }
+
+  @Post('reprecio-masivo/revertir/:id')
+  @Roles('ADMIN_EMPRESA')
+  revertirReprecio(@Param('id', ParseIntPipe) id: number, @Request() req) {
+    return this.reprecio.revertir(req.user.empresaId, id);
+  }
 
   @Post()
   @Roles('ADMIN_EMPRESA')
