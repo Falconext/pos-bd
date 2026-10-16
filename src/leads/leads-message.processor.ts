@@ -132,9 +132,150 @@ export class LeadsMessageProcessor extends WorkerHost {
 
   async process(job: Job<MensajeEntrante | TareaRespuesta>): Promise<void> {
     if (job.name === JOB_RESPONDER) {
-      return this.responder(job.data as TareaRespuesta);
+      try {
+        return await this.responder(job.data as TareaRespuesta);
+      } catch (e) {
+        // Acá es donde el cliente se quedaba hablando solo: la cola reintenta
+        // tres veces y, si la IA sigue sin poder responder, el trabajo muere
+        // en silencio. Nadie le avisa al cliente y nadie le avisa al negocio.
+        await this.avisarQueLaIaNoPudo(job, e).catch(() => undefined);
+        throw e;
+      }
     }
     return this.ingresar(job.data as MensajeEntrante);
+  }
+
+  /**
+   * Cuándo se avisó por última vez que la IA de esta empresa no puede
+   * responder. Sirve para no mandar cuarenta notificaciones seguidas cuando
+   * se acaba la cuota: el problema es uno solo aunque lo choquen cuarenta
+   * clientes.
+   *
+   * Vive en memoria a propósito: si el proceso se reinicia, que vuelva a
+   * avisar es lo correcto — el reinicio pudo haber sido por esto mismo.
+   */
+  private readonly ultimoAvisoDeFalla = new Map<number, number>();
+  private static readonly ESPERA_ENTRE_AVISOS_MS = 60 * 60 * 1000;
+
+  /**
+   * La IA no pudo responder y ya no va a reintentar.
+   *
+   * Pasa cuando se acaban los créditos de Gemini, cuando la clave se vence o
+   * cuando Google está caído. Para el cliente es indistinguible de que lo
+   * ignoren, así que acá se hacen tres cosas: se le avisa al negocio, se le
+   * avisa al cliente que lo atiende una persona, y se pausa la IA en ese chat
+   * para que no siga chocando contra la misma pared. La pausa vence sola: si
+   * el problema era pasajero, la IA retoma sin que nadie la encienda.
+   */
+  private async avisarQueLaIaNoPudo(
+    job: Job<MensajeEntrante | TareaRespuesta>,
+    error: unknown,
+  ): Promise<void> {
+    // Un error irrecuperable (clave inválida) no se reintenta: ya es el final.
+    const intentosTotales = job.opts?.attempts ?? 1;
+    const esElUltimo =
+      error instanceof UnrecoverableError ||
+      job.attemptsMade + 1 >= intentosTotales;
+    if (!esElUltimo) return;
+
+    const { empresaId, conversacionId } = job.data as TareaRespuesta;
+    const motivo = error instanceof Error ? error.message : String(error);
+    const porCuota = /429|quota|RESOURCE_EXHAUSTED|billing|credit/i.test(motivo);
+    this.logger.error(
+      `Lead: la IA no pudo responder la conv ${conversacionId} tras ${intentosTotales} intento(s): ${motivo.slice(0, 200)}`,
+    );
+
+    const conv = await this.prisma.leadConversacion.findUnique({
+      where: { id: conversacionId },
+      select: { telefonoProspecto: true, nombreProspecto: true, botActivo: true },
+    });
+    if (!conv) return;
+
+    // 1) La IA deja de intentar en este chat. Vence sola.
+    if (conv.botActivo) {
+      const pausa = {
+        botActivo: false,
+        pausadoHasta: venceEn(),
+        motivoPausa: porCuota
+          ? 'la IA se quedó sin cuota o sin créditos'
+          : 'la IA no pudo responder',
+      };
+      await this.prisma
+        .$transaction([
+          this.prisma.leadConversacion.update({
+            where: { id: conversacionId },
+            data: pausa,
+          }),
+          this.prisma.leadProspecto.updateMany({
+            where: { conversacionId },
+            data: pausa,
+          }),
+        ])
+        .catch(() => undefined);
+    }
+
+    // 2) El cliente se entera de que lo van a atender, en vez de nada.
+    //    Una sola vez: desde acá la conversación queda pausada, así que los
+    //    mensajes que sigan ya no llegan a este camino.
+    if (conv.botActivo) {
+      await this.whatsapp
+        .enviarTexto(
+          conv.telefonoProspecto,
+          'Disculpa la demora, en un momento te atiende una persona del equipo.',
+          empresaId,
+        )
+        .catch(() => undefined);
+    }
+
+    // 3) El negocio se entera. Como mucho una vez por hora: la cuota agotada
+    //    es un problema solo, aunque lo choquen veinte clientes.
+    const ahora = Date.now();
+    const ultimo = this.ultimoAvisoDeFalla.get(empresaId) ?? 0;
+    if (ahora - ultimo < LeadsMessageProcessor.ESPERA_ENTRE_AVISOS_MS) return;
+    this.ultimoAvisoDeFalla.set(empresaId, ahora);
+
+    const titulo = porCuota
+      ? '🔴 La IA se quedó sin créditos y dejó de responder'
+      : '🔴 La IA no está pudiendo responder';
+    const quePasa = porCuota
+      ? 'Gemini rechazó las respuestas por cuota o créditos agotados. Carga créditos en Google AI Studio para que vuelva a atender.'
+      : 'La IA falló al responder y ya agotó los reintentos.';
+    await this.notificaciones
+      .notificarAdminsEmpresa({
+        empresaId,
+        tipo: 'CRITICAL',
+        titulo,
+        mensaje:
+          `${quePasa}
+
+` +
+          `Mientras tanto los chats quedan en pausa y hay que atenderlos a mano desde el panel.
+` +
+          `Último chat afectado: ${conv.nombreProspecto ?? conv.telefonoProspecto}
+
+` +
+          `Detalle técnico: ${motivo.slice(0, 300)}`,
+        metaData: {
+          origen: 'ia-ventas-sin-respuesta',
+          conversacionId,
+          porCuota,
+        },
+      })
+      .catch(() => undefined);
+
+    // Y por WhatsApp a quien atiende: si nadie mira el panel, el aviso in-app
+    // no sirve de nada — que es justo el escenario que esto viene a evitar.
+    const cfg = await this.pedido.configDe(empresaId).catch(() => null);
+    await this.alerta
+      .avisarDerivacion({
+        empresaId,
+        telefonoProspecto: conv.telefonoProspecto,
+        nombreProspecto: conv.nombreProspecto ?? null,
+        motivo: porCuota ? 'sin créditos de IA' : 'fallo de la IA',
+        detalle: quePasa,
+        supervisorTelefono: cfg?.supervisorTelefono ?? null,
+      })
+      .catch(() => undefined);
   }
 
   /**
