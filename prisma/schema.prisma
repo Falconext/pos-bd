@@ -436,7 +436,7 @@ model Empresa {
   geocercasLogistica            GeocercaLogistica[]
   apiKeys                       ApiKey[]
   idempotenciaApi               IdempotenciaApi[]
-  webhookEndpointsLogistica     WebhookEndpointLogistica[]
+  webhookEndpoints              WebhookEndpoint[]
 
   repartidores            Repartidor[]
   despachoMensajeTemplate DespachoMensajeTemplate?
@@ -1073,8 +1073,21 @@ model MedioPagoDetraccion {
 }
 
 model Comprobante {
-  id                      Int                  @id @default(autoincrement())
-  ublVersion              String               @default("2.1")
+  id                  Int     @id @default(autoincrement())
+  ublVersion          String  @default("2.1")
+  /// Último estado público ya avisado por webhook. Null = nunca se avisó.
+  ///
+  /// Es lo que hace que el aviso no dependa de QUIÉN movió el comprobante: el
+  /// estado se fija en tres lugares del motor de envío y también en el
+  /// scheduler y en la conciliación desde el panel. En vez de enganchar cada
+  /// uno, el emisor compara lo publicado con lo avisado y manda la diferencia.
+  apiEstadoNotificado String?
+
+  /// Id opaco para la API pública (`inv_…`). Null en todo lo que no nació por
+  /// la API. El id numérico NO se expone: es secuencial, así que delataría el
+  /// volumen de Krezka y dejaría sondear comprobantes ajenos cambiando un
+  /// dígito. Se verifica igual que el emisor, pero sin ser adivinable.
+  apiPublicId             String?              @unique
   tipoDoc                 String
   serie                   String
   correlativo             Int
@@ -4277,21 +4290,36 @@ model ApiKey {
 
 /// Endpoints de webhook registrados por una empresa para recibir eventos
 /// `order.*`. `secret` es el secreto de firma HMAC (`whsec_…`) devuelto una vez.
-model WebhookEndpointLogistica {
+/// Endpoint al que se le entregan los eventos de una API pública.
+///
+/// Sirve a los dos productos. El `producto` no es decorativo: sin él, quien
+/// suscribe un endpoint de logística recibiría también los eventos de
+/// facturación de su empresa —con el RUC y el nombre de cada cliente— por el
+/// solo hecho de tener una URL registrada.
+model WebhookEndpoint {
   id            Int       @id @default(autoincrement())
   empresaId     Int
   endpointId    String    @unique // id público "we_…"
   url           String
-  eventos       String[] // eventos suscritos (order.*)
+  eventos       String[] // eventos suscritos (order.* / invoice.*)
   secret        String // whsec_… (firma HMAC)
   activo        Boolean   @default(true)
   ultimoEnvioEn DateTime?
   creadoEn      DateTime  @default(now())
   actualizadoEn DateTime  @updatedAt
 
+  /// A qué API pertenece. Por defecto logistica: es lo que había antes de que
+  /// existiera la de facturación.
+  producto String @default("logistica")
+
   empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
 
-  @@index([empresaId])
+  @@index([empresaId, producto])
+  /// La tabla conserva su nombre de origen a propósito. El despliegue
+  /// sincroniza el esquema con `prisma db push --accept-data-loss`, que NO
+  /// detecta renombrados: vería una tabla que desaparece y otra que aparece, y
+  /// haría DROP + CREATE. Renombrarla de verdad exige una migración manual.
+  @@map("WebhookEndpointLogistica")
 }
 
 // ─── Módulo IA de Ventas / Filtro de Leads (portado de salesfilter-ai) ──────

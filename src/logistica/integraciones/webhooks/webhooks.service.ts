@@ -9,15 +9,27 @@ export class WebhooksService {
   /**
    * Entrega REAL de un evento a todos los endpoints suscritos de la empresa.
    *
-   * Busca los `WebhookEndpointLogistica` activos cuyos `eventos` incluyan el
-   * evento (o que tengan la lista vacía = suscritos a todo) y hace un POST HTTP
-   * firmado con HMAC-SHA256. Es **best-effort**: cada endpoint va en su propio
-   * try/catch y NUNCA lanza al caller.
+   * Busca los endpoints activos **de ese producto** cuyos `eventos` incluyan
+   * el evento (o que tengan la lista vacía = suscritos a todo) y hace un POST
+   * HTTP firmado con HMAC-SHA256. Es **best-effort**: cada endpoint va en su
+   * propio try/catch y NUNCA lanza al caller.
    *
-   * Eventos válidos (7): order.created, order.assigned, order.picked_up,
+   * El filtro por producto no es cosmético. Sin él, quien registró una URL
+   * para seguir sus pedidos recibiría también los eventos de facturación de
+   * su empresa —con el RUC y el nombre de cada cliente— por el solo hecho de
+   * tener un endpoint dado de alta.
+   *
+   * Eventos de logística (7): order.created, order.assigned, order.picked_up,
    * order.in_transit, order.delivered, order.failed, order.returned.
+   * Eventos de facturación (5): invoice.created, invoice.accepted,
+   * invoice.observed, invoice.rejected, invoice.voided.
    */
-  async dispatchEvent(empresaId: number, event: string, order: any) {
+  async dispatchEvent(
+    empresaId: number,
+    event: string,
+    order: any,
+    producto: 'logistica' | 'facturacion' = 'logistica',
+  ) {
     let endpoints: Array<{
       id: number;
       url: string;
@@ -25,8 +37,8 @@ export class WebhooksService {
       eventos: string[];
     }> = [];
     try {
-      endpoints = await this.prisma.webhookEndpointLogistica.findMany({
-        where: { empresaId, activo: true },
+      endpoints = await this.prisma.webhookEndpoint.findMany({
+        where: { empresaId, activo: true, producto },
         select: { id: true, url: true, secret: true, eventos: true },
       });
     } catch {
@@ -83,7 +95,7 @@ export class WebhooksService {
               });
               if (res.ok) {
                 entregados += 1;
-                await this.prisma.webhookEndpointLogistica
+                await this.prisma.webhookEndpoint
                   .update({
                     where: { id: endpoint.id },
                     data: { ultimoEnvioEn: new Date() },
@@ -115,6 +127,7 @@ export class WebhooksService {
   async createEndpoint(
     empresaId: number,
     payload: { url: string; events: string[] },
+    producto: 'logistica' | 'facturacion' = 'logistica',
   ) {
     const url = typeof payload?.url === 'string' ? payload.url.trim() : '';
     if (!url || !/^https?:\/\//i.test(url)) {
@@ -127,8 +140,8 @@ export class WebhooksService {
     const eventos = Array.isArray(payload?.events) ? payload.events : [];
     const endpointId = `we_${randomBytes(8).toString('hex')}`;
     const secret = `whsec_${randomBytes(24).toString('hex')}`;
-    const registro = await this.prisma.webhookEndpointLogistica.create({
-      data: { empresaId, endpointId, url, eventos, secret },
+    const registro = await this.prisma.webhookEndpoint.create({
+      data: { empresaId, endpointId, url, eventos, secret, producto },
     });
     return {
       id: registro.endpointId,
@@ -138,10 +151,17 @@ export class WebhooksService {
     };
   }
 
-  /** Lista los endpoints de webhook de la empresa (sin exponer el `secret`). */
-  async listEndpoints(empresaId: number) {
-    const registros = await this.prisma.webhookEndpointLogistica.findMany({
-      where: { empresaId },
+  /**
+   * Lista los endpoints de la empresa para un producto, sin exponer el
+   * `secret`: se devuelve una sola vez, al crearlo. Volver a mostrarlo
+   * convertiría cualquier lectura del listado en una forma de robar la firma.
+   */
+  async listEndpoints(
+    empresaId: number,
+    producto: 'logistica' | 'facturacion' = 'logistica',
+  ) {
+    const registros = await this.prisma.webhookEndpoint.findMany({
+      where: { empresaId, producto },
       select: {
         endpointId: true,
         url: true,
@@ -167,7 +187,7 @@ export class WebhooksService {
    * Acepta el id público `we_…`. Devuelve null si no le pertenece.
    */
   async deleteEndpoint(empresaId: number, id: string) {
-    const { count } = await this.prisma.webhookEndpointLogistica.deleteMany({
+    const { count } = await this.prisma.webhookEndpoint.deleteMany({
       where: { empresaId, endpointId: id },
     });
     if (count === 0) return null;
