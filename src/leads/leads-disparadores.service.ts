@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
+import { estaPausado } from './pausa-bot';
 import { esNumeroInterno, numerosInternos } from './numeros-internos';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { EtapaCrm, etapaDesdeDespacho } from './leads-embudo';
@@ -388,7 +389,9 @@ export class LeadsDisparadoresService {
       select: {
         id: true,
         nombreProspecto: true,
-        prospecto: { select: { botActivo: true, pausadoHasta: true } },
+        // La pausa de la conversación, que es la que respeta el processor.
+        botActivo: true,
+        pausadoHasta: true,
         mensajes: {
           where: { rol: 'USUARIO' },
           orderBy: { creadoEn: 'desc' },
@@ -398,12 +401,7 @@ export class LeadsDisparadoresService {
       },
     });
 
-    const pausa = conv?.prospecto;
-    const pausadoAhora =
-      pausa && !pausa.botActivo
-        ? // Pausa con vencimiento: solo cuenta si no venció.
-          !pausa.pausadoHasta || pausa.pausadoHasta > new Date()
-        : false;
+    const pausadoAhora = estaPausado(conv);
 
     return {
       nombre: conv?.nombreProspecto ?? null,

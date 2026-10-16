@@ -69,14 +69,17 @@ function armar(
         creadoEn: new Date(),
         telefonoProspecto: TELEFONO,
         nombreProspecto: 'Juan',
+        // La pausa de la IA vive en la conversación (antes en el prospecto):
+        // así también se puede tomar un chat de prueba, que no tiene uno.
+        botActivo: opts.botActivo ?? true,
+        pausadoHasta: null,
       }),
       update: jest.fn().mockResolvedValue({}),
     },
+    $transaction: jest.fn((ops: any[]) => Promise.all(ops)),
     leadProspecto: {
       upsert: jest.fn().mockResolvedValue({}),
-      findUnique: jest
-        .fn()
-        .mockResolvedValue({ botActivo: opts.botActivo ?? true }),
+      findUnique: jest.fn().mockResolvedValue({ id: 1 }),
       update: jest.fn().mockResolvedValue({}),
     },
     leadMensaje: {

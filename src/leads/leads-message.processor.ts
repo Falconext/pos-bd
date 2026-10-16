@@ -360,23 +360,40 @@ export class LeadsMessageProcessor extends WorkerHost {
         creadoEn: true,
         telefonoProspecto: true,
         nombreProspecto: true,
+        botActivo: true,
+        pausadoHasta: true,
       },
     });
     if (!conv) return;
 
-    // Bot pausado en este prospecto (un humano tomó el chat). La pausa por
+    // Bot pausado en esta conversación (un humano tomó el chat). La pausa por
     // intervención vence sola; la de una derivación, no — ahí hay una persona
     // atendiendo y la IA no debe meterse en medio.
+    //
+    // Se lee de la CONVERSACIÓN y no del prospecto: los chats de prueba del
+    // negocio no tienen prospecto, y leyéndolo de ahí la IA seguía
+    // respondiendo encima del dueño por mucho que él tomara el chat.
     const prospecto = await this.prisma.leadProspecto.findUnique({
       where: { conversacionId: conv.id },
-      select: { id: true, botActivo: true, pausadoHasta: true },
+      select: { id: true },
     });
-    if (estaPausado(prospecto)) return;
-    if (debeReactivarse(prospecto) && prospecto) {
-      await this.prisma.leadProspecto.update({
-        where: { id: prospecto.id },
-        data: { botActivo: true, pausadoHasta: null, motivoPausa: null },
-      });
+    if (estaPausado(conv)) return;
+    if (debeReactivarse(conv)) {
+      const limpio = { botActivo: true, pausadoHasta: null, motivoPausa: null };
+      await this.prisma.$transaction([
+        this.prisma.leadConversacion.update({
+          where: { id: conv.id },
+          data: limpio,
+        }),
+        ...(prospecto
+          ? [
+              this.prisma.leadProspecto.update({
+                where: { id: prospecto.id },
+                data: limpio,
+              }),
+            ]
+          : []),
+      ]);
       this.logger.log(
         `Lead: venció la pausa de la conv ${conv.id}; la IA retoma.`,
       );
@@ -1437,16 +1454,26 @@ export class LeadsMessageProcessor extends WorkerHost {
           //   por un error pasajero deja a esa persona sin atención. Pasó de
           //   verdad: un fallo al registrar el pedido mató la conversación.
           const pausadoHasta = huboFalloTecnico ? venceEn() : null;
-          await this.prisma.leadProspecto.updateMany({
-            where: { conversacionId },
-            data: {
-              botActivo: false,
-              pausadoHasta,
-              motivoPausa: huboFalloTecnico
-                ? `fallo del sistema (${motivo})`
-                : motivo,
-            },
-          });
+          const pausa = {
+            botActivo: false,
+            pausadoHasta,
+            motivoPausa: huboFalloTecnico
+              ? `fallo del sistema (${motivo})`
+              : motivo,
+          };
+          // La pausa que manda es la de la conversación —es la que mira el
+          // processor—; la del prospecto se mantiene al día porque es la que
+          // pinta "IA en pausa" en el embudo.
+          await this.prisma.$transaction([
+            this.prisma.leadConversacion.update({
+              where: { id: conversacionId },
+              data: pausa,
+            }),
+            this.prisma.leadProspecto.updateMany({
+              where: { conversacionId },
+              data: pausa,
+            }),
+          ]);
           await this.notificaciones
             .notificarAdminsEmpresa({
               empresaId,
