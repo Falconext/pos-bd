@@ -18,6 +18,7 @@ import { IdempotenciaInterceptor } from '../idempotencia/idempotencia.intercepto
 import { EmisoresService } from '../emisores/emisores.service';
 import { WebhooksService } from '../../logistica/integraciones/webhooks/webhooks.service';
 import { FacturacionApiService } from './facturacion.service';
+import { MedidorApiService } from './medidor.service';
 
 /**
  * La API pública de facturación.
@@ -44,6 +45,7 @@ export class FacturacionApiController {
     private readonly facturacion: FacturacionApiService,
     private readonly emisores: EmisoresService,
     private readonly webhooks: WebhooksService,
+    private readonly medidor: MedidorApiService,
   ) {}
 
   /**
@@ -72,6 +74,19 @@ export class FacturacionApiController {
   @Get('invoices/:id')
   async obtener(@Param('id') id: string, @Request() req: any) {
     return this.facturacion.obtener(req.apiEmpresaId, id);
+  }
+
+  /**
+   * El consumo del mes, con el detalle por emisor.
+   *
+   * Existe para que el integrador no se entere de lo que debe el día que le
+   * llega la factura. Mientras el período está abierto el número se calcula
+   * en vivo contra los comprobantes; una vez cerrado devuelve lo congelado,
+   * que es exactamente lo que dice la factura.
+   */
+  @Get('usage')
+  async consumo(@Query('period') periodo: string, @Request() req: any) {
+    return this.medidor.consumo(req.apiEmpresaId, periodo || undefined);
   }
 
   /** Los emisores (RUCs) por los que este integrador puede emitir. */
