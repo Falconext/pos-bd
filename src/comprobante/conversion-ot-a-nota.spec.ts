@@ -52,7 +52,9 @@ const validarOrigen = async (opts: {
   origen?: Origen | null;
   tipoDocDestino?: string;
   salidasKardex?: number;
-  sumaPagos?: number;
+  /** `null` es lo que devuelve Postgres cuando no hay ni un pago: no es lo
+   *  mismo que 0 y la OT contraentrega pasa justo por ahí. */
+  sumaPagos?: number | null;
   comisiones?: number;
 }) => {
   const {
@@ -79,7 +81,7 @@ const validarOrigen = async (opts: {
     },
     comisionVendedor: { count: jest.fn(() => Promise.resolve(comisiones)) },
   };
-  const service = new ComprobanteService(prisma as any);
+  const service = new (ComprobanteService as any)(prisma);
   return (service as any).validarOrigenDeConversion(
     origen?.id ?? 1,
     70,
@@ -136,7 +138,7 @@ describe('qué origen se acepta', () => {
     await expect(
       validarOrigen({
         origen: { ...OT, estadoPago: 'PENDIENTE_PAGO', saldo: 24 },
-        pagos: { _sum: { monto: null } },
+        sumaPagos: null,
       }),
     ).resolves.toMatchObject({ ok: true, montoYaCobradoEnOrigen: 0 });
   });

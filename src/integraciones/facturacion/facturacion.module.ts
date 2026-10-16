@@ -1,0 +1,28 @@
+import { Module } from '@nestjs/common';
+import { PrismaModule } from '../../prisma/prisma.module';
+import { ComprobanteModule } from '../../comprobante/comprobante.module';
+import { IntegracionesModule } from '../../logistica/integraciones/integraciones.module';
+import { EmisoresService } from '../emisores/emisores.service';
+import { FacturacionApiController } from './facturacion.controller';
+import { FacturacionApiService } from './facturacion.service';
+import { AvisosFacturacionService } from './avisos.service';
+
+/**
+ * La API pública de facturación.
+ *
+ * Importa `ComprobanteModule` en vez de reimplementar: un comprobante emitido
+ * por la API y uno emitido desde el panel tienen que ser el mismo comprobante.
+ * Una segunda implementación divergiría en el primer cambio tributario y
+ * nadie se enteraría hasta que SUNAT rechazara.
+ *
+ * El motor de webhooks también se reusa —es el de logística, ya generalizado
+ * por producto— por lo mismo: dos motores de entrega con reintentos y firma
+ * HMAC es un motor que se arregla y otro que se olvida.
+ */
+@Module({
+  imports: [PrismaModule, ComprobanteModule, IntegracionesModule],
+  controllers: [FacturacionApiController],
+  providers: [FacturacionApiService, EmisoresService, AvisosFacturacionService],
+  exports: [FacturacionApiService, EmisoresService, AvisosFacturacionService],
+})
+export class FacturacionApiModule {}

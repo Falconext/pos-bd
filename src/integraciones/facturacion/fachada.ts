@@ -266,8 +266,54 @@ export const totalEstimado = (
 };
 
 /**
+ * Toda la validación, sin tocar la base ni necesitar nada resuelto.
+ *
+ * Va aparte de `traducirComprobante` por un motivo que encontró la QA: la
+ * emisión resolvía el cliente ANTES de validar, así que una factura a un DNI
+ * —que siempre va a ser rechazada— alcanzaba para dejar un cliente nuevo en
+ * la cartera del empresario. Repetida, se la llenaba de basura, y el
+ * integrador ni se enteraba de que estaba ensuciando la base de su cliente.
+ *
+ * Devuelve las piezas ya normalizadas para no recorrer los ítems dos veces.
+ */
+export const validarEntrada = (
+  entrada: ComprobantePublico,
+): { tipoDoc: string; detalles: any[]; descuentoGlobal: number; moneda: string; pago: ReturnType<typeof traducirPago> } => {
+  const tipo = entrada.document_type ?? '';
+  exigir(
+    TIPO_DOC[tipo],
+    'parameter_invalid',
+    'document_type debe ser "invoice" (factura) o "receipt" (boleta).',
+    'document_type',
+  );
+  validarCliente(tipo, entrada.customer);
+
+  const items = entrada.items ?? [];
+  exigir(items.length > 0, 'parameter_missing', 'El comprobante necesita al menos un ítem.', 'items');
+
+  const moneda = entrada.currency ?? 'PEN';
+  exigir(moneda === 'PEN' || moneda === 'USD', 'parameter_invalid', 'currency debe ser PEN o USD.', 'currency');
+
+  const detalles = items.map(traducirItem);
+  const descuentoGlobal = Number(entrada.global_discount ?? 0);
+  exigir(
+    descuentoGlobal >= 0,
+    'parameter_invalid',
+    'global_discount no puede ser negativo.',
+    'global_discount',
+  );
+
+  const pago = traducirPago(entrada.payment_terms, totalEstimado(items, descuentoGlobal));
+  return { tipoDoc: TIPO_DOC[tipo], detalles, descuentoGlobal, moneda, pago };
+};
+
+/**
  * La traducción completa. No toca la base: el cliente y el tipo de operación
  * se resuelven afuera y se inyectan ya resueltos.
+ *
+ * Valida de nuevo a propósito: que `emitir` valide antes es una optimización
+ * para no ensuciar la base, no una garantía. Quien llame a esta función
+ * directamente tiene que obtener lo mismo.
  */
 export const traducirComprobante = (
   entrada: ComprobantePublico,

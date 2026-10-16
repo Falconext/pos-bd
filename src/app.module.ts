@@ -1,4 +1,5 @@
 import { IntegracionesApiModule } from './integraciones/integraciones.module';
+import { FacturacionApiModule } from './integraciones/facturacion/facturacion.module';
 import { LogisticaModule } from './logistica/logistica.module';
 
 import { Module } from '@nestjs/common';
@@ -71,6 +72,7 @@ import { MercadoPagoModule } from './mercadopago/mercadopago.module';
 @Module({
   imports: [
     IntegracionesApiModule,
+    FacturacionApiModule,
     LogisticaModule,
 
     ConfigModule.forRoot({ isGlobal: true }),
