@@ -1,0 +1,7 @@
+-- Marcador de historial. NO se perdió nada: esta migración está registrada como
+-- aplicada en la base desde el 2025-06-01, pero su carpeta no quedó en el repo.
+--
+-- Sin este marcador, `prisma migrate status` y `migrate deploy` se plantan:
+-- encuentran en la base una migración que no existe localmente y se niegan a
+-- seguir. Queda vacía a propósito: su efecto ya está en la base y no hay forma
+-- honesta de reconstruir el SQL original.
