@@ -269,6 +269,13 @@ export class ReprecioMasivoService {
   /**
    * Deshace un lote: devuelve cada producto a su precio anterior, y borra los
    * items que el lote había creado.
+   *
+   * Solo se puede deshacer del más nuevo al más viejo. Un lote posterior sobre
+   * los mismos productos guardó como "precio anterior" el que dejó este lote;
+   * si se deshiciera este primero, el posterior quedaría figurando como vigente
+   * en el historial mientras su efecto ya no está en ningún precio, y al
+   * deshacerlo después no tendría nada que restaurar. El empresario vería un
+   * historial que no coincide con lo que cobra.
    */
   async revertir(empresaId: number, loteId: number) {
     const lote = await this.prisma.reprecioLote.findFirst({
@@ -280,10 +287,12 @@ export class ReprecioMasivoService {
     }
 
     const detalle = (lote.detalle as any[]) || [];
+    await this.exigirQueSeaElUltimo(empresaId, lote, detalle);
+
     const aRestaurar = detalle.filter((d) => d.precioAnterior != null);
     const aBorrar = detalle.filter((d) => d.precioAnterior == null);
 
-    await this.prisma.$transaction([
+    const operaciones: any[] = [
       ...aRestaurar.map((d) =>
         this.prisma.listaPrecioItem.updateMany({
           where: {
@@ -309,8 +318,66 @@ export class ReprecioMasivoService {
         where: { id: lote.id },
         data: { revertidoEn: new Date() },
       }),
-    ]);
+    ];
 
-    return { ok: true, restaurados: aRestaurar.length, eliminados: aBorrar.length };
+    const resultado = await this.prisma.$transaction(operaciones);
+
+    // Se informa lo que REALMENTE se tocó, no lo que se pensaba tocar: si una
+    // fila ya no existe, `updateMany` afecta 0 y decir "13 restaurados" sería
+    // mentirle al empresario sobre el estado de sus precios.
+    const restaurados = resultado
+      .slice(0, aRestaurar.length)
+      .reduce((suma: number, r: any) => suma + (r?.count ?? 0), 0);
+    const eliminados = aBorrar.length
+      ? ((resultado[aRestaurar.length] as any)?.count ?? 0)
+      : 0;
+
+    return { ok: true, restaurados, eliminados };
+  }
+
+  /**
+   * Rechaza el deshacer si otro reprecio posterior ya pisó alguno de estos
+   * productos. Se compara por producto y no por lista: dos reprecios sobre
+   * categorías distintas de la misma lista no se estorban, y bloquearlos sería
+   * una traba sin motivo.
+   */
+  private async exigirQueSeaElUltimo(
+    empresaId: number,
+    lote: { id: number; listaPrecioId: number; creadoEn: Date },
+    detalle: any[],
+  ) {
+    const mios = new Set(detalle.map((d) => Number(d.productoId)));
+    if (mios.size === 0) return;
+
+    const posteriores = await this.prisma.reprecioLote.findMany({
+      where: {
+        empresaId,
+        listaPrecioId: lote.listaPrecioId,
+        revertidoEn: null,
+        id: { not: lote.id },
+        creadoEn: { gt: lote.creadoEn },
+      },
+      orderBy: { creadoEn: 'asc' },
+      select: { creadoEn: true, detalle: true },
+    });
+
+    const choca = posteriores.find((p) =>
+      (((p.detalle as any[]) || []) as any[]).some((d) =>
+        mios.has(Number(d.productoId)),
+      ),
+    );
+    if (!choca) return;
+
+    const fecha = choca.creadoEn.toLocaleString('es-PE', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    throw new BadRequestException(
+      `Después de este hiciste otro reprecio sobre los mismos productos (${fecha}). ` +
+        'Deshaz ese primero y luego este.',
+    );
   }
 }
