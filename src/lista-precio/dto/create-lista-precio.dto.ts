@@ -6,6 +6,8 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Max,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -25,12 +27,28 @@ export class ListaPrecioItemDto {
   @IsOptional()
   @IsNumber()
   precioOferta?: number | null;
+
+  // Descuento en % que esta lista aplica sobre el precio (0-100).
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  descuentoPorcentaje?: number | null;
 }
 
 export class CreateListaPrecioDto {
   @IsString()
   @IsNotEmpty()
   nombre: string;
+
+  @IsOptional()
+  @IsString()
+  descripcion?: string;
+
+  // Desempate cuando dos listas podrían aplicar: gana la de `orden` menor.
+  @IsOptional()
+  @IsInt()
+  orden?: number;
 
   @IsOptional()
   @IsBoolean()
@@ -49,6 +67,11 @@ export class CreateListaPrecioDto {
   @IsArray()
   @IsInt({ each: true })
   usuarioIds?: number[];
+
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  clienteIds?: number[];
 
   @IsOptional()
   @IsArray()

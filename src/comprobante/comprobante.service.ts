@@ -68,6 +68,7 @@ import {
   agregarVentasPorProducto,
   totalesVentasPorProducto,
 } from './ventas-por-producto';
+import { validarLimitesPrecioVenta } from '../common/utils/limites-precio-venta';
 
 @Injectable()
 export class ComprobanteService {
@@ -3239,6 +3240,14 @@ export class ComprobanteService {
       afectarCaja?: boolean;
     },
   ) {
+    // Piso/techo de venta: se valida ACÁ, no solo en el POS. El cajero puede
+    // mandar cualquier precio por la API, y "se vendió bajo costo" se descubre
+    // recién al cerrar el mes. Los importados (histórico) se saltan: son
+    // hechos del pasado y bloquearlos impediría registrar lo ya vendido.
+    if (!opts?.importado) {
+      await validarLimitesPrecioVenta(this.prisma, empresaId, input?.detalles || []);
+    }
+
     const importado = opts?.importado === true;
     // La importación de comprobantes emitidos solo admite Facturas y Boletas.
     // NC/ND requieren manejo del documento afectado (fase posterior).
@@ -3650,6 +3659,11 @@ export class ComprobanteService {
       // usuario que registró la venta). Denormalizado como en Pago.
       vendedorCampoId: input.vendedorCampoId ?? undefined,
       vendedorCampoNombre: input.vendedorCampoNombre ?? undefined,
+      // Con qué lista de precios se cobró. El cajero puede cambiarla a mitad de
+      // venta, así que sin esto no hay cómo auditar por qué el mismo producto
+      // salió a dos precios distintos en el mismo día.
+      listaPrecioId: input.listaPrecioId ?? undefined,
+      listaPrecioNombre: input.listaPrecioNombre ?? undefined,
       mtoOperGravadas,
       mtoOperInafectas: mtoOpInafectas,
       mtoOperExoneradas: mtoOpExoneradas,
@@ -5146,6 +5160,14 @@ export class ComprobanteService {
       origenSyncUuid?: string;
     },
   ) {
+    // Piso/techo de venta: se valida ACÁ, no solo en el POS. El cajero puede
+    // mandar cualquier precio por la API, y "se vendió bajo costo" se descubre
+    // recién al cerrar el mes. Los importados (histórico) se saltan: son
+    // hechos del pasado y bloquearlos impediría registrar lo ya vendido.
+    if (!opts?.importado) {
+      await validarLimitesPrecioVenta(this.prisma, empresaId, input?.detalles || []);
+    }
+
     const importado = opts?.importado === true;
     const offline = opts?.offline === true;
     const realizadoEn = offline ? opts?.realizadoEn : undefined;
@@ -5463,6 +5485,11 @@ export class ComprobanteService {
       // Cobranza en campo: vendedor de campo atribuido (denormalizado como en Pago).
       vendedorCampoId: input.vendedorCampoId ?? undefined,
       vendedorCampoNombre: input.vendedorCampoNombre ?? undefined,
+      // Con qué lista de precios se cobró. El cajero puede cambiarla a mitad de
+      // venta, así que sin esto no hay cómo auditar por qué el mismo producto
+      // salió a dos precios distintos en el mismo día.
+      listaPrecioId: input.listaPrecioId ?? undefined,
+      listaPrecioNombre: input.listaPrecioNombre ?? undefined,
       mtoOperGravadas,
       mtoOperInafectas: mtoOpInafectas,
       mtoOperExoneradas: mtoOpExoneradas,

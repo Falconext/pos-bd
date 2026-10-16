@@ -296,6 +296,20 @@ export class CreateProductoDto {
   @Type(() => PrecioMayoristaDto)
   preciosMayorista?: PrecioMayoristaDto[];
 
+  // Piso y techo de venta: aunque el vendedor pueda editar el precio, no se
+  // puede salir de acá. Null/ausente = sin límite.
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  precioMinimoVenta?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  precioMaximoVenta?: number | null;
+
   @IsOptional()
   @IsString()
   descripcionLarga?: string;

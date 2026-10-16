@@ -191,6 +191,18 @@ export class CrearComprobanteDto {
   @IsString()
   vendedorCampoNombre?: string;
 
+  // Lista de precios con la que se cobró. La manda el POS (el cajero puede
+  // cambiarla a mitad de venta) y queda denormalizada para poder auditar
+  // después por qué el mismo producto salió a dos precios distintos.
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  listaPrecioId?: number;
+
+  @IsOptional()
+  @IsString()
+  listaPrecioNombre?: string;
+
   @IsString()
   clienteName: string;
 

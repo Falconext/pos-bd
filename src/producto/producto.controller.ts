@@ -927,6 +927,8 @@ export class ProductoController {
     @Query('limit') limit?: string,
     @Query('search') search?: string,
     @Query('categoriaId') categoriaId?: string,
+    @Query('listaPrecioId') listaPrecioId?: string,
+    @Query('clienteId') clienteId?: string,
   ) {
     const resolvedSedeId = sedeId ? Number(sedeId) : user.sedeId;
     if (!resolvedSedeId) throw new Error('sedeId es requerido');
@@ -938,6 +940,8 @@ export class ProductoController {
       search,
       categoriaId: categoriaId ? Number(categoriaId) : undefined,
       usuarioId: user.id,
+      listaPrecioId: listaPrecioId ? Number(listaPrecioId) : undefined,
+      clienteId: clienteId ? Number(clienteId) : undefined,
     });
   }
 
@@ -1009,6 +1013,8 @@ export class ProductoController {
       soloVendibles: query.soloVendibles,
       usarPrecioSede: query.usarPrecioSede,
       usuarioId: user.id,
+      listaPrecioId: query.listaPrecioId,
+      clienteId: query.clienteId,
       soloStockBajo: query.soloStockBajo,
       priorizarStock: query.priorizarStock,
       incluirOcultos: query.incluirOcultos,

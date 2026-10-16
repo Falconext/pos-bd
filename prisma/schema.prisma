@@ -775,6 +775,13 @@ model Producto {
   unidadVenta         String?
   volumenMl           Decimal?
   preciosMayorista    Json?
+  /// Piso y techo de venta. Aunque el vendedor tenga permiso para editar el
+  /// precio, no puede salirse de acá. Null = sin límite.
+  /// Viven en el producto y no en el ítem de lista a propósito: si vivieran en
+  /// la lista, un producto que no está en ninguna quedaría sin piso, que es
+  /// exactamente el caso que esto viene a cubrir.
+  precioMinimoVenta   Decimal?
+  precioMaximoVenta   Decimal?
   atributosTecnicos   Json?
   localizacion        String?
   porcentajeVenta     Int                     @default(100)
@@ -1025,6 +1032,7 @@ model Cliente {
   fechaNacimiento       DateTime?
   medicoTratanteId      Int?
   empresa               Empresa?             @relation(fields: [empresaId], references: [id])
+  listasPrecio          ListaPrecioCliente[]
   tipoDocumento         TipoDocumento?       @relation(fields: [tipoDocumentoId], references: [id])
   medicoTratante        Doctor?              @relation("PacienteMedico", fields: [medicoTratanteId], references: [id])
   compras               Compra[]
@@ -1165,6 +1173,13 @@ model Comprobante {
   // Denormalizado (sin FK), igual que Pago.vendedorId/vendedorNombre.
   vendedorCampoId         Int?
   vendedorCampoNombre     String?
+  // Con qué lista de precios se cobró. El vendedor puede cambiarla en el POS
+  // (licorería vs. consumo en el local), así que sin esto no hay forma de
+  // auditar por qué un mismo producto salió a dos precios distintos.
+  // Denormalizado (sin FK), igual que vendedorCampoId: el nombre debe sobrevivir
+  // a que la lista se renombre o se elimine.
+  listaPrecioId           Int?
+  listaPrecioNombre       String?
   s3CdrUrl                String?
   s3PdfUrl                String?
   s3XmlUrl                String?
@@ -2066,14 +2081,22 @@ model ListaPrecio {
   id            Int      @id @default(autoincrement())
   empresaId     Int
   nombre        String
+  /// Para qué es esta lista, en palabras del negocio ("precios de licorería",
+  /// "consumo en el local"). El nombre solo no alcanza cuando hay varias.
+  descripcion   String?
   activo        Boolean  @default(true)
   esPorDefecto  Boolean  @default(false)
+  /// Desempate cuando dos listas podrían aplicar: gana la de `orden` menor.
+  /// Antes se resolvía por `id` ascendente, que era accidental e invisible
+  /// para el empresario; esto lo vuelve algo que se puede arrastrar y ver.
+  orden         Int      @default(0)
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt
 
   empresa  Empresa              @relation(fields: [empresaId], references: [id], onDelete: Cascade)
   sedes    ListaPrecioSede[]
   usuarios ListaPrecioUsuario[]
+  clientes ListaPrecioCliente[]
   items    ListaPrecioItem[]
 
   @@index([empresaId])
@@ -2092,6 +2115,21 @@ model ListaPrecioSede {
   @@index([sedeId])
 }
 
+/// Precio pactado con un cliente concreto ("Distribuidora López paga esto").
+/// Se aplica solo al elegirlo en la venta, sin que el cajero recuerde nada.
+model ListaPrecioCliente {
+  id            Int @id @default(autoincrement())
+  listaPrecioId Int
+  clienteId     Int
+
+  listaPrecio ListaPrecio @relation(fields: [listaPrecioId], references: [id], onDelete: Cascade)
+  cliente     Cliente     @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  @@unique([listaPrecioId, clienteId])
+  @@index([listaPrecioId])
+  @@index([clienteId])
+}
+
 model ListaPrecioUsuario {
   id            Int @id @default(autoincrement())
   listaPrecioId Int
@@ -2106,15 +2144,18 @@ model ListaPrecioUsuario {
 }
 
 model ListaPrecioItem {
-  id                 Int      @id @default(autoincrement())
-  listaPrecioId      Int
-  productoId         Int
+  id                  Int      @id @default(autoincrement())
+  listaPrecioId       Int
+  productoId          Int
   // "" = precio de la unidad base; si no, matchea ProductoCodigoBarras.codigo
   // (presentación de paquete) del mismo producto. Se usa "" en vez de null para
   // que el unique compuesto trate "unidad base" como un valor único por producto.
-  presentacionCodigo String   @default("")
-  precioUnitario     Decimal  @db.Decimal(12, 4)
-  precioOferta       Decimal? @db.Decimal(12, 4)
+  presentacionCodigo  String   @default("")
+  precioUnitario      Decimal  @db.Decimal(12, 4)
+  precioOferta        Decimal? @db.Decimal(12, 4)
+  /// Descuento que esta lista aplica sobre el precio, en porcentaje.
+  /// Distinto de `precioOferta`: ese es un precio fijo, este es un %.
+  descuentoPorcentaje Decimal? @db.Decimal(5, 2)
 
   listaPrecio ListaPrecio @relation(fields: [listaPrecioId], references: [id], onDelete: Cascade)
   producto    Producto    @relation(fields: [productoId], references: [id], onDelete: Cascade)

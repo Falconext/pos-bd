@@ -1,4 +1,8 @@
 import { num, round3 } from '../common/utils/stock';
+import {
+  precioConDescuento,
+  resolverListaPrecioAplicable,
+} from '../common/utils/lista-precio.resolver';
 import { colorDe, tallaDe, varianteDe } from './atributos-variante';
 import { afectacionDeCelda } from './afectacion-igv';
 import {
@@ -377,6 +381,8 @@ export class ProductoService {
       fechaInicioOferta?: string | Date;
       fechaFinOferta?: string | Date;
       preciosMayorista?: { cantidadMinima: number; precio: number }[];
+      precioMinimoVenta?: number | null;
+      precioMaximoVenta?: number | null;
       atributosTecnicos?: Record<string, any> | null;
       descripcionLarga?: string;
       opcionesAtributos?: any;
@@ -510,7 +516,11 @@ export class ProductoService {
     if (data.codigosBarrasExtra !== undefined) {
       await this.validarColisionCodigosExtra(
         empresaId,
-        this.normalizarCodigosExtra(data.codigosBarrasExtra, codigoBarras),
+        this.normalizarCodigosExtra(
+          data.codigosBarrasExtra,
+          codigoBarras,
+          data.codigo,
+        ),
       );
     }
 
@@ -618,6 +628,8 @@ export class ProductoService {
                 ? new Date(fechaFinOferta)
                 : undefined,
           preciosMayorista: preciosMayorista ?? undefined,
+          precioMinimoVenta: data.precioMinimoVenta ?? undefined,
+          precioMaximoVenta: data.precioMaximoVenta ?? undefined,
           atributosTecnicos: atributosTecnicos ?? undefined,
           opcionesAtributos: data.opcionesAtributos ?? undefined,
           valoresAtributos: data.valoresAtributos ?? undefined,
@@ -724,6 +736,8 @@ export class ProductoService {
                 ? new Date(fechaFinOferta)
                 : undefined,
           preciosMayorista: preciosMayorista ?? undefined,
+          precioMinimoVenta: data.precioMinimoVenta ?? undefined,
+          precioMaximoVenta: data.precioMaximoVenta ?? undefined,
           atributosTecnicos: atributosTecnicos ?? undefined,
           opcionesAtributos: data.opcionesAtributos ?? undefined,
           valoresAtributos: data.valoresAtributos ?? undefined,
@@ -770,30 +784,27 @@ export class ProductoService {
       empresaId,
       data.codigosBarrasExtra,
       nuevo.codigoBarras,
+      nuevo.codigo,
     );
 
     return this.obtenerPorId(nuevo.id, empresaId);
   }
 
   /**
-   * Carga los items de la lista de precio que aplica al usuario/sede, en un
-   * Map keyed por `${productoId}|${presentacionCodigo}` ('' = unidad base).
+   * Carga los items de la lista de precio que aplica, en un Map keyed por
+   * `${productoId}|${presentacionCodigo}` ('' = unidad base).
    *
-   * Modelo pensado para el empresario (intuitivo):
-   *   1) Lista ESPECÍFICA del usuario  (precio especial de ese cajero/cliente)
-   *   2) Lista ESPECÍFICA de la sede    (la excepción de ese local)
-   *   3) Lista "por defecto" de la empresa (los precios normales del negocio)
-   *   4) (si no hay) → precio base del producto, lo resuelve resolverPrecioConLista
-   *
-   * La lista "por defecto" NO compite en los pasos 1 y 2: es solo el fallback
-   * general. Así, asignar al dueño/local a la lista general no lo "clava", y una
-   * lista específica de un local SIEMPRE gana sobre la default.
-   * Una sola query por listado (no por producto). Map vacío si no hay lista.
+   * La precedencia (elegida a mano > usuario > sede > default) vive en
+   * `resolverListaPrecioAplicable`. Acá solo se arma el Map: una sola query por
+   * listado, no por producto. Map vacío si no hay ninguna lista aplicable, y
+   * entonces `resolverPrecioConLista` cae al precio base del producto.
    */
   private async cargarItemsListaPrecio(
     empresaId: number,
     usuarioId?: number,
     sedeId?: number,
+    listaPrecioIdExplicita?: number,
+    clienteId?: number,
   ): Promise<
     Map<string, { precioUnitario: number; precioOferta: number | null }>
   > {
@@ -802,46 +813,28 @@ export class ProductoService {
       { precioUnitario: number; precioOferta: number | null }
     >();
 
-    let lista: { items: any[] } | null = null;
-    // 1) Lista específica del usuario (excluye la default: no debe "clavar").
-    if (usuarioId) {
-      lista = await this.prisma.listaPrecio.findFirst({
-        where: {
-          empresaId,
-          activo: true,
-          esPorDefecto: false,
-          usuarios: { some: { usuarioId } },
-        },
-        orderBy: { id: 'asc' },
-        include: { items: true },
-      });
-    }
-    // 2) Lista específica de la sede (excluye la default).
-    if (!lista && sedeId) {
-      lista = await this.prisma.listaPrecio.findFirst({
-        where: {
-          empresaId,
-          activo: true,
-          esPorDefecto: false,
-          sedes: { some: { sedeId } },
-        },
-        orderBy: { id: 'asc' },
-        include: { items: true },
-      });
-    }
-    // 3) Lista "por defecto" de la empresa: fallback general (precios normales).
-    if (!lista) {
-      lista = await this.prisma.listaPrecio.findFirst({
-        where: { empresaId, activo: true, esPorDefecto: true },
-        include: { items: true },
-      });
-    }
+    const lista = await resolverListaPrecioAplicable(this.prisma, {
+      empresaId,
+      usuarioId,
+      sedeId,
+      clienteId,
+      listaPrecioIdExplicita,
+      incluirItems: true,
+    });
     if (lista) {
-      for (const it of lista.items) {
+      for (const it of lista.items ?? []) {
+        // El descuento de la lista se aplica ACÁ, una sola vez: a partir de
+        // este Map todo el sistema ve el precio final, y catálogo y carrito no
+        // pueden discrepar.
         map.set(`${it.productoId}|${it.presentacionCodigo || ''}`, {
-          precioUnitario: Number(it.precioUnitario),
+          precioUnitario: precioConDescuento(
+            it.precioUnitario,
+            it.descuentoPorcentaje,
+          ),
           precioOferta:
-            it.precioOferta != null ? Number(it.precioOferta) : null,
+            it.precioOferta != null
+              ? precioConDescuento(it.precioOferta, it.descuentoPorcentaje)
+              : null,
         });
       }
     }
@@ -1088,6 +1081,10 @@ export class ProductoService {
     soloVendibles?: boolean;
     usarPrecioSede?: boolean;
     usuarioId?: number;
+    /** Lista elegida a mano en el POS; pisa la resolución automática. */
+    listaPrecioId?: number;
+    /** Cliente de la venta: su lista pactada gana sobre la del vendedor. */
+    clienteId?: number;
     soloStockBajo?: boolean;
     priorizarStock?: boolean;
     /** Incluir productos NO disponibles en la sede (para asignarlos). */
@@ -1223,6 +1220,8 @@ export class ProductoService {
           empresaId: true,
           creadoEn: true,
           preciosMayorista: true,
+          precioMinimoVenta: true,
+          precioMaximoVenta: true,
           atributosTecnicos: true,
           codigoBarras: true,
           // Códigos de PAQUETE (ej. six-pack): el POS los muestra como tarjetas
@@ -1375,6 +1374,8 @@ export class ProductoService {
           empresaId,
           params.usuarioId,
           params.sedeId,
+          params.listaPrecioId,
+          params.clienteId,
         )
       : new Map<
           string,
@@ -1735,6 +1736,10 @@ export class ProductoService {
     search?: string;
     categoriaId?: number;
     usuarioId?: number;
+    /** Lista elegida a mano en el POS; pisa la resolución automática. */
+    listaPrecioId?: number;
+    /** Cliente de la venta: su lista pactada gana sobre la del vendedor. */
+    clienteId?: number;
   }) {
     const { empresaId, sedeId, categoriaId } = params;
     const page = Number(params.page) || 1;
@@ -1869,6 +1874,8 @@ export class ProductoService {
       empresaId,
       params.usuarioId,
       sedeId,
+      params.listaPrecioId,
+      params.clienteId,
     );
 
     const hoy = new Date();
@@ -2138,6 +2145,8 @@ export class ProductoService {
         }
     >,
     codigoBarrasPrincipal?: string | null,
+    /** Código (SKU) del producto: base para generar el de una presentación sin EAN. */
+    codigoProducto?: string | null,
   ): Array<{
     codigo: string;
     unidadesPorPaquete: number;
@@ -2173,12 +2182,28 @@ export class ProductoService {
       // ROLLO). Como el modelo exige `codigo`, si no hay barras se guarda el
       // interno como código. Antes se descartaba la fila sin barras en silencio
       // y se perdían las presentaciones (reportado por TIENDA MINERA).
-      const codigo = codigoBarra || codigoInterno || '';
-      if (!codigo || codigo === principal) continue;
       const unidades = Math.max(
         1,
         Math.trunc(Number(esObjeto ? raw.unidadesPorPaquete : 1) || 1),
       );
+      const precioDelPaquete = Number(esObjeto ? raw.precioPaquete : NaN);
+      // Una fila es una PRESENTACIÓN real si trae paquete o precio propio,
+      // aunque no le hayan puesto ningún código.
+      const esPresentacion =
+        unidades > 1 || (Number.isFinite(precioDelPaquete) && precioDelPaquete > 0);
+
+      // El modelo exige `codigo` (es la identidad de la presentación y por donde
+      // se escanea). Si no hay barras ni interno pero SÍ es una presentación, se
+      // deriva uno del SKU en vez de descartar la fila: antes el producto se
+      // guardaba "OK" y el paquete desaparecía sin avisar, y desde el panel eso
+      // se veía como "no me deja guardar si no pongo código de barras".
+      const base = (codigoProducto || principal || 'PAQ')
+        .trim()
+        .toUpperCase()
+        .replace(/\s+/g, '-');
+      const derivado = esPresentacion ? `${base}-X${unidades}` : '';
+      const codigo = codigoBarra || codigoInterno || derivado;
+      if (!codigo || codigo === principal) continue;
       // Precio TOTAL del paquete (opcional; solo válido si es > 0).
       const precioRaw = esObjeto ? Number(raw.precioPaquete) : NaN;
       const precioPaquete =
@@ -2295,10 +2320,15 @@ export class ProductoService {
         >
       | undefined,
     codigoBarrasPrincipal?: string | null,
+    codigoProducto?: string | null,
   ) {
     if (codigos === undefined) return;
 
-    const limpios = this.normalizarCodigosExtra(codigos, codigoBarrasPrincipal);
+    const limpios = this.normalizarCodigosExtra(
+      codigos,
+      codigoBarrasPrincipal,
+      codigoProducto,
+    );
 
     await this.validarColisionCodigosExtra(empresaId, limpios, productoId);
 
@@ -2438,6 +2468,8 @@ export class ProductoService {
         // estos el escaneo ignoraba los precios mayorista (no aparecía el selector
         // en "Editar ítem"), la moneda/oferta y las banderas de farmacia.
         preciosMayorista: true,
+        precioMinimoVenta: true,
+        precioMaximoVenta: true,
         moneda: true,
         precioOferta: true,
         fechaInicioOferta: true,
@@ -3024,6 +3056,8 @@ export class ProductoService {
       fechaInicioOferta?: string | Date;
       fechaFinOferta?: string | Date;
       preciosMayorista?: { cantidadMinima: number; precio: number }[];
+      precioMinimoVenta?: number | null;
+      precioMaximoVenta?: number | null;
       atributosTecnicos?: Record<string, any> | null;
       opcionesAtributos?: any;
       valoresAtributos?: any;
@@ -3129,6 +3163,7 @@ export class ProductoService {
         this.normalizarCodigosExtra(
           data.codigosBarrasExtra,
           data.codigoBarras ?? producto.codigoBarras,
+          data.codigo ?? producto.codigo,
         ),
         data.id,
       );
@@ -3512,6 +3547,14 @@ export class ProductoService {
           data.preciosMayorista !== undefined
             ? data.preciosMayorista
             : undefined,
+        precioMinimoVenta:
+          data.precioMinimoVenta !== undefined
+            ? data.precioMinimoVenta
+            : undefined,
+        precioMaximoVenta:
+          data.precioMaximoVenta !== undefined
+            ? data.precioMaximoVenta
+            : undefined,
         atributosTecnicos:
           data.atributosTecnicos !== undefined
             ? data.atributosTecnicos === null
@@ -3575,6 +3618,7 @@ export class ProductoService {
       data.empresaId,
       data.codigosBarrasExtra,
       actualizado.codigoBarras,
+      actualizado.codigo,
     );
 
     return this.obtenerPorId(actualizado.id, data.empresaId);
