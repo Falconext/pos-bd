@@ -6,6 +6,7 @@ import { EmisoresService } from '../emisores/emisores.service';
 import { FacturacionApiController } from './facturacion.controller';
 import { FacturacionApiService } from './facturacion.service';
 import { AvisosFacturacionService } from './avisos.service';
+import { MedidorApiService } from './medidor.service';
 
 /**
  * La API pública de facturación.
@@ -22,7 +23,17 @@ import { AvisosFacturacionService } from './avisos.service';
 @Module({
   imports: [PrismaModule, ComprobanteModule, IntegracionesModule],
   controllers: [FacturacionApiController],
-  providers: [FacturacionApiService, EmisoresService, AvisosFacturacionService],
-  exports: [FacturacionApiService, EmisoresService, AvisosFacturacionService],
+  providers: [
+    FacturacionApiService,
+    EmisoresService,
+    AvisosFacturacionService,
+    MedidorApiService,
+  ],
+  exports: [
+    FacturacionApiService,
+    EmisoresService,
+    AvisosFacturacionService,
+    MedidorApiService,
+  ],
 })
 export class FacturacionApiModule {}

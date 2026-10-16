@@ -437,6 +437,7 @@ model Empresa {
   apiKeys                       ApiKey[]
   idempotenciaApi               IdempotenciaApi[]
   webhookEndpoints              WebhookEndpoint[]
+  consumosApi                   ConsumoApiMes[]               @relation("ConsumoApiIntegrador")
 
   repartidores            Repartidor[]
   despachoMensajeTemplate DespachoMensajeTemplate?
@@ -1075,6 +1076,13 @@ model MedioPagoDetraccion {
 model Comprobante {
   id                  Int     @id @default(autoincrement())
   ublVersion          String  @default("2.1")
+  /// En qué período se le cobró al integrador, como `2026-10`.
+  ///
+  /// Es lo que hace que cerrar un mes dos veces no cobre dos veces, y que un
+  /// comprobante aceptado tarde no se pierda: si todavía no tiene marca, el
+  /// próximo cierre lo toma. Null = no cobrado aún (o no cobrable).
+  apiPeriodoFacturado String?
+
   /// Último estado público ya avisado por webhook. Null = nunca se avisó.
   ///
   /// Es lo que hace que el aviso no dependa de QUIÉN movió el comprobante: el
@@ -4823,4 +4831,40 @@ model DispositivoMovil {
   empresa               Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade)
 
   @@index([empresaId, ultimoSyncEn])
+}
+
+/// Lo que se le facturó a un integrador por un mes, ya cerrado.
+///
+/// Existe para que una factura emitida no cambie nunca más. El consumo del
+/// mes en curso se calcula en vivo contra `Comprobante`, que es siempre la
+/// verdad; pero una vez cerrado el período hay que congelarlo, porque un
+/// comprobante puede cambiar de estado después (se acepta tarde, se anula) y
+/// la factura que el integrador ya pagó no puede moverse por eso.
+///
+/// El detalle por emisor NO se guarda acá: se reconstruye desde los
+/// comprobantes marcados con este período, así que siempre cuadra con lo
+/// cobrado y no hay dos fuentes que puedan discrepar.
+model ConsumoApiMes {
+  id           Int    @id @default(autoincrement())
+  /// La Empresa que actúa como integrador.
+  integradorId Int
+  /// `AAAA-MM`.
+  periodo      String
+
+  cantidad       Int
+  /// El precio del tramo que aplicó, guardado por si los tramos cambian.
+  precioUnitario Float
+  subtotal       Float
+  igv            Float
+  total          Float
+  /// Verdadero cuando mandó el mínimo mensual y no el consumo.
+  aplicoMinimo   Boolean @default(false)
+
+  cerradoEn DateTime @default(now())
+
+  integrador Empresa @relation("ConsumoApiIntegrador", fields: [integradorId], references: [id], onDelete: Cascade)
+
+  /// Un período por integrador: la última defensa contra cobrar dos veces.
+  @@unique([integradorId, periodo])
+  @@index([periodo])
 }
