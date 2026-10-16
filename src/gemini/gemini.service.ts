@@ -864,6 +864,86 @@ Responde SOLO JSON válido (sin markdown):
   }
 
   /**
+   * Lee el comprobante de pago que manda un cliente por WhatsApp: la captura
+   * del Yape, del Plin o de una transferencia.
+   *
+   * No es lo mismo que `extraerFacturaDesdeImagen`: aquella lee una factura
+   * de compra con items y RUC; esta lee un recibo de pago, donde lo único que
+   * importa es cuánto, cuándo, por dónde y quién pagó.
+   *
+   * Devuelve null cuando la imagen no es un comprobante —puede ser la foto de
+   * un frasco o una receta— para que el flujo siga como si no se hubiera
+   * leído nada, en vez de inventar un monto.
+   */
+  async leerComprobantePago(
+    base64: string,
+    mimeType: string,
+  ): Promise<{
+    esComprobante: boolean;
+    monto: number | null;
+    numeroOperacion: string | null;
+    fecha: string | null;
+    medio: string | null;
+    pagador: string | null;
+  } | null> {
+    if (!this.model) return null;
+    const prompt = `Mira esta imagen. ¿Es la captura de un pago hecho desde una app peruana (Yape, Plin) o de una transferencia bancaria (BCP, Interbank, BBVA, Scotiabank)?
+
+Devuelve SOLO un JSON válido, sin markdown ni explicaciones, con EXACTAMENTE esta forma:
+{
+  "esComprobante": true | false,
+  "monto": 0,
+  "numeroOperacion": "",
+  "fecha": "",
+  "medio": "",
+  "pagador": ""
+}
+
+Reglas:
+- "esComprobante" es false si la imagen es cualquier otra cosa (un producto, una receta, una captura de chat, una foto personal). En ese caso deja todo lo demás vacío.
+- "monto" es el importe pagado, como número, sin símbolo ni comas de miles (usa punto decimal). Si no se lee con claridad, usa 0.
+- "numeroOperacion" es el número de operación, de constancia o de transacción. Cópialo tal cual, sin espacios.
+- "fecha" es la fecha tal como aparece impresa, sin reformatear.
+- "medio" es "Yape", "Plin", "BCP", "Interbank", "BBVA", "Scotiabank" o "Transferencia".
+- "pagador" es el nombre de quien ENVÍA el dinero, no el de quien lo recibe. En Yape suele estar arriba o como "De:". Si no aparece, deja "".
+- NO inventes. Si un dato no está en la imagen, déjalo vacío o en 0.`;
+    try {
+      const result = await this.model.generateContent([
+        prompt,
+        { inlineData: { mimeType, data: base64 } },
+      ]);
+      const crudo = result.response
+        .text()
+        .trim()
+        .replace(/^```(?:json)?/i, '')
+        .replace(/```$/, '')
+        .trim();
+      const d = JSON.parse(crudo);
+      if (!d?.esComprobante) return { esComprobante: false, monto: null, numeroOperacion: null, fecha: null, medio: null, pagador: null };
+      const texto = (v: unknown) => {
+        const t = String(v ?? '').trim();
+        return t ? t : null;
+      };
+      const monto = Number(d.monto);
+      return {
+        esComprobante: true,
+        monto: Number.isFinite(monto) && monto > 0 ? monto : null,
+        numeroOperacion: texto(d.numeroOperacion),
+        fecha: texto(d.fecha),
+        medio: texto(d.medio),
+        pagador: texto(d.pagador),
+      };
+    } catch (e) {
+      // Leer el voucher es un extra: si falla, el comprobante se archiva igual
+      // y lo valida una persona, que es como funcionaba antes.
+      this.logger.warn(
+        `No se pudo leer el comprobante de pago: ${(e as Error).message}`,
+      );
+      return null;
+    }
+  }
+
+  /**
    * Lee una imagen de factura/boleta de compra peruana y extrae sus datos como
    * JSON estructurado (proveedor, documento, items con cantidad y precio). No
    * matchea productos — eso lo hace compras.service con el catálogo. Devuelve

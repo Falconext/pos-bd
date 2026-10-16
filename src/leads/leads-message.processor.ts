@@ -80,6 +80,12 @@ interface ProductoParaIa {
  */
 const UMBRAL_PARECIDO = 0.45;
 
+
+/** Lo que la IA logró leer de un comprobante de pago. Null = no se pudo. */
+type ComprobanteLeido = Awaited<
+  ReturnType<IaVentasService['leerComprobantePago']>
+>;
+
 /** Lo que necesita el trabajo de respuesta: la conversación, no el mensaje. */
 interface TareaRespuesta {
   empresaId: number;
@@ -428,7 +434,7 @@ export class LeadsMessageProcessor extends WorkerHost {
     // no se toca — puede ser una receta o la foto de un frasco, y archivarla
     // sin motivo es guardar datos de alguien por nada.
     if (d.esImagen) {
-      await this.registrarVoucherSiCorresponde(empresa.id, conv.id, d);
+      await this.registrarVoucherSiCorresponde(empresa.id, conv.id, d, userMsgId);
     }
 
     this.logger.log(
@@ -1094,6 +1100,7 @@ export class LeadsMessageProcessor extends WorkerHost {
     empresaId: number,
     conversacionId: number,
     d: MensajeEntrante,
+    mensajeId?: number,
   ) {
     try {
       const borrador = await this.prisma.leadPedidoBorrador.findUnique({
@@ -1117,13 +1124,61 @@ export class LeadsMessageProcessor extends WorkerHost {
         }
       }
 
+      // Se lee la imagen antes de archivarla. Hasta ahora el voucher se
+      // guardaba cerrado y alguien tenía que abrirlo para saber de cuánto
+      // era; el cliente, mientras tanto, recibía un "ya le avisé al asesor"
+      // que no confirmaba nada. Leerlo permite responderle con el monto y el
+      // número de operación en el acto.
+      //
+      // Es un extra, no un requisito: si la IA no está o la foto no se pudo
+      // bajar, `leido` queda en null y todo sigue como antes.
+      let leido: ComprobanteLeido = null;
+      if (buffer && mimeType && this.ia.disponible()) {
+        leido = await this.ia
+          .leerComprobantePago(buffer, mimeType)
+          .catch(() => null);
+      }
+
       await this.embudo.registrarComprobantePago(empresaId, conversacionId, {
         mediaId: d.mediaId,
         // El texto que acompaña a la imagen: "ya transferí", "a nombre de…".
         nota: d.text?.replace('[el cliente envió una imagen]', '').trim(),
         buffer,
         mimeType,
+        leido: leido?.esComprobante ? leido : null,
       });
+
+      // Lo leído se le cuenta al modelo escribiéndolo en el propio mensaje
+      // del cliente. Así lo confirma con naturalidad —"recibí tu Yape de
+      // S/ 30, operación 12345678"— y aplica solo las reglas de pago que el
+      // negocio ya tiene en su contexto (saldo pendiente, monto distinto al
+      // acordado). No hace falta una herramienta nueva para eso.
+      if (mensajeId && leido?.esComprobante) {
+        const partes = [
+          leido.medio && `por ${leido.medio}`,
+          leido.monto != null && `de S/ ${leido.monto.toFixed(2)}`,
+          leido.numeroOperacion && `operación ${leido.numeroOperacion}`,
+          leido.fecha && `del ${leido.fecha}`,
+          leido.pagador && `a nombre de ${leido.pagador}`,
+        ].filter(Boolean);
+        if (partes.length) {
+          await this.prisma.leadMensaje
+            .update({
+              where: { id: mensajeId },
+              data: {
+                contenido: `[el cliente envió un comprobante de pago ${partes.join(', ')}]${
+                  d.text?.replace('[el cliente envió una imagen]', '').trim()
+                    ? ` ${d.text.replace('[el cliente envió una imagen]', '').trim()}`
+                    : ''
+                }`,
+              },
+            })
+            .catch(() => undefined);
+          this.logger.log(
+            `Lead: comprobante leído en la conv ${conversacionId} (${partes.join(', ')}).`,
+          );
+        }
+      }
       this.logger.log(
         `Lead: comprobante de pago de ${d.from} registrado (conv ${conversacionId}).`,
       );
