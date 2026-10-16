@@ -143,7 +143,11 @@ export class AvisosFacturacionService {
    * cada vez.
    */
   private async actualizarHabilitacion(c: any, estado: EstadoPublico) {
-    const cambio = estadoSegunRespuesta(estado, codigoDelCdr(c.sunatCdrResponse));
+    const cambio = estadoSegunRespuesta(
+      estado,
+      codigoDelCdr(c.sunatCdrResponse),
+      c.empresa?.apiEmisorEstado,
+    );
     if (!cambio) return;
     if (c.empresa?.apiEmisorEstado === cambio.estado && !cambio.motivo) return;
     try {

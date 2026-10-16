@@ -112,16 +112,40 @@ describe('qué aprende el sistema de cada respuesta de SUNAT', () => {
     expect(estadoSegunRespuesta('observed', '4000')).toEqual({ estado: 'activo' });
   });
 
-  it('un rechazo por habilitación bloquea, con el motivo en palabras', () => {
-    const r = estadoSegunRespuesta('rejected', '0111');
+  it('un rechazo por habilitación bloquea a un emisor que nunca emitió', () => {
+    const r = estadoSegunRespuesta('rejected', '0111', 'pendiente');
     expect(r!.estado).toBe('bloqueado');
     expect(r!.motivo).toContain('emisor electrónico');
-    expect(estadoSegunRespuesta('rejected', '0154')!.motivo).toContain('clave SOL');
+    expect(estadoSegunRespuesta('rejected', '0154', 'pendiente')!.motivo).toContain('clave SOL');
   });
 
   it('un rechazo por datos no toca al emisor', () => {
-    expect(estadoSegunRespuesta('rejected', '2116')).toBeNull();
-    expect(estadoSegunRespuesta('rejected', '3105')).toBeNull();
+    expect(estadoSegunRespuesta('rejected', '2116', 'pendiente')).toBeNull();
+    expect(estadoSegunRespuesta('rejected', '3105', 'pendiente')).toBeNull();
+  });
+
+  it('a un emisor que YA emitió bien, un 0111 NO le corta la facturación', () => {
+    // El proveedor de firma avisó que esos códigos tambien saltan cuando los
+    // servidores de SUNAT estan caídos, y los datos lo confirman: MATERIALES
+    // ORTEGA recibió un 0154 después de 1,165 comprobantes aceptados y
+    // M3-RAKI un 0111 tras 201. Bloquearlos habría dejado sin facturar a dos
+    // clientes sanos por una intermitencia.
+    expect(estadoSegunRespuesta('rejected', '0111', 'activo')).toBeNull();
+    expect(estadoSegunRespuesta('rejected', '0154', 'activo')).toBeNull();
+  });
+
+  it('pero al que nunca emitió, sí', () => {
+    // LA DESPENSA HM y DEMISKIN BEAUTY: cero comprobantes aceptados. Para
+    // ellos el código significa exactamente lo que dice.
+    expect(estadoSegunRespuesta('rejected', '0111', 'pendiente')!.estado).toBe('bloqueado');
+    expect(estadoSegunRespuesta('rejected', '0154', null)!.estado).toBe('bloqueado');
+    expect(estadoSegunRespuesta('rejected', '0111', undefined)!.estado).toBe('bloqueado');
+  });
+
+  it('una aceptación reactiva aunque estuviera bloqueado', () => {
+    // El contribuyente arregló su habilitación: la prueba es que SUNAT
+    // aceptó, y el emisor vuelve solo.
+    expect(estadoSegunRespuesta('accepted', '0', 'bloqueado')).toEqual({ estado: 'activo' });
   });
 
   it('lo que todavía no resolvió tampoco', () => {

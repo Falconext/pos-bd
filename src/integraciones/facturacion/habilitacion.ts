@@ -32,12 +32,17 @@ export type EstadoEmisor = 'pendiente' | 'activo' | 'bloqueado';
 export const ESPERA_ALTA_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Códigos de SUNAT que significan "este RUC no está habilitado para emitir".
+ * Códigos de SUNAT que PUEDEN significar "este RUC no está habilitado".
  *
- * Son los dos que aparecen de verdad en producción. No se resuelven solos:
- * 0111 es que el RUC no tiene el perfil de emisor electrónico y 0154 que no
- * autorizó al PSE. Los dos los arregla el contribuyente en SUNAT, nunca un
- * reintento.
+ * 0111 es "no tiene el perfil de emisor electrónico" y 0154 "no autorizó al
+ * PSE". Pero el proveedor de firma advirtió algo que los datos confirman:
+ * **los mismos códigos saltan cuando los servidores de recepción de SUNAT
+ * están caídos**. No alcanzan por sí solos para condenar a un emisor.
+ *
+ * En producción, de los cuatro RUCs que recibieron estos códigos, dos ya
+ * facturaban normalmente —MATERIALES ORTEGA llevaba 1,165 comprobantes
+ * aceptados y M3-RAKI 201— y los otros dos nunca habían emitido nada. Esa es
+ * la diferencia que decide: ver `estadoSegunRespuesta`.
  */
 export const CODIGOS_SIN_HABILITACION: readonly string[] = ['0111', '0154'];
 
@@ -117,11 +122,21 @@ export const puedeEmitir = (
 export const estadoSegunRespuesta = (
   estadoPublico: string | null,
   codigoCdr: string | null,
+  estadoActual?: string | null,
 ): { estado: EstadoEmisor; motivo?: string } | null => {
   // Que SUNAT lo acepte es la única prueba real de que el alta funcionó.
   if (estadoPublico === 'accepted' || estadoPublico === 'observed') {
     return { estado: 'activo' };
   }
+
+  // A un emisor que YA emitió bien no se le corta la facturación por estos
+  // códigos: para él son una caída de SUNAT, no una falta de habilitación.
+  //
+  // No es una hipótesis. En producción MATERIALES ORTEGA recibió 0154 después
+  // de 1,165 comprobantes aceptados, y M3-RAKI un 0111 tras 201. Bloquearlos
+  // habría dejado sin facturar a dos clientes sanos por una intermitencia.
+  if (estadoActual === 'activo') return null;
+
   if (estadoPublico === 'rejected' && esFaltaDeHabilitacion(codigoCdr)) {
     return {
       estado: 'bloqueado',
