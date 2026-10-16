@@ -16,6 +16,43 @@ import {
 import { NotificacionesService } from '../../notificaciones/notificaciones.service';
 
 const MAX_RETRIES_ANTES_NOTIFICAR = 5;
+
+/**
+ * Qué se le dice al empresario cuando un comprobante no sale.
+ *
+ * Antes el aviso era uno solo —"verifica tu conexión y credenciales PSE"— sin
+ * importar la causa. Cuando SUNAT es la que no responde eso es falso y además
+ * dañino: le dice que revise algo que no está roto justo cuando está nervioso,
+ * y la reacción natural (reemitir o anular) rompe correlativos y duplica.
+ *
+ * El tipo de error ya viene clasificado en el mensaje: RED es infraestructura
+ * (SUNAT caída o lenta) y no depende del cliente; CONFIG y DATOS sí requieren
+ * que haga algo.
+ */
+export function avisoFallaSunat(
+  ref: string,
+  intentos: number,
+  errorMsg?: string,
+): { titulo: string; mensaje: string; esDeSunat: boolean } {
+  const esDeSunat = /^\s*\[RED\]/i.test(String(errorMsg ?? ''));
+  if (esDeSunat) {
+    return {
+      esDeSunat: true,
+      titulo: 'SUNAT está demorando en responder',
+      mensaje:
+        `${ref} sigue en cola porque SUNAT no está respondiendo. No es un problema de tu sistema ` +
+        `ni de tus datos, y tu comprobante es válido. Lo seguimos reenviando solo hasta que SUNAT ` +
+        `responda: NO lo vuelvas a emitir ni lo anules.`,
+    };
+  }
+  return {
+    esDeSunat: false,
+    titulo: 'Comprobante pendiente de envío a SUNAT',
+    mensaje:
+      `${ref} no pudo enviarse tras ${intentos} intentos. Revisa tus credenciales PSE y tu ` +
+      `certificado digital en Perfil → Configuración; si siguen vigentes, escríbenos.`,
+  };
+}
 const PENDIENTE_STUCK_HORAS = 2;
 /**
  * A partir de esta antigüedad, un comprobante PENDIENTE deja de reenviarse a
@@ -415,12 +452,13 @@ export class VerificarPendientesSunatService {
           const retriesCount = (comprobante.sunatRetriesCount || 0) + 1;
           if (retriesCount >= MAX_RETRIES_ANTES_NOTIFICAR) {
             const ref = `${comprobante.serie ?? ''}-${String(comprobante.correlativo ?? '').padStart(8, '0')}`;
+            const aviso = avisoFallaSunat(ref, retriesCount, err?.message);
             await this.notificacionesService
               .notificarFallaSunat({
                 empresaId: comprobante.empresaId,
                 tipo: 'WARNING',
-                titulo: 'Comprobante pendiente de envío a SUNAT',
-                mensaje: `${ref} no pudo enviarse a SUNAT tras ${retriesCount} intentos. Verifica tu conexión y credenciales PSE.`,
+                titulo: aviso.titulo,
+                mensaje: aviso.mensaje,
                 meta: {
                   comprobanteId: comprobante.id,
                   serie: comprobante.serie,

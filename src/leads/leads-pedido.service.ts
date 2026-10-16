@@ -156,11 +156,16 @@ export class LeadsPedidoService {
     faltan: string[];
     problemas?: string[];
     aclarar?: string;
+    /** Correcciones que conviene confirmarle al cliente sin detener el pedido. */
+    confirmar?: string[];
   }> {
     const config = await this.configDe(empresaId);
     const cambios: Prisma.LeadPedidoBorradorUncheckedUpdateInput = {};
     const guardado: string[] = [];
     const problemas: string[] = [];
+    // Cosas que el modelo tiene que decirle al cliente sin frenar el pedido,
+    // a diferencia de `aclarar`, que sí lo detiene.
+    const aclaraciones: string[] = [];
 
     if (datos.destino?.trim()) {
       // Sin zonas configuradas no se puede decir cuánto cuesta el envío. Antes
@@ -188,6 +193,15 @@ export class LeadsPedidoService {
         cambios.lugar = resuelto.lugar ?? datos.destino.trim();
         cambios.costoEnvio = new Prisma.Decimal(resuelto.zona.tarifa);
         guardado.push(`destino: ${resuelto.lugar ?? datos.destino.trim()}`);
+        // Se reconoció corrigiendo lo que vino escrito. Se le confirma al
+        // cliente en la misma respuesta: la zona decide la tarifa y la forma
+        // de pago, y un distrito mal leído se descubre con el repartidor ya
+        // en la calle.
+        if (resuelto.aproximado && resuelto.lugar) {
+          aclaraciones.push(
+            `Entendí "${datos.destino.trim()}" como ${resuelto.lugar}. Confírmaselo al cliente de pasada en tu respuesta ("te confirmo, la entrega es en ${resuelto.lugar}, ¿correcto?") y sigue con el pedido sin frenarte.`,
+          );
+        }
       }
     }
 
@@ -246,6 +260,7 @@ export class LeadsPedidoService {
       guardado,
       faltan: this.faltantes(borrador),
       ...(problemas.length ? { problemas } : {}),
+      ...(aclaraciones.length ? { confirmar: aclaraciones } : {}),
     };
   }
 

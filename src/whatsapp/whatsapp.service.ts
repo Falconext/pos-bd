@@ -693,7 +693,14 @@ export class WhatsAppService {
     },
     {
       // F6: el producto de la lista de espera volvió. {{1}} nombre, {{2}} producto.
+      //
+      // MARKETING porque es lo que Meta decide igual: la mandamos como UTILITY
+      // y nos la reclasificó al revisarla. Avisar que un producto volvió es
+      // promoción para ellos, aunque el cliente lo haya pedido. Declararlo de
+      // frente evita la discrepancia entre lo que el panel dice y lo que Meta
+      // cobra, y que el cliente cuente con un precio de UTILITY que no es.
       name: 'producto_disponible',
+      category: 'MARKETING',
       body: 'Hola {{1}}, buenas noticias: {{2}} ya está disponible nuevamente. Escríbenos y coordinamos tu pedido.',
       example: ['Juan', 'Uña de gato 100 cápsulas'],
     },
@@ -769,7 +776,14 @@ export class WhatsAppService {
     return res;
   }
 
-  /** Alta idempotente de un juego de plantillas en una WABA. */
+  /**
+   * Alta idempotente de un juego de plantillas en una WABA.
+   *
+   * En PARALELO a propósito. Secuencialmente, siete plantillas tardaban más
+   * de 12 segundos y el navegador cortaba la petición: el servidor las creaba
+   * igual, pero al usuario le decía que había fallado — que es peor que un
+   * error, porque invita a reintentar algo que ya se hizo.
+   */
   private async crearPlantillasEnWaba(
     wabaId: string,
     token: string,
@@ -778,8 +792,9 @@ export class WhatsAppService {
     const creadas: string[] = [];
     const existentes: string[] = [];
     const errores: string[] = [];
-    for (const p of plantillas) {
-      try {
+
+    const resultados = await Promise.all(
+      plantillas.map(async (p) => {
         const components: Record<string, unknown>[] = [
           {
             type: 'BODY',
@@ -788,36 +803,49 @@ export class WhatsAppService {
           },
         ];
         if (p.footer) components.push({ type: 'FOOTER', text: p.footer });
-        await axios.post(
-          `${this.apiUrl}/${wabaId}/message_templates`,
-          {
-            name: p.name,
-            language: 'es',
-            category: p.category ?? 'UTILITY',
-            components,
-          },
-          { headers: { Authorization: `Bearer ${token}` } },
-        );
-        creadas.push(p.name);
-      } catch (e: any) {
-        const err = e.response?.data?.error;
-        // "Ya existe" → subcódigo 2388023/2388024, o el texto (es/en) en message /
-        // error_user_title / error_user_msg.
-        const txt = [err?.message, err?.error_user_title, err?.error_user_msg]
-          .filter(Boolean)
-          .join(' ');
-        if (
-          /already exists|ya existe/i.test(txt) ||
-          err?.error_subcode === 2388023 ||
-          err?.error_subcode === 2388024
-        ) {
-          existentes.push(p.name);
-        } else {
-          const detalle = err?.error_user_title || err?.message || e.message;
+        try {
+          await axios.post(
+            `${this.apiUrl}/${wabaId}/message_templates`,
+            {
+              name: p.name,
+              language: 'es',
+              category: p.category ?? 'UTILITY',
+              components,
+            },
+            { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 },
+          );
+          return { nombre: p.name, estado: 'creada' as const };
+        } catch (e: any) {
+          const err = e.response?.data?.error;
+          // "Ya existe" → subcódigo 2388023/2388024, o el texto (es/en) en message /
+          // error_user_title / error_user_msg.
+          const txt = [err?.message, err?.error_user_title, err?.error_user_msg]
+            .filter(Boolean)
+            .join(' ');
+          if (
+            /already exists|ya existe/i.test(txt) ||
+            err?.error_subcode === 2388023 ||
+            err?.error_subcode === 2388024
+          ) {
+            return { nombre: p.name, estado: 'existente' as const };
+          }
+          // error_user_msg entra en la cuenta: cuando Meta rechaza por
+          // categoría o por el cuerpo, el por qué suele venir solo ahí.
+          const detalle =
+            err?.error_user_title ||
+            err?.error_user_msg ||
+            err?.message ||
+            e.message;
           this.logger.warn(`Plantilla ${p.name} falló: ${detalle}`);
-          errores.push(`${p.name}: ${detalle}`);
+          return { nombre: p.name, estado: 'error' as const, motivo: detalle };
         }
-      }
+      }),
+    );
+
+    for (const r of resultados) {
+      if (r.estado === 'creada') creadas.push(r.nombre);
+      else if (r.estado === 'existente') existentes.push(r.nombre);
+      else errores.push(`${r.nombre}: ${r.motivo}`);
     }
     return { creadas, existentes, errores };
   }

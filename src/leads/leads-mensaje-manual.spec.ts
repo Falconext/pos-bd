@@ -17,11 +17,18 @@ import { PAUSA_INTERVENCION_MS } from './pausa-bot';
 const EMPRESA = 7;
 const CONVERSACION = 42;
 
-/** Conversación de prueba: por defecto con la IA todavía activa. */
+/**
+ * Conversación de prueba: por defecto con la IA todavía activa.
+ *
+ * `botActivo` vive en la CONVERSACIÓN, no en el prospecto. Antes estaba en el
+ * prospecto y los chats de prueba del negocio —que a propósito no generan
+ * prospecto— se quedaban sin forma de pausar la IA.
+ */
 const conversacion = (extra: Record<string, any> = {}) => ({
   id: CONVERSACION,
   telefonoProspecto: '51987654321',
-  prospecto: { id: 99, botActivo: true },
+  botActivo: true,
+  prospecto: { id: 99 },
   ...extra,
 });
 
@@ -45,6 +52,8 @@ function armar(
         ),
     },
     leadProspecto: { update: jest.fn().mockResolvedValue({}) },
+    // La pausa se escribe en la conversación y en el prospecto a la vez.
+    $transaction: jest.fn((ops: any[]) => Promise.all(ops)),
   };
   const whatsapp: any = {
     enviarTexto: jest.fn().mockResolvedValue(opts.envio ?? { success: true }),
@@ -199,6 +208,14 @@ describe('Mensaje manual del vendedor en una conversación de leads', () => {
         CONVERSACION,
         'hola',
       );
+      // La que manda es la de la conversación: es la que lee el processor
+      // para decidir si responde.
+      const enConv = prisma.leadConversacion.update.mock.calls.find(
+        (c: any[]) => c[0]?.data?.botActivo === false,
+      );
+      expect(enConv).toBeDefined();
+      // Y se refleja en el prospecto, que es lo que pinta "IA en pausa" en el
+      // embudo.
       const llamada = prisma.leadProspecto.update.mock.calls[0][0];
       expect(llamada.where).toEqual({ id: 99 });
       expect(llamada.data.botActivo).toBe(false);
@@ -211,20 +228,10 @@ describe('Mensaje manual del vendedor en una conversación de leads', () => {
       expect(r.botPausado).toBe(true);
     });
 
-    it('no vuelve a pausarlo si el vendedor ya había tomado el chat', async () => {
-      const { service, prisma } = armar({
-        conv: conversacion({ prospecto: { id: 99, botActivo: false } }),
-      });
-      const r = await service.enviarMensajeManual(
-        EMPRESA,
-        CONVERSACION,
-        'hola',
-      );
-      expect(prisma.leadProspecto.update).not.toHaveBeenCalled();
-      expect(r.botPausado).toBe(false);
-    });
-
-    it('una conversación sin prospecto calificado todavía acepta el mensaje', async () => {
+    it('pausa también un chat de prueba, que no tiene prospecto', async () => {
+      // El dueño prueba su propio bot desde su celular. Esos chats no generan
+      // prospecto para no ensuciar el embudo, y por eso la pausa vivía fuera
+      // de su alcance: respondía a mano y la IA le contestaba encima.
       const { service, prisma, whatsapp } = armar({
         conv: conversacion({ prospecto: null }),
       });
@@ -234,6 +241,23 @@ describe('Mensaje manual del vendedor en una conversación de leads', () => {
         'hola',
       );
       expect(whatsapp.enviarTexto).toHaveBeenCalled();
+      const enConv = prisma.leadConversacion.update.mock.calls.find(
+        (c: any[]) => c[0]?.data?.botActivo === false,
+      );
+      expect(enConv).toBeDefined();
+      expect(prisma.leadProspecto.update).not.toHaveBeenCalled();
+      expect(r.botPausado).toBe(true);
+    });
+
+    it('no vuelve a pausarlo si el vendedor ya había tomado el chat', async () => {
+      const { service, prisma } = armar({
+        conv: conversacion({ botActivo: false }),
+      });
+      const r = await service.enviarMensajeManual(
+        EMPRESA,
+        CONVERSACION,
+        'hola',
+      );
       expect(prisma.leadProspecto.update).not.toHaveBeenCalled();
       expect(r.botPausado).toBe(false);
     });

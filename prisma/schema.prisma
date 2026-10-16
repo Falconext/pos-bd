@@ -4559,6 +4559,13 @@ model LeadConversacion {
   ultimoSeguimientoEn DateTime?
   // Evita reenviar el brochure más de una vez por conversación.
   brochureEnviado     Boolean                @default(false)
+  // Tomar el chat: la IA se calla en ESTA conversación. Vive acá y no solo en
+  // el prospecto porque los chats de prueba del propio negocio no generan
+  // prospecto (ver numeros-internos.ts) y eran justamente los únicos donde no
+  // se podía apagar la IA — que es donde más falta hacía.
+  botActivo           Boolean                @default(true)
+  pausadoHasta        DateTime?
+  motivoPausa         String?
   mensajes            LeadMensaje[]
   prospecto           LeadProspecto?
   borrador            LeadPedidoBorrador?
