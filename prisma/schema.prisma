@@ -3078,11 +3078,21 @@ model IngresoSistema {
 /// administrador. Esa separación entre "se debe" y "se pagó" es la que permite
 /// enchufar el cobro automático después sin rehacer nada.
 model CobroEmpresa {
-  id               Int       @id @default(autoincrement())
-  empresaId        Int
+  id        Int    @id @default(autoincrement())
+  empresaId Int
   /// Mes que cubre el cobro, "YYYY-MM". Junto al índice único de abajo es lo
   /// que impide que el cron cobre dos veces el mismo mes si corre dos veces.
-  periodo          String
+  periodo   String
+
+  /// Qué se está cobrando. `MENSUALIDAD` es la suscripción al ERP;
+  /// `API_FACTURACION`, el consumo de la API de comprobantes.
+  ///
+  /// Entra en la clave única junto con el período porque un integrador puede
+  /// ser las dos cosas a la vez: paga su propio ERP y además consume la API.
+  /// Sin este campo el segundo cobro del mes chocaría contra el primero y se
+  /// perdería en silencio — el emisor de mensualidades ya trata ese choque
+  /// como "ya se emitió" y sigue de largo.
+  concepto         String    @default("MENSUALIDAD")
   /// Nombre y costo del plan congelados al emitir: si mañana sube el precio o
   /// la empresa cambia de plan, el cobro de este mes sigue diciendo lo que se
   /// cobró de verdad.
@@ -3108,7 +3118,7 @@ model CobroEmpresa {
   empresa Empresa         @relation(fields: [empresaId], references: [id])
   ingreso IngresoSistema?
 
-  @@unique([empresaId, periodo])
+  @@unique([empresaId, periodo, concepto])
   @@index([empresaId, estado])
   @@index([estado, fechaVencimiento])
 }

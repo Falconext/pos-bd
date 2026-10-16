@@ -81,10 +81,12 @@ correr('medidor y cierre mensual, contra Postgres real', () => {
   beforeEach(async () => {
     await prisma.$executeRawUnsafe(`DELETE FROM "Comprobante" WHERE "empresaId" >= 9410`);
     await prisma.$executeRawUnsafe(`DELETE FROM "ConsumoApiMes" WHERE "integradorId" >= 9400`);
+    await prisma.$executeRawUnsafe(`DELETE FROM "CobroEmpresa" WHERE "empresaId" >= 9400`);
   });
 
   afterAll(async () => {
     await prisma.$executeRawUnsafe(`DELETE FROM "ConsumoApiMes" WHERE "integradorId" >= 9400`);
+    await prisma.$executeRawUnsafe(`DELETE FROM "CobroEmpresa" WHERE "empresaId" >= 9400`);
     await limpiar(prisma, 9400);
     await prisma.$disconnect();
   });
@@ -270,6 +272,83 @@ correr('medidor y cierre mensual, contra Postgres real', () => {
       // No es integrador: es un cliente común del ERP.
       const r = await medidor.cerrarMesAnterior();
       expect(r.some((x) => x.integradorId === EMISOR_A1)).toBe(false);
+    });
+  });
+
+  describe('la factura al integrador', () => {
+    it('convierte el consumo cerrado en un cobro pendiente', async () => {
+      for (let i = 0; i < 3; i++) await emitido(EMISOR_A1, clienteA1, 'EMITIDO');
+      await medidor.cerrarPeriodo(INT_A, PERIODO);
+      const f = await medidor.facturarConsumo(INT_A, PERIODO);
+      expect(f.yaEstaba).toBe(false);
+
+      const cobro = await prisma.cobroEmpresa.findFirst({
+        where: { empresaId: INT_A, periodo: PERIODO, concepto: 'API_FACTURACION' } });
+      expect(cobro).toBeTruthy();
+      expect(cobro!.estado).toBe('PENDIENTE');
+      // 3 comprobantes caen bajo el mínimo: S/30 + IGV.
+      expect(Number(cobro!.monto)).toBe(35.4);
+      expect(cobro!.descripcion).toContain('3 comprobantes');
+    });
+
+    it('no se puede facturar un período que no se cerró', async () => {
+      // Facturar sobre un número en vivo cobraría algo que todavía se mueve.
+      await emitido(EMISOR_A1, clienteA1, 'EMITIDO');
+      await expect(medidor.facturarConsumo(INT_A, PERIODO)).rejects.toThrow(/no está cerrado/);
+    });
+
+    it('facturar dos veces deja UN solo cobro', async () => {
+      await emitido(EMISOR_A1, clienteA1, 'EMITIDO');
+      await medidor.cerrarPeriodo(INT_A, PERIODO);
+      const a = await medidor.facturarConsumo(INT_A, PERIODO);
+      const b = await medidor.facturarConsumo(INT_A, PERIODO);
+      expect(b.yaEstaba).toBe(true);
+      expect(b.cobroId).toBe(a.cobroId);
+      expect(await prisma.cobroEmpresa.count({
+        where: { empresaId: INT_A, periodo: PERIODO, concepto: 'API_FACTURACION' } })).toBe(1);
+    });
+
+    it('convive con la mensualidad del ERP del mismo integrador', async () => {
+      // Es el choque que motivó la columna `concepto`: un integrador puede
+      // pagar su propio ERP y además consumir la API. Sin distinguirlos, el
+      // segundo cobro del mes se perdía sin ruido.
+      await prisma.cobroEmpresa.create({
+        data: {
+          empresaId: INT_A, periodo: PERIODO, concepto: 'MENSUALIDAD',
+          monto: 149, estado: 'PENDIENTE', fechaVencimiento: new Date(),
+          descripcion: 'Mensualidad del ERP',
+        },
+      });
+      await emitido(EMISOR_A1, clienteA1, 'EMITIDO');
+      await medidor.cerrarPeriodo(INT_A, PERIODO);
+      await medidor.facturarConsumo(INT_A, PERIODO);
+
+      const todos = await prisma.cobroEmpresa.findMany({
+        where: { empresaId: INT_A, periodo: PERIODO }, orderBy: { concepto: 'asc' } });
+      expect(todos.map((c) => c.concepto)).toEqual(['API_FACTURACION', 'MENSUALIDAD']);
+      expect(todos.map((c) => Number(c.monto))).toEqual([35.4, 149]);
+    });
+
+    it('el cobro lleva el total CON IGV, que es lo que se le cobra', async () => {
+      for (let i = 0; i < 1000; i++) {} // sin emitir: solo el mínimo
+      await medidor.cerrarPeriodo(INT_A, PERIODO);
+      await medidor.facturarConsumo(INT_A, PERIODO);
+      const c = await prisma.cobroEmpresa.findFirst({
+        where: { empresaId: INT_A, periodo: PERIODO, concepto: 'API_FACTURACION' } });
+      expect(Number(c!.monto)).toBe(35.4); // 30 + 18%
+      expect(c!.descripcion).toContain('mínimo mensual');
+    });
+
+    it('el cron cierra y factura en la misma pasada', async () => {
+      await emitido(EMISOR_A1, clienteA1, 'EMITIDO');
+      await medidor.cerrarMesAnterior();
+      const periodo = new Date();
+      const p = `${periodo.getFullYear()}-${String(periodo.getMonth()).padStart(2, '0')}`;
+      // El cron cierra el mes ANTERIOR al de hoy; basta con que haya creado
+      // el cobro de ese período para los integradores con emisores.
+      const n = await prisma.cobroEmpresa.count({
+        where: { empresaId: { in: [INT_A, INT_B] }, concepto: 'API_FACTURACION' } });
+      expect(n).toBeGreaterThanOrEqual(2);
     });
   });
 });

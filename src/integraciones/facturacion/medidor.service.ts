@@ -35,6 +35,9 @@ import {
  */
 @Injectable()
 export class MedidorApiService {
+  /** El concepto con que viaja el consumo de la API a `CobroEmpresa`. */
+  static readonly CONCEPTO = 'API_FACTURACION';
+
   constructor(private readonly prisma: PrismaService) {}
 
   /**
@@ -200,6 +203,15 @@ export class MedidorApiService {
     for (const i of integradores) {
       try {
         const r = await this.cerrarPeriodo(i.id, periodo);
+        // Cerrar y facturar van juntos, pero el cobro no puede tumbar el
+        // cierre: si falla, el período queda cerrado igual y la factura se
+        // puede volver a pedir. Al revés —cerrar sin poder reabrir— sería
+        // perder el consumo del mes.
+        try {
+          await this.facturarConsumo(i.id, periodo);
+        } catch (ef: any) {
+          console.error(`[api-facturacion] cerrado ${periodo} de ${i.razonSocial} pero no se pudo emitir el cobro:`, ef?.message);
+        }
         resultados.push({ integradorId: i.id, ...r });
       } catch (e: any) {
         // Que falle uno no puede dejar sin cerrar a los demás.
@@ -210,5 +222,70 @@ export class MedidorApiService {
       console.log(`[api-facturacion] cerrado ${periodo}: ${resultados.length} integradores`);
     }
     return resultados;
+  }
+
+  /**
+   * Convierte el consumo cerrado en un cobro al integrador.
+   *
+   * No inventa un circuito de cobranza nuevo: escribe en `CobroEmpresa`, que
+   * es por donde ya pasan la cobranza, el asiento contable (`IngresoSistema`)
+   * y la pantalla del panel. Un segundo circuito significaría dos lugares
+   * donde mirar cuánto debe un cliente, y tarde o temprano discrepan.
+   *
+   * Es idempotente por el índice único `[empresaId, periodo, concepto]`. El
+   * concepto hace falta: un integrador puede pagar su propia mensualidad del
+   * ERP y su consumo de API el mismo mes, y sin distinguirlos el segundo
+   * cobro chocaría contra el primero y se perdería sin ruido.
+   */
+  async facturarConsumo(integradorId: number, periodo: string) {
+    const consumo = await this.prisma.consumoApiMes.findUnique({
+      where: { integradorId_periodo: { integradorId, periodo } },
+    });
+    if (!consumo) {
+      throw new Error(
+        `No se puede facturar ${periodo} del integrador ${integradorId}: el período no está cerrado.`,
+      );
+    }
+
+    const ya = await this.prisma.cobroEmpresa.findFirst({
+      where: { empresaId: integradorId, periodo, concepto: MedidorApiService.CONCEPTO },
+      select: { id: true, monto: true },
+    });
+    if (ya) return { cobroId: ya.id, yaEstaba: true, total: Number(ya.monto) };
+
+    // Vence a 15 días del cierre, como cualquier factura a crédito.
+    const vence = new Date();
+    vence.setDate(vence.getDate() + 15);
+
+    const detalle =
+      consumo.cantidad === 0
+        ? 'sin consumo, mínimo mensual'
+        : `${consumo.cantidad.toLocaleString('es-PE')} comprobantes × S/ ${consumo.precioUnitario.toFixed(2)}`;
+
+    try {
+      const cobro = await this.prisma.cobroEmpresa.create({
+        data: {
+          empresaId: integradorId,
+          periodo,
+          concepto: MedidorApiService.CONCEPTO,
+          // El total lleva IGV: es lo que se le cobra al integrador.
+          monto: consumo.total,
+          estado: 'PENDIENTE',
+          fechaVencimiento: vence,
+          descripcion: `API de facturación ${periodo} — ${detalle}`,
+        },
+        select: { id: true },
+      });
+      return { cobroId: cobro.id, yaEstaba: false, total: consumo.total };
+    } catch (e: any) {
+      if (e?.code === 'P2002') {
+        const otro = await this.prisma.cobroEmpresa.findFirst({
+          where: { empresaId: integradorId, periodo, concepto: MedidorApiService.CONCEPTO },
+          select: { id: true, monto: true },
+        });
+        return { cobroId: otro?.id ?? 0, yaEstaba: true, total: Number(otro?.monto ?? 0) };
+      }
+      throw e;
+    }
   }
 }
