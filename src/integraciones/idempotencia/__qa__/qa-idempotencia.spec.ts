@@ -15,6 +15,7 @@
  *   QA_DB=1 npx jest src/integraciones/idempotencia/__qa__
  */
 import { PrismaClient } from '@prisma/client';
+import { limpiar, sembrarCatalogos, sembrarEmpresa } from '../../__qa__/sembrar';
 import { IdempotenciaService } from '../idempotencia.service';
 import { huellaDelCuerpo } from '../idempotencia';
 
@@ -39,11 +40,18 @@ correr('idempotencia contra Postgres real', () => {
   beforeAll(async () => {
     prisma = new PrismaClient({ datasources: { db: { url: URL_QA } } });
     await prisma.$connect();
+    // Siembra propia: antes dependía de que la base de QA ya tuviera estas
+    // empresas, lo que la ataba a una copia vieja de producción.
+    await sembrarCatalogos(prisma);
+    for (const [id, nombre] of [[50, 'EMPRESA A'], [89, 'EMPRESA B'], [777, 'TEMPORAL QA']] as [number, string][]) {
+      await sembrarEmpresa(prisma, id, nombre);
+    }
     servicio = new IdempotenciaService(prisma as never);
   });
 
   afterAll(async () => {
     await prisma.idempotenciaApi.deleteMany({});
+    await limpiar(prisma, 50);
     await prisma.$disconnect();
   });
 
@@ -133,7 +141,7 @@ correr('idempotencia contra Postgres real', () => {
   });
 
   it('borrar la empresa se lleva sus claves', async () => {
-    await prisma.$executeRawUnsafe(`INSERT INTO "Empresa" (id,"razonSocial") VALUES (777,'TEMPORAL')`);
+    await sembrarEmpresa(prisma, 777, 'TEMPORAL QA');
     await servicio.reservar({ ...base('k6'), empresaId: 777 });
     await prisma.$executeRawUnsafe(`DELETE FROM "Empresa" WHERE id=777`);
     expect(await prisma.idempotenciaApi.count({ where: { empresaId: 777 } })).toBe(0);

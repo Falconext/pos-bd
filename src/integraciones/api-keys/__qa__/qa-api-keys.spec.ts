@@ -10,6 +10,7 @@
  *   QA_DB=1 npx jest src/integraciones/api-keys/__qa__
  */
 import { PrismaClient } from '@prisma/client';
+import { limpiar, sembrarCatalogos, sembrarEmpresa } from '../../__qa__/sembrar';
 import { createHash } from 'node:crypto';
 import { ApiKeysService } from '../api-keys.service';
 
@@ -26,11 +27,18 @@ correr('API keys contra Postgres real', () => {
   beforeAll(async () => {
     prisma = new PrismaClient({ datasources: { db: { url: URL_QA } } });
     await prisma.$connect();
+    // Se siembran las empresas en vez de darlas por existentes. Antes esta
+    // suite asumía que la base de QA ya tenía la 89, lo que la ataba a una
+    // copia de producción y hacía que nadie más pudiera correrla.
+    await sembrarCatalogos(prisma);
+    await sembrarEmpresa(prisma, 89, 'EMPRESA QA');
+    await sembrarEmpresa(prisma, 778, 'TEMPORAL QA');
     servicio = new ApiKeysService(prisma as never);
   });
 
   afterAll(async () => {
     await prisma.apiKey.deleteMany({});
+    await limpiar(prisma, 50);
     await prisma.$disconnect();
   });
 
@@ -130,7 +138,7 @@ correr('API keys contra Postgres real', () => {
   });
 
   it('borrar la empresa se lleva sus keys', async () => {
-    await prisma.$executeRawUnsafe(`INSERT INTO "Empresa" (id,"razonSocial") VALUES (778,'TEMP')`);
+    await sembrarEmpresa(prisma, 778, 'TEMPORAL QA');
     await servicio.generateKey(778, 'facturacion');
     await prisma.$executeRawUnsafe(`DELETE FROM "Empresa" WHERE id=778`);
     expect(await prisma.apiKey.count({ where: { empresaId: 778 } })).toBe(0);

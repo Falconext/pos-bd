@@ -12,6 +12,7 @@
  *   QA_DB=1 npx jest src/integraciones/emisores/__qa__
  */
 import { PrismaClient } from '@prisma/client';
+import { limpiar, sembrarCatalogos, sembrarEmpresa } from '../../__qa__/sembrar';
 import { ForbiddenException } from '@nestjs/common';
 import { EmisoresService } from '../emisores.service';
 
@@ -27,26 +28,23 @@ correr('emisores de un integrador, contra Postgres real', () => {
   const INTEGRADOR_A = 9001;
   const INTEGRADOR_B = 9002;
 
-  const crearEmpresa = (id: number, razon: string, extra = '') =>
-    prisma.$executeRawUnsafe(
-      `INSERT INTO "Empresa" (id,"razonSocial"${extra ? ',' + extra.split('=')[0] : ''})
-       VALUES (${id},'${razon}'${extra ? ",'" + extra.split('=')[1] + "'" : ''})
-       ON CONFLICT (id) DO NOTHING`,
-    );
+  /** Una empresa válida según el esquema de hoy, no según el de la base vieja. */
+  const crearEmpresa = (id: number, razon: string) => sembrarEmpresa(prisma, id, razon);
 
   beforeAll(async () => {
     prisma = new PrismaClient({ datasources: { db: { url: URL_QA } } });
     await prisma.$connect();
+    await sembrarCatalogos(prisma);
     servicio = new EmisoresService(prisma as never);
   });
 
   afterAll(async () => {
-    await prisma.$executeRawUnsafe(`DELETE FROM "Empresa" WHERE id >= 9000`);
+    await limpiar(prisma);
     await prisma.$disconnect();
   });
 
   beforeEach(async () => {
-    await prisma.$executeRawUnsafe(`DELETE FROM "Empresa" WHERE id >= 9000`);
+    await limpiar(prisma);
     await crearEmpresa(INTEGRADOR_A, 'ERP DEL NORTE SAC');
     await crearEmpresa(INTEGRADOR_B, 'SOFTWARE SUR SAC');
     await crearEmpresa(9010, 'BODEGA LA ESQUINA');
