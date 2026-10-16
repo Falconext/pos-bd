@@ -4486,6 +4486,25 @@ model LeadComprobantePago {
   mediaId         String?
   /// Lo que el cliente escribió junto a la foto.
   nota            String?
+
+  // ── Lo que la IA leyó de la imagen ──────────────────────────────────────
+  // El voucher se archivaba sin abrirlo: alguien tenía que mirar la foto para
+  // saber de cuánto era. Ahora se lee al entrar, se le confirma al cliente en
+  // el acto y queda en claro para quien valida. Todo opcional: una foto
+  // borrosa o un recibo raro no puede frenar la venta.
+  /// Monto que figura en el comprobante.
+  montoLeido      Decimal?      @db.Decimal(10, 2)
+  /// Número de operación o de constancia.
+  operacionLeida  String?
+  /// Fecha tal como aparece impresa (no se normaliza: puede venir de mil formas).
+  fechaLeida      String?
+  /// Yape, Plin, BCP, Interbank, transferencia…
+  medioLeido      String?
+  /// Nombre de quien hizo el pago, que es con lo que el negocio concilia.
+  pagadorLeido    String?
+  /// Cuándo se leyó. Null = no se pudo (o la empresa no tiene IA).
+  leidoEn         DateTime?
+
   recibidoEn      DateTime      @default(now())
   validadoEn      DateTime?
   validadoPor     String?

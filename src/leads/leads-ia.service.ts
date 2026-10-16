@@ -91,6 +91,11 @@ export class IaVentasService {
     return this.gemini.transcribirAudio(buffer.toString('base64'), mimeType);
   }
 
+  /** Lee la captura de Yape/Plin/transferencia que manda el cliente. */
+  async leerComprobantePago(buffer: Buffer, mimeType: string) {
+    return this.gemini.leerComprobantePago(buffer.toString('base64'), mimeType);
+  }
+
   /**
    * Genera la respuesta del asesor para el último mensaje del prospecto y,
    * cada cierto número de mensajes (o ante intención de cierre), calcula la

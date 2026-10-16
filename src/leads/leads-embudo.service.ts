@@ -146,7 +146,20 @@ export class LeadsEmbudoService {
   async registrarComprobantePago(
     empresaId: number,
     conversacionId: number,
-    datos: { mediaId?: string; nota?: string; buffer?: Buffer; mimeType?: string },
+    datos: {
+      mediaId?: string;
+      nota?: string;
+      buffer?: Buffer;
+      mimeType?: string;
+      /// Lo que la IA leyó de la imagen, si se pudo. Opcional a propósito.
+      leido?: {
+        monto: number | null;
+        numeroOperacion: string | null;
+        fecha: string | null;
+        medio: string | null;
+        pagador: string | null;
+      } | null;
+    },
   ) {
     const prospecto = await this.prisma.leadProspecto.findFirst({
       where: { conversacionId, empresaId },
@@ -181,6 +194,16 @@ export class LeadsEmbudoService {
         url,
         mediaId: datos.mediaId ?? null,
         nota: datos.nota?.trim() || null,
+        ...(datos.leido
+          ? {
+              montoLeido: datos.leido.monto ?? null,
+              operacionLeida: datos.leido.numeroOperacion,
+              fechaLeida: datos.leido.fecha,
+              medioLeido: datos.leido.medio,
+              pagadorLeido: datos.leido.pagador,
+              leidoEn: new Date(),
+            }
+          : {}),
       },
       select: { id: true, url: true },
     });
