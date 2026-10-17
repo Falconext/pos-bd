@@ -1,0 +1,11 @@
+-- Los síntomas del cliente dejan de compartir campo con el resumen comercial.
+--
+-- Vivían los dos en `resumen`: `anotarPerfil` guardaba ahí lo que el cliente
+-- contaba de su malestar, y el análisis BANT reescribía ese mismo campo en
+-- CADA mensaje con su resumen de venta. Resultado: para cuando el pedido se
+-- cerraba, la guía de consumo se armaba con un texto que decía qué producto
+-- eligió y que ya había pagado, en vez de qué le dolía.
+--
+-- Aditiva: no toca datos existentes. Lo que haya hoy en `resumen` se queda
+-- donde está; no se migra porque es resumen de venta, no síntomas.
+ALTER TABLE "LeadProspecto" ADD COLUMN "sintomas" TEXT;

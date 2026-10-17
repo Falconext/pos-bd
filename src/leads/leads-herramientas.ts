@@ -74,7 +74,8 @@ const guardarDatosEnvio: FunctionDeclaration = {
     'Nunca vuelvas a pedirle un dato que esta herramienta ya tiene guardado. ' +
     'El nombre se le pregunta: no uses el de su perfil de WhatsApp ni el del comprobante de pago —quien paga no siempre es quien recibe. ' +
     'Y NUNCA completes un dato que el cliente no te dio: ni el DNI, ni el celular, ni la dirección. ' +
-    'Si falta uno, pregúntaselo. Un número puesto por ti pasa todas las validaciones y deja un pedido que nadie puede entregar.',
+    'Si falta uno, pregúntaselo. Un número puesto por ti pasa todas las validaciones y deja un pedido que nadie puede entregar. ' +
+    'Si el cliente llegó contando un malestar, guarda en `sintomas` lo que te contó —solo eso, con sus palabras— y pregúntale la edad antes de cerrar el pedido, con naturalidad y en un mensaje donde ya le estés avanzando algo. El negocio arma su guía de consumo con eso y la dosis depende de la edad. Si no quiere decirla, sigue sin insistir.',
   parameters: {
     type: SchemaType.OBJECT,
     properties: {

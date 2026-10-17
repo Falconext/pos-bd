@@ -257,6 +257,10 @@ export class LeadsBiService {
         sexo: true,
         edad: true,
         resumen: true,
+        // Lo que el cliente contó de su malestar. Va aparte de `resumen`
+        // —que lo reescribe el BANT en cada mensaje— y es con lo que el
+        // negocio arma la guía de consumo.
+        sintomas: true,
         puntosClave: true,
         clienteId: true,
         conversacionId: true,
