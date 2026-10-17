@@ -174,6 +174,11 @@ export class ListaPrecioController {
         presentacionCodigo?: string;
         precioUnitario: number;
         precioOferta?: number | null;
+        // El servicio lo guarda y el resolver lo aplica al precio. Si falta acá
+        // y algún día esto pasa a ser un DTO con decoradores, el ValidationPipe
+        // (whitelist:true) lo descartaría y el descuento volvería a ser un campo
+        // decorativo, como ya pasó una vez.
+        descuentoPorcentaje?: number | null;
       }>;
     },
     @Request() req,
