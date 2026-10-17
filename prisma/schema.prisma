@@ -543,6 +543,7 @@ model Empresa {
   vehiculos               Vehiculo[]
   contratosVehiculares    ContratoVehicular[]
   listasPrecio            ListaPrecio[]
+  repreciosLote           ReprecioLote[]
   leadConversaciones      LeadConversacion[]
   leadProspectos          LeadProspecto[]
   leadDocumentos          LeadDocumento[]
@@ -2117,6 +2118,39 @@ model ListaPrecioSede {
 
 /// Precio pactado con un cliente concreto ("Distribuidora López paga esto").
 /// Se aplica solo al elegirlo en la venta, sin que el cajero recuerde nada.
+/// Un reprecio masivo, para poder deshacerlo.
+///
+/// La pantalla cambia el precio de cientos de productos de una vez; si el
+/// empresario se equivoca de lista o de porcentaje, sin esto no hay vuelta
+/// atrás y hay que recordar a mano qué valía cada uno. Casa Market no lo tiene.
+///
+/// El detalle va en JSON y no en una tabla hija a propósito: es un registro
+/// histórico que se escribe una vez y se lee entero, nunca se consulta por
+/// producto, y así deshacer es una sola lectura.
+model ReprecioLote {
+  id            Int       @id @default(autoincrement())
+  empresaId     Int
+  listaPrecioId Int
+  usuarioId     Int?
+  /// Qué se pidió: operación, modo y valor. Para mostrarlo en el historial.
+  operacion     String
+  modo          String
+  valor         Decimal   @db.Decimal(12, 4)
+  /// [{ productoId, presentacionCodigo, precioAnterior, precioNuevo }]
+  /// `precioAnterior` null = el producto no tenía precio en esa lista, así que
+  /// deshacer significa borrar el item, no escribirle un cero.
+  detalle       Json
+  totalItems    Int       @default(0)
+  creadoEn      DateTime  @default(now())
+  /// Cuándo se deshizo. Null = sigue vigente.
+  revertidoEn   DateTime?
+
+  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  @@index([empresaId, creadoEn])
+  @@index([listaPrecioId])
+}
+
 model ListaPrecioCliente {
   id            Int @id @default(autoincrement())
   listaPrecioId Int
