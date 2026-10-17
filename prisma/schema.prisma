@@ -2571,6 +2571,16 @@ model EnvioDespacho {
   transportista            String?
   codigoGuia               String?
   estado                   EstadoDespacho     @default(PREPARANDO)
+  /// Token del enlace que se le manda al repartidor por WhatsApp.
+  ///
+  /// El motorizado no tiene cuenta en el sistema y no debería tenerla: para
+  /// marcar una entrega habría que darle acceso al módulo de Ventas, donde
+  /// vería todas las ventas del día con sus montos y márgenes. El enlace le
+  /// abre SOLO su despacho, para marcar estado y subir la foto.
+  ///
+  /// Vence al día siguiente de entregar (ver `acceso-repartidor.ts`): si se
+  /// filtra, lo que queda expuesto es un pedido ya cerrado y por poco tiempo.
+  accesoToken              String?            @unique
   observaciones            String?
   direccionDestino         String?
   fechaEstimada            DateTime?

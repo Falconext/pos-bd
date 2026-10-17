@@ -15,6 +15,11 @@ import {
 import * as XLSX from 'xlsx';
 import { DespachoConfigDto } from './dto/despacho-config.dto';
 import { RepartidorService } from '../repartidor/repartidor.service';
+import {
+  enlaceVigente,
+  nuevoTokenDeEntrega,
+  puedeMarcar,
+} from './acceso-repartidor';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { planPermiteShalomPro } from '../shalom/shalom.util';
 import { parseFechaSoloDia } from '../common/utils/fecha';
@@ -186,6 +191,10 @@ export class EnvioDespachoService {
       data: {
         comprobanteId,
         estado: estadoInicial,
+        // El enlace del repartidor nace con el despacho: así ya está listo
+        // para mandárselo por WhatsApp sin un paso extra. Ver
+        // `acceso-repartidor.ts`.
+        accesoToken: nuevoTokenDeEntrega(),
         historial,
         direccionDestino:
           dto.direccionDestino ?? comprobante.cliente?.direccion ?? null,
@@ -733,6 +742,158 @@ export class EnvioDespachoService {
         empresaId,
       );
     }
+  }
+
+  /**
+   * El enlace para mandarle al repartidor.
+   *
+   * Lo genera si el despacho todavía no tenía —los que ya existían cuando se
+   * agregó esto, y los que vendrán si alguna vez se crea uno sin token—. Es
+   * idempotente: llamarlo dos veces devuelve el mismo enlace, porque un token
+   * nuevo invalidaría el que el motorizado ya tiene en su WhatsApp.
+   */
+  async enlaceParaRepartidor(comprobanteId: number, empresaId: number) {
+    await this.validateComprobante(comprobanteId, empresaId);
+    const envio = await this.prisma.envioDespacho.findUnique({
+      where: { comprobanteId },
+      select: { id: true, accesoToken: true },
+    });
+    if (!envio) {
+      throw new NotFoundException(
+        'No existe seguimiento de despacho para este comprobante.',
+      );
+    }
+    const token =
+      envio.accesoToken ??
+      (
+        await this.prisma.envioDespacho.update({
+          where: { id: envio.id },
+          data: { accesoToken: nuevoTokenDeEntrega() },
+          select: { accesoToken: true },
+        })
+      ).accesoToken!;
+    return { token };
+  }
+
+  /**
+   * El despacho que abre un enlace de repartidor.
+   *
+   * Devuelve lo MÍNIMO para entregar: a quién, dónde, a qué teléfono llamar
+   * si no encuentra, qué lleva y cuánto cobrar. Nada de precios unitarios,
+   * márgenes ni el resto de la venta: el enlace no pide contraseña y anda
+   * suelto en los WhatsApp de varios motorizados.
+   *
+   * Devuelve null si el token no existe o el enlace ya venció — el
+   * controlador traduce las dos cosas al mismo 404, para no confirmarle a
+   * nadie que un token existió.
+   */
+  async entregaPorToken(token: string) {
+    if (!token?.trim()) return null;
+    const d = await this.prisma.envioDespacho.findUnique({
+      where: { accesoToken: token },
+      select: {
+        id: true,
+        estado: true,
+        entregadoEn: true,
+        tipoEnvio: true,
+        direccionDestino: true,
+        agenciaDestino: true,
+        distrito: true,
+        observaciones: true,
+        nombreDestinatario: true,
+        celularDest: true,
+        montoCOD: true,
+        nroPaquetes: true,
+        repartidor: { select: { nombre: true } },
+        comprobante: {
+          select: {
+            serie: true,
+            correlativo: true,
+            cliente: { select: { nombre: true, telefono: true } },
+            detalles: {
+              select: { cantidad: true, descripcion: true },
+            },
+          },
+        },
+      },
+    });
+    if (!enlaceVigente(d)) return null;
+
+    const c = d!.comprobante;
+    return {
+      pedido: `${c.serie}-${String(c.correlativo).padStart(8, '0')}`,
+      estado: d!.estado,
+      entregadoEn: d!.entregadoEn,
+      tipoEnvio: d!.tipoEnvio,
+      destinatario: d!.nombreDestinatario || c.cliente?.nombre || 'Cliente',
+      telefono: d!.celularDest || c.cliente?.telefono || null,
+      direccion: d!.direccionDestino || d!.agenciaDestino || null,
+      distrito: d!.distrito,
+      referencia: d!.observaciones,
+      paquetes: d!.nroPaquetes ?? 1,
+      // Lo que tiene que cobrar en la puerta. Cero = ya está pagado.
+      aCobrar: Number(d!.montoCOD ?? 0),
+      repartidor: d!.repartidor?.nombre ?? null,
+      items: c.detalles.map((x) => ({
+        cantidad: Number(x.cantidad),
+        descripcion: x.descripcion,
+      })),
+    };
+  }
+
+  /**
+   * El repartidor marca que salió o que entregó.
+   *
+   * Reusa `update`, que es el mismo camino del panel: así el aviso al
+   * cliente, el historial y el rastreo salen igual que si lo hubiera marcado
+   * alguien de la oficina. Lo único distinto es por dónde entra.
+   *
+   * Queda anotado en el historial que vino del enlace, para que después se
+   * pueda distinguir de lo que marcó una persona desde el panel.
+   */
+  async marcarPorToken(token: string, estado: string) {
+    const d = await this.prisma.envioDespacho.findUnique({
+      where: { accesoToken: token },
+      select: {
+        comprobanteId: true,
+        estado: true,
+        entregadoEn: true,
+        comprobante: { select: { empresaId: true } },
+      },
+    });
+    if (!enlaceVigente(d)) return null;
+    if (!puedeMarcar(estado)) {
+      throw new BadRequestException('Ese estado no se marca desde el enlace.');
+    }
+    // Solo el estado: `observaciones` es la referencia de la dirección, no una
+    // nota del historial, y mandarla la pisaría.
+    await this.update(d!.comprobanteId, d!.comprobante.empresaId, {
+      estado: estado as never,
+    });
+    this.logger.log(
+      `Despacho ${d!.comprobanteId}: ${estado} marcado por el repartidor desde el enlace.`,
+    );
+    return { estado };
+  }
+
+  /** El comprobante al que pertenece un enlace vigente, para las fotos. */
+  async comprobanteDeToken(
+    token: string,
+  ): Promise<{ comprobanteId: number; empresaId: number } | null> {
+    const d = await this.prisma.envioDespacho.findUnique({
+      where: { accesoToken: token },
+      select: {
+        comprobanteId: true,
+        estado: true,
+        entregadoEn: true,
+        comprobante: { select: { empresaId: true } },
+      },
+    });
+    if (!enlaceVigente(d)) return null;
+    return {
+      comprobanteId: d!.comprobanteId,
+      empresaId: d!.comprobante.empresaId,
+    };
   }
 
   async actualizarSaldo(

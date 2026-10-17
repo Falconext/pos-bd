@@ -92,6 +92,22 @@ export class EnvioDespachoController {
     );
   }
 
+  /**
+   * El enlace que se le pasa al repartidor por WhatsApp.
+   *
+   * No se manda desde el servidor a propósito: un texto libre a un número que
+   * no escribió en las últimas 24 horas lo bloquea Meta, y una plantilla
+   * nueva son días de aprobación. El panel abre `wa.me` con el mensaje
+   * listo y lo manda quien despacha, desde su propio WhatsApp.
+   */
+  @Post('comprobante/:comprobanteId/enlace-repartidor')
+  enlaceRepartidor(
+    @User() user: any,
+    @Param('comprobanteId', ParseIntPipe) comprobanteId: number,
+  ) {
+    return this.service.enlaceParaRepartidor(comprobanteId, user.empresaId);
+  }
+
   @Delete('evidencias/:id')
   anularEvidencia(
     @User() user: any,
