@@ -80,5 +80,19 @@ RUN chown -R appuser:appgroup /app /tmp/chrome-data
 USER appuser
 EXPOSE 4000
 
-# Ejecutar migraciones y iniciar aplicación
-CMD ["sh", "-c", "npx prisma db push --accept-data-loss && node dist/src/main.js"]
+# Aplicar migraciones pendientes y arrancar.
+#
+# `migrate deploy` y NO `db push --accept-data-loss`. La diferencia no es de
+# estilo: `db push` hace que la base calce con el schema del commit desplegado
+# y BORRA lo que no esté ahí, en cada arranque. Como el contenedor reinicia por
+# despliegues, OOM o reprogramaciones de Railway, cualquier columna o tabla que
+# no estuviera en el commit vivía hasta el siguiente restart.
+#
+# Pasó de verdad y más de una vez: `Comprobante.listaPrecioId` desapareció a la
+# media hora de aplicarla, y la tabla `ReprecioLote` —con 11 filas del historial
+# de deshacer— estuvo a un reinicio de perderse entera.
+#
+# `migrate deploy` solo aplica migraciones pendientes y nunca borra. Si una
+# falla, el servicio no arranca: es ruidoso a propósito, que es justo lo que
+# faltaba.
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/main.js"]
