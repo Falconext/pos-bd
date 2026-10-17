@@ -326,7 +326,10 @@ describe('registrarPedido', () => {
     expect(dto.montoCOD).toBe(77);
   });
 
-  it('en provincia cobra la mitad por adelantado', async () => {
+  it('sin pago recibido, la agencia cobra el total', async () => {
+    // La regla la fijó el negocio el 2026-10-17: el adelanto es lo que el
+    // cliente PAGÓ, no el 50% que se le pide. Antes se daba por cobrada la
+    // mitad aunque no hubiera llegado un sol, y la agencia cobraba de menos.
     const b = limaCompleto();
     b.tipoZona = 'AGENCIA';
     b.zona = 'Provincia';
@@ -339,9 +342,8 @@ describe('registrarPedido', () => {
 
     // 2×31 = 62 + 10 = 72.
     expect(r.montoAPagar).toBe(72);
-    expect(r.adelanto).toBe(36);
-    // Lo que queda por cobrar al recoger.
-    expect(despacho.create.mock.calls[0][2].montoCOD).toBe(36);
+    expect(r.adelanto).toBeUndefined();
+    expect(despacho.create.mock.calls[0][2].montoCOD).toBe(72);
   });
 
   it('no registra dos veces por más que el cliente insista', async () => {

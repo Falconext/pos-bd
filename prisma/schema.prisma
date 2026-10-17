@@ -4696,7 +4696,15 @@ model LeadProspecto {
   autoridad         Int?
   necesidad         Int?
   plazo             Int?
+  /// Resumen COMERCIAL que escribe el análisis BANT en cada mensaje. Se
+  /// reescribe solo, así que no sirve para guardar nada que deba durar.
   resumen           String?
+  /// Lo que le pasa al cliente, en sus palabras ("acidez por las noches hace
+  /// dos meses"). Vive aparte de `resumen` porque son cosas distintas y
+  /// compartían campo: los síntomas se guardaban ahí y el análisis BANT los
+  /// pisaba al mensaje siguiente con su resumen de venta. El negocio lee esto
+  /// para armar la guía de consumo personalizada, así que tiene que durar.
+  sintomas          String?
   puntosClave       String[]
   proximaAccion     String?
   botActivo         Boolean               @default(true)

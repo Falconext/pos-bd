@@ -316,7 +316,7 @@ export class LeadsPedidoService {
     datos: DatosDelCliente,
     guardado: string[],
   ): Promise<void> {
-    const cambios: { sexo?: string; edad?: number; resumen?: string } = {};
+    const cambios: { sexo?: string; edad?: number; sintomas?: string } = {};
 
     const sexo = String(datos.sexo ?? '').trim().toUpperCase();
     if (sexo) {
@@ -330,9 +330,12 @@ export class LeadsPedidoService {
     // Fuera de este rango es un error de lectura, no una edad: guardarlo
     // ensuciaría el reporte sin que nadie lo note.
     if (Number.isFinite(edad) && edad >= 1 && edad <= 110) cambios.edad = edad;
-    // Los síntomas van al resumen del prospecto, que es lo que el negocio lee
-    // para armar la guía de consumo personalizada.
-    if (sintomas.length >= 4) cambios.resumen = sintomas.slice(0, 400);
+    // Los síntomas van a su propio campo y NO a `resumen`: ese lo reescribe el
+    // análisis BANT en cada mensaje (`leads-message.processor.ts`), así que lo
+    // que se guardara ahí duraba hasta el mensaje siguiente. Pasó en
+    // producción: la guía de consumo de un cliente con acidez terminó armada
+    // con "eligió el producto X y ya envió el comprobante".
+    if (sintomas.length >= 4) cambios.sintomas = sintomas.slice(0, 400);
 
     if (!Object.keys(cambios).length) return;
     try {
@@ -342,7 +345,7 @@ export class LeadsPedidoService {
       });
       if (cambios.sexo) guardado.push('sexo');
       if (cambios.edad) guardado.push('edad');
-      if (cambios.resumen) guardado.push('síntomas');
+      if (cambios.sintomas) guardado.push('síntomas');
     } catch {
       // Silencio a propósito: ver arriba.
     }
@@ -743,9 +746,25 @@ export class LeadsPedidoService {
 
     const esAgencia = borrador.tipoZona === 'AGENCIA';
     const esRecojo = borrador.tipoZona === 'RECOJO';
-    // En provincia se adelanta la mitad para reservar; en Lima se paga todo
-    // contraentrega.
-    const adelanto = esAgencia ? Math.round(calculo.montoAPagar * 50) / 100 : 0;
+    // Lo que el cliente YA pagó, venga de donde venga.
+    //
+    // Antes esto era `esAgencia ? mitad : 0`: el 50% que se le PIDE en
+    // provincia, no lo que de verdad entró. En Lima el adelanto se perdía
+    // entero —el NV01-00000008 nació "pagado" con saldo 0 cuando el cliente
+    // había yapeado S/ 20 de S/ 46— y en provincia se daba por cobrada la
+    // mitad aunque no hubiera llegado nada.
+    //
+    // La regla la fijó el negocio: cualquier pago realizado queda como
+    // adelanto y el resto figura como saldo por pagar, sea Lima, provincia o
+    // reserva. Así el pedido nace con lo que falta cobrar, y "pago completado"
+    // pasa a ser un hecho aparte —cuando el repartidor entrega la plata— que
+    // marca `actualizarSaldo`.
+    const adelanto = await this.pagadoPorElCliente(
+      conversacionId,
+      calculo.montoAPagar,
+    );
+    /** Lo que el repartidor o la agencia le cobran al cliente al entregar. */
+    const porCobrar = calculo.montoAPagar - adelanto;
 
     // El comprobante necesita un cliente REAL, no un nombre suelto:
     // crearInformal solo resuelve por nombre cuando es exactamente
@@ -761,12 +780,12 @@ export class LeadsPedidoService {
     let perfil: {
       sexo: string | null;
       edad: number | null;
-      resumen: string | null;
+      sintomas: string | null;
     } | null = null;
     try {
       perfil = await this.prisma.leadProspecto.findFirst({
         where: { conversacionId, empresaId },
-        select: { sexo: true, edad: true, resumen: true },
+        select: { sexo: true, edad: true, sintomas: true },
       });
     } catch {
       perfil = null;
@@ -800,10 +819,7 @@ export class LeadsPedidoService {
             adelanto,
             telefono,
           ),
-          detalles: items.map((i) => ({
-            productoId: i.productoId,
-            cantidad: i.cantidad,
-          })),
+          detalles: this.lineasDelComprobante(items, productos, calculo),
         },
         empresaId,
       )) as { id?: number; serie?: string; correlativo?: number };
@@ -853,9 +869,28 @@ export class LeadsPedidoService {
           ...(borrador.nombre ? { nombreDestinatario: borrador.nombre } : {}),
           ...(borrador.dni ? { dniDestinatario: borrador.dni } : {}),
           ...(borrador.celular ? { celularDest: borrador.celular } : {}),
+          // Las dos columnas de la plantilla del motorizado. Sin ellas el
+          // pedido entra al panel marcado "con datos incompletos" y NO sale
+          // en el Excel de reparto: el repartidor nunca se entera. Pasó con
+          // el NV01-00000008, que quedó fuera del reparto del día.
+          //
+          // Se derivan, no se adivinan: si queda algo por cobrar es una
+          // contraentrega, y si no, solo se entrega. La forma de cobro parte
+          // en EFECTIVO porque es lo que lleva un motorizado a la puerta;
+          // quien despacha la cambia en el panel si el cliente paga con Yape.
+          ...(esAgencia
+            ? {}
+            : {
+                tipoVentaReparto: (porCobrar > 0
+                  ? 'CONTRAENTREGA'
+                  : 'SOLO_ENTREGA') as never,
+                formaPagoCobro: (porCobrar > 0
+                  ? 'EFECTIVO'
+                  : 'NO_COBRAR') as never,
+              }),
           costoEnvio: envio,
           // Lo que queda por cobrar al entregar.
-          montoCOD: calculo.montoAPagar - adelanto,
+          montoCOD: porCobrar,
         });
       } catch (e) {
         this.logger.warn(
@@ -912,6 +947,113 @@ export class LeadsPedidoService {
   }
 
   /** El detalle que necesita quien va a despachar, en una sola lectura. */
+  /**
+   * Cuánto pagó ya el cliente, según los comprobantes que mandó.
+   *
+   * Se suma lo que la IA leyó de cada captura. Se descartan los rechazados
+   * —alguien los miró y dijo que no— pero NO se exige que estén validados a
+   * mano: si se exigiera, el pedido nacería dado por impago hasta que alguien
+   * abriera el panel, y el cliente que ya pagó recibiría un saldo equivocado.
+   * Entre cobrar de más y cobrar de menos, el error caro es el primero.
+   *
+   * Nunca pasa del total: un monto mal leído no puede dejar el pedido
+   * sobrepagado ni el saldo en negativo.
+   */
+  private async pagadoPorElCliente(
+    conversacionId: number,
+    total: number,
+  ): Promise<number> {
+    try {
+      const pagos = await this.prisma.leadComprobantePago.findMany({
+        where: { conversacionId, rechazadoEn: null, montoLeido: { not: null } },
+        select: { montoLeido: true },
+      });
+      const suma = pagos.reduce((a, p) => a + Number(p.montoLeido ?? 0), 0);
+      return Math.min(Math.max(0, Math.round(suma * 100) / 100), total);
+    } catch (e) {
+      // Sin esto el pedido se registra igual, solo que sin adelanto: perder la
+      // venta por no poder leer un voucher sería peor.
+      this.logger.warn(
+        `Lead: no se pudo leer lo pagado en la conv ${conversacionId}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      return 0;
+    }
+  }
+
+  /**
+   * Las líneas del comprobante: la mercadería, con su descuento.
+   *
+   * Hasta ahora iban a precio de lista, sin el descuento, así que un pedido
+   * con descuento por volumen se facturaba de MÁS: 3×90 con S/ 10 de rebaja
+   * salía en 270 en vez de 260.
+   *
+   * Lleva la mercadería con el descuento ya aplicado. El envío queda FUERA
+   * por decisión contable del negocio: ver abajo.
+   *
+   * El descuento se reparte entre las líneas de producto y no se manda como
+   * descuento global: ese es solo informativo para el ticket —el total sale de
+   * las líneas—, así que restarlo ahí no cambiaría nada.
+   */
+  private lineasDelComprobante(
+    items: ItemPedido[],
+    productos: { id: number; precioUnitario: unknown }[],
+    calculo: ReturnType<typeof calcularDescuento>,
+  ): Array<Record<string, unknown>> {
+    const precioDe = (id: number) =>
+      Number(productos.find((p) => p.id === id)?.precioUnitario ?? 0);
+    const bruto = items.reduce(
+      (a, i) => a + precioDe(i.productoId) * i.cantidad,
+      0,
+    );
+    const descuento = Math.max(0, calculo.descuento);
+
+    let repartido = 0;
+    const lineas: Array<Record<string, unknown>> = items.map((i, idx) => {
+      const precio = precioDe(i.productoId);
+      // El descuento se reparte en proporción a lo que pesa cada línea. Si
+      // cayera entero en la primera, el ticket mostraría un producto regalado
+      // y los demás a precio lleno.
+      //
+      // La ÚLTIMA línea se lleva lo que falte: repartir 10 entre 3 unidades
+      // deja 3.3333 por unidad, y redondear eso a dos decimales hacía que el
+      // comprobante saliera un céntimo arriba del total cobrado. El residuo
+      // tiene que caer en algún lado y la última es el lugar natural.
+      const esUltima = idx === items.length - 1;
+      const parte = bruto > 0 ? (precio * i.cantidad) / bruto : 0;
+      const rebaja = esUltima
+        ? descuento - repartido
+        : Math.round(descuento * parte * 100) / 100;
+      repartido += rebaja;
+      // El unitario NO se redondea a dos decimales: el total sale de
+      // cantidad × unitario, así que un unitario recortado descuadra la
+      // línea. Es el mismo criterio que usa `comprobante.service.ts`, que
+      // deriva el unitario del valor de venta con más decimales.
+      const unitario = Math.max(
+        0,
+        Math.round(((precio * i.cantidad - rebaja) / i.cantidad) * 1e6) / 1e6,
+      );
+      return {
+        productoId: i.productoId,
+        cantidad: i.cantidad,
+        nuevoValorUnitario: unitario,
+      };
+    });
+
+    // El envío NO entra acá, y es a propósito: lo decidió la contadora del
+    // negocio el 2026-10-17. El servicio de delivery no se factura, así que
+    // no puede sumar al total de la boleta ni de la guía —si sumara, entraría
+    // a la base imponible y pagaría IGV—. Queda en las observaciones del
+    // comprobante y en el `montoCOD` del despacho, que es lo que el
+    // repartidor cobra de verdad en la puerta.
+    //
+    // Consecuencia buscada: el total del comprobante es SOLO la mercadería.
+    // Que no cuadre con lo que el cliente entrega en la puerta no es un error
+    // —el delivery se cobra aparte y sin comprobante—.
+    return lineas;
+  }
+
   /**
    * Avisa al negocio que un cliente va a pasar por la tienda a recoger.
    *
@@ -1022,7 +1164,11 @@ export class LeadsPedidoService {
   }
 
   private resumenParaElEquipo(
-    perfil: { sexo: string | null; edad: number | null; resumen: string | null } | null,
+    perfil: {
+      sexo: string | null;
+      edad: number | null;
+      sintomas: string | null;
+    } | null,
     b: {
       zona: string | null;
       lugar: string | null;
@@ -1050,7 +1196,7 @@ export class LeadsPedidoService {
         `Perfil: ${[perfil.sexo === 'F' ? 'mujer' : perfil.sexo === 'M' ? 'hombre' : null, perfil.edad ? `${perfil.edad} años` : null].filter(Boolean).join(', ')}`,
       );
     }
-    if (perfil?.resumen) l.push(`Síntomas: ${perfil.resumen}`);
+    if (perfil?.sintomas) l.push(`Síntomas: ${perfil.sintomas}`);
     if (b.celular) l.push(`Celular: ${b.celular}`);
     if (b.zona) l.push(`Destino: ${b.zona}${b.lugar ? ` — ${b.lugar}` : ''}`);
     if (b.direccion) l.push(`Dirección: ${b.direccion}`);
