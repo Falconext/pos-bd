@@ -566,13 +566,18 @@ export class GuiaRemisionService {
       }
 
       // Rechazo DEFINITIVO de SUNAT: recibió y procesó la guía y la rechazó
-      // (devuelve CDR). Reintentar los mismos datos inválidos siempre volverá
-      // a fallar → RECHAZADO (sin reintentos). FALLIDO_ENVIO se reserva para
-      // fallos transitorios (no se pudo enviar / SUNAT caída), que sí reintentan.
+      // CON CDR. Reintentar los mismos datos inválidos siempre volverá a fallar
+      // → RECHAZADO (sin reintentos, y la guía ya no se puede reenviar).
+      //
+      // Se mide por el CDR y no por `cdrResponse`, que es el JSON del PSE y
+      // SIEMPRE viene: con eso, un rechazo por excepción (los 2xxx, que llegan
+      // sin CDR) quedaba marcado como definitivo y sin forma de reintentar —
+      // y esos sí se resuelven reenviando, como pasó con una guía M1/L que el
+      // validador del PSE rechazó una vez y aceptó al segundo intento.
       const esRechazoDefinitivo =
         !resultado.success &&
         !resultado.pendienteVerificacion &&
-        !!resultado.cdrResponse;
+        !!resultado.cdrZip;
 
       const nuevoEstado = resultado.success
         ? 'EMITIDO'
@@ -581,6 +586,17 @@ export class GuiaRemisionService {
           : esRechazoDefinitivo
             ? 'RECHAZADO'
             : 'FALLIDO_ENVIO';
+
+      // Rechazo SIN CDR (excepción del PSE/SUNAT): se reintenta solo, con el
+      // backoff de errores de datos y su tope. El validador del PSE a veces
+      // rechaza algo que acepta al siguiente intento, y el empresario no tiene
+      // por qué enterarse de eso ni tocar nada; si es un error real de datos,
+      // el tope corta y el motivo ya queda escrito en `sunatErrorMsg`.
+      const reintentosPrevios = guia.sunatRetriesCount || 0;
+      const programaReintento =
+        nuevoEstado === 'FALLIDO_ENVIO' &&
+        !!resultado.error &&
+        reintentosPrevios + 1 < this.MAX_DATA_ERROR_RETRIES;
 
       const guiaActualizada = await this.prisma.guiaRemision.update({
         where: { id },
@@ -597,6 +613,11 @@ export class GuiaRemisionService {
             sunatNextRetryAt: null,
           }),
           ...(esRechazoDefinitivo && { sunatNextRetryAt: null }),
+          ...(programaReintento && {
+            sunatRetriesCount: reintentosPrevios + 1,
+            sunatLastRetryAt: new Date(),
+            sunatNextRetryAt: this.calculateDataRetry(reintentosPrevios + 1),
+          }),
         },
       });
 
