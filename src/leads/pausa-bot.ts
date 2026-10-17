@@ -64,7 +64,6 @@ export function venceEn(
 export const MOTIVOS_DERIVACION = [
   'mayorista',
   'reclamo',
-  'comprobante_de_pago',
   'seguimiento_de_pedido',
   'descuento_especial',
   'producto_no_disponible',
@@ -72,6 +71,36 @@ export const MOTIVOS_DERIVACION = [
 ] as const;
 
 export type MotivoDerivacion = (typeof MOTIVOS_DERIVACION)[number];
+
+/**
+ * El comprobante de pago YA NO se deriva, y esto detecta cuando el modelo
+ * igual lo intenta.
+ *
+ * Estuvo en la lista de arriba desde el principio, de cuando el voucher se
+ * archivaba cerrado y una persona tenía que abrirlo. Desde que la IA lo lee
+ * y le confirma al cliente el monto y la operación (ver
+ * `registrarVoucherSiCorresponde`), derivar por eso es apagar el bot justo
+ * cuando falta la mitad del trabajo: en Hierba Sana el pago llega ANTES de
+ * los datos de envío, y el chat se queda sin quién los pida.
+ *
+ * No alcanza con sacarlo de la lista: el rechazo genérico le dice al modelo
+ * "respóndelo tú" y eso, ante una captura de Yape, no le dice qué hacer. Con
+ * esto se le da la instrucción que corresponde.
+ *
+ * Si un negocio necesita que una persona verifique cada pago, eso va en su
+ * contexto —no en la lista de motivos, que es de todos.
+ */
+export function esMotivoDeComprobante(
+  motivo: string | null | undefined,
+): boolean {
+  const n = String(motivo ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  return /comprobante|voucher|constancia|captura.*pago|pago.*captura|yape|plin|transferencia/.test(
+    n,
+  );
+}
 
 /**
  * El motivo que trae el modelo, si es uno de los de verdad.

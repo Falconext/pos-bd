@@ -132,11 +132,11 @@ describe('qué dice el aviso', () => {
     const { servicio, enviados } = armar();
     await servicio.avisarDerivacion({
       ...BASE,
-      motivo: 'comprobante_de_pago',
+      motivo: 'seguimiento_de_pedido',
       supervisorTelefono: '955947892',
     });
-    expect(enviados[0].texto).toContain('comprobante de pago');
-    expect(enviados[0].texto).not.toContain('comprobante_de_pago');
+    expect(enviados[0].texto).toContain('seguimiento de pedido');
+    expect(enviados[0].texto).not.toContain('seguimiento_de_pedido');
   });
 
   it('sin nombre ni detalle sigue siendo útil', async () => {
