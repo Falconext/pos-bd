@@ -186,6 +186,26 @@ describe('el adelanto y el saldo', () => {
       expect(despacho.create.mock.calls[0][2].montoCOD).toBe(46);
     });
 
+    it('y sin pago la nota NACE PENDIENTE, no cobrada', async () => {
+      // El agujero que se vio en el NV01-00000009: el adelanto ya se pasaba,
+      // pero sin pago no había adelanto que pasar, la nota caía en "contado"
+      // y nacía COMPLETADO con saldo 0 — contradiciendo a su propio despacho,
+      // que decía CONTRAENTREGA con S/ 45 por cobrar. Es el caso NORMAL de
+      // Lima, así que era el que más veces salía mal.
+      const { registrar, emitido } = armar();
+      await registrar();
+
+      expect(emitido().formaPagoTipo).toBe('CREDITO');
+    });
+
+    it('si el cliente ya pagó todo, la nota sale saldada', async () => {
+      const { registrar, emitido, despacho } = armar({ pagos: [46] });
+      await registrar();
+
+      expect(emitido().formaPagoTipo).toBe('CONTADO');
+      expect(despacho.create.mock.calls[0][2].montoCOD).toBe(0);
+    });
+
     it('un monto mal leído no deja el pedido sobrepagado', async () => {
       // La IA puede leer 4600 donde decía 46.00. El saldo no puede quedar
       // negativo ni el pedido nacer con vuelto.
