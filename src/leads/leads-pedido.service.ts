@@ -798,7 +798,20 @@ export class LeadsPedidoService {
         {
           tipoDoc: 'NV',
           fechaEmision: new Date().toISOString(),
-          formaPagoTipo: 'CONTADO',
+          // Con saldo por cobrar la nota nace PENDIENTE, no "contado".
+          //
+          // Esto faltaba y se vio en la segunda prueba (NV01-00000009): el
+          // adelanto ya se pasaba, pero cuando el cliente no había pagado
+          // NADA —el caso normal en Lima contraentrega— no había adelanto que
+          // pasar, el comprobante caía en contado y nacía COMPLETADO con
+          // saldo 0. Quedaba contradiciendo a su propio despacho, que decía
+          // CONTRAENTREGA con S/ 45 por cobrar.
+          //
+          // 'CREDITO' acá significa "se cobra después", no una venta al
+          // crédito: es lo que `crearInformal` mira para dejar el saldo
+          // pendiente. Si hubo adelanto, ese camino gana igual y la nota sale
+          // PAGO_PARCIAL; si no quedó nada por cobrar, sale saldada.
+          formaPagoTipo: porCobrar > 0 ? 'CREDITO' : 'CONTADO',
           formaPagoMoneda: 'PEN',
           tipoMoneda: 'PEN',
           // En provincia el cliente adelanta la mitad y paga el resto al
