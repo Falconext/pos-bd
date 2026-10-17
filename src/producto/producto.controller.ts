@@ -1019,6 +1019,7 @@ export class ProductoController {
       priorizarStock: query.priorizarStock,
       incluirOcultos: query.incluirOcultos,
       incluirVariantes: query.incluirVariantes,
+      ids: query.ids,
     });
     res.locals.message = 'Productos listados correctamente';
     return resultado;
