@@ -187,13 +187,27 @@ export class SunatGuiaService {
     if (
       stateLabel === 'aceptado' ||
       stateLabel === 'observado' ||
-      (code === '0' && hasCdr)
+      (code === '0' && hasCdr) ||
+      // Los 4xxx son OBSERVACIONES: SUNAT aceptó el documento y devolvió CDR.
+      // Sin esto caían en PENDIENTE y la guía se quedaba esperando un estado
+      // que ya había llegado.
+      (code.startsWith('4') && hasCdr)
     )
       return 'ACEPTADO';
+    // Códigos de SUNAT: 0 = aceptado, 98 = en proceso, 4xxx = observado (sí se
+    // aceptó). Cualquier otro código con `sunat_success: false` es un rechazo.
+    const codigoDeError =
+      code !== '' && code !== '0' && code !== '98' && !code.startsWith('4');
     if (
       stateLabel === 'rechazado' ||
       code === '99' ||
-      (response?.sunat_success === false && (hasErrors || hasCdr))
+      // Un rechazo por EXCEPCIÓN (los 2xxx/3xxx) no trae CDR ni llena `errors`:
+      // llega como `sunat_success:false` + código, dentro de un envoltorio con
+      // `success: true` (eso solo dice que la llamada al PSE salió bien). Sin
+      // esta rama caía en PENDIENTE y la guía quedaba en el limbo: sin motivo
+      // guardado, sin reintento programado y con la app diciendo "enviada,
+      // seguiremos actualizando su estado" para siempre.
+      (response?.sunat_success === false && (hasErrors || hasCdr || codigoDeError))
     )
       return 'RECHAZADO';
     if (
