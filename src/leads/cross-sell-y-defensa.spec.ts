@@ -16,7 +16,11 @@
  */
 import { promptDelAsesor } from './prompt-asesor';
 import { HERRAMIENTAS_VENTA, HERRAMIENTA_DERIVAR } from './leads-herramientas';
-import { MOTIVOS_DERIVACION, motivoDerivacionValido } from './pausa-bot';
+import {
+  MOTIVOS_DERIVACION,
+  esMotivoDeComprobante,
+  motivoDerivacionValido,
+} from './pausa-bot';
 
 const p = promptDelAsesor({
   nombre: 'Hierba Sana',
@@ -98,7 +102,7 @@ describe('la herramienta de derivar dice que su lista es cerrada', () => {
 });
 
 describe('motivoDerivacionValido', () => {
-  it('acepta los siete motivos reales', () => {
+  it('acepta los seis motivos reales', () => {
     for (const m of MOTIVOS_DERIVACION) {
       expect(motivoDerivacionValido(m)).toBe(m);
     }
@@ -107,9 +111,6 @@ describe('motivoDerivacionValido', () => {
   it('acepta cómo los escribe el modelo de verdad', () => {
     // No vale rechazar una derivación buena por una tilde o un espacio.
     expect(motivoDerivacionValido('Reclamo')).toBe('reclamo');
-    expect(motivoDerivacionValido('comprobante de pago')).toBe(
-      'comprobante_de_pago',
-    );
     expect(motivoDerivacionValido('seguimiento-de-pedido')).toBe(
       'seguimiento_de_pedido',
     );
@@ -119,6 +120,16 @@ describe('motivoDerivacionValido', () => {
     expect(motivoDerivacionValido('quiere hablar con un asesor')).toBe(
       'pide_hablar_con_persona',
     );
+  });
+
+  it('ya no deriva por un comprobante de pago', () => {
+    // Estuvo en la lista hasta el 2026-10-16. Derivar ahí apagaba el bot con
+    // el pago hecho y los datos de envío sin pedir: ver `pausa-bot.ts`.
+    expect(motivoDerivacionValido('comprobante de pago')).toBeNull();
+    expect(motivoDerivacionValido('comprobante_de_pago')).toBeNull();
+    expect(esMotivoDeComprobante('comprobante de pago')).toBe(true);
+    expect(esMotivoDeComprobante('mandó su voucher de Yape')).toBe(true);
+    expect(esMotivoDeComprobante('reclamo')).toBe(false);
   });
 
   it('rechaza los motivos que el modelo se inventa', () => {

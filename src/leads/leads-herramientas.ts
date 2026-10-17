@@ -18,6 +18,7 @@ export const HERRAMIENTA_ENVIAR_FOTO = 'enviar_foto';
 export const HERRAMIENTA_GUARDAR_DATOS = 'guardar_datos_envio';
 export const HERRAMIENTA_COTIZAR = 'cotizar';
 export const HERRAMIENTA_REGISTRAR_PEDIDO = 'registrar_pedido';
+export const HERRAMIENTA_AVISAR_VISITA = 'avisar_visita_tienda';
 export const HERRAMIENTA_DERIVAR = 'derivar_a_asesor';
 
 const buscarProductos: FunctionDeclaration = {
@@ -71,7 +72,9 @@ const guardarDatosEnvio: FunctionDeclaration = {
     'Si te dice el distrito o la ciudad, mándalo en `destino` y te devuelve la zona, el costo de envío y la forma de pago que corresponde. ' +
     'Con el nombre de la ciudad alcanza: cualquier lugar fuera de Lima cae en provincia. No le pidas al cliente que precise más de lo que ya resolvió esta herramienta. ' +
     'Nunca vuelvas a pedirle un dato que esta herramienta ya tiene guardado. ' +
-    'El nombre se le pregunta: no uses el de su perfil de WhatsApp.',
+    'El nombre se le pregunta: no uses el de su perfil de WhatsApp ni el del comprobante de pago —quien paga no siempre es quien recibe. ' +
+    'Y NUNCA completes un dato que el cliente no te dio: ni el DNI, ni el celular, ni la dirección. ' +
+    'Si falta uno, pregúntaselo. Un número puesto por ti pasa todas las validaciones y deja un pedido que nadie puede entregar.',
   parameters: {
     type: SchemaType.OBJECT,
     properties: {
@@ -179,10 +182,32 @@ const registrarPedido: FunctionDeclaration = {
   parameters: { type: SchemaType.OBJECT, properties: {} },
 };
 
+const avisarVisitaTienda: FunctionDeclaration = {
+  name: HERRAMIENTA_AVISAR_VISITA,
+  description:
+    'Avisa a la tienda que el cliente va a pasar a recoger, con el día y la hora. ' +
+    'Úsala cuando el cliente ya decidió recoger en tienda y te dice cuándo va a ir — tanto si dejó reserva como si no. ' +
+    'Si el negocio cobra una reserva para separar el producto, ofrécesela UNA vez y con naturalidad, antes de llamar a esta herramienta. Si no quiere, no insistas: igual avisas la visita y sigues atendiendo normal. Insistir con la reserva es lo que hace que no venga. ' +
+    'Esto NO aparta el stock: avisa al negocio para que él decida si lo separa. Así que no le prometas al cliente que su producto está guardado ni "asegurado" — dile que la tienda queda avisada para tenerlo listo. ' +
+    'Si el cliente cambia el día, vuelve a llamarla con el día nuevo.',
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      cuando: {
+        type: SchemaType.STRING,
+        description:
+          'Cuándo va a pasar, en palabras del cliente ("mañana a las 2 de la tarde", "el sábado por la mañana").',
+      },
+    },
+    required: ['cuando'],
+  },
+};
+
 const derivar: FunctionDeclaration = {
   name: HERRAMIENTA_DERIVAR,
   description:
-    'Pasa la conversación a una persona del equipo y deja de responder. Úsala SOLO cuando: el cliente es mayorista, revendedor o distribuidor (o compra 6 docenas o más); hay un reclamo, producto dañado, vencido o equivocado, pedido incompleto, cambio, devolución o cancelación con adelanto; manda un comprobante de pago; pregunta por el seguimiento de un pedido ya hecho; pide un descuento fuera de la regla; quiere un producto que no tenemos y pide que lo busquemos con proveedores; o pide hablar con una persona. ' +
+    'Pasa la conversación a una persona del equipo y deja de responder. Úsala SOLO cuando: el cliente es mayorista, revendedor o distribuidor (o compra 6 docenas o más); hay un reclamo, producto dañado, vencido o equivocado, pedido incompleto, cambio, devolución o cancelación con adelanto; pregunta por el seguimiento de un pedido ya hecho; pide un descuento fuera de la regla; quiere un producto que no tenemos y pide que lo busquemos con proveedores; o pide hablar con una persona. ' +
+    'Un comprobante de pago NO se deriva: lo recibes leído, se lo confirmas al cliente y sigues tú con los datos de envío. Derivar ahí deja el pedido pagado y sin dirección. ' +
     'Esa lista es CERRADA. Lo que no está en ella se responde, no se deriva: una pregunta difícil o incómoda —certificaciones, registros, permisos, composición, garantía, si el producto es original, desconfianza— se contesta con el contexto del negocio y la conversación sigue. Que no tengas el dato exacto a la mano tampoco es motivo: di lo que sí puedes confirmar y ofrece conseguir el resto. ' +
     'ANTES de llamarla, pregúntale lo que el asesor va a necesitar (qué producto, qué pasó, qué cantidades) — después de derivar ya no podrás preguntar nada. ' +
     'El mensaje con el que derivas no lleva preguntas. Se deriva UNA sola vez.',
@@ -210,6 +235,7 @@ export const HERRAMIENTAS_VENTA: FunctionDeclaration[] = [
   guardarDatosEnvio,
   cotizar,
   registrarPedido,
+  avisarVisitaTienda,
   derivar,
 ];
 

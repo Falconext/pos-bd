@@ -24,6 +24,11 @@ import {
   calcularDescuento,
   soles,
 } from './reglas-descuento';
+import {
+  digitosDichosPorElCliente,
+  pedirDatoAlCliente,
+  textoDichoPorElCliente,
+} from './procedencia-datos';
 
 /** Lo que cada empresa configura de su operación comercial. */
 export interface ConfigComercial {
@@ -205,13 +210,29 @@ export class LeadsPedidoService {
       }
     }
 
+    // Lo que el cliente escribió en esta conversación. Es contra esto que se
+    // comprueba que un dato de contacto exista de verdad: ver
+    // `procedencia-datos.ts` para el incidente que lo hizo necesario.
+    const dichoPorElCliente = await this.mensajesDelCliente(conversacionId);
+    // Vacío solo puede ser un fallo de lectura: el modelo nunca guarda datos
+    // antes de que el cliente escriba. En ese caso no se comprueba nada, que
+    // es dejar las cosas como estaban, no romper la venta.
+    const comprobar = dichoPorElCliente.length > 0;
+
     // El DNI y el celular se validan al entrar: un celular mal escrito es un
     // pedido que no se puede entregar, y eso se descubre con el repartidor ya
-    // en la calle.
+    // en la calle. Un celular INVENTADO es lo mismo pero peor, porque pasa
+    // todas las validaciones de formato: por eso además se exige que el
+    // número aparezca en algún mensaje del cliente.
     if (datos.dni?.trim()) {
       const problema = validarDni(datos.dni);
       if (problema) problemas.push(problema.detalle);
-      else {
+      else if (
+        comprobar &&
+        !digitosDichosPorElCliente(datos.dni, dichoPorElCliente)
+      ) {
+        problemas.push(pedirDatoAlCliente('DNI'));
+      } else {
         cambios.dni = datos.dni.replace(/\D/g, '');
         guardado.push('DNI');
       }
@@ -219,10 +240,29 @@ export class LeadsPedidoService {
     if (datos.celular?.trim()) {
       const problema = validarCelular(datos.celular);
       if (problema) problemas.push(problema.detalle);
-      else {
+      else if (
+        comprobar &&
+        !digitosDichosPorElCliente(datos.celular, dichoPorElCliente)
+      ) {
+        problemas.push(pedirDatoAlCliente('celular'));
+      } else {
         cambios.celular = normalizarCelular(datos.celular);
         guardado.push('celular');
       }
+    }
+
+    // La dirección también tiene que haber salido del cliente: el agente no
+    // la puede ofrecer de una lista, así que si no está en lo que escribió,
+    // la escribió el modelo. La sede de la agencia y el nombre NO se
+    // comprueban a propósito —el agente ofrece la sede del catálogo y el
+    // cliente contesta "sí, esa"—, ver `procedencia-datos.ts`.
+    if (
+      comprobar &&
+      datos.direccion?.trim() &&
+      !textoDichoPorElCliente(datos.direccion, dichoPorElCliente)
+    ) {
+      problemas.push(pedirDatoAlCliente('dirección'));
+      delete datos.direccion;
     }
 
     for (const campo of [
@@ -391,6 +431,36 @@ export class LeadsPedidoService {
   ): { formaPago: string } | null {
     const z = config.envio.zonas.find((x) => x.nombre === zona);
     return z?.notaPago ? { formaPago: z.notaPago } : null;
+  }
+
+  /**
+   * Todo lo que el cliente escribió en esta conversación.
+   *
+   * Incluye el mensaje que acaba de llegar: el processor lo persiste antes de
+   * llamar al modelo, así que un dato que el cliente dictó recién ya está
+   * acá y no se rechaza por llegar en el mismo turno.
+   *
+   * Si la lectura falla se devuelve vacío y los datos pasan sin comprobar.
+   * Es a propósito: este control existe para que no entre un dato falso, no
+   * para frenar las ventas de todos si la consulta se cae. Queda el log.
+   */
+  private async mensajesDelCliente(conversacionId: number): Promise<string[]> {
+    try {
+      const mensajes = await this.prisma.leadMensaje.findMany({
+        where: { conversacionId, rol: 'USUARIO' },
+        select: { contenido: true },
+        orderBy: { id: 'desc' },
+        take: 60,
+      });
+      return mensajes.map((m) => m.contenido);
+    } catch (e) {
+      this.logger.warn(
+        `Lead: no se pudieron leer los mensajes de la conv ${conversacionId} para comprobar la procedencia de los datos: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      return [];
+    }
   }
 
   /**
@@ -672,6 +742,7 @@ export class LeadsPedidoService {
     );
 
     const esAgencia = borrador.tipoZona === 'AGENCIA';
+    const esRecojo = borrador.tipoZona === 'RECOJO';
     // En provincia se adelanta la mitad para reservar; en Lima se paga todo
     // contraentrega.
     const adelanto = esAgencia ? Math.round(calculo.montoAPagar * 50) / 100 : 0;
@@ -711,6 +782,14 @@ export class LeadsPedidoService {
           formaPagoTipo: 'CONTADO',
           formaPagoMoneda: 'PEN',
           tipoMoneda: 'PEN',
+          // En provincia el cliente adelanta la mitad y paga el resto al
+          // recoger. Sin pasar el adelanto, `crearInformal` cae en "contado"
+          // y la nota nace COMPLETADO con saldo 0: el sistema daba por
+          // cobrados los S/ 270 cuando en la cuenta había S/ 135, y el saldo
+          // que se cobra en la agencia no quedaba registrado en ninguna
+          // parte. Pasándolo, la nota nace PAGO_PARCIAL con su saldo y a
+          // caja entra solo lo que de verdad entró.
+          ...(adelanto > 0 ? { adelanto } : {}),
           ...(clienteId
             ? { clienteId }
             : { clienteName: 'CLIENTES VARIOS' }),
@@ -737,37 +816,52 @@ export class LeadsPedidoService {
       return { error: 'No se pudo registrar el pedido en el sistema.' };
     }
 
+    // Un recojo en tienda NO genera despacho: no hay nada que transportar.
+    // Antes caía en el `else` y se creaba un despacho DOMICILIO sin dirección
+    // y con el courier de la zona, así que el panel ofrecía "Coordinar envío"
+    // para un paquete que el cliente venía a buscar él mismo. El pedido se ve
+    // igual en ventas, y que viene a la tienda lo avisa `avisarVisitaTienda`.
+    //
+    // Tampoco se le inventa un `tipoEnvio: 'RECOJO'`: el modal del panel pide
+    // transportista, agencia, turno y fecha de despacho —nada de eso existe
+    // en un recojo— y un valor que no sabe tratar le deja el formulario en
+    // error al que lo abra.
+    //
     // El despacho es best-effort: si falla, el pedido YA existe y perderlo
     // sería peor. Queda el aviso para que alguien lo complete a mano.
-    try {
-      // El courier sale de la zona configurada. Sin él, el despacho quedaba
-      // en blanco y el botón "Coordinar envío" del panel no sabía con quién
-      // iba el paquete.
-      const zonaDelPedido = config.envio.zonas.find(
-        (z) => z.nombre === borrador.zona,
-      );
-      await this.despacho.create(comprobanteId, empresaId, {
-        tipoEnvio: (esAgencia ? 'AGENCIA' : 'DOMICILIO') as never,
-        ...(zonaDelPedido?.courier
-          ? { transportista: zonaDelPedido.courier }
-          : {}),
-        ...(borrador.agenciaSede
-          ? { agenciaDestino: borrador.agenciaSede }
-          : {}),
-        ...(borrador.direccion ? { direccionDestino: borrador.direccion } : {}),
-        ...(borrador.referencia ? { observaciones: borrador.referencia } : {}),
-        ...(borrador.lugar ? { distrito: borrador.lugar } : {}),
-        ...(borrador.nombre ? { nombreDestinatario: borrador.nombre } : {}),
-        ...(borrador.dni ? { dniDestinatario: borrador.dni } : {}),
-        ...(borrador.celular ? { celularDest: borrador.celular } : {}),
-        costoEnvio: envio,
-        // Lo que queda por cobrar al entregar.
-        montoCOD: calculo.montoAPagar - adelanto,
-      });
-    } catch (e) {
-      this.logger.warn(
-        `Lead: pedido ${codigo} creado pero sin despacho: ${e instanceof Error ? e.message : String(e)}`,
-      );
+    if (!esRecojo) {
+      try {
+        // El courier sale de la zona configurada. Sin él, el despacho quedaba
+        // en blanco y el botón "Coordinar envío" del panel no sabía con quién
+        // iba el paquete.
+        const zonaDelPedido = config.envio.zonas.find(
+          (z) => z.nombre === borrador.zona,
+        );
+        await this.despacho.create(comprobanteId, empresaId, {
+          tipoEnvio: (esAgencia ? 'AGENCIA' : 'DOMICILIO') as never,
+          ...(zonaDelPedido?.courier
+            ? { transportista: zonaDelPedido.courier }
+            : {}),
+          ...(borrador.agenciaSede
+            ? { agenciaDestino: borrador.agenciaSede }
+            : {}),
+          ...(borrador.direccion
+            ? { direccionDestino: borrador.direccion }
+            : {}),
+          ...(borrador.referencia ? { observaciones: borrador.referencia } : {}),
+          ...(borrador.lugar ? { distrito: borrador.lugar } : {}),
+          ...(borrador.nombre ? { nombreDestinatario: borrador.nombre } : {}),
+          ...(borrador.dni ? { dniDestinatario: borrador.dni } : {}),
+          ...(borrador.celular ? { celularDest: borrador.celular } : {}),
+          costoEnvio: envio,
+          // Lo que queda por cobrar al entregar.
+          montoCOD: calculo.montoAPagar - adelanto,
+        });
+      } catch (e) {
+        this.logger.warn(
+          `Lead: pedido ${codigo} creado pero sin despacho: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
     }
 
     await this.prisma.leadPedidoBorrador.update({
@@ -818,6 +912,115 @@ export class LeadsPedidoService {
   }
 
   /** El detalle que necesita quien va a despachar, en una sola lectura. */
+  /**
+   * Avisa al negocio que un cliente va a pasar por la tienda a recoger.
+   *
+   * El hueco que tapa, reportado en Hierba Sana: un señor de SJL dijo que el
+   * envío le salía caro, que iba a pasar por la tienda, y al día siguiente
+   * avisó que llegaba a las 2 p. m. El agente le contestó "sí, tenemos stock
+   * asegurado para mañana" — y eso no estaba respaldado por nada: en el
+   * negocio NADIE sabía que ese señor venía, ni por qué producto. El recojo
+   * en tienda existía como zona de envío y se contaba en los reportes, pero
+   * no había forma de registrar la visita.
+   *
+   * Lo que hace y lo que NO hace, a propósito: avisa, y no toca el stock. Una
+   * reserva automática por cada "mañana paso" apartaría producto de gente que
+   * no viene, y en la tienda el stock es limitado. Quien decide si lo separa
+   * es el negocio, con el aviso a la vista.
+   *
+   * No crea comprobante: no hay venta todavía. La cotización ya está hecha y
+   * es la que el equipo mira.
+   */
+  async avisarVisitaTienda(
+    empresaId: number,
+    conversacionId: number,
+    telefono: string,
+    cuando: string,
+  ): Promise<{
+    avisado?: boolean;
+    yaAvisado?: boolean;
+    falta?: string[];
+    error?: string;
+  }> {
+    const borrador = await this.prisma.leadPedidoBorrador.findUnique({
+      where: { conversacionId },
+    });
+    if (!borrador) {
+      return { error: 'Todavía no hay nada cotizado. Cotiza primero.' };
+    }
+    if (borrador.tipoZona !== ('RECOJO' satisfies TipoZona)) {
+      return {
+        error:
+          'Esto es solo para recojo en tienda. Si el pedido es con envío, usa registrar_pedido.',
+      };
+    }
+    const items = (borrador.itemsJson ?? []) as unknown as ItemPedido[];
+    if (!Array.isArray(items) || items.length === 0) {
+      return {
+        error:
+          'No hay productos confirmados. Cotiza primero y confirma con el cliente qué se lleva.',
+      };
+    }
+    // El nombre es lo único que se exige: el negocio tiene que saber a quién
+    // espera. El celular no se pide porque el WhatsApp por el que escribe ya
+    // es su celular, y pedir un dato que ya se tiene es lo que más molesta en
+    // el banco de pruebas.
+    if (!borrador.nombre) return { falta: ['nombre completo'] };
+
+    const momento = cuando.trim();
+    if (!momento) {
+      return { falta: ['el día y la hora en que va a pasar'] };
+    }
+    // Idempotencia sin campo nuevo: la visita se guarda en `horario`, que en
+    // un recojo no se usa para otra cosa. Si vuelve a avisar lo mismo, no se
+    // manda una segunda notificación —el modelo reintenta cuando el cliente
+    // repite "sí, mañana voy"—, pero si cambia el día sí, porque eso el
+    // negocio necesita saberlo.
+    if (borrador.horario?.trim() === momento) {
+      return { avisado: true, yaAvisado: true };
+    }
+
+    const productos = await this.prisma.producto.findMany({
+      where: { empresaId, id: { in: items.map((i) => i.productoId) } },
+      select: { id: true, descripcion: true },
+    });
+    const lista = items
+      .map((i) => {
+        const p = productos.find((x) => x.id === i.productoId);
+        return `• ${i.cantidad}x ${p?.descripcion ?? `producto ${i.productoId}`}`;
+      })
+      .join('\n');
+
+    await this.prisma.leadPedidoBorrador.update({
+      where: { conversacionId },
+      data: { horario: momento },
+    });
+
+    await this.notificaciones
+      .notificarAdminsEmpresa({
+        empresaId,
+        // WARNING y no INFO: pide una decisión —separar el producto o no— y
+        // tiene fecha de caducidad. Un INFO se lee cuando se puede.
+        tipo: 'WARNING',
+        titulo: `🏬 Pasa por la tienda: ${borrador.nombre}`,
+        mensaje: [
+          `${borrador.nombre} va a recoger en tienda ${momento}.`,
+          '',
+          lista,
+          '',
+          'SIN RESERVA: el stock NO está apartado. Si quieres asegurarlo, sepáralo tú.',
+          `WhatsApp: ${telefono}`,
+        ].join('\n'),
+        metaData: { origen: 'ia-ventas-visita-tienda', telefono },
+      })
+      .catch(() => undefined);
+
+    this.logger.log(
+      `Lead: visita a tienda avisada (empresa ${empresaId}, conv ${conversacionId}, ${momento}).`,
+    );
+    return { avisado: true };
+  }
+
   private resumenParaElEquipo(
     perfil: { sexo: string | null; edad: number | null; resumen: string | null } | null,
     b: {

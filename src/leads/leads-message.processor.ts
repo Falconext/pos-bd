@@ -15,6 +15,7 @@ import {
 import { DisponibilidadProducto, Prisma } from '@prisma/client';
 import { EjecutorHerramienta } from '../gemini/gemini.service';
 import {
+  HERRAMIENTA_AVISAR_VISITA,
   HERRAMIENTA_BUSCAR_PRODUCTOS,
   HERRAMIENTA_COTIZAR,
   HERRAMIENTA_DERIVAR,
@@ -25,6 +26,7 @@ import {
 import {
   debeReactivarse,
   estaPausado,
+  esMotivoDeComprobante,
   motivoDerivacionValido,
   venceEn,
 } from './pausa-bot';
@@ -79,7 +81,6 @@ interface ProductoParaIa {
  * empieza a traer productos que no vienen a cuento.
  */
 const UMBRAL_PARECIDO = 0.45;
-
 
 /** Lo que la IA logró leer de un comprobante de pago. Null = no se pudo. */
 type ComprobanteLeido = Awaited<
@@ -1626,6 +1627,28 @@ export class LeadsMessageProcessor extends WorkerHost {
           // aunque el motivo no encaje en ninguna etiqueta, y la pausa vence
           // sola (ver más abajo).
           const motivoValido = motivoDerivacionValido(motivoCrudo);
+          // El comprobante de pago ya no se deriva: la IA lo lee y se lo
+          // confirma al cliente. Y derivar ahí es lo peor que puede pasar,
+          // porque en provincia el pago llega ANTES de los datos de envío:
+          // apagar el bot deja el pedido sin dirección y sin quién la pida.
+          // Por eso lleva instrucción propia y no el rechazo genérico, que
+          // ante una captura de Yape no le dice al modelo qué hacer.
+          if (
+            !motivoValido &&
+            !huboFalloTecnico &&
+            esMotivoDeComprobante(motivoCrudo)
+          ) {
+            this.logger.log(
+              `Lead: conv ${conversacionId} NO derivada por comprobante de pago; sigue atendiendo.`,
+            );
+            return {
+              derivado: false,
+              instruccion:
+                'El comprobante de pago no se deriva: ya lo recibiste y lo tienes leído en el mensaje del cliente. ' +
+                'Confírmale lo que llegó (monto y número de operación) y SIGUE con el pedido: lo que falta son los datos de envío. ' +
+                'Pídeselos tú, de uno en uno, y no los completes por tu cuenta. No le digas que lo pasaste con nadie.',
+            };
+          }
           if (!motivoValido && !huboFalloTecnico) {
             this.logger.log(
               `Lead: conv ${conversacionId} NO derivada, motivo fuera de lista ("${motivoCrudo}").`,
@@ -1723,6 +1746,29 @@ export class LeadsMessageProcessor extends WorkerHost {
           if (res?.error && !/ya estaba registrado/i.test(res.error)) {
             huboFalloTecnico = true;
           }
+          return res;
+        }
+
+        case HERRAMIENTA_AVISAR_VISITA: {
+          const res = await this.pedido.avisarVisitaTienda(
+            empresaId,
+            conversacionId,
+            telefono,
+            String(argumentos.cuando ?? ''),
+          );
+          // Avisar la visita no es una venta cerrada, pero sí es el final del
+          // camino de un recojo: el cliente ya decidió. Se marca la etapa
+          // para que el embudo no lo deje como una cotización olvidada.
+          if (res?.avisado && !res.yaAvisado) {
+            await this.marcarEtapa(
+              empresaId,
+              conversacionId,
+              EtapaCrm.DATOS_COMPLETOS,
+              'Pasa por la tienda a recoger',
+            );
+          }
+          // Un fallo acá NO deriva: el cliente igual va a ir a la tienda, y
+          // apagar el bot lo dejaría sin a quién preguntarle.
           return res;
         }
 
