@@ -6,6 +6,21 @@
  * 27/06. Con mediodía UTC (12:00) la fecha calendario se mantiene en cualquier
  * zona de UTC-12 a UTC+12.
  */
+/**
+ * Fecha de emisión tal como la manda el cliente. El POS envía un ISO completo
+ * con hora (se respeta); los importadores y la emisión retroactiva mandan solo
+ * "YYYY-MM-DD", y `new Date('YYYY-MM-DD')` es medianoche UTC por spec — las
+ * 19:00 del día ANTERIOR en Lima, aunque `TZ=America/Lima`. Un comprobante
+ * importado del día 1 caía así en el mes anterior en los reportes.
+ */
+export function parseFechaEmision(value: string | Date | null | undefined): Date {
+  if (value instanceof Date) return value;
+  const s = String(value ?? '').trim();
+  if (!s) return new Date();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return parseFechaSoloDia(s);
+  return new Date(s);
+}
+
 export function parseFechaSoloDia(value: string | Date): Date {
   if (value instanceof Date) {
     return new Date(

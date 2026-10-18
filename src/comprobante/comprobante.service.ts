@@ -1,4 +1,5 @@
 import { num, round3 } from '../common/utils/stock';
+import { parseFechaEmision } from '../common/utils/fecha';
 import { diaDeEnvio } from './dia-de-envio';
 import { aplicarDescuentoGlobal } from './descuento-global';
 import { excluirNotasCreditoDeAnulacion } from '../common/utils/notas-credito.util';
@@ -2141,7 +2142,7 @@ export class ComprobanteService {
           empresaId,
           tipoDoc,
           serie,
-          new Date(fechaEmision),
+          parseFechaEmision(fechaEmision),
         );
         if (hueco) correlativo = hueco;
       }
@@ -3573,7 +3574,7 @@ export class ComprobanteService {
       );
     }
 
-    const fecha = new Date(fechaEmision);
+    const fecha = parseFechaEmision(fechaEmision);
 
     // Determinar estado y saldo para comprobantes formales
     // IMPORTANTE: formaPagoTipo es la fuente autoritativa
@@ -3820,7 +3821,7 @@ export class ComprobanteService {
           comprobanteId: comprobante.id,
           empresaId,
           vendedorId: vendedorComisionId,
-          fechaEmision: new Date(fechaEmision),
+          fechaEmision: parseFechaEmision(fechaEmision),
           detalles: detalleFinal.map((d: any) => ({
             productoId: d.productoId ?? null,
             descripcion: d.descripcion,
@@ -4932,7 +4933,7 @@ export class ComprobanteService {
       );
     }
 
-    const fecha = new Date(fechaEmision);
+    const fecha = parseFechaEmision(fechaEmision);
 
     // 10) Crear Nota de Crédito
     const nota = await this.prisma.comprobante.create({
@@ -5310,7 +5311,7 @@ export class ComprobanteService {
     );
     // El total ya sale de las líneas rebajadas; restarlo otra vez lo duplicaría.
     const mtoImpVenta = subTotal;
-    const fecha = new Date(fechaEmision);
+    const fecha = parseFechaEmision(fechaEmision);
 
     // Validar tipoOperacionId si existe para evitar error de FK
     let tipoOperacionIdFinal: number | null = null;
@@ -5726,7 +5727,7 @@ export class ComprobanteService {
       Math.max(0, Number(montoDescuentoGlobal ?? 0)),
     );
     const mtoImpVenta = subTotal;
-    const fecha = new Date(fechaEmision);
+    const fecha = parseFechaEmision(fechaEmision);
 
     return this.prisma.$transaction(async (tx) => {
       // Eliminar detalles y leyendas antiguos
@@ -6059,7 +6060,7 @@ export class ComprobanteService {
       empresaId,
     );
 
-    const fecha = fechaEmision ? new Date(fechaEmision) : new Date();
+    const fecha = fechaEmision ? parseFechaEmision(fechaEmision) : new Date();
 
     // Crear comprobante OT
     const comp = await this.prisma.comprobante.create({
@@ -6451,7 +6452,7 @@ export class ComprobanteService {
         splitPayments,
         montoPagado,
         documento: `${comp.tipoDoc}-${comp.serie}-${comp.correlativo}`,
-        fecha: new Date(fechaEmision ?? comp.fechaEmision),
+        fecha: parseFechaEmision(fechaEmision ?? comp.fechaEmision),
       });
     }
     const vendedorComisionId = vendedorCampoIdFinal ?? usuarioId;
@@ -6461,7 +6462,7 @@ export class ComprobanteService {
           comprobanteId: comp.id,
           empresaId,
           vendedorId: vendedorComisionId,
-          fechaEmision: new Date(fechaEmision ?? comp.fechaEmision),
+          fechaEmision: parseFechaEmision(fechaEmision ?? comp.fechaEmision),
           detalles: detalleFinal.map((d: any) => ({
             productoId: d.productoId ?? null,
             descripcion: d.descripcion,

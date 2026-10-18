@@ -16,12 +16,13 @@ export class ModuleAccessGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const requiredModule = this.reflector.getAllAndOverride<string>(
+    const raw = this.reflector.getAllAndOverride<string | string[]>(
       MODULE_KEY,
       [context.getHandler(), context.getClass()],
     );
+    const requiredModules = (Array.isArray(raw) ? raw : [raw]).filter(Boolean);
 
-    if (!requiredModule) {
+    if (requiredModules.length === 0) {
       return true;
     }
 
@@ -64,9 +65,9 @@ export class ModuleAccessGuard implements CanActivate {
     }
 
     // 2. Validate Access
-    if (!planModulos.includes(requiredModule)) {
+    if (!requiredModules.some((m) => planModulos.includes(m))) {
       throw new ForbiddenException(
-        `Su plan no incluye acceso al módulo: ${requiredModule}`,
+        `Su plan no incluye acceso al módulo: ${requiredModules[0]}`,
       );
     }
 

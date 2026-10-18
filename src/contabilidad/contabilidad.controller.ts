@@ -10,7 +10,12 @@ import {
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
+import { ModuleAccessGuard } from '../common/guards/module-access.guard';
+import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { RequiresModule } from '../common/decorators/module.decorator';
+import { RequiresPermission } from '../common/decorators/permission.decorator';
+import { sedeIdParaListado } from '../common/utils/alcance-lectura';
 import { User } from '../common/decorators/user.decorator';
 import { ContabilidadService } from './contabilidad.service';
 import { ArqueoService } from './arqueo.service';
@@ -29,7 +34,13 @@ function toFechaLima(d: Date): string {
   return new Date(d.getTime() - 5 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
-@UseGuards(JwtAuthGuard, RolesGuard)
+// Plan y permiso fino, como el resto de módulos. Antes bastaba estar logueado:
+// cualquier usuario de la empresa veía el reporte completo por URL, con o sin
+// el módulo en su plan. `reportes` y `contabilidad` son el mismo módulo con
+// dos nombres (ver frontend/src/utils/permissions.ts).
+@UseGuards(JwtAuthGuard, RolesGuard, ModuleAccessGuard, PermissionsGuard)
+@RequiresModule('reportes', 'contabilidad')
+@RequiresPermission('reportes', 'contabilidad')
 @Controller('contabilidad')
 export class ContabilidadController {
   constructor(
@@ -53,7 +64,7 @@ export class ContabilidadController {
       user.empresaId,
       fechaInicio,
       fechaFin,
-      sedeId ? Number(sedeId) : undefined,
+      sedeIdParaListado(user, sedeId),
     );
     return data;
   }
@@ -72,7 +83,7 @@ export class ContabilidadController {
       user.empresaId,
       fechaInicio,
       fechaFin,
-      sedeId ? Number(sedeId) : undefined,
+      sedeIdParaListado(user, sedeId),
     );
     return data;
   }
@@ -88,11 +99,11 @@ export class ContabilidadController {
   ) {
     if (!fechaInicio || !fechaFin)
       throw new BadRequestException('fechaInicio y fechaFin son requeridos');
-    const { comprobantes, resumen, anulaciones } = await this.service.obtenerReporte(
+    const { comprobantes, resumen, excluidos } = await this.service.obtenerReporte(
       user.empresaId,
       fechaInicio,
       fechaFin,
-      sedeId ? Number(sedeId) : undefined,
+      sedeIdParaListado(user, sedeId),
     );
 
     const estadoPagoLabel: Record<string, string> = {
@@ -111,6 +122,11 @@ export class ContabilidadController {
       CLIENTE: comp.cliente?.nombre ?? '',
       'FECHA EMISIÓN': toFechaLima(new Date(comp.fechaEmision)),
       MONEDA: comp.tipoMoneda ?? 'PEN',
+      // Los importes de abajo ya están en soles; para un documento en US$ el
+      // contador necesita además el total original y el TC con que se convirtió.
+      'TIPO CAMBIO':
+        comp.tipoMoneda === 'USD' ? Number(comp.tipoCambio ?? 0) : 1,
+      'TOTAL MONEDA ORIGEN': Number(comp.mtoImpVentaDoc ?? comp.mtoImpVenta ?? 0),
       'FORMA PAGO':
         (comp.formaPagoTipo ?? '').toUpperCase() === 'CREDITO'
           ? 'Crédito'
@@ -123,6 +139,8 @@ export class ContabilidadController {
         : '',
       'OP. GRAVADAS': Number(comp.mtoOperGravadas ?? 0),
       'OP. INAFECTAS': Number(comp.mtoOperInafectas ?? 0),
+      'OP. EXONERADAS': Number(comp.mtoOperExoneradas ?? 0),
+      'OP. EXPORTACIÓN': Number(comp.mtoOperExportacion ?? 0),
       IGV: Number(comp.mtoIGV ?? 0),
       DESCUENTO: Number(comp.mtoDescuentoGlobal ?? 0),
       TOTAL: Number(comp.mtoImpVenta ?? 0),
@@ -155,9 +173,13 @@ export class ContabilidadController {
       { wch: 8 },
       { wch: 10 },
       { wch: 14 },
+      { wch: 10 },
+      { wch: 14 },
       { wch: 12 },
       { wch: 14 },
       { wch: 40 },
+      { wch: 14 },
+      { wch: 14 },
       { wch: 14 },
       { wch: 14 },
       { wch: 12 },
@@ -181,36 +203,32 @@ export class ContabilidadController {
       ['TOTAL DESCUENTOS', resumen.totalDescuentos],
       ['TOTAL OP. INAFECTAS', resumen.totalInafectas],
       ['TOTAL OP. GRAVADAS', resumen.totalGravadas],
+      ['TOTAL OP. EXONERADAS', resumen.totalExoneradas],
+      ['TOTAL OP. EXPORTACIÓN', resumen.totalExportacion],
       ['TOTAL IGV (18%)', resumen.totalIGV],
       ['TOTAL VENTAS NETO:', resumen.totalVenta],
+      [
+        `ANULADOS QUE SUMAN (${resumen.cantidadAnulados}; los resta su NC en el mes en que se emitió)`,
+        resumen.totalAnulados,
+      ],
     ];
 
     XLSX.utils.sheet_add_aoa(
       worksheet,
       resumenData.map(([label, value]) =>
-        Array(22).fill('').concat([label, value]),
+        Array(26).fill('').concat([label, value]),
       ),
       { origin: -1 },
     );
 
-    // Sección informativa de anulaciones: los pares boleta/factura + NC de
-    // anulación se excluyen de los totales (neto S/ 0), pero se listan para
-    // que el contador pueda cuadrar el conteo de NCs contra SUNAT.
-    if (anulaciones && anulaciones.length > 0) {
-      const ncPorAfectado = new Map<string, string>();
-      for (const c of anulaciones) {
-        if (c.tipoDoc === '07' && c.numDocAfectado) {
-          ncPorAfectado.set(
-            String(c.numDocAfectado).trim(),
-            `${c.serie}-${c.correlativo}`,
-          );
-        }
-      }
+    // No aceptados por SUNAT: se emitieron pero no son venta. Se listan para
+    // cuadrar el conteo contra la lista de Comprobantes.
+    if (excluidos && excluidos.length > 0) {
       XLSX.utils.sheet_add_aoa(
         worksheet,
         [
           [''],
-          ['ANULACIONES DEL PERIODO (no incluidas en los totales — neto S/ 0)'],
+          [`NO ACEPTADOS POR SUNAT: ${excluidos.length} (no suman)`],
           [
             'TIPO',
             'SERIE',
@@ -219,45 +237,20 @@ export class ContabilidadController {
             'RUC/DNI',
             'CLIENTE',
             'TOTAL',
-            'DETALLE',
+            'ESTADO SUNAT',
+            'POR QUÉ NO SUMA',
           ],
-          ...anulaciones.map((c: any) => {
-            const nc = ncPorAfectado.get(`${c.serie}-${c.correlativo}`);
-            return [
-              c.comprobante,
-              c.serie,
-              c.correlativo,
-              toFechaLima(new Date(c.fechaEmision)),
-              c.cliente?.nroDoc ?? '',
-              c.cliente?.nombre ?? '',
-              Number(c.mtoImpVenta ?? 0),
-              c.tipoDoc === '07'
-                ? `ANULA A ${c.numDocAfectado ?? ''}${c.motivo ? ` — ${c.motivo.descripcion}` : ''}`
-                : nc
-                  ? `ANULADO POR NC ${nc}`
-                  : 'ANULADO',
-            ];
-          }),
-        ],
-        { origin: -1 },
-      );
-      const ncsAnulacion = anulaciones.filter((c: any) => c.tipoDoc === '07');
-      XLSX.utils.sheet_add_aoa(
-        worksheet,
-        [
-          [
-            `NOTAS DE CREDITO POR ANULACIÓN: ${ncsAnulacion.length}`,
-            '',
-            '',
-            '',
-            '',
-            '',
-            ncsAnulacion.reduce(
-              (s: number, c: any) => s + Number(c.mtoImpVenta ?? 0),
-              0,
-            ),
-            'Estas NC anulan comprobantes del listado y no restan a los totales',
-          ],
+          ...excluidos.map((c: any) => [
+            c.comprobante,
+            c.serie,
+            c.correlativo,
+            toFechaLima(new Date(c.fechaEmision)),
+            c.cliente?.nroDoc ?? '',
+            c.cliente?.nombre ?? '',
+            Number(c.mtoImpVenta ?? 0),
+            c.estadoEnvioSunat,
+            c.motivoExclusion,
+          ]),
         ],
         { origin: -1 },
       );
@@ -295,7 +288,7 @@ export class ContabilidadController {
         user.empresaId,
         fechaInicio,
         fechaFin,
-        sedeId ? Number(sedeId) : undefined,
+        sedeIdParaListado(user, sedeId),
       );
 
     // Preparar datos para Excel siguiendo formato del proyecto Node original
@@ -347,6 +340,10 @@ export class ContabilidadController {
       ['NOTAS PEDIDO', resumen.totalNotasPedido],
       ['ORDENES TRABAJO', resumen.totalOrdenesTrabajo],
       ['TOTALES:', resumen.totalVenta],
+      [
+        `YA CONVERTIDOS A SUNAT (${resumen.cantidadConvertidos}, no suman):`,
+        resumen.totalConvertidos,
+      ],
     ];
 
     XLSX.utils.sheet_add_aoa(
@@ -393,7 +390,7 @@ export class ContabilidadController {
       user.empresaId,
       fechaInicio,
       fechaFin,
-      sedeId ? Number(sedeId) : undefined,
+      sedeIdParaListado(user, sedeId),
     );
   }
 
@@ -412,7 +409,7 @@ export class ContabilidadController {
       user.empresaId,
       fechaInicio,
       fechaFin,
-      sedeId ? Number(sedeId) : undefined,
+      sedeIdParaListado(user, sedeId),
     );
 
     const estadoPagoLabel: Record<string, string> = {
@@ -601,7 +598,7 @@ export class ContabilidadController {
       user.empresaId,
       fechaInicio,
       fechaFin,
-      sedeId ? Number(sedeId) : undefined,
+      sedeIdParaListado(user, sedeId),
     );
     return data;
   }
@@ -622,7 +619,7 @@ export class ContabilidadController {
         user.empresaId,
         fechaInicio,
         fechaFin,
-        sedeId ? Number(sedeId) : undefined,
+        sedeIdParaListado(user, sedeId),
       );
 
     // Preparar datos para Excel siguiendo formato del proyecto Node original

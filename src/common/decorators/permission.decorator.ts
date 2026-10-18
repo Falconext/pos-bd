@@ -8,5 +8,5 @@ export const PERMISSION_KEY = 'permission';
  * `permisos` incluya el código pedido (o '*'). ADMIN_EMPRESA y ADMIN_SISTEMA
  * lo tienen siempre. Se valida con PermissionsGuard.
  */
-export const RequiresPermission = (permiso: string) =>
-  SetMetadata(PERMISSION_KEY, permiso);
+export const RequiresPermission = (...permisos: string[]) =>
+  SetMetadata(PERMISSION_KEY, permisos);

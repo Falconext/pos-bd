@@ -18,11 +18,13 @@ export class PermissionsGuard implements CanActivate {
   constructor(private reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const required = this.reflector.getAllAndOverride<string>(PERMISSION_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
-    if (!required) return true;
+    const raw = this.reflector.getAllAndOverride<string | string[]>(
+      PERMISSION_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+    // Varios códigos = basta con uno (alias del mismo módulo).
+    const required = (Array.isArray(raw) ? raw : [raw]).filter(Boolean);
+    if (required.length === 0) return true;
 
     const { user } = context.switchToHttp().getRequest();
     if (!user) return false;
@@ -35,11 +37,12 @@ export class PermissionsGuard implements CanActivate {
       const permisos: string[] = Array.isArray(user.permisos)
         ? user.permisos
         : [];
-      if (permisos.includes('*') || permisos.includes(required)) return true;
+      if (permisos.includes('*') || required.some((r) => permisos.includes(r)))
+        return true;
     }
 
     throw new ForbiddenException(
-      `No tienes el permiso requerido: ${required}`,
+      `No tienes el permiso requerido: ${required[0]}`,
     );
   }
 }

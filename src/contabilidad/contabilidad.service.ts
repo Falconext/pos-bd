@@ -59,6 +59,10 @@ export class ContabilidadService {
         saldo: true,
         mtoOperGravadas: true,
         mtoOperInafectas: true,
+        // Exoneradas (Ley de Amazonía) y exportación: sin ellas la fila de una
+        // empresa exonerada sale 0/0/0 con el total lleno y no cuadra.
+        mtoOperExoneradas: true,
+        mtoOperExportacion: true,
         mtoIGV: true,
         mtoDescuentoGlobal: true,
         mtoImpVenta: true,
@@ -80,25 +84,28 @@ export class ContabilidadService {
       },
     });
 
-    // Filtrar documentos según reglas contables
-    const comprobantesFiltrados = await this.filtrarDocumentosParaReporte(
-      comprobantesRaw,
-      empresaId,
-    );
+    const comprobantesFiltrados =
+      this.filtrarDocumentosParaReporte(comprobantesRaw);
 
     // Los montos se guardan en la moneda nativa del comprobante (p.ej. USD para
     // una Factura de exportación); se convierten a soles antes de sumar y de
     // mostrar cada fila, o un comprobante en USD infla el reporte como si fuera PEN.
     const aPen = (c: (typeof comprobantesFiltrados)[number], v: any) =>
       montoEnPen(v, c.tipoMoneda, c.tipoCambio);
-    const comprobantes = comprobantesFiltrados.map((c) => ({
+    // `mtoImpVentaDoc` conserva el total en la moneda del documento: la fila
+    // se muestra en soles, pero el contador necesita ver el US$ original y el TC.
+    const enPen = (c: (typeof comprobantesFiltrados)[number]) => ({
       ...c,
       mtoOperGravadas: aPen(c, c.mtoOperGravadas),
       mtoOperInafectas: aPen(c, c.mtoOperInafectas),
+      mtoOperExoneradas: aPen(c, c.mtoOperExoneradas),
+      mtoOperExportacion: aPen(c, c.mtoOperExportacion),
       mtoIGV: aPen(c, c.mtoIGV),
       mtoDescuentoGlobal: aPen(c, c.mtoDescuentoGlobal),
       mtoImpVenta: aPen(c, c.mtoImpVenta),
-    }));
+      mtoImpVentaDoc: Number(c.mtoImpVenta || 0),
+    });
+    const comprobantes = comprobantesFiltrados.map(enPen);
 
     // Calcular resumen con lógica contable correcta
     const resumen = comprobantes.reduce(
@@ -115,6 +122,8 @@ export class ContabilidadService {
 
         const gravadas = Number(comp.mtoOperGravadas || 0) * factor;
         const inafectas = Number(comp.mtoOperInafectas || 0) * factor;
+        const exoneradas = Number(comp.mtoOperExoneradas || 0) * factor;
+        const exportacion = Number(comp.mtoOperExportacion || 0) * factor;
         const igv = Number(comp.mtoIGV || 0) * factor;
         const descuentos = Number(comp.mtoDescuentoGlobal || 0) * factor;
         const total = Number(comp.mtoImpVenta || 0) * factor;
@@ -124,6 +133,8 @@ export class ContabilidadService {
           totalIGV: acc.totalIGV + igv,
           totalGravadas: acc.totalGravadas + gravadas,
           totalInafectas: acc.totalInafectas + inafectas,
+          totalExoneradas: acc.totalExoneradas + exoneradas,
+          totalExportacion: acc.totalExportacion + exportacion,
           totalDescuentos: acc.totalDescuentos + descuentos,
           totalFacturas:
             comp.tipoDoc === '01'
@@ -146,6 +157,8 @@ export class ContabilidadService {
         totalIGV: 0,
         totalGravadas: 0,
         totalInafectas: 0,
+        totalExoneradas: 0,
+        totalExportacion: 0,
         totalDescuentos: 0,
         totalFacturas: 0,
         totalBoletas: 0,
@@ -159,79 +172,60 @@ export class ContabilidadService {
       comprobante: tipoLabels[c.tipoDoc] || 'DESCONOCIDO',
     }));
 
-    // Documentos excluidos de los totales (anulados y sus notas de crédito):
-    // se exponen aparte para que el contador pueda cuadrarlos contra SUNAT
-    // sin que alteren el neto (cada par boleta+NC suma 0).
+    // Lo emitido que NO entra al total: solo lo que SUNAT no aceptó. Se expone
+    // aparte, con motivo, para que quien compare contra la lista de
+    // Comprobantes entienda por qué "falta".
     const idsIncluidos = new Set(comprobantes.map((c) => c.id));
-    const anulaciones = comprobantesRaw
+    const excluidos = comprobantesRaw
       .filter((c) => !idsIncluidos.has(c.id))
       .map((c) => ({
-        ...c,
-        mtoOperGravadas: aPen(c, c.mtoOperGravadas),
-        mtoOperInafectas: aPen(c, c.mtoOperInafectas),
-        mtoIGV: aPen(c, c.mtoIGV),
-        mtoDescuentoGlobal: aPen(c, c.mtoDescuentoGlobal),
-        mtoImpVenta: aPen(c, c.mtoImpVenta),
+        ...enPen(c),
         comprobante: tipoLabels[c.tipoDoc] || 'DESCONOCIDO',
+        motivoExclusion:
+          c.estadoEnvioSunat === 'RECHAZADO'
+            ? 'Rechazado por SUNAT'
+            : 'Falló el envío a SUNAT',
       }));
 
-    return { comprobantes: comprobantesConTipo, resumen, anulaciones };
+    // Anulados que SÍ suman (ver filtrarDocumentosParaReporte): se informan
+    // para que "Nota de Crédito" y "Anulados" se lean juntos.
+    const anuladosIncluidos = comprobantes.filter(
+      (c) => c.estadoEnvioSunat === 'ANULADO' && c.tipoDoc !== '07',
+    );
+
+    return {
+      comprobantes: comprobantesConTipo,
+      resumen: {
+        ...resumen,
+        cantidadAnulados: anuladosIncluidos.length,
+        totalAnulados: anuladosIncluidos.reduce(
+          (t, c) => t + Number(c.mtoImpVenta || 0),
+          0,
+        ),
+      },
+      excluidos,
+    };
   }
 
   /**
-   * Filtra documentos según reglas contables:
-   * 1. Excluye documentos ANULADOS
-   * 2. Para notas de crédito con motivo anulación (01, 06): excluye TANTO el documento
-   *    afectado COMO la propia nota de crédito (se cancelan mutuamente, neto = 0)
-   * 3. Mantiene notas de corrección/descuento (02, 03, 04, 05, 07) y sus documentos afectados
+   * Qué entra al reporte. Mismo criterio que el Libro de Ventas (SIRE), que se
+   * verificó al céntimo contra la propuesta RVIE de SUNAT (ver sire.service.ts):
+   *
+   * - Un comprobante suma en su mes de emisión a valor completo, AUNQUE figure
+   *   ANULADO: en este sistema `ANULADO` significa que una nota de crédito lo
+   *   anuló (no hay comunicación de baja), y SUNAT lo sigue contando. La
+   *   reducción la hace la NC, en negativo, en el mes en que ELLA se emitió.
+   *   Excluir el par boleta+NC (como se hacía) borraba la venta de enero cuando
+   *   la NC salía en febrero, y enero ya estaba declarado.
+   * - RECHAZADO y FALLIDO_ENVIO no suman: SUNAT nunca los aceptó.
+   * - PENDIENTE sí suma: está en camino y el contador necesita verlo.
    */
-  private async filtrarDocumentosParaReporte(
-    comprobantesRaw: any[],
-    empresaId: number,
-  ) {
-    const documentosExcluidos = new Set<string>();
-
-    // Paso 1: Identificar documentos que deben excluirse
-    for (const comp of comprobantesRaw) {
-      // Si es una nota de crédito con motivo de anulación/devolución total
-      if (
-        comp.tipoDoc === '07' &&
-        comp.motivo &&
-        ['01', '06'].includes(comp.motivo.codigo)
-      ) {
-        // Excluir la nota de crédito misma (cancela completamente al afectado)
-        const ncKey = `${comp.tipoDoc}-${comp.serie}-${comp.correlativo}`;
-        documentosExcluidos.add(ncKey);
-
-        if (comp.numDocAfectado) {
-          // Excluir también el documento original afectado
-          const docKey = `${comp.tipDocAfectado}-${comp.numDocAfectado}`;
-          documentosExcluidos.add(docKey);
-        }
-      }
-    }
-
-    // Paso 2: Filtrar comprobantes
-    const comprobantes = comprobantesRaw.filter((comp) => {
-      // Excluir documentos con estado ANULADO
-      if (comp.estadoEnvioSunat === 'ANULADO') {
-        return false;
-      }
-
-      // Verificar si este documento está en la lista de exclusión
-      const docKey = `${comp.tipoDoc}-${comp.serie}-${comp.correlativo}`;
-      if (documentosExcluidos.has(docKey)) {
-        return false;
-      }
-
-      return true;
-    });
-
-    console.log(
-      `📊 Reporte contable: ${comprobantesRaw.length} documentos emitidos, ${comprobantes.length} incluidos en reporte`,
+  private filtrarDocumentosParaReporte<T extends { estadoEnvioSunat: string }>(
+    comprobantesRaw: T[],
+  ): T[] {
+    return comprobantesRaw.filter(
+      (c) => !['RECHAZADO', 'FALLIDO_ENVIO'].includes(c.estadoEnvioSunat),
     );
-
-    return comprobantes;
   }
 
   async obtenerReporteInformales(
@@ -277,16 +271,36 @@ export class ContabilidadService {
         adelanto: true,
         cliente: { select: { nombre: true, nroDoc: true } },
         sede: { select: { nombre: true } },
+        // Al convertir una NV/OT el origen queda tal cual (NO_APLICA) y el
+        // documento nuevo apunta a él. Se trae para no contar la venta dos veces.
+        comprobantesDerivados: {
+          select: { tipoDoc: true, serie: true, correlativo: true },
+          take: 1,
+        },
       },
     });
 
     // mtoImpVenta se guarda en la moneda nativa del comprobante (p.ej. USD para
     // una Nota de Venta en dólares); se convierte a soles antes de sumar y de
     // mostrar cada fila, o un comprobante en USD infla el reporte como si fuera PEN.
-    const comprobantesPen = comprobantes.map((c) => ({
-      ...c,
-      mtoImpVenta: montoEnPen(c.mtoImpVenta, c.tipoMoneda, c.tipoCambio),
-    }));
+    const todosPen = comprobantes.map(
+      ({ comprobantesDerivados, ...c }) => ({
+        ...c,
+        mtoImpVenta: montoEnPen(c.mtoImpVenta, c.tipoMoneda, c.tipoCambio),
+        convertidoA: comprobantesDerivados[0]
+          ? `${comprobantesDerivados[0].serie}-${String(
+              comprobantesDerivados[0].correlativo,
+            ).padStart(8, '0')}`
+          : null,
+      }),
+    );
+
+    // Un informal ya convertido (NV → Boleta, OT → NV) dejó de ser una venta de
+    // esta pestaña: la venta vive en el documento que salió de él. Sumarlo acá
+    // duplica contra "Comprobantes SUNAT" (igual que finanzas.service, que
+    // excluye el lado formal por el mismo motivo).
+    const convertidos = todosPen.filter((c) => c.convertidoA);
+    const comprobantesPen = todosPen.filter((c) => !c.convertidoA);
 
     // Calcular resumen por tipo de comprobante informal
     const resumen = comprobantesPen.reduce(
@@ -332,12 +346,24 @@ export class ContabilidadService {
       },
     );
 
-    const comprobantesConTipo = comprobantesPen.map((c) => ({
+    const conTipo = (c: (typeof todosPen)[number]) => ({
       ...c,
       comprobante: tipoLabels[c.tipoDoc] || 'DESCONOCIDO',
-    }));
+    });
 
-    return { comprobantes: comprobantesConTipo, resumen };
+    return {
+      comprobantes: comprobantesPen.map(conTipo),
+      resumen: {
+        ...resumen,
+        // Se informan aparte para que el contador pueda cuadrar el conteo.
+        cantidadConvertidos: convertidos.length,
+        totalConvertidos: convertidos.reduce(
+          (s, c) => s + Number(c.mtoImpVenta || 0),
+          0,
+        ),
+      },
+      convertidos: convertidos.map(conTipo),
+    };
   }
 
   /**
