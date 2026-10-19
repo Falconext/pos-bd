@@ -2497,12 +2497,18 @@ export class ProduccionService {
               valorUnitario: new Decimal(
                 Number((precioVenta / 1.18).toFixed(2)),
               ),
-              costoPromedio: new Decimal(costoUnitario),
               categoriaId: categoriaId ?? null,
               marcaId: marcaId ?? null,
               codigoBarras: codigoBarras || null,
             },
           });
+          // El costo se corrige en la sede de la carga y el global se deriva
+          // de las sedes; escribirlo directo al global lo despegaba de ellas.
+          await this.productoService.corregirCostoEnSede(
+            productoExistente.id,
+            sedeId,
+            costoUnitario,
+          );
           resumen.productos.actualizados += 1;
           continue;
         }

@@ -52,6 +52,11 @@ class DetalleCompraDto {
   // true = el precioUnitario ya incluye IGV → el costo neto = precio / 1.18
   @IsOptional()
   incluyeIgv?: boolean;
+  // false = esta línea no lleva IGV aunque el producto sea gravado (la orden
+  // se pactó sin IGV con el proveedor). Sin él, manda la afectación del producto.
+  @IsOptional()
+  @IsBoolean()
+  gravado?: boolean;
   // Distribución por sede: sede/almacén al que entra ESTA línea. Si no viene,
   // entra a la sede de la cabecera (sedeId de la compra).
   @IsOptional()

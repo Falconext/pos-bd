@@ -121,6 +121,7 @@
       <span class="c-cant">{{this.cantidad}}</span>
       <span class="c-desc">
         <span class="desc-multi">{{this.descripcion}}</span>{{#if this.gratis}}<span class="gratis" style="font-size:{{tpx ../tpx 'productos' 13}}px">[GRATIS]</span>{{/if}}
+        {{#each this.detalleLineas}}<span class="sub" style="font-size:{{tpx ../../tpx 'productos' 13}}px">{{this}}</span>{{/each}}
         {{#each this.lotes}}<span class="sub" style="font-size:{{tpx ../../tpx 'productos' 12}}px">Lote: {{this.lote}} Venc: {{this.fechaVencimiento}}</span>{{/each}}
       </span>
       <span class="c-pu">{{this.precioUnitario}}</span>
@@ -166,7 +167,9 @@
   </div>
   {{/if}}
   {{#unless esCredito}}<p class="row"><span>MEDIO DE PAGO:</span><span>{{medioPago}}</span></p>{{/unless}}
-  <p class="row"><span>VUELTO:</span><span>{{simboloMoneda}} {{vuelto}}</span></p>
+  {{#if pagoAnterior}}<p class="row"><span>PAGO ANTERIOR:</span><span>{{simboloMoneda}} {{pagoAnterior}}</span></p>{{/if}}
+  {{#if recibido}}<p class="row"><span>RECIBIDO:</span><span>{{simboloMoneda}} {{recibido}}</span></p>{{/if}}
+  {{#if devolucion}}<p class="row"><span>DEVOLUCIÓN:</span><span>{{simboloMoneda}} {{devolucion}}</span></p>{{else}}<p class="row"><span>VUELTO:</span><span>{{simboloMoneda}} {{vuelto}}</span></p>{{/if}}
   <p class="row"><span>PAGADO:</span><span>{{simboloMoneda}} {{pagado}}</span></p>
   <p class="row"><span>VENDEDOR:</span><span>{{vendedor}}</span></p>
   <hr>

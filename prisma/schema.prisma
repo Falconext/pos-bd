@@ -1262,6 +1262,11 @@ model DetalleComprobante {
   // de lista y el ahorro; el precio ya viene con descuento en mtoPrecioUnitario/mtoValorVenta,
   // por lo que NO afecta el XML enviado a SUNAT.
   mtoDescuento       Float?          @default(0)
+  // Descripción / detalle adicional de la línea, multilínea (p. ej. una cotización
+  // de servicios: "Retiro de pintura antigua\nRaspado, lijado..."). Se imprime en
+  // el PDF debajo de la descripción (el título). NO va al XML UBL de SUNAT: allí
+  // el ítem sigue saliendo solo con `descripcion`.
+  detalleAdicional   String?
   // Farmacia: trazabilidad de lote dispensado
   loteId             Int?
   // Kit vendido como una sola línea (Empresa.kitsComoUnaLinea): referencia al combo

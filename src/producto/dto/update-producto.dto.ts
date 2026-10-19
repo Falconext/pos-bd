@@ -78,6 +78,15 @@ export class UpdateProductoDto {
   @Type(() => Number)
   costoUnitario?: number;
 
+  /**
+   * Sede cuyo costo se corrige: la que el Kardex está mostrando. 0 = "Todas
+   * las sedes" (la corrección vale para todas). Sin enviar, la sede de la sesión.
+   */
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
+  costoSedeId?: number;
+
   @IsOptional()
   @IsNumber()
   @Type(() => Number)

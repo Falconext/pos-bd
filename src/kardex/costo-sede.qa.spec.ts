@@ -350,9 +350,11 @@ describeSiHayBase('QA funcional · costo por sede', () => {
 
       // Antes ambas salían a S/150 —el global— aunque Centro pagó 100.
       expect(enCentro.costoPromedio).toBe(100);
-      expect(enCentro.valorTotal).toBe(1000);
+      // El valorizado se muestra CON IGV ("de bolsillo", feee53b 2026-10-05):
+      // costo neto × 1.18 redondeado a 2 decimales, por el stock.
+      expect(enCentro.valorTotal).toBeCloseTo(10 * 118, 6);
       expect(enNorte.costoPromedio).toBe(200);
-      expect(enNorte.valorTotal).toBe(2000);
+      expect(enNorte.valorTotal).toBeCloseTo(10 * 236, 6);
     });
 
     enEscenario('comprar dos veces en la misma sede pondera contra lo suyo', async (e) => {
@@ -926,8 +928,10 @@ describeSiHayBase('QA funcional · costo por sede', () => {
       );
       const enCentro = (id: number) => centro.productos.find((p: any) => p.id === id);
 
-      expect(enCentro(e.productoId).valorTotal).toBe(1000);
-      expect(enCentro(b).valorTotal).toBe(200);
+      // El valorizado se muestra CON IGV ("de bolsillo", feee53b 2026-10-05):
+      // costo neto × 1.18 redondeado a 2 decimales, por el stock.
+      expect(enCentro(e.productoId).valorTotal).toBeCloseTo(1000 * 1.18, 6);
+      expect(enCentro(b).valorTotal).toBeCloseTo(200 * 1.18, 6);
       // El tercero no tiene stock en Centro: no aporta valor.
       expect(enCentro(c)?.valorTotal ?? 0).toBe(0);
     });
@@ -1055,7 +1059,9 @@ describeSiHayBase('QA funcional · costo por sede', () => {
         {} as any,
         e.centro,
       );
-      expect(inv.productos.find((p: any) => p.id === e.productoId).valorTotal).toBe(610);
+      // El valorizado se muestra CON IGV ("de bolsillo", feee53b 2026-10-05):
+      // costo neto × 1.18 redondeado a 2 decimales, por el stock.
+      expect(inv.productos.find((p: any) => p.id === e.productoId).valorTotal).toBeCloseTo(610 * 1.18, 6);
     });
   });
 
@@ -1065,8 +1071,8 @@ describeSiHayBase('QA funcional · costo por sede', () => {
   // los locales otra —S/1 009.73 en el caso que destapó esto— y el número que
   // el empresario acaba de escribir no se vería en ningún reporte por sede.
   describe('Ronda 12 · costo editado a mano', () => {
-    /** El editor real, con su propio servicio. */
-    const editarCosto = async (e: any, costo: number) => {
+    /** El editor real, con su propio servicio, desde la sede indicada. */
+    const editarCosto = async (e: any, costo: number, sedeId?: number) => {
       const { ProductoService } = await import('../producto/producto.service');
       const servicio: any = Object.create(ProductoService.prototype);
       servicio.prisma = prisma;
@@ -1075,26 +1081,50 @@ describeSiHayBase('QA funcional · costo por sede', () => {
         where: { id: e.productoId },
         data: { costoPromedio: costo },
       });
-      await servicio.resetearCostoPorSede(e.productoId, anterior, costo);
+      await servicio.aplicarCostoManual(e.productoId, sedeId, anterior, costo);
     };
 
-    enEscenario('editar el costo deja las sedes leyendo el valor nuevo', async (e) => {
-      await e.comprar(e.centro, 39, 42.25);
-      await e.comprar(e.norte, 29, 36.62);
-      expect(await e.costoDe(e.centro)).not.toBeNull();
+    enEscenario('editar en una sede no toca el costo de la otra', async (e) => {
+      await e.comprar(e.centro, 10, 100);
+      await e.comprar(e.norte, 10, 200);
 
-      await editarCosto(e, 25);
+      await editarCosto(e, 80, e.centro);
 
-      // Vuelven a NULL: el costo tipeado manda sobre lo calculado.
-      expect(await e.costoDe(e.centro)).toBeNull();
-      expect(await e.costoDe(e.norte)).toBeNull();
-      expect(await e.costoGlobal()).toBe(25);
+      expect(await e.costoDe(e.centro)).toBe(80);
+      expect(await e.costoDe(e.norte)).toBe(200);
+      expect(await e.costoGlobal()).toBeCloseTo(140, 4);
+      expect(await e.valorPorSedes()).toBeCloseTo(await e.valorGlobal(), 4);
+    });
+
+    enEscenario('OWENSOFT: corregir la principal no pisa lo que pagó el almacén', async (e) => {
+      // Principal compró a 20; el almacén, a 15.
+      await e.comprar(e.centro, 10, 20);
+      await e.comprar(e.norte, 10, 15);
+
+      await editarCosto(e, 20, e.centro);
+      expect(await e.costoDe(e.norte)).toBe(15);
+
+      await editarCosto(e, 14, e.norte);
+      expect(await e.costoDe(e.centro)).toBe(20);
+      expect(await e.costoDe(e.norte)).toBe(14);
+    });
+
+    enEscenario('una sede que seguía en NULL conserva lo que mostraba', async (e) => {
+      await e.comprar(e.centro, 10, 30);
+      await e.ajustar(e.norte, 5); // stock heredado, sin costo propio
+      expect(await e.costoDe(e.norte)).not.toBe(12);
+
+      const antes = costoDeSede(await e.costoDe(e.norte), await e.costoGlobal());
+      await editarCosto(e, 12, e.centro);
+
+      expect(await e.costoDe(e.norte)).toBeCloseTo(antes, 4);
+      expect(await e.costoDe(e.centro)).toBe(12);
       expect(await e.valorPorSedes()).toBeCloseTo(await e.valorGlobal(), 4);
     });
 
     enEscenario('el reporte por sede muestra el costo que se escribió', async (e) => {
       await e.comprar(e.centro, 10, 300);
-      await editarCosto(e, 75);
+      await editarCosto(e, 75, e.centro);
 
       const inv: any = await e.kardex.obtenerInventarioValorizado(
         e.empresaId,
@@ -1103,32 +1133,59 @@ describeSiHayBase('QA funcional · costo por sede', () => {
       );
       const fila = inv.productos.find((p: any) => p.id === e.productoId);
       expect(fila.costoPromedio).toBe(75);
-      expect(fila.valorTotal).toBe(750);
+      // El valorizado se muestra CON IGV ("de bolsillo", feee53b 2026-10-05):
+      // costo neto × 1.18 redondeado a 2 decimales, por el stock.
+      expect(fila.valorTotal).toBeCloseTo(10 * Number((75 * 1.18).toFixed(2)), 6);
     });
 
     enEscenario('guardar sin cambiar el costo no borra lo calculado', async (e) => {
-      // Un guardado cualquiera del formulario no puede tirar a la basura lo
-      // que las compras calcularon para cada sede.
+      // El formulario trae el costo de la sede; guardarlo tal cual no puede
+      // mover nada, aunque difiera del global.
       await e.comprar(e.centro, 10, 100);
       await e.comprar(e.norte, 10, 200);
-      const antesCentro = await e.costoDe(e.centro);
 
-      await editarCosto(e, await e.costoGlobal());
+      await editarCosto(e, 100, e.centro);
 
-      expect(await e.costoDe(e.centro)).toBe(antesCentro);
+      expect(await e.costoDe(e.centro)).toBe(100);
       expect(await e.costoDe(e.norte)).toBe(200);
+      expect(await e.costoGlobal()).toBeCloseTo(150, 4);
     });
 
-    enEscenario('tras editar, cada sede vuelve a diferenciarse al comprar', async (e) => {
+    enEscenario('tras editar, la sede sigue promediando con sus compras', async (e) => {
       await e.comprar(e.centro, 10, 100);
       await e.comprar(e.norte, 10, 200);
-      await editarCosto(e, 50);
+      await editarCosto(e, 50, e.centro);
 
       await e.comprar(e.centro, 10, 90);
 
-      // Centro: 10 al costo tipeado (50) + 10 a 90 → 70. Norte sigue en 50.
+      // Centro: 10 al costo tipeado (50) + 10 a 90 → 70. Norte no se movió.
       expect(await e.costoDe(e.centro)).toBeCloseTo(70, 4);
-      expect(await e.costoDe(e.norte)).toBeCloseTo(50, 4);
+      expect(await e.costoDe(e.norte)).toBeCloseTo(200, 4);
+      expect(await e.valorPorSedes()).toBeCloseTo(await e.valorGlobal(), 4);
+    });
+
+    enEscenario('sin sede, la corrección vale para todas como antes', async (e) => {
+      await e.comprar(e.centro, 10, 100);
+      await e.comprar(e.norte, 10, 200);
+
+      await editarCosto(e, 25);
+
+      expect(await e.costoDe(e.centro)).toBeNull();
+      expect(await e.costoDe(e.norte)).toBeNull();
+      expect(await e.costoGlobal()).toBe(25);
+    });
+  });
+
+  describe('Ronda 12b · la sede sin stock conserva su último costo', () => {
+    enEscenario('OWENSOFT: comprar en el almacén no cambia el costo de la principal vacía', async (e) => {
+      await e.comprar(e.centro, 2, 183.94);
+      await e.despachar(e.centro, 2);
+      expect(await e.stockDe(e.centro)).toBe(0);
+
+      await e.comprar(e.norte, 2, 150);
+
+      expect(await e.costoDe(e.norte)).toBe(150);
+      expect(costoDeSede(await e.costoDe(e.centro), await e.costoGlobal())).toBeCloseTo(183.94, 4);
       expect(await e.valorPorSedes()).toBeCloseTo(await e.valorGlobal(), 4);
     });
   });
@@ -1308,6 +1365,112 @@ describeSiHayBase('QA funcional · costo por sede', () => {
       expect(espiado).toHaveBeenCalledTimes(1);
       expect(r.costo).toBe(800);
       espiado.mockRestore();
+    });
+  });
+
+  // ── RONDA 15 · Las otras vías que escriben costo ──────────────────────────
+  // QA B 2026-10-19: el Excel de productos, la plantilla de fabricación y la
+  // propagación a variantes escribían el costo GLOBAL directo, y el export por
+  // sede sacaba el global. El global quedaba despegado de las sedes y la sede
+  // importada seguía mostrando el costo viejo.
+  describe('Ronda 15 · cargas, export y variantes', () => {
+    const servicio = async () => {
+      const { ProductoService } = await import('../producto/producto.service');
+      const s: any = Object.create(ProductoService.prototype);
+      s.prisma = prisma;
+      return s;
+    };
+
+    enEscenario('la carga corrige solo la sede destino y el global se deriva', async (e) => {
+      await e.comprar(e.centro, 10, 10);
+      await e.comprar(e.norte, 10, 20);
+      const s = await servicio();
+
+      await s.corregirCostoEnSede(e.productoId, e.norte, 30);
+
+      expect(await e.costoDe(e.centro)).toBe(10);
+      expect(await e.costoDe(e.norte)).toBe(30);
+      expect(await e.costoGlobal()).toBeCloseTo(20, 6);
+      expect(await e.valorPorSedes()).toBeCloseTo(await e.valorGlobal(), 6);
+    });
+
+    enEscenario('reimportar el mismo Excel (costo con IGV a 2 decimales) no reescribe', async (e) => {
+      await e.comprar(e.norte, 10, 12.3456);
+      const s = await servicio();
+      // Export: 12.3456 × 1.18 = 14.57; import: 14.57 / 1.18 = 12.3475.
+      await s.corregirCostoEnSede(e.productoId, e.norte, 12.3475, 0.0043);
+      expect(await e.costoDe(e.norte)).toBeCloseTo(12.3456, 6);
+    });
+
+    enEscenario('una sede sin fila recibe la suya y no borra el costo de las otras', async (e) => {
+      await e.comprar(e.centro, 10, 10);
+      await e.comprar(e.norte, 10, 20);
+      const sur = (
+        await prisma.sede.create({
+          data: { nombre: 'Sur', empresaId: e.empresaId },
+          select: { id: true },
+        })
+      ).id;
+      const s = await servicio();
+
+      await s.corregirCostoEnSede(e.productoId, sur, 50);
+
+      expect(await e.costoDe(sur)).toBe(50);
+      expect(await e.costoDe(e.centro)).toBe(10);
+      expect(await e.costoDe(e.norte)).toBe(20);
+      expect(await e.costoGlobal()).toBeCloseTo(15, 6);
+    });
+
+    enEscenario('el export de una sede trae el costo de esa sede', async (e) => {
+      await e.comprar(e.centro, 10, 10);
+      await e.comprar(e.norte, 10, 20);
+      const s = await servicio();
+      const XLSX = await import('xlsx');
+      const filas = (sedeId?: number) =>
+        s.exportar(e.empresaId, undefined, sedeId).then((buf: Buffer) => {
+          const wb = XLSX.read(buf);
+          return XLSX.utils
+            .sheet_to_json<any>(wb.Sheets[wb.SheetNames[0]])
+            .filter((r: any) => r['COSTO CON IGV'] !== '' && r['COSTO CON IGV'] != null);
+        });
+
+      const [norte] = await filas(e.norte);
+      const [centro] = await filas(e.centro);
+      expect(norte['COSTO CON IGV']).toBeCloseTo(23.6, 6);
+      expect(norte['VALOR INVENTARIO']).toBeCloseTo(236, 6);
+      expect(centro['COSTO CON IGV']).toBeCloseTo(11.8, 6);
+    });
+
+    enEscenario('el costo del padre baja a las variantes solo en la sede editada', async (e) => {
+      const s = await servicio();
+      const espejo = await e.nuevoProducto(`${e.empresaId}-M`, [e.centro, e.norte], e.productoId);
+      const propia = await e.nuevoProducto(`${e.empresaId}-L`, [e.centro, e.norte], e.productoId);
+      await prisma.producto.updateMany({
+        where: { id: { in: [e.productoId, espejo] } },
+        data: { costoPromedio: 10 },
+      });
+      await e.comprar(e.centro, 5, 25, propia);
+      await e.comprar(e.norte, 5, 10, espejo);
+
+      // Padre en Centro: 10 → 12.
+      await s.propagarCostoAVariantes(e.productoId, e.empresaId, e.centro, 10, 12);
+
+      expect(await e.costoDe(e.centro, espejo)).toBe(12);
+      // En Norte la variante conserva lo suyo: la corrección fue en Centro.
+      expect(await e.costoDe(e.norte, espejo)).toBe(10);
+      // La variante con compra propia no espejaba: no se toca.
+      expect(await e.costoDe(e.centro, propia)).toBe(25);
+      expect(await e.valorPorSedes(espejo)).toBeCloseTo(await e.valorGlobal(espejo), 6);
+    });
+
+    enEscenario('guardar el padre sin tocar el costo no arrastra a las variantes', async (e) => {
+      const s = await servicio();
+      const espejo = await e.nuevoProducto(`${e.empresaId}-M`, [e.centro, e.norte], e.productoId);
+      await prisma.producto.update({ where: { id: espejo }, data: { costoPromedio: 15 } });
+      // El padre vale 30 en Norte y su global (mezcla) es 15: el formulario,
+      // viendo Norte, muestra y reenvía 30. Antes 30 ≠ 15 propagaba.
+      await s.propagarCostoAVariantes(e.productoId, e.empresaId, e.norte, 30, 30);
+      expect(await e.costoGlobal(espejo)).toBe(15);
     });
   });
 });

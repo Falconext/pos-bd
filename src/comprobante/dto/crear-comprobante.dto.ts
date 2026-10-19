@@ -8,6 +8,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -43,6 +44,14 @@ class DetalleDto {
   @IsOptional()
   @IsString()
   descripcion?: string;
+
+  // Detalle multilínea bajo la descripción (p. ej. cotización de servicios:
+  // "Retiro de pintura antigua\nRaspado, lijado..."). Solo se imprime en el
+  // PDF; no va al XML UBL de SUNAT. Ver comprobante/detalle-adicional.ts.
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  detalleAdicional?: string;
 
   @Type(() => Number)
   @IsNumber()

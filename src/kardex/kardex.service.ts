@@ -1105,6 +1105,12 @@ export class KardexService {
     // Actualizar stock en la sede específica.
     const esSalida =
       tipoMovimiento === 'SALIDA' || tipoMovimiento === 'TRANSFERENCIA';
+    // Unidades que no se pudieron descontar. La salida NO puede retornar antes
+    // de la sincronización de abajo: desde 42154b5 lo hacía, y cada venta
+    // bajaba el stock de la sede pero dejaba `Producto.stock` como estaba. La
+    // tienda web lee ese campo y seguía ofreciendo lo ya vendido (OWENSOFT:
+    // caja de mantenimiento en 0 en el Kardex y "1 en stock" en la tienda).
+    let faltante = 0;
     if (esSalida && cantidad != null) {
       // Descuento ATÓMICO: resta la cantidad en UNA sola operación condicionada
       // al stock disponible. Evita el "lost update" de dos ventas simultáneas
@@ -1141,21 +1147,26 @@ export class KardexService {
             where: { productoId_sedeId: { productoId, sedeId } },
             data: { stock: { decrement: qty } },
           });
-          return 0;
+        } else {
+          await this.prisma.productoStock.update({
+            where: { productoId_sedeId: { productoId, sedeId } },
+            data: { stock: 0 },
+          });
+          faltante = round3(Math.max(0, qty - disponible));
         }
-
-        await this.prisma.productoStock.update({
-          where: { productoId_sedeId: { productoId, sedeId } },
-          data: { stock: 0 },
-        });
-        return round3(Math.max(0, qty - disponible));
       }
-      return 0;
     } else {
       await this.prisma.productoStock.update({
         where: { productoId_sedeId: { productoId, sedeId } },
         data: {
-          stock: round3(Math.max(0, nuevoStock)),
+          // Un ingreso SUMA de forma atómica, igual que la salida resta. Con
+          // el valor absoluto leído antes, un ingreso y una venta simultáneos
+          // se pisaban: dos anulaciones a la vez dejaban dos INGRESO en el
+          // Kardex y una sola devolución en el stock.
+          stock:
+            tipoMovimiento === 'INGRESO' && cantidad != null
+              ? { increment: round3(num(cantidad)) }
+              : round3(Math.max(0, nuevoStock)),
           // Un ingreso (o un ajuste positivo) de stock en la sede la deja
           // DISPONIBLE ahí (catálogo por sede): nunca puede haber stock de un
           // producto "invisible".
@@ -1221,8 +1232,8 @@ export class KardexService {
     // también cambia la mezcla, y vender en la sede barata deja el producto
     // concentrado en la cara. Con una sola sede el resultado es el de siempre.
     await alinearCostoGlobal(this.prisma, productoId, producto?.costoPromedio);
-    // Un ingreso o un ajuste nunca dejan unidades sin aplicar.
-    return 0;
+    // Un ingreso o un ajuste nunca dejan unidades sin aplicar; una salida puede.
+    return faltante;
   }
 
   /**
