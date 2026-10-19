@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
-import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { WhatsAppService, esBsuid } from '../whatsapp/whatsapp.service';
 import type { CalificacionBant } from './leads-ia.service';
 import { numerosInternos } from './numeros-internos';
 
@@ -165,7 +165,7 @@ export class LeadsAlertaService {
   }
 
   private mensajeAltoRiesgo(p: AvisoDerivacionParams): string {
-    const wa = `https://wa.me/${String(p.telefonoProspecto).replace(/\D/g, '')}`;
+    const wa = enlaceWhatsApp(p.telefonoProspecto);
     return [
       '⚠️ *CLIENTE DE ALTO RIESGO — HACER SEGUIMIENTO*',
       '',
@@ -183,7 +183,7 @@ export class LeadsAlertaService {
   }
 
   private mensajeDerivacion(p: AvisoDerivacionParams): string {
-    const wa = `https://wa.me/${String(p.telefonoProspecto).replace(/\D/g, '')}`;
+    const wa = enlaceWhatsApp(p.telefonoProspecto);
     return [
       '🙋 *UN CLIENTE NECESITA UNA PERSONA*',
       '',
@@ -210,7 +210,7 @@ export class LeadsAlertaService {
   }
 
   private mensajeWhatsApp(p: AlertaLeadParams, panelUrl: string): string {
-    const waProspecto = `https://wa.me/${p.telefonoProspecto.replace(/\D/g, '')}`;
+    const waProspecto = enlaceWhatsApp(p.telefonoProspecto);
     const s = p.cal.score;
     return [
       '🔥 *LEAD CALIENTE* 🔥',
@@ -285,4 +285,14 @@ export class LeadsAlertaService {
     });
     if (error) throw new Error(String((error as any)?.message ?? error));
   }
+}
+
+/**
+ * Enlace para escribirle al cliente. A un usuario que llegó sin número (solo
+ * con su id de WhatsApp, por tener @nick) no se le puede abrir un wa.me: se
+ * le contesta desde el panel.
+ */
+function enlaceWhatsApp(telefono: string | null | undefined): string {
+  if (esBsuid(telefono)) return 'sin número (usuario con @nick): respóndele desde el panel';
+  return `https://wa.me/${String(telefono ?? '').replace(/\D/g, '')}`;
 }

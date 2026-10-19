@@ -123,12 +123,27 @@ export class LeadsWebhookController {
             // asesor, y antes ese mensaje se descartaba en silencio.
             const texto = textoDeMensaje(msg);
             if (texto === null) continue;
-            const contacto = contactos.find((c) => c.wa_id === msg.from);
+            // Con nombre de usuario (@nick) Meta puede omitir el teléfono:
+            // `from` no viene y queda `from_user_id` (BSUID). Antes eso creaba
+            // la conversación sin teléfono, fallaba y el mensaje se perdía
+            // (19-10: "Hola", "Deseo info", "Responde basura" sin respuesta).
+            const remitente: string | undefined = msg.from ?? msg.from_user_id;
+            if (!remitente) {
+              this.logger.warn(
+                `Webhook leads: mensaje ${msg.id} sin remitente (ni from ni from_user_id); se ignora.`,
+              );
+              continue;
+            }
+            const contacto = contactos.find(
+              (c) =>
+                (msg.from && c.wa_id === msg.from) ||
+                (msg.from_user_id && c.user_id === msg.from_user_id),
+            );
             await this.queue.add(
               JOB_INGRESAR_MENSAJE,
               {
                 phoneNumberId,
-                from: msg.from,
+                from: remitente,
                 messageId: msg.id,
                 text: texto,
                 esAudio: msg.type === 'audio',
@@ -137,7 +152,7 @@ export class LeadsWebhookController {
                 // nota de voz y bajar la imagen del voucher para que el
                 // encargado pueda mirarlo antes de validar el pago.
                 mediaId: msg.audio?.id ?? msg.image?.id ?? msg.document?.id,
-                nombre: contacto?.profile?.name,
+                nombre: contacto?.profile?.name ?? contacto?.profile?.username,
                 timestamp: msg.timestamp,
               },
               {
