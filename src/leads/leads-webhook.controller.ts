@@ -103,10 +103,14 @@ export class LeadsWebhookController {
     }
 
     const body: any = req.body ?? {};
-    // Meta siempre espera 200 rápido; encolamos y respondemos.
-    res.status(200).send('EVENT_RECEIVED');
-
-    if (body.object !== 'whatsapp_business_account') return;
+    if (body.object !== 'whatsapp_business_account') {
+      return res.status(200).send('EVENT_RECEIVED');
+    }
+    // Primero se encola y DESPUÉS se contesta. Antes el 200 salía primero: si
+    // la cola fallaba, Meta ya tenía su OK y no reintentaba, y el mensaje se
+    // perdía sin rastro (19-10, "Habla p Tone" al 915 con doble check y sin
+    // conversación). Con un 500 Meta reentrega, y la reentrega no duplica:
+    // el jobId sale del id del mensaje y LeadMensaje.whatsappMsgId es único.
     try {
       for (const entry of body.entry ?? []) {
         for (const change of entry.changes ?? []) {
@@ -154,7 +158,9 @@ export class LeadsWebhookController {
       }
     } catch (e: any) {
       this.logger.error(`Webhook leads: error encolando: ${e?.message}`);
+      return res.status(500).send('retry');
     }
+    return res.status(200).send('EVENT_RECEIVED');
   }
 }
 
