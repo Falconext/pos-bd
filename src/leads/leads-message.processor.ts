@@ -34,6 +34,7 @@ import {
 import { conDescargoLegal } from './prompt-asesor';
 import { sinConfirmacionFalsa } from './confirmacion-falsa';
 import { conIndicacionMedica, esAltoRiesgo } from './alto-riesgo';
+import { avisoVoucher, extraerTitular } from './voucher-verificacion';
 import { esNumeroInterno, numerosInternos } from './numeros-internos';
 import { bloqueComercial } from './tarifas-y-descuentos';
 import {
@@ -1237,11 +1238,16 @@ export class LeadsMessageProcessor extends WorkerHost {
           leido.pagador && `a nombre de ${leido.pagador}`,
         ].filter(Boolean);
         if (partes.length) {
+          const aviso = await this.verificarVoucher(
+            empresaId,
+            borrador.comprobanteId,
+            leido,
+          );
           await this.prisma.leadMensaje
             .update({
               where: { id: mensajeId },
               data: {
-                contenido: `[el cliente envió un comprobante de pago ${partes.join(', ')}]${
+                contenido: `[el cliente envió un comprobante de pago ${partes.join(', ')}]${aviso ? ` ${aviso}` : ''}${
                   d.text?.replace('[el cliente envió una imagen]', '').trim()
                     ? ` ${d.text.replace('[el cliente envió una imagen]', '').trim()}`
                     : ''
@@ -1261,6 +1267,56 @@ export class LeadsMessageProcessor extends WorkerHost {
       this.logger.warn(
         `Lead: no se pudo registrar el comprobante de pago: ${e?.message}`,
       );
+    }
+  }
+
+  /**
+   * ¿La captura cuadra con el titular del negocio y con lo que falta pagar?
+   * Ver voucher-verificacion.ts. Best-effort: si algo falla, no se avisa.
+   */
+  private async verificarVoucher(
+    empresaId: number,
+    comprobanteId: number | null,
+    leido: { monto?: number | null; pagador?: string | null },
+  ): Promise<string | null> {
+    try {
+      const [cfg, empresa] = await Promise.all([
+        this.pedido.configDe(empresaId),
+        this.prisma.empresa.findUnique({
+          where: { id: empresaId },
+          select: { iaVentasContexto: true },
+        }),
+      ]);
+      const titular =
+        extraerTitular(cfg.mediosPago) ??
+        extraerTitular(empresa?.iaVentasContexto);
+      let pendiente: number | null = null;
+      if (comprobanteId) {
+        const [nota, despacho] = await Promise.all([
+          this.prisma.comprobante.findUnique({
+            where: { id: comprobanteId },
+            select: { saldo: true },
+          }),
+          this.prisma.envioDespacho.findUnique({
+            where: { comprobanteId },
+            select: { montoCOD: true },
+          }),
+        ]);
+        pendiente =
+          despacho?.montoCOD != null
+            ? Number(despacho.montoCOD)
+            : nota?.saldo != null
+              ? Number(nota.saldo)
+              : null;
+      }
+      return avisoVoucher({
+        monto: leido.monto,
+        nombre: leido.pagador,
+        referenciaTitular: titular,
+        pendiente,
+      });
+    } catch {
+      return null;
     }
   }
 

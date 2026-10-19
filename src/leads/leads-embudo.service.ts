@@ -314,6 +314,23 @@ export class LeadsEmbudoService {
       select: { saldo: true },
     });
     const pedido = Number(montoConfirmado ?? pago.montoLeido ?? 0);
+    const despachoAntes = await this.prisma.envioDespacho.findUnique({
+      where: { comprobanteId: borrador.comprobanteId },
+      select: { montoCOD: true },
+    });
+    const pendiente =
+      despachoAntes?.montoCOD != null
+        ? Number(despachoAntes.montoCOD)
+        : Number(nota?.saldo ?? 0);
+    // Un monto leído que supera lo que falta no se asienta solo: pasó con un
+    // Yape de S/ 500 (a otra cuenta) para un adelanto de S/ 50. Asentarlo
+    // habría saldado la nota y dejado en 0 el cobro de la agencia.
+    if (montoConfirmado == null && pendiente > 0 && pedido > pendiente + 0.01) {
+      return {
+        registrado: false,
+        motivo: `El comprobante dice S/ ${pedido.toFixed(2)} y lo pendiente es S/ ${pendiente.toFixed(2)}: confirma el monto a mano.`,
+      };
+    }
     if (!(pedido > 0)) {
       return {
         registrado: false,
