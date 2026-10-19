@@ -107,6 +107,13 @@ export class IaVentasService {
     cantidadMensajes: number,
     ejecutor?: EjecutorHerramienta,
     negocio?: DatosDelNegocio,
+    /**
+     * Lo que cambia en cada mensaje (productos que coinciden, fragmentos del
+     * entrenamiento). Va pegado al último mensaje del cliente y NO al prompt
+     * de sistema, para que ese prompt sea idéntico entre mensajes y Gemini lo
+     * pueda servir desde caché.
+     */
+    contextoDelTurno?: string,
   ): Promise<RespuestaVenta> {
     const systemPrompt = promptDelAsesor({
       nombre: negocio?.nombre ?? 'este negocio',
@@ -127,6 +134,18 @@ export class IaVentasService {
       role: m.role === 'user' ? ('user' as const) : ('model' as const),
       content: m.content,
     }));
+    const apoyo = contextoDelTurno?.trim();
+    if (apoyo) {
+      const i = turnos.map((t) => t.role).lastIndexOf('user');
+      if (i >= 0) {
+        turnos[i] = {
+          ...turnos[i],
+          content:
+            `[INFORMACIÓN DE APOYO PARA ESTE MENSAJE — datos reales del negocio; úsala, no la menciones ni la cites como tal]\n${apoyo}\n\n` +
+            `[MENSAJE DEL CLIENTE]\n${turnos[i].content}`,
+        };
+      }
+    }
 
     // Con ejecutor, el modelo consulta el catálogo por su cuenta; sin él (y si
     // alguien reutiliza este servicio sin herramientas) se mantiene el turno

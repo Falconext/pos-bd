@@ -133,3 +133,24 @@ describe('conDescargoLegal', () => {
     expect(conDescargoLegal('Hola.', '  ', true)).toBe('Hola.');
   });
 });
+
+import { IaVentasService } from './leads-ia.service';
+
+describe('generarRespuesta: prompt fijo + apoyo en el último mensaje', () => {
+  it('dos mensajes distintos usan exactamente el mismo prompt de sistema', async () => {
+    const llamadas: any[] = [];
+    const gemini: any = {
+      chatConHerramientas: jest.fn(async (sistema: string, turnos: any[]) => {
+        llamadas.push({ sistema, turnos });
+        return { texto: 'ok', llamadas: [], uso: { entrada: 0, salida: 0, total: 0, cacheados: 0, llamadasAlModelo: 1 } };
+      }),
+    };
+    const ia = new IaVentasService(gemini, {} as any);
+    const negocio = { nombre: 'Hierba Sana', contexto: 'fijo' } as any;
+    const ejecutor = jest.fn();
+    await ia.generarRespuesta([{ role: 'user', content: 'moringa?' }], 'CONTEXTO FIJO', 1, ejecutor, negocio, 'Moringa S/ 30');
+    await ia.generarRespuesta([{ role: 'user', content: 'berberina?' }], 'CONTEXTO FIJO', 1, ejecutor, negocio, 'Berberina S/ 45');
+    expect(llamadas[0].sistema).toBe(llamadas[1].sistema);
+    expect(llamadas[0].turnos.at(-1).content).toMatch(/Moringa S\/ 30[\s\S]*moringa\?/);
+  });
+});
