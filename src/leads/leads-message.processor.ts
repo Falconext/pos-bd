@@ -155,7 +155,12 @@ export class LeadsMessageProcessor extends WorkerHost {
   async process(job: Job<MensajeEntrante | TareaRespuesta>): Promise<void> {
     if (job.name === JOB_RESPONDER) {
       try {
-        return await this.responder(job.data as TareaRespuesta);
+        // Solo si este turno respondió: si no respondió a propósito (bot en
+        // pausa, tope del plan), reprogramar sería un bucle.
+        if (await this.responder(job.data as TareaRespuesta)) {
+          await this.responderLoQueQuedo(job.data as TareaRespuesta);
+        }
+        return;
       } catch (e) {
         // Acá es donde el cliente se quedaba hablando solo: la cola reintenta
         // tres veces y, si la IA sigue sin poder responder, el trabajo muere
@@ -165,6 +170,34 @@ export class LeadsMessageProcessor extends WorkerHost {
       }
     }
     return this.ingresar(job.data as MensajeEntrante);
+  }
+
+  /**
+   * ¿Quedó un mensaje del cliente sin contestar al terminar este turno?
+   *
+   * Mientras este trabajo corre, su id está ocupado y lo que escribe el
+   * cliente NO programa respuesta propia. El control de "llegó algo nuevo"
+   * antes de enviar cubre lo que entra mientras la IA piensa, pero no lo que
+   * entra DESPUÉS de enviar (brochure, calificación: varios segundos). 19-10,
+   * Krezka: "Es Farmacia, ambas plataformas…" llegó 1 s después de la
+   * respuesta y quedó sin contestar. Si lo último es del cliente, se
+   * reprograma con otro id.
+   */
+  private async responderLoQueQuedo(t: TareaRespuesta): Promise<void> {
+    const ultimo = await this.prisma.leadMensaje.findFirst({
+      where: { conversacionId: t.conversacionId },
+      orderBy: { id: 'desc' },
+      select: { id: true, rol: true },
+    });
+    if (!ultimo || ultimo.rol !== 'USUARIO') return;
+    await this.queue.add(JOB_RESPONDER, t, {
+      jobId: `resp-${t.empresaId}-${t.conversacionId}-tras-${ultimo.id}`,
+      delay: 1_000,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 2000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    });
   }
 
   /**
@@ -494,7 +527,7 @@ export class LeadsMessageProcessor extends WorkerHost {
    * Responde a todo lo que el cliente haya escrito desde nuestro último
    * mensaje, en un solo turno.
    */
-  private async responder(t: TareaRespuesta): Promise<void> {
+  private async responder(t: TareaRespuesta): Promise<boolean> {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: t.empresaId },
       select: {
@@ -510,10 +543,10 @@ export class LeadsMessageProcessor extends WorkerHost {
         plan: { select: { maxLeadsMes: true } },
       },
     });
-    if (!empresa?.iaVentasActiva) return;
+    if (!empresa?.iaVentasActiva) return false;
     if (!this.ia.disponible()) {
       this.logger.warn('IA de ventas sin GEMINI_API_KEY; no se responde.');
-      return;
+      return false;
     }
 
     const conv = await this.prisma.leadConversacion.findUnique({
@@ -527,7 +560,7 @@ export class LeadsMessageProcessor extends WorkerHost {
         pausadoHasta: true,
       },
     });
-    if (!conv) return;
+    if (!conv) return false;
 
     // Bot pausado en esta conversación (un humano tomó el chat). La pausa por
     // intervención vence sola; la de una derivación, no — ahí hay una persona
@@ -540,7 +573,7 @@ export class LeadsMessageProcessor extends WorkerHost {
       where: { conversacionId: conv.id },
       select: { id: true },
     });
-    if (estaPausado(conv)) return;
+    if (estaPausado(conv)) return false;
     if (debeReactivarse(conv)) {
       const limpio = { botActivo: true, pausadoHasta: null, motivoPausa: null };
       await this.prisma.$transaction([
@@ -571,7 +604,7 @@ export class LeadsMessageProcessor extends WorkerHost {
         conv.creadoEn,
       )
     ) {
-      return;
+      return false;
     }
 
     const mensajes = await this.prisma.leadMensaje.findMany({
@@ -583,7 +616,7 @@ export class LeadsMessageProcessor extends WorkerHost {
     const ultimoLeido = mensajes.at(-1)?.id ?? 0;
     // Si lo último que hay es nuestro, este lote ya fue contestado (reintento
     // de BullMQ, o una respuesta manual desde el panel mientras esperábamos).
-    if (mensajes.at(-1)?.rol !== 'USUARIO') return;
+    if (mensajes.at(-1)?.rol !== 'USUARIO') return false;
 
     const historial: MensajeConversacion[] = mensajes.map((m) => ({
       role: m.rol === 'USUARIO' ? 'user' : 'assistant',
@@ -737,7 +770,7 @@ export class LeadsMessageProcessor extends WorkerHost {
       this.logger.log(
         `Lead: respuesta omitida en conv ${conv.id} (repetiría un mensaje anterior y el cliente no aportó nada nuevo).`,
       );
-      return;
+      return false;
     }
 
     // El cliente escribió mientras pensábamos. Mientras este trabajo corre su
@@ -761,7 +794,7 @@ export class LeadsMessageProcessor extends WorkerHost {
         removeOnComplete: true,
         removeOnFail: true,
       });
-      return;
+      return false;
     }
 
     // Nunca "tu pedido quedó registrado" si no hay pedido.
@@ -880,6 +913,7 @@ export class LeadsMessageProcessor extends WorkerHost {
         `Lead: conv ${conv.id} cerrada por despedida del cliente.`,
       );
     }
+    return true;
   }
 
   /**

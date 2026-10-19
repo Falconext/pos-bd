@@ -746,3 +746,32 @@ describe('el cliente dice cuándo retoma y el modelo no lo agenda', () => {
     expect(tipos).not.toContain('RECORDATORIO_ACORDADO');
   });
 });
+
+describe('mensaje que llega justo después de enviar la respuesta', () => {
+  const tarea = { name: JOB_RESPONDER, data: { empresaId: EMPRESA, conversacionId: CONV } };
+
+  it('19-10 Krezka: si al terminar lo último es del cliente, se vuelve a responder', async () => {
+    const { processor, prisma, queue } = armar({
+      mensajes: [{ rol: 'USUARIO', contenido: '¡Hola! Quiero más información' }],
+    });
+    // Al terminar el turno, ya entró otro mensaje del cliente (id 99).
+    prisma.leadMensaje.findFirst = jest.fn(async ({ orderBy }: any) =>
+      orderBy ? { id: 99, rol: 'USUARIO' } : null,
+    );
+    await processor.process(tarea as any);
+    const ids = queue.add.mock.calls.map((c: any[]) => c[2]?.jobId);
+    expect(ids).toContain(`resp-${EMPRESA}-${CONV}-tras-99`);
+  });
+
+  it('si lo último es la respuesta, no reprograma nada', async () => {
+    const { processor, prisma, queue } = armar({
+      mensajes: [{ rol: 'USUARIO', contenido: 'hola' }],
+    });
+    prisma.leadMensaje.findFirst = jest.fn(async ({ orderBy }: any) =>
+      orderBy ? { id: 100, rol: 'ASISTENTE' } : null,
+    );
+    await processor.process(tarea as any);
+    const ids = queue.add.mock.calls.map((c: any[]) => c[2]?.jobId).filter(Boolean);
+    expect(ids.some((i: string) => i.includes('-tras-'))).toBe(false);
+  });
+});
