@@ -170,3 +170,22 @@ describe('qué dice el aviso', () => {
     }
   });
 });
+
+describe('cliente de alto riesgo (decisión de Hierba Sana, 19-10)', () => {
+  it('avisa al mismo supervisor, pide seguimiento y dice que la IA sigue', async () => {
+    const { servicio, enviados } = armar();
+    await servicio.avisarAltoRiesgo({
+      ...BASE,
+      motivo: 'diabetes e hipertensión, toma metformina y losartán',
+      detalle: 'Diabetes Colesterol Presión - Natural Medix',
+      supervisorTelefono: '955947892',
+    });
+    expect(enviados).toHaveLength(1);
+    expect(enviados[0].numero).toBe('955947892');
+    expect(enviados[0].texto).toContain('ALTO RIESGO');
+    expect(enviados[0].texto).toContain('metformina');
+    expect(enviados[0].texto).toContain('La IA sigue atendiendo');
+    // No es una derivación: no dice que la IA dejó de responder.
+    expect(enviados[0].texto).not.toContain('dejó de responder');
+  });
+});

@@ -20,6 +20,7 @@ export const HERRAMIENTA_COTIZAR = 'cotizar';
 export const HERRAMIENTA_REGISTRAR_PEDIDO = 'registrar_pedido';
 export const HERRAMIENTA_AVISAR_VISITA = 'avisar_visita_tienda';
 export const HERRAMIENTA_DERIVAR = 'derivar_a_asesor';
+export const HERRAMIENTA_AVISAR_RIESGO = 'avisar_cliente_alto_riesgo';
 
 const buscarProductos: FunctionDeclaration = {
   name: HERRAMIENTA_BUSCAR_PRODUCTOS,
@@ -235,6 +236,34 @@ const derivar: FunctionDeclaration = {
 };
 
 /** Las herramientas disponibles hoy. Los bloques C y F añaden las suyas aquí. */
+/**
+ * Cliente de alto riesgo: el bot SIGUE atendiendo y una persona hace
+ * seguimiento. No es una derivación —esa apaga el bot—: Hierba Sana lo
+ * decidió así el 19-10 tras la prueba del diabético con metformina.
+ */
+const avisarAltoRiesgo: FunctionDeclaration = {
+  name: HERRAMIENTA_AVISAR_RIESGO,
+  description:
+    'Avisa al equipo que este cliente es de alto riesgo para que una persona le haga seguimiento. NO te saca de la conversación: sigues atendiendo normal. ' +
+    'Úsala UNA vez cuando el cliente diga que toma medicamentos, tiene una enfermedad crónica (diabetes, presión alta, enfermedad del corazón, riñón o hígado, cáncer), está embarazada o dando de lactar, o el producto es para un bebé o niño pequeño. ' +
+    'En ese mismo mensaje, después de recomendar, dile con naturalidad que lo consulte con su médico y que no deje su tratamiento actual hasta que su médico lo indique. No le digas que avisaste a nadie.',
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      riesgo: {
+        type: SchemaType.STRING,
+        description:
+          'Qué lo hace de alto riesgo, en sus palabras: condición y medicamentos ("diabetes e hipertensión, toma metformina y losartán").',
+      },
+      recomendado: {
+        type: SchemaType.STRING,
+        description: 'Producto(s) que le recomendaste, si ya lo hiciste.',
+      },
+    },
+    required: ['riesgo'],
+  },
+};
+
 export const HERRAMIENTAS_VENTA: FunctionDeclaration[] = [
   buscarProductos,
   enviarFoto,
@@ -243,6 +272,7 @@ export const HERRAMIENTAS_VENTA: FunctionDeclaration[] = [
   registrarPedido,
   avisarVisitaTienda,
   derivar,
+  avisarAltoRiesgo,
 ];
 
 /**
