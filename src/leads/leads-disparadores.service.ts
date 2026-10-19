@@ -14,6 +14,7 @@ import {
   cuandoDisparar,
   decidirEnvio,
   pideBaja,
+  proximoHorarioHabil,
 } from './leads-disparadores';
 import { disponibilidadEfectiva } from '../producto/disponibilidad.util';
 
@@ -93,6 +94,8 @@ export class LeadsDisparadoresService {
     telefono: string;
     referencia: string;
     desde?: Date;
+    /** Fecha exacta (la que dijo el cliente). Se corre al horario hábil. */
+    programadoPara?: Date;
     prospectoId?: number | null;
     conversacionId?: number | null;
   }) {
@@ -109,11 +112,9 @@ export class LeadsDisparadoresService {
       return { programado: false, motivo: 'número interno del negocio' };
     }
 
-    const programadoPara = cuandoDisparar(
-      datos.tipo,
-      datos.desde ?? new Date(),
-      config,
-    );
+    const programadoPara = datos.programadoPara
+      ? proximoHorarioHabil(datos.programadoPara, config)
+      : cuandoDisparar(datos.tipo, datos.desde ?? new Date(), config);
 
     try {
       await this.prisma.leadDisparo.upsert({
@@ -551,6 +552,11 @@ export class LeadsDisparadoresService {
       case TipoDisparo.REACTIVACION:
         return {
           texto: `${saludo}, hace un tiempo que no sabemos de ti. Tenemos novedades en el catálogo y seguimos a tu disposición.`,
+          parametros: [nombre],
+        };
+      case TipoDisparo.RECORDATORIO_ACORDADO:
+        return {
+          texto: `${saludo}, te escribo como quedamos para retomar tu pedido. ¿Seguimos? Cualquier duda, aquí estoy.`,
           parametros: [nombre],
         };
     }

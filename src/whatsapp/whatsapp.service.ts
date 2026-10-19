@@ -697,6 +697,13 @@ export class WhatsAppService {
       example: ['Juan'],
     },
     {
+      // El cliente dijo cuándo retomaba ("en una semana", "a fin de mes");
+      // se le escribe ese día. {{1}} nombre.
+      name: 'recordatorio_acordado',
+      body: 'Hola {{1}}, te escribo como quedamos para retomar tu pedido. ¿Seguimos? Cualquier duda, aquí estoy.',
+      example: ['Juan'],
+    },
+    {
       // F3: 24h después de la entrega. {{1}} nombre, {{2}} pedido.
       name: 'post_entrega_resena',
       body: 'Hola {{1}}, esperamos que estés disfrutando tu pedido {{2}}. ¿Nos cuentas qué te pareció? Tu opinión nos ayuda a mejorar.',

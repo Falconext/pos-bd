@@ -4471,6 +4471,7 @@ enum TipoDisparoLead {
   POST_ENTREGA
   RECOMPRA
   REACTIVACION
+  RECORDATORIO_ACORDADO
 }
 
 enum EstadoDisparoLead {

@@ -20,6 +20,7 @@ import {
   HERRAMIENTA_COTIZAR,
   HERRAMIENTA_DERIVAR,
   HERRAMIENTA_AVISAR_RIESGO,
+  HERRAMIENTA_AGENDAR_RECORDATORIO,
   HERRAMIENTA_ENVIAR_FOTO,
   HERRAMIENTA_GUARDAR_DATOS,
   HERRAMIENTA_REGISTRAR_PEDIDO,
@@ -46,7 +47,11 @@ import {
 import { LeadsEmbudoService } from './leads-embudo.service';
 import { LeadsConsultasService } from './leads-consultas.service';
 import { LeadsDisparadoresService } from './leads-disparadores.service';
-import { TipoDisparo, postergaLaCompra } from './leads-disparadores';
+import {
+  TipoDisparo,
+  aLaHoraEnLima,
+  postergaLaCompra,
+} from './leads-disparadores';
 import { EtapaCrm } from './leads-embudo';
 import {
   disponibilidadEfectiva,
@@ -623,6 +628,9 @@ export class LeadsMessageProcessor extends WorkerHost {
       .filter((s) => s && s.trim())
       .join('\n\n');
     const contextoDelTurno = [
+      // La fecha va acá y no en el prompt fijo: cambia cada día y rompería el
+      // caché. La necesita la IA para convertir "en una semana" en una fecha.
+      `HOY: ${new Intl.DateTimeFormat('es-PE', { timeZone: 'America/Lima', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date())} (${new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(new Date())}).`,
       this.productosYaMostrados(mensajes),
       relevantes.contexto,
       contextoRag,
@@ -1951,6 +1959,42 @@ export class LeadsMessageProcessor extends WorkerHost {
           return { avisado: true, instruccion };
         }
 
+        case HERRAMIENTA_AGENDAR_RECORDATORIO: {
+          // "En una semana", "a fin de mes": se le escribe ese día a las 10
+          // de la mañana de Lima. Pedido de Hierba Sana (19-10).
+          const fecha = String(argumentos.fecha ?? '').trim();
+          const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(fecha);
+          if (!m) {
+            return { agendado: false, error: 'La fecha tiene que ir como AAAA-MM-DD.' };
+          }
+          const mediodia = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], 17));
+          const cuando = aLaHoraEnLima(mediodia, 10);
+          const ahora = Date.now();
+          if (cuando.getTime() < ahora + 3600_000 || cuando.getTime() > ahora + 125 * 864e5) {
+            return {
+              agendado: false,
+              error: 'La fecha tiene que estar entre mañana y 4 meses desde hoy.',
+            };
+          }
+          const r = await this.disparadores.programar({
+            empresaId,
+            tipo: TipoDisparo.RECORDATORIO_ACORDADO,
+            telefono,
+            referencia: `conversacion:${conversacionId}:${fecha}`,
+            programadoPara: cuando,
+            conversacionId,
+          });
+          if (!r.programado) {
+            return {
+              agendado: false,
+              motivo: r.motivo,
+              instruccion:
+                'No le prometas que le escribirás en esa fecha: dile que puede escribirnos cuando quiera y aquí lo atendemos.',
+            };
+          }
+          return { agendado: true, fecha };
+        }
+
         case HERRAMIENTA_REGISTRAR_PEDIDO: {
           const res = await this.pedido.registrarPedido(
             empresaId,
@@ -1961,6 +2005,17 @@ export class LeadsMessageProcessor extends WorkerHost {
           // idempotencia haciendo su trabajo.
           if (res?.error && !/ya estaba registrado/i.test(res.error)) {
             huboFalloTecnico = true;
+          }
+          // Compró antes de la fecha que había dicho: el recordatorio ya no va.
+          if (res && 'pedido' in res && (res as { pedido?: string }).pedido) {
+            await this.disparadores
+              .cancelar(
+                empresaId,
+                telefono,
+                [TipoDisparo.RECORDATORIO_ACORDADO],
+                'El cliente ya hizo su pedido',
+              )
+              .catch(() => undefined);
           }
           return res;
         }

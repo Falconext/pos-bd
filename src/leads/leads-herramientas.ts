@@ -21,6 +21,7 @@ export const HERRAMIENTA_REGISTRAR_PEDIDO = 'registrar_pedido';
 export const HERRAMIENTA_AVISAR_VISITA = 'avisar_visita_tienda';
 export const HERRAMIENTA_DERIVAR = 'derivar_a_asesor';
 export const HERRAMIENTA_AVISAR_RIESGO = 'avisar_cliente_alto_riesgo';
+export const HERRAMIENTA_AGENDAR_RECORDATORIO = 'agendar_recordatorio';
 
 const buscarProductos: FunctionDeclaration = {
   name: HERRAMIENTA_BUSCAR_PRODUCTOS,
@@ -264,6 +265,33 @@ const avisarAltoRiesgo: FunctionDeclaration = {
   },
 };
 
+/**
+ * El cliente dijo CUÁNDO retoma: "en una semana", "a fin de mes", "cuando
+ * cobre el 30", "cuando regrese de viaje el lunes". Hierba Sana (19-10): ese
+ * día hay que escribirle, como un agendado.
+ */
+const agendarRecordatorio: FunctionDeclaration = {
+  name: HERRAMIENTA_AGENDAR_RECORDATORIO,
+  description:
+    'Programa un mensaje para el cliente en la fecha en que él dijo que retomaría la compra. Úsala cuando el cliente diga una fecha o un plazo concreto ("en una semana", "a fin de mes", "cuando cobre el 30", "regreso de viaje el lunes"). ' +
+    'Calcula la fecha con el día de HOY que viene en la información de apoyo y pásala como AAAA-MM-DD. Si dice "fin de mes", usa el último día del mes. ' +
+    'Si no da ninguna fecha ("lo voy a pensar", "lo consulto"), NO la uses: de eso ya se encarga otro aviso. Después de usarla, dile en una línea que le escribirás ese día, y despídete sin insistir.',
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      fecha: {
+        type: SchemaType.STRING,
+        description: 'Fecha en formato AAAA-MM-DD, entre mañana y 4 meses desde hoy.',
+      },
+      motivo: {
+        type: SchemaType.STRING,
+        description: 'Lo que dijo el cliente, en pocas palabras ("cobra a fin de mes").',
+      },
+    },
+    required: ['fecha'],
+  },
+};
+
 export const HERRAMIENTAS_VENTA: FunctionDeclaration[] = [
   buscarProductos,
   enviarFoto,
@@ -273,6 +301,7 @@ export const HERRAMIENTAS_VENTA: FunctionDeclaration[] = [
   avisarVisitaTienda,
   derivar,
   avisarAltoRiesgo,
+  agendarRecordatorio,
 ];
 
 /**

@@ -32,6 +32,8 @@ export enum TipoDisparo {
   RECOMPRA = 'RECOMPRA',
   /** 33.6 — reactivación tras 45 días sin actividad. */
   REACTIVACION = 'REACTIVACION',
+  /** El cliente dijo cuándo retomaba ("en una semana", "a fin de mes"). */
+  RECORDATORIO_ACORDADO = 'RECORDATORIO_ACORDADO',
 }
 
 export interface DefinicionDisparo {
@@ -105,6 +107,15 @@ export const CATALOGO_DISPAROS: Record<TipoDisparo, DefinicionDisparo> = {
     demoraHoras: 45 * 24,
     plantilla: 'reactivacion_45',
     categoria: 'MARKETING',
+    exigeProductoDisponible: false,
+  },
+  [TipoDisparo.RECORDATORIO_ACORDADO]: {
+    tipo: TipoDisparo.RECORDATORIO_ACORDADO,
+    etiqueta: 'Recordatorio en la fecha que dijo el cliente',
+    // La fecha la pone quien lo programa (la que dijo el cliente).
+    demoraHoras: 0,
+    plantilla: 'recordatorio_acordado',
+    categoria: 'UTILITY',
     exigeProductoDisponible: false,
   },
 };
