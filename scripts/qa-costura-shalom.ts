@@ -53,6 +53,8 @@ async function main() {
         return { success: true };
       },
     } as never,
+    {} as never,
+    {} as never,
   );
   const embudo = new LeadsEmbudoService(prisma, { isEnabled: () => false } as never);
   const disparos = new LeadsDisparadoresService(

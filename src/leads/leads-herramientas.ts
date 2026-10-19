@@ -122,6 +122,11 @@ const guardarDatosEnvio: FunctionDeclaration = {
         description:
           'Nombre de un tercero que recibirá, si no es el comprador.',
       },
+      notaEntrega: {
+        type: SchemaType.STRING,
+        description:
+          'Indicaciones para quien entrega que no son la dirección: el vuelto que necesita ("vuelto de S/ 50"), piso, timbre. Si el cliente lo dice, guárdalo aquí: es la única forma de que le llegue al motorizado. No le digas que ya se avisó si no lo guardaste.',
+      },
       sexo: {
         type: SchemaType.STRING,
         description:

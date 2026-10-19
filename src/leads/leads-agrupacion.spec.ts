@@ -84,6 +84,8 @@ function armar(
     },
     leadMensaje: {
       findUnique: jest.fn().mockResolvedValue(null),
+      // ¿Ya se mandó el descargo en esta conversación? En estas pruebas, no.
+      findFirst: jest.fn().mockResolvedValue(null),
       count: jest.fn().mockResolvedValue(0),
       // Dos lecturas distintas sobre la misma tabla: el historial completo y
       // los embeddings de nuestras últimas respuestas.

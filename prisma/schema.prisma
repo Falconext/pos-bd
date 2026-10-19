@@ -4794,6 +4794,10 @@ model LeadPedidoBorrador {
   /// Si recibe un tercero.
   recibeNombre String?
   recibeDni    String?
+  /// Lo que el motorizado tiene que saber y no es dirección: el vuelto que
+  /// necesita, "tocar el timbre del 2do piso". La IA lo prometía en el chat
+  /// ("ya le avisamos al motorizado") y no quedaba en ningún lado.
+  notaEntrega  String?
 
   // ── Lo que lleva ─────────────────────────────────────────────────────────
   /// [{ productoId, cantidad }] confirmados por el cliente.

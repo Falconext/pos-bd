@@ -72,6 +72,8 @@ export interface DatosDelCliente {
   horario?: string;
   agenciaSede?: string;
   recibeNombre?: string;
+  /** Vuelto, piso, timbre: lo que el motorizado tiene que saber. */
+  notaEntrega?: string;
   /**
    * Sexo y edad del cliente. NO son datos de entrega y nunca se le piden:
    * solo se anotan si los dice (la edad suele salir al hablar de la dosis).
@@ -272,6 +274,7 @@ export class LeadsPedidoService {
       'horario',
       'agenciaSede',
       'recibeNombre',
+      'notaEntrega',
     ] as const) {
       const valor = datos[campo]?.trim();
       if (valor) {
@@ -877,7 +880,13 @@ export class LeadsPedidoService {
           ...(borrador.direccion
             ? { direccionDestino: borrador.direccion }
             : {}),
-          ...(borrador.referencia ? { observaciones: borrador.referencia } : {}),
+          ...(borrador.referencia || borrador.notaEntrega
+            ? {
+                observaciones: [borrador.referencia, borrador.notaEntrega]
+                  .filter(Boolean)
+                  .join(' — '),
+              }
+            : {}),
           ...(borrador.lugar ? { distrito: borrador.lugar } : {}),
           ...(borrador.nombre ? { nombreDestinatario: borrador.nombre } : {}),
           ...(borrador.dni ? { dniDestinatario: borrador.dni } : {}),
@@ -1192,6 +1201,7 @@ export class LeadsPedidoService {
       referencia: string | null;
       horario: string | null;
       agenciaSede: string | null;
+      notaEntrega?: string | null;
     },
     calculo: ReturnType<typeof calcularDescuento>,
     adelanto: number,
@@ -1216,6 +1226,7 @@ export class LeadsPedidoService {
     if (b.referencia) l.push(`Referencia: ${b.referencia}`);
     if (b.agenciaSede) l.push(`Agencia: ${b.agenciaSede}`);
     if (b.horario) l.push(`Horario: ${b.horario}`);
+    if (b.notaEntrega) l.push(`Para la entrega: ${b.notaEntrega}`);
     l.push(`Envío: ${soles(calculo.envio)}`);
     if (calculo.descuento > 0) l.push(`Descuento: ${soles(calculo.descuento)}`);
     l.push(`Monto a pagar: ${soles(calculo.montoAPagar)}`);

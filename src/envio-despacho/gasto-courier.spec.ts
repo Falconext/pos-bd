@@ -16,7 +16,7 @@ import { EnvioDespachoService } from './envio-despacho.service';
 import { UpdateEnvioDespachoDto } from './dto/envio-despacho.dto';
 
 describe('Gasto de envío por courier', () => {
-  const service = new EnvioDespachoService({} as any, {} as any, {} as any);
+  const service = new EnvioDespachoService({} as any, {} as any, {} as any, {} as any, {} as any);
   const fila = (envio: any) => (service as any).filaReparto(envio);
   const agrupar = (filas: any[], key: string) =>
     (service as any).agrupar(filas, key);
@@ -106,7 +106,7 @@ describe('Gasto de envío por courier', () => {
  * el usuario escribe el monto, guarda, y nadie avisa que se perdió.
  */
 describe('Gasto de envío por courier · se guarda de verdad', () => {
-  const service = new EnvioDespachoService({} as any, {} as any, {} as any);
+  const service = new EnvioDespachoService({} as any, {} as any, {} as any, {} as any, {} as any);
   const pick = (dto: any) => (service as any).pickFields(dto);
 
   it('el monto pagado al courier sobrevive al guardado', () => {

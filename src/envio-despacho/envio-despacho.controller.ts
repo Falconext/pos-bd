@@ -254,7 +254,11 @@ export class EnvioDespachoController {
     @Param('comprobanteId', ParseIntPipe) comprobanteId: number,
     @User() user: any,
   ) {
-    return this.service.confirmarPago(comprobanteId, user.empresaId);
+    return this.service.confirmarPago(
+      comprobanteId,
+      user.empresaId,
+      user.id ?? undefined,
+    );
   }
 
   @Patch('comprobante/:comprobanteId/actualizar-saldo')
