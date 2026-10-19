@@ -210,3 +210,30 @@ describe('medio de pago del voucher validado', () => {
     expect(medioDePago(null)).toBe('TRANSFERENCIA');
   });
 });
+
+import { LeadsEmbudoService } from './leads-embudo.service';
+
+describe('validar un voucher que no cuadra', () => {
+  it('no asienta solo un monto leído mayor a lo pendiente', async () => {
+    const pagos = { registrarPago: jest.fn() };
+    const prisma: any = {
+      leadComprobantePago: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 5, prospectoId: 1, conversacionId: 376, validadoEn: null,
+          montoLeido: 500, medioLeido: 'Yape', operacionLeida: '08779795',
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      leadPedidoBorrador: { findUnique: jest.fn().mockResolvedValue({ comprobanteId: 99 }) },
+      comprobante: { findFirst: jest.fn().mockResolvedValue({ saldo: 90 }) },
+      envioDespacho: { findUnique: jest.fn().mockResolvedValue({ id: 1, montoCOD: 100 }), update: jest.fn() },
+      usuario: { findUnique: jest.fn().mockResolvedValue(null) },
+    };
+    const s = new LeadsEmbudoService(prisma, {} as any, pagos as any);
+    const r: any = await s.validarPago(5, 89, { id: 157, nombre: 'Edwing' }, false);
+    expect(pagos.registrarPago).not.toHaveBeenCalled();
+    expect(prisma.envioDespacho.update).not.toHaveBeenCalled();
+    expect(r.adelanto.registrado).toBe(false);
+    expect(r.adelanto.motivo).toMatch(/confirma el monto a mano/);
+  });
+});
