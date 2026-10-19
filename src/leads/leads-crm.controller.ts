@@ -69,13 +69,16 @@ export class LeadsCrmController {
   validarPago(
     @User() user: any,
     @Param('pagoId', ParseIntPipe) pagoId: number,
-    @Body() body: { pasarADespacho?: boolean },
+    @Body() body: { pasarADespacho?: boolean; monto?: number },
   ) {
+    const monto = Number(body?.monto);
     return this.embudo.validarPago(
       pagoId,
       user.empresaId,
       { id: user.sub ?? user.id, nombre: user.nombre },
       body?.pasarADespacho !== false,
+      // El monto que confirma quien valida, si lo corrige; si no, el leído.
+      monto > 0 ? monto : undefined,
     );
   }
 

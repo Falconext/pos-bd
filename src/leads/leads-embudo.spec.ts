@@ -199,3 +199,14 @@ describe('los automatismos no hacen retroceder un pedido', () => {
     expect(esAvance(EtapaCrm.FRIO, EtapaCrm.COTIZADO)).toBe(true);
   });
 });
+
+import { medioDePago } from './leads-embudo.service';
+
+describe('medio de pago del voucher validado', () => {
+  it('traduce lo que leyó la IA a los nombres de la caja', () => {
+    expect(medioDePago('Yape')).toBe('YAPE');
+    expect(medioDePago('PLIN - Interbank')).toBe('PLIN');
+    expect(medioDePago('BCP')).toBe('TRANSFERENCIA');
+    expect(medioDePago(null)).toBe('TRANSFERENCIA');
+  });
+});
