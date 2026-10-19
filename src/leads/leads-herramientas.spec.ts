@@ -322,3 +322,17 @@ describe('caché del contexto', () => {
     expect(gestor.create).toHaveBeenCalledTimes(2);
   });
 });
+
+import {
+  HERRAMIENTAS_VENTA as LISTA,
+  HERRAMIENTA_AVISAR_RIESGO,
+} from './leads-herramientas';
+
+describe('aviso de alto riesgo', () => {
+  it('está entre las herramientas y deja claro que no saca al asesor', () => {
+    const h = LISTA.find((x) => x.name === HERRAMIENTA_AVISAR_RIESGO);
+    expect(h).toBeDefined();
+    expect(h!.description).toMatch(/sigues atendiendo/i);
+    expect(h!.description).toMatch(/no deje su tratamiento/i);
+  });
+});

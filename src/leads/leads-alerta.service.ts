@@ -111,6 +111,23 @@ export class LeadsAlertaService {
    * fallar porque WhatsApp esté caído.
    */
   async avisarDerivacion(p: AvisoDerivacionParams): Promise<void> {
+    await this.avisarAlSupervisor(p, this.mensajeDerivacion(p), 'derivación');
+  }
+
+  /**
+   * Cliente de alto riesgo (medicación, enfermedad crónica, embarazo): llega
+   * al mismo número que las derivaciones, pero la IA SIGUE respondiendo. Lo
+   * que se pide es seguimiento, no tomar el chat.
+   */
+  async avisarAltoRiesgo(p: AvisoDerivacionParams): Promise<void> {
+    await this.avisarAlSupervisor(p, this.mensajeAltoRiesgo(p), 'alto riesgo');
+  }
+
+  private async avisarAlSupervisor(
+    p: AvisoDerivacionParams,
+    texto: string,
+    que: string,
+  ): Promise<void> {
     const admins = await this.prisma.usuario.findMany({
       where: { empresaId: p.empresaId, rol: 'ADMIN_EMPRESA' },
       select: { celular: true },
@@ -122,12 +139,11 @@ export class LeadsAlertaService {
       : numerosInternos(admins.map((a) => a.celular));
     if (destinos.length === 0) {
       this.logger.warn(
-        `Derivación de la empresa ${p.empresaId} sin número a quién avisar: configura el supervisor o el celular del administrador.`,
+        `Aviso de ${que} de la empresa ${p.empresaId} sin número a quién avisar: configura el supervisor o el celular del administrador.`,
       );
       return;
     }
 
-    const texto = this.mensajeDerivacion(p);
     await Promise.allSettled(
       destinos.map((numero) =>
         this.whatsapp
@@ -135,17 +151,35 @@ export class LeadsAlertaService {
           .then((r) => {
             if (!r.success) {
               this.logger.warn(
-                `Aviso de derivación a ${numero} falló: ${r.error}`,
+                `Aviso de ${que} a ${numero} falló: ${r.error}`,
               );
             }
           })
           .catch((e) =>
             this.logger.warn(
-              `Aviso de derivación a ${numero} error: ${e?.message}`,
+              `Aviso de ${que} a ${numero} error: ${e?.message}`,
             ),
           ),
       ),
     );
+  }
+
+  private mensajeAltoRiesgo(p: AvisoDerivacionParams): string {
+    const wa = `https://wa.me/${String(p.telefonoProspecto).replace(/\D/g, '')}`;
+    return [
+      '⚠️ *CLIENTE DE ALTO RIESGO — HACER SEGUIMIENTO*',
+      '',
+      `👤 *${p.nombreProspecto?.trim() || 'Sin nombre'}*`,
+      `📱 ${wa}`,
+      `🩺 ${p.motivo}`,
+      p.detalle?.trim() ? `💊 Se le recomendó: ${p.detalle.trim()}` : null,
+      '',
+      'La IA sigue atendiendo y ya le dijo que consulte con su médico y no deje su tratamiento. Escríbele para acompañarlo:',
+      wa,
+      `Ver en el panel: ${this.frontendUrl()}/administrador/leads`,
+    ]
+      .filter((l) => l !== null)
+      .join('\n');
   }
 
   private mensajeDerivacion(p: AvisoDerivacionParams): string {
