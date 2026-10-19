@@ -222,7 +222,7 @@
         <tr><td>HORA:</td><td>{{hora}}</td></tr>
         <tr><td>MONEDA:</td><td>{{monedaNombre}}</td></tr>
         <tr><td>FORMA PAGO:</td><td>{{formaPago}}</td></tr>
-        <tr><td>MEDIO PAGO:</td><td>{{medioPago}} {{simboloMoneda}} {{pagado}}</td></tr>
+        <tr><td>MEDIO PAGO:</td><td>{{#if pagosMixtosFmt}}{{#each pagosMixtosFmt}}{{this.medio}} {{../simboloMoneda}} {{this.monto}}{{#unless @last}} · {{/unless}}{{/each}}{{else}}{{medioPago}} {{simboloMoneda}} {{pagado}}{{/if}}</td></tr>
         {{#if pagoAnterior}}<tr><td>PAGO ANTERIOR:</td><td>{{simboloMoneda}} {{pagoAnterior}}</td></tr>{{/if}}
         {{#if recibido}}<tr><td>RECIBIDO:</td><td>{{simboloMoneda}} {{recibido}}</td></tr>{{/if}}
         {{#if devolucion}}<tr><td>DEVOLUCIÓN:</td><td>{{simboloMoneda}} {{devolucion}}</td></tr>{{else}}<tr><td>VUELTO:</td><td>{{simboloMoneda}} {{vuelto}}</td></tr>{{/if}}

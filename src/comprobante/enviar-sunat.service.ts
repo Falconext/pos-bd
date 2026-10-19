@@ -17,6 +17,7 @@ import { generarQrSunatDataUrl } from './qr-sunat.util';
 import { numeroALetras } from './utils/numero-a-letras';
 import axios from 'axios';
 import { QpseClient, QpseSendResponse } from '../common/utils/qpse.client';
+import { lineasPagoMixto } from '../common/utils/pago-mixto';
 import { buildUblXml } from '../common/utils/ubl-xml';
 import { ApisPeruClient } from '../common/utils/apis-peru.client';
 import { JambleClient } from '../common/utils/jamble.client';
@@ -2581,6 +2582,7 @@ export class EnviarSunatService {
                   ? 'CONTADO'
                   : 'CRÉDITO',
               medioPago: (comp.medioPago || 'EFECTIVO').toUpperCase(),
+              pagosMixtos: lineasPagoMixto(comp),
               observaciones: comp.observaciones
                 ? comp.observaciones.toUpperCase()
                 : undefined,
@@ -3863,6 +3865,7 @@ export class EnviarSunatService {
             ? 'CONTADO'
             : 'CRÉDITO',
         medioPago: (comp.medioPago || 'EFECTIVO').toUpperCase(),
+        pagosMixtos: lineasPagoMixto(comp),
         observaciones: comp.observaciones
           ? comp.observaciones.toUpperCase()
           : undefined,

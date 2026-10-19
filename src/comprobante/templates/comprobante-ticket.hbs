@@ -166,7 +166,8 @@
     {{/each}}
   </div>
   {{/if}}
-  {{#unless esCredito}}<p class="row"><span>MEDIO DE PAGO:</span><span>{{medioPago}}</span></p>{{/unless}}
+  {{#unless esCredito}}<p class="row"><span>MEDIO DE PAGO:</span><span>{{medioPago}}</span></p>
+  {{#each pagosMixtosFmt}}<p class="row"><span>&nbsp;&nbsp;{{this.medio}}:</span><span>{{../simboloMoneda}} {{this.monto}}</span></p>{{/each}}{{/unless}}
   {{#if pagoAnterior}}<p class="row"><span>PAGO ANTERIOR:</span><span>{{simboloMoneda}} {{pagoAnterior}}</span></p>{{/if}}
   {{#if recibido}}<p class="row"><span>RECIBIDO:</span><span>{{simboloMoneda}} {{recibido}}</span></p>{{/if}}
   {{#if devolucion}}<p class="row"><span>DEVOLUCIÓN:</span><span>{{simboloMoneda}} {{devolucion}}</span></p>{{else}}<p class="row"><span>VUELTO:</span><span>{{simboloMoneda}} {{vuelto}}</span></p>{{/if}}
