@@ -21,6 +21,7 @@ import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 import { ClienteModule } from '../cliente/cliente.module';
 import { ComprobanteModule } from '../comprobante/comprobante.module';
 import { EnvioDespachoModule } from '../envio-despacho/envio-despacho.module';
+import { PagoModule } from '../pago/pago.module';
 import { LEADS_MESSAGES_QUEUE, redisConnection } from './leads.constants';
 
 /**
@@ -43,6 +44,7 @@ import { LEADS_MESSAGES_QUEUE, redisConnection } from './leads.constants';
     ComprobanteModule,
     EnvioDespachoModule,
     S3Module,
+    PagoModule,
   ],
   controllers: [LeadsController, LeadsWebhookController, LeadsCrmController],
   providers: [

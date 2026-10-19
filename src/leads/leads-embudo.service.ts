@@ -3,9 +3,11 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
+import { PagoService } from '../pago/pago.service';
 import { etiquetaDeUsuario, nombreDeUsuario } from '../common/utils/nombre-usuario.util';
 import {
   Actor,
@@ -33,6 +35,7 @@ export class LeadsEmbudoService {
   constructor(
     private prisma: PrismaService,
     private s3: S3Service,
+    @Optional() private pagos?: PagoService,
   ) {}
 
   /**
@@ -221,10 +224,19 @@ export class LeadsEmbudoService {
     empresaId: number,
     usuario: { id?: number; nombre?: string },
     pasarADespacho = true,
+    montoConfirmado?: number,
   ) {
     const pago = await this.prisma.leadComprobantePago.findFirst({
       where: { id: pagoId, empresaId },
-      select: { id: true, prospectoId: true, validadoEn: true },
+      select: {
+        id: true,
+        prospectoId: true,
+        conversacionId: true,
+        validadoEn: true,
+        montoLeido: true,
+        medioLeido: true,
+        operacionLeida: true,
+      },
     });
     if (!pago) throw new NotFoundException('Comprobante no encontrado.');
     if (pago.validadoEn) return { validado: true, yaEstaba: true };
@@ -245,6 +257,13 @@ export class LeadsEmbudoService {
       },
     });
 
+    const adelanto = await this.registrarAdelanto(
+      empresaId,
+      pago,
+      montoConfirmado,
+      usuario.id,
+    );
+
     let etapa: unknown = null;
     if (pasarADespacho) {
       etapa = await this.mover(
@@ -254,7 +273,83 @@ export class LeadsEmbudoService {
         { usuario, nota: 'Pago validado' },
       );
     }
-    return { validado: true, etapa };
+    return { validado: true, etapa, adelanto };
+  }
+
+  /**
+   * El voucher validado es dinero que entró: se registra como pago de la
+   * nota del pedido y se descuenta de lo que queda por cobrar en la entrega.
+   *
+   * Antes validar solo marcaba "visto": en la prueba del 19-10 un adelanto de
+   * S/ 25 a provincia quedó fuera de caja, la nota seguía debiendo el total y
+   * el despacho mandaba cobrar S/ 50 en la agencia cuando faltaban S/ 25.
+   *
+   * El monto es el que confirma quien valida y, si no lo da, el que la IA leyó
+   * de la foto. Sin ninguno de los dos no se inventa: se avisa.
+   */
+  private async registrarAdelanto(
+    empresaId: number,
+    pago: {
+      conversacionId: number;
+      montoLeido: unknown;
+      medioLeido: string | null;
+      operacionLeida: string | null;
+    },
+    montoConfirmado: number | undefined,
+    usuarioId: number | undefined,
+  ): Promise<{ registrado: boolean; monto?: number; motivo?: string }> {
+    if (!this.pagos) return { registrado: false };
+    const borrador = await this.prisma.leadPedidoBorrador.findUnique({
+      where: { conversacionId: pago.conversacionId },
+      select: { comprobanteId: true },
+    });
+    if (!borrador?.comprobanteId) {
+      return {
+        registrado: false,
+        motivo: 'El pedido todavía no está registrado: el pago no se pudo asentar.',
+      };
+    }
+    const nota = await this.prisma.comprobante.findFirst({
+      where: { id: borrador.comprobanteId, empresaId },
+      select: { saldo: true },
+    });
+    const pedido = Number(montoConfirmado ?? pago.montoLeido ?? 0);
+    if (!(pedido > 0)) {
+      return {
+        registrado: false,
+        motivo: 'No se leyó el monto del comprobante: regístralo a mano en la nota de venta.',
+      };
+    }
+    // El saldo de la nota es solo la mercadería; el envío se cobra aparte. Lo
+    // que exceda el saldo no se asienta en la nota (registrarPago lo rechaza),
+    // pero sí se descuenta de lo que el repartidor o la agencia debe cobrar.
+    const monto = Math.min(pedido, Number(nota?.saldo ?? 0));
+    if (monto > 0) {
+      await this.pagos.registrarPago(
+        borrador.comprobanteId,
+        {
+          monto,
+          medioPago: medioDePago(pago.medioLeido),
+          referencia: pago.operacionLeida ?? undefined,
+          observacion: 'Adelanto validado desde el embudo de IA de Ventas',
+        },
+        usuarioId,
+        empresaId,
+      );
+    }
+    const despacho = await this.prisma.envioDespacho.findUnique({
+      where: { comprobanteId: borrador.comprobanteId },
+      select: { id: true, montoCOD: true },
+    });
+    if (despacho?.montoCOD != null) {
+      await this.prisma.envioDespacho.update({
+        where: { id: despacho.id },
+        data: {
+          montoCOD: Math.max(0, Number(despacho.montoCOD) - pedido),
+        },
+      });
+    }
+    return { registrado: true, monto: pedido };
   }
 
   /** El pago no cuadra: se rechaza con el motivo, para poder decírselo al cliente. */
@@ -389,4 +484,12 @@ export class LeadsEmbudoService {
       },
     });
   }
+}
+
+/** El medio que la IA leyó del voucher, con los nombres que usa la caja. */
+export function medioDePago(leido: string | null | undefined): string {
+  const t = String(leido ?? '').toLowerCase();
+  if (t.includes('yape')) return 'YAPE';
+  if (t.includes('plin')) return 'PLIN';
+  return 'TRANSFERENCIA';
 }
