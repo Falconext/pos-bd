@@ -59,6 +59,22 @@ interface PlantillaWhatsApp {
   footer?: string;
 }
 
+/**
+ * ¿Es un id de usuario de WhatsApp (BSUID) y no un teléfono?
+ *
+ * Desde 2026 un usuario con nombre de usuario (@nick) puede escribir SIN que
+ * Meta mande su número: llega `from_user_id` ("PE.1349…") en vez de `from`.
+ * Formato: país, punto y el resto alfanumérico.
+ */
+export function esBsuid(destino: string | null | undefined): boolean {
+  return /^[A-Z]{2}\.[A-Za-z0-9.]+$/.test(String(destino ?? '').trim());
+}
+
+/** A un teléfono se le escribe con `to`; a un BSUID, con `recipient`. */
+function campoDestino(destino: string): { to: string } | { recipient: string } {
+  return esBsuid(destino) ? { recipient: destino } : { to: destino };
+}
+
 @Injectable()
 export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
@@ -862,6 +878,9 @@ export class WhatsAppService {
    * Formatea número al formato internacional de Meta (ej: 519XXXXXXXX)
    */
   private formatearNumero(numero: string): string {
+    // Un BSUID ("PE.13491208655302741918") va tal cual: quitarle el país y el
+    // punto lo convierte en un número que no existe.
+    if (esBsuid(numero)) return numero.trim();
     let num = numero.replace(/\D/g, '');
 
     // Si tiene 9 dígitos, asumir Perú (+51)
@@ -904,7 +923,7 @@ export class WhatsAppService {
         {
           messaging_product: 'whatsapp',
           recipient_type: 'individual',
-          to,
+          ...campoDestino(to),
           type: 'text',
           text: { body: mensaje },
         },
@@ -985,7 +1004,7 @@ export class WhatsAppService {
         {
           messaging_product: 'whatsapp',
           recipient_type: 'individual',
-          to,
+          ...campoDestino(to),
           type: 'image',
           image,
         },
@@ -1039,7 +1058,7 @@ export class WhatsAppService {
         {
           messaging_product: 'whatsapp',
           recipient_type: 'individual',
-          to,
+          ...campoDestino(to),
           type: 'template',
           template: {
             name: plantilla,
@@ -1095,7 +1114,7 @@ export class WhatsAppService {
         {
           messaging_product: 'whatsapp',
           recipient_type: 'individual',
-          to,
+          ...campoDestino(to),
           type: 'document',
           document: { link: pdfUrl, caption, filename },
         },
@@ -1151,7 +1170,7 @@ export class WhatsAppService {
       const payload = {
         messaging_product: 'whatsapp',
         recipient_type: 'individual',
-        to,
+        ...campoDestino(to),
         type: 'document',
         document: {
           link: pdfUrl,
@@ -1236,7 +1255,7 @@ export class WhatsAppService {
       const payload = {
         messaging_product: 'whatsapp',
         recipient_type: 'individual',
-        to,
+        ...campoDestino(to),
         type: 'template',
         template: {
           name: 'guia_enviada',

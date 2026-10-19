@@ -72,3 +72,35 @@ describe('webhook de leads: primero encolar, después contestar', () => {
     expect(res.send).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('usuario con @nick: Meta no manda su teléfono', () => {
+  const previo = process.env.META_APP_SECRET;
+  beforeAll(() => (process.env.META_APP_SECRET = SECRETO));
+  afterAll(() => (process.env.META_APP_SECRET = previo));
+
+  it('se encola con su BSUID en vez de perderse', async () => {
+    // Forma del ejemplo de Meta (business-scoped user IDs): sin `from` ni
+    // `wa_id`, con `from_user_id` y `contacts[].user_id`.
+    const body = {
+      object: 'whatsapp_business_account',
+      entry: [{ changes: [{ value: {
+        metadata: { phone_number_id: '1372645942600125' },
+        contacts: [{ profile: { name: 'Tone', username: 'tone.pe' }, user_id: 'PE.13491208655302741918' }],
+        messages: [{ from_user_id: 'PE.13491208655302741918', id: 'wamid.Y', type: 'text', text: { body: 'Deseo info' } }],
+      } }] }],
+    };
+    const raw = Buffer.from(JSON.stringify(body));
+    const firma = 'sha256=' + crypto.createHmac('sha256', SECRETO).update(raw).digest('hex');
+    const queue = { add: jest.fn().mockResolvedValue({}) };
+    const res: any = { estado: 0, status(c: number) { this.estado = c; return this; }, send: jest.fn() };
+    await new LeadsWebhookController(queue as never).receive(
+      { headers: { 'x-hub-signature-256': firma }, body, rawBody: raw } as any,
+      res,
+    );
+    expect(queue.add).toHaveBeenCalledTimes(1);
+    const datos = queue.add.mock.calls[0][1];
+    expect(datos.from).toBe('PE.13491208655302741918');
+    expect(datos.nombre).toBe('Tone');
+    expect(res.estado).toBe(200);
+  });
+});
