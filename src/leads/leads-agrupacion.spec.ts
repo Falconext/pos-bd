@@ -143,13 +143,17 @@ function armar(
     cotizar: jest.fn().mockResolvedValue({ texto: 'cotización' }),
     registrarPedido: jest.fn().mockResolvedValue({ registrado: true }),
   };
+  const notificaciones: any = {
+    notificarAdminsEmpresa: jest.fn().mockResolvedValue({}),
+  };
+  const alerta: any = { avisarAltoRiesgo: jest.fn().mockResolvedValue(undefined) };
   const processor = new LeadsMessageProcessor(
     prisma,
     ia,
     rag,
     whatsapp,
-    {} as any,
-    {} as any,
+    notificaciones,
+    alerta,
     {} as any,
     pedido,
     embudoFalso(),
@@ -157,7 +161,7 @@ function armar(
     disparadoresFalsos(),
     queue,
   );
-  return { processor, prisma, ia, whatsapp, queue, pedido, mensajes };
+  return { processor, prisma, ia, whatsapp, queue, pedido, mensajes, alerta };
 }
 
 const entrante = (messageId: string, text: string) => ({
@@ -250,6 +254,27 @@ describe('la respuesta lee todo el lote', () => {
     expect(nombre).toBe(JOB_RESPONDER);
     expect(opciones.jobId).toBe(`resp-${EMPRESA}-${CONV}-tras-7`);
     expect(opciones.removeOnComplete).toBe(true);
+  });
+
+  it('cliente de alto riesgo: indicación médica y aviso aunque el modelo los olvide', async () => {
+    // 19-10 en prod: el mismo mensaje salió una vez bien y otra sin nada.
+    const { processor, whatsapp, alerta } = armar({
+      mensajes: [
+        {
+          rol: 'USUARIO',
+          contenido:
+            'tengo diabetes, soy hipertenso y tomo metformina y losartán, ¿qué puedo tomar?',
+        },
+      ],
+      respuestaIa: 'Tenemos Diabetizan - Natural Medix a S/ 30. ¿Te lo agrego?',
+    });
+
+    await processor.process(tarea as any);
+
+    const enviado = whatsapp.enviarTexto.mock.calls[0][1];
+    expect(enviado).toMatch(/consúltalo con tu médico/);
+    expect(enviado).toMatch(/no dejes tu tratamiento/);
+    expect(alerta.avisarAltoRiesgo).toHaveBeenCalledTimes(1);
   });
 
   it('busca productos con el lote entero, no solo con el último mensaje', async () => {
