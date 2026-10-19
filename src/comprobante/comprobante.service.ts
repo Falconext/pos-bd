@@ -71,6 +71,7 @@ import {
   totalesVentasPorProducto,
 } from './ventas-por-producto';
 import { validarLimitesPrecioVenta } from '../common/utils/limites-precio-venta';
+import { lineasPagoMixto } from '../common/utils/pago-mixto';
 import {
   cobroDeEdicion,
   fecharPagosEdicion,
@@ -6895,6 +6896,8 @@ export class ComprobanteService {
         tipoDetraccion: true,
         medioPagoDetraccion: true,
         usuario: { select: { nombre: true, celular: true, email: true } },
+        // Desglose del pago MIXTO en documentos sin paymentDetails.splitPayments.
+        pagos: { select: { medioPago: true, monto: true } },
       },
     });
   }
@@ -7120,6 +7123,7 @@ export class ComprobanteService {
         esVentaCredito && montoPagado <= 0
           ? '—'
           : (full.medioPago || 'EFECTIVO').toUpperCase(),
+      pagosMixtos: lineasPagoMixto(full),
       vuelto: Number((full as any).vuelto || 0).toFixed(2),
       pagado: montoPagado.toFixed(2),
       // Nota editada que ya estaba cobrada: el vuelto es sobre el saldo, así

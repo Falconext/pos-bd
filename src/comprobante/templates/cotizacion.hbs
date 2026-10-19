@@ -271,7 +271,7 @@
                     <tr><td>SALDO CRÉDITO:</td><td>{{monedaSimbolo}} {{saldoCredito}}</td></tr>
                     {{#if vencimientoCredito}}<tr><td>VENCIMIENTO:</td><td>{{vencimientoCredito}}</td></tr>{{/if}}
                 {{else}}
-                    <tr><td>MEDIO PAGO:</td><td>{{medioPago}}</td></tr>
+                    <tr><td>MEDIO PAGO:</td><td>{{#if pagosMixtosFmt}}{{#each pagosMixtosFmt}}{{this.medio}} {{../monedaSimbolo}} {{this.monto}}{{#unless @last}} · {{/unless}}{{/each}}{{else}}{{medioPago}}{{/if}}</td></tr>
                 {{/if}}
                 {{/if}}
             </table>
