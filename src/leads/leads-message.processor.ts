@@ -33,6 +33,7 @@ import {
 } from './pausa-bot';
 import { conDescargoLegal } from './prompt-asesor';
 import { sinConfirmacionFalsa } from './confirmacion-falsa';
+import { conIndicacionMedica, esAltoRiesgo } from './alto-riesgo';
 import { esNumeroInterno, numerosInternos } from './numeros-internos';
 import { bloqueComercial } from './tarifas-y-descuentos';
 import {
@@ -739,6 +740,28 @@ export class LeadsMessageProcessor extends WorkerHost {
       resultado.llamadas,
       !!borradorTrasTurno?.comprobanteId,
     );
+
+    // Cliente de alto riesgo: la indicación médica y el aviso al equipo no
+    // dependen de que el modelo se acuerde (ver alto-riesgo.ts). Va después
+    // del control de mensajes nuevos: si este turno se descartara, el aviso
+    // saldría dos veces.
+    if (esAltoRiesgo(contenido)) {
+      resultado.reply = conIndicacionMedica(resultado.reply);
+      const yaLoLlamo = resultado.llamadas.some(
+        (ll) => ll.nombre === HERRAMIENTA_AVISAR_RIESGO,
+      );
+      if (!yaLoLlamo) {
+        const argumentos = { riesgo: contenido.slice(0, 300) };
+        const r = await ejecutor(HERRAMIENTA_AVISAR_RIESGO, argumentos);
+        // Queda en el historial de herramientas: es lo que evita repetir el
+        // aviso en el próximo mensaje.
+        resultado.llamadas.push({
+          nombre: HERRAMIENTA_AVISAR_RIESGO,
+          argumentos,
+          resultado: r,
+        });
+      }
+    }
 
     // Persistir la respuesta y enviarla desde el número de la empresa.
     await this.prisma.leadMensaje.create({
