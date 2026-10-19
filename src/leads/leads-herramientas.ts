@@ -110,7 +110,7 @@ const guardarDatosEnvio: FunctionDeclaration = {
       agenciaSede: {
         type: SchemaType.STRING,
         description:
-          'Sede de la agencia donde recogerá. Solo para envíos por agencia.',
+          'Sede de la agencia donde recogerá. Solo para envíos por agencia. Si el cliente la nombra junto con la agencia ("Shalom de Av. de la Cultura"), guárdala aquí en ese mismo turno: sin ella el pedido no se puede registrar.',
       },
       sintomas: {
         type: SchemaType.STRING,
