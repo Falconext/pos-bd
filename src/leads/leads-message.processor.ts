@@ -606,12 +606,23 @@ export class LeadsMessageProcessor extends WorkerHost {
       relevantes.productos[0],
     );
     const contextoRag = await this.rag.buscarContexto(empresa.id, contenido, 5);
+    // Lo FIJO del negocio va en el prompt de sistema; lo que cambia en cada
+    // mensaje (productos que coinciden, fragmentos del entrenamiento, lo ya
+    // mostrado) viaja junto al mensaje del cliente. Si todo fuera junto, el
+    // prompt cambiaría en cada mensaje y el caché de Gemini —el explícito y
+    // el implícito— no se reutilizaría nunca: se pagaba el contexto completo
+    // en cada llamada y además se creaba (y almacenaba) un caché nuevo por
+    // mensaje.
     const businessContext = [
       contextoEmpresa,
       // Mientras un cliente siga teniendo los números copiados en su texto
       // libre, las dos versiones conviven en el prompt. Por eso el bloque
       // dice de sí mismo que es el que manda.
       comercial,
+    ]
+      .filter((s) => s && s.trim())
+      .join('\n\n');
+    const contextoDelTurno = [
       this.productosYaMostrados(mensajes),
       relevantes.contexto,
       contextoRag,
@@ -642,6 +653,7 @@ export class LeadsMessageProcessor extends WorkerHost {
           asesor: config.asesor ?? null,
           contexto: businessContext,
         },
+        contextoDelTurno,
       );
     } catch (err) {
       if (esErrorPermanente(err)) {
@@ -657,7 +669,7 @@ export class LeadsMessageProcessor extends WorkerHost {
       // Queda en el log para poder calcular el costo real por cliente: casi
       // todo es contexto fijo que se reenvía en cada vuelta del ciclo.
       this.logger.log(
-        `IA conv ${conv.id}: ${resultado.uso.entrada} tokens de entrada + ${resultado.uso.salida} de salida en ${resultado.uso.llamadasAlModelo} llamada(s).`,
+        `IA conv ${conv.id}: ${resultado.uso.entrada} tokens de entrada (${resultado.uso.cacheados ?? 0} desde caché) + ${resultado.uso.salida} de salida en ${resultado.uso.llamadasAlModelo} llamada(s).`,
       );
     }
 

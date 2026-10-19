@@ -509,8 +509,10 @@ describe('lo que la IA ve del catálogo (B1 y B2)', () => {
     ...extra,
   });
 
+  // Lo fijo del negocio (arg 1) y lo de este mensaje (arg 5): el catálogo
+  // viaja en el segundo para no romper el caché del prompt.
   const contextoDe = (ia: any) =>
-    ia.generarRespuesta.mock.calls[0][1] as string;
+    `${ia.generarRespuesta.mock.calls[0][1] ?? ''}\n${ia.generarRespuesta.mock.calls[0][5] ?? ''}`;
 
   it('nunca le pasa un número de stock', async () => {
     // Hierba Sana no lleva inventario: su stock es ficticio y decir "quedan
@@ -703,3 +705,18 @@ function consultasFalsas() {
     historialDe: async () => ({ malestares: [], productos: [], noHabidos: [] }),
   } as never;
 }
+
+describe('el prompt de sistema no cambia entre mensajes (caché de Gemini)', () => {
+  const tarea = { name: JOB_RESPONDER, data: { empresaId: EMPRESA, conversacionId: CONV } };
+
+  it('el catálogo del turno va aparte, no en el contexto fijo', async () => {
+    const { processor, ia } = armar({
+      mensajes: [{ rol: 'USUARIO', contenido: 'tienen moringa?' }],
+      productos: [{ id: 1, descripcion: 'Moringa 100 cápsulas', precioUnitario: 30, stock: 5, moneda: 'PEN' }],
+    });
+    await processor.process(tarea as any);
+    const [, fijo, , , , delTurno] = ia.generarRespuesta.mock.calls[0];
+    expect(fijo).not.toMatch(/Moringa/);
+    expect(delTurno).toMatch(/Moringa/);
+  });
+});
