@@ -11,6 +11,56 @@ import { num, round3 } from '../common/utils/stock';
 export class ProductoLoteService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /** Sede del usuario, o la principal de la empresa si no viene una. */
+  private async resolverSede(empresaId: number, sedeId?: number | null) {
+    if (sedeId) return Number(sedeId);
+    const principal = await this.prisma.sede.findFirst({
+      where: { empresaId, esPrincipal: true },
+      select: { id: true },
+    });
+    if (!principal) {
+      throw new BadRequestException('La empresa no tiene sede principal');
+    }
+    return principal.id;
+  }
+
+  /**
+   * Suma (o resta, con delta negativo) stock en la sede y deja
+   * `Producto.stock` = suma de las sedes, igual que el Kardex. Una baja no
+   * deja la sede en negativo: si había menos, queda en 0.
+   */
+  private async moverStockSede(
+    tx: Prisma.TransactionClient,
+    productoId: number,
+    sedeId: number,
+    delta: number,
+  ): Promise<{ anterior: number; actual: number }> {
+    const fila = await tx.productoStock.upsert({
+      where: { productoId_sedeId: { productoId, sedeId } },
+      create: { productoId, sedeId, stock: 0, stockMinimo: 0 },
+      update: {},
+      select: { stock: true },
+    });
+    const anterior = round3(num(fila.stock));
+    const actual = round3(Math.max(0, anterior + delta));
+    await tx.productoStock.update({
+      where: { productoId_sedeId: { productoId, sedeId } },
+      data: {
+        stock: actual,
+        ...(delta > 0 ? { visibleEnSede: true } : {}),
+      },
+    });
+    const total = await tx.productoStock.aggregate({
+      where: { productoId },
+      _sum: { stock: true },
+    });
+    await tx.producto.update({
+      where: { id: productoId },
+      data: { stock: round3(num(total._sum.stock)) },
+    });
+    return { anterior, actual };
+  }
+
   /**
    * Obtener lotes disponibles de un producto (ordenados por vencimiento FEFO)
    * FEFO = First Expire, First Out
@@ -55,6 +105,7 @@ export class ProductoLoteService {
     usuarioId: number;
     costoUnitario?: number;
     proveedor?: string;
+    sedeId?: number;
   }) {
     // Verificar que el producto pertenece a la empresa
     const producto = await this.prisma.producto.findFirst({
@@ -81,12 +132,19 @@ export class ProductoLoteService {
       );
     }
 
+    const sedeId = await this.resolverSede(data.empresaId, data.sedeId);
+
     return this.prisma.$transaction(async (tx) => {
-      // 1. Validar y actualizar Stock Global del Producto
-      const productoActualizado = await tx.producto.update({
-        where: { id: data.productoId },
-        data: { stock: { increment: data.stockInicial } },
-      });
+      // 1. El lote entra a una SEDE. Antes solo se sumaba a `Producto.stock`:
+      //    la sede quedaba en 0 (el POS no podía venderlo) y en cuanto el
+      //    producto tenía otro movimiento el global se recalculaba como suma
+      //    de las sedes y el lote desaparecía de la tienda web.
+      const { anterior, actual } = await this.moverStockSede(
+        tx,
+        data.productoId,
+        sedeId,
+        num(data.stockInicial),
+      );
 
       // 2. Crear Lote
       const nuevoLote = await tx.productoLote.create({
@@ -113,10 +171,9 @@ export class ProductoLoteService {
           tipoMovimiento: 'INGRESO',
           concepto: `Apertura Lote: ${data.lote}`,
           cantidad: data.stockInicial,
-          stockAnterior: round3(
-            num(productoActualizado.stock) - num(data.stockInicial),
-          ),
-          stockActual: num(productoActualizado.stock),
+          stockAnterior: anterior,
+          stockActual: actual,
+          sedeId,
           costoUnitario: data.costoUnitario || producto.costoPromedio || 0,
           usuarioId: data.usuarioId,
           comprobanteId: null,
@@ -527,7 +584,12 @@ export class ProductoLoteService {
   /**
    * Desactivar lote (no eliminar físicamente)
    */
-  async desactivarLote(loteId: number, empresaId: number, usuarioId: number) {
+  async desactivarLote(
+    loteId: number,
+    empresaId: number,
+    usuarioId: number,
+    sedeIdUsuario?: number,
+  ) {
     const lote = await this.prisma.productoLote.findUnique({
       where: { id: loteId },
       include: { producto: true },
@@ -549,8 +611,19 @@ export class ProductoLoteService {
       });
     }
 
+    const sedeId = await this.resolverSede(empresaId, sedeIdUsuario);
+
     // Transacción completa: Kardex, Stock Global, Stock Lote
     return this.prisma.$transaction(async (tx) => {
+      // La baja sale de la sede (antes solo bajaba `Producto.stock`, y el
+      // siguiente movimiento del producto la deshacía al resincronizar).
+      const { anterior, actual } = await this.moverStockSede(
+        tx,
+        lote.productoId,
+        sedeId,
+        -num(lote.stockActual),
+      );
+
       // 1. Crear Movimiento Kardex Global (SALIDA)
       const movimiento = await tx.movimientoKardex.create({
         data: {
@@ -560,10 +633,9 @@ export class ProductoLoteService {
           tipoMovimiento: 'SALIDA',
           concepto: `Baja por Vencimiento/Deterioro (Lote: ${lote.lote})`,
           cantidad: Number(lote.stockActual),
-          stockAnterior: num(lote.producto.stock),
-          stockActual: round3(
-            num(lote.producto.stock) - Number(lote.stockActual),
-          ),
+          stockAnterior: anterior,
+          stockActual: actual,
+          sedeId,
           fecha: new Date(),
           costoUnitario: lote.costoUnitario,
         },
@@ -580,13 +652,7 @@ export class ProductoLoteService {
         },
       });
 
-      // 3. Actualizar Stock Global del Producto
-      await tx.producto.update({
-        where: { id: lote.productoId },
-        data: {
-          stock: { decrement: Number(lote.stockActual) },
-        },
-      });
+      // 3. El stock global ya quedó como suma de las sedes en moverStockSede.
 
       // 4. Desactivar Lote y poner Stock a 0
       return tx.productoLote.update({

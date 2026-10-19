@@ -6,7 +6,7 @@
  * Importa porque es la base del costeo por sede: si estuviera mal, cada local
  * heredaría el error en su propio costo.
  */
-import { costoDeSede, promedioTrasIngreso } from './costo-sede';
+import { costoDeSede, promedioDesdeSedes, promedioTrasIngreso } from './costo-sede';
 
 describe('Promedio ponderado tras un ingreso', () => {
   it('el caso normal: 10 a S/100 más 10 a S/140 da S/120', () => {
@@ -79,5 +79,46 @@ describe('Qué costo le corresponde a una sede', () => {
     // Prisma devuelve Decimal, no number: Number(decimal) es lo que lo resuelve.
     const decimal = { toString: () => '17.75', valueOf: () => 17.75 };
     expect(costoDeSede(decimal, 100)).toBe(17.75);
+  });
+});
+
+describe('Costo global derivado de las sedes', () => {
+  it('pondera solo las sedes con mercadería', () => {
+    expect(
+      promedioDesdeSedes(
+        [
+          { stock: 2, costoPromedio: 50 },
+          { stock: 5, costoPromedio: 10 },
+        ],
+        0,
+      ),
+    ).toBeCloseTo(150 / 7, 10);
+  });
+
+  it('una sede en negativo no arrastra el costo global a 0 ni a negativo', () => {
+    // QA 2026-10-19: con saldo negativo permitido, vender 3 en la sede de S/50
+    // que tenía 2 dejaba el global en S/0; dos más, en −S/50.
+    expect(
+      promedioDesdeSedes(
+        [
+          { stock: -1, costoPromedio: 50 },
+          { stock: 5, costoPromedio: 10 },
+        ],
+        21.43,
+      ),
+    ).toBe(10);
+    expect(
+      promedioDesdeSedes(
+        [
+          { stock: -3, costoPromedio: 50 },
+          { stock: 5, costoPromedio: 10 },
+        ],
+        21.43,
+      ),
+    ).toBe(10);
+  });
+
+  it('si ninguna sede tiene mercadería no hay costo que derivar', () => {
+    expect(promedioDesdeSedes([{ stock: -2, costoPromedio: 50 }], 30)).toBeNull();
   });
 });

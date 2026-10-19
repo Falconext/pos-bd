@@ -33,6 +33,8 @@ import { S3Service } from '../s3/s3.service';
 import { FIRMA_KREZKA_DATA_URI } from './firma-krezka';
 import { LOGO_KREZKA_DATA_URI } from './logo-krezka';
 import { pagoEnMonedaCuenta } from '../common/utils/moneda-compra';
+import { diaCalendarioLima } from '../common/utils/fecha';
+import { evaluarGracia } from '../common/utils/gracia-suscripcion';
 
 function parseDDMMYYYY(input: string): Date {
   if (!input || input.trim() === '') {
@@ -1322,7 +1324,11 @@ export class EmpresaService {
       }
     }
 
-    const resolverSalud = (e: { id: number; fechaActivacion: Date | null }) => {
+    const resolverSalud = (e: {
+      id: number;
+      fechaActivacion: Date | null;
+      fechaExpiracion: Date | null;
+    }) => {
       const s = saludMap.get(e.id) ?? {
         ultimaVenta: null,
         ventas7: 0,
@@ -1330,11 +1336,35 @@ export class EmpresaService {
       };
       // Empresas recién activadas que aún no facturan no deben salir en rojo:
       // se cuentan los días desde la última venta, o desde la activación si nunca vendió.
-      const referencia = s.ultimaVenta ?? e.fechaActivacion ?? ahora;
-      const diasSinVender = Math.floor(
-        (ahora.getTime() - new Date(referencia).getTime()) /
-          (24 * 60 * 60 * 1000),
+      // Son días calendario de Lima, no bloques de 24 h: "hoy" tiene que ser hoy.
+      // La activación es una fecha sin hora guardada a medianoche UTC; su día
+      // es el de la fecha UTC, no el de Lima (que sería el anterior).
+      const diaReferencia = s.ultimaVenta
+        ? diaCalendarioLima(new Date(s.ultimaVenta))
+        : e.fechaActivacion
+          ? Math.floor(
+              Date.UTC(
+                e.fechaActivacion.getUTCFullYear(),
+                e.fechaActivacion.getUTCMonth(),
+                e.fechaActivacion.getUTCDate(),
+              ) /
+                (24 * 60 * 60 * 1000),
+            )
+          : diaCalendarioLima(ahora);
+      // Una venta con fecha futura (emisión adelantada) cuenta como de hoy.
+      const diasSinVender = Math.max(
+        0,
+        diaCalendarioLima(ahora) - diaReferencia,
       );
+      // Si puede o no entrar, con la MISMA regla que el login y el guard. Sin
+      // esto el panel pintaba "Activa · Facturó hoy" a una cuenta que ya
+      // estaba bloqueada.
+      const gracia = evaluarGracia(e.fechaExpiracion, ahora);
+      const acceso: 'vigente' | 'gracia' | 'bloqueada' = gracia.bloqueada
+        ? 'bloqueada'
+        : gracia.enGracia
+          ? 'gracia'
+          : 'vigente';
       let estado: 'sana' | 'riesgo' | 'critico';
       if (diasSinVender <= 7) estado = 'sana';
       else if (diasSinVender <= 14) estado = 'riesgo';
@@ -1342,6 +1372,8 @@ export class EmpresaService {
       return {
         estado,
         diasSinVender,
+        acceso,
+        diasGracia: gracia.diasRestantes,
         ultimaVenta: s.ultimaVenta,
         ventas7: s.ventas7,
         ventas30: s.ventas30,

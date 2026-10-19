@@ -37,6 +37,7 @@ import {
   porcentajeRetenido,
 } from './retencion';
 import { KardexService } from '../kardex/kardex.service';
+import { costoDeSede } from '../kardex/costo-sede';
 import { InventarioNotificacionesService } from '../notificaciones/inventario-notificaciones.service';
 import { S3Service } from '../s3/s3.service';
 import {
@@ -70,12 +71,34 @@ import {
   totalesVentasPorProducto,
 } from './ventas-por-producto';
 import { validarLimitesPrecioVenta } from '../common/utils/limites-precio-venta';
+import {
+  cobroDeEdicion,
+  fecharPagosEdicion,
+  type PagoAnterior,
+} from './pagos-edicion';
+import {
+  lineasDetalleAdicional,
+  normalizarDetalleAdicional,
+} from './detalle-adicional';
 
 @Injectable()
 export class ComprobanteService {
   private readonly logger = new Logger(ComprobanteService.name);
 
   private readonly adminSistemaRole = 'ADMIN_SISTEMA';
+
+  /** Costo del producto en una sede, con respaldo al global (ver costo-sede). */
+  private async costoEnSede(
+    productoId: number,
+    sedeId: number,
+    costoGlobal: unknown,
+  ): Promise<number> {
+    const fila = await this.prisma.productoStock.findUnique({
+      where: { productoId_sedeId: { productoId, sedeId } },
+      select: { costoPromedio: true },
+    });
+    return costoDeSede(fila?.costoPromedio, costoGlobal);
+  }
 
   private esProductoServicio(atributosTecnicos?: Record<string, any> | null) {
     return (
@@ -245,6 +268,8 @@ export class ComprobanteService {
     montoPagado: number;
     documento: string;
     fecha?: Date;
+    /** Solo al editar: los pagos que la nota tenía, para conservar sus fechas. */
+    pagosAnteriores?: PagoAnterior[];
   }) {
     const montoPagado = this.round2(Number(params.montoPagado || 0));
     if (montoPagado <= 0) return;
@@ -263,12 +288,17 @@ export class ComprobanteService {
     );
     if (lines.length === 0) return;
 
+    const fechaNueva = params.fecha ?? new Date();
+    const filas = params.pagosAnteriores
+      ? fecharPagosEdicion(params.pagosAnteriores, lines, fechaNueva)
+      : lines.map((line: any) => ({ ...line, fecha: fechaNueva, usuarioId: null }));
+
     await this.prisma.pago.createMany({
-      data: lines.map((line: any) => ({
+      data: filas.map((line: any) => ({
         comprobanteId: params.comprobanteId,
         empresaId: params.empresaId,
-        usuarioId: params.usuarioId ?? null,
-        fecha: params.fecha ?? new Date(),
+        usuarioId: line.usuarioId ?? params.usuarioId ?? null,
+        fecha: line.fecha,
         monto: line.amount,
         medioPago: line.method,
         observacion: `Pago registrado al emitir ${params.documento}`,
@@ -485,6 +515,7 @@ export class ComprobanteService {
                 },
                 unidad: true,
                 descripcion: true,
+                detalleAdicional: true,
                 cantidad: true,
                 mtoValorUnitario: true,
                 mtoValorVenta: true,
@@ -844,6 +875,7 @@ export class ComprobanteService {
             },
             unidad: true,
             descripcion: true,
+            detalleAdicional: true,
             cantidad: true,
             mtoValorUnitario: true,
             mtoValorVenta: true,
@@ -1202,6 +1234,16 @@ export class ComprobanteService {
     );
     const isFormal = ['01', '03', '08'].includes(comp.tipoDoc);
 
+    // Anular dos veces devolvía el stock dos veces: revertirStock encuentra la
+    // SALIDA original de nuevo y vuelve a sumar (NV de 5 unidades anulada dos
+    // veces = +10). Un comprobante ya anulado no tiene nada más que revertir.
+    if (
+      comp.estadoEnvioSunat === EstadoSunat.ANULADO ||
+      (comp as any).estadoPago === 'ANULADO'
+    ) {
+      throw new BadRequestException('Este comprobante ya está anulado.');
+    }
+
     // Documentos SUNAT formales: Boleta y Factura ya aceptadas NO pueden darse de baja directamente.
     // - Boleta (03): comunicación de baja SUNAT — use Nota de Crédito (botón "Generar NC")
     // - Factura (01): SUNAT exige Nota de Crédito, nunca baja directa
@@ -1216,6 +1258,20 @@ export class ComprobanteService {
       throw new BadRequestException(
         `Una ${tipoNombre} ya aceptada por SUNAT debe anularse emitiendo una Nota de Crédito. Use el botón "Generar NC (Anular)".`,
       );
+    }
+
+    // Se reclama la anulación de forma atómica ANTES de devolver stock: dos
+    // pedidos simultáneos (doble clic, dos pestañas) pasaban los dos el chequeo
+    // de arriba y devolvían el stock dos veces.
+    const reclamo = await this.prisma.comprobante.updateMany({
+      where: {
+        id: comprobanteId,
+        estadoEnvioSunat: { not: EstadoSunat.ANULADO },
+      },
+      data: { estadoEnvioSunat: EstadoSunat.ANULADO },
+    });
+    if (reclamo.count === 0) {
+      throw new BadRequestException('Este comprobante ya está anulado.');
     }
 
     // Revertir stock para todos los tipos de comprobantes que afectan inventario
@@ -2371,6 +2427,11 @@ export class ComprobanteService {
           ...(item.comboId != null ? { comboId: Number(item.comboId) } : {}),
           unidad: unidadLibre || 'ZZ',
           descripcion: String(item.descripcion).trim(),
+          // Detalle multilínea bajo el título (cotización de servicios). Solo PDF;
+          // el XML de SUNAT usa `descripcion` (ver detalle-adicional.ts).
+          ...(normalizarDetalleAdicional(item.detalleAdicional)
+            ? { detalleAdicional: normalizarDetalleAdicional(item.detalleAdicional) }
+            : {}),
           cantidad,
           ...(numerosSerieLibre.length > 0
             ? { numerosSerie: numerosSerieLibre }
@@ -2498,6 +2559,9 @@ export class ComprobanteService {
         // Fraccionamiento: usar unidadVenta del ítem si viene (ej. TABLETA vs CAJA)
         unidad: item.unidadVenta || (prod as any).unidadMedida.codigo,
         descripcion,
+        ...(normalizarDetalleAdicional(item.detalleAdicional)
+          ? { detalleAdicional: normalizarDetalleAdicional(item.detalleAdicional) }
+          : {}),
         cantidad,
         mtoPrecioUnitario: esGratProd
           ? this.round2(valorUnitario)
@@ -2900,7 +2964,14 @@ export class ComprobanteService {
           ? cantidad * factorConvVenta
           : cantidad;
       if (data && this.kardexService) {
-        const costoUnitario = Number(producto.costoPromedio) || 0;
+        // La venta sale al costo de LA SEDE que vende, no al global: con
+        // costos por sede distintos el global es una mezcla y la rentabilidad
+        // del local quedaba mal costeada.
+        const costoUnitario = await this.costoEnSede(
+          productoId,
+          sedeId,
+          producto.costoPromedio,
+        );
 
         const movimiento = await this.kardexService.registrarMovimiento({
           productoId,
@@ -3016,7 +3087,29 @@ export class ComprobanteService {
           // Registrar movimiento de kardex GLOBAL (siempre se hace para subir el stock del producto)
           if (data && this.kardexService) {
             try {
-              const costoUnitario = Number(producto.costoPromedio) || 0;
+              const sedeDevolucion =
+                movimientosOriginales.find(
+                  (m) => m.productoId === item.productoId,
+                )?.sedeId ||
+                (
+                  await this.prisma.sede.findFirst({
+                    where: {
+                      empresaId: data?.empresaId,
+                      esPrincipal: true,
+                    },
+                    select: { id: true },
+                  })
+                )?.id ||
+                1;
+              // Lo devuelto vuelve al costo que la sede ya tiene. Con el
+              // global (una mezcla de sedes) cada anulación o nota de crédito
+              // corría el costo del local: S/50 pasaba a S/10 al anular una
+              // venta en la sede que se había quedado sin stock.
+              const costoUnitario = await this.costoEnSede(
+                item.productoId,
+                sedeDevolucion,
+                producto.costoPromedio,
+              );
 
               const movimientoIngreso =
                 await this.kardexService.registrarMovimiento({
@@ -3028,20 +3121,7 @@ export class ComprobanteService {
                   comprobanteId: data.comprobanteId,
                   costoUnitario: costoUnitario,
                   usuarioId: data.usuarioId,
-                  sedeId:
-                    movimientosOriginales.find(
-                      (m) => m.productoId === item.productoId,
-                    )?.sedeId ||
-                    (
-                      await this.prisma.sede.findFirst({
-                        where: {
-                          empresaId: data?.empresaId,
-                          esPrincipal: true,
-                        },
-                        select: { id: true },
-                      })
-                    )?.id ||
-                    1,
+                  sedeId: sedeDevolucion,
                 });
 
               // --- REVERSIÓN DETALLADA DE LOTES ---
@@ -5791,6 +5871,8 @@ export class ComprobanteService {
                 comboId: d.comboId ?? null,
                 unidad: d.unidad,
                 descripcion: d.descripcion,
+                // Sin esto, editar la cotización borraba el detalle multilínea.
+                detalleAdicional: d.detalleAdicional ?? null,
                 cantidad: d.cantidad,
                 mtoValorUnitario: d.mtoValorUnitario,
                 mtoValorVenta: d.mtoValorVenta,
@@ -6208,6 +6290,7 @@ export class ComprobanteService {
       vendedorCampoNombre,
       cuotas,
       fechaVencimientoCredito,
+      vuelto,
     } = input;
 
     if (!Array.isArray(detalles) || detalles.length === 0)
@@ -6254,7 +6337,12 @@ export class ComprobanteService {
     }
     // REEMPLAZAR: la pantalla de edición es la fuente de verdad del pago. Se borran
     // pagos y comisiones (se recrean); también detalles/leyendas viejos. El stock se
-    // ajusta por diferencia más abajo.
+    // ajusta por diferencia más abajo. Los pagos viejos se leen antes de borrarlos
+    // para que lo ya cobrado conserve su fecha (ver fecharPagosEdicion).
+    const pagosAnteriores = await this.prisma.pago.findMany({
+      where: { comprobanteId: comp.id },
+      select: { monto: true, medioPago: true, fecha: true, usuarioId: true },
+    });
     await this.prisma.pago.deleteMany({ where: { comprobanteId: comp.id } });
     await this.prisma.comisionVendedor.deleteMany({
       where: { comprobanteId: comp.id },
@@ -6403,6 +6491,11 @@ export class ComprobanteService {
         mtoImpVenta,
         estadoPago,
         saldo,
+        // El vuelto de ESTA cobranza (sobre el saldo), para que la reimpresión
+        // no muestre el de la venta original. Clientes que no lo mandan: se deja.
+        ...(vuelto != null && !esCredito
+          ? { vuelto: this.round2(Math.max(0, Number(vuelto) || 0)) }
+          : {}),
         adelanto: esCredito && adelantoNorm > 0 ? adelantoNorm : null,
         fechaVencimientoCredito:
           esCredito && fechaVencimientoCredito
@@ -6453,6 +6546,7 @@ export class ComprobanteService {
         montoPagado,
         documento: `${comp.tipoDoc}-${comp.serie}-${comp.correlativo}`,
         fecha: parseFechaEmision(fechaEmision ?? comp.fechaEmision),
+        pagosAnteriores,
       });
     }
     const vendedorComisionId = vendedorCampoIdFinal ?? usuarioId;
@@ -6873,6 +6967,7 @@ export class ComprobanteService {
       (acc: number, d: any) => acc + Number(d.mtoDescuento || 0),
       0,
     );
+    const isDocumentoFiscalPdf = ['01', '03', '07', '08'].includes(full.tipoDoc);
     const productos = full.detalles.map((d: any, i: number) => {
       const cantidad = Number(d.cantidad || 0);
       const descLinea = Number(d.mtoDescuento || 0);
@@ -6894,6 +6989,10 @@ export class ComprobanteService {
       cantidad: formatCantidad(d.cantidad),
       unidadMedida: (d.unidad || 'NIU').toUpperCase(),
       descripcion: (d.descripcion || '').toUpperCase(),
+      // Detalle multilínea bajo el título, en letra normal. En factura/boleta/
+      // notas NO se imprime: el XML a SUNAT solo lleva `descripcion` y la
+      // representación impresa no debe decir más que el XML sobre el ítem.
+      detalleLineas: isDocumentoFiscalPdf ? [] : lineasDetalleAdicional(d.detalleAdicional),
       precioUnitario: precioLista.toFixed(2),
       total: esGrat ? '0.00' : Number((d.mtoPrecioUnitario || 0) * d.cantidad).toFixed(2),
       gratis: esGrat,
@@ -7023,6 +7122,9 @@ export class ComprobanteService {
           : (full.medioPago || 'EFECTIVO').toUpperCase(),
       vuelto: Number((full as any).vuelto || 0).toFixed(2),
       pagado: montoPagado.toFixed(2),
+      // Nota editada que ya estaba cobrada: el vuelto es sobre el saldo, así
+      // que se imprime lo pagado antes y lo recibido en la edición.
+      ...cobroDeEdicion((full as any).paymentDetails, esVentaCredito),
       saldoPendiente:
         saldoPendiente > 0 ? saldoPendiente.toFixed(2) : undefined,
       // Cobranza en campo: prioriza el vendedor de campo atribuido.

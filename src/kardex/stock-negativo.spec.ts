@@ -21,6 +21,7 @@ describe('Salida sin stock suficiente', () => {
         updateMany: jest.fn().mockResolvedValue({ count: 0 }), // nunca alcanza
         findUnique: jest.fn().mockResolvedValue({ stock: stockPrevio }),
         update: jest.fn((a: any) => { updates.push(a.data); return Promise.resolve({}); }),
+        findMany: jest.fn().mockResolvedValue([]),
       },
       empresa: {
         findUnique: jest.fn().mockResolvedValue({ permitirStockNegativo: permiteNegativo }),
@@ -35,6 +36,32 @@ describe('Salida sin stock suficiente', () => {
 
   const aplicar = (s: any, cantidad: number) =>
     s.actualizarStockYCosto(30173, 67, -cantidad, 'SALIDA', 0, cantidad, 86);
+
+  it('una salida también deja el stock global igual a la suma de sedes', async () => {
+    // Desde 42154b5 la salida retornaba antes de esta sincronización: la venta
+    // bajaba la sede y `Producto.stock` quedaba igual. La tienda web lee ese
+    // campo y seguía ofreciendo lo ya vendido.
+    for (const permite of [true, false]) {
+      const { service, prisma } = montar(permite);
+      (prisma.productoStock as any).aggregate.mockResolvedValue({ _sum: { stock: -1 } });
+      await aplicar(service, 1);
+      expect(prisma.producto.update).toHaveBeenCalledWith({
+        where: { id: 30173 },
+        data: { stock: -1 },
+      });
+    }
+  });
+
+  it('una venta que sí alcanza también sincroniza el stock global', async () => {
+    const { service, prisma } = montar(false, 5);
+    prisma.productoStock.updateMany.mockResolvedValue({ count: 1 });
+    (prisma.productoStock as any).aggregate.mockResolvedValue({ _sum: { stock: 4 } });
+    await expect(aplicar(service, 1)).resolves.toBe(0);
+    expect(prisma.producto.update).toHaveBeenCalledWith({
+      where: { id: 30173 },
+      data: { stock: 4 },
+    });
+  });
 
   it('con stock negativo permitido, descuenta de verdad', async () => {
     const { service, updates } = montar(true);
@@ -72,5 +99,21 @@ describe('Salida sin stock suficiente', () => {
     const { service, updates } = montar(true);
     await (service as any).actualizarStockYCosto(30173, 67, -1, 'SALIDA', 0, 1, undefined);
     expect(updates).toContainEqual({ stock: 0 });
+  });
+
+  it('un ingreso suma de forma atómica (no pisa una venta simultánea)', async () => {
+    // QA 2026-10-19: dos anulaciones simultáneas dejaban dos INGRESO en el
+    // Kardex y una sola devolución en el stock, porque el ingreso escribía el
+    // valor absoluto calculado antes.
+    const { service, updates } = montar(true, 7);
+    await service['actualizarStockYCosto'](30173, 67, 10, 'INGRESO', 0, 3, 86);
+    expect(updates[0].stock).toEqual({ increment: 3 });
+  });
+
+  it('un ingreso sobre saldo negativo lo neta, no lo pierde', async () => {
+    // Antes: max(0, −5 + 3) = 0 y se perdían las 2 que se debían.
+    const { service, updates } = montar(true, -5);
+    await service['actualizarStockYCosto'](30173, 67, -2, 'INGRESO', 0, 3, 86);
+    expect(updates[0].stock).toEqual({ increment: 3 });
   });
 });

@@ -53,6 +53,7 @@ import * as XLSX from 'xlsx';
 import axios from 'axios';
 import { estadosAListar } from './vendibilidad';
 import { etiquetaDeMotivo } from './motivo-ajuste-stock';
+import { alinearCostoGlobal, costoDeSede } from '../kardex/costo-sede';
 import {
   ESTADO_EN_CAMINO,
   agruparEnCamino,
@@ -1256,6 +1257,7 @@ export class ProductoService {
               vendibleEnSede: true,
               precioUnitarioOverride: true,
               precioOfertaOverride: true,
+              costoPromedio: true,
             },
           },
           costoPromedio: true,
@@ -1614,7 +1616,11 @@ export class ProductoService {
                     : null,
               }
             : null,
-          costoUnitario: Number(p.costoPromedio) || 0,
+          // Con sede, el costo de ESE local: cada sede lleva el suyo y la
+          // columna mostraba el global, que es la mezcla de todas.
+          costoUnitario: params.sedeId
+            ? costoDeSede(p.stocks[0]?.costoPromedio, p.costoPromedio)
+            : Number(p.costoPromedio) || 0,
           costoFijo: Number((p as any).costoFijo) || 0,
           comisionPorVenta: Number((p as any).comisionPorVenta) || 0,
           comisionPorcentaje: Number((p as any).comisionPorcentaje) || 0,
@@ -1705,7 +1711,7 @@ export class ProductoService {
             where: {
               ...(params.sedeId ? { sedeId: params.sedeId } : {}),
             },
-            select: { stock: true },
+            select: { stock: true, costoPromedio: true },
           },
           lotes: {
             where: { activo: true, stockActual: { gt: 0 } },
@@ -1736,7 +1742,10 @@ export class ProductoService {
       // Costo "de bolsillo" (CON IGV) — misma regla que la columna Costo de la
       // tabla de productos del frontend, para que el KPI calce con lo listado
       // (costoPromedio se guarda NETO; se re-agrega el IGV si es gravado).
-      const costoNeto = Number(p.costoPromedio) || 0;
+      // Con sede, su propio costo, igual que la columna del listado.
+      const costoNeto = params.sedeId
+        ? costoDeSede(p.stocks[0]?.costoPromedio, p.costoPromedio)
+        : Number(p.costoPromedio) || 0;
       const esGravado = String((p as any).tipoAfectacionIGV ?? '10') === '10';
       const costo = esGravado
         ? parseFloat((costoNeto * 1.18).toFixed(2))
@@ -2969,58 +2978,187 @@ export class ProductoService {
   private async propagarCostoAVariantes(
     padreId: number,
     empresaId: number,
+    sedeId: number | undefined,
     costoAnterior: number,
     costoNuevo: number,
   ) {
     if (!(costoNuevo >= 0) || Math.abs(costoNuevo - costoAnterior) < 0.00005) {
       return;
     }
+    // Con sede, la variante "espejaba" si SU costo en esa sede era el del
+    // padre en esa sede: el formulario corrige un local, no todos. Antes se
+    // comparaba y se escribía el costo global, así que corregir el padre en
+    // la principal movía la talla también en el almacén (y guardar sin tocar
+    // nada, con el costo de la sede distinto del global, la arrastraba).
     const variantes = await this.prisma.producto.findMany({
       where: { productoPadreId: padreId, empresaId },
-      select: { id: true, costoPromedio: true },
+      select: {
+        id: true,
+        costoPromedio: true,
+        stocks: sedeId
+          ? { where: { sedeId }, select: { costoPromedio: true } }
+          : false,
+      },
     });
     const espejaba = (c: number) =>
       c === 0 ||
       Math.abs(c - costoAnterior) < 0.01 ||
       (costoAnterior > 0 && Math.abs(c / costoAnterior - 1.18) < 0.005);
-    const ids = variantes
-      .filter((v) => espejaba(Number(v.costoPromedio ?? 0)))
-      .map((v) => v.id);
-    if (ids.length === 0) return;
-    await this.prisma.producto.updateMany({
-      where: { id: { in: ids } },
-      data: { costoPromedio: new Decimal(costoNuevo) },
-    });
+    for (const v of variantes as any[]) {
+      const fila = sedeId ? v.stocks?.[0] : undefined;
+      const costoVariante = fila
+        ? costoDeSede(fila.costoPromedio, v.costoPromedio)
+        : Number(v.costoPromedio ?? 0);
+      if (!espejaba(costoVariante)) continue;
+      // Igual que el padre: se escribe el global y luego se corrige la sede
+      // (o todas, sin sede) y se vuelve a derivar el global.
+      const costoGlobalAntes = Number(v.costoPromedio ?? 0);
+      await this.prisma.producto.update({
+        where: { id: v.id },
+        data: { costoPromedio: new Decimal(costoNuevo) },
+      });
+      await this.aplicarCostoManual(v.id, sedeId, costoGlobalAntes, costoNuevo);
+    }
   }
 
   /**
-   * Cuando el empresario escribe un costo a mano, las sedes vuelven a NULL.
+   * Corrige el costo de un producto en una sede desde una carga (Excel de
+   * productos, plantilla de fabricación), con la misma regla que el editor:
+   * solo esa sede cambia, las demás conservan lo que valían y el global se
+   * deriva. Antes estas cargas escribían directo el costo global, que quedaba
+   * despegado de las sedes (el valorizado de la empresa dejaba de ser la suma
+   * de sus locales) y la sede importada seguía mostrando el costo viejo.
    *
-   * El costo por sede se calcula de las compras; un costo tipeado es una
-   * corrección que manda sobre todo lo calculado. Si las sedes se quedaran con
-   * el suyo, el valorizado global diría una cosa y la suma de los locales otra
-   * —S/1 009.73 de diferencia en el caso que destapó esto—, además de que el
-   * número que el empresario acaba de escribir no se vería en ningún reporte
-   * por sede.
+   * `tolerancia`: el Excel trae el costo CON IGV a 2 decimales; al pasarlo a
+   * neto el redondeo mueve hasta ~0.004, y reimportar el mismo Excel no debe
+   * reescribir costos.
+   */
+  async corregirCostoEnSede(
+    productoId: number,
+    sedeId: number | undefined,
+    costoNuevo: number,
+    tolerancia = 0.00005,
+  ) {
+    if (!(costoNuevo >= 0)) return;
+    const producto = await this.prisma.producto.findUnique({
+      where: { id: productoId },
+      select: {
+        costoPromedio: true,
+        stocks: sedeId
+          ? { where: { sedeId }, select: { costoPromedio: true } }
+          : false,
+      },
+    });
+    if (!producto) return;
+    const costoAnterior = Number(producto.costoPromedio ?? 0);
+    const fila = sedeId ? (producto as any).stocks?.[0] : undefined;
+    const costoMostrado = fila
+      ? costoDeSede(fila.costoPromedio, costoAnterior)
+      : costoAnterior;
+    if (Math.abs(costoNuevo - costoMostrado) < tolerancia) return;
+    await this.prisma.producto.update({
+      where: { id: productoId },
+      data: { costoPromedio: new Decimal(costoNuevo) },
+    });
+    await this.aplicarCostoManual(productoId, sedeId, costoAnterior, costoNuevo);
+  }
+
+  /**
+   * El costo escrito a mano corrige el de la sede en la que está el usuario,
+   * y nada más.
    *
-   * Volver a NULL las deja leyendo el costo nuevo y cada una vuelve a
-   * diferenciarse en su próxima compra, igual que al empezar la migración.
+   * Antes devolvía TODAS las sedes a NULL, así que corregir el costo en la
+   * principal borraba lo que el Almacén 2 había pagado (OWENSOFT: escribir
+   * S/20 en la principal dejaba en S/20 los cargadores que el almacén compró a
+   * S/15). Cada local lleva su costo justamente para que eso no pase.
+   *
+   * Las otras sedes conservan lo que valían: si seguían en NULL se fijan en el
+   * costo anterior, que es el que estaban mostrando. Después el global se
+   * vuelve a derivar de las sedes, para que el valorizado de la empresa siga
+   * siendo la suma de sus locales.
+   *
+   * Sin sede (o si el producto no tiene fila en ella) no hay a quién atribuir
+   * la corrección, y se aplica a todas como antes.
    *
    * Solo cuando el valor CAMBIA: guardar el formulario sin tocar el costo no
    * puede borrar lo que las compras calcularon.
    */
-  private async resetearCostoPorSede(
+  /**
+   * La sede cuyo costo corrige el editor: la que el Kardex está mostrando, no
+   * la de la sesión. Si no, con el filtro en "Almacén" el formulario mostraba
+   * el costo del almacén y lo guardaba en la principal. 0 = "Todas las sedes".
+   * Una sede de otra empresa se ignora.
+   */
+  private async sedeDelCostoManual(data: {
+    empresaId: number;
+    sedeId?: number;
+    costoSedeId?: number;
+  }): Promise<number | undefined> {
+    if (data.costoSedeId === undefined || data.costoSedeId === null) {
+      return data.sedeId;
+    }
+    const id = Number(data.costoSedeId);
+    if (!id) return undefined;
+    const sede = await this.prisma.sede.findFirst({
+      where: { id, empresaId: data.empresaId },
+      select: { id: true },
+    });
+    return sede ? id : data.sedeId;
+  }
+
+  private async aplicarCostoManual(
     productoId: number,
+    sedeId: number | undefined,
     costoAnterior: number,
     costoNuevo: number,
   ) {
-    if (!(costoNuevo >= 0) || Math.abs(costoNuevo - costoAnterior) < 0.00005) {
+    if (!(costoNuevo >= 0)) return;
+    const fila = sedeId
+      ? await this.prisma.productoStock.findUnique({
+          where: { productoId_sedeId: { productoId, sedeId } },
+          select: { costoPromedio: true },
+        })
+      : null;
+    if (sedeId && !fila) {
+      // Producto sin fila en esa sede (legado: creado por sync o antes de que
+      // la sede existiera). El Kardex igual lo lista ahí con el costo global;
+      // antes la corrección caía a "todas las sedes" y borraba el costo
+      // propio de las demás. Se le crea la fila, sin stock, con el costo.
+      if (Math.abs(costoNuevo - costoAnterior) < 0.00005) return;
+      await this.prisma.productoStock.updateMany({
+        where: { productoId, costoPromedio: null },
+        data: { costoPromedio: costoAnterior },
+      });
+      await this.prisma.productoStock.create({
+        data: { productoId, sedeId, stock: 0, costoPromedio: costoNuevo },
+      });
+      await alinearCostoGlobal(this.prisma, productoId, costoAnterior);
       return;
     }
-    await this.prisma.productoStock.updateMany({
-      where: { productoId, costoPromedio: { not: null } },
-      data: { costoPromedio: null },
-    });
+    if (!sedeId || !fila) {
+      if (Math.abs(costoNuevo - costoAnterior) < 0.00005) return;
+      await this.prisma.productoStock.updateMany({
+        where: { productoId, costoPromedio: { not: null } },
+        data: { costoPromedio: null },
+      });
+      return;
+    }
+    // El formulario muestra el costo de la sede, así que "cambió" se mide
+    // contra ese, no contra el global.
+    const costoSedeAntes = costoDeSede(fila.costoPromedio, costoAnterior);
+    if (Math.abs(costoNuevo - costoSedeAntes) >= 0.00005) {
+      await this.prisma.productoStock.updateMany({
+        where: { productoId, costoPromedio: null, NOT: { sedeId } },
+        data: { costoPromedio: costoAnterior },
+      });
+      await this.prisma.productoStock.update({
+        where: { productoId_sedeId: { productoId, sedeId } },
+        data: { costoPromedio: costoNuevo },
+      });
+    }
+    // `actualizar` acaba de escribir el número tipeado en el global; aunque la
+    // sede no haya cambiado, el global se vuelve a derivar de las sedes.
+    await alinearCostoGlobal(this.prisma, productoId, costoAnterior);
   }
 
   async actualizar(
@@ -3103,6 +3241,8 @@ export class ProductoService {
       prioridadVenta?: number | null;
 
       sedeId?: number; // Nueva propiedad opcional para identificar dónde se ajusta el stock
+      /** Sede cuyo costo se corrige (la que muestra el Kardex); 0 = todas. */
+      costoSedeId?: number;
     },
     usuarioId?: number,
   ) {
@@ -3110,6 +3250,26 @@ export class ProductoService {
       where: { id: data.id, empresaId: data.empresaId },
     });
     if (!producto) throw new NotFoundException('Producto no encontrado');
+    // El costo que el formulario mostraba (el de la sede del Kardex): contra
+    // ese se decide si el costo cambió para bajarlo a las variantes. Contra el
+    // global, guardar sin tocar nada desde una sede con costo propio lo
+    // arrastraba a las tallas/colores.
+    let costoMostradoAntes = Number(producto.costoPromedio ?? 0);
+    if (data.costoUnitario !== undefined) {
+      const sedeVista = await this.sedeDelCostoManual(data);
+      if (sedeVista) {
+        const filaVista = await this.prisma.productoStock.findUnique({
+          where: {
+            productoId_sedeId: { productoId: producto.id, sedeId: sedeVista },
+          },
+          select: { costoPromedio: true },
+        });
+        costoMostradoAntes = costoDeSede(
+          filaVista?.costoPromedio,
+          producto.costoPromedio,
+        );
+      }
+    }
     const esServicio = this.esProductoServicio(
       data.atributosTecnicos ?? (producto.atributosTecnicos as any),
     );
@@ -3611,14 +3771,17 @@ export class ProductoService {
     // "espejaban" ese costo (nunca tuvieron compra propia) lo siguen. Va antes
     // de sincronizarVariantes, que preserva el costo existente de cada variante.
     if (data.costoUnitario !== undefined) {
+      const sedeCosto = await this.sedeDelCostoManual(data);
       await this.propagarCostoAVariantes(
         actualizado.id,
         data.empresaId,
-        Number(producto.costoPromedio ?? 0),
+        sedeCosto,
+        costoMostradoAntes,
         Number(data.costoUnitario),
       );
-      await this.resetearCostoPorSede(
+      await this.aplicarCostoManual(
         actualizado.id,
+        sedeCosto,
         Number(producto.costoPromedio ?? 0),
         Number(data.costoUnitario),
       );
@@ -4789,7 +4952,12 @@ export class ProductoService {
           : (p.stockMinimo ?? 0);
       // Costo "de bolsillo" (CON IGV) — misma regla que la tabla de productos y
       // el KPI de resumen: lo que el empresario pagó, no el neto contable.
-      const costoNeto = Number(p.costoPromedio ?? 0);
+      // Con sede, el costo de ESA sede (cada local lleva el suyo): con el
+      // global, el VALOR INVENTARIO del almacén salía con el costo mezclado y
+      // reimportar ese Excel pisaba el costo propio de la sede.
+      const costoNeto = sedeId
+        ? costoDeSede(p.stocks?.[0]?.costoPromedio, p.costoPromedio)
+        : Number(p.costoPromedio ?? 0);
       const esGravadoExport = String(p.tipoAfectacionIGV ?? '10') === '10';
       const costo = esGravadoExport
         ? Math.round(costoNeto * 1.18 * 100) / 100
@@ -5609,9 +5777,7 @@ export class ProductoService {
               precioUnitario: new Decimal(precioUnitario),
               valorUnitario: new Decimal(valorUnitario),
               igvPorcentaje: new Decimal(igvPorcentaje),
-              ...(costoPromedio != null
-                ? { costoPromedio: new Decimal(costoPromedio) }
-                : {}),
+              // El costo NO va aquí: se corrige en la sede destino más abajo.
               ...(stockMinimoImport != null && !Number.isNaN(stockMinimoImport)
                 ? { stockMinimo: stockMinimoImport }
                 : {}),
@@ -5632,6 +5798,23 @@ export class ProductoService {
           await this.marcarDisponibleEnSede(existe.id, sedeDestinoId);
           if (esProductoPadre) {
             await this.sincronizarDisponibilidadVariantes(existe.id);
+          }
+
+          // El costo del Excel es el de la sede destino (el export por sede trae
+          // el de esa sede): solo esa sede cambia y el global se deriva. Va
+          // antes del stock para que el ingreso del ajuste se promedie contra el
+          // costo ya corregido, como pasaba cuando el costo era uno solo.
+          if (costoPromedio != null && Number.isFinite(costoPromedio)) {
+            const vieneConIgv =
+              costoConIgvRaw != null &&
+              costoConIgvRaw.toString().trim() !== '' &&
+              esGravadoImport;
+            await this.corregirCostoEnSede(
+              existe.id,
+              sedeDestinoId,
+              costoPromedio,
+              vieneConIgv ? 0.0043 : 0.00005,
+            );
           }
 
           // Reemplazar el stock de la sede destino con el valor del Excel,

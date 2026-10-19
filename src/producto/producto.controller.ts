@@ -1294,6 +1294,12 @@ export class ProductoController {
         id,
         empresaId: user.empresaId,
         sedeId: user.sedeId ?? undefined,
+        // Un usuario de empresa solo ve su sede (el listado se la impone), así
+        // que solo corrige el costo de su sede: con `costoSedeId` podía pisar
+        // el de otro local o, con 0, devolver todas las sedes al global.
+        ...(user.rol === 'ADMIN_EMPRESA' || user.rol === 'ADMIN_SISTEMA'
+          ? {}
+          : { costoSedeId: undefined }),
       },
       user.id,
     );
@@ -1435,6 +1441,7 @@ export class ProductoController {
       empresaId: user.empresaId,
       fechaVencimiento: parseFechaSoloDia(dto.fechaVencimiento),
       usuarioId: user.id,
+      sedeId: user.sedeId ?? undefined,
     });
     res.locals.message = 'Lote creado correctamente';
     return lote;
@@ -1496,7 +1503,12 @@ export class ProductoController {
     @User() user: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    await this.loteService.desactivarLote(id, user.empresaId, user.id);
+    await this.loteService.desactivarLote(
+      id,
+      user.empresaId,
+      user.id,
+      user.sedeId ?? undefined,
+    );
     res.locals.message = 'Lote desactivado correctamente';
     return { success: true };
   }

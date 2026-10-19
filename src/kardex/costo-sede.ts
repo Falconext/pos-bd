@@ -59,7 +59,12 @@ export const promedioDesdeSedes = (
   let valorTotal = 0;
   for (const fila of filas) {
     const stock = Number(fila.stock);
-    if (!Number.isFinite(stock)) continue;
+    // Una sede en negativo (sobreventa con saldo negativo permitido) no tiene
+    // mercadería que valorizar. Si entrara en la mezcla restaría valor: con
+    // S/50 en una sede a −1 y 5 a S/10 en otra, el global daba S/0, y a −3
+    // daba −S/50. Desde que las ventas también realinean el global, cada
+    // sobreventa lo corría.
+    if (!Number.isFinite(stock) || stock <= 0) continue;
     stockTotal += stock;
     valorTotal += stock * costoDeSede(fila.costoPromedio, costoGlobalActual);
   }
@@ -104,22 +109,26 @@ export const alinearCostoGlobal = async (
   });
 
   const algunaTieneCosto = filas.some((f) => f.costoPromedio != null);
-  // Solo las sedes que TIENEN mercadería: una en cero no aporta valor y no
-  // entra en la circularidad, así que se la deja en NULL. Congelarle un costo
-  // sería inventarle un dato que nadie le puso.
-  const faltanCostos = filas.some(
-    (f) => f.costoPromedio == null && Number(f.stock) !== 0,
-  );
-  if (algunaTieneCosto && faltanCostos) {
-    const congelado = costoDeSede(null, costoGlobalActual);
+  const congelado = costoDeSede(null, costoGlobalActual);
+  // Las sedes en cero también se congelan si el producto YA tenía un costo:
+  // es el último precio al que esa sede compró, y el empresario lo usa como
+  // referencia (OWENSOFT: el disco a S/183.94 de la principal, sin stock,
+  // pasaba a mostrar los S/150 que pagó el Almacén 2). Con stock cero no
+  // aporta valor, así que no altera ningún valorizado. Un producto que nunca
+  // tuvo costo sí deja a esas sedes en NULL: no hay nada que conservar.
+  const debeCongelar = (f: { stock: unknown; costoPromedio: unknown }) =>
+    f.costoPromedio == null && (Number(f.stock) !== 0 || congelado > 0);
+  if (algunaTieneCosto && filas.some(debeCongelar)) {
     await cliente.productoStock.updateMany({
-      where: { productoId, costoPromedio: null, NOT: { stock: 0 } },
+      where: {
+        productoId,
+        costoPromedio: null,
+        ...(congelado > 0 ? {} : { NOT: { stock: 0 } }),
+      },
       data: { costoPromedio: congelado },
     });
     filas = filas.map((f) =>
-      f.costoPromedio == null && Number(f.stock) !== 0
-        ? { ...f, costoPromedio: congelado }
-        : f,
+      debeCongelar(f) ? { ...f, costoPromedio: congelado } : f,
     );
   }
 

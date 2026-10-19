@@ -146,6 +146,8 @@
         }
         .observaciones-box { width: 66%; padding-right: 16px; }
         .obs-linea { margin-bottom: 2px; }
+        /* Detalle adicional de la línea (multilínea, letra normal, debajo del título). */
+        .desc-detalle { font-weight: normal; text-transform: none; margin-top: 1px; line-height: 1.35; }
         .obs-title { font-weight: bold; margin-bottom: 4px; }
         .detraccion-block { margin-top: 14px; line-height: 1.5; }
         .detraccion-block p:first-child { font-weight: bold; }
@@ -316,7 +318,7 @@
                 {{#if ../includeProductImages}}
                 <td class="col-img">{{#if imagenUrl}}<img src="{{imagenUrl}}" alt="" />{{else}}-{{/if}}</td>
                 {{/if}}
-                <td class="col-desc">{{descripcion}}</td>
+                <td class="col-desc">{{descripcion}}{{#each detalleLineas}}<div class="desc-detalle">{{this}}</div>{{/each}}</td>
                 <td class="col-moneda">{{../monedaSimbolo}}</td>
                 <td class="col-pu">{{precioUnitario}}</td>
                 <td class="col-tot">{{total}}</td>
