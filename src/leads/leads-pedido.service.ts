@@ -511,6 +511,83 @@ export class LeadsPedidoService {
    * Arma la cotización. Devuelve el texto ya escrito, con el formato exacto
    * que usa el negocio, para que el modelo no lo reinvente cada vez.
    */
+  /**
+   * ¿El pedido registrado en esta conversación ya terminó? Entregado, pagado
+   * del todo o anulado: lo que venga después es otra compra.
+   */
+  private async pedidoCerrado(comprobanteId: number): Promise<boolean> {
+    // Si no se puede comprobar, el pedido se da por EN CURSO: abrir uno nuevo
+    // por error duplicaría una venta, que es peor que no abrirlo.
+    const nota = await this.prisma.comprobante
+      ?.findUnique({
+        where: { id: comprobanteId },
+        select: {
+          estadoPago: true,
+          estadoEnvioSunat: true,
+          envioDespacho: { select: { estado: true } },
+        },
+      })
+      .catch(() => null);
+    if (!nota) return false;
+    return (
+      String(nota.estadoEnvioSunat) === 'ANULADO' ||
+      String(nota.estadoPago) === 'COMPLETADO' ||
+      String(nota.estadoPago) === 'ANULADO' ||
+      nota.envioDespacho?.estado === 'ENTREGADO'
+    );
+  }
+
+  /**
+   * Abre un pedido nuevo en la misma conversación. Se quedan los datos de
+   * quien recibe (dirección, DNI, zona): el cliente dice "a la misma
+   * dirección" y no hay que volver a pedírselos. Se va lo del pedido: los
+   * productos, la cotización, la franja horaria y el número de nota.
+   *
+   * El embudo vuelve a NUEVO: desde ENTREGADO un automatismo no puede
+   * avanzar (es terminal), y el segundo pedido quedaba invisible.
+   */
+  private async abrirPedidoNuevo(empresaId: number, conversacionId: number) {
+    const borrador = await this.prisma.leadPedidoBorrador.update({
+      where: { conversacionId },
+      data: {
+        comprobanteId: null,
+        registradoEn: null,
+        cotizacionId: null,
+        cotizadoEn: null,
+        itemsJson: Prisma.DbNull,
+        descuentoAplicado: null,
+        horario: null,
+        notaEntrega: null,
+      },
+    });
+    const prospecto = await this.prisma.leadProspecto.findFirst({
+      where: { conversacionId, empresaId },
+      select: { id: true, etapa: true },
+    });
+    if (prospecto && prospecto.etapa !== 'NUEVO') {
+      await this.prisma.$transaction([
+        this.prisma.leadProspecto.update({
+          where: { id: prospecto.id },
+          data: { etapa: 'NUEVO' as never, etapaEn: new Date() },
+        }),
+        this.prisma.leadEtapaHistorial.create({
+          data: {
+            prospectoId: prospecto.id,
+            empresaId,
+            desde: prospecto.etapa as never,
+            hacia: 'NUEVO' as never,
+            actor: 'bot',
+            nota: 'Cliente que vuelve: pedido nuevo',
+          },
+        }),
+      ]);
+    }
+    this.logger.log(
+      `Lead: conv ${conversacionId} abre un pedido nuevo (el anterior ya se cerró).`,
+    );
+    return borrador;
+  }
+
   async cotizar(
     empresaId: number,
     conversacionId: number,
@@ -526,9 +603,16 @@ export class LeadsPedidoService {
           'Este negocio todavía no tiene configuradas sus zonas de envío. No armes una cotización: deriva a un asesor para que le confirme el total con el envío.',
       };
     }
-    const borrador = await this.prisma.leadPedidoBorrador.findUnique({
+    let borrador = await this.prisma.leadPedidoBorrador.findUnique({
       where: { conversacionId },
     });
+    // Cliente que vuelve: su pedido anterior ya se cerró y esto es una compra
+    // nueva. Sin esto, registrar_pedido contestaba "ya estaba registrado" (el
+    // borrador es uno por conversación) y el modelo le decía al cliente que
+    // su segundo pedido había quedado registrado sin que existiera (19-10).
+    if (borrador?.comprobanteId && (await this.pedidoCerrado(borrador.comprobanteId))) {
+      borrador = await this.abrirPedidoNuevo(empresaId, conversacionId);
+    }
     if (!borrador?.tipoZona || borrador.costoEnvio == null) {
       return {
         falta:
@@ -707,6 +791,13 @@ export class LeadsPedidoService {
     });
     if (!borrador) {
       return { error: 'Todavía no hay ningún pedido en curso.' };
+    }
+    // El pedido anterior ya se cerró y no hay cotización nueva: no se
+    // registra de nuevo lo viejo ni se le dice "ya estaba registrado".
+    if (borrador.comprobanteId && (await this.pedidoCerrado(borrador.comprobanteId))) {
+      return {
+        falta: ['los productos de este nuevo pedido: cotízalos primero'],
+      };
     }
     // Idempotencia: por más que el cliente insista, un pedido se registra una
     // vez. El modelo puede llamar dos veces si el cliente repite "ya está".

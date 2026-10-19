@@ -127,6 +127,18 @@ export class LeadsCrmController {
   }
 
   /**
+   * Encender o apagar avisos. Solo `activos`: lo demás (horario, tope) sigue
+   * con sus valores. Antes no había forma de cambiarlo sin tocar la base.
+   */
+  @Patch('disparadores/config')
+  guardarConfigDisparos(
+    @User() user: any,
+    @Body() body: { activos?: string[] },
+  ) {
+    return this.disparadores.guardarActivos(user.empresaId, body?.activos ?? []);
+  }
+
+  /**
    * Manda un aviso ya, sin esperar al cron. Igual pasa por TODAS las reglas:
    * la baja, el horario, el tope y la disponibilidad del producto. El botón
    * no es una puerta trasera.
