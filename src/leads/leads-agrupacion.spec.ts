@@ -143,6 +143,7 @@ function armar(
     cotizar: jest.fn().mockResolvedValue({ texto: 'cotización' }),
     registrarPedido: jest.fn().mockResolvedValue({ registrado: true }),
   };
+  const consultas: any = consultasFalsas();
   const notificaciones: any = {
     notificarAdminsEmpresa: jest.fn().mockResolvedValue({}),
   };
@@ -157,11 +158,11 @@ function armar(
     {} as any,
     pedido,
     embudoFalso(),
-    consultasFalsas(),
+    consultas,
     disparadoresFalsos(),
     queue,
   );
-  return { processor, prisma, ia, whatsapp, queue, pedido, mensajes, alerta };
+  return { processor, prisma, ia, whatsapp, queue, pedido, mensajes, alerta, consultas };
 }
 
 const entrante = (messageId: string, text: string) => ({
@@ -275,6 +276,21 @@ describe('la respuesta lee todo el lote', () => {
     expect(enviado).toMatch(/consúltalo con tu médico/);
     expect(enviado).toMatch(/no dejes tu tratamiento/);
     expect(alerta.avisarAltoRiesgo).toHaveBeenCalledTimes(1);
+  });
+
+  it('producto agotado: queda en lista de espera aunque el modelo no use la herramienta', async () => {
+    // 19-10: "agotado... te aviso apenas llegue" y nadie quedó anotado.
+    const { processor, consultas } = armar({
+      mensajes: [{ rol: 'USUARIO', contenido: 'quiero el purificador de sangre natural medix' }],
+      productos: [
+        { id: 31403, descripcion: 'Purificador de sangre - NATURAL MEDIX ( 100 capsulas )', precioUnitario: 31, stock: 0, moneda: 'PEN', disponibilidad: null },
+      ],
+      respuestaIa: 'Está agotado por ahora, te aviso apenas llegue.',
+    });
+    await processor.process(tarea as any);
+    expect(consultas.registrar).toHaveBeenCalledTimes(1);
+    const [, , , filas] = consultas.registrar.mock.calls[0];
+    expect(filas[0]).toMatchObject({ productoId: 31403, hubo: false, disponibilidad: 'NO_DISPONIBLE' });
   });
 
   it('busca productos con el lote entero, no solo con el último mensaje', async () => {
@@ -683,7 +699,7 @@ function disparadoresFalsos() {
 
 function consultasFalsas() {
   return {
-    registrar: async () => 0,
+    registrar: jest.fn(async () => 0),
     historialDe: async () => ({ malestares: [], productos: [], noHabidos: [] }),
   } as never;
 }

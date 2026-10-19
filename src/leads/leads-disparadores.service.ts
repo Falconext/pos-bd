@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { estaPausado } from './pausa-bot';
@@ -42,6 +42,34 @@ export class LeadsDisparadoresService {
   ) {}
 
   /** La configuración de disparadores de la empresa, sobre los valores por defecto. */
+  /** Guarda qué avisos están encendidos, sin tocar el resto de la config. */
+  async guardarActivos(
+    empresaId: number,
+    activos: string[],
+  ): Promise<ConfigDisparadores> {
+    const validos = Object.values(TipoDisparo) as string[];
+    const desconocidos = activos.filter((a) => !validos.includes(a));
+    if (desconocidos.length) {
+      throw new BadRequestException(
+        `Avisos desconocidos: ${desconocidos.join(', ')}. Válidos: ${validos.join(', ')}.`,
+      );
+    }
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { iaVentasConfigJson: true },
+    });
+    const actual = (empresa?.iaVentasConfigJson ?? {}) as Record<string, unknown>;
+    const disparadores = {
+      ...((actual.disparadores as Record<string, unknown>) ?? {}),
+      activos: [...new Set(activos)],
+    };
+    await this.prisma.empresa.update({
+      where: { id: empresaId },
+      data: { iaVentasConfigJson: { ...actual, disparadores } as never },
+    });
+    return this.configDe(empresaId);
+  }
+
   async configDe(empresaId: number): Promise<ConfigDisparadores> {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },

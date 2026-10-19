@@ -35,6 +35,7 @@ import { conDescargoLegal } from './prompt-asesor';
 import { sinConfirmacionFalsa } from './confirmacion-falsa';
 import { conIndicacionMedica, esAltoRiesgo } from './alto-riesgo';
 import { avisoVoucher, extraerTitular } from './voucher-verificacion';
+import { conNombreBienEscrito } from './nombre-negocio';
 import { esNumeroInterno, numerosInternos } from './numeros-internos';
 import { bloqueComercial } from './tarifas-y-descuentos';
 import {
@@ -597,6 +598,13 @@ export class LeadsMessageProcessor extends WorkerHost {
       empresa.id,
       contenido,
     );
+    await this.anotarEnListaDeEspera(
+      empresa.id,
+      conv.id,
+      conv.telefonoProspecto,
+      contenido,
+      relevantes.productos[0],
+    );
     const contextoRag = await this.rag.buscarContexto(empresa.id, contenido, 5);
     const businessContext = [
       contextoEmpresa,
@@ -763,6 +771,11 @@ export class LeadsMessageProcessor extends WorkerHost {
         });
       }
     }
+
+    resultado.reply = conNombreBienEscrito(
+      resultado.reply,
+      empresa.nombreComercial || empresa.razonSocial,
+    );
 
     // Persistir la respuesta y enviarla desde el número de la empresa.
     await this.prisma.leadMensaje.create({
@@ -1981,6 +1994,47 @@ export class LeadsMessageProcessor extends WorkerHost {
     return textoParaElCliente(disponibilidadEfectiva(producto));
   }
 
+  /**
+   * Si lo que el cliente pidió está agotado, queda anotado para avisarle
+   * cuando vuelva (la lista de espera sale de LeadConsulta).
+   *
+   * Antes solo se anotaba dentro de `buscar_productos`. El 19-10 el modelo
+   * contestó "Purificador de sangre: agotado... te aviso apenas llegue" con
+   * el adelanto de productos del prompt, sin llamar a la herramienta, y nadie
+   * quedó anotado: la promesa no tenía respaldo. Una vez por producto y
+   * conversación, para no inflar el reporte de no habidos.
+   */
+  private async anotarEnListaDeEspera(
+    empresaId: number,
+    conversacionId: number,
+    telefono: string,
+    texto: string,
+    producto:
+      | { id: number; disponibilidad?: DisponibilidadProducto | null; stock?: unknown }
+      | undefined,
+  ): Promise<void> {
+    if (!producto) return;
+    const disponibilidad = disponibilidadEfectiva(producto);
+    if (disponibilidad === 'INMEDIATA') return;
+    try {
+      const ya = await this.prisma.leadConsulta.count({
+        where: { empresaId, conversacionId, productoId: producto.id },
+      });
+      if (ya) return;
+    } catch {
+      // Sin poder comprobarlo, se anota igual: una fila de más en el reporte
+      // cuesta menos que un cliente al que nadie le avisa.
+    }
+    await this.consultas.registrar(empresaId, conversacionId, telefono, [
+      {
+        texto: texto.slice(0, 120),
+        hubo: false,
+        productoId: producto.id,
+        disponibilidad,
+      },
+    ]);
+  }
+
   private async buscarProductosRelevantes(
     empresaId: number,
     texto: string,
@@ -1991,6 +2045,7 @@ export class LeadsMessageProcessor extends WorkerHost {
       descripcion: string;
       precioUnitario: any;
       stock: any;
+      disponibilidad?: DisponibilidadProducto | null;
       moneda: string;
       imagenUrl: string | null;
     }[];

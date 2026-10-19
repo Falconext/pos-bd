@@ -445,3 +445,60 @@ describe('no ensuciar el panel con cotizaciones duplicadas', () => {
     ]);
   });
 });
+
+describe('cliente que vuelve a comprar (prueba del 19-10)', () => {
+  const YA_ENTREGADO = {
+    zona: 'Lima', tipoZona: 'DOMICILIO', lugar: 'Lince', costoEnvio: 15,
+    nombre: 'Diego Ortega Ramos', dni: '45879632', celular: '991065217',
+    direccion: 'Av. Arequipa 2100', referencia: 'frente al colegio',
+    horario: 'mañana de 4 a 6', comprobanteId: 21893, cotizacionId: 9,
+    itemsJson: [{ productoId: 1, cantidad: 1 }],
+  };
+
+  function conPedidoCerrado(estadoPago: string) {
+    const a = armar({ borrador: { ...YA_ENTREGADO } });
+    a.prisma.comprobante = {
+      findUnique: jest.fn().mockResolvedValue({
+        estadoPago, estadoEnvioSunat: 'NO_APLICA', envioDespacho: { estado: 'ENTREGADO' },
+      }),
+    };
+    a.prisma.leadProspecto = {
+      findFirst: jest.fn().mockResolvedValue({ id: 260, etapa: 'ENTREGADO' }),
+      update: jest.fn().mockResolvedValue({}),
+    };
+    a.prisma.leadEtapaHistorial = { create: jest.fn().mockResolvedValue({}) };
+    a.prisma.$transaction = jest.fn((ops: any[]) => Promise.all(ops));
+    return a;
+  }
+
+  it('una cotización nueva abre otro pedido y conserva la dirección', async () => {
+    const a = conPedidoCerrado('COMPLETADO');
+    const r = await a.service.cotizar(EMPRESA, CONV, [{ productoId: 2, cantidad: 2 }]);
+    expect(r.texto).toBeDefined();
+    const b: any = a.verBorrador();
+    expect(b.comprobanteId).toBeNull();
+    expect(b.direccion).toBe('Av. Arequipa 2100');
+    expect(b.horario).toBeNull();
+    // El embudo vuelve a empezar: desde ENTREGADO no avanzaba.
+    expect(a.prisma.leadProspecto.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ etapa: 'NUEVO' }) }),
+    );
+  });
+
+  it('registrar sin cotizar lo nuevo no dice "ya estaba registrado"', async () => {
+    const a = conPedidoCerrado('COMPLETADO');
+    const r: any = await a.service.registrarPedido(EMPRESA, CONV, TELEFONO);
+    expect(r.registrado).toBeFalsy();
+    expect(r.falta?.[0]).toMatch(/cotízalos primero/);
+  });
+
+  it('con el pedido anterior aún en curso, sigue la idempotencia', async () => {
+    const a = conPedidoCerrado('PENDIENTE_PAGO');
+    a.prisma.comprobante.findUnique.mockResolvedValue({
+      estadoPago: 'PENDIENTE_PAGO', estadoEnvioSunat: 'NO_APLICA', envioDespacho: { estado: 'PREPARANDO' },
+    });
+    const r: any = await a.service.registrarPedido(EMPRESA, CONV, TELEFONO);
+    expect(r.registrado).toBe(true);
+    expect(r.error).toMatch(/ya estaba registrado/);
+  });
+});
