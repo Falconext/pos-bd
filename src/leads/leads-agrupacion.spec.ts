@@ -106,6 +106,8 @@ function armar(
       }),
     },
     producto: { findMany: jest.fn().mockResolvedValue(opts.productos ?? []) },
+    // Sin pedido registrado: una respuesta que diga "quedó registrado" se corrige.
+    leadPedidoBorrador: { findUnique: jest.fn().mockResolvedValue(null) },
   };
 
   const ia: any = {
@@ -229,6 +231,25 @@ describe('la respuesta lee todo el lote', () => {
       'tienen berberina?',
       'y cuanto cuesta',
     ]);
+  });
+
+  it('si el cliente escribe mientras se responde, no manda la respuesta vieja y vuelve a responder', async () => {
+    // Prueba del 19-10: los datos de envío llegaron con el trabajo en curso,
+    // su id ocupado, y nadie los contestó.
+    const { processor, prisma, whatsapp, queue } = armar({
+      mensajes: [{ id: 7, rol: 'USUARIO', contenido: 'quiero 1 gastrizan' } as any],
+    });
+    prisma.leadMensaje.count.mockImplementation(({ where }: any) =>
+      Promise.resolve(where?.id?.gt === 7 && where?.rol === 'USUARIO' ? 1 : 0),
+    );
+
+    await processor.process(tarea as any);
+
+    expect(whatsapp.enviarTexto).not.toHaveBeenCalled();
+    const [nombre, , opciones] = queue.add.mock.calls.at(-1);
+    expect(nombre).toBe(JOB_RESPONDER);
+    expect(opciones.jobId).toBe(`resp-${EMPRESA}-${CONV}-tras-7`);
+    expect(opciones.removeOnComplete).toBe(true);
   });
 
   it('busca productos con el lote entero, no solo con el último mensaje', async () => {

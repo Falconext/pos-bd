@@ -31,6 +31,7 @@ import {
   venceEn,
 } from './pausa-bot';
 import { conDescargoLegal } from './prompt-asesor';
+import { sinConfirmacionFalsa } from './confirmacion-falsa';
 import { esNumeroInterno, numerosInternos } from './numeros-internos';
 import { bloqueComercial } from './tarifas-y-descuentos';
 import {
@@ -562,8 +563,10 @@ export class LeadsMessageProcessor extends WorkerHost {
     const mensajes = await this.prisma.leadMensaje.findMany({
       where: { conversacionId: conv.id },
       orderBy: { id: 'asc' },
-      select: { rol: true, contenido: true, herramientasJson: true },
+      select: { id: true, rol: true, contenido: true, herramientasJson: true },
     });
+    // Hasta dónde leyó este turno. Lo que llegue después no lo vio el modelo.
+    const ultimoLeido = mensajes.at(-1)?.id ?? 0;
     // Si lo último que hay es nuestro, este lote ya fue contestado (reintento
     // de BullMQ, o una respuesta manual desde el panel mientras esperábamos).
     if (mensajes.at(-1)?.rol !== 'USUARIO') return;
@@ -700,6 +703,41 @@ export class LeadsMessageProcessor extends WorkerHost {
       );
       return;
     }
+
+    // El cliente escribió mientras pensábamos. Mientras este trabajo corre su
+    // id está ocupado, así que ese mensaje NO programó respuesta propia: si
+    // mandáramos esto, quedaría sin contestar hasta que volviera a escribir
+    // (pasó en la prueba del 19-10 con los datos de envío). Se descarta esta
+    // respuesta y se vuelve a responder con todo junto.
+    const llegoAlgoNuevo = await this.prisma.leadMensaje.count({
+      where: { conversacionId: conv.id, rol: 'USUARIO', id: { gt: ultimoLeido } },
+    });
+    if (llegoAlgoNuevo) {
+      this.logger.log(
+        `Lead: conv ${conv.id} recibió ${llegoAlgoNuevo} mensaje(s) mientras se respondía; se vuelve a responder con todo.`,
+      );
+      await this.queue.add(JOB_RESPONDER, t, {
+        // Otro id: el de la conversación sigue ocupado por este trabajo.
+        jobId: `resp-${t.empresaId}-${t.conversacionId}-tras-${ultimoLeido}`,
+        delay: 1_000,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: true,
+        removeOnFail: true,
+      });
+      return;
+    }
+
+    // Nunca "tu pedido quedó registrado" si no hay pedido.
+    const borradorTrasTurno = await this.prisma.leadPedidoBorrador.findUnique({
+      where: { conversacionId: conv.id },
+      select: { comprobanteId: true },
+    });
+    resultado.reply = sinConfirmacionFalsa(
+      resultado.reply,
+      resultado.llamadas,
+      !!borradorTrasTurno?.comprobanteId,
+    );
 
     // Persistir la respuesta y enviarla desde el número de la empresa.
     await this.prisma.leadMensaje.create({
