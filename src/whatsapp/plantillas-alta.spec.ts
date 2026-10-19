@@ -96,7 +96,7 @@ describe('dar de alta las plantillas de IA de Ventas', () => {
     const r = await alta(servicio());
 
     expect(r.creadas).toEqual([]);
-    expect(r.existentes).toHaveLength(7);
+    expect(r.existentes).toHaveLength(8);
     expect(r.errores).toEqual([]);
   });
 
@@ -114,7 +114,7 @@ describe('dar de alta las plantillas de IA de Ventas', () => {
     const r = await alta(servicio());
 
     expect(r.errores).toEqual(['recompra_25: Categoría no permitida']);
-    expect(r.creadas).toHaveLength(6);
+    expect(r.creadas).toHaveLength(7);
   });
 
   it('una que falla no se lleva a las otras', async () => {
@@ -127,7 +127,7 @@ describe('dar de alta las plantillas de IA de Ventas', () => {
 
     const r = await alta(servicio());
 
-    expect(r.creadas).toHaveLength(6);
+    expect(r.creadas).toHaveLength(7);
     expect(r.errores).toHaveLength(1);
   });
 });

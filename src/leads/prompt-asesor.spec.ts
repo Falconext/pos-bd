@@ -145,7 +145,7 @@ describe('generarRespuesta: prompt fijo + apoyo en el último mensaje', () => {
         return { texto: 'ok', llamadas: [], uso: { entrada: 0, salida: 0, total: 0, cacheados: 0, llamadasAlModelo: 1 } };
       }),
     };
-    const ia = new IaVentasService(gemini, {} as any);
+    const ia = new IaVentasService(gemini);
     const negocio = { nombre: 'Hierba Sana', contexto: 'fijo' } as any;
     const ejecutor = jest.fn();
     await ia.generarRespuesta([{ role: 'user', content: 'moringa?' }], 'CONTEXTO FIJO', 1, ejecutor, negocio, 'Moringa S/ 30');

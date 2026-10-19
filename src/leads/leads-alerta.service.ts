@@ -72,20 +72,15 @@ export class LeadsAlertaService {
       // ventana de 24h si no hay plantilla aprobada).
       if (admin.celular) {
         tareas.push(
-          this.whatsapp
-            .enviarTexto(admin.celular, texto, p.empresaId)
-            .then((r) => {
-              if (!r.success) {
-                this.logger.warn(
-                  `Alerta lead caliente: WhatsApp a ${admin.celular} falló: ${r.error}`,
-                );
-              }
-            })
-            .catch((e) =>
-              this.logger.warn(
-                `Alerta lead caliente: WhatsApp a ${admin.celular} error: ${e?.message}`,
-              ),
-            ),
+          this.enviarAlEquipo(
+            admin.celular,
+            texto,
+            `Lead caliente (${p.cal.score.total}/100)${p.cal.interes ? `: ${p.cal.interes}` : ''}`,
+            p.nombreProspecto,
+            p.telefonoProspecto,
+            p.empresaId,
+            'lead caliente',
+          ),
         );
       }
     }
@@ -111,7 +106,12 @@ export class LeadsAlertaService {
    * fallar porque WhatsApp esté caído.
    */
   async avisarDerivacion(p: AvisoDerivacionParams): Promise<void> {
-    await this.avisarAlSupervisor(p, this.mensajeDerivacion(p), 'derivación');
+    await this.avisarAlSupervisor(
+      p,
+      this.mensajeDerivacion(p),
+      'derivación',
+      `Un cliente necesita una persona (${p.motivo.replace(/_/g, ' ')})${p.detalle?.trim() ? `: ${p.detalle.trim()}` : ''}`,
+    );
   }
 
   /**
@@ -120,13 +120,19 @@ export class LeadsAlertaService {
    * que se pide es seguimiento, no tomar el chat.
    */
   async avisarAltoRiesgo(p: AvisoDerivacionParams): Promise<void> {
-    await this.avisarAlSupervisor(p, this.mensajeAltoRiesgo(p), 'alto riesgo');
+    await this.avisarAlSupervisor(
+      p,
+      this.mensajeAltoRiesgo(p),
+      'alto riesgo',
+      `Cliente de alto riesgo, hacer seguimiento: ${p.motivo}${p.detalle?.trim() ? `. Se le recomendó ${p.detalle.trim()}` : ''}`,
+    );
   }
 
   private async avisarAlSupervisor(
     p: AvisoDerivacionParams,
     texto: string,
     que: string,
+    resumen: string,
   ): Promise<void> {
     const admins = await this.prisma.usuario.findMany({
       where: { empresaId: p.empresaId, rol: 'ADMIN_EMPRESA' },
@@ -146,22 +152,58 @@ export class LeadsAlertaService {
 
     await Promise.allSettled(
       destinos.map((numero) =>
-        this.whatsapp
-          .enviarTexto(numero, texto, p.empresaId)
-          .then((r) => {
-            if (!r.success) {
-              this.logger.warn(
-                `Aviso de ${que} a ${numero} falló: ${r.error}`,
-              );
-            }
-          })
-          .catch((e) =>
-            this.logger.warn(
-              `Aviso de ${que} a ${numero} error: ${e?.message}`,
-            ),
-          ),
+        this.enviarAlEquipo(
+          numero,
+          texto,
+          resumen,
+          p.nombreProspecto ?? null,
+          p.telefonoProspecto,
+          p.empresaId,
+          que,
+        ),
       ),
     );
+  }
+
+  /**
+   * Manda el aviso al equipo y, si WhatsApp lo rechaza, con plantilla.
+   *
+   * El texto libre solo llega si ese número le escribió al del negocio en las
+   * últimas 24 horas. El supervisor de Hierba Sana no le escribía al 915 desde
+   * el sábado: ninguno de los avisos del 19-10 (alto riesgo, derivaciones,
+   * leads calientes) le llegó, y nadie lo notaba porque el fallo solo quedaba
+   * en el log. La plantilla `aviso_equipo` (UTILITY), una vez aprobada por Meta, llega aunque la ventana esté cerrada.
+   */
+  private async enviarAlEquipo(
+    numero: string,
+    texto: string,
+    resumen: string,
+    nombreCliente: string | null,
+    telefonoCliente: string,
+    empresaId: number,
+    que: string,
+  ): Promise<void> {
+    try {
+      const r = await this.whatsapp.enviarTexto(numero, texto, empresaId);
+      if (r.success) return;
+      const cliente = `${nombreCliente?.trim() || 'Sin nombre'} · ${
+        esBsuid(telefonoCliente) ? 'usuario con @nick' : telefonoCliente
+      }`;
+      const plantilla = await this.whatsapp.enviarPlantilla(
+        numero,
+        'aviso_equipo',
+        'es',
+        [paraPlantilla(resumen), paraPlantilla(cliente)],
+        empresaId,
+      );
+      if (!plantilla.success) {
+        this.logger.warn(
+          `Aviso de ${que} a ${numero}: falló el texto (${r.error}) y la plantilla (${plantilla.error}).`,
+        );
+      }
+    } catch (e: any) {
+      this.logger.warn(`Aviso de ${que} a ${numero} error: ${e?.message}`);
+    }
   }
 
   private mensajeAltoRiesgo(p: AvisoDerivacionParams): string {
@@ -295,4 +337,12 @@ export class LeadsAlertaService {
 function enlaceWhatsApp(telefono: string | null | undefined): string {
   if (esBsuid(telefono)) return 'sin número (usuario con @nick): respóndele desde el panel';
   return `https://wa.me/${String(telefono ?? '').replace(/\D/g, '')}`;
+}
+
+/**
+ * Un parámetro de plantilla no admite saltos de línea, tabulaciones ni más
+ * de cuatro espacios seguidos (Meta rechaza el envío entero).
+ */
+function paraPlantilla(texto: string): string {
+  return texto.replace(/[\n\t]+/g, ' · ').replace(/\s{2,}/g, ' ').trim().slice(0, 900);
 }
