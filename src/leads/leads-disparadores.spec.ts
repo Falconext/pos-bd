@@ -31,10 +31,11 @@ const lima = (dia: number, hora: number) =>
   new Date(Date.UTC(2026, 9, dia, hora + 5, 0, 0));
 
 describe('los 7 disparadores del anexo', () => {
-  it('están los 6 automáticos más la exclusión operativa, que es una regla', () => {
+  it('están los 6 automáticos del anexo, el recordatorio acordado y la exclusión operativa, que es una regla', () => {
     // 33.7 no es un disparador: es la prohibición de disparar. Vive como
-    // condición dentro de los que tocan productos.
-    expect(Object.keys(CATALOGO_DISPAROS)).toHaveLength(6);
+    // condición dentro de los que tocan productos. El 7mo es el recordatorio
+    // en la fecha que dijo el cliente (Hierba Sana, 19-10).
+    expect(Object.keys(CATALOGO_DISPAROS)).toHaveLength(7);
     expect(
       CATALOGO_DISPAROS[TipoDisparo.VUELTA_DISPONIBILIDAD].exigeProductoDisponible,
     ).toBe(true);

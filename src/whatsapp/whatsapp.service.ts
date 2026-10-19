@@ -682,10 +682,25 @@ export class WhatsAppService {
    */
   private readonly PLANTILLAS_IA_VENTAS: PlantillaWhatsApp[] = [
     {
+      // Aviso interno al supervisor o administrador cuando su ventana de 24h
+      // está cerrada (alto riesgo, derivación, lead caliente).
+      // {{1}} qué pasó, {{2}} cliente.
+      name: 'aviso_equipo',
+      body: 'Aviso del asesor de ventas: {{1}}. Cliente: {{2}}. Revisa el panel de IA de Ventas para atenderlo.',
+      example: ['Cliente de alto riesgo, toma metformina', 'Diego Ortega · 51991065217'],
+    },
+    {
       // C4: la IA retoma tras una pausa por intervención manual, con la ventana
       // de 24h ya cerrada. {{1}} nombre.
       name: 'reanudar_atencion',
       body: 'Hola {{1}}, retomamos tu consulta. Seguimos a tu disposición para continuar con tu pedido cuando gustes.',
+      example: ['Juan'],
+    },
+    {
+      // El cliente dijo cuándo retomaba ("en una semana", "a fin de mes");
+      // se le escribe ese día. {{1}} nombre.
+      name: 'recordatorio_acordado',
+      body: 'Hola {{1}}, te escribo como quedamos para retomar tu pedido. ¿Seguimos? Cualquier duda, aquí estoy.',
       example: ['Juan'],
     },
     {

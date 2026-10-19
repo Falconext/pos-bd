@@ -189,3 +189,40 @@ describe('cliente de alto riesgo (decisión de Hierba Sana, 19-10)', () => {
     expect(enviados[0].texto).not.toContain('dejó de responder');
   });
 });
+
+describe('con la ventana de 24h cerrada, el aviso sale por plantilla', () => {
+  // 19-10: el supervisor de Hierba Sana no recibió ningún aviso desde el
+  // sábado: el texto libre fallaba y solo quedaba en el log.
+  it('si el texto falla, manda aviso_equipo con el resumen y el cliente en una línea', async () => {
+    const plantillas: any[] = [];
+    const prisma = { usuario: { findMany: jest.fn().mockResolvedValue([{ celular: '955947892' }]) } } as never;
+    const whatsapp = {
+      enviarTexto: jest.fn(async () => ({ success: false, error: '(#131047) Re-engagement message' })),
+      enviarPlantilla: jest.fn(async (...a: any[]) => {
+        plantillas.push(a);
+        return { success: true };
+      }),
+    } as never;
+    const servicio = new LeadsAlertaService(prisma, whatsapp, { get: () => 'https://app.krezka.com' } as never);
+    await servicio.avisarAltoRiesgo({
+      ...BASE,
+      motivo: 'diabetes e hipertensión,\ntoma metformina',
+      detalle: 'Diabetizan',
+      supervisorTelefono: '955947892',
+    });
+    expect(plantillas).toHaveLength(1);
+    const [numero, nombre, idioma, params, empresaId] = plantillas[0];
+    expect([numero, nombre, idioma, empresaId]).toEqual(['955947892', 'aviso_equipo', 'es', 89]);
+    expect(params[0]).toMatch(/alto riesgo.*metformina.*Diabetizan/);
+    expect(params[0]).not.toMatch(/\n/);
+    expect(params[1]).toBe('Diego Ortega · 51991065217');
+  });
+
+  it('si el texto llega, no gasta la plantilla', async () => {
+    const { servicio } = armar();
+    const w: any = (servicio as any).whatsapp;
+    w.enviarPlantilla = jest.fn();
+    await servicio.avisarDerivacion({ ...BASE, supervisorTelefono: '955947892' });
+    expect(w.enviarPlantilla).not.toHaveBeenCalled();
+  });
+});

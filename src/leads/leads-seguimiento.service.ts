@@ -3,6 +3,7 @@ import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { IaVentasService, MensajeConversacion } from './leads-ia.service';
+import { CONFIG_DISPARADORES_DEFECTO, enHorarioHabil } from './leads-disparadores';
 
 /**
  * Seguimiento automático de la IA de Ventas.
@@ -32,6 +33,11 @@ export class LeadsSeguimientoService {
   @Cron('*/30 * * * *', { name: 'leads-seguimiento' })
   async ejecutar(): Promise<void> {
     if (!this.ia.disponible()) return;
+    // Solo en horario de atención (9 a. m. a 9 p. m. de Lima, el mismo de
+    // los avisos automáticos). Antes salía a cualquier hora: un reenganche a
+    // las 2 de la mañana. Lo que tocaba de noche se manda a primera hora si
+    // la ventana de 24 h sigue abierta. Pedido de Hierba Sana, 19-10.
+    if (!enHorarioHabil(new Date(), CONFIG_DISPARADORES_DEFECTO)) return;
 
     const ahora = Date.now();
     const limiteSilencio = new Date(
