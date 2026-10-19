@@ -144,6 +144,7 @@ function armar(
     registrarPedido: jest.fn().mockResolvedValue({ registrado: true }),
   };
   const consultas: any = consultasFalsas();
+  const disparadores: any = disparadoresFalsos();
   const notificaciones: any = {
     notificarAdminsEmpresa: jest.fn().mockResolvedValue({}),
   };
@@ -159,10 +160,10 @@ function armar(
     pedido,
     embudoFalso(),
     consultas,
-    disparadoresFalsos(),
+    disparadores,
     queue,
   );
-  return { processor, prisma, ia, whatsapp, queue, pedido, mensajes, alerta, consultas };
+  return { processor, prisma, ia, whatsapp, queue, pedido, mensajes, alerta, consultas, disparadores };
 }
 
 const entrante = (messageId: string, text: string) => ({
@@ -693,7 +694,7 @@ function embudoFalso() {
 /** Los disparadores no son lo que estos tests miden: no estorban. */
 function disparadoresFalsos() {
   return {
-    programar: async () => ({ programado: false }),
+    programar: jest.fn(async () => ({ programado: true })),
     cancelar: async () => ({ cancelados: 0 }),
     atenderSiEsBaja: async () => ({ eraBaja: false }),
   } as never;
@@ -718,5 +719,30 @@ describe('el prompt de sistema no cambia entre mensajes (caché de Gemini)', () 
     const [, fijo, , , , delTurno] = ia.generarRespuesta.mock.calls[0];
     expect(fijo).not.toMatch(/Moringa/);
     expect(delTurno).toMatch(/Moringa/);
+  });
+});
+
+describe('el cliente dice cuándo retoma y el modelo no lo agenda', () => {
+  const tarea = { name: JOB_RESPONDER, data: { empresaId: EMPRESA, conversacionId: CONV } };
+
+  it('19-10: "cobro a fin de mes y ahí te escribo" queda agendado igual', async () => {
+    const { processor, disparadores } = armar({
+      mensajes: [{ rol: 'USUARIO', contenido: 'ahorita no tengo plata, cobro a fin de mes y ahí te escribo para comprarlo' }],
+      respuestaIa: '¡Perfecto! A fin de mes te estaré escribiendo.',
+    });
+    await processor.process(tarea as any);
+    const llamadas = disparadores.programar.mock.calls.map((c: any[]) => c[0]);
+    const r = llamadas.find((d: any) => d.tipo === 'RECORDATORIO_ACORDADO');
+    expect(r).toBeDefined();
+    expect(r.referencia).toMatch(/^conversacion:\d+:\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('una fecha de entrega no es una postergación', async () => {
+    const { processor, disparadores } = armar({
+      mensajes: [{ rol: 'USUARIO', contenido: 'mándamelo el lunes a mi casa' }],
+    });
+    await processor.process(tarea as any);
+    const tipos = disparadores.programar.mock.calls.map((c: any[]) => c[0].tipo);
+    expect(tipos).not.toContain('RECORDATORIO_ACORDADO');
   });
 });

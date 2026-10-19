@@ -37,6 +37,11 @@ import { sinConfirmacionFalsa } from './confirmacion-falsa';
 import { conIndicacionMedica, esAltoRiesgo } from './alto-riesgo';
 import { avisoVoucher, extraerTitular } from './voucher-verificacion';
 import { conNombreBienEscrito } from './nombre-negocio';
+import { fechaMencionada } from './fecha-mencionada';
+
+/** Frases de "retomo después" que acompañan a una fecha. */
+const POSPONE =
+  /\b(te escribo|te aviso|te confirmo|te hablo|cobro|cobre|me pagan|regreso|vuelvo|lo compro|lo pido|ahi compro|ahi te)\b/i;
 import { esNumeroInterno, numerosInternos } from './numeros-internos';
 import { bloqueComercial } from './tarifas-y-descuentos';
 import {
@@ -790,6 +795,25 @@ export class LeadsMessageProcessor extends WorkerHost {
           resultado: r,
         });
       }
+    }
+
+    // Dijo una fecha para retomar y el modelo no la agendó: se agenda igual.
+    // Va después del control de mensajes nuevos (no duplicar si se descarta
+    // el turno) y solo si de verdad está posponiendo la compra.
+    const fechaDicha = fechaMencionada(contenido);
+    if (
+      fechaDicha &&
+      (postergaLaCompra(contenido) || POSPONE.test(contenido)) &&
+      !resultado.llamadas.some((ll) => ll.nombre === HERRAMIENTA_AGENDAR_RECORDATORIO) &&
+      !borradorTrasTurno?.comprobanteId
+    ) {
+      const argumentos = { fecha: fechaDicha, motivo: 'detectado en el mensaje' };
+      const r = await ejecutor(HERRAMIENTA_AGENDAR_RECORDATORIO, argumentos);
+      resultado.llamadas.push({
+        nombre: HERRAMIENTA_AGENDAR_RECORDATORIO,
+        argumentos,
+        resultado: r,
+      });
     }
 
     resultado.reply = conNombreBienEscrito(
@@ -1992,6 +2016,16 @@ export class LeadsMessageProcessor extends WorkerHost {
                 'No le prometas que le escribirás en esa fecha: dile que puede escribirnos cuando quiera y aquí lo atendemos.',
             };
           }
+          // Dio una fecha: el "carrito en espera" de mañana ya no va (Edwing:
+          // se le escribe en la fecha que dijo, no al día siguiente).
+          await this.disparadores
+            .cancelar(
+              empresaId,
+              telefono,
+              [TipoDisparo.CARRITO_EN_ESPERA],
+              'El cliente dio una fecha para retomar',
+            )
+            .catch(() => undefined);
           return { agendado: true, fecha };
         }
 
