@@ -1,4 +1,4 @@
-import { IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsIn, IsInt, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
 export class ListProductoDto {
@@ -71,6 +71,21 @@ export class ListProductoDto {
   @IsOptional()
   @Transform(({ value }) => value === true || value === 'true' || value === '1')
   soloStockBajo?: boolean;
+
+  // Filtro de stock del Kardex: bajo el mínimo, sin stock o un rango (desde/hasta).
+  @IsOptional()
+  @IsIn(['BAJO', 'SIN_STOCK', 'RANGO'])
+  stockFiltro?: 'BAJO' | 'SIN_STOCK' | 'RANGO';
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  stockDesde?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  stockHasta?: number;
 
   // Prioriza en el listado los productos con stock (los muestra primero). Usado
   // por el POS de facturación para que lo vendible aparezca arriba.

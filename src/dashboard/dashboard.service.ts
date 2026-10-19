@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { EstadoSunat, EstadoPago } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { ProductoService } from '../producto/producto.service';
 import { montoEnPen } from '../common/utils/moneda.util';
 import { egresosCajaWhere } from '../common/utils/egresos-caja.util';
 import { excluirNotasCreditoDeAnulacion } from '../common/utils/notas-credito.util';
@@ -14,7 +15,10 @@ import {
 
 @Injectable()
 export class DashboardService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly productos: ProductoService,
+  ) {}
 
   // Tipos de comprobantes informales (no van a SUNAT)
   private readonly TIPOS_INFORMALES = [
@@ -1164,24 +1168,23 @@ export class DashboardService {
     const comprasPrevRows = { _sum: { total: await sumarComprasSoles(prevRange) } };
 
     const TIPOS_INFORMALES_ARRAY = this.TIPOS_INFORMALES;
+    // Stock bajo: el MISMO cálculo que "Kardex → Ver solo stock bajo" (stock de
+    // la sede, reservas, lotes). Antes se leía Producto.stock global, se tomaban
+    // 20 y se mostraban 4 con "4 productos": la tarjeta y el Kardex listaban
+    // productos distintos (DEMENVER, 2026-10-18).
+    const stockBajo = await this.productos.listar({
+      empresaId,
+      sedeId,
+      stockFiltro: 'BAJO',
+      page: 1,
+      limit: 4,
+    });
     const [
-      productosBajoStockRaw,
       sunatPendientesRows,
       sunatPendientesCount,
       cuentasCobrarRows,
       pedidosTiendaCount,
     ] = await Promise.all([
-      this.prisma.producto.findMany({
-        where: {
-          empresaId,
-          estado: 'ACTIVO',
-          stockMinimo: { gt: 0 },
-          codigo: { notIn: ['DGD', 'IPM', 'PLD'] },
-        },
-        select: { id: true, descripcion: true, stock: true, stockMinimo: true },
-        orderBy: { stock: 'asc' },
-        take: 20,
-      }),
       this.prisma.comprobante.findMany({
         where: {
           empresaId,
@@ -1258,9 +1261,7 @@ export class DashboardService {
       }),
     ]);
 
-    const stockBajoList = productosBajoStockRaw
-      .filter((p) => Number(p.stock) <= (p.stockMinimo ?? 0))
-      .slice(0, 4);
+    const stockBajoList = stockBajo.productos as any[];
 
     const comprasCurr = Number(comprasRows._sum.total ?? 0);
     const comprasPrev = Number(comprasPrevRows._sum.total ?? 0);
@@ -1447,6 +1448,7 @@ export class DashboardService {
           stock: p.stock,
           stockMinimo: p.stockMinimo,
         })),
+        stockBajoTotal: stockBajo.total,
         sunatPendientes: {
           count: sunatPendientesCount,
           items: sunatPendientesRows.map((c) => ({

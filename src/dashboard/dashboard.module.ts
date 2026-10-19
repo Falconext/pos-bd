@@ -4,9 +4,10 @@ import { DashboardPublicController } from './dashboard-public.controller';
 import { DashboardService } from './dashboard.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { GeminiModule } from '../gemini/gemini.module';
+import { ProductoModule } from '../producto/producto.module';
 
 @Module({
-  imports: [PrismaModule, GeminiModule],
+  imports: [PrismaModule, GeminiModule, ProductoModule],
   controllers: [DashboardController, DashboardPublicController],
   providers: [DashboardService],
 })

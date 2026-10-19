@@ -1,5 +1,10 @@
 import { num, round3 } from '../common/utils/stock';
 import {
+  cumpleFiltroStock,
+  stockEfectivoDeProducto,
+  type FiltroStock,
+} from './stock-efectivo';
+import {
   precioConDescuento,
   resolverListaPrecioAplicable,
 } from '../common/utils/lista-precio.resolver';
@@ -1085,7 +1090,11 @@ export class ProductoService {
     listaPrecioId?: number;
     /** Cliente de la venta: su lista pactada gana sobre la del vendedor. */
     clienteId?: number;
+    /** Alias histórico de `stockFiltro: 'BAJO'` (link "Ver solo stock bajo"). */
     soloStockBajo?: boolean;
+    stockFiltro?: FiltroStock;
+    stockDesde?: number;
+    stockHasta?: number;
     priorizarStock?: boolean;
     /** Incluir productos NO disponibles en la sede (para asignarlos). */
     incluirOcultos?: boolean;
@@ -1150,13 +1159,6 @@ export class ProductoService {
       };
     }
 
-    if (params.soloStockBajo) {
-      // Pre-filter: only include products that have a stockMinimo configured > 0
-      // (products without stockMinimo can never be "low stock").
-      // Field-to-field comparison (stock <= stockMinimo) is not supported by Prisma,
-      // so a JS post-filter is applied after computing effective stock values.
-      where.AND = [...(where.AND ?? []), { stockMinimo: { gt: 0 } }];
-    }
 
     // Prioriza productos con stock: los con stock (producto.stock = suma de sedes,
     // mantenida por kardex) van primero, y dentro de cada grupo se respeta el orden
@@ -1165,10 +1167,71 @@ export class ProductoService {
       ? [{ stock: 'desc' }, { [sort]: order }]
       : { [sort]: order };
 
-    const [productosRaw, total] = await Promise.all([
+    // Filtro por stock ANTES de paginar. Antes "solo stock bajo" se aplicaba
+    // sobre la página ya cortada (50 productos): con 800 en catálogo encontraba
+    // 3 y el dashboard mostraba otros. Aquí se calcula el stock de todos los
+    // candidatos con la misma regla de la columna y se pagina lo que cumple.
+    const filtroStock: FiltroStock | undefined =
+      params.stockFiltro ?? (params.soloStockBajo ? 'BAJO' : undefined);
+    let skipPagina = skip;
+    let totalFiltrado: number | null = null;
+    if (filtroStock) {
+      const candidatos = await this.prisma.producto.findMany({
+        where,
+        orderBy,
+        select: {
+          id: true,
+          stock: true,
+          stockMinimo: true,
+          porcentajeProvision: true,
+          stocks: {
+            where: params.sedeId ? { sedeId: params.sedeId } : {},
+            select: { stock: true, stockMinimo: true },
+          },
+          lotes: {
+            where: { activo: true, stockActual: { gt: 0 } },
+            select: { stockActual: true },
+          },
+        },
+      });
+      const reservas = candidatos.length
+        ? await this.prisma.reserva.groupBy({
+            by: ['productoId'],
+            where: {
+              empresaId,
+              ...(params.sedeId ? { sedeId: params.sedeId } : {}),
+              productoId: { in: candidatos.map((c) => c.id) },
+              estado: {
+                in: [EstadoReserva.PENDIENTE, EstadoReserva.CONFIRMADA],
+              },
+            },
+            _sum: { cantidad: true },
+          })
+        : [];
+      const reservado = new Map(
+        reservas.map((r) => [r.productoId, r._sum.cantidad ?? 0]),
+      );
+      const desde = params.stockDesde != null ? Number(params.stockDesde) : null;
+      const hasta = params.stockHasta != null ? Number(params.stockHasta) : null;
+      const ids = candidatos
+        .filter((c) =>
+          cumpleFiltroStock(
+            stockEfectivoDeProducto(c, params.sedeId, reservado.get(c.id) ?? 0),
+            filtroStock,
+            Number.isFinite(desde) ? desde : null,
+            Number.isFinite(hasta) ? hasta : null,
+          ),
+        )
+        .map((c) => c.id);
+      totalFiltrado = ids.length;
+      where.id = { in: ids.slice(skip, skip + limitNumber) };
+      skipPagina = 0;
+    }
+
+    const [productosRaw, totalSinFiltro] = await Promise.all([
       this.prisma.producto.findMany({
         where,
-        skip,
+        skip: skipPagina,
         take: limitNumber,
         orderBy,
         select: {
@@ -1323,6 +1386,7 @@ export class ProductoService {
       }),
       this.prisma.producto.count({ where }),
     ]);
+    const total = totalFiltrado ?? totalSinFiltro;
 
     const productoIds = productosRaw.map((p) => p.id);
     const reservasAgrupadas =
@@ -1405,29 +1469,10 @@ export class ProductoService {
 
     const productos = await Promise.all(
       productosRaw.map(async (p) => {
-        const stockDesdeLotes = (p.lotes || []).reduce(
-          (acc, lote) => acc + Number(lote.stockActual || 0),
-          0,
-        );
-        const usaStockLotes = stockDesdeLotes > 0;
+        const reservado = reservadoPorProducto.get(p.id) ?? 0;
+        const { usaStockLotes, stockTotal, stockMinimo, stockDisponibleVenta } =
+          stockEfectivoDeProducto(p as any, params.sedeId, reservado);
         const loteFefoActual = usaStockLotes ? p.lotes[0] : null;
-
-        // Si se pide una sede específica, usar SOLO ese stock.
-        // Si no se pide sede, usar suma total como comportamiento histórico.
-        const stockTotalBase = params.sedeId
-          ? num(p.stocks[0]?.stock) // if sedeId is specific, and no ProductoStock exists, stock is 0
-          : p.stocks.length > 0
-            ? p.stocks.reduce((sum, s) => sum + num(s.stock), 0)
-            : num((p as any).stock);
-        // If a specific sede is requested, we MUST use the sede's specific stock from ProductoStock (stockTotalBase).
-        // Lotes don't have sedeId in this schema, so their sum is global.
-        const stockTotal =
-          usaStockLotes && !params.sedeId ? stockDesdeLotes : stockTotalBase;
-        const stockMinimo = params.sedeId
-          ? (p.stocks[0]?.stockMinimo ?? 0)
-          : p.stocks.length > 0
-            ? p.stocks.reduce((sum, s) => sum + (s.stockMinimo || 0), 0)
-            : ((p as any).stockMinimo ?? 0);
         const stockSede = params.sedeId
           ? (p.stocks[0] as any | undefined)
           : undefined;
@@ -1444,16 +1489,7 @@ export class ProductoService {
           Number(p.precioUnitario),
           p.precioOferta != null ? Number(p.precioOferta) : null,
         );
-        const reservado = reservadoPorProducto.get(p.id) ?? 0;
         const enCaminoProducto = enCaminoPorProducto.get(p.id) ?? null;
-        const cupoProvision = Math.floor(
-          (stockTotal * (p.porcentajeProvision ?? 0)) / 100,
-        );
-        const cupoVenta = Math.max(0, stockTotal - cupoProvision);
-        const stockDisponibleVenta = Math.max(
-          0,
-          Math.min(stockTotal - reservado, cupoVenta),
-        );
 
         const imagenUrl = normalizePersistentImageUrl(
           (p as any).imagenUrl as string | null,
@@ -1618,20 +1654,9 @@ export class ProductoService {
       }),
     );
 
-    // Post-filter for soloStockBajo: keep only products where effective stock <= stockMinimo.
-    // Prisma can't express column-to-column comparison natively, so we filter in JS
-    // after computing the effective stock values.
-    const productosFinales = params.soloStockBajo
-      ? productos.filter((p: any) => {
-          const stockEfectivo = Number(p.stock ?? 0);
-          const minimo = Number(p.stockMinimo ?? 0);
-          return minimo > 0 && stockEfectivo <= minimo;
-        })
-      : productos;
-
     return {
-      productos: productosFinales,
-      total: params.soloStockBajo ? productosFinales.length : total,
+      productos,
+      total,
       page,
       limit,
     };
