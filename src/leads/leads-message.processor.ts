@@ -19,6 +19,7 @@ import {
   HERRAMIENTA_BUSCAR_PRODUCTOS,
   HERRAMIENTA_COTIZAR,
   HERRAMIENTA_DERIVAR,
+  HERRAMIENTA_AVISAR_RIESGO,
   HERRAMIENTA_ENVIAR_FOTO,
   HERRAMIENTA_GUARDAR_DATOS,
   HERRAMIENTA_REGISTRAR_PEDIDO,
@@ -1783,6 +1784,67 @@ export class LeadsMessageProcessor extends WorkerHost {
             instruccion:
               'Avísale al cliente que ya informaste a un asesor y que se comunicará con él. Sin preguntas y una sola vez: a partir de aquí no vuelvas a responder.',
           };
+        }
+
+        case HERRAMIENTA_AVISAR_RIESGO: {
+          const riesgo = String(argumentos.riesgo ?? '').trim();
+          const recomendado =
+            typeof argumentos.recomendado === 'string'
+              ? argumentos.recomendado
+              : '';
+          const instruccion =
+            'Sigue atendiendo normal. Después de recomendar, dile con naturalidad que lo consulte con su médico y que no deje su tratamiento actual hasta que su médico lo indique. No le digas que avisaste a nadie.';
+          // Una vez por conversación: el aviso es para que alguien lo siga, y
+          // repetirlo en cada mensaje solo llena el celular del supervisor.
+          const previos = await this.prisma.leadMensaje.findMany({
+            where: {
+              conversacionId,
+              rol: 'ASISTENTE',
+              herramientasJson: { not: Prisma.DbNull },
+            },
+            select: { herramientasJson: true },
+          });
+          const yaAvisado = previos.some((m) =>
+            (Array.isArray(m.herramientasJson) ? m.herramientasJson : []).some(
+              (ll: any) =>
+                ll?.nombre === HERRAMIENTA_AVISAR_RIESGO &&
+                (ll?.resultado as { avisado?: boolean })?.avisado,
+            ),
+          );
+          if (yaAvisado) return { avisado: true, yaEstaba: true, instruccion };
+
+          await this.notificaciones
+            .notificarAdminsEmpresa({
+              empresaId,
+              tipo: 'WARNING',
+              titulo: '⚠️ Cliente de alto riesgo: hacer seguimiento',
+              mensaje: `${riesgo || 'Sin detalle.'}${recomendado ? `\nSe le recomendó: ${recomendado}` : ''}\n\nWhatsApp: ${telefono}`,
+              metaData: { origen: 'ia-ventas-alto-riesgo', telefono },
+            })
+            .catch(() => undefined);
+          const conv = await this.prisma.leadConversacion.findUnique({
+            where: { id: conversacionId },
+            select: { nombreProspecto: true },
+          });
+          const cfg = await this.pedido.configDe(empresaId);
+          await this.alerta
+            .avisarAltoRiesgo({
+              empresaId,
+              telefonoProspecto: telefono,
+              nombreProspecto: conv?.nombreProspecto ?? null,
+              motivo: riesgo || 'sin detalle',
+              detalle: recomendado,
+              supervisorTelefono: cfg.supervisorTelefono ?? null,
+            })
+            .catch((e) =>
+              this.logger.warn(
+                `Aviso de alto riesgo de la conv ${conversacionId} falló: ${e?.message}`,
+              ),
+            );
+          this.logger.log(
+            `Lead: conv ${conversacionId} marcada de alto riesgo; la IA sigue atendiendo.`,
+          );
+          return { avisado: true, instruccion };
         }
 
         case HERRAMIENTA_REGISTRAR_PEDIDO: {
