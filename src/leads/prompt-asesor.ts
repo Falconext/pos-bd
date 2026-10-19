@@ -94,16 +94,40 @@ ${negocio.contexto}`;
  * Va en código y no en el prompt a propósito: el anexo lo exige "fijo e
  * invariable", y un modelo lo olvida justo en el mensaje que importa. Si el
  * modelo ya lo escribió, no se duplica.
+ *
+ * Y va UNA vez por conversación (`yaSeEnvio`). En la prueba completa del
+ * 19-10 salió en cuatro mensajes seguidos —la búsqueda de productos se repite
+ * al cotizar— y en uno de ellos dos veces: el fijo y otro que el modelo
+ * redactó con sus palabras ("son un apoyo y no reemplazan…"). Las versiones
+ * del modelo se quitan: el texto que vale es el fijo.
  */
 export function conDescargoLegal(
   respuesta: string,
   descargo: string | null | undefined,
   huboRecomendacion: boolean,
+  yaSeEnvio = false,
 ): string {
   const texto = descargo?.trim();
-  if (!texto || !huboRecomendacion) return respuesta;
-  if (normalizar(respuesta).includes(normalizar(texto))) return respuesta;
-  return `${respuesta.trimEnd()}\n\n${texto}`;
+  if (!texto) return respuesta;
+  if (yaSeEnvio) return sinDescargos(respuesta, texto);
+  if (!huboRecomendacion) return respuesta;
+  return `${sinDescargos(respuesta, texto).trimEnd()}\n\n${texto}`;
+}
+
+/**
+ * Quita los párrafos que son el descargo: el fijo, escrito igual o sin
+ * tildes, y las versiones del modelo ("no reemplazan un tratamiento médico").
+ */
+function sinDescargos(respuesta: string, descargo: string): string {
+  const fijo = normalizar(descargo);
+  const parrafos = respuesta.split(/\n\s*\n/);
+  const quedan = parrafos.filter((p) => {
+    const n = normalizar(p);
+    if (!n) return false;
+    if (n.includes(fijo)) return false;
+    return !(/reemplaza/.test(n) && /tratamiento/.test(n));
+  });
+  return quedan.length ? quedan.join('\n\n') : respuesta;
 }
 
 function normalizar(t: string): string {

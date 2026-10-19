@@ -656,10 +656,22 @@ export class LeadsMessageProcessor extends WorkerHost {
         (Array.isArray(r?.productos) && r.productos.length > 0) || !!r?.texto
       );
     });
+    const descargo = config.descargoLegal?.trim();
+    const descargoYaEnviado = descargo
+      ? !!(await this.prisma.leadMensaje.findFirst({
+          where: {
+            conversacionId: conv.id,
+            rol: 'ASISTENTE',
+            contenido: { contains: descargo },
+          },
+          select: { id: true },
+        }))
+      : false;
     resultado.reply = conDescargoLegal(
       resultado.reply,
       config.descargoLegal,
       recomendoProductos,
+      descargoYaEnviado,
     );
 
     // El cliente solo dio las gracias o dijo "ok" y lo que íbamos a contestar

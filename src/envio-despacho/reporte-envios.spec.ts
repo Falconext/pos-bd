@@ -20,6 +20,8 @@ describe('Reporte de envíos — filtro por courier y modo agencia', () => {
     {} as any,
     {} as any,
     {} as any,
+    {} as any,
+    {} as any,
   );
   const filtro = (c?: string) => (service as any).filtroCourier(c);
   const modo = (c?: string) => (service as any).modoReporte(c);

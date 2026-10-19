@@ -23,6 +23,9 @@ import {
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { planPermiteShalomPro } from '../shalom/shalom.util';
 import { parseFechaSoloDia } from '../common/utils/fecha';
+import { ModuleRef } from '@nestjs/core';
+import { PagoService } from '../pago/pago.service';
+import { LeadsEmbudoService } from '../leads/leads-embudo.service';
 
 const ESTADOS_NOTIFICABLES = new Set([
   EstadoDespacho.EN_CAMINO,
@@ -111,6 +114,10 @@ export class EnvioDespachoService {
     private prisma: PrismaService,
     private repartidorService: RepartidorService,
     private whatsapp: WhatsAppService,
+    private pagos: PagoService,
+    // El embudo de la IA de Ventas vive en LeadsModule, que ya importa este
+    // módulo. Se resuelve en tiempo de ejecución para no cerrar el ciclo.
+    private moduleRef: ModuleRef,
   ) {}
 
   async getByComprobante(comprobanteId: number, empresaId: number) {
@@ -327,6 +334,7 @@ export class EnvioDespachoService {
         comprobanteId,
         dto.estado as EstadoDespacho,
       );
+      await this.sincronizarEmbudo(empresaId, comprobanteId, dto.estado!);
     }
 
     return this.withLegacyRepartidor(updated);
@@ -656,6 +664,30 @@ export class EnvioDespachoService {
     return { data: todos, total: todos.length };
   }
 
+  /**
+   * Lleva el pedido de la IA de Ventas a la etapa que corresponde al despacho
+   * (en ruta, entregado, reprogramado). La lógica estaba escrita en
+   * `sincronizarConDespacho` pero nadie la llamaba: el despacho salía "en
+   * camino" y el embudo seguía en "por despachar".
+   *
+   * Best-effort: un despacho que no salió de la IA no tiene pedido en el
+   * embudo, y un fallo acá no debe tumbar el cambio de estado.
+   */
+  private async sincronizarEmbudo(
+    empresaId: number,
+    comprobanteId: number,
+    estado: string,
+  ) {
+    try {
+      const embudo = this.moduleRef.get(LeadsEmbudoService, { strict: false });
+      await embudo.sincronizarConDespacho(empresaId, comprobanteId, estado);
+    } catch (e) {
+      this.logger.warn(
+        `Embudo: no se pudo seguir al despacho ${comprobanteId}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
   private async notificarCambioEstado(
     comprobanteId: number,
     empresaId: number,
@@ -729,7 +761,10 @@ export class EnvioDespachoService {
         telefono,
         'pedido_en_camino',
         'es',
-        [nombre, pedidoRef, repartidorNombre ?? 'Sin asignar'],
+        // "Repartidor asignado: Sin asignar" le llegaba así al cliente. El
+        // texto de la plantilla es fijo, así que el hueco se llena con algo
+        // que se pueda leer.
+        [nombre, pedidoRef, repartidorNombre ?? 'nuestro equipo de reparto'],
         empresaId,
       );
     } else {
@@ -917,7 +952,11 @@ export class EnvioDespachoService {
     });
   }
 
-  async confirmarPago(comprobanteId: number, empresaId: number): Promise<void> {
+  async confirmarPago(
+    comprobanteId: number,
+    empresaId: number,
+    usuarioId?: number,
+  ): Promise<void> {
     const comprobante = await this.prisma.comprobante.findFirst({
       where: { id: comprobanteId, empresaId },
       select: {
@@ -926,14 +965,40 @@ export class EnvioDespachoService {
         correlativo: true,
         saldo: true,
         cliente: { select: { nombre: true, telefono: true } },
+        envioDespacho: { select: { tipoEnvio: true, formaPagoCobro: true } },
       },
     });
     if (!comprobante) throw new NotFoundException('Comprobante no encontrado');
+    const despacho = comprobante.envioDespacho;
 
-    await this.prisma.comprobante.update({
-      where: { id: comprobanteId },
-      data: { saldo: 0, estadoPago: 'COMPLETADO' },
-    });
+    // Lo cobrado se registra como un pago de verdad. Antes solo se ponía el
+    // saldo en 0: la nota quedaba "pagada" pero el dinero no entraba a caja
+    // ni a finanzas, y la venta contraentrega —que se cuenta cuando el
+    // cliente recibe y paga— no aparecía en ningún ingreso.
+    const saldo = Number(comprobante.saldo ?? 0);
+    if (saldo > 0) {
+      const forma = despacho?.formaPagoCobro;
+      await this.pagos.registrarPago(
+        comprobanteId,
+        {
+          monto: saldo,
+          medioPago: forma && forma !== 'NO_COBRAR' ? forma : 'EFECTIVO',
+          observacion: 'Cobro confirmado desde despacho',
+        },
+        usuarioId,
+        empresaId,
+      );
+    } else {
+      await this.prisma.comprobante.update({
+        where: { id: comprobanteId },
+        data: { saldo: 0, estadoPago: 'COMPLETADO' },
+      });
+    }
+
+    // La plantilla dice "Ya puedes retirar tu pedido": tiene sentido en una
+    // agencia, no en un delivery a domicilio, donde llegaba DESPUÉS de "fue
+    // entregado exitosamente".
+    if (despacho?.tipoEnvio === 'DOMICILIO') return;
 
     const telefono = comprobante.cliente?.telefono;
     if (telefono) {

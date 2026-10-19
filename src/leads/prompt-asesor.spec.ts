@@ -106,6 +106,28 @@ describe('conDescargoLegal', () => {
     expect(r.split('complemento alimenticio')).toHaveLength(2);
   });
 
+  it('va una sola vez por conversación', () => {
+    // Caso real del 19-10: salía en cada mensaje desde la recomendación.
+    const r = conDescargoLegal(
+      `¿En qué distrito te encuentras?\n\n${DESCARGO}`,
+      DESCARGO,
+      true,
+      true,
+    );
+    expect(r).toBe('¿En qué distrito te encuentras?');
+  });
+
+  it('quita la versión que redacta el modelo y deja la fija', () => {
+    const r = conDescargoLegal(
+      'Te recomiendo Gastrizan.\n\nRecuerda que los productos naturales son un apoyo y no reemplazan un tratamiento médico.\n\n¿Lo agregamos?',
+      DESCARGO,
+      true,
+    );
+    expect(r).not.toContain('Recuerda que');
+    expect(r.split('complemento alimenticio')).toHaveLength(2);
+    expect(r).toContain('¿Lo agregamos?');
+  });
+
   it('sin descargo configurado no cambia nada', () => {
     expect(conDescargoLegal('Hola.', null, true)).toBe('Hola.');
     expect(conDescargoLegal('Hola.', '  ', true)).toBe('Hola.');
