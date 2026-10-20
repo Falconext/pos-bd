@@ -342,6 +342,12 @@ export class LeadsEmbudoService {
     // pero sí se descuenta de lo que el repartidor o la agencia debe cobrar.
     const monto = Math.min(pedido, Number(nota?.saldo ?? 0));
     if (monto > 0) {
+      // ¿Es el primer pago de la nota? Entonces la nota toma su medio: el
+      // panel de ventas muestra el de la nota, que nace "EFECTIVO" por
+      // defecto, y un adelanto por Yape se veía como efectivo (20-10).
+      const pagosPrevios = await this.prisma.pago
+        .count({ where: { comprobanteId: borrador.comprobanteId } })
+        .catch(() => 1);
       await this.pagos.registrarPago(
         borrador.comprobanteId,
         {
@@ -353,6 +359,14 @@ export class LeadsEmbudoService {
         usuarioId,
         empresaId,
       );
+      if (pagosPrevios === 0) {
+        await this.prisma.comprobante
+          .update({
+            where: { id: borrador.comprobanteId },
+            data: { medioPago: medioDePago(pago.medioLeido) },
+          })
+          .catch(() => undefined);
+      }
     }
     const despacho = await this.prisma.envioDespacho.findUnique({
       where: { comprobanteId: borrador.comprobanteId },

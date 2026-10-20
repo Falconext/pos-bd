@@ -237,3 +237,42 @@ describe('validar un voucher que no cuadra', () => {
     expect(r.adelanto.motivo).toMatch(/confirma el monto a mano/);
   });
 });
+
+describe('validar el voucher de Yape del adelanto (validación del 20-10)', () => {
+  function armarValidacion(pagosPrevios: number) {
+    const pagos = { registrarPago: jest.fn().mockResolvedValue({}) };
+    const prisma: any = {
+      leadComprobantePago: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 8, prospectoId: 1, conversacionId: 606, validadoEn: null,
+          montoLeido: 12, medioLeido: 'Yape', operacionLeida: '01300228',
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      leadPedidoBorrador: { findUnique: jest.fn().mockResolvedValue({ comprobanteId: 22080 }) },
+      comprobante: {
+        findFirst: jest.fn().mockResolvedValue({ saldo: 24 }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      pago: { count: jest.fn().mockResolvedValue(pagosPrevios) },
+      envioDespacho: { findUnique: jest.fn().mockResolvedValue({ id: 1, montoCOD: 24 }), update: jest.fn() },
+      usuario: { findUnique: jest.fn().mockResolvedValue(null) },
+    };
+    return { s: new LeadsEmbudoService(prisma, {} as any, pagos as any), prisma, pagos };
+  }
+
+  it('registra el pago como YAPE, el despacho cobra el resto y la nota toma el medio', async () => {
+    const { s, prisma, pagos } = armarValidacion(0);
+    const r: any = await s.validarPago(8, 89, { id: 157, nombre: 'Edwing' }, false);
+    expect(r.adelanto).toMatchObject({ registrado: true, monto: 12 });
+    expect(pagos.registrarPago.mock.calls[0][1]).toMatchObject({ monto: 12, medioPago: 'YAPE', referencia: '01300228' });
+    expect(prisma.envioDespacho.update).toHaveBeenCalledWith({ where: { id: 1 }, data: { montoCOD: 12 } });
+    expect(prisma.comprobante.update).toHaveBeenCalledWith({ where: { id: 22080 }, data: { medioPago: 'YAPE' } });
+  });
+
+  it('si la nota ya tenía pagos, no le cambia el medio', async () => {
+    const { s, prisma } = armarValidacion(1);
+    await s.validarPago(8, 89, { id: 157, nombre: 'Edwing' }, false);
+    expect(prisma.comprobante.update).not.toHaveBeenCalled();
+  });
+});
