@@ -37,6 +37,8 @@ export interface ConfigComercial {
   descuento: ReglasDescuento;
   /** Nombre con el que se presenta quien atiende ("Claudio" en Hierba Sana). */
   asesor?: string;
+  /** Video que se manda una vez, tras la primera respuesta (Krezka). */
+  videoBienvenidaUrl?: string;
   /**
    * Texto fijo al pie de toda recomendación de producto. El anexo lo exige
    * "fijo e invariable", por eso lo pone el código y no el modelo.
@@ -131,6 +133,9 @@ export class LeadsPedidoService {
       // regalar S/ 10 a S/ 30 por pedido sin pedirlo.
       descuento: guardada.descuento ?? SIN_DESCUENTO,
       ...(guardada.asesor ? { asesor: guardada.asesor } : {}),
+      ...(guardada.videoBienvenidaUrl
+        ? { videoBienvenidaUrl: guardada.videoBienvenidaUrl }
+        : {}),
       ...(guardada.mediosPago ? { mediosPago: guardada.mediosPago } : {}),
       ...(guardada.descargoLegal
         ? { descargoLegal: guardada.descargoLegal }

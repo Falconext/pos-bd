@@ -940,7 +940,12 @@ export class WhatsAppService {
           recipient_type: 'individual',
           ...campoDestino(to),
           type: 'text',
-          text: { body: mensaje },
+          // Con un enlace adentro, WhatsApp muestra la vista previa (miniatura de
+          // YouTube, título de la página) solo si se pide.
+          text: {
+            body: mensaje,
+            ...(/https?:\/\//i.test(mensaje) ? { preview_url: true } : {}),
+          },
         },
         {
           headers: {
@@ -1101,6 +1106,56 @@ export class WhatsAppService {
    * Envía un documento (PDF por URL) por WhatsApp. Si se pasa `empresaId`, usa las
    * credenciales de esa empresa (BYON); si no, las de plataforma.
    */
+  /**
+   * Video por enlace (MP4 H.264 + AAC, máx. 16 MB: límite de WhatsApp). Lo
+   * usa el video de bienvenida de la IA de Ventas.
+   */
+  async enviarVideoUrl(
+    numero: string,
+    videoUrl: string,
+    caption?: string,
+    empresaId?: number,
+  ): Promise<{ success: boolean; error?: string }> {
+    let token: string;
+    let phoneId: string;
+    if (empresaId) {
+      try {
+        ({ token, phoneId } = await this.getCredentialsForEmpresa(empresaId));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'WhatsApp no configurado';
+        return { success: false, error: msg };
+      }
+    } else {
+      ({ token, phoneId } = this.getCredentials());
+    }
+    if (!token || !phoneId)
+      return { success: false, error: 'WhatsApp no configurado' };
+    const to = this.formatearNumero(numero);
+    try {
+      await axios.post(
+        `${this.apiUrl}/${phoneId}/messages`,
+        {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          ...campoDestino(to),
+          type: 'video',
+          video: { link: videoUrl, ...(caption ? { caption } : {}) },
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+      return { success: true };
+    } catch (error) {
+      const msg = error.response?.data?.error?.message || error.message;
+      this.logger.warn(`WhatsApp video fallido a ${to}: ${msg}`);
+      return { success: false, error: msg };
+    }
+  }
+
   async enviarDocumentoUrl(
     numero: string,
     pdfUrl: string,
