@@ -22,7 +22,7 @@ import { REGLAS_HIERBA_SANA } from './reglas-descuento';
 const EMPRESA = 89;
 const CONV = 212;
 
-function armar(opts: { items?: any[]; pagos?: number[]; zona?: string } = {}) {
+function armar(opts: { items?: any[]; pagos?: number[]; zona?: string; medio?: string } = {}) {
   const items = opts.items ?? [{ productoId: 1, cantidad: 1 }];
   const esAgencia = opts.zona === 'AGENCIA';
   const borrador: any = {
@@ -68,7 +68,9 @@ function armar(opts: { items?: any[]; pagos?: number[]; zona?: string } = {}) {
     leadComprobantePago: {
       findMany: jest
         .fn()
-        .mockResolvedValue((opts.pagos ?? []).map((m) => ({ montoLeido: m }))),
+        .mockResolvedValue(
+          (opts.pagos ?? []).map((m) => ({ montoLeido: m, medioLeido: opts.medio ?? null })),
+        ),
     },
   };
   const comprobante: any = {
@@ -227,5 +229,26 @@ describe('el adelanto y el saldo', () => {
 
       expect(r.adelanto).toBeUndefined();
     });
+  });
+});
+
+describe('el medio del adelanto (pedido de Hierba Sana 20-10)', () => {
+  it('un adelanto por Yape queda como YAPE en la nota, no EFECTIVO', async () => {
+    const { registrar, emitido } = armar({ pagos: [20], medio: 'Yape' });
+    await registrar();
+    expect(emitido().adelanto).toBe(20);
+    expect(emitido().medioPago).toBe('YAPE');
+  });
+
+  it('y por Plin, PLIN', async () => {
+    const { registrar, emitido } = armar({ pagos: [20], medio: 'Plin' });
+    await registrar();
+    expect(emitido().medioPago).toBe('PLIN');
+  });
+
+  it('sin adelanto no se le pone medio', async () => {
+    const { registrar, emitido } = armar();
+    await registrar();
+    expect(emitido().medioPago).toBeUndefined();
   });
 });

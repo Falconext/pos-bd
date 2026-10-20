@@ -824,3 +824,18 @@ describe('el cliente de la nota es el que dio sus datos (validación del 20-10)'
     expect(a.comprobante.crearInformal.mock.calls[0][0].clienteId).toBe(5300);
   });
 });
+
+describe('nombre completo para la nota (pedido de Hierba Sana 20-10)', () => {
+  it('con solo el nombre de pila todavía falta el nombre completo', async () => {
+    const { service, comprobante } = armar({ borrador: { ...limaCompleto(), nombre: 'Diego' } });
+    const r = await service.registrarPedido(EMPRESA, CONV, TELEFONO);
+    expect(r.falta).toContain('nombre completo');
+    expect(comprobante.crearInformal).not.toHaveBeenCalled();
+  });
+
+  it('nombre y apellido alcanza', async () => {
+    const { service } = armar({ borrador: { ...limaCompleto(), nombre: 'Diego Ortega' } });
+    const r = await service.registrarPedido(EMPRESA, CONV, TELEFONO);
+    expect(r.registrado).toBe(true);
+  });
+});

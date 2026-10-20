@@ -1,3 +1,4 @@
+import { medioDePago } from './leads-embudo.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -527,7 +528,11 @@ export class LeadsPedidoService {
       if (falta) faltan.push(que);
     };
 
-    pedir(!b.nombre, 'nombre completo');
+    // Nombre Y apellido: con "Diego" solo, la nota sale a nombre de nadie.
+    pedir(
+      !b.nombre || b.nombre.trim().split(/\s+/).filter((w) => w.length > 1).length < 2,
+      'nombre completo',
+    );
     if (b.tipoZona === ('DOMICILIO' satisfies TipoZona)) {
       pedir(!b.direccion, 'dirección con calle y número');
       pedir(!b.referencia, 'una referencia para ubicar la dirección');
@@ -1180,10 +1185,8 @@ export class LeadsPedidoService {
     // reserva. Así el pedido nace con lo que falta cobrar, y "pago completado"
     // pasa a ser un hecho aparte —cuando el repartidor entrega la plata— que
     // marca `actualizarSaldo`.
-    const adelanto = await this.pagadoPorElCliente(
-      conversacionId,
-      calculo.montoAPagar,
-    );
+    const { monto: adelanto, medio: medioDelAdelanto } =
+      await this.pagadoPorElCliente(conversacionId, calculo.montoAPagar);
     /** Lo que el repartidor o la agencia le cobran al cliente al entregar. */
     const porCobrar = calculo.montoAPagar - adelanto;
 
@@ -1242,7 +1245,9 @@ export class LeadsPedidoService {
           // que se cobra en la agencia no quedaba registrado en ninguna
           // parte. Pasándolo, la nota nace PAGO_PARCIAL con su saldo y a
           // caja entra solo lo que de verdad entró.
-          ...(adelanto > 0 ? { adelanto } : {}),
+          // Con el medio del voucher: sin él la nota decía EFECTIVO aunque el
+          // adelanto entrara por Yape (20-10).
+          ...(adelanto > 0 ? { adelanto, medioPago: medioDelAdelanto } : {}),
           ...(clienteId
             ? { clienteId }
             : { clienteName: 'CLIENTES VARIOS' }),
@@ -1408,14 +1413,17 @@ export class LeadsPedidoService {
   private async pagadoPorElCliente(
     conversacionId: number,
     total: number,
-  ): Promise<number> {
+  ): Promise<{ monto: number; medio: string }> {
     try {
       const pagos = await this.prisma.leadComprobantePago.findMany({
         where: { conversacionId, rechazadoEn: null, montoLeido: { not: null } },
-        select: { montoLeido: true },
+        select: { montoLeido: true, medioLeido: true },
       });
       const suma = pagos.reduce((a, p) => a + Number(p.montoLeido ?? 0), 0);
-      return Math.min(Math.max(0, Math.round(suma * 100) / 100), total);
+      return {
+        monto: Math.min(Math.max(0, Math.round(suma * 100) / 100), total),
+        medio: medioDePago(pagos[0]?.medioLeido),
+      };
     } catch (e) {
       // Sin esto el pedido se registra igual, solo que sin adelanto: perder la
       // venta por no poder leer un voucher sería peor.
@@ -1424,7 +1432,7 @@ export class LeadsPedidoService {
           e instanceof Error ? e.message : String(e)
         }`,
       );
-      return 0;
+      return { monto: 0, medio: 'EFECTIVO' };
     }
   }
 
