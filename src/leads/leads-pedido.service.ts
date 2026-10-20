@@ -1,3 +1,4 @@
+import type { ConfigDemos } from './demos';
 import { medioDePago } from './leads-embudo.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -62,6 +63,8 @@ export interface ConfigComercial {
    * administradores se agregan solos; esta lista es para el resto.
    */
   numerosInternos?: string[];
+  /** Demos por rubro que la IA entrega (Krezka). Ver `demos.ts`. */
+  demos?: ConfigDemos;
 }
 
 /** Campos que la IA puede ir guardando a medida que el cliente los dice. */
@@ -148,6 +151,9 @@ export class LeadsPedidoService {
         : {}),
       ...(Array.isArray(guardada.numerosInternos)
         ? { numerosInternos: guardada.numerosInternos }
+        : {}),
+      ...(Array.isArray(guardada.demos?.cuentas) && guardada.demos?.enlace
+        ? { demos: guardada.demos }
         : {}),
     };
   }

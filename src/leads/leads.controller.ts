@@ -1,3 +1,4 @@
+import type { ConfigDemos } from './demos';
 import {
   Controller,
   Get,
@@ -43,6 +44,7 @@ export class LeadsController {
       iaVentasBrochureUrl?: string;
       asesor?: string;
       videoBienvenidaUrl?: string;
+      demos?: ConfigDemos | null;
     },
   ) {
     return this.service.actualizarConfig(user.empresaId, body);
