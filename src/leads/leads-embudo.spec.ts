@@ -248,6 +248,7 @@ describe('validar el voucher de Yape del adelanto (validación del 20-10)', () =
           montoLeido: 12, medioLeido: 'Yape', operacionLeida: '01300228',
         }),
         update: jest.fn().mockResolvedValue({}),
+        count: jest.fn().mockResolvedValue(0),
       },
       leadPedidoBorrador: { findUnique: jest.fn().mockResolvedValue({ comprobanteId: 22080 }) },
       comprobante: {
@@ -274,5 +275,41 @@ describe('validar el voucher de Yape del adelanto (validación del 20-10)', () =
     const { s, prisma } = armarValidacion(1);
     await s.validarPago(8, 89, { id: 157, nombre: 'Edwing' }, false);
     expect(prisma.comprobante.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('el mismo voucher no paga dos pedidos', () => {
+  function armarDuplicado() {
+    const pagos = { registrarPago: jest.fn().mockResolvedValue({}) };
+    const prisma: any = {
+      leadComprobantePago: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 9, prospectoId: 2, conversacionId: 700, validadoEn: null,
+          montoLeido: 12, medioLeido: 'Yape', operacionLeida: '01300228',
+        }),
+        update: jest.fn().mockResolvedValue({}),
+        // Ya hay otro pago validado con esa operación.
+        count: jest.fn().mockResolvedValue(1),
+      },
+      leadPedidoBorrador: { findUnique: jest.fn().mockResolvedValue({ comprobanteId: 23000 }) },
+      comprobante: { findFirst: jest.fn().mockResolvedValue({ saldo: 24 }), update: jest.fn().mockResolvedValue({}) },
+      pago: { count: jest.fn().mockResolvedValue(0) },
+      envioDespacho: { findUnique: jest.fn().mockResolvedValue({ id: 2, montoCOD: 24 }), update: jest.fn() },
+      usuario: { findUnique: jest.fn().mockResolvedValue(null) },
+    };
+    return { s: new LeadsEmbudoService(prisma, {} as any, pagos as any), pagos, prisma };
+  }
+
+  it('no lo asienta solo y explica por qué', async () => {
+    const { s, pagos } = armarDuplicado();
+    const r: any = await s.validarPago(9, 89, { id: 157 }, false);
+    expect(pagos.registrarPago).not.toHaveBeenCalled();
+    expect(r.adelanto.motivo).toMatch(/01300228 ya se usó/);
+  });
+
+  it('si quien valida confirma el monto, pasa', async () => {
+    const { s, pagos } = armarDuplicado();
+    await s.validarPago(9, 89, { id: 157 }, false, 12);
+    expect(pagos.registrarPago).toHaveBeenCalled();
   });
 });

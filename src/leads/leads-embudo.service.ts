@@ -290,6 +290,7 @@ export class LeadsEmbudoService {
   private async registrarAdelanto(
     empresaId: number,
     pago: {
+      id?: number;
       conversacionId: number;
       montoLeido: unknown;
       medioLeido: string | null;
@@ -330,6 +331,28 @@ export class LeadsEmbudoService {
         registrado: false,
         motivo: `El comprobante dice S/ ${pedido.toFixed(2)} y lo pendiente es S/ ${pendiente.toFixed(2)}: confirma el monto a mano.`,
       };
+    }
+    // El mismo número de operación ya pagó otro pedido: la misma captura
+    // reenviada no es plata nueva. Solo pasa si quien valida confirma el
+    // monto a mano, igual que un monto que no cuadra.
+    const operacion = pago.operacionLeida?.trim();
+    if (montoConfirmado == null && operacion) {
+      const yaUsada = await this.prisma.leadComprobantePago
+        .count({
+          where: {
+            empresaId,
+            operacionLeida: operacion,
+            validadoEn: { not: null },
+            ...(pago.id ? { id: { not: pago.id } } : {}),
+          },
+        })
+        .catch(() => 0);
+      if (yaUsada > 0) {
+        return {
+          registrado: false,
+          motivo: `La operación ${operacion} ya se usó en otro pago validado: puede ser la misma captura reenviada. Revísalo y, si es correcto, confirma el monto a mano.`,
+        };
+      }
     }
     if (!(pedido > 0)) {
       return {
