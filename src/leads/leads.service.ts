@@ -1,3 +1,4 @@
+import { demosValidas, type ConfigDemos } from './demos';
 import {
   Injectable,
   Logger,
@@ -426,12 +427,18 @@ export class LeadsService {
       asesor?: string;
       /** URL del video de bienvenida. Vacío = sin video. */
       videoBienvenidaUrl?: string;
+      /** Demos por rubro que entrega la IA. null = sin demos. */
+      demos?: ConfigDemos | null;
     },
   ) {
     // El nombre del asesor vive en iaVentasConfigJson junto a zonas, descuentos
     // y avisos: se mezcla para no pisar lo demás. Antes no había forma de
     // cambiarlo sin tocar la base.
-    if (data.asesor !== undefined || data.videoBienvenidaUrl !== undefined) {
+    if (
+      data.asesor !== undefined ||
+      data.videoBienvenidaUrl !== undefined ||
+      data.demos !== undefined
+    ) {
       const actual = await this.prisma.empresa.findUnique({
         where: { id: empresaId },
         select: { iaVentasConfigJson: true },
@@ -446,6 +453,10 @@ export class LeadsService {
         const url = data.videoBienvenidaUrl.trim();
         if (url) json.videoBienvenidaUrl = url;
         else delete json.videoBienvenidaUrl;
+      }
+      if (data.demos !== undefined) {
+        if (data.demos === null) delete json.demos;
+        else json.demos = demosValidas(data.demos);
       }
       await this.prisma.empresa.update({
         where: { id: empresaId },

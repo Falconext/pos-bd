@@ -128,6 +128,50 @@ export class LeadsAlertaService {
     );
   }
 
+  /**
+   * El prospecto ya tiene su demo: a ventas le llegan sus datos para
+   * agendarle la demo en vivo. La IA sigue atendiendo.
+   */
+  async avisarDemo(
+    p: AvisoDerivacionParams & {
+      datos: {
+        correo?: string;
+        celular?: string;
+        ruc?: string;
+        razonSocial?: string;
+        nombreComercial?: string;
+        rubro?: string;
+      };
+      demo: string;
+      aproximada: boolean;
+    },
+  ): Promise<void> {
+    const wa = enlaceWhatsApp(p.telefonoProspecto);
+    const d = p.datos;
+    const texto = [
+      '🎯 *DEMO ENTREGADA — AGENDAR DEMO EN VIVO*',
+      '',
+      `👤 *${p.nombreProspecto?.trim() || 'Sin nombre'}*`,
+      `📱 ${d.celular?.trim() || wa}`,
+      d.correo ? `✉️ ${d.correo}` : null,
+      d.ruc ? `🧾 RUC ${d.ruc}${d.razonSocial ? ` · ${d.razonSocial}` : ''}` : '🧾 Sin RUC',
+      d.nombreComercial ? `🏪 ${d.nombreComercial}` : null,
+      d.rubro ? `📌 Rubro: ${d.rubro}` : null,
+      `💻 Demo: *${p.demo}*${p.aproximada ? ' (la más parecida: su rubro no tiene demo propia)' : ''}`,
+      '',
+      'La IA sigue atendiendo. Escríbele para la demo en vivo:',
+      wa,
+    ]
+      .filter((l) => l !== null)
+      .join('\n');
+    await this.avisarAlSupervisor(
+      p,
+      texto,
+      'demo',
+      `Demo de ${p.demo} entregada, agendar demo en vivo${d.rubro ? ` (${d.rubro})` : ''}`,
+    );
+  }
+
   private async avisarAlSupervisor(
     p: AvisoDerivacionParams,
     texto: string,

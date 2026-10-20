@@ -23,6 +23,7 @@ export const HERRAMIENTA_CANCELAR_PEDIDO = 'cancelar_pedido';
 export const HERRAMIENTA_DERIVAR = 'derivar_a_asesor';
 export const HERRAMIENTA_AVISAR_RIESGO = 'avisar_cliente_alto_riesgo';
 export const HERRAMIENTA_AGENDAR_RECORDATORIO = 'agendar_recordatorio';
+export const HERRAMIENTA_DAR_DEMO = 'dar_demo';
 
 const buscarProductos: FunctionDeclaration = {
   name: HERRAMIENTA_BUSCAR_PRODUCTOS,
@@ -320,6 +321,41 @@ const agendarRecordatorio: FunctionDeclaration = {
   },
 };
 
+/**
+ * Accesos a la demo del rubro del prospecto (Krezka, 20-10). Solo la usan
+ * los negocios que configuraron demos; al resto les devuelve que no hay.
+ */
+const darDemo: FunctionDeclaration = {
+  name: HERRAMIENTA_DAR_DEMO,
+  description:
+    'Entrega al prospecto los accesos (enlace, usuario y clave) a la demo del sistema de SU rubro. ' +
+    'Úsala cuando el prospecto ya te mandó sus datos del bloque DATOS PARA CREAR SU DEMO. Pasa todo lo que dijo; si te devuelve `faltan`, pídele solo eso. ' +
+    'Si te devuelve `opciones`, ninguna demo es de su rubro: vuelve a llamarla con `demo` = la opción más parecida a su negocio. ' +
+    'Si te devuelve `acceso`, mándale el enlace, el usuario y la clave tal cual. Nunca escribas accesos que esta herramienta no te dio.',
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      rubro: {
+        type: SchemaType.STRING,
+        description: 'A qué se dedica su negocio, en sus palabras ("farmacia", "venta de repuestos de motos").',
+      },
+      nombre: { type: SchemaType.STRING, description: 'Nombres y apellidos.' },
+      celular: { type: SchemaType.STRING },
+      correo: { type: SchemaType.STRING },
+      ruc: {
+        type: SchemaType.STRING,
+        description: 'El RUC que dio. Si dijo que no tiene, pásalo vacío y pon "no tiene".',
+      },
+      nombreComercial: { type: SchemaType.STRING },
+      demo: {
+        type: SchemaType.STRING,
+        description: 'Solo cuando la herramienta te devolvió `opciones`: la más parecida a su negocio, copiada de la lista.',
+      },
+    },
+    required: ['rubro'],
+  },
+};
+
 export const HERRAMIENTAS_VENTA: FunctionDeclaration[] = [
   buscarProductos,
   enviarFoto,
@@ -331,6 +367,7 @@ export const HERRAMIENTAS_VENTA: FunctionDeclaration[] = [
   derivar,
   avisarAltoRiesgo,
   agendarRecordatorio,
+  darDemo,
 ];
 
 /**
@@ -355,5 +392,6 @@ CÓMO SE CIERRA UNA VENTA
 - Cuando el cliente acepte y no falte ningún dato, llama a ${HERRAMIENTA_REGISTRAR_PEDIDO} y a nada más: no vuelvas a buscar ni a cotizar lo que ya cotizaste. Solo después de que te confirme puedes decirle que su pedido quedó agendado.
 - Si recoge en tienda, también se cotiza con ${HERRAMIENTA_COTIZAR} (sin envío) y se cierra con ${HERRAMIENTA_AVISAR_VISITA}, que registra el pedido.
 - Si el cliente cancela un pedido ya registrado, usa ${HERRAMIENTA_CANCELAR_PEDIDO}.
+- Si el prospecto te manda sus datos para la demo, usa ${HERRAMIENTA_DAR_DEMO}.
 - Lo que no te toca resolver se deriva con ${HERRAMIENTA_DERIVAR}: mayoristas, reclamos, comprobantes de pago, seguimiento de pedidos ya hechos y quien pida hablar con una persona. Esos casos y nada más: una duda que puedas contestar con el contexto se contesta. Nunca digas que ya informaste a un asesor si en ese mismo turno no la llamaste.
 `.trim();

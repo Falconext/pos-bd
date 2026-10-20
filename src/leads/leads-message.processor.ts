@@ -17,6 +17,7 @@ import { EjecutorHerramienta } from '../gemini/gemini.service';
 import {
   HERRAMIENTA_AVISAR_VISITA,
   HERRAMIENTA_CANCELAR_PEDIDO,
+  HERRAMIENTA_DAR_DEMO,
   HERRAMIENTA_BUSCAR_PRODUCTOS,
   HERRAMIENTA_COTIZAR,
   HERRAMIENTA_DERIVAR,
@@ -36,6 +37,15 @@ import {
 import { conDescargoLegal } from './prompt-asesor';
 import { afirmaCancelacion, sinConfirmacionFalsa } from './confirmacion-falsa';
 import { conRegistroDirecto, yaAceptoAntes } from './registro-directo';
+import {
+  BLOQUE_DATOS_DEMO,
+  conAccesosDemo,
+  consultarRuc,
+  elegirDemo,
+  faltanParaDemo,
+  leerRuc,
+  type DatosDemo,
+} from './demos';
 import { conCotizacionExacta } from './cotizacion-exacta';
 import { conBloqueDeDatosExacto } from './datos-en-bloque';
 import { conIndicacionMedica, esAltoRiesgo } from './alto-riesgo';
@@ -902,6 +912,21 @@ export class LeadsMessageProcessor extends WorkerHost {
       resultado.reply,
       pedidoTrasTurno?.pedirTodoJunto,
     );
+
+    // Los accesos a la demo van completos aunque el modelo los resuma.
+    const demoEntregada = [...resultado.llamadas]
+      .reverse()
+      .find(
+        (ll) =>
+          ll.nombre === HERRAMIENTA_DAR_DEMO &&
+          (ll.resultado as { acceso?: unknown } | null)?.acceso,
+      );
+    if (demoEntregada) {
+      resultado.reply = conAccesosDemo(
+        resultado.reply,
+        (demoEntregada.resultado as { acceso: Parameters<typeof conAccesosDemo>[1] }).acceso,
+      );
+    }
 
     // Cliente de alto riesgo: la indicación médica y el aviso al equipo no
     // dependen de que el modelo se acuerde (ver alto-riesgo.ts). Va después
@@ -2259,9 +2284,149 @@ export class LeadsMessageProcessor extends WorkerHost {
             String(argumentos.motivo ?? ''),
           );
 
+        case HERRAMIENTA_DAR_DEMO:
+          return this.darDemo(empresaId, conversacionId, telefono, argumentos);
+
         default:
           return { error: `Herramienta desconocida: ${nombre}` };
       }
+    };
+  }
+
+  /**
+   * Los accesos a la demo del rubro del prospecto. Valida el RUC en SUNAT
+   * (un número mal escrito se le devuelve para que lo revise) y le avisa a
+   * ventas una sola vez por conversación.
+   */
+  private async darDemo(
+    empresaId: number,
+    conversacionId: number,
+    telefono: string,
+    argumentos: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const cfg = await this.pedido.configDe(empresaId);
+    if (!cfg.demos?.cuentas.length) {
+      return {
+        error:
+          'Este negocio no entrega demos por aquí. No inventes accesos: ofrécele coordinarla con el equipo.',
+      };
+    }
+    const texto = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+    const datos: DatosDemo = {
+      rubro: texto(argumentos.rubro),
+      demo: texto(argumentos.demo),
+      nombre: texto(argumentos.nombre),
+      celular: texto(argumentos.celular),
+      correo: texto(argumentos.correo),
+      ruc: texto(argumentos.ruc),
+      nombreComercial: texto(argumentos.nombreComercial),
+    };
+    const faltan = faltanParaDemo(datos);
+    if (faltan.length) return { faltan, bloque: BLOQUE_DATOS_DEMO };
+
+    const ruc = leerRuc(datos.ruc);
+    if ('invalido' in ruc) {
+      return {
+        faltan: ['RUC válido'],
+        instruccion:
+          'El RUC debe tener 11 dígitos y empezar con 10 o 20. Pídele que lo revise, o que te diga si aún no tiene RUC.',
+      };
+    }
+    let razonSocial: string | undefined;
+    let estadoRuc: string | undefined;
+    if ('ruc' in ruc) {
+      const sunat = await consultarRuc(ruc.ruc);
+      if (sunat === null) {
+        return {
+          faltan: ['RUC válido'],
+          instruccion: `SUNAT no encuentra el RUC ${ruc.ruc}. Pídele que lo revise, o que te diga si aún no tiene RUC.`,
+        };
+      }
+      if (sunat) {
+        razonSocial = sunat.razonSocial;
+        estadoRuc = `${sunat.estado} ${sunat.condicion}`.trim();
+      }
+    }
+
+    const elegida = elegirDemo(cfg.demos.cuentas, { ...datos, razonSocial });
+    if (!elegida) {
+      return {
+        opciones: cfg.demos.cuentas.map((c) => c.rubro),
+        instruccion:
+          'Ninguna demo es de su rubro. Vuelve a llamar a dar_demo con los mismos datos y `demo` = la opción más parecida a su negocio. No le digas que no hay demo de su rubro.',
+      };
+    }
+    const { cuenta, aproximada } = elegida;
+    const acceso = {
+      rubro: cuenta.rubro,
+      enlace: cfg.demos.enlace,
+      usuario: cuenta.usuario,
+      clave: cuenta.clave,
+    };
+
+    // Una vez por conversación: si vuelve a pedirla, se le repiten los
+    // accesos sin llenar otra vez el celular de ventas.
+    const previos = await this.prisma.leadMensaje.findMany({
+      where: {
+        conversacionId,
+        rol: 'ASISTENTE',
+        herramientasJson: { not: Prisma.DbNull },
+      },
+      select: { herramientasJson: true },
+    });
+    const yaAvisado = previos.some((m) =>
+      (Array.isArray(m.herramientasJson) ? m.herramientasJson : []).some(
+        (ll: any) =>
+          ll?.nombre === HERRAMIENTA_DAR_DEMO && ll?.resultado?.acceso,
+      ),
+    );
+    if (!yaAvisado) {
+      await this.prisma.leadConversacion
+        .update({
+          where: { id: conversacionId },
+          data: { nombreProspecto: datos.nombre },
+        })
+        .catch(() => undefined);
+      await this.notificaciones
+        .notificarAdminsEmpresa({
+          empresaId,
+          tipo: 'INFO',
+          titulo: `🎯 Demo entregada: ${datos.nombre}`,
+          mensaje: `Demo de ${cuenta.rubro}${aproximada ? ' (la más parecida)' : ''}. Rubro: ${datos.rubro}. Correo: ${datos.correo}. ${'ruc' in ruc ? `RUC ${ruc.ruc}${razonSocial ? ` · ${razonSocial}` : ''}` : 'Sin RUC'}.\n\nWhatsApp: ${telefono}`,
+          metaData: { origen: 'ia-ventas-demo', telefono, demo: cuenta.rubro },
+        })
+        .catch(() => undefined);
+      await this.alerta
+        .avisarDemo({
+          empresaId,
+          telefonoProspecto: telefono,
+          nombreProspecto: datos.nombre,
+          motivo: 'demo',
+          supervisorTelefono: cfg.demos.avisarA ?? cfg.supervisorTelefono ?? null,
+          datos: {
+            ...datos,
+            ruc: 'ruc' in ruc ? ruc.ruc : undefined,
+            razonSocial: razonSocial
+              ? `${razonSocial}${estadoRuc && estadoRuc !== 'ACTIVO HABIDO' ? ` (${estadoRuc})` : ''}`
+              : undefined,
+          },
+          demo: cuenta.rubro,
+          aproximada,
+        })
+        .catch((e) =>
+          this.logger.warn(
+            `Aviso de demo de la conv ${conversacionId} falló: ${e?.message}`,
+          ),
+        );
+    }
+    this.logger.log(
+      `Lead: conv ${conversacionId} recibió la demo de ${cuenta.rubro}${aproximada ? ' (aproximada)' : ''}.`,
+    );
+    return {
+      acceso,
+      ...(razonSocial ? { razonSocial } : {}),
+      instruccion:
+        'Mándale el enlace, el usuario y la clave tal cual, dile que es una demo de su rubro para que explore el sistema, y ofrécele los dos horarios de la demo en vivo.',
     };
   }
 
