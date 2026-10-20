@@ -19,6 +19,7 @@ function prismaFalso(over: Record<string, unknown> = {}) {
     actualizados,
     cliente: {
       findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
       create: jest.fn(({ data }: any) => {
         creados.push(data);
         return Promise.resolve({ id: 777 });
@@ -64,13 +65,23 @@ describe('a quién se le factura el pedido', () => {
     expect(prisma.actualizados[0]).toEqual({ telefono: '915947349' });
   });
 
-  it('sin DNI, lo busca por teléfono', async () => {
+  it('sin DNI, lo busca por teléfono si es la misma persona', async () => {
     // Sin DNI no hay búsqueda por documento: la primera consulta ya es la del
     // teléfono.
     const prisma = prismaFalso();
-    prisma.cliente.findFirst.mockResolvedValueOnce({ id: 55 });
+    prisma.cliente.findMany.mockResolvedValueOnce([
+      { id: 55, nombre: 'EDWING ORTEGA', nroDoc: '915947349' },
+    ]);
     expect(await resolver(prisma, { ...BORRADOR, dni: null })).toBe(55);
-    expect(prisma.cliente.findFirst).toHaveBeenCalledTimes(1);
+    expect(prisma.cliente.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('con el mismo teléfono pero otro nombre, es otra persona: la crea', async () => {
+    const prisma = prismaFalso();
+    prisma.cliente.findMany.mockResolvedValueOnce([
+      { id: 55, nombre: 'EDWING RAMOS', nroDoc: '45879632' },
+    ]);
+    expect(await resolver(prisma, { ...BORRADOR, dni: null })).toBe(777);
   });
 
   it('si no existe, lo crea con lo que dio en el chat', async () => {

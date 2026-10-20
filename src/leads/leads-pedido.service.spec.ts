@@ -683,3 +683,144 @@ describe('datos para agendar en un solo mensaje (pedido de Hierba Sana 20-10)', 
     expect(r.texto).toContain('Envío Lima: S/ 15.00');
   });
 });
+
+describe('cambiar el pedido después de registrado (validación del 20-10)', () => {
+  function registrado(pagos: { monto: number; medioPago: string }[] = []) {
+    const a = armar({
+      borrador: {
+        ...limaCompleto(),
+        tipoZona: 'AGENCIA', zona: 'Provincia', lugar: 'Arequipa', costoEnvio: 10,
+        dni: '47065472', agenciaSede: 'Shalom Jr Parra',
+        itemsJson: [{ productoId: 1, cantidad: 1 }],
+        comprobanteId: 22055, cotizacionId: 22052,
+      },
+    });
+    a.prisma.comprobante = {
+      // Pedido en curso: ni pagado del todo ni entregado.
+      findUnique: jest.fn().mockResolvedValue({
+        id: 22055, estadoPago: 'PENDIENTE_PAGO', estadoEnvioSunat: 'NO_APLICA', envioDespacho: { estado: 'PENDIENTE' },
+      }),
+    };
+    a.prisma.pago = { findMany: jest.fn().mockResolvedValue(pagos) };
+    a.prisma.leadConversacion = { findUnique: jest.fn().mockResolvedValue({ telefonoProspecto: TELEFONO }) };
+    a.prisma.leadProspecto = { findFirst: jest.fn().mockResolvedValue(null) };
+    a.prisma.envioDespacho = { updateMany: jest.fn().mockResolvedValue({ count: 1 }) };
+    a.comprobante.eliminarCotizacion = jest.fn().mockResolvedValue({});
+    a.comprobante.editarNotaVenta = jest.fn().mockResolvedValue({ serie: 'NV01', correlativo: 10 });
+    return a;
+  }
+
+  it('edita la nota con lo nuevo (envío incluido) y el despacho cobra el total nuevo', async () => {
+    const a = registrado();
+    const r: any = await a.service.cotizar(EMPRESA, CONV, [{ productoId: 1, cantidad: 2 }]);
+
+    expect(r.pedidoActualizado).toBe('NV01-00000010');
+    const [id, input] = a.comprobante.editarNotaVenta.mock.calls[0];
+    expect(id).toBe(22055);
+    expect(input.detalles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ productoId: 1, cantidad: 2 }),
+        expect.objectContaining({ productoId: null, descripcion: 'ENVÍO AREQUIPA (AGENCIA)', nuevoValorUnitario: 10 }),
+      ]),
+    );
+    expect(input.formaPagoTipo).toBe('CREDITO');
+    // 2×31 + 10 = 72, sin pagos todavía.
+    expect(a.prisma.envioDespacho.updateMany).toHaveBeenCalledWith({
+      where: { comprobanteId: 22055 },
+      data: { montoCOD: 72 },
+    });
+  });
+
+  it('lo ya pagado se conserva como adelanto y el saldo baja', async () => {
+    const a = registrado([{ monto: 20, medioPago: 'YAPE' }]);
+    const r: any = await a.service.cotizar(EMPRESA, CONV, [{ productoId: 1, cantidad: 2 }]);
+    const input = a.comprobante.editarNotaVenta.mock.calls[0][1];
+    expect(input.adelanto).toBe(20);
+    expect(input.medioPago).toBe('YAPE');
+    expect(r.porCobrar).toBe(52);
+  });
+
+  it('si ya pagó más que el total nuevo, no toca la nota y avisa', async () => {
+    const a = registrado([{ monto: 100, medioPago: 'YAPE' }]);
+    const r: any = await a.service.cotizar(EMPRESA, CONV, [{ productoId: 1, cantidad: 1 }, { productoId: 2, cantidad: 0 }]);
+    // Mismos ítems que los registrados: ni siquiera intenta editar.
+    expect(a.comprobante.editarNotaVenta).not.toHaveBeenCalled();
+    const r2: any = await registrado([{ monto: 100, medioPago: 'YAPE' }]).service.cotizar(EMPRESA, CONV, [{ productoId: 1, cantidad: 2 }]);
+    expect(r2.aviso).toMatch(/NO se pudo actualizar/);
+    expect(r.pedidoActualizado).toBeUndefined();
+  });
+
+  it('si la edición falla, el modelo no puede confirmar el cambio', async () => {
+    const a = registrado();
+    a.comprobante.editarNotaVenta.mockRejectedValue(new Error('convertida'));
+    const r: any = await a.service.cotizar(EMPRESA, CONV, [{ productoId: 1, cantidad: 2 }]);
+    expect(r.aviso).toMatch(/No le digas que el pedido quedó actualizado/);
+    expect(a.prisma.envioDespacho.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('id válido pero de otro producto (validación del 20-10)', () => {
+  it('manda el nombre que se le ofreció al cliente', async () => {
+    const catalogo = [
+      { id: 30001, descripcion: 'aceite de almendra - LAB. GERWILL ( 30ML )', precioUnitario: 5 },
+      { id: 30002, descripcion: 'aceite esencial de almendra - ARTESANAL DESTILADO ( 10ml )', precioUnitario: 15 },
+    ];
+    const { service, prisma, verBorrador } = armar({
+      borrador: { ...limaCompleto(), itemsJson: null, cotizacionId: null },
+    });
+    prisma.producto.findMany.mockImplementation(({ where }: any) => {
+      if (where.descripcion) {
+        const n = String(where.descripcion.equals).toLowerCase();
+        return Promise.resolve(catalogo.filter((p) => p.descripcion.toLowerCase() === n));
+      }
+      return Promise.resolve(catalogo.filter((p) => where.id.in.includes(p.id)));
+    });
+    const r = await service.cotizar(EMPRESA, CONV, [
+      { productoId: 30002, cantidad: 1, nombre: 'aceite de almendra - LAB. GERWILL ( 30ML )' },
+    ]);
+    expect(r.texto).toContain('GERWILL ( 30ML ) - P.U. S/ 5.00');
+    expect((verBorrador() as any).itemsJson).toEqual([{ productoId: 30001, cantidad: 1 }]);
+  });
+});
+
+describe('el cliente de la nota es el que dio sus datos (validación del 20-10)', () => {
+  function conClienteViejo() {
+    const a = armar({
+      borrador: { ...limaCompleto(), nombre: 'Diego Ortega Roldan', celular: '991065217', dni: '47065472' },
+    });
+    a.prisma.cliente = {
+      findFirst: jest.fn().mockResolvedValue(null),
+      // Otro cliente con el mismo celular, de una prueba anterior.
+      findMany: jest.fn().mockResolvedValue([
+        { id: 5300, nombre: 'DIEGO ORTEGA RAMOS', nroDoc: '45879632' },
+      ]),
+      create: jest.fn().mockResolvedValue({ id: 5400 }),
+    };
+    a.prisma.tipoDocumento = { findFirst: jest.fn().mockResolvedValue({ id: 2 }) };
+    return a;
+  }
+
+  it('no reutiliza a otra persona por compartir el celular', async () => {
+    const a = conClienteViejo();
+    await a.service.registrarPedido(EMPRESA, CONV, TELEFONO);
+    expect(a.prisma.cliente.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ nombre: 'DIEGO ORTEGA ROLDAN', nroDoc: '47065472' }),
+      }),
+    );
+    expect(a.comprobante.crearInformal.mock.calls[0][0].clienteId).toBe(5400);
+  });
+
+  it('sí reutiliza a la misma persona aunque escriba el nombre más corto', async () => {
+    const a = conClienteViejo();
+    a.prisma.cliente.findMany.mockResolvedValue([
+      { id: 5300, nombre: 'DIEGO JESUS ORTEGA ROLDAN', nroDoc: '991065217' },
+    ]);
+    const b: any = a.verBorrador();
+    b.nombre = 'Diego Ortega';
+    b.dni = null;
+    await a.service.registrarPedido(EMPRESA, CONV, TELEFONO);
+    expect(a.prisma.cliente.create).not.toHaveBeenCalled();
+    expect(a.comprobante.crearInformal.mock.calls[0][0].clienteId).toBe(5300);
+  });
+});
