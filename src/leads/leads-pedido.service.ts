@@ -602,6 +602,40 @@ export class LeadsPedidoService {
     return salida;
   }
 
+  /**
+   * Lo que hay que saber del pedido en curso para este turno: qué se cotizó
+   * (para recotizar si el cliente cambia algo) y el bloque de datos que
+   * faltan. null si no hay pedido abierto.
+   */
+  async estadoParaElTurno(conversacionId: number): Promise<{
+    cotizado: string | null;
+    pedirTodoJunto?: string;
+  } | null> {
+    try {
+      const b = await this.prisma.leadPedidoBorrador.findUnique({
+        where: { conversacionId },
+      });
+      if (!b || b.comprobanteId) return null;
+      const items = normalizarItems(b.itemsJson);
+      let cotizado: string | null = null;
+      if (b.cotizadoEn && items.length) {
+        const productos = await this.prisma.producto.findMany({
+          where: { id: { in: items.map((i) => i.productoId) } },
+          select: { id: true, descripcion: true },
+        });
+        cotizado = items
+          .map(
+            (i) =>
+              `${i.cantidad}x ${productos.find((p) => p.id === i.productoId)?.descripcion ?? `producto ${i.productoId}`} (id ${i.productoId})`,
+          )
+          .join('; ');
+      }
+      return { cotizado, ...conBloqueDeDatos(this.faltantes(b)) };
+    } catch {
+      return null;
+    }
+  }
+
   /** ¿La nota existió y ya no está? Ante un error de consulta, no. */
   private async notaBorrada(comprobanteId: number): Promise<boolean> {
     try {
@@ -787,9 +821,25 @@ export class LeadsPedidoService {
     // Lo que se lleva el cliente al final queda en la nota de venta, que es
     // la que vale; la COT es el borrador que el vendedor ve mientras tanto, y
     // el chat guarda el detalle de cada versión.
-    const cot =
-      borrador.cotizacionId ??
-      (await this.crearCotizacion(empresaId, limpios, resumenCotizacion(texto)));
+    //
+    // Pero si el cliente cambió lo que lleva, la COT del panel tiene que
+    // decir lo nuevo (20-10: quitó y agregó productos y el panel seguía con
+    // la primera versión). Se reemplaza: sigue habiendo una sola.
+    const mismosItems =
+      JSON.stringify(normalizarItems(borrador.itemsJson)) ===
+      JSON.stringify(normalizarItems(limpios));
+    let cot = borrador.cotizacionId;
+    if (cot && !mismosItems) {
+      await this.comprobante
+        .eliminarCotizacion(cot, empresaId)
+        .catch((e: unknown) =>
+          this.logger.warn(
+            `No se pudo reemplazar la COT ${cot}: ${e instanceof Error ? e.message : String(e)}`,
+          ),
+        );
+      cot = null;
+    }
+    cot ??= await this.crearCotizacion(empresaId, limpios, resumenCotizacion(texto));
     await this.prisma.leadPedidoBorrador.update({
       where: { conversacionId },
       data: {
@@ -1505,4 +1555,12 @@ export function conBloqueDeDatos(faltan: string[]): { pedirTodoJunto?: string } 
       ...lineas,
     ].join('\n'),
   };
+}
+
+/** Ítems comparables: solo id y cantidad, ordenados por id. */
+function normalizarItems(json: unknown): ItemPedido[] {
+  if (!Array.isArray(json)) return [];
+  return (json as ItemPedido[])
+    .map((i) => ({ productoId: Number(i.productoId), cantidad: Number(i.cantidad) }))
+    .sort((a, b) => a.productoId - b.productoId);
 }
