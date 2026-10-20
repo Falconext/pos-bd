@@ -96,18 +96,30 @@ describe('a quién se le factura el pedido', () => {
     });
   });
 
-  it('sin DNI guarda el celular como documento, como ya hace el sistema', async () => {
+  it('sin DNI el documento queda en "0", sin inventar nada', async () => {
+    // Pedido de Hierba Sana (20-10): en Lima el DNI no se pide; si no lo dio,
+    // no se inventa. Antes se ponía el celular como si fuera el documento.
     const prisma = prismaFalso();
     await resolver(prisma, { ...BORRADOR, dni: null });
-    expect(prisma.creados[0]).toMatchObject({ nroDoc: '915947349' });
-    // Sin DNI no se le pone tipo de documento: no sería un DNI.
-    expect(prisma.creados[0].tipoDocumentoId).toBeUndefined();
+    expect(prisma.creados[0]).toMatchObject({ nroDoc: '0', telefono: '915947349' });
+    expect(prisma.tipoDocumento.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { codigo: '0' } }),
+    );
   });
 
-  it('sin celular propio usa el número del que escribe', async () => {
+  it('si la misma persona da su DNI después, se guarda en su ficha', async () => {
+    const prisma = prismaFalso();
+    prisma.cliente.findMany.mockResolvedValueOnce([
+      { id: 55, nombre: 'EDWING ORTEGA', nroDoc: '0' },
+    ]);
+    expect(await resolver(prisma, BORRADOR)).toBe(55);
+    expect(prisma.actualizados[0]).toMatchObject({ nroDoc: '44556677' });
+  });
+
+  it('sin celular propio guarda el número del que escribe como teléfono', async () => {
     const prisma = prismaFalso();
     await resolver(prisma, { ...BORRADOR, dni: null, celular: null }, '51987654321');
-    expect(prisma.creados[0]).toMatchObject({ nroDoc: '51987654321' });
+    expect(prisma.creados[0]).toMatchObject({ nroDoc: '0', telefono: '51987654321' });
   });
 
   it('sin nombre no inventa una ficha', async () => {
