@@ -1840,6 +1840,7 @@ export class LeadsMessageProcessor extends WorkerHost {
             items.map((i) => ({
               productoId: Number(i.productoId),
               cantidad: Number(i.cantidad),
+              ...(typeof i.nombre === 'string' ? { nombre: i.nombre } : {}),
             })),
             typeof argumentos.nombrePack === 'string'
               ? argumentos.nombrePack

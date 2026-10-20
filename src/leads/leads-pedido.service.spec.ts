@@ -544,6 +544,34 @@ describe('prueba en vivo del 20-10: id inventado y nota borrada', () => {
     expect((verBorrador() as any).itemsJson).toBeNull();
   });
 
+  it('con el nombre del producto corrige el id mal escrito y cotiza todo', async () => {
+    const catalogo = [
+      { id: 31468, descripcion: 'Uña de Gato - OASIS ( 100 capsulas )', precioUnitario: 30 },
+      { id: 31000, descripcion: 'aceite de copaiba - SAYAL ( 30ml )', precioUnitario: 15 },
+    ];
+    const { service, prisma, verBorrador } = armar({
+      borrador: { ...limaCompleto(), itemsJson: null, cotizacionId: null },
+    });
+    prisma.producto.findMany.mockImplementation(({ where }: any) => {
+      if (where.descripcion) {
+        const n = String(where.descripcion.equals).toLowerCase();
+        return Promise.resolve(catalogo.filter((p) => p.descripcion.toLowerCase() === n));
+      }
+      return Promise.resolve(catalogo.filter((p) => where.id.in.includes(p.id)));
+    });
+    const r = await service.cotizar(EMPRESA, CONV, [
+      { productoId: 31468, cantidad: 1, nombre: 'Uña de Gato - OASIS ( 100 capsulas )' },
+      { productoId: 3844, cantidad: 1, nombre: 'aceite de copaiba - SAYAL ( 30ml )' },
+    ]);
+    expect(r.error).toBeUndefined();
+    expect(r.texto).toContain('1x aceite de copaiba - SAYAL ( 30ml ) - P.U. S/ 15.00');
+    expect(r.texto).toContain('*TOTAL: S/ 60.00*');
+    expect((verBorrador() as any).itemsJson).toEqual([
+      { productoId: 31468, cantidad: 1 },
+      { productoId: 31000, cantidad: 1 },
+    ]);
+  });
+
   it('registrar con un id guardado que no existe pide recotizar, no revienta', async () => {
     const b = limaCompleto();
     b.itemsJson = [

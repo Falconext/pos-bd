@@ -94,6 +94,8 @@ export interface DatosDelCliente {
 export interface ItemPedido {
   productoId: number;
   cantidad: number;
+  /** Lo que el modelo cree que está cotizando; sirve para corregir un id malo. */
+  nombre?: string;
 }
 
 /**
@@ -549,6 +551,55 @@ export class LeadsPedidoService {
     );
   }
 
+  /**
+   * El id lo escribe el modelo y a veces lo escribe mal (20-10: la copaiba
+   * salió con 3844 en vez de 31000). El nombre lo copia del resultado de la
+   * búsqueda y casi nunca falla. Si el id no es de un producto activo de
+   * este negocio, se busca el producto por su nombre en el catálogo; solo se
+   * corrige con una coincidencia única. Si no, el id queda como vino y
+   * `cotizar` lo rechaza.
+   */
+  private async conIdDelCatalogo(
+    empresaId: number,
+    items: ItemPedido[],
+  ): Promise<ItemPedido[]> {
+    const ids = items.map((i) => i.productoId).filter((id) => id > 0);
+    const validos = new Set(
+      (
+        await this.prisma.producto.findMany({
+          where: { empresaId, id: { in: ids }, estado: 'ACTIVO' as never },
+          select: { id: true },
+        })
+      ).map((p: { id: number }) => p.id),
+    );
+    const salida: ItemPedido[] = [];
+    for (const item of items) {
+      const nombre = item.nombre?.trim();
+      if (validos.has(item.productoId) || !nombre) {
+        salida.push(item);
+        continue;
+      }
+      const porNombre = await this.prisma.producto.findMany({
+        where: {
+          empresaId,
+          estado: 'ACTIVO' as never,
+          descripcion: { equals: nombre, mode: 'insensitive' },
+        },
+        select: { id: true },
+        take: 2,
+      });
+      if (porNombre.length === 1) {
+        this.logger.warn(
+          `Lead: cotizar recibió el id ${item.productoId} para "${nombre}"; se usa ${porNombre[0].id} del catálogo.`,
+        );
+        salida.push({ ...item, productoId: porNombre[0].id });
+      } else {
+        salida.push(item);
+      }
+    }
+    return salida;
+  }
+
   /** ¿La nota existió y ya no está? Ante un error de consulta, no. */
   private async notaBorrada(comprobanteId: number): Promise<boolean> {
     try {
@@ -645,7 +696,15 @@ export class LeadsPedidoService {
       };
     }
 
-    const limpios = items.filter((i) => i.productoId > 0 && i.cantidad > 0);
+    const limpios = (
+      await this.conIdDelCatalogo(
+        empresaId,
+        items.filter((i) => i.cantidad > 0),
+      )
+    )
+      .filter((i) => i.productoId > 0)
+      // Solo id y cantidad: es lo que se guarda y lo que lee registrar.
+      .map((i) => ({ productoId: i.productoId, cantidad: i.cantidad }));
     if (limpios.length === 0) return { error: 'No hay productos que cotizar.' };
 
     const productos = await this.prisma.producto.findMany({

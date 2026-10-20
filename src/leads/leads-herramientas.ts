@@ -161,14 +161,19 @@ const cotizar: FunctionDeclaration = {
           properties: {
             productoId: {
               type: SchemaType.INTEGER,
-              description: 'Id del producto.',
+              description: 'Id del producto, el que te devolvió buscar_productos.',
+            },
+            nombre: {
+              type: SchemaType.STRING,
+              description:
+                'Nombre del producto tal como te lo devolvió buscar_productos, p. ej. "aceite de copaiba - SAYAL ( 30ml )".',
             },
             cantidad: {
               type: SchemaType.INTEGER,
               description: 'Cuántas unidades.',
             },
           },
-          required: ['productoId', 'cantidad'],
+          required: ['productoId', 'nombre', 'cantidad'],
         },
       },
       nombrePack: {
