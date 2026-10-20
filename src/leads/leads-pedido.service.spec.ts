@@ -525,3 +525,82 @@ describe('cliente que vuelve a comprar (prueba del 19-10)', () => {
     expect(r.error).toMatch(/ya estaba registrado/);
   });
 });
+
+describe('prueba en vivo del 20-10: id inventado y nota borrada', () => {
+  it('cotizar con un id que no existe no arma una cotización a medias', async () => {
+    const { service, comprobante, verBorrador } = armar({
+      borrador: { ...limaCompleto(), itemsJson: null, cotizacionId: null },
+    });
+    // El 1 existe; el 3844 lo inventó el modelo.
+    const r = await service.cotizar(EMPRESA, CONV, [
+      { productoId: 1, cantidad: 1 },
+      { productoId: 3844, cantidad: 1 },
+    ]);
+    expect(r.texto).toBeUndefined();
+    expect(r.error).toContain('3844');
+    expect(r.error).toContain('buscar_productos');
+    expect(comprobante.crearInformal).not.toHaveBeenCalled();
+    // Y no deja guardado el id malo para que registrar falle después.
+    expect((verBorrador() as any).itemsJson).toBeNull();
+  });
+
+  it('con el nombre del producto corrige el id mal escrito y cotiza todo', async () => {
+    const catalogo = [
+      { id: 31468, descripcion: 'Uña de Gato - OASIS ( 100 capsulas )', precioUnitario: 30 },
+      { id: 31000, descripcion: 'aceite de copaiba - SAYAL ( 30ml )', precioUnitario: 15 },
+    ];
+    const { service, prisma, verBorrador } = armar({
+      borrador: { ...limaCompleto(), itemsJson: null, cotizacionId: null },
+    });
+    prisma.producto.findMany.mockImplementation(({ where }: any) => {
+      if (where.descripcion) {
+        const n = String(where.descripcion.equals).toLowerCase();
+        return Promise.resolve(catalogo.filter((p) => p.descripcion.toLowerCase() === n));
+      }
+      return Promise.resolve(catalogo.filter((p) => where.id.in.includes(p.id)));
+    });
+    const r = await service.cotizar(EMPRESA, CONV, [
+      { productoId: 31468, cantidad: 1, nombre: 'Uña de Gato - OASIS ( 100 capsulas )' },
+      { productoId: 3844, cantidad: 1, nombre: 'aceite de copaiba - SAYAL ( 30ml )' },
+    ]);
+    expect(r.error).toBeUndefined();
+    expect(r.texto).toContain('1x aceite de copaiba - SAYAL ( 30ml ) - P.U. S/ 15.00');
+    expect(r.texto).toContain('*TOTAL: S/ 60.00*');
+    expect((verBorrador() as any).itemsJson).toEqual([
+      { productoId: 31468, cantidad: 1 },
+      { productoId: 31000, cantidad: 1 },
+    ]);
+  });
+
+  it('registrar con un id guardado que no existe pide recotizar, no revienta', async () => {
+    const b = limaCompleto();
+    b.itemsJson = [
+      { productoId: 1, cantidad: 1 },
+      { productoId: 3844, cantidad: 1 },
+    ];
+    const { service, comprobante } = armar({ borrador: b });
+    const r = await service.registrarPedido(EMPRESA, CONV, TELEFONO);
+    expect(r.registrado).toBeUndefined();
+    expect(r.error).toMatch(/vuelve a cotizar/);
+    expect(comprobante.crearInformal).not.toHaveBeenCalled();
+  });
+
+  it('si la nota del pedido fue borrada, registra de nuevo en vez de decir "ya estaba"', async () => {
+    const a = armar({ borrador: { ...limaCompleto(), comprobanteId: 21707 } });
+    a.prisma.comprobante = { findUnique: jest.fn().mockResolvedValue(null) };
+    const r = await a.service.registrarPedido(EMPRESA, CONV, TELEFONO);
+    expect(r.registrado).toBe(true);
+    expect(r.pedido).toBe('NV01-00000007');
+    expect(a.comprobante.crearInformal).toHaveBeenCalledTimes(1);
+  });
+
+  it('si la consulta de la nota falla, no se registra dos veces', async () => {
+    const a = armar({ borrador: { ...limaCompleto(), comprobanteId: 21707 } });
+    a.prisma.comprobante = {
+      findUnique: jest.fn().mockRejectedValue(new Error('timeout')),
+    };
+    const r = await a.service.registrarPedido(EMPRESA, CONV, TELEFONO);
+    expect(a.comprobante.crearInformal).not.toHaveBeenCalled();
+    expect(r.error).toMatch(/ya estaba registrado/);
+  });
+});

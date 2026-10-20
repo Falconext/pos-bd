@@ -94,6 +94,8 @@ export interface DatosDelCliente {
 export interface ItemPedido {
   productoId: number;
   cantidad: number;
+  /** Lo que el modelo cree que está cotizando; sirve para corregir un id malo. */
+  nombre?: string;
 }
 
 /**
@@ -521,18 +523,25 @@ export class LeadsPedidoService {
    * del todo o anulado: lo que venga después es otra compra.
    */
   private async pedidoCerrado(comprobanteId: number): Promise<boolean> {
-    // Si no se puede comprobar, el pedido se da por EN CURSO: abrir uno nuevo
+    // Si la consulta falla, el pedido se da por EN CURSO: abrir uno nuevo
     // por error duplicaría una venta, que es peor que no abrirlo.
-    const nota = await this.prisma.comprobante
-      ?.findUnique({
+    let nota;
+    try {
+      nota = await this.prisma.comprobante?.findUnique({
         where: { id: comprobanteId },
         select: {
           estadoPago: true,
           estadoEnvioSunat: true,
           envioDespacho: { select: { estado: true } },
         },
-      })
-      .catch(() => null);
+      });
+    } catch {
+      return false;
+    }
+    // La nota ya no existe (la borraron): ese pedido terminó. Antes contaba
+    // como "en curso" y el chat quedaba atado a una nota fantasma: el bot
+    // decía "tu pedido quedó registrado" sin que hubiera nada (20-10).
+    if (nota === null) return true;
     if (!nota) return false;
     return (
       String(nota.estadoEnvioSunat) === 'ANULADO' ||
@@ -540,6 +549,68 @@ export class LeadsPedidoService {
       String(nota.estadoPago) === 'ANULADO' ||
       nota.envioDespacho?.estado === 'ENTREGADO'
     );
+  }
+
+  /**
+   * El id lo escribe el modelo y a veces lo escribe mal (20-10: la copaiba
+   * salió con 3844 en vez de 31000). El nombre lo copia del resultado de la
+   * búsqueda y casi nunca falla. Si el id no es de un producto activo de
+   * este negocio, se busca el producto por su nombre en el catálogo; solo se
+   * corrige con una coincidencia única. Si no, el id queda como vino y
+   * `cotizar` lo rechaza.
+   */
+  private async conIdDelCatalogo(
+    empresaId: number,
+    items: ItemPedido[],
+  ): Promise<ItemPedido[]> {
+    const ids = items.map((i) => i.productoId).filter((id) => id > 0);
+    const validos = new Set(
+      (
+        await this.prisma.producto.findMany({
+          where: { empresaId, id: { in: ids }, estado: 'ACTIVO' as never },
+          select: { id: true },
+        })
+      ).map((p: { id: number }) => p.id),
+    );
+    const salida: ItemPedido[] = [];
+    for (const item of items) {
+      const nombre = item.nombre?.trim();
+      if (validos.has(item.productoId) || !nombre) {
+        salida.push(item);
+        continue;
+      }
+      const porNombre = await this.prisma.producto.findMany({
+        where: {
+          empresaId,
+          estado: 'ACTIVO' as never,
+          descripcion: { equals: nombre, mode: 'insensitive' },
+        },
+        select: { id: true },
+        take: 2,
+      });
+      if (porNombre.length === 1) {
+        this.logger.warn(
+          `Lead: cotizar recibió el id ${item.productoId} para "${nombre}"; se usa ${porNombre[0].id} del catálogo.`,
+        );
+        salida.push({ ...item, productoId: porNombre[0].id });
+      } else {
+        salida.push(item);
+      }
+    }
+    return salida;
+  }
+
+  /** ¿La nota existió y ya no está? Ante un error de consulta, no. */
+  private async notaBorrada(comprobanteId: number): Promise<boolean> {
+    try {
+      const nota = await this.prisma.comprobante?.findUnique({
+        where: { id: comprobanteId },
+        select: { id: true },
+      });
+      return nota === null;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -625,7 +696,15 @@ export class LeadsPedidoService {
       };
     }
 
-    const limpios = items.filter((i) => i.productoId > 0 && i.cantidad > 0);
+    const limpios = (
+      await this.conIdDelCatalogo(
+        empresaId,
+        items.filter((i) => i.cantidad > 0),
+      )
+    )
+      .filter((i) => i.productoId > 0)
+      // Solo id y cantidad: es lo que se guarda y lo que lee registrar.
+      .map((i) => ({ productoId: i.productoId, cantidad: i.cantidad }));
     if (limpios.length === 0) return { error: 'No hay productos que cotizar.' };
 
     const productos = await this.prisma.producto.findMany({
@@ -638,6 +717,18 @@ export class LeadsPedidoService {
     });
     if (productos.length === 0) {
       return { error: 'Ninguno de esos productos es de este negocio.' };
+    }
+    // Un id que no existe NO se salta en silencio. Pasó en vivo el 20-10: el
+    // modelo mandó la copaiba con un id inventado, la cotización salió solo
+    // con la uña de gato, el modelo escribió por su cuenta otra con las dos,
+    // y registrar_pedido falló porque el id malo quedó guardado.
+    const desconocidos = limpios
+      .filter((i) => !productos.some((p) => p.id === i.productoId))
+      .map((i) => i.productoId);
+    if (desconocidos.length) {
+      return {
+        error: `El id ${desconocidos.join(', ')} no es un producto de este negocio. Busca de nuevo ese producto con buscar_productos, usa el id EXACTO que te devuelve y vuelve a llamar a cotizar con todos los productos. No escribas tú la cotización.`,
+      };
     }
 
     // El precio sale del catálogo, nunca de lo que recuerde el modelo.
@@ -799,6 +890,16 @@ export class LeadsPedidoService {
     if (!borrador) {
       return { error: 'Todavía no hay ningún pedido en curso.' };
     }
+    // La nota del pedido ya no existe: se registra este como si nada. Sin
+    // esto el bot respondía "ya estaba registrado" y el cliente se iba
+    // creyendo que tenía un pedido.
+    if (borrador.comprobanteId && (await this.notaBorrada(borrador.comprobanteId))) {
+      await this.prisma.leadPedidoBorrador.update({
+        where: { conversacionId },
+        data: { comprobanteId: null, registradoEn: null },
+      });
+      borrador.comprobanteId = null;
+    }
     // El pedido anterior ya se cerró y no hay cotización nueva: no se
     // registra de nuevo lo viejo ni se le dice "ya estaba registrado".
     if (borrador.comprobanteId && (await this.pedidoCerrado(borrador.comprobanteId))) {
@@ -834,6 +935,16 @@ export class LeadsPedidoService {
       where: { empresaId, id: { in: items.map((i) => i.productoId) } },
       select: { id: true, precioUnitario: true },
     });
+    // Un pedido cotizado con un id que no existe no se puede registrar:
+    // crearInformal lanza "Productos no encontrados" y al cliente le llegaba
+    // "tengo un inconveniente temporal". Se pide recotizar en vez de fallar.
+    if (items.some((i) => !productos.some((p) => p.id === i.productoId))) {
+      // `error` y no `falta`: lo de `falta` se le lee al cliente tal cual.
+      return {
+        error:
+          'Uno de los productos cotizados no está en el catálogo, así que el pedido NO se registró. Búscalo con buscar_productos, vuelve a cotizar con el id exacto y muéstrale al cliente la cotización nueva antes de registrar.',
+      };
+    }
     const calculo = calcularDescuento(
       items.map((i) => ({
         precioUnitario: Number(
