@@ -651,6 +651,8 @@ export class LeadsPedidoService {
    */
   async estadoParaElTurno(conversacionId: number): Promise<{
     cotizado: string | null;
+    tipoZona: string | null;
+    faltan: string[];
     pedirTodoJunto?: string;
   } | null> {
     try {
@@ -672,7 +674,8 @@ export class LeadsPedidoService {
           )
           .join('; ');
       }
-      return { cotizado, ...conBloqueDeDatos(this.faltantes(b)) };
+      const faltan = this.faltantes(b);
+      return { cotizado, tipoZona: b.tipoZona, faltan, ...conBloqueDeDatos(faltan) };
     } catch {
       return null;
     }
