@@ -401,12 +401,22 @@ export class LeadsPedidoService {
         }
       }
 
+      // Por celular solo si es la MISMA persona. Un celular lo comparten
+      // familias, y el 20-10 un "Diego Ortega Roldan" que dio el DNI 47065472
+      // salió en la nota como "Diego Ortega Ramos" con el DNI 45879632: otro
+      // cliente con ese celular. Si dio DNI y no coincide, tampoco es él.
       if (celular) {
-        const porTelefono = await this.prisma.cliente.findFirst({
+        const conEseCelular = await this.prisma.cliente.findMany({
           where: { empresaId, telefono: celular, estado: 'ACTIVO' as never },
-          select: { id: true },
+          select: { id: true, nombre: true, nroDoc: true },
+          take: 10,
         });
-        if (porTelefono) return porTelefono.id;
+        const mismo = conEseCelular.find(
+          (c) =>
+            (!nombre || mismaPersona(c.nombre ?? '', nombre)) &&
+            (!dni || c.nroDoc === dni || c.nroDoc === celular),
+        );
+        if (mismo) return mismo.id;
       }
 
       if (!nombre) return null;
@@ -1691,4 +1701,22 @@ function normalizarItems(json: unknown): ItemPedido[] {
   return (json as ItemPedido[])
     .map((i) => ({ productoId: Number(i.productoId), cantidad: Number(i.cantidad) }))
     .sort((a, b) => a.productoId - b.productoId);
+}
+
+/**
+ * ¿Dos nombres son de la misma persona? Sí si todas las palabras del más
+ * corto están en el otro: "Diego Ortega" = "Diego Jesús Ortega Roldán", pero
+ * "Diego Ortega Roldán" ≠ "Diego Ortega Ramos".
+ */
+export function mismaPersona(a: string, b: string): boolean {
+  const palabras = (s: string) =>
+    s
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .split(/[^a-zñ]+/)
+      .filter((w) => w.length > 1);
+  const [corto, largo] = [palabras(a), palabras(b)].sort((x, y) => x.length - y.length);
+  if (corto.length === 0) return false;
+  return corto.every((w) => largo.includes(w));
 }

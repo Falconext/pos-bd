@@ -782,3 +782,45 @@ describe('id válido pero de otro producto (validación del 20-10)', () => {
     expect((verBorrador() as any).itemsJson).toEqual([{ productoId: 30001, cantidad: 1 }]);
   });
 });
+
+describe('el cliente de la nota es el que dio sus datos (validación del 20-10)', () => {
+  function conClienteViejo() {
+    const a = armar({
+      borrador: { ...limaCompleto(), nombre: 'Diego Ortega Roldan', celular: '991065217', dni: '47065472' },
+    });
+    a.prisma.cliente = {
+      findFirst: jest.fn().mockResolvedValue(null),
+      // Otro cliente con el mismo celular, de una prueba anterior.
+      findMany: jest.fn().mockResolvedValue([
+        { id: 5300, nombre: 'DIEGO ORTEGA RAMOS', nroDoc: '45879632' },
+      ]),
+      create: jest.fn().mockResolvedValue({ id: 5400 }),
+    };
+    a.prisma.tipoDocumento = { findFirst: jest.fn().mockResolvedValue({ id: 2 }) };
+    return a;
+  }
+
+  it('no reutiliza a otra persona por compartir el celular', async () => {
+    const a = conClienteViejo();
+    await a.service.registrarPedido(EMPRESA, CONV, TELEFONO);
+    expect(a.prisma.cliente.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ nombre: 'DIEGO ORTEGA ROLDAN', nroDoc: '47065472' }),
+      }),
+    );
+    expect(a.comprobante.crearInformal.mock.calls[0][0].clienteId).toBe(5400);
+  });
+
+  it('sí reutiliza a la misma persona aunque escriba el nombre más corto', async () => {
+    const a = conClienteViejo();
+    a.prisma.cliente.findMany.mockResolvedValue([
+      { id: 5300, nombre: 'DIEGO JESUS ORTEGA ROLDAN', nroDoc: '991065217' },
+    ]);
+    const b: any = a.verBorrador();
+    b.nombre = 'Diego Ortega';
+    b.dni = null;
+    await a.service.registrarPedido(EMPRESA, CONV, TELEFONO);
+    expect(a.prisma.cliente.create).not.toHaveBeenCalled();
+    expect(a.comprobante.crearInformal.mock.calls[0][0].clienteId).toBe(5300);
+  });
+});
