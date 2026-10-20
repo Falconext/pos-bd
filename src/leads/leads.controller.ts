@@ -32,6 +32,12 @@ export class LeadsController {
     return this.service.obtenerConfig(user.empresaId);
   }
 
+  /** Prospectos que pidieron demo: el banco para llamarlos después. */
+  @Get('demos')
+  listarDemos(@User() user: any) {
+    return this.service.listarDemos(user.empresaId);
+  }
+
   @Patch('config')
   actualizarConfig(
     @User() user: any,

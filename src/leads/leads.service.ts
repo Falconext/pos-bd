@@ -403,15 +403,85 @@ export class LeadsService {
         iaVentasSeguimiento: true,
         iaVentasCotizacion: true,
         iaVentasBrochureUrl: true,
+        iaVentasConfigJson: true,
       },
     });
+    const demos = (empresa?.iaVentasConfigJson as { demos?: ConfigDemos } | null)
+      ?.demos;
     return {
       iaVentasActiva: empresa?.iaVentasActiva ?? false,
       iaVentasContexto: empresa?.iaVentasContexto ?? '',
       iaVentasSeguimiento: empresa?.iaVentasSeguimiento ?? true,
       iaVentasCotizacion: empresa?.iaVentasCotizacion ?? false,
       iaVentasBrochureUrl: empresa?.iaVentasBrochureUrl ?? '',
+      // El panel muestra la pestaña "Demos" solo a quien las entrega.
+      tieneDemos: Boolean(demos?.cuentas?.length),
     };
+  }
+
+  /**
+   * El banco de prospectos que pidieron demo, el más reciente primero, con
+   * cómo va el seguimiento: si ya se le preguntó qué le pareció y si
+   * contestó. Es la lista que usan los vendedores para llamar.
+   */
+  async listarDemos(empresaId: number) {
+    const demos = await this.prisma.leadDemo.findMany({
+      where: { empresaId },
+      orderBy: { creadoEn: 'desc' },
+      take: 500,
+    });
+    if (!demos.length) return [];
+    const telefonos = demos.map((d) => d.telefono);
+    const [seguimientos, conversaciones] = await Promise.all([
+      this.prisma.leadDisparo.findMany({
+        where: {
+          empresaId,
+          tipo: 'SEGUIMIENTO_DEMO' as never,
+          referencia: { in: demos.map((d) => `demo:${d.id}`) },
+        },
+        select: {
+          referencia: true,
+          estado: true,
+          programadoPara: true,
+          enviadoEn: true,
+          motivo: true,
+        },
+      }),
+      this.prisma.leadConversacion.findMany({
+        where: { empresaId, telefonoProspecto: { in: telefonos } },
+        select: {
+          telefonoProspecto: true,
+          mensajes: {
+            where: { rol: 'USUARIO' },
+            orderBy: { creadoEn: 'desc' },
+            take: 1,
+            select: { creadoEn: true },
+          },
+        },
+      }),
+    ]);
+    const seguimientoDe = new Map(seguimientos.map((s) => [s.referencia, s]));
+    const ultimoDe = new Map(
+      conversaciones.map((c) => [
+        c.telefonoProspecto,
+        c.mensajes[0]?.creadoEn ?? null,
+      ]),
+    );
+    return demos.map((d) => {
+      const seguimiento = seguimientoDe.get(`demo:${d.id}`) ?? null;
+      const ultimoMensajeEn = ultimoDe.get(d.telefono) ?? null;
+      return {
+        ...d,
+        ultimoMensajeEn,
+        seguimiento,
+        // Contestó al "¿qué tal te pareció?": escribió después de que salió.
+        respondioSeguimiento: Boolean(
+          seguimiento?.enviadoEn &&
+            ultimoMensajeEn &&
+            ultimoMensajeEn > seguimiento.enviadoEn,
+        ),
+      };
+    });
   }
 
   /** Actualiza el toggle y/o el contexto de negocio de la IA de ventas. */
