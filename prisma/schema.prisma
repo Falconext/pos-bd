@@ -1225,6 +1225,7 @@ model Comprobante {
   comprobanteOrigenId     Int?
   comprobanteOrigen       Comprobante?         @relation("ConversionOrigen", fields: [comprobanteOrigenId], references: [id])
   comprobantesDerivados   Comprobante[]        @relation("ConversionOrigen")
+  ordenesCompra           OrdenCompraOrigen[]  @relation("OrdenCompraOrigenes")
   detalles                DetalleComprobante[]
   leyendas                Leyenda[]
   movimientosKardex       MovimientoKardex[]
@@ -2509,6 +2510,9 @@ model OrdenCompra {
   usuario         Usuario?             @relation(fields: [usuarioId], references: [id])
   compra          Compra?              @relation(fields: [compraId], references: [id])
   detalles        DetalleOrdenCompra[]
+  // Notas de venta/pedido de las que se armó la orden (preventa: varios
+  // pedidos de clientes, una sola compra al proveedor).
+  origenes        OrdenCompraOrigen[]
 
   @@unique([empresaId, numero])
   @@index([empresaId, estado])
@@ -2534,6 +2538,16 @@ model DetalleOrdenCompra {
   producto           Producto?   @relation(fields: [productoId], references: [id])
 
   @@index([ordenCompraId])
+}
+
+model OrdenCompraOrigen {
+  ordenCompraId Int
+  comprobanteId Int
+  ordenCompra   OrdenCompra @relation(fields: [ordenCompraId], references: [id], onDelete: Cascade)
+  comprobante   Comprobante @relation("OrdenCompraOrigenes", fields: [comprobanteId], references: [id], onDelete: Cascade)
+
+  @@id([ordenCompraId, comprobanteId])
+  @@index([comprobanteId])
 }
 
 enum EstadoOrdenCompra {

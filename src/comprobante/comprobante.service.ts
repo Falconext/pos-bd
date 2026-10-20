@@ -552,6 +552,11 @@ export class ComprobanteService {
                 creadoEn: true,
               },
             },
+            // Notas ya pedidas al proveedor (Notas de venta → Orden de compra).
+            ordenesCompra: {
+              where: { ordenCompra: { estado: { not: 'ANULADA' } } },
+              select: { ordenCompra: { select: { id: true, numero: true, estado: true } } },
+            },
           },
         }),
         this.prisma.comprobante.count({ where }),
