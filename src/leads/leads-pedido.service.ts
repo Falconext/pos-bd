@@ -374,6 +374,13 @@ export class LeadsPedidoService {
    * Si algo falla, devuelve null y el pedido se registra a CLIENTES VARIOS:
    * una venta no se pierde por no poder crear una ficha.
    */
+  private async tipoDocumentoId(codigo: string): Promise<number | null> {
+    const t = await this.prisma.tipoDocumento
+      .findFirst({ where: { codigo }, select: { id: true } })
+      .catch(() => null);
+    return t?.id ?? null;
+  }
+
   private async clienteDelPedido(
     empresaId: number,
     borrador: { nombre: string | null; dni: string | null; celular: string | null },
@@ -411,28 +418,40 @@ export class LeadsPedidoService {
           select: { id: true, nombre: true, nroDoc: true },
           take: 10,
         });
+        // Ficha sin documento real: "0" o, en las viejas, el celular.
+        const sinDoc = (doc: string | null) => !doc || doc === '0' || doc === celular;
         const mismo = conEseCelular.find(
           (c) =>
             (!nombre || mismaPersona(c.nombre ?? '', nombre)) &&
-            (!dni || c.nroDoc === dni || c.nroDoc === celular),
+            (!dni || c.nroDoc === dni || sinDoc(c.nroDoc)),
         );
-        if (mismo) return mismo.id;
+        if (mismo) {
+          // Ahora sí dio su DNI: queda guardado en su ficha.
+          if (dni && sinDoc(mismo.nroDoc)) {
+            const tipoDni = await this.tipoDocumentoId('1');
+            await this.prisma.cliente
+              .update({
+                where: { id: mismo.id },
+                data: { nroDoc: dni, ...(tipoDni ? { tipoDocumentoId: tipoDni } : {}) },
+              })
+              .catch(() => undefined);
+          }
+          return mismo.id;
+        }
       }
 
       if (!nombre) return null;
 
-      const tipoDni = await this.prisma.tipoDocumento.findFirst({
-        where: { codigo: '1' },
-        select: { id: true },
-      });
+      // Sin DNI el documento es "0" (Catálogo 06: sin documento). Antes se
+      // ponía el celular y en la nota parecía un número de documento que el
+      // cliente nunca dio (20-10). En Lima el DNI no se pide.
+      const tipoDoc = await this.tipoDocumentoId(dni ? '1' : '0');
       const creado = await this.prisma.cliente.create({
         data: {
           empresaId,
           nombre: nombre.toUpperCase(),
-          // Sin DNI se guarda el celular como documento, que es como el
-          // sistema ya registra a los clientes que llegan por WhatsApp.
-          nroDoc: dni || celular,
-          ...(dni && tipoDni ? { tipoDocumentoId: tipoDni.id } : {}),
+          nroDoc: dni || '0',
+          ...(tipoDoc ? { tipoDocumentoId: tipoDoc } : {}),
           ...(celular ? { telefono: celular } : {}),
         },
         select: { id: true },
