@@ -1109,7 +1109,13 @@ export class LeadsPedidoService {
             adelanto,
             telefono,
           ),
-          detalles: this.lineasDelComprobante(items, productos, calculo),
+          detalles: this.lineasDelComprobante(
+            items,
+            productos,
+            calculo,
+            envio,
+            esAgencia ? `ENVÍO ${borrador.lugar ?? borrador.zona ?? ''} (agencia)` : 'ENVÍO DELIVERY',
+          ),
         },
         empresaId,
       )) as { id?: number; serie?: string; correlativo?: number };
@@ -1296,6 +1302,8 @@ export class LeadsPedidoService {
     items: ItemPedido[],
     productos: { id: number; precioUnitario: unknown }[],
     calculo: ReturnType<typeof calcularDescuento>,
+    envio = 0,
+    descripcionEnvio = 'ENVÍO',
   ): Array<Record<string, unknown>> {
     const precioDe = (id: number) =>
       Number(productos.find((p) => p.id === id)?.precioUnitario ?? 0);
@@ -1337,16 +1345,21 @@ export class LeadsPedidoService {
       };
     });
 
-    // El envío NO entra acá, y es a propósito: lo decidió la contadora del
-    // negocio el 2026-10-17. El servicio de delivery no se factura, así que
-    // no puede sumar al total de la boleta ni de la guía —si sumara, entraría
-    // a la base imponible y pagaría IGV—. Queda en las observaciones del
-    // comprobante y en el `montoCOD` del despacho, que es lo que el
-    // repartidor cobra de verdad en la puerta.
-    //
-    // Consecuencia buscada: el total del comprobante es SOLO la mercadería.
-    // Que no cuadre con lo que el cliente entrega en la puerta no es un error
-    // —el delivery se cobra aparte y sin comprobante—.
+    // El envío entra como una línea más, sin producto del catálogo: el total
+    // de la nota tiene que ser el de la cotización (pedido de Hierba Sana
+    // 20-10: "ya no sería 14 sino 24"). Hasta el 17-10 quedaba afuera por
+    // pedido de su contadora, para que no sumara IGV si la nota se convertía
+    // en boleta; el negocio decidió cambiarlo. Si se convierte, esta línea
+    // va gravada como cualquier ítem libre.
+    if (envio > 0) {
+      lineas.push({
+        productoId: null,
+        descripcion: descripcionEnvio.replace(/\s+/g, ' ').trim().toUpperCase(),
+        cantidad: 1,
+        nuevoValorUnitario: envio,
+        unidad: 'ZZ',
+      });
+    }
     return lineas;
   }
 

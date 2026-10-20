@@ -102,18 +102,16 @@ function armar(opts: { items?: any[]; pagos?: number[]; zona?: string } = {}) {
 }
 
 describe('el total del comprobante', () => {
-  it('NO lleva el envío: el delivery no se factura', async () => {
-    // Lo decidió la contadora del negocio: el servicio de delivery no suma al
-    // total de la boleta ni de la guía. Si sumara entraría a la base
-    // imponible y pagaría IGV.
+  it('lleva el envío como una línea más: el total es el de la cotización', async () => {
+    // Pedido de Hierba Sana (20-10): "ya no sería 14 sino 24". Hasta el 17-10
+    // el envío quedaba afuera por pedido de su contadora; el negocio lo cambió.
     const { registrar, emitido, totalEmitido } = armar();
     const r = await registrar();
 
-    // El cliente entrega 46 en la puerta, pero la boleta es por los 31 de
-    // mercadería. Los 15 del delivery se cobran aparte y sin comprobante.
     expect(r.montoAPagar).toBe(46);
-    expect(Math.round(totalEmitido() * 100) / 100).toBe(31);
-    expect(emitido().detalles.every((l: any) => l.productoId)).toBe(true);
+    expect(Math.round(totalEmitido() * 100) / 100).toBe(46);
+    const envio = emitido().detalles.find((l: any) => l.productoId == null);
+    expect(envio).toMatchObject({ descripcion: 'ENVÍO DELIVERY', cantidad: 1, nuevoValorUnitario: 15 });
   });
 
   it('el envío sí queda escrito, para que el equipo lo vea', async () => {
@@ -129,13 +127,19 @@ describe('el total del comprobante', () => {
   it('el descuento sí entra: ese es mercadería', async () => {
     // 3×90 = 270 con S/ 10 de rebaja por volumen = 260. Antes se facturaban
     // los 270 completos, S/ 10 de más.
-    const { registrar, totalEmitido } = armar({
+    const { registrar, totalEmitido, emitido } = armar({
       items: [{ productoId: 2, cantidad: 3 }],
       zona: 'AGENCIA',
     });
-    await registrar();
+    const r = await registrar();
 
-    expect(Math.round(totalEmitido() * 100) / 100).toBe(260);
+    const mercaderia = emitido()
+      .detalles.filter((l: any) => l.productoId)
+      .reduce((a: number, l: any) => a + l.cantidad * l.nuevoValorUnitario, 0);
+    expect(Math.round(mercaderia * 100) / 100).toBe(260);
+    // Y con el envío de la agencia, la nota suma lo mismo que la cotización.
+    expect(Math.round(totalEmitido() * 100) / 100).toBe(r.montoAPagar);
+    expect(emitido().detalles.find((l: any) => l.productoId == null).descripcion).toMatch(/^ENVÍO .*\(AGENCIA\)$/);
   });
 
   it('el descuento se reparte, no cae entero en una línea', async () => {
