@@ -602,6 +602,40 @@ export class LeadsPedidoService {
     return salida;
   }
 
+  /**
+   * Lo que hay que saber del pedido en curso para este turno: qué se cotizó
+   * (para recotizar si el cliente cambia algo) y el bloque de datos que
+   * faltan. null si no hay pedido abierto.
+   */
+  async estadoParaElTurno(conversacionId: number): Promise<{
+    cotizado: string | null;
+    pedirTodoJunto?: string;
+  } | null> {
+    try {
+      const b = await this.prisma.leadPedidoBorrador.findUnique({
+        where: { conversacionId },
+      });
+      if (!b || b.comprobanteId) return null;
+      const items = normalizarItems(b.itemsJson);
+      let cotizado: string | null = null;
+      if (b.cotizadoEn && items.length) {
+        const productos = await this.prisma.producto.findMany({
+          where: { id: { in: items.map((i) => i.productoId) } },
+          select: { id: true, descripcion: true },
+        });
+        cotizado = items
+          .map(
+            (i) =>
+              `${i.cantidad}x ${productos.find((p) => p.id === i.productoId)?.descripcion ?? `producto ${i.productoId}`} (id ${i.productoId})`,
+          )
+          .join('; ');
+      }
+      return { cotizado, ...conBloqueDeDatos(this.faltantes(b)) };
+    } catch {
+      return null;
+    }
+  }
+
   /** ¿La nota existió y ya no está? Ante un error de consulta, no. */
   private async notaBorrada(comprobanteId: number): Promise<boolean> {
     try {
@@ -787,9 +821,25 @@ export class LeadsPedidoService {
     // Lo que se lleva el cliente al final queda en la nota de venta, que es
     // la que vale; la COT es el borrador que el vendedor ve mientras tanto, y
     // el chat guarda el detalle de cada versión.
-    const cot =
-      borrador.cotizacionId ??
-      (await this.crearCotizacion(empresaId, limpios, resumenCotizacion(texto)));
+    //
+    // Pero si el cliente cambió lo que lleva, la COT del panel tiene que
+    // decir lo nuevo (20-10: quitó y agregó productos y el panel seguía con
+    // la primera versión). Se reemplaza: sigue habiendo una sola.
+    const mismosItems =
+      JSON.stringify(normalizarItems(borrador.itemsJson)) ===
+      JSON.stringify(normalizarItems(limpios));
+    let cot = borrador.cotizacionId;
+    if (cot && !mismosItems) {
+      await this.comprobante
+        .eliminarCotizacion(cot, empresaId)
+        .catch((e: unknown) =>
+          this.logger.warn(
+            `No se pudo reemplazar la COT ${cot}: ${e instanceof Error ? e.message : String(e)}`,
+          ),
+        );
+      cot = null;
+    }
+    cot ??= await this.crearCotizacion(empresaId, limpios, resumenCotizacion(texto));
     await this.prisma.leadPedidoBorrador.update({
       where: { conversacionId },
       data: {
@@ -1059,7 +1109,13 @@ export class LeadsPedidoService {
             adelanto,
             telefono,
           ),
-          detalles: this.lineasDelComprobante(items, productos, calculo),
+          detalles: this.lineasDelComprobante(
+            items,
+            productos,
+            calculo,
+            envio,
+            esAgencia ? `ENVÍO ${borrador.lugar ?? borrador.zona ?? ''} (agencia)` : 'ENVÍO DELIVERY',
+          ),
         },
         empresaId,
       )) as { id?: number; serie?: string; correlativo?: number };
@@ -1246,6 +1302,8 @@ export class LeadsPedidoService {
     items: ItemPedido[],
     productos: { id: number; precioUnitario: unknown }[],
     calculo: ReturnType<typeof calcularDescuento>,
+    envio = 0,
+    descripcionEnvio = 'ENVÍO',
   ): Array<Record<string, unknown>> {
     const precioDe = (id: number) =>
       Number(productos.find((p) => p.id === id)?.precioUnitario ?? 0);
@@ -1287,16 +1345,21 @@ export class LeadsPedidoService {
       };
     });
 
-    // El envío NO entra acá, y es a propósito: lo decidió la contadora del
-    // negocio el 2026-10-17. El servicio de delivery no se factura, así que
-    // no puede sumar al total de la boleta ni de la guía —si sumara, entraría
-    // a la base imponible y pagaría IGV—. Queda en las observaciones del
-    // comprobante y en el `montoCOD` del despacho, que es lo que el
-    // repartidor cobra de verdad en la puerta.
-    //
-    // Consecuencia buscada: el total del comprobante es SOLO la mercadería.
-    // Que no cuadre con lo que el cliente entrega en la puerta no es un error
-    // —el delivery se cobra aparte y sin comprobante—.
+    // El envío entra como una línea más, sin producto del catálogo: el total
+    // de la nota tiene que ser el de la cotización (pedido de Hierba Sana
+    // 20-10: "ya no sería 14 sino 24"). Hasta el 17-10 quedaba afuera por
+    // pedido de su contadora, para que no sumara IGV si la nota se convertía
+    // en boleta; el negocio decidió cambiarlo. Si se convierte, esta línea
+    // va gravada como cualquier ítem libre.
+    if (envio > 0) {
+      lineas.push({
+        productoId: null,
+        descripcion: descripcionEnvio.replace(/\s+/g, ' ').trim().toUpperCase(),
+        cantidad: 1,
+        nuevoValorUnitario: envio,
+        unidad: 'ZZ',
+      });
+    }
     return lineas;
   }
 
@@ -1505,4 +1568,12 @@ export function conBloqueDeDatos(faltan: string[]): { pedirTodoJunto?: string } 
       ...lineas,
     ].join('\n'),
   };
+}
+
+/** Ítems comparables: solo id y cantidad, ordenados por id. */
+function normalizarItems(json: unknown): ItemPedido[] {
+  if (!Array.isArray(json)) return [];
+  return (json as ItemPedido[])
+    .map((i) => ({ productoId: Number(i.productoId), cantidad: Number(i.cantidad) }))
+    .sort((a, b) => a.productoId - b.productoId);
 }

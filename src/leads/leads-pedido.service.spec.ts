@@ -449,21 +449,34 @@ describe('no ensuciar el panel con cotizaciones duplicadas', () => {
     expect(obs).not.toContain('¿Deseas que agendemos');
   });
 
-  it('tampoco si cambió lo que lleva: una COT por conversación', async () => {
-    // El QA del flujo completo midió cuatro llamadas a cotizar en una sola
-    // venta. Un documento por cada una deja al vendedor sin saber cuál mirar.
-    // Lo que se lleva de verdad queda en la nota de venta.
+  it('si cambió lo que lleva, reemplaza la COT: sigue habiendo una sola y dice lo nuevo', async () => {
+    // 20-10: el cliente quitó y agregó productos y el panel seguía mostrando
+    // la primera cotización. Ahora la vieja se borra y se crea la nueva.
     const { service, comprobante, verBorrador } = armar({
       borrador: { ...limaCompleto(), itemsJson: null, cotizacionId: null },
     });
+    comprobante.eliminarCotizacion = jest.fn().mockResolvedValue({});
+    comprobante.crearInformal
+      .mockResolvedValueOnce({ id: 501 })
+      .mockResolvedValueOnce({ id: 502 });
 
     await service.cotizar(EMPRESA, CONV, [{ productoId: 1, cantidad: 2 }]);
-    await service.cotizar(EMPRESA, CONV, [{ productoId: 1, cantidad: 5 }]);
-    await service.cotizar(EMPRESA, CONV, [{ productoId: 2, cantidad: 1 }]);
+    // Mismo pedido: no toca la COT.
+    await service.cotizar(EMPRESA, CONV, [{ productoId: 1, cantidad: 2 }]);
+    expect(comprobante.eliminarCotizacion).not.toHaveBeenCalled();
 
-    expect(comprobante.crearInformal).toHaveBeenCalledTimes(1);
-    // Pero el borrador sí refleja lo último que pidió.
-    expect((verBorrador() as any).itemsJson).toEqual([
+    // Agrega un producto: se reemplaza.
+    await service.cotizar(EMPRESA, CONV, [
+      { productoId: 1, cantidad: 2 },
+      { productoId: 2, cantidad: 1 },
+    ]);
+    expect(comprobante.eliminarCotizacion).toHaveBeenCalledWith(501, EMPRESA);
+    expect(comprobante.crearInformal).toHaveBeenCalledTimes(2);
+    expect(comprobante.crearInformal.mock.calls[1][0].observaciones).toContain('Berberina');
+    const b: any = verBorrador();
+    expect(b.cotizacionId).toBe(502);
+    expect(b.itemsJson).toEqual([
+      { productoId: 1, cantidad: 2 },
       { productoId: 2, cantidad: 1 },
     ]);
   });

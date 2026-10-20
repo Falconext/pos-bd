@@ -35,6 +35,7 @@ import {
 import { conDescargoLegal } from './prompt-asesor';
 import { sinConfirmacionFalsa } from './confirmacion-falsa';
 import { conCotizacionExacta } from './cotizacion-exacta';
+import { conBloqueDeDatosExacto } from './datos-en-bloque';
 import { conIndicacionMedica, esAltoRiesgo } from './alto-riesgo';
 import { avisoVoucher, extraerTitular } from './voucher-verificacion';
 import { conNombreBienEscrito } from './nombre-negocio';
@@ -666,11 +667,17 @@ export class LeadsMessageProcessor extends WorkerHost {
     ]
       .filter((s) => s && s.trim())
       .join('\n\n');
+    const pedidoEnCurso = await this.estadoDelPedido(conv.id);
     const contextoDelTurno = [
       // La fecha va acá y no en el prompt fijo: cambia cada día y rompería el
       // caché. La necesita la IA para convertir "en una semana" en una fecha.
       `HOY: ${new Intl.DateTimeFormat('es-PE', { timeZone: 'America/Lima', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date())} (${new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(new Date())}).`,
       this.productosYaMostrados(mensajes),
+      // 20-10: el cliente quitó y agregó productos y la cotización no cambió;
+      // el modelo no sabía que tenía que volver a cotizar.
+      pedidoEnCurso?.cotizado
+        ? `PEDIDO YA COTIZADO: ${pedidoEnCurso.cotizado}. Si en este mensaje el cliente agrega, quita o cambia un producto o una cantidad, llama a cotizar con la lista COMPLETA ya actualizada y muéstrale la cotización nueva antes de seguir.`
+        : '',
       relevantes.contexto,
       contextoRag,
     ]
@@ -809,6 +816,13 @@ export class LeadsMessageProcessor extends WorkerHost {
       !!borradorTrasTurno?.comprobanteId,
     );
     resultado.reply = conCotizacionExacta(resultado.reply, resultado.llamadas);
+    // Con lo que quedó guardado DESPUÉS del turno: si el cliente ya dio
+    // algún dato, el bloque pide solo lo que falta.
+    const pedidoTrasTurno = await this.estadoDelPedido(conv.id);
+    resultado.reply = conBloqueDeDatosExacto(
+      resultado.reply,
+      pedidoTrasTurno?.pedirTodoJunto,
+    );
 
     // Cliente de alto riesgo: la indicación médica y el aviso al equipo no
     // dependen de que el modelo se acuerde (ver alto-riesgo.ts). Va después
@@ -2177,6 +2191,15 @@ export class LeadsMessageProcessor extends WorkerHost {
    * quedó anotado: la promesa no tenía respaldo. Una vez por producto y
    * conversación, para no inflar el reporte de no habidos.
    */
+  /** El pedido en curso para este turno; si no se puede leer, se sigue sin él. */
+  private async estadoDelPedido(conversacionId: number) {
+    try {
+      return (await this.pedido.estadoParaElTurno(conversacionId)) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   private async anotarEnListaDeEspera(
     empresaId: number,
     conversacionId: number,
