@@ -1,4 +1,5 @@
 import { num, round3 } from '../common/utils/stock';
+import { repartirPago } from './cobro-varias';
 import { parseFechaEmision } from '../common/utils/fecha';
 import { diaDeEnvio } from './dia-de-envio';
 import { aplicarDescuentoGlobal } from './descuento-global';
@@ -1319,6 +1320,88 @@ export class ComprobanteService {
         ...(isInformal ? { estadoPago: 'ANULADO' as any, saldo: 0 } : {}),
       },
     });
+  }
+
+  /**
+   * Cobrar varias notas de un mismo cliente de una vez (Notas de venta →
+   * elegir → Cobrar). El monto se reparte de la más antigua a la más nueva y
+   * cada parte se registra con el mismo `completarPagoOT` de un cobro suelto:
+   * caja, cuentas y estados quedan exactamente igual que si se cobraran una
+   * por una. Todo se valida antes del primer pago.
+   */
+  async cobrarVarias(
+    empresaId: number,
+    usuarioId: number,
+    input: {
+      ids: number[];
+      monto: number;
+      medioPago?: string;
+      referencia?: string;
+      observacion?: string;
+      cuentaBancariaId?: number | null;
+    },
+  ) {
+    const ids = [...new Set((input?.ids ?? []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+    if (!ids.length) throw new BadRequestException('Elige al menos una nota');
+    const notas = await this.prisma.comprobante.findMany({
+      where: { id: { in: ids }, empresaId },
+      select: {
+        id: true, tipoDoc: true, serie: true, correlativo: true, clienteId: true,
+        tipoMoneda: true, saldo: true, fechaEmision: true, estadoEnvioSunat: true,
+      },
+    });
+    if (notas.length !== ids.length) throw new NotFoundException('Alguna de las notas no existe');
+    const informales = ['TICKET', 'NV', 'RH', 'CP', 'NP', 'OT'];
+    const doc = (n: { serie: string; correlativo: number }) => `${n.serie}-${n.correlativo}`;
+    const invalida = notas.find((n) => !informales.includes(n.tipoDoc) || n.estadoEnvioSunat === 'ANULADO');
+    if (invalida) throw new BadRequestException(`${doc(invalida)} no se puede cobrar (anulada o no es nota)`);
+    if (new Set(notas.map((n) => n.clienteId)).size > 1) {
+      throw new BadRequestException('Las notas son de clientes distintos: cobra las de un cliente a la vez');
+    }
+    if (new Set(notas.map((n) => String(n.tipoMoneda || 'PEN').toUpperCase())).size > 1) {
+      throw new BadRequestException('Hay notas en soles y en dólares: cóbralas por separado');
+    }
+    let reparto: { id: number; monto: number }[];
+    try {
+      reparto = repartirPago(
+        notas.map((n) => ({ id: n.id, saldo: Number(n.saldo ?? 0), fechaEmision: n.fechaEmision })),
+        Number(input?.monto),
+      );
+    } catch (e: any) {
+      throw new BadRequestException(e?.message || 'Monto inválido');
+    }
+
+    const aplicados: { id: number; documento: string; monto: number }[] = [];
+    for (const parte of reparto) {
+      const nota = notas.find((n) => n.id === parte.id)!;
+      try {
+        await this.completarPagoOT(
+          parte.id,
+          {
+            montoPagado: parte.monto,
+            medioPago: input?.medioPago,
+            referencia: input?.referencia,
+            observacion: input?.observacion,
+            cuentaBancariaId: input?.cuentaBancariaId ?? undefined,
+          },
+          usuarioId,
+          empresaId,
+        );
+        aplicados.push({ id: parte.id, documento: doc(nota), monto: parte.monto });
+      } catch (e: any) {
+        // Lo ya cobrado queda cobrado: se informa dónde se cortó.
+        throw new BadRequestException(
+          `Se cobró ${aplicados.map((a) => a.documento).join(', ') || 'nada'}; ` +
+            `falló ${doc(nota)}: ${e?.message || 'error'}`,
+        );
+      }
+    }
+    const total = Number(notas.reduce((s, n) => s + Number(n.saldo ?? 0), 0).toFixed(2));
+    return {
+      aplicados,
+      cobrado: Number(aplicados.reduce((s, a) => s + a.monto, 0).toFixed(2)),
+      saldoRestante: Number((total - Number(input.monto)).toFixed(2)),
+    };
   }
 
   async completarPagoOT(
@@ -7490,6 +7573,8 @@ export class ComprobanteService {
     tipoDoc?: string;
     estado?: string;
     estadoPago?: string;
+    /** CSV de ids: solo esos comprobantes (notas elegidas en la lista). */
+    ids?: string;
   }): Promise<any> {
     const {
       empresaId,
@@ -7551,12 +7636,21 @@ export class ComprobanteService {
         ? (normalizedEstado as EstadoSunat)
         : undefined;
 
+    // Notas elegidas: pueden venir de varias páginas o fechas, así que el
+    // rango no aplica; sede, vendedor y tipos siguen acotando (permisos).
+    const ids = String(params.ids ?? '')
+      .split(',')
+      .map((v) => Number(v))
+      .filter((n) => Number.isInteger(n) && n > 0)
+      .slice(0, 500);
+
     return {
       empresaId,
       ...sedeFilter,
       ...(usuarioId ? { usuarioId } : {}),
       tipoDoc: { in: tipoDoc ? [tipoDoc] : tiposPermitidos },
-      ...(fechaInicio || fechaFin
+      ...(ids.length ? { id: { in: ids } } : {}),
+      ...(!ids.length && (fechaInicio || fechaFin)
         ? {
             fechaEmision: {
               ...(adjustedFechaInicio ? { gte: adjustedFechaInicio } : {}),
@@ -7583,6 +7677,7 @@ export class ComprobanteService {
     tipoDoc?: string;
     estado?: string;
     estadoPago?: string;
+    ids?: string;
     formato: 'zip' | 'pdf';
   }): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
     const { fechaInicio, fechaFin, formato } = params;
@@ -7834,6 +7929,7 @@ export class ComprobanteService {
     tipoDoc?: string;
     estado?: string;
     estadoPago?: string;
+    ids?: string;
     columnas?: string;
     formato: 'excel' | 'pdf';
   }): Promise<{ buffer: Buffer; filename: string; contentType: string }> {

@@ -52,6 +52,12 @@ export class ListComprobanteDto {
   @IsString()
   estadoPago?: string;
 
+  // Exportar solo las notas elegidas en la lista: ids separados por coma.
+  @IsOptional()
+  @Type(() => String)
+  @IsString()
+  ids?: string;
+
   @IsOptional()
   @Type(() => String)
   @IsString()
