@@ -79,7 +79,12 @@ function armar(
     {} as never,
     notificaciones,
   );
+  // La nota del recojo se arma con registrarPedido, que tiene su propia spec.
+  const registrar = jest
+    .spyOn(servicio, 'registrarPedido')
+    .mockResolvedValue({ registrado: true, pedido: 'NV01-00000099', montoAPagar: 7 });
   return {
+    registrar,
     avisar: (cuando: string) =>
       servicio.avisarVisitaTienda(EMPRESA, CONV, TELEFONO, cuando),
     avisos,
@@ -116,6 +121,26 @@ describe('visita a la tienda', () => {
     expect((borradorActual() as any).horario).toBe('mañana 2pm');
   });
 
+  it('deja registrada la nota del recojo, para que la reserva tenga dónde quedar', async () => {
+    // 20-10: el Yape de S/ 5 de la reserva no se pudo asentar porque el
+    // recojo no tenía nota de venta.
+    const { avisar, registrar } = armar();
+    const res = await avisar('el sábado por la mañana');
+
+    expect(registrar).toHaveBeenCalledWith(EMPRESA, CONV, TELEFONO);
+    expect(res).toMatchObject({ avisado: true, pedido: 'NV01-00000099', montoAPagar: 7 });
+  });
+
+  it('si la nota no se pudo registrar, no deja decir que quedó registrado', async () => {
+    const { avisar, registrar } = armar();
+    registrar.mockResolvedValue({ error: 'No se pudo registrar el pedido en el sistema.' });
+    const res = await avisar('mañana');
+
+    expect(res.avisado).toBe(true);
+    expect(res.pedido).toBeUndefined();
+    expect(res.aviso).toMatch(/NO se registró/);
+  });
+
   describe('lo que NO debe pasar', () => {
     it('no manda el mismo aviso dos veces', async () => {
       // El modelo reintenta cuando el cliente repite "sí, mañana voy".
@@ -123,7 +148,7 @@ describe('visita a la tienda', () => {
       await avisar('mañana a las 2');
       const segundo = await avisar('mañana a las 2');
 
-      expect(segundo).toEqual({ avisado: true, yaAvisado: true });
+      expect(segundo).toMatchObject({ avisado: true, yaAvisado: true });
       expect(avisos).toHaveLength(1);
     });
 

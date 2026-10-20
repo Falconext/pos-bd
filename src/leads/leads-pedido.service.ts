@@ -544,9 +544,11 @@ export class LeadsPedidoService {
       pedir(!b.dni, 'DNI');
       pedir(!b.agenciaSede, 'la sede de la agencia donde recogerá');
       pedir(!b.celular, 'celular de contacto');
-    } else {
+    } else if (b.tipoZona !== ('RECOJO' satisfies TipoZona)) {
       pedir(!b.celular, 'celular de contacto');
     }
+    // En un recojo basta el nombre: el celular es el WhatsApp por el que
+    // escribe, y pedirlo frenaba la nota del recojo (20-10).
     return faltan;
   }
 
@@ -1542,6 +1544,9 @@ export class LeadsPedidoService {
   ): Promise<{
     avisado?: boolean;
     yaAvisado?: boolean;
+    pedido?: string;
+    montoAPagar?: number;
+    aviso?: string;
     falta?: string[];
     error?: string;
   }> {
@@ -1580,7 +1585,7 @@ export class LeadsPedidoService {
     // repite "sí, mañana voy"—, pero si cambia el día sí, porque eso el
     // negocio necesita saberlo.
     if (borrador.horario?.trim() === momento) {
-      return { avisado: true, yaAvisado: true };
+      return { avisado: true, yaAvisado: true, ...(await this.notaDelRecojo(empresaId, conversacionId, telefono)) };
     }
 
     const productos = await this.prisma.producto.findMany({
@@ -1621,7 +1626,132 @@ export class LeadsPedidoService {
     this.logger.log(
       `Lead: visita a tienda avisada (empresa ${empresaId}, conv ${conversacionId}, ${momento}).`,
     );
-    return { avisado: true };
+    return { avisado: true, ...(await this.notaDelRecojo(empresaId, conversacionId, telefono)) };
+  }
+
+  /**
+   * La visita a tienda también deja su nota de venta, sin envío ni despacho.
+   *
+   * Antes el recojo solo avisaba, y la reserva de S/ 5 que el cliente
+   * yapeaba no tenía dónde quedar: al validar el voucher salía "el pedido
+   * todavía no está registrado" y esa plata no figuraba en ningún lado
+   * (prueba del 20-10). Lo decidió el negocio: la reserva se descuenta del
+   * total, así que tiene que estar en la nota como adelanto. Si el cliente
+   * no viene en las 2 semanas, la nota se anula a mano.
+   */
+  private async notaDelRecojo(
+    empresaId: number,
+    conversacionId: number,
+    telefono: string,
+  ): Promise<{ pedido?: string; montoAPagar?: number; aviso?: string }> {
+    const r = await this.registrarPedido(empresaId, conversacionId, telefono);
+    if (r.pedido) return { pedido: r.pedido, montoAPagar: r.montoAPagar };
+    if (r.registrado) return {};
+    return {
+      aviso:
+        'La tienda quedó avisada, pero la nota del pedido NO se registró. No le digas que su pedido quedó registrado.',
+    };
+  }
+
+  /**
+   * Cancela, a pedido del cliente, un pedido ya registrado: anula su nota.
+   *
+   * Sin esto el bot contestaba "queda cancelado" y la nota seguía viva, con
+   * su despacho: el motorizado podía salir igual. Solo se anula sola cuando
+   * no hay plata de por medio y el paquete no salió; lo demás tiene costos
+   * (S/ 15 si ya salió el motorizado, S/ 10 si ya se empaquetó) y lo decide
+   * una persona.
+   */
+  async cancelarPedido(
+    empresaId: number,
+    conversacionId: number,
+    motivo: string,
+  ): Promise<{
+    cancelado?: boolean;
+    pedido?: string;
+    derivar?: string;
+    error?: string;
+  }> {
+    const borrador = await this.prisma.leadPedidoBorrador.findUnique({
+      where: { conversacionId },
+    });
+    if (!borrador?.comprobanteId) {
+      return {
+        error:
+          'No hay un pedido registrado que cancelar: solo estaba cotizado. Dile que no hay problema y que aquí estamos cuando lo necesite.',
+      };
+    }
+    const nota = await this.prisma.comprobante.findUnique({
+      where: { id: borrador.comprobanteId },
+      select: {
+        id: true,
+        empresaId: true,
+        serie: true,
+        correlativo: true,
+        estadoPago: true,
+        estadoEnvioSunat: true,
+        envioDespacho: { select: { estado: true } },
+      },
+    });
+    if (!nota || nota.empresaId !== empresaId) {
+      return { error: 'No hay un pedido registrado que cancelar.' };
+    }
+    const pedido = `${nota.serie}-${String(nota.correlativo).padStart(8, '0')}`;
+    if (
+      String(nota.estadoPago) === 'ANULADO' ||
+      String(nota.estadoEnvioSunat) === 'ANULADO'
+    ) {
+      return { cancelado: true, pedido };
+    }
+    const pagos = await this.prisma.pago.count({
+      where: { comprobanteId: nota.id },
+    });
+    if (pagos > 0) {
+      return {
+        derivar:
+          'El cliente ya pagó parte de este pedido: la cancelación con adelanto la ve una persona. NO le digas que quedó cancelado: llama a derivar_a_asesor.',
+      };
+    }
+    const estado = nota.envioDespacho?.estado;
+    if (estado && estado !== 'PREPARANDO') {
+      return {
+        derivar:
+          'El pedido ya salió a entrega: cancelarlo ahora tiene costo y lo ve una persona. NO le digas que quedó cancelado: llama a derivar_a_asesor.',
+      };
+    }
+    try {
+      await this.comprobante.anularComprobante(
+        nota.id,
+        `Cancelado por el cliente por WhatsApp${motivo ? `: ${motivo}` : ''}`.slice(0, 200),
+        empresaId,
+      );
+    } catch (e) {
+      this.logger.error(
+        `Lead: no se pudo anular ${pedido}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return {
+        derivar:
+          'No se pudo anular el pedido en el sistema. NO le digas que quedó cancelado: llama a derivar_a_asesor para que una persona lo anule.',
+      };
+    }
+    await this.notificaciones
+      .notificarAdminsEmpresa({
+        empresaId,
+        tipo: 'WARNING',
+        titulo: `❌ Pedido cancelado por el cliente: ${pedido}`,
+        mensaje: [
+          `${borrador.nombre ?? 'El cliente'} canceló su pedido por WhatsApp. La nota ${pedido} quedó anulada.`,
+          motivo ? `Motivo: ${motivo}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        metaData: { origen: 'ia-ventas-cancelacion', comprobanteId: nota.id },
+      })
+      .catch(() => undefined);
+    this.logger.log(
+      `Lead: pedido ${pedido} cancelado por el cliente (empresa ${empresaId}, conv ${conversacionId}).`,
+    );
+    return { cancelado: true, pedido };
   }
 
   private resumenParaElEquipo(

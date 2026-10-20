@@ -19,6 +19,7 @@ export const HERRAMIENTA_GUARDAR_DATOS = 'guardar_datos_envio';
 export const HERRAMIENTA_COTIZAR = 'cotizar';
 export const HERRAMIENTA_REGISTRAR_PEDIDO = 'registrar_pedido';
 export const HERRAMIENTA_AVISAR_VISITA = 'avisar_visita_tienda';
+export const HERRAMIENTA_CANCELAR_PEDIDO = 'cancelar_pedido';
 export const HERRAMIENTA_DERIVAR = 'derivar_a_asesor';
 export const HERRAMIENTA_AVISAR_RIESGO = 'avisar_cliente_alto_riesgo';
 export const HERRAMIENTA_AGENDAR_RECORDATORIO = 'agendar_recordatorio';
@@ -203,7 +204,8 @@ const avisarVisitaTienda: FunctionDeclaration = {
   name: HERRAMIENTA_AVISAR_VISITA,
   description:
     'Avisa a la tienda que el cliente va a pasar a recoger, con el día y la hora. ' +
-    'Úsala cuando el cliente ya decidió recoger en tienda y te dice cuándo va a ir — tanto si dejó reserva como si no. ' +
+    'Úsala cuando el cliente ya decidió recoger en tienda, ya le mostraste la cotización (con cotizar) y te dio su nombre completo y cuándo va a ir — tanto si dejó reserva como si no. ' +
+    'También registra su pedido (nota de venta sin envío): si te devuelve `pedido`, puedes decirle que su pedido quedó registrado; si te devuelve `aviso`, síguelo. En un recojo NO llames a registrar_pedido. ' +
     'Si el negocio cobra una reserva para separar el producto, ofrécesela UNA vez y con naturalidad, antes de llamar a esta herramienta. Si no quiere, no insistas: igual avisas la visita y sigues atendiendo normal. Insistir con la reserva es lo que hace que no venga. ' +
     'Esto NO aparta el stock: avisa al negocio para que él decida si lo separa. Así que no le prometas al cliente que su producto está guardado ni "asegurado" — dile que la tienda queda avisada para tenerlo listo. ' +
     'Si el cliente cambia el día, vuelve a llamarla con el día nuevo.',
@@ -217,6 +219,23 @@ const avisarVisitaTienda: FunctionDeclaration = {
       },
     },
     required: ['cuando'],
+  },
+};
+
+const cancelarPedido: FunctionDeclaration = {
+  name: HERRAMIENTA_CANCELAR_PEDIDO,
+  description:
+    'Cancela el pedido YA REGISTRADO de esta conversación cuando el cliente dice que ya no lo quiere. ' +
+    'Si te devuelve `cancelado`, dile que su pedido quedó cancelado. Si te devuelve `derivar`, NO le digas que quedó cancelado: haz lo que dice. ' +
+    'Nunca le digas al cliente que su pedido quedó cancelado si esta herramienta no te lo confirmó. Si solo estaba cotizado, no hace falta cancelar nada.',
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      motivo: {
+        type: SchemaType.STRING,
+        description: 'Lo que dijo el cliente, en pocas palabras ("ya no lo necesita").',
+      },
+    },
   },
 };
 
@@ -308,6 +327,7 @@ export const HERRAMIENTAS_VENTA: FunctionDeclaration[] = [
   cotizar,
   registrarPedido,
   avisarVisitaTienda,
+  cancelarPedido,
   derivar,
   avisarAltoRiesgo,
   agendarRecordatorio,
@@ -333,5 +353,7 @@ CÓMO SE CIERRA UNA VENTA
 - El complemento que ofrezcas antes de cotizar también sale de ${HERRAMIENTA_BUSCAR_PRODUCTOS}, nunca de tu memoria. Si la búsqueda no devuelve uno que le sirva de verdad, no ofrezcas nada y sigue al cierre.
 - Para cotizar usa ${HERRAMIENTA_COTIZAR}. El envío y el descuento los calcula ella: tú no sumas ni aplicas descuentos. Copia su texto tal cual.
 - Cuando el cliente acepte y no falte ningún dato, llama a ${HERRAMIENTA_REGISTRAR_PEDIDO} y a nada más: no vuelvas a buscar ni a cotizar lo que ya cotizaste. Solo después de que te confirme puedes decirle que su pedido quedó agendado.
+- Si recoge en tienda, también se cotiza con ${HERRAMIENTA_COTIZAR} (sin envío) y se cierra con ${HERRAMIENTA_AVISAR_VISITA}, que registra el pedido.
+- Si el cliente cancela un pedido ya registrado, usa ${HERRAMIENTA_CANCELAR_PEDIDO}.
 - Lo que no te toca resolver se deriva con ${HERRAMIENTA_DERIVAR}: mayoristas, reclamos, comprobantes de pago, seguimiento de pedidos ya hechos y quien pida hablar con una persona. Esos casos y nada más: una duda que puedas contestar con el contexto se contesta. Nunca digas que ya informaste a un asesor si en ese mismo turno no la llamaste.
 `.trim();

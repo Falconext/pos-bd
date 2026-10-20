@@ -47,6 +47,14 @@ export function sinConfirmacionFalsa(
   return 'Todavía no pude dejar registrado tu pedido. ¿Me confirmas tus datos de entrega para intentarlo de nuevo?';
 }
 
+const AFIRMA_CANCELACION =
+  /(qued[oó]|queda|ha quedado|est[aá]|fue|he|hemos|se ha)\s+(\S+\s+){0,2}(cancelad|anulad)|pedido\s+(cancelado|anulado)/i;
+
+/** ¿El texto le asegura al cliente que su pedido quedó cancelado? */
+export function afirmaCancelacion(texto: string): boolean {
+  return AFIRMA_CANCELACION.test(texto);
+}
+
 function unir(partes: string[]): string {
   if (partes.length === 1) return partes[0];
   return `${partes.slice(0, -1).join(', ')} y ${partes.at(-1)}`;
