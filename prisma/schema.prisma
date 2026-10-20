@@ -160,6 +160,16 @@ model Empresa {
   // seguir agregando de la misma lista (true) o limpiar y mostrar todo el
   // catálogo (false, comportamiento original pedido por Demenver)?
   posMantenerBusqueda       Boolean            @default(false)
+  // Resumen diario de productos en su stock mínimo o por debajo (8:00 Lima),
+  // además del aviso en la campana del panel. Por correo a los administradores
+  // (o a `alertaStockCorreos`) y por WhatsApp a `alertaStockCelular` desde el
+  // número propio de la empresa. `alertaStockUltimoEnvio` evita mandarlo dos
+  // veces el mismo día si el servidor reinicia.
+  alertaStockCorreo         Boolean            @default(false)
+  alertaStockWhatsapp       Boolean            @default(false)
+  alertaStockCorreos        String?
+  alertaStockCelular        String?
+  alertaStockUltimoEnvio    DateTime?
   // POS: tipo de comprobante con el que arranca cada venta (y al que vuelve al
   // terminar una). MANTENER_ULTIMO = hereda el de la venta anterior (original);
   // NOTA_DE_VENTA | BOLETA | FACTURA = siempre ese (pedido por Demenver: tras

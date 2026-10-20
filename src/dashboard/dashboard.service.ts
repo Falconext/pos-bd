@@ -7,6 +7,7 @@ import { egresosCajaWhere } from '../common/utils/egresos-caja.util';
 import { excluirNotasCreditoDeAnulacion } from '../common/utils/notas-credito.util';
 import { montoCompraEnSoles } from '../common/utils/moneda-compra';
 import { costoDeSede } from '../kardex/costo-sede';
+import { agruparPacksVendidos } from './packs-vendidos';
 import {
   ingresoLineaSinIgv,
   normalizarCriterio,
@@ -527,6 +528,92 @@ export class DashboardService {
     return Array.from(map.values()).sort((a, b) =>
       a.fecha.localeCompare(b.fecha),
     );
+  }
+
+  /**
+   * Packs (kits/combos) más vendidos del rango (ver packs-vendidos.ts). Cuenta
+   * las líneas que guardaron su combo: los kits vendidos como una sola línea
+   * (Empresa.kitsComoUnaLinea). Un kit desarmado en sus productos no deja
+   * rastro del pack, por eso la respuesta dice si la opción está encendida.
+   */
+  async packsMasVendidos(
+    empresaId: number,
+    fechaInicio?: string,
+    fechaFin?: string,
+    sedeId?: number,
+  ) {
+    const fechaEmision = this.parseRange(fechaInicio, fechaFin);
+    const comprobantesRaw = await this.prisma.comprobante.findMany({
+      where: {
+        empresaId,
+        ...(sedeId ? { sedeId } : {}),
+        ...(fechaEmision ? { fechaEmision } : {}),
+        estadoEnvioSunat: { notIn: ['ANULADO', 'RECHAZADO'] as any },
+        tipoDoc: { not: '08' },
+        detalles: { some: { comboId: { not: null } } },
+        ...this.filtroExcluirConvertidos,
+      },
+      select: {
+        id: true,
+        tipoDoc: true,
+        numDocAfectado: true,
+        tipoMoneda: true,
+        tipoCambio: true,
+        fechaEmision: true,
+      },
+    });
+    const comprobantes = await excluirNotasCreditoDeAnulacion(
+      this.prisma,
+      empresaId,
+      comprobantesRaw,
+    );
+    const porId = new Map(comprobantes.map((c) => [c.id, c] as const));
+
+    const [lineas, combos, empresa] = await Promise.all([
+      porId.size
+        ? this.prisma.detalleComprobante.findMany({
+            where: { comprobanteId: { in: [...porId.keys()] }, comboId: { not: null } },
+            select: { comboId: true, comprobanteId: true, cantidad: true, mtoPrecioUnitario: true },
+          })
+        : Promise.resolve([]),
+      this.prisma.combo.findMany({
+        where: { empresaId },
+        select: { id: true, nombre: true, imagenUrl: true, activo: true, precioCombo: true },
+      }),
+      this.prisma.empresa.findUnique({
+        where: { id: empresaId },
+        select: { kitsComoUnaLinea: true },
+      }),
+    ]);
+
+    const packs = agruparPacksVendidos(
+      lineas.map((l) => {
+        const c = porId.get(l.comprobanteId)!;
+        return {
+          comboId: Number(l.comboId),
+          comprobanteId: l.comprobanteId,
+          tipoDoc: String(c.tipoDoc ?? ''),
+          cantidad: Number(l.cantidad),
+          mtoPrecioUnitario: Number(l.mtoPrecioUnitario),
+          tipoMoneda: c.tipoMoneda,
+          tipoCambio: c.tipoCambio != null ? Number(c.tipoCambio) : null,
+          fechaEmision: c.fechaEmision,
+        };
+      }),
+      combos.map((c) => ({
+        id: c.id,
+        nombre: c.nombre,
+        imagenUrl: c.imagenUrl,
+        activo: c.activo,
+        precioCombo: Number(c.precioCombo),
+      })),
+    );
+    return {
+      kitsComoUnaLinea: Boolean(empresa?.kitsComoUnaLinea),
+      totalPacks: packs.reduce((s, p) => s + Math.max(0, p.cantidad), 0),
+      totalVendido: Math.round(packs.reduce((s, p) => s + p.total, 0) * 100) / 100,
+      packs,
+    };
   }
 
   async topProductos(

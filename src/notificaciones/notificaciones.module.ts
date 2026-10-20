@@ -6,11 +6,14 @@ import { NotificacionesService } from './notificaciones.service';
 import { NotificacionesGateway } from './notificaciones.gateway';
 import { InventarioNotificacionesService } from './inventario-notificaciones.service';
 import { PrismaModule } from '../prisma/prisma.module';
+import { WhatsAppModule } from '../whatsapp/whatsapp.module';
+import { AlertaStockService } from './alerta-stock.service';
 import { resolveJwtSecret } from '../auth/jwt-secret';
 
 @Module({
   imports: [
     PrismaModule,
+    WhatsAppModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -25,7 +28,8 @@ import { resolveJwtSecret } from '../auth/jwt-secret';
     NotificacionesService,
     NotificacionesGateway,
     InventarioNotificacionesService,
+    AlertaStockService,
   ],
-  exports: [NotificacionesService, InventarioNotificacionesService],
+  exports: [NotificacionesService, InventarioNotificacionesService, AlertaStockService],
 })
 export class NotificacionesModule {}

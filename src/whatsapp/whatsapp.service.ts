@@ -632,6 +632,18 @@ export class WhatsAppService {
     };
   }
 
+  /**
+   * Resumen de stock bajo al dueño del negocio (AlertaStockService), cuando su
+   * ventana de 24h con el número de la empresa está cerrada — casi siempre: el
+   * dueño no le escribe a su propio número de ventas.
+   * {{1}} negocio, {{2}} cuántos productos, {{3}} los más urgentes.
+   */
+  private readonly PLANTILLA_ALERTA_STOCK: PlantillaWhatsApp = {
+    name: 'alerta_stock_bajo',
+    body: 'Aviso de inventario de {{1}}: hay {{2}} productos en su stock mínimo o por debajo. Los más urgentes: {{3}}. La lista completa está en tu correo y en el panel.',
+    example: ['Regalos Lucía', '7', 'Peluche oso 30 cm (2), Papel coreano rosa (5)'],
+  };
+
   // Plantillas de despacho a crear en cada WABA (idioma es). Meta exige ejemplos.
   private readonly PLANTILLAS_DESPACHO: PlantillaWhatsApp[] = [
     {
@@ -667,6 +679,7 @@ export class WhatsAppService {
       body: 'Hola {{1}}, te compartimos tu guía de remisión {{2}}. Gracias por tu compra. 📄',
       example: ['Juan Pérez', 'T001-00000123'],
     },
+    this.PLANTILLA_ALERTA_STOCK,
   ];
 
   /**
@@ -771,6 +784,30 @@ export class WhatsAppService {
     token: string,
   ): Promise<{ creadas: string[]; existentes: string[]; errores: string[] }> {
     return this.crearPlantillasEnWaba(wabaId, token, this.PLANTILLAS_IA_VENTAS);
+  }
+
+  /**
+   * Da de alta la plantilla del resumen de stock bajo en la WABA de la empresa.
+   * Las empresas que conectaron su número antes de que existiera no la tienen
+   * (el alta al conectar solo crea las de despacho de ese momento): se pide al
+   * encender el aviso por WhatsApp. Idempotente.
+   */
+  async crearPlantillaAlertaStockEmpresa(empresaId: number): Promise<{
+    creadas: string[];
+    existentes: string[];
+    errores: string[];
+  }> {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { whatsappBusinessId: true, whatsappApiToken: true },
+    });
+    const token = empresa?.whatsappApiToken || this.systemUserToken;
+    if (!empresa?.whatsappBusinessId || !token) {
+      return { creadas: [], existentes: [], errores: ['Sin cuenta de WhatsApp Business conectada'] };
+    }
+    return this.crearPlantillasEnWaba(empresa.whatsappBusinessId, token, [
+      this.PLANTILLA_ALERTA_STOCK,
+    ]);
   }
 
   /**
