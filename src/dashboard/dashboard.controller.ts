@@ -114,6 +114,18 @@ export class DashboardController {
     return data;
   }
 
+  @Get('packs-mas-vendidos')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async packsMasVendidos(
+    @User() user: any,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
+    @Query('sedeId') sedeIdQuery?: string,
+  ) {
+    const sedeId = this.resolveSedeId(user, sedeIdQuery);
+    return this.service.packsMasVendidos(user.empresaId, fechaInicio, fechaFin, sedeId);
+  }
+
   @Get('top-productos-por-categoria')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async topProductosPorCategoria(

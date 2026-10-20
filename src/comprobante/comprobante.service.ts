@@ -511,6 +511,11 @@ export class ComprobanteService {
             },
             detalles: {
               select: {
+                // productoId/comboId: al convertir una Nota de Venta el POS
+                // rearma las líneas desde aquí. Sin comboId el pack pasaba a la
+                // boleta como ítem suelto y dejaba de contarse como pack.
+                productoId: true,
+                comboId: true,
                 producto: {
                   select: { id: true, descripcion: true, imagenUrl: true },
                 },

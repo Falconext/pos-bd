@@ -5,6 +5,7 @@ import { VerificarEnviosShalomService } from './services/verificar-envios-shalom
 import { VerificarEnviosOlvaService } from './services/verificar-envios-olva.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { InventarioNotificacionesService } from '../notificaciones/inventario-notificaciones.service';
+import { AlertaStockService } from '../notificaciones/alerta-stock.service';
 import { ResellerService } from '../reseller/reseller.service';
 import { CobroEmpresaService } from '../suscripcion/cobro-empresa.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -31,6 +32,7 @@ export class SchedulerService {
     private readonly cobroEmpresaService: CobroEmpresaService,
     private readonly prisma: PrismaService,
     private readonly whatsappService: WhatsAppService,
+    private readonly alertaStock: AlertaStockService,
   ) {}
 
   /**
@@ -233,6 +235,23 @@ export class SchedulerService {
       this.logger.log('✅ Verificación de inventario completada');
     } catch (error) {
       this.logger.error('❌ Error al verificar inventario:', error);
+    }
+  }
+
+  // Resumen de stock bajo por correo/WhatsApp a las empresas que lo encendieron
+  // (Perfil → Configuración). Va después del aviso de la campana de las 8:00.
+  @Cron('5 8 * * *', {
+    name: 'resumen-stock-bajo',
+    timeZone: 'America/Lima',
+  })
+  async resumenStockBajo(): Promise<void> {
+    // Un backend de desarrollo apuntando a la base compartida mandaría los
+    // mismos correos: se apaga con STOCK_ALERTAS_JOBS_ENABLED=false.
+    if (process.env.STOCK_ALERTAS_JOBS_ENABLED === 'false') return;
+    try {
+      await this.alertaStock.enviarResumenTodas();
+    } catch (error) {
+      this.logger.error('❌ Error en el resumen de stock bajo:', error);
     }
   }
 
