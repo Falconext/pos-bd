@@ -566,18 +566,24 @@ export class LeadsPedidoService {
     items: ItemPedido[],
   ): Promise<ItemPedido[]> {
     const ids = items.map((i) => i.productoId).filter((id) => id > 0);
-    const validos = new Set(
+    const validos = new Map<number, string>(
       (
         await this.prisma.producto.findMany({
           where: { empresaId, id: { in: ids }, estado: 'ACTIVO' as never },
-          select: { id: true },
+          select: { id: true, descripcion: true },
         })
-      ).map((p: { id: number }) => p.id),
+      ).map((p: { id: number; descripcion?: string }) => [p.id, p.descripcion ?? '']),
     );
+    const igual = (a: string, b: string) =>
+      a.replace(/\s+/g, ' ').trim().toLowerCase() === b.replace(/\s+/g, ' ').trim().toLowerCase();
     const salida: ItemPedido[] = [];
     for (const item of items) {
       const nombre = item.nombre?.trim();
-      if (validos.has(item.productoId) || !nombre) {
+      // Un id válido pero de OTRO producto también es un error (20-10: el
+      // aceite de almendra GERWILL de S/ 5 salió como el ARTESANAL de S/ 15).
+      // Manda el nombre, que es lo que el modelo le ofreció al cliente.
+      const descripcion = validos.get(item.productoId);
+      if (!nombre || (descripcion !== undefined && (!descripcion || igual(descripcion, nombre)))) {
         salida.push(item);
         continue;
       }
@@ -854,8 +860,117 @@ export class LeadsPedidoService {
       },
     });
 
+    // Pedido ya registrado y el cliente cambió lo que lleva: la nota de venta
+    // y lo que cobra el despacho tienen que seguir a la cotización. 20-10:
+    // pasó de 1 a 2 inka muña después de registrar, el bot dijo "pedido
+    // actualizado" y la nota siguió en S/ 24 en vez de S/ 31.
+    const nota =
+      borrador.comprobanteId && !mismosItems
+        ? await this.actualizarNotaRegistrada(
+            empresaId,
+            conversacionId,
+            borrador.comprobanteId,
+            borrador,
+            limpios,
+            productos,
+            calculo,
+            envio,
+          )
+        : {};
+
     // El bloque para pedir los datos que faltan, listo para cuando acepte.
-    return { texto, ...conBloqueDeDatos(this.faltantes(borrador)) };
+    return { texto, ...nota, ...conBloqueDeDatos(this.faltantes(borrador)) };
+  }
+
+  /**
+   * Edita la nota de venta de un pedido ya registrado con los ítems nuevos.
+   * Lo ya pagado se conserva como adelanto; el saldo y el `montoCOD` del
+   * despacho pasan a ser el total nuevo menos eso. Si no se puede, se le
+   * dice al modelo que NO confirme el cambio.
+   */
+  private async actualizarNotaRegistrada(
+    empresaId: number,
+    conversacionId: number,
+    comprobanteId: number,
+    borrador: Parameters<LeadsPedidoService['resumenParaElEquipo']>[1],
+    items: ItemPedido[],
+    productos: { id: number; precioUnitario: unknown }[],
+    calculo: ReturnType<typeof calcularDescuento>,
+    envio: number,
+  ): Promise<{ pedidoActualizado?: string; porCobrar?: number; aviso?: string }> {
+    const noSePudo = {
+      aviso:
+        'El pedido ya estaba registrado y su nota de venta NO se pudo actualizar con este cambio. No le digas que el pedido quedó actualizado: dile que un asesor del equipo ajusta su pedido y le confirma el nuevo total.',
+    };
+    try {
+      const pagos = await this.prisma.pago.findMany({
+        where: { comprobanteId },
+        select: { monto: true, medioPago: true },
+      });
+      const pagado =
+        Math.round(pagos.reduce((a, p) => a + Number(p.monto), 0) * 100) / 100;
+      const porCobrar = Math.round((calculo.montoAPagar - pagado) * 100) / 100;
+      // Pagó más que el total nuevo: devolver plata lo decide una persona.
+      if (porCobrar < 0) return noSePudo;
+
+      const conv = await this.prisma.leadConversacion.findUnique({
+        where: { id: conversacionId },
+        select: { telefonoProspecto: true },
+      });
+      const perfil = await this.prisma.leadProspecto
+        .findFirst({
+          where: { conversacionId, empresaId },
+          select: { sexo: true, edad: true, sintomas: true },
+        })
+        .catch(() => null);
+      const esAgencia = (borrador as { tipoZona?: string | null }).tipoZona === 'AGENCIA';
+      const nv = (await this.comprobante.editarNotaVenta(
+        comprobanteId,
+        {
+          formaPagoTipo: porCobrar > 0 ? 'CREDITO' : 'CONTADO',
+          // Lo cobrado se vuelve a registrar igual (editarNotaVenta reemplaza
+          // los pagos con lo que se le pasa).
+          ...(pagado > 0
+            ? {
+                adelanto: pagado,
+                medioPago: pagos[0].medioPago,
+                paymentDetails: { amount: pagado },
+              }
+            : {}),
+          observaciones: this.resumenParaElEquipo(
+            perfil,
+            borrador,
+            calculo,
+            pagado,
+            conv?.telefonoProspecto ?? '',
+          ),
+          detalles: this.lineasDelComprobante(
+            items,
+            productos,
+            calculo,
+            envio,
+            esAgencia ? `ENVÍO ${borrador.lugar ?? borrador.zona ?? ''} (agencia)` : 'ENVÍO DELIVERY',
+          ),
+        },
+        empresaId,
+      )) as { serie?: string; correlativo?: number } | null;
+      await this.prisma.envioDespacho.updateMany({
+        where: { comprobanteId },
+        data: { montoCOD: porCobrar },
+      });
+      const codigo = nv?.serie
+        ? `${nv.serie}-${String(nv.correlativo).padStart(8, '0')}`
+        : `nota ${comprobanteId}`;
+      this.logger.log(
+        `Lead: conv ${conversacionId} cambió su pedido registrado; ${codigo} actualizada a S/ ${calculo.montoAPagar.toFixed(2)}.`,
+      );
+      return { pedidoActualizado: codigo, porCobrar };
+    } catch (e) {
+      this.logger.warn(
+        `Lead: no se pudo actualizar la nota ${comprobanteId} tras recotizar: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return noSePudo;
+    }
   }
 
   /** El formato exacto del negocio. Cambiarlo cambia lo que ve el cliente. */

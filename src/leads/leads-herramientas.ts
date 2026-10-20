@@ -151,13 +151,15 @@ const cotizar: FunctionDeclaration = {
     'Te devuelve el texto de la cotización ya escrito; cópialo tal cual en tu respuesta. ' +
     'Necesita saber el destino: si todavía no lo sabes, te lo dirá y tendrás que preguntárselo al cliente antes. ' +
     'Vuelve a llamarla si el cliente agrega o quita productos. ' +
-    'Si te devuelve `pedirTodoJunto` y el cliente acepta la cotización, en tu siguiente mensaje pídele los datos copiando ese bloque TAL CUAL, todos juntos.',
+    'Si te devuelve `pedirTodoJunto` y el cliente acepta la cotización, en tu siguiente mensaje pídele los datos copiando ese bloque TAL CUAL, todos juntos. ' +
+    'Si el pedido ya estaba registrado y te devuelve `pedidoActualizado`, dile que su pedido quedó actualizado con el nuevo total; si te devuelve `aviso`, haz lo que dice y no confirmes el cambio.',
   parameters: {
     type: SchemaType.OBJECT,
     properties: {
       items: {
         type: SchemaType.ARRAY,
-        description: 'Los productos confirmados, con la cantidad que pidió.',
+        description:
+          'SOLO los productos que el cliente aceptó, con la cantidad que pidió. Lo que le sugeriste y no dijo que sí, no va.',
         items: {
           type: SchemaType.OBJECT,
           properties: {
