@@ -719,6 +719,24 @@ export class LeadsMessageProcessor extends WorkerHost {
       throw err;
     }
 
+    // Respuesta vacía: pasó en el QA del 20-10 ("mejor quiero dos, ya no
+    // una" → 0 tokens de salida) y el envío a WhatsApp falló con el cliente
+    // sin respuesta. Si el turno cotizó, va la cotización; si no, se reintenta
+    // el trabajo como cualquier fallo pasajero del modelo.
+    if (!resultado.reply?.trim()) {
+      const cotizado = [...resultado.llamadas]
+        .reverse()
+        .map((ll) => ll.resultado as { texto?: unknown; pedidoActualizado?: unknown } | null)
+        .find((r) => typeof r?.texto === 'string');
+      if (cotizado) {
+        resultado.reply = cotizado.pedidoActualizado
+          ? `${String(cotizado.texto)}\n\nTu pedido ${String(cotizado.pedidoActualizado)} quedó actualizado con este total.`
+          : String(cotizado.texto);
+      } else {
+        throw new Error(`La IA devolvió una respuesta vacía en la conv ${conv.id}.`);
+      }
+    }
+
     if (resultado.uso) {
       // Queda en el log para poder calcular el costo real por cliente: casi
       // todo es contexto fijo que se reenvía en cada vuelta del ciclo.

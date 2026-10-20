@@ -129,3 +129,17 @@ describe('aportaDatoNuevo', () => {
     ).toBe(false);
   });
 });
+
+describe('cambiar el pedido no es despedirse (QA del 20-10)', () => {
+  it.each([
+    'mejor quiero dos, ya no una',
+    'ya no el aceite, solo la uña de gato',
+    'ya no quiero el grande, el chico',
+  ])('"%s" no cierra la conversación', (t) => {
+    expect(esDespedidaClara(t)).toBe(false);
+  });
+
+  it.each(['ya no', 'ya no gracias', 'ya no me interesa'])('"%s" sí es despedida', (t) => {
+    expect(esDespedidaClara(t)).toBe(true);
+  });
+});
