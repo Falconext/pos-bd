@@ -16,6 +16,7 @@ import { DisponibilidadProducto, Prisma } from '@prisma/client';
 import { EjecutorHerramienta } from '../gemini/gemini.service';
 import {
   HERRAMIENTA_AVISAR_VISITA,
+  HERRAMIENTA_CANCELAR_PEDIDO,
   HERRAMIENTA_BUSCAR_PRODUCTOS,
   HERRAMIENTA_COTIZAR,
   HERRAMIENTA_DERIVAR,
@@ -33,7 +34,7 @@ import {
   venceEn,
 } from './pausa-bot';
 import { conDescargoLegal } from './prompt-asesor';
-import { sinConfirmacionFalsa } from './confirmacion-falsa';
+import { afirmaCancelacion, sinConfirmacionFalsa } from './confirmacion-falsa';
 import { conCotizacionExacta } from './cotizacion-exacta';
 import { conBloqueDeDatosExacto } from './datos-en-bloque';
 import { conIndicacionMedica, esAltoRiesgo } from './alto-riesgo';
@@ -833,6 +834,36 @@ export class LeadsMessageProcessor extends WorkerHost {
       resultado.llamadas,
       !!borradorTrasTurno?.comprobanteId,
     );
+    // Nunca "tu pedido quedó cancelado" con la nota viva: el motorizado
+    // saldría igual. Si el modelo no canceló, se cancela acá; si no se puede
+    // sola (ya pagó o ya salió), la ve una persona.
+    if (
+      borradorTrasTurno?.comprobanteId &&
+      afirmaCancelacion(resultado.reply) &&
+      !resultado.llamadas.some(
+        (ll) =>
+          ll.nombre === HERRAMIENTA_CANCELAR_PEDIDO &&
+          (ll.resultado as { cancelado?: boolean } | undefined)?.cancelado,
+      )
+    ) {
+      const argumentos = { motivo: contenido.slice(0, 200) };
+      const r = (await ejecutor(HERRAMIENTA_CANCELAR_PEDIDO, argumentos)) as {
+        cancelado?: boolean;
+      };
+      resultado.llamadas.push({
+        nombre: HERRAMIENTA_CANCELAR_PEDIDO,
+        argumentos,
+        resultado: r,
+      });
+      if (!r?.cancelado) {
+        await ejecutor(HERRAMIENTA_DERIVAR, {
+          motivo: 'cancelacion',
+          detalle: `El cliente quiere cancelar su pedido: "${contenido.slice(0, 200)}"`,
+        });
+        resultado.reply =
+          'Entiendo. Como tu pedido ya está en proceso, la cancelación la revisa una persona del equipo: ya le avisé y te escribe por aquí.';
+      }
+    }
     resultado.reply = conCotizacionExacta(resultado.reply, resultado.llamadas);
     // Con lo que quedó guardado DESPUÉS del turno: si el cliente ya dio
     // algún dato, el bloque pide solo lo que falta.
@@ -2168,6 +2199,16 @@ export class LeadsMessageProcessor extends WorkerHost {
           // Avisar la visita no es una venta cerrada, pero sí es el final del
           // camino de un recojo: el cliente ya decidió. Se marca la etapa
           // para que el embudo no lo deje como una cotización olvidada.
+          if (res?.pedido) {
+            await this.disparadores
+              .cancelar(
+                empresaId,
+                telefono,
+                [TipoDisparo.RECORDATORIO_ACORDADO],
+                'El cliente ya hizo su pedido',
+              )
+              .catch(() => undefined);
+          }
           if (res?.avisado && !res.yaAvisado) {
             await this.marcarEtapa(
               empresaId,
@@ -2180,6 +2221,13 @@ export class LeadsMessageProcessor extends WorkerHost {
           // apagar el bot lo dejaría sin a quién preguntarle.
           return res;
         }
+
+        case HERRAMIENTA_CANCELAR_PEDIDO:
+          return this.pedido.cancelarPedido(
+            empresaId,
+            conversacionId,
+            String(argumentos.motivo ?? ''),
+          );
 
         default:
           return { error: `Herramienta desconocida: ${nombre}` };

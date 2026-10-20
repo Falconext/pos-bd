@@ -67,6 +67,8 @@ export const MOTIVOS_DERIVACION = [
   'seguimiento_de_pedido',
   'descuento_especial',
   'producto_no_disponible',
+  // Cancelar un pedido con adelanto o que ya salió tiene costos: lo ve una persona.
+  'cancelacion',
   'pide_hablar_con_persona',
 ] as const;
 
