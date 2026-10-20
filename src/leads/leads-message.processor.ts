@@ -34,6 +34,7 @@ import {
 } from './pausa-bot';
 import { conDescargoLegal } from './prompt-asesor';
 import { sinConfirmacionFalsa } from './confirmacion-falsa';
+import { conCotizacionExacta } from './cotizacion-exacta';
 import { conIndicacionMedica, esAltoRiesgo } from './alto-riesgo';
 import { avisoVoucher, extraerTitular } from './voucher-verificacion';
 import { conNombreBienEscrito } from './nombre-negocio';
@@ -807,6 +808,7 @@ export class LeadsMessageProcessor extends WorkerHost {
       resultado.llamadas,
       !!borradorTrasTurno?.comprobanteId,
     );
+    resultado.reply = conCotizacionExacta(resultado.reply, resultado.llamadas);
 
     // Cliente de alto riesgo: la indicación médica y el aviso al equipo no
     // dependen de que el modelo se acuerde (ver alto-riesgo.ts). Va después
