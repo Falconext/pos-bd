@@ -426,6 +426,29 @@ describe('no ensuciar el panel con cotizaciones duplicadas', () => {
     expect(comprobante.crearInformal).toHaveBeenCalledTimes(1);
   });
 
+  it('las observaciones de la COT son la cotización que leyó el cliente', async () => {
+    // Antes decían "Cotización de la IA de Ventas por WhatsApp — Lima." y el
+    // vendedor no veía el envío, que no es un ítem de la COT.
+    const { service, comprobante } = armar({
+      borrador: { ...limaCompleto(), itemsJson: null, cotizacionId: null },
+    });
+    await service.cotizar(
+      EMPRESA,
+      CONV,
+      [
+        { productoId: 1, cantidad: 2 },
+        { productoId: 2, cantidad: 1 },
+      ],
+      'Pack Detox',
+    );
+    const obs: string = comprobante.crearInformal.mock.calls[0][0].observaciones;
+    expect(obs.startsWith('Te adjunto la Cotización 📋 Pack Detox\n2x Moringa 100 cápsulas - P.U. S/ 31.00')).toBe(true);
+    expect(obs).toContain('Guía de consumo de REGALO 🎁\nEnvío Lima: S/ 15.00\nTOTAL: S/ 137.00');
+    expect(obs).toContain('MONTO A PAGAR: S/ 127.00');
+    expect(obs).not.toContain('*');
+    expect(obs).not.toContain('¿Deseas que agendemos');
+  });
+
   it('tampoco si cambió lo que lleva: una COT por conversación', async () => {
     // El QA del flujo completo midió cuatro llamadas a cotizar en una sola
     // venta. Un documento por cada una deja al vendedor sin saber cuál mirar.
