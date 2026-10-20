@@ -246,7 +246,7 @@ describe('cotizar', () => {
     expect(r.texto).toContain('Cotización 📋 *Pack Detox*');
     expect(r.texto).toContain('2x Moringa 100 cápsulas - P.U. S/ 31.00');
     expect(r.texto).toContain('Guía de consumo de REGALO 🎁');
-    expect(r.texto).toContain('Envío Lima: S/ 15.00');
+    expect(r.texto).toContain('Envío Miraflores: S/ 15.00');
     expect(r.texto).toContain('*TOTAL: S/ 137.00*');
     expect(r.texto).toContain('Descuento: S/ 10.00');
     expect(r.texto).toContain('*MONTO A PAGAR: S/ 127.00*');
@@ -443,7 +443,7 @@ describe('no ensuciar el panel con cotizaciones duplicadas', () => {
     );
     const obs: string = comprobante.crearInformal.mock.calls[0][0].observaciones;
     expect(obs.startsWith('Te adjunto la Cotización 📋 Pack Detox\n2x Moringa 100 cápsulas - P.U. S/ 31.00')).toBe(true);
-    expect(obs).toContain('Guía de consumo de REGALO 🎁\nEnvío Lima: S/ 15.00\nTOTAL: S/ 137.00');
+    expect(obs).toContain('Guía de consumo de REGALO 🎁\nEnvío Miraflores: S/ 15.00\nTOTAL: S/ 137.00');
     expect(obs).toContain('MONTO A PAGAR: S/ 127.00');
     expect(obs).not.toContain('*');
     expect(obs).not.toContain('¿Deseas que agendemos');
@@ -602,5 +602,71 @@ describe('prueba en vivo del 20-10: id inventado y nota borrada', () => {
     const r = await a.service.registrarPedido(EMPRESA, CONV, TELEFONO);
     expect(a.comprobante.crearInformal).not.toHaveBeenCalled();
     expect(r.error).toMatch(/ya estaba registrado/);
+  });
+});
+
+describe('datos para agendar en un solo mensaje (pedido de Hierba Sana 20-10)', () => {
+  it('guardar el destino devuelve el bloque con todo lo que falta, celular al final', async () => {
+    const { service } = armar({
+      borrador: limaCompleto(['nombre', 'direccion', 'referencia', 'horario', 'celular']),
+    });
+    const r = await service.guardarDatos(EMPRESA, CONV, {} as any);
+    expect(r.pedirTodoJunto).toBe(
+      [
+        'Para agendar tu pedido, compárteme estos datos en un solo mensaje:',
+        '',
+        '*DATOS PARA AGENDAR TU PEDIDO*',
+        '- Nombres y apellidos:',
+        '- Dirección (calle y número):',
+        '- Referencia:',
+        '- Horario para recibir tu pedido:',
+        '- Número de celular:',
+      ].join('\n'),
+    );
+  });
+
+  it('la cotización trae el bloque listo para cuando acepte', async () => {
+    const { service } = armar({
+      borrador: { ...limaCompleto(['nombre', 'celular']), itemsJson: null, cotizacionId: null },
+    });
+    const r = await service.cotizar(EMPRESA, CONV, [{ productoId: 1, cantidad: 1 }]);
+    expect(r.texto).toBeDefined();
+    expect(r.pedirTodoJunto).toContain('- Nombres y apellidos:\n- Número de celular:');
+  });
+
+  it('registrar con datos pendientes también lo devuelve', async () => {
+    const { service } = armar({ borrador: limaCompleto(['referencia', 'celular']) });
+    const r = await service.registrarPedido(EMPRESA, CONV, TELEFONO);
+    expect(r.falta).toHaveLength(2);
+    expect(r.pedirTodoJunto).toContain('*DATOS PARA AGENDAR TU PEDIDO*');
+  });
+
+  it('con un solo dato pendiente no hace falta el bloque', async () => {
+    const { service } = armar({ borrador: limaCompleto(['celular']) });
+    const r = await service.registrarPedido(EMPRESA, CONV, TELEFONO);
+    expect(r.pedirTodoJunto).toBeUndefined();
+  });
+
+  it('provincia pide DNI y agencia, no dirección', async () => {
+    const { service } = armar({
+      borrador: {
+        ...limaCompleto(['nombre', 'celular', 'direccion', 'referencia', 'horario']),
+        tipoZona: 'AGENCIA', zona: 'Provincia', lugar: 'Cusco', costoEnvio: 10,
+      },
+    });
+    const r = await service.registrarPedido(EMPRESA, CONV, TELEFONO);
+    expect(r.pedirTodoJunto).toContain('- DNI:');
+    expect(r.pedirTodoJunto).toContain('- Agencia y sede donde recogerás:');
+    expect(r.pedirTodoJunto).not.toContain('Dirección');
+  });
+
+  it('si el lugar guardado es una dirección entera, el envío dice la zona', async () => {
+    const { service } = armar({
+      borrador: {
+        ...limaCompleto(), lugar: 'CALLAO MZ N LT 13 URB LAS FRESAS', itemsJson: null, cotizacionId: null,
+      },
+    });
+    const r = await service.cotizar(EMPRESA, CONV, [{ productoId: 1, cantidad: 1 }]);
+    expect(r.texto).toContain('Envío Lima: S/ 15.00');
   });
 });

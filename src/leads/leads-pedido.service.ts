@@ -172,6 +172,7 @@ export class LeadsPedidoService {
     aclarar?: string;
     /** Correcciones que conviene confirmarle al cliente sin detener el pedido. */
     confirmar?: string[];
+    pedirTodoJunto?: string;
   }> {
     const config = await this.configDe(empresaId);
     const cambios: Prisma.LeadPedidoBorradorUncheckedUpdateInput = {};
@@ -309,6 +310,7 @@ export class LeadsPedidoService {
       ...(this.formaPagoDe(borrador.zona, config) ?? {}),
       guardado,
       faltan: this.faltantes(borrador),
+      ...conBloqueDeDatos(this.faltantes(borrador)),
       ...(problemas.length ? { problemas } : {}),
       ...(aclaraciones.length ? { confirmar: aclaraciones } : {}),
     };
@@ -669,7 +671,12 @@ export class LeadsPedidoService {
     conversacionId: number,
     items: ItemPedido[],
     nombrePack?: string,
-  ): Promise<{ texto?: string; falta?: string; error?: string }> {
+  ): Promise<{
+    texto?: string;
+    falta?: string;
+    error?: string;
+    pedirTodoJunto?: string;
+  }> {
     const config = await this.configDe(empresaId);
     // Lo primero, antes de consultar nada: sin zonas configuradas el costo de
     // envío sería 0 y el total una promesa de envío gratis que nadie hizo.
@@ -755,9 +762,15 @@ export class LeadsPedidoService {
       config.descuento,
     );
 
+    // "Envío Callao", no "Envío Lima": el cliente reconoce su distrito. Solo
+    // si es un nombre de lugar; si quedó guardada una dirección entera, la zona.
+    const lugarCorto =
+      borrador.lugar && borrador.lugar.length <= 30 && !/\d/.test(borrador.lugar)
+        ? borrador.lugar
+        : null;
     const texto = this.textoCotizacion(
       lineas,
-      borrador.zona ?? '',
+      lugarCorto ?? borrador.zona ?? '',
       envio,
       calculo,
       nombrePack,
@@ -791,7 +804,8 @@ export class LeadsPedidoService {
       },
     });
 
-    return { texto };
+    // El bloque para pedir los datos que faltan, listo para cuando acepte.
+    return { texto, ...conBloqueDeDatos(this.faltantes(borrador)) };
   }
 
   /** El formato exacto del negocio. Cambiarlo cambia lo que ve el cliente. */
@@ -882,6 +896,7 @@ export class LeadsPedidoService {
     montoAPagar?: number;
     adelanto?: number;
     falta?: string[];
+    pedirTodoJunto?: string;
     error?: string;
   }> {
     const borrador = await this.prisma.leadPedidoBorrador.findUnique({
@@ -918,7 +933,7 @@ export class LeadsPedidoService {
     }
 
     const faltan = this.faltantes(borrador);
-    if (faltan.length) return { falta: faltan };
+    if (faltan.length) return { falta: faltan, ...conBloqueDeDatos(faltan) };
 
     const items = (borrador.itemsJson ?? []) as unknown as ItemPedido[];
     if (!Array.isArray(items) || items.length === 0) {
@@ -1460,4 +1475,34 @@ export function resumenCotizacion(texto: string): string {
     .map((l) => l.replace(/\*/g, ''))
     .join('\n')
     .trim();
+}
+
+/** Cómo se le pide al cliente cada dato que devuelve `faltantes`. */
+const ETIQUETA_DEL_DATO: Record<string, string> = {
+  'el distrito o ciudad de entrega': 'Distrito o ciudad',
+  'nombre completo': 'Nombres y apellidos',
+  DNI: 'DNI',
+  'dirección con calle y número': 'Dirección (calle y número)',
+  'una referencia para ubicar la dirección': 'Referencia',
+  'el horario de entrega': 'Horario para recibir tu pedido',
+  'la sede de la agencia donde recogerá': 'Agencia y sede donde recogerás',
+  'celular de contacto': 'Número de celular',
+};
+
+/**
+ * Los datos que faltan, en un solo bloque para que el cliente los conteste
+ * todos de una vez. Pedido de Hierba Sana (20-10): de a uno eran cinco
+ * idas y vueltas. Con un solo dato pendiente no hace falta el bloque.
+ */
+export function conBloqueDeDatos(faltan: string[]): { pedirTodoJunto?: string } {
+  if (faltan.length < 2) return {};
+  const lineas = faltan.map((f) => `- ${ETIQUETA_DEL_DATO[f] ?? f}:`);
+  return {
+    pedirTodoJunto: [
+      'Para agendar tu pedido, compárteme estos datos en un solo mensaje:',
+      '',
+      '*DATOS PARA AGENDAR TU PEDIDO*',
+      ...lineas,
+    ].join('\n'),
+  };
 }

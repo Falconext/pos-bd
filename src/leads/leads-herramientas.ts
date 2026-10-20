@@ -74,6 +74,7 @@ const guardarDatosEnvio: FunctionDeclaration = {
     'Si te dice el distrito o la ciudad, mándalo en `destino` y te devuelve la zona, el costo de envío y la forma de pago que corresponde. ' +
     'Con el nombre de la ciudad alcanza: cualquier lugar fuera de Lima cae en provincia. No le pidas al cliente que precise más de lo que ya resolvió esta herramienta. ' +
     'Nunca vuelvas a pedirle un dato que esta herramienta ya tiene guardado. ' +
+    'Si te devuelve `pedirTodoJunto`, pide los datos que faltan copiando ese bloque TAL CUAL en un solo mensaje, para que el cliente los conteste todos juntos; no los pidas de uno en uno. ' +
     'El nombre se le pregunta: no uses el de su perfil de WhatsApp ni el del comprobante de pago —quien paga no siempre es quien recibe. ' +
     'Y NUNCA completes un dato que el cliente no te dio: ni el DNI, ni el celular, ni la dirección. ' +
     'Si falta uno, pregúntaselo. Un número puesto por ti pasa todas las validaciones y deja un pedido que nadie puede entregar. ' +
@@ -149,7 +150,8 @@ const cotizar: FunctionDeclaration = {
     'Arma la cotización con los productos que el cliente confirmó. Calcula el envío y el descuento por pack en código, no los calcules tú: nunca sumes ni apliques descuentos a mano. ' +
     'Te devuelve el texto de la cotización ya escrito; cópialo tal cual en tu respuesta. ' +
     'Necesita saber el destino: si todavía no lo sabes, te lo dirá y tendrás que preguntárselo al cliente antes. ' +
-    'Vuelve a llamarla si el cliente agrega o quita productos.',
+    'Vuelve a llamarla si el cliente agrega o quita productos. ' +
+    'Si te devuelve `pedirTodoJunto` y el cliente acepta la cotización, en tu siguiente mensaje pídele los datos copiando ese bloque TAL CUAL, todos juntos.',
   parameters: {
     type: SchemaType.OBJECT,
     properties: {
@@ -190,7 +192,7 @@ const registrarPedido: FunctionDeclaration = {
   name: HERRAMIENTA_REGISTRAR_PEDIDO,
   description:
     'Registra el pedido en el sistema. Llámala SOLO cuando se cumplan las dos cosas: el cliente aceptó la cotización, y ya tienes todos los datos que guardar_datos_envio pedía. ' +
-    'Si falta algo te lo dirá y no registrará nada: pídeselo y vuelve a intentarlo. ' +
+    'Si falta algo te lo dirá y no registrará nada: pídeselo y vuelve a intentarlo (si viene `pedirTodoJunto`, copia ese bloque tal cual en un solo mensaje). ' +
     'Nunca le digas al cliente que su pedido quedó agendado si esta herramienta no te lo confirmó. Se llama una sola vez por pedido.',
   parameters: { type: SchemaType.OBJECT, properties: {} },
 };
