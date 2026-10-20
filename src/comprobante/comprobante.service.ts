@@ -1,3 +1,4 @@
+import { resolverDespachoAgrupado, selectDespachoAgrupado } from '../envio-despacho/despacho-agrupado';
 import { num, round3 } from '../common/utils/stock';
 import { NOTA_SIN_CONVERTIR } from './convertidos';
 import { repartirPago } from './cobro-varias';
@@ -83,6 +84,20 @@ import {
   lineasDetalleAdicional,
   normalizarDetalleAdicional,
 } from './detalle-adicional';
+
+const CAMPOS_DESPACHO_LISTA = {
+  id: true,
+  comprobanteId: true,
+  estado: true,
+  transportista: true,
+  tipoEnvio: true,
+  agenciaDestino: true,
+  direccionDestino: true,
+  celularDest: true,
+  nroPaquetes: true,
+  turnoEnvio: true,
+  creadoEn: true,
+} as const;
 
 @Injectable()
 export class ComprobanteService {
@@ -539,21 +554,9 @@ export class ComprobanteService {
             tipoOperacion: { select: { codigo: true, descripcion: true } },
             usuario: { select: { id: true, nombre: true } },
             sede: { select: { id: true, nombre: true, direccion: true } },
-            envioDespacho: {
-              select: {
-                id: true,
-                comprobanteId: true,
-                estado: true,
-                transportista: true,
-                tipoEnvio: true,
-                agenciaDestino: true,
-                direccionDestino: true,
-                celularDest: true,
-                nroPaquetes: true,
-                turnoEnvio: true,
-                creadoEn: true,
-              },
-            },
+            envioDespacho: { select: CAMPOS_DESPACHO_LISTA },
+            // Va en el envío de otra nota (un solo paquete): ver despacho-agrupado.ts.
+            despachoAgrupado: selectDespachoAgrupado(CAMPOS_DESPACHO_LISTA),
             // Notas ya pedidas al proveedor (Notas de venta → Orden de compra).
             ordenesCompra: {
               where: { ordenCompra: { estado: { not: 'ANULADA' } } },
@@ -754,6 +757,7 @@ export class ComprobanteService {
               };
             }),
           );
+          resolverDespachoAgrupado(it as any);
           return {
             ...it,
             detalles,

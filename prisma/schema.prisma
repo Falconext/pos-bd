@@ -1237,6 +1237,8 @@ model Comprobante {
   pagos                   Pago[]
   whatsappEnvios          WhatsAppEnvio[]
   envioDespacho           EnvioDespacho?
+  // Va en el envío de otra nota del mismo cliente (un solo paquete).
+  despachoAgrupado        EnvioDespachoNota?   @relation("DespachoNotaExtra")
   comisiones              ComisionVendedor[]
   campanas                CampanaMarketing[]
   productoSeries          ProductoSerie[]
@@ -2545,6 +2547,17 @@ model DetalleOrdenCompra {
   @@index([ordenCompraId])
 }
 
+/// Notas que viajan en el envío de otra nota (un solo paquete para varias
+/// ventas del mismo cliente). Una nota va en un solo envío.
+model EnvioDespachoNota {
+  comprobanteId Int           @id
+  despachoId    Int
+  despacho      EnvioDespacho @relation(fields: [despachoId], references: [id], onDelete: Cascade)
+  comprobante   Comprobante   @relation("DespachoNotaExtra", fields: [comprobanteId], references: [id], onDelete: Cascade)
+
+  @@index([despachoId])
+}
+
 /// Notas adicionales de una boleta/factura que junta varias notas de venta.
 /// Una nota entra en un solo formal (origenId es la clave).
 model ComprobanteOrigenExtra {
@@ -2692,6 +2705,8 @@ model EnvioDespacho {
   /// se discute con una fecha.
   entregadoEn              DateTime?
   evidencias               EvidenciaEntrega[]
+  /// Otras notas del mismo cliente que viajan en este mismo paquete.
+  notasExtra               EnvioDespachoNota[]
   creadoEn                 DateTime           @default(now())
   actualizadoEn            DateTime           @updatedAt
 

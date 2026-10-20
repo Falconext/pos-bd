@@ -173,6 +173,18 @@ export class EnvioDespachoService {
       throw new BadRequestException(
         'Este comprobante ya tiene un seguimiento de despacho.',
       );
+    // Ya viaja en el paquete de otra nota: un segundo despacho sería un
+    // segundo envío (y una segunda guía de courier) por la misma mercadería.
+    const agrupada = await this.prisma.envioDespachoNota.findUnique({
+      where: { comprobanteId },
+      select: { despacho: { select: { comprobante: { select: { serie: true, correlativo: true } } } } },
+    });
+    if (agrupada) {
+      const c = agrupada.despacho.comprobante;
+      throw new BadRequestException(
+        `Esta nota ya va en el envío de ${c.serie}-${String(c.correlativo).padStart(8, '0')}. Edita ese envío.`,
+      );
+    }
 
     const estadoInicial: EstadoDespacho =
       dto.estado ?? EstadoDespacho.PREPARANDO;
@@ -235,6 +247,53 @@ export class EnvioDespachoService {
     });
     if (existing) return this.update(comprobanteId, empresaId, dto, usuarioId);
     return this.create(comprobanteId, empresaId, dto, usuarioId);
+  }
+
+  /**
+   * Un solo envío para varias notas del mismo cliente: el despacho vive en la
+   * nota de `comprobanteId` y estas otras quedan enlazadas a él. No se crea
+   * otro despacho ni otra guía: el paquete es uno.
+   */
+  async agregarNotas(comprobanteId: number, empresaId: number, ids: number[]) {
+    await this.validateComprobante(comprobanteId, empresaId);
+    const principal = await this.prisma.comprobante.findUnique({
+      where: { id: comprobanteId },
+      select: { clienteId: true },
+    });
+    const despacho = await this.prisma.envioDespacho.findUnique({
+      where: { comprobanteId },
+      select: { id: true },
+    });
+    if (!despacho) throw new NotFoundException('Primero guarda el envío de esta nota.');
+    const otras = [...new Set((ids ?? []).map(Number))].filter(
+      (n) => Number.isInteger(n) && n > 0 && n !== comprobanteId,
+    );
+    if (!otras.length) return { despachoId: despacho.id, notas: [] };
+    const notas = await this.prisma.comprobante.findMany({
+      where: { id: { in: otras }, empresaId },
+      select: {
+        id: true, serie: true, correlativo: true, clienteId: true, estadoEnvioSunat: true,
+        envioDespacho: { select: { id: true } },
+        despachoAgrupado: { select: { despachoId: true } },
+      },
+    });
+    if (notas.length !== otras.length) throw new NotFoundException('Alguna de las notas no existe');
+    const doc = (n: { serie: string; correlativo: number }) => `${n.serie}-${n.correlativo}`;
+    for (const n of notas) {
+      if (n.estadoEnvioSunat === 'ANULADO') throw new BadRequestException(`${doc(n)} está anulada`);
+      if (n.clienteId !== principal?.clienteId) {
+        throw new BadRequestException('Un envío es para un solo cliente: las notas son de clientes distintos.');
+      }
+      if (n.envioDespacho) throw new BadRequestException(`${doc(n)} ya tiene su propio envío. Quítalo primero.`);
+      if (n.despachoAgrupado && n.despachoAgrupado.despachoId !== despacho.id) {
+        throw new BadRequestException(`${doc(n)} ya va en otro envío.`);
+      }
+    }
+    await this.prisma.envioDespachoNota.createMany({
+      data: notas.map((n) => ({ comprobanteId: n.id, despachoId: despacho.id })),
+      skipDuplicates: true,
+    });
+    return { despachoId: despacho.id, notas: notas.map(doc) };
   }
 
   async update(
@@ -557,6 +616,13 @@ export class EnvioDespachoService {
             },
           },
           repartidor: true,
+          notasExtra: {
+            select: {
+              comprobante: {
+                select: { serie: true, correlativo: true, mtoImpVenta: true, saldo: true, adelanto: true },
+              },
+            },
+          },
         },
       }),
       this.prisma.pedidoTienda.findMany({
@@ -597,17 +663,26 @@ export class EnvioDespachoService {
     ]);
 
     const despachosNormalizados = despachos.map((d) => {
-      const total = Number(d.comprobante.mtoImpVenta);
-      const saldo = Number(d.comprobante.saldo ?? 0);
-      const adelanto = Number(d.comprobante.adelanto ?? 0);
-      const montoPagado =
-        adelanto > 0 ? adelanto : saldo === 0 ? total : total - saldo;
+      // Un paquete con varias notas cobra lo de todas.
+      const notasDelPaquete: any[] = [d.comprobante, ...((d as any).notasExtra ?? []).map((x: any) => x.comprobante)];
+      const pagadoDe = (c: any) => {
+        const t = Number(c.mtoImpVenta);
+        const sal = Number(c.saldo ?? 0);
+        const ad = Number(c.adelanto ?? 0);
+        return ad > 0 ? ad : sal === 0 ? t : t - sal;
+      };
+      const total = notasDelPaquete.reduce((s, c) => s + Number(c.mtoImpVenta), 0);
+      const saldo = notasDelPaquete.reduce((s, c) => s + Number(c.saldo ?? 0), 0);
+      const montoPagado = notasDelPaquete.reduce((s, c) => s + pagadoDe(c), 0);
       return {
         tipo: 'COMPROBANTE' as const,
         id: d.id,
         comprobanteId: d.comprobanteId,
         comprobanteTipoDoc: d.comprobante.tipoDoc,
         referencia: `${d.comprobante.serie}-${String(d.comprobante.correlativo).padStart(8, '0')}`,
+        notasIncluidas: ((d as any).notasExtra ?? []).map(
+          (x: any) => `${x.comprobante.serie}-${String(x.comprobante.correlativo).padStart(8, '0')}`,
+        ),
         cliente: d.comprobante.cliente?.nombre ?? '—',
         telefono: d.comprobante.cliente?.telefono ?? '',
         vendedor:

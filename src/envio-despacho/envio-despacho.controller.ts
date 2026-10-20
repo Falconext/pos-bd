@@ -221,7 +221,17 @@ export class EnvioDespachoController {
     );
   }
 
-  @Patch('comprobante/:comprobanteId/upsert')
+  // Un solo envío para varias notas: enlaza otras notas al envío de esta.
+  @Post('comprobante/:comprobanteId/notas')
+  agregarNotas(
+    @Param('comprobanteId', ParseIntPipe) comprobanteId: number,
+    @Body() body: { comprobanteIds: number[] },
+    @User() user: any,
+  ) {
+    return this.service.agregarNotas(comprobanteId, user.empresaId, body?.comprobanteIds ?? []);
+  }
+
+    @Patch('comprobante/:comprobanteId/upsert')
   upsert(
     @Param('comprobanteId', ParseIntPipe) comprobanteId: number,
     @Body() dto: CreateEnvioDespachoDto,
