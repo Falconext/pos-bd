@@ -3,12 +3,14 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EstadoLeadProspecto, TipoLeadDocumento } from '@prisma/client';
 import { RagVentasService } from './leads-rag.service';
 import { ClienteService } from '../cliente/cliente.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { S3Service } from '../s3/s3.service';
 import { LIMITE_TEXTO_WHATSAPP } from './leads.constants';
 import { venceEn } from './pausa-bot';
 
@@ -26,6 +28,7 @@ export class LeadsService {
     private readonly rag: RagVentasService,
     private readonly clientes: ClienteService,
     private readonly whatsapp: WhatsAppService,
+    @Optional() private readonly s3?: S3Service,
   ) {}
 
   /**
@@ -363,6 +366,32 @@ export class LeadsService {
     };
   }
 
+  /**
+   * Sube el video de bienvenida a S3 y lo deja configurado. WhatsApp solo
+   * acepta MP4 de hasta 16 MB; se valida acá para no guardar un enlace que
+   * después falla en cada conversación sin que nadie lo vea.
+   */
+  async subirVideoBienvenida(
+    empresaId: number,
+    archivo: { buffer: Buffer; mimetype: string; size: number },
+  ) {
+    if (!archivo?.buffer?.length) throw new BadRequestException('Falta el archivo de video.');
+    if (archivo.mimetype !== 'video/mp4') {
+      throw new BadRequestException('El video tiene que ser MP4.');
+    }
+    if (archivo.size > 16 * 1024 * 1024) {
+      throw new BadRequestException('WhatsApp acepta videos de hasta 16 MB.');
+    }
+    if (!this.s3) throw new BadRequestException('El almacenamiento no está disponible.');
+    const url = await this.s3.uploadPDF(
+      archivo.buffer,
+      `ia-ventas/empresa-${empresaId}/video-bienvenida-${Date.now()}.mp4`,
+      'video/mp4',
+    );
+    await this.actualizarConfig(empresaId, { videoBienvenidaUrl: url });
+    return { videoBienvenidaUrl: url };
+  }
+
   /** Configuración de la IA de ventas de la empresa (toggle + contexto). */
   async obtenerConfig(empresaId: number) {
     const empresa = await this.prisma.empresa.findUnique({
@@ -395,20 +424,29 @@ export class LeadsService {
       iaVentasBrochureUrl?: string;
       /** Nombre con el que se presenta el asesor ("Nicky"). Vacío = sin nombre. */
       asesor?: string;
+      /** URL del video de bienvenida. Vacío = sin video. */
+      videoBienvenidaUrl?: string;
     },
   ) {
     // El nombre del asesor vive en iaVentasConfigJson junto a zonas, descuentos
     // y avisos: se mezcla para no pisar lo demás. Antes no había forma de
     // cambiarlo sin tocar la base.
-    if (data.asesor !== undefined) {
+    if (data.asesor !== undefined || data.videoBienvenidaUrl !== undefined) {
       const actual = await this.prisma.empresa.findUnique({
         where: { id: empresaId },
         select: { iaVentasConfigJson: true },
       });
       const json = { ...((actual?.iaVentasConfigJson as Record<string, unknown>) ?? {}) };
-      const nombre = data.asesor.trim().slice(0, 40);
-      if (nombre) json.asesor = nombre;
-      else delete json.asesor;
+      if (data.asesor !== undefined) {
+        const nombre = data.asesor.trim().slice(0, 40);
+        if (nombre) json.asesor = nombre;
+        else delete json.asesor;
+      }
+      if (data.videoBienvenidaUrl !== undefined) {
+        const url = data.videoBienvenidaUrl.trim();
+        if (url) json.videoBienvenidaUrl = url;
+        else delete json.videoBienvenidaUrl;
+      }
       await this.prisma.empresa.update({
         where: { id: empresaId },
         data: { iaVentasConfigJson: json as never },

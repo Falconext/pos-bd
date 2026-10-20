@@ -882,6 +882,7 @@ export class LeadsMessageProcessor extends WorkerHost {
     // falta, y el ejecutor las manda en ese momento.
 
     await this.enviarBrochureSiCorresponde(empresa, conv, contenido);
+    await this.enviarVideoBienvenidaSiEsElPrimero(empresa.id, conv, config);
 
     // Solo +1: los mensajes del cliente ya se contaron al guardarlos.
     await this.prisma.leadConversacion.update({
@@ -1094,6 +1095,40 @@ export class LeadsMessageProcessor extends WorkerHost {
       lote.unshift(mensajes[i].contenido);
     }
     return lote.join('\n');
+  }
+
+  /**
+   * Video de bienvenida: una sola vez por conversación, justo después de la
+   * PRIMERA respuesta del asesor (Krezka: mostrar el sistema en video al que
+   * llega del anuncio). "Primera" = es el único mensaje del asesor en el chat,
+   * así que no se repite aunque el cliente vuelva a escribir.
+   */
+  private async enviarVideoBienvenidaSiEsElPrimero(
+    empresaId: number,
+    conv: { id: number; telefonoProspecto: string },
+    config: { videoBienvenidaUrl?: string },
+  ): Promise<void> {
+    if (!config.videoBienvenidaUrl) return;
+    const respuestas = await this.prisma.leadMensaje.count({
+      where: { conversacionId: conv.id, rol: 'ASISTENTE' },
+    });
+    if (respuestas !== 1) return;
+    const url = config.videoBienvenidaUrl;
+    // Un MP4 se manda como video (se ve dentro del chat); cualquier otro
+    // enlace (YouTube) como mensaje con vista previa.
+    if (/\.mp4(\?|$)/i.test(url)) {
+      await this.whatsapp
+        .enviarVideoUrl(conv.telefonoProspecto, url, undefined, empresaId)
+        .catch(() => undefined);
+    } else {
+      await this.whatsapp
+        .enviarTexto(
+          conv.telefonoProspecto,
+          `🎥 Te dejo un video corto para que veas cómo funciona por dentro:\n${url}`,
+          empresaId,
+        )
+        .catch(() => undefined);
+    }
   }
 
   /**

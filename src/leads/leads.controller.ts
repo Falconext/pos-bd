@@ -9,7 +9,10 @@ import {
   Body,
   ParseIntPipe,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { LeadsService } from './leads.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { ModuleAccessGuard } from '../common/guards/module-access.guard';
@@ -39,9 +42,26 @@ export class LeadsController {
       iaVentasCotizacion?: boolean;
       iaVentasBrochureUrl?: string;
       asesor?: string;
+      videoBienvenidaUrl?: string;
     },
   ) {
     return this.service.actualizarConfig(user.empresaId, body);
+  }
+
+  /**
+   * Sube el video de bienvenida (MP4, máx. 16 MB). Se manda una vez a cada
+   * cliente nuevo, tras la primera respuesta del asesor. Para quitarlo:
+   * PATCH /leads/config { videoBienvenidaUrl: "" }.
+   */
+  @Post('video-bienvenida')
+  @UseInterceptors(
+    FileInterceptor('archivo', { limits: { fileSize: 16 * 1024 * 1024 } }),
+  )
+  subirVideoBienvenida(
+    @User() user: any,
+    @UploadedFile() archivo: Express.Multer.File,
+  ) {
+    return this.service.subirVideoBienvenida(user.empresaId, archivo);
   }
 
   // ─── Entrenamiento de la IA (RAG) ──────────────────────────────────────────
