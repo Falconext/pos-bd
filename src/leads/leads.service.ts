@@ -393,8 +393,27 @@ export class LeadsService {
       iaVentasSeguimiento?: boolean;
       iaVentasCotizacion?: boolean;
       iaVentasBrochureUrl?: string;
+      /** Nombre con el que se presenta el asesor ("Nicky"). Vacío = sin nombre. */
+      asesor?: string;
     },
   ) {
+    // El nombre del asesor vive en iaVentasConfigJson junto a zonas, descuentos
+    // y avisos: se mezcla para no pisar lo demás. Antes no había forma de
+    // cambiarlo sin tocar la base.
+    if (data.asesor !== undefined) {
+      const actual = await this.prisma.empresa.findUnique({
+        where: { id: empresaId },
+        select: { iaVentasConfigJson: true },
+      });
+      const json = { ...((actual?.iaVentasConfigJson as Record<string, unknown>) ?? {}) };
+      const nombre = data.asesor.trim().slice(0, 40);
+      if (nombre) json.asesor = nombre;
+      else delete json.asesor;
+      await this.prisma.empresa.update({
+        where: { id: empresaId },
+        data: { iaVentasConfigJson: json as never },
+      });
+    }
     const empresa = await this.prisma.empresa.update({
       where: { id: empresaId },
       data: {

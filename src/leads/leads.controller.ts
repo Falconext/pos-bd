@@ -38,6 +38,7 @@ export class LeadsController {
       iaVentasSeguimiento?: boolean;
       iaVentasCotizacion?: boolean;
       iaVentasBrochureUrl?: string;
+      asesor?: string;
     },
   ) {
     return this.service.actualizarConfig(user.empresaId, body);
