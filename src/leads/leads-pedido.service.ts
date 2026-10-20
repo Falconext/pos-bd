@@ -685,7 +685,7 @@ export class LeadsPedidoService {
     // el chat guarda el detalle de cada versión.
     const cot =
       borrador.cotizacionId ??
-      (await this.crearCotizacion(empresaId, limpios, borrador.zona));
+      (await this.crearCotizacion(empresaId, limpios, resumenCotizacion(texto)));
     await this.prisma.leadPedidoBorrador.update({
       where: { conversacionId },
       data: {
@@ -744,7 +744,7 @@ export class LeadsPedidoService {
   private async crearCotizacion(
     empresaId: number,
     items: ItemPedido[],
-    zona: string | null,
+    resumen: string,
   ): Promise<number | null> {
     try {
       const comp = (await this.comprobante.crearInformal(
@@ -755,7 +755,9 @@ export class LeadsPedidoService {
           formaPagoMoneda: 'PEN',
           tipoMoneda: 'PEN',
           clienteName: 'CLIENTES VARIOS',
-          observaciones: `Cotización de la IA de Ventas por WhatsApp${zona ? ` — ${zona}` : ''}.`,
+          // Lo mismo que leyó el cliente: el envío no es un ítem de la COT y
+          // sin esto el vendedor no ve cuánto se le cobró.
+          observaciones: resumen,
           detalles: items.map((i) => ({
             productoId: i.productoId,
             cantidad: i.cantidad,
@@ -1332,4 +1334,19 @@ export class LeadsPedidoService {
     }
     return l.join('\n');
   }
+}
+
+/**
+ * La cotización tal como la leyó el cliente, para las observaciones de la COT:
+ * sin el aviso de "con N unidades más", sin la pregunta de cierre y sin los
+ * asteriscos de negrita de WhatsApp.
+ */
+export function resumenCotizacion(texto: string): string {
+  const lineas = texto.split('\n');
+  const fin = lineas.findIndex((l) => l.startsWith('Esta sería la cotización'));
+  return (fin === -1 ? lineas : lineas.slice(0, fin))
+    .filter((l) => !l.startsWith('(Con '))
+    .map((l) => l.replace(/\*/g, ''))
+    .join('\n')
+    .trim();
 }
