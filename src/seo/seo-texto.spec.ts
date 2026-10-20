@@ -19,7 +19,7 @@ import {
   type ProductoSeo,
   type TiendaSeo,
 } from './seo-texto';
-import { normalizarRuta } from './seo.service';
+import { limpiarVerificacion, normalizarRuta } from './seo.service';
 
 const tienda: TiendaSeo = {
   slug: 'rosas-asociados',
@@ -86,6 +86,16 @@ describe('mayúsculas', () => {
     expect(suavizarMayusculas('Ramo de iPhone XR')).toBe('Ramo de iPhone XR');
     expect(suavizarMayusculas('aceite esencial - ARTESANAL')).toBe('aceite esencial - ARTESANAL');
     expect(suavizarMayusculas('LED')).toBe('LED');
+    expect(suavizarMayusculas('AUTOPARTES S.A.', 'titulo')).toBe('Autopartes S.A.');
+    expect(suavizarMayusculas('ROSAS & ASOCIADOS SAC', 'titulo')).toBe('Rosas & Asociados SAC');
+  });
+});
+
+describe('puntuación', () => {
+  it('no deja doble punto cuando la tienda termina en S.A.', () => {
+    const d = descripcionProducto(producto(), { ...tienda, nombre: 'Autopartes S.A.', distrito: null, provincia: null });
+    expect(d).toContain('en Autopartes S.A. Compra online');
+    expect(d).not.toContain('..');
   });
 });
 
@@ -174,5 +184,16 @@ describe('sitemap', () => {
     const xml = xmlUrlset([{ loc: 'https://a/tienda/x/catalogo?category=A&B', imagen: 'https://i/1.jpg' }]);
     expect(xml).toContain('<loc>https://a/tienda/x/catalogo?category=A&amp;B</loc>');
     expect(xml).toContain('<image:loc>https://i/1.jpg</image:loc>');
+  });
+});
+
+describe('verificación de Google', () => {
+  it('acepta la etiqueta completa o solo el código', () => {
+    expect(limpiarVerificacion('<meta name="google-site-verification" content="AbC123_def-456XYZ" />')).toBe('AbC123_def-456XYZ');
+    expect(limpiarVerificacion('  AbC123_def-456XYZ ')).toBe('AbC123_def-456XYZ');
+  });
+  it('rechaza lo que no es un código', () => {
+    expect(limpiarVerificacion('<script>alert(1)</script>')).toBeNull();
+    expect(limpiarVerificacion('')).toBeNull();
   });
 });

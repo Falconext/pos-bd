@@ -107,11 +107,18 @@ export function suavizarMayusculas(texto: string, modo: 'frase' | 'titulo' = 'fr
   if (mayus / letras.length < 0.7) return t;
   const bajo = t.toLowerCase();
   if (modo === 'frase') return bajo.charAt(0).toUpperCase() + bajo.slice(1);
+  const originales = t.split(' ');
   return bajo
     .split(' ')
-    .map((w, i) => (i > 0 && MENORES.has(w) ? w : w.charAt(0).toUpperCase() + w.slice(1)))
+    .map((w, i) => {
+      // Siglas societarias y de una letra con punto quedan como estaban: "S.A.C.", "EIRL".
+      if (SIGLAS.test(originales[i] ?? '')) return originales[i];
+      return i > 0 && MENORES.has(w) ? w : w.charAt(0).toUpperCase() + w.slice(1);
+    })
     .join(' ');
 }
+
+const SIGLAS = /^(?:[A-Z]\.){1,5}[A-Z]?\.?$|^(?:SAC|SAA|SA|EIRL|SRL|SAS|SL|RUC)\.?,?$/;
 
 /** Recorta en el último espacio antes del límite, sin dejar la palabra a medias. */
 export function recortar(texto: string, max: number): string {
@@ -179,6 +186,8 @@ export function disponibilidad(p: ProductoSeo): string {
 }
 
 const soles = (n: number) => `S/ ${n.toFixed(2)}`;
+/** "Autopartes S.A." + "." no debe quedar "S.A..". */
+const conPunto = (t: string) => (/[.!?…]$/.test(t) ? t : `${t}.`);
 const lugar = (t: TiendaSeo) => [t.distrito, t.provincia].filter(Boolean).map((s) => titulo(String(s))).join(', ');
 const titulo = (s: string) => s.toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase());
 
@@ -191,7 +200,7 @@ export function descripcionTienda(t: TiendaSeo): string {
   const propia = limpiarTexto(t.descripcion);
   if (propia.length >= 60) return recortar(propia, 160);
   const donde = lugar(t);
-  const base = `${t.nombre}${t.rubro ? `: ${limpiarTexto(t.rubro).toLowerCase()}` : ''}${donde ? ` en ${donde}` : ''}.`;
+  const base = conPunto(`${t.nombre}${t.rubro ? `: ${limpiarTexto(t.rubro).toLowerCase()}` : ''}${donde ? ` en ${donde}` : ''}`);
   return recortar(`${base} ${propia ? `${propia}. ` : ''}Compra online o pide por WhatsApp.`, 160);
 }
 
@@ -210,7 +219,7 @@ export function descripcionProducto(p: ProductoSeo, t: TiendaSeo, ahora = new Da
   if (propia.length >= 50) return recortar(`${propia} ${precioTxt}.`, 160);
   const donde = lugar(t);
   return recortar(
-    `${p.nombre}${p.categoria ? ` (${limpiarTexto(p.categoria).toLowerCase()})` : ''} a ${precioTxt} en ${t.nombre}${donde ? `, ${donde}` : ''}. Compra online o pide por WhatsApp.`,
+    `${conPunto(`${p.nombre}${p.categoria ? ` (${limpiarTexto(p.categoria).toLowerCase()})` : ''} a ${precioTxt} en ${t.nombre}${donde ? `, ${donde}` : ''}`)} Compra online o pide por WhatsApp.`,
     160,
   );
 }

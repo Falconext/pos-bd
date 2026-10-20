@@ -6,6 +6,7 @@ import {
   InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
+import { limpiarVerificacion } from '../seo/seo.service';
 import axios from 'axios';
 import { EstadoProductoReview, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -406,13 +407,33 @@ export class TiendaService {
       }
     }
 
+    // Search Console entrega la etiqueta entera; se guarda solo el código. Un
+    // texto que no se entiende se rechaza en vez de publicar una etiqueta rota.
+    const data: ConfigurarTiendaDto = { ...dto };
+    if (dto.googleVerificacion !== undefined) {
+      const crudo = String(dto.googleVerificacion || '').trim();
+      const codigo = limpiarVerificacion(crudo);
+      if (crudo && !codigo) {
+        throw new BadRequestException(
+          'El código de verificación de Google no es válido. Pega la etiqueta que te da Search Console o solo el código.',
+        );
+      }
+      data.googleVerificacion = codigo ?? (null as any);
+    }
+    for (const campo of ['seoTitulo', 'seoDescripcion'] as const) {
+      if (data[campo] !== undefined) data[campo] = (String(data[campo] ?? '').trim() || null) as any;
+    }
+
     return this.prisma.empresa.update({
       where: { id: empresaId },
-      data: dto,
+      data,
       select: {
         id: true,
         slugTienda: true,
         descripcionTienda: true,
+        seoTitulo: true,
+        seoDescripcion: true,
+        googleVerificacion: true,
         whatsappTienda: true,
         facebookUrl: true,
         instagramUrl: true,
@@ -451,6 +472,11 @@ export class TiendaService {
         id: true,
         slugTienda: true,
         descripcionTienda: true,
+        seoTitulo: true,
+        seoDescripcion: true,
+        googleVerificacion: true,
+        brand: true,
+        nombreComercial: true,
         whatsappTienda: true,
         facebookUrl: true,
         instagramUrl: true,

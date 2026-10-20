@@ -38,6 +38,8 @@ export interface PaginaSeo {
   ogType: 'website' | 'product';
   precio?: string;
   moneda?: string;
+  /** Solo en la portada: etiqueta google-site-verification del negocio. */
+  verificacionGoogle?: string | null;
   jsonLd: Record<string, unknown>[];
 }
 
@@ -65,6 +67,10 @@ const SELECT_EMPRESA = {
   provincia: true,
   departamento: true,
   tiendaVentaSinStock: true,
+  seoTitulo: true,
+  seoDescripcion: true,
+  seoImagenUrl: true,
+  googleVerificacion: true,
   brand: true,
   usaDemo: true,
   estado: true,
@@ -88,6 +94,10 @@ type EmpresaSeo = {
   provincia: string | null;
   departamento: string | null;
   tiendaVentaSinStock: boolean | null;
+  seoTitulo: string | null;
+  seoDescripcion: string | null;
+  seoImagenUrl: string | null;
+  googleVerificacion: string | null;
   brand: string | null;
   usaDemo: boolean | null;
   estado: string;
@@ -136,20 +146,23 @@ export class SeoService {
     const indexable = esIndexable(empresa);
     const robots = indexable ? INDEXAR : NO_INDEXAR;
     const logo = imagenPublica(empresa.logo, api, 1200);
+    // Lo que el negocio escribió en Tienda Virtual → Google manda sobre lo automático.
+    const imagenTienda = imagenPublica(empresa.seoImagenUrl, api, 1200) ?? logo;
     const inicio = { nombre: tienda.nombre, url: urlTienda(base, slug) };
 
     if (resto === '' || resto === '/') {
       return {
         status: 200,
         tipo: 'tienda',
-        titulo: tituloTienda(tienda),
-        descripcion: descripcionTienda(tienda),
+        titulo: propio(empresa.seoTitulo, 60) ?? tituloTienda(tienda),
+        descripcion: propio(empresa.seoDescripcion, 160) ?? descripcionTienda(tienda),
         canonical: inicio.url,
-        imagen: logo,
+        imagen: imagenTienda,
         imagenAlt: tienda.nombre,
         robots,
         sitio: tienda.nombre,
         ogType: 'website',
+        verificacionGoogle: limpiarVerificacion(empresa.googleVerificacion),
         jsonLd: [jsonLdTienda(tienda, inicio.url, logo)],
       };
     }
@@ -168,8 +181,8 @@ export class SeoService {
       return {
         status: 200,
         tipo: 'producto',
-        titulo: tituloProducto(p, tienda),
-        descripcion: descripcionProducto(p, tienda),
+        titulo: propio(producto.seoTitulo, 60) ?? tituloProducto(p, tienda),
+        descripcion: propio(producto.seoDescripcion, 160) ?? descripcionProducto(p, tienda),
         canonical: url,
         imagen: p.imagenes[0] ?? logo,
         imagenAlt: p.nombre,
@@ -301,6 +314,8 @@ export class SeoService {
     ratingAvg: true,
     ratingCount: true,
     atributosTecnicos: true,
+    seoTitulo: true,
+    seoDescripcion: true,
     categoria: { select: { nombre: true } },
     marca: { select: { nombre: true } },
   } as const;
@@ -428,6 +443,25 @@ function leerImagenesExtra(valor: unknown): string[] {
     }
   }
   return s.split(',').map((x) => x.trim()).filter(Boolean);
+}
+
+/** Texto escrito por el negocio, limpio y dentro del límite; null si está vacío. */
+function propio(texto: string | null | undefined, max: number): string | null {
+  const t = limpiarTexto(texto);
+  return t ? recortar(t, max) : null;
+}
+
+/**
+ * Search Console da una etiqueta entera
+ * (`<meta name="google-site-verification" content="abc123" />`) y la gente la
+ * pega tal cual: se guarda solo el código.
+ */
+export function limpiarVerificacion(valor?: string | null): string | null {
+  const v = String(valor || '').trim();
+  if (!v) return null;
+  const m = /content\s*=\s*["']([^"']+)["']/i.exec(v);
+  const codigo = (m ? m[1] : v).trim();
+  return /^[A-Za-z0-9_-]{10,100}$/.test(codigo) ? codigo : null;
 }
 
 export function normalizarRuta(path: string): string {
