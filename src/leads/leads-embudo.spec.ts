@@ -313,3 +313,66 @@ describe('el mismo voucher no paga dos pedidos', () => {
     expect(pagos.registrarPago).toHaveBeenCalled();
   });
 });
+
+describe('el voucher que llegó antes de registrar el pedido (NV01-00000028, 20-10)', () => {
+  // La nota ya nació con ese Yape como adelanto: validarlo no lo vuelve a cobrar.
+  function armarPrevio(recibidoEn: Date) {
+    const pagos = { registrarPago: jest.fn().mockResolvedValue({}) };
+    const prisma: any = {
+      leadComprobantePago: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 10, prospectoId: 3, conversacionId: 800, validadoEn: null,
+          montoLeido: 12, medioLeido: 'Yape', operacionLeida: '01300228', recibidoEn,
+        }),
+        update: jest.fn().mockResolvedValue({}),
+        count: jest.fn().mockResolvedValue(0),
+      },
+      leadPedidoBorrador: {
+        findUnique: jest.fn().mockResolvedValue({
+          comprobanteId: 24000,
+          registradoEn: new Date('2026-10-20T15:00:00Z'),
+        }),
+      },
+      comprobante: { findFirst: jest.fn().mockResolvedValue({ saldo: 12 }), update: jest.fn().mockResolvedValue({}) },
+      pago: { count: jest.fn().mockResolvedValue(1) },
+      envioDespacho: { findUnique: jest.fn().mockResolvedValue({ id: 3, montoCOD: 12 }), update: jest.fn() },
+      usuario: { findUnique: jest.fn().mockResolvedValue(null) },
+    };
+    return { s: new LeadsEmbudoService(prisma, {} as any, pagos as any), pagos, prisma };
+  }
+  const ANTES = new Date('2026-10-20T14:59:00Z');
+
+  it('no lo asienta otra vez ni baja de nuevo lo que cobra la agencia', async () => {
+    const { s, pagos, prisma } = armarPrevio(ANTES);
+    const r: any = await s.validarPago(10, 89, { id: 157 }, false);
+    expect(r.adelanto).toMatchObject({ registrado: true, monto: 12 });
+    expect(pagos.registrarPago).not.toHaveBeenCalled();
+    expect(prisma.envioDespacho.update).not.toHaveBeenCalled();
+  });
+
+  it('tampoco si quien valida confirma el mismo monto', async () => {
+    const { s, pagos } = armarPrevio(ANTES);
+    await s.validarPago(10, 89, { id: 157 }, false, 12);
+    expect(pagos.registrarPago).not.toHaveBeenCalled();
+  });
+
+  it('si confirma más de lo leído, asienta solo la diferencia', async () => {
+    const { s, pagos, prisma } = armarPrevio(ANTES);
+    await s.validarPago(10, 89, { id: 157 }, false, 15);
+    expect(pagos.registrarPago.mock.calls[0][1]).toMatchObject({ monto: 3 });
+    expect(prisma.envioDespacho.update).toHaveBeenCalledWith({ where: { id: 3 }, data: { montoCOD: 9 } });
+  });
+
+  it('si confirma menos de lo leído, avisa para corregir a mano', async () => {
+    const { s, pagos } = armarPrevio(ANTES);
+    const r: any = await s.validarPago(10, 89, { id: 157 }, false, 10);
+    expect(pagos.registrarPago).not.toHaveBeenCalled();
+    expect(r.adelanto.motivo).toMatch(/ya entró en la nota/);
+  });
+
+  it('un voucher que llegó DESPUÉS de registrar sí se asienta', async () => {
+    const { s, pagos } = armarPrevio(new Date('2026-10-20T15:05:00Z'));
+    await s.validarPago(10, 89, { id: 157 }, false);
+    expect(pagos.registrarPago.mock.calls[0][1]).toMatchObject({ monto: 12 });
+  });
+});

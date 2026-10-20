@@ -236,6 +236,7 @@ export class LeadsEmbudoService {
         montoLeido: true,
         medioLeido: true,
         operacionLeida: true,
+        recibidoEn: true,
       },
     });
     if (!pago) throw new NotFoundException('Comprobante no encontrado.');
@@ -295,6 +296,7 @@ export class LeadsEmbudoService {
       montoLeido: unknown;
       medioLeido: string | null;
       operacionLeida: string | null;
+      recibidoEn?: Date | null;
     },
     montoConfirmado: number | undefined,
     usuarioId: number | undefined,
@@ -302,13 +304,45 @@ export class LeadsEmbudoService {
     if (!this.pagos) return { registrado: false };
     const borrador = await this.prisma.leadPedidoBorrador.findUnique({
       where: { conversacionId: pago.conversacionId },
-      select: { comprobanteId: true },
+      select: { comprobanteId: true, registradoEn: true },
     });
     if (!borrador?.comprobanteId) {
       return {
         registrado: false,
         motivo: 'El pedido todavía no está registrado: el pago no se pudo asentar.',
       };
+    }
+    // El voucher llegó ANTES de registrar el pedido: la nota ya nació con
+    // ese monto como adelanto (registrarPedido suma lo leído de los
+    // vouchers). Asentarlo otra vez al validar lo cobraba dos veces: en la
+    // prueba del 20-10 un Yape de S/ 12 dejó la NV01-00000028 en COMPLETADO
+    // con saldo 0 y la agencia sin nada que cobrar, cuando faltaban S/ 12.
+    // Solo se asienta lo que quien valida confirme por encima de lo leído.
+    const yaContado =
+      borrador.registradoEn &&
+      pago.recibidoEn &&
+      pago.recibidoEn <= borrador.registradoEn &&
+      pago.montoLeido != null
+        ? Number(pago.montoLeido)
+        : 0;
+    if (yaContado > 0) {
+      const extra =
+        Math.round(((montoConfirmado ?? yaContado) - yaContado) * 100) / 100;
+      if (Math.abs(extra) < 0.01) {
+        return { registrado: true, monto: yaContado };
+      }
+      if (extra < 0) {
+        return {
+          registrado: false,
+          motivo: `Este pago ya entró en la nota al registrar el pedido, por S/ ${yaContado.toFixed(2)} (lo leído del comprobante). Corrige la diferencia a mano en la nota de venta.`,
+        };
+      }
+      return this.registrarAdelanto(
+        empresaId,
+        { ...pago, montoLeido: extra, recibidoEn: null },
+        extra,
+        usuarioId,
+      );
     }
     const nota = await this.prisma.comprobante.findFirst({
       where: { id: borrador.comprobanteId, empresaId },
