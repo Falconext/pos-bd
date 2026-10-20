@@ -1226,6 +1226,11 @@ model Comprobante {
   comprobanteOrigen       Comprobante?         @relation("ConversionOrigen", fields: [comprobanteOrigenId], references: [id])
   comprobantesDerivados   Comprobante[]        @relation("ConversionOrigen")
   ordenesCompra           OrdenCompraOrigen[]  @relation("OrdenCompraOrigenes")
+  // Varias notas facturadas en una sola boleta/factura: la primera queda en
+  // comprobanteOrigenId (como siempre) y las demás acá. `consolidadoEn` va en la
+  // NOTA; `origenesExtra` en el formal.
+  consolidadoEn           ComprobanteOrigenExtra?  @relation("OrigenExtraNota")
+  origenesExtra           ComprobanteOrigenExtra[] @relation("OrigenExtraFormal")
   detalles                DetalleComprobante[]
   leyendas                Leyenda[]
   movimientosKardex       MovimientoKardex[]
@@ -2538,6 +2543,17 @@ model DetalleOrdenCompra {
   producto           Producto?   @relation(fields: [productoId], references: [id])
 
   @@index([ordenCompraId])
+}
+
+/// Notas adicionales de una boleta/factura que junta varias notas de venta.
+/// Una nota entra en un solo formal (origenId es la clave).
+model ComprobanteOrigenExtra {
+  origenId Int         @id
+  formalId Int
+  origen   Comprobante @relation("OrigenExtraNota", fields: [origenId], references: [id], onDelete: Cascade)
+  formal   Comprobante @relation("OrigenExtraFormal", fields: [formalId], references: [id], onDelete: Cascade)
+
+  @@index([formalId])
 }
 
 model OrdenCompraOrigen {

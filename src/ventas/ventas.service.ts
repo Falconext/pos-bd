@@ -1,3 +1,4 @@
+import { formalDeNota } from '../comprobante/convertidos';
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EstadoSunat } from '@prisma/client';
@@ -251,6 +252,7 @@ export class VentasService {
           adelanto: true,
           pagos: { select: { monto: true } },
           comprobantesDerivados: { select: { id: true } },
+          consolidadoEn: { select: { formalId: true } },
           tipoMoneda: true,
           tipoCambio: true,
         },
@@ -272,7 +274,7 @@ export class VentasService {
 
     const comprobantesPendientes = comprobantes
       .filter((c) => !TIPOS_NO_VENTA_FINAL.has(c.tipoDoc))
-      .filter((c) => (c.comprobantesDerivados ?? []).length === 0)
+      .filter((c) => (c.comprobantesDerivados ?? []).length === 0 && !c.consolidadoEn)
       .map((c) => calcularSaldoRealComprobante(c))
       .filter((saldo) => saldo > 0.01);
 
@@ -425,6 +427,9 @@ export class VentasService {
           comprobantesDerivados: {
             select: { id: true, tipoDoc: true, serie: true, correlativo: true },
           },
+          consolidadoEn: {
+            select: { formal: { select: { id: true, tipoDoc: true, serie: true, correlativo: true } } },
+          },
           // Para saber si este comprobante formal viene de un informal
           comprobanteOrigenId: true,
           comprobanteOrigen: {
@@ -520,7 +525,7 @@ export class VentasService {
         vendedorNombre?: string | null;
         comprobanteUrl?: string | null;
       }[];
-      const derivado = (c.comprobantesDerivados ?? [])[0] ?? null;
+      const derivado = formalDeNota(c);
       const epRaw = (c.estadoPago as string) ?? '';
       // Compute saldo real: if DB saldo is correctly set, use it;
       // otherwise derive from estadoPago + pagos + adelanto (handles old NPs

@@ -1,4 +1,5 @@
 import { num, round3 } from '../common/utils/stock';
+import { NOTA_SIN_CONVERTIR } from '../comprobante/convertidos';
 import {
   cumpleFiltroStock,
   stockEfectivoDeProducto,
@@ -1059,7 +1060,7 @@ export class ProductoService {
           empresaId,
           tipoDoc: 'NP',
           estadoEnvioSunat: { not: 'ANULADO' as any },
-          comprobantesDerivados: { none: {} },
+          ...NOTA_SIN_CONVERTIR,
           movimientosKardex: { none: { tipoMovimiento: 'SALIDA' as any } },
           ...(sedeId ? { sedeId } : {}),
         },

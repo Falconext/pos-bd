@@ -1,3 +1,4 @@
+import { NOTA_SIN_CONVERTIR } from '../comprobante/convertidos';
 import {
   BadRequestException,
   Injectable,
@@ -602,7 +603,7 @@ export class OrdenCompraService {
         empresaId,
         tipoDoc: 'NP',
         estadoEnvioSunat: { not: 'ANULADO' as any },
-        comprobantesDerivados: { none: {} },
+        ...NOTA_SIN_CONVERTIR,
         movimientosKardex: { none: { tipoMovimiento: 'SALIDA' as any } },
         detalles: { some: { productoId: { in: productoIds } } },
       },
