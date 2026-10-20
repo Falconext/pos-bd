@@ -85,7 +85,12 @@ const DESPEDIDAS = [
   'no gracias',
   'no por ahora',
   'por ahora no',
-  'ya no',
+  // "ya no" a secas cerraba "mejor quiero dos, ya no una" (QA 20-10).
+  'ya no gracias',
+  'ya no quiero nada',
+  'ya no lo quiero',
+  'ya no lo necesito',
+  'ya no me interesa',
   'eso es todo',
   'eso seria todo',
   'nada mas',
@@ -106,7 +111,8 @@ export function esDespedidaClara(texto: string): boolean {
   // En un mensaje largo esas palabras suelen ser parte de otra cosa
   // ("ya no me acuerdo cuál pedí la vez pasada").
   if (limpio.split(' ').length > 8) return false;
-  return DESPEDIDAS.some((d) => limpio.includes(d));
+  // "ya no" solo, como respuesta completa, sí es una despedida.
+  return limpio === 'ya no' || DESPEDIDAS.some((d) => limpio.includes(d));
 }
 
 /** Coseno entre dos vectores. 0 si alguno está vacío o no coinciden en tamaño. */

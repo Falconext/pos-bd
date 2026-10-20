@@ -415,6 +415,42 @@ describe('no repetirse ni insistir tras la despedida (A3)', () => {
     );
   });
 
+  it('respuesta vacía de la IA: no manda un mensaje vacío, reintenta (QA 20-10)', async () => {
+    const { processor, ia, whatsapp } = armar({
+      mensajes: [{ rol: 'USUARIO', contenido: 'mejor quiero dos, ya no una' }],
+    });
+    ia.generarRespuesta.mockResolvedValue({ reply: '', llamadas: [] });
+
+    await expect(processor.process(tarea as any)).rejects.toThrow(/respuesta vacía/);
+    expect(whatsapp.enviarTexto).not.toHaveBeenCalled();
+  });
+
+  it('respuesta vacía tras cotizar: manda la cotización y que el pedido se actualizó', async () => {
+    const { processor, ia, whatsapp, prisma } = armar({
+      mensajes: [{ rol: 'USUARIO', contenido: 'mejor quiero dos, ya no una' }],
+    });
+    ia.generarRespuesta.mockResolvedValue({
+      reply: '',
+      llamadas: [
+        {
+          nombre: 'cotizar',
+          argumentos: {},
+          resultado: { texto: 'Te adjunto la Cotización 📋 *Tu pedido*\n*TOTAL: S/ 24.00*', pedidoActualizado: 'NV01-00000015' },
+        },
+      ],
+    });
+
+    await processor.process(tarea as any);
+
+    const enviado = whatsapp.enviarTexto.mock.calls[0][1];
+    expect(enviado).toContain('*TOTAL: S/ 24.00*');
+    expect(enviado).toContain('NV01-00000015 quedó actualizado');
+    // Y no se cierra la conversación: cambiar el pedido no es despedirse.
+    expect(prisma.leadConversacion.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { estado: 'CERRADA' } }),
+    );
+  });
+
   it('no cierra con un "lo voy a pensar"', async () => {
     const { processor, prisma } = armar({
       mensajes: [{ rol: 'USUARIO', contenido: 'lo voy a pensar' }],
