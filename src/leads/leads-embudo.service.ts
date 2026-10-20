@@ -290,6 +290,7 @@ export class LeadsEmbudoService {
   private async registrarAdelanto(
     empresaId: number,
     pago: {
+      id?: number;
       conversacionId: number;
       montoLeido: unknown;
       medioLeido: string | null;
@@ -331,6 +332,28 @@ export class LeadsEmbudoService {
         motivo: `El comprobante dice S/ ${pedido.toFixed(2)} y lo pendiente es S/ ${pendiente.toFixed(2)}: confirma el monto a mano.`,
       };
     }
+    // El mismo número de operación ya pagó otro pedido: la misma captura
+    // reenviada no es plata nueva. Solo pasa si quien valida confirma el
+    // monto a mano, igual que un monto que no cuadra.
+    const operacion = pago.operacionLeida?.trim();
+    if (montoConfirmado == null && operacion) {
+      const yaUsada = await this.prisma.leadComprobantePago
+        .count({
+          where: {
+            empresaId,
+            operacionLeida: operacion,
+            validadoEn: { not: null },
+            ...(pago.id ? { id: { not: pago.id } } : {}),
+          },
+        })
+        .catch(() => 0);
+      if (yaUsada > 0) {
+        return {
+          registrado: false,
+          motivo: `La operación ${operacion} ya se usó en otro pago validado: puede ser la misma captura reenviada. Revísalo y, si es correcto, confirma el monto a mano.`,
+        };
+      }
+    }
     if (!(pedido > 0)) {
       return {
         registrado: false,
@@ -342,6 +365,12 @@ export class LeadsEmbudoService {
     // pero sí se descuenta de lo que el repartidor o la agencia debe cobrar.
     const monto = Math.min(pedido, Number(nota?.saldo ?? 0));
     if (monto > 0) {
+      // ¿Es el primer pago de la nota? Entonces la nota toma su medio: el
+      // panel de ventas muestra el de la nota, que nace "EFECTIVO" por
+      // defecto, y un adelanto por Yape se veía como efectivo (20-10).
+      const pagosPrevios = await this.prisma.pago
+        .count({ where: { comprobanteId: borrador.comprobanteId } })
+        .catch(() => 1);
       await this.pagos.registrarPago(
         borrador.comprobanteId,
         {
@@ -353,6 +382,14 @@ export class LeadsEmbudoService {
         usuarioId,
         empresaId,
       );
+      if (pagosPrevios === 0) {
+        await this.prisma.comprobante
+          .update({
+            where: { id: borrador.comprobanteId },
+            data: { medioPago: medioDePago(pago.medioLeido) },
+          })
+          .catch(() => undefined);
+      }
     }
     const despacho = await this.prisma.envioDespacho.findUnique({
       where: { comprobanteId: borrador.comprobanteId },
