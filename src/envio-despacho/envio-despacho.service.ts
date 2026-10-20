@@ -434,7 +434,14 @@ export class EnvioDespachoService {
     const skip = (page - 1) * limit;
 
     const where: any = {
-      comprobante: { empresaId },
+      comprobante: {
+        empresaId,
+        // Una venta anulada ya no se despacha: fuera del panel, como en el
+        // Excel de reparto (20-10: la NV que el cliente canceló seguía ahí
+        // con "cobra S/ 22").
+        estadoEnvioSunat: { not: 'ANULADO' as any },
+        NOT: { estadoPago: 'ANULADO' as any },
+      },
       ...(params?.estado ? { estado: params.estado } : {}),
     };
 
@@ -516,7 +523,14 @@ export class EnvioDespachoService {
     const [despachos, pedidos] = await Promise.all([
       this.prisma.envioDespacho.findMany({
         where: {
-          comprobante: { empresaId },
+          comprobante: {
+            empresaId,
+            // Una venta anulada ya no se despacha: fuera del panel, como en el
+            // Excel de reparto (20-10: la NV que el cliente canceló seguía ahí
+            // con "cobra S/ 22").
+            estadoEnvioSunat: { not: 'ANULADO' as any },
+            NOT: { estadoPago: 'ANULADO' as any },
+          },
           ...filtroDespacho,
         },
         orderBy: { creadoEn: 'desc' },

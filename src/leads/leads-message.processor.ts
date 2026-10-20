@@ -35,6 +35,7 @@ import {
 } from './pausa-bot';
 import { conDescargoLegal } from './prompt-asesor';
 import { afirmaCancelacion, sinConfirmacionFalsa } from './confirmacion-falsa';
+import { conRegistroDirecto, yaAceptoAntes } from './registro-directo';
 import { conCotizacionExacta } from './cotizacion-exacta';
 import { conBloqueDeDatosExacto } from './datos-en-bloque';
 import { conIndicacionMedica, esAltoRiesgo } from './alto-riesgo';
@@ -868,6 +869,35 @@ export class LeadsMessageProcessor extends WorkerHost {
     // Con lo que quedó guardado DESPUÉS del turno: si el cliente ya dio
     // algún dato, el bloque pide solo lo que falta.
     const pedidoTrasTurno = await this.estadoDelPedido(conv.id);
+
+    // El cliente ya dijo "sí, agéndalo" antes de ver la cotización y en este
+    // turno llegó lo último que faltaba: se registra ya. Antes se le mostraba
+    // la cotización y se le volvía a preguntar, y el pedido quedaba colgado
+    // hasta un segundo "sí" (NV01-00000025, 20-10). Solo delivery en Lima:
+    // en provincia el registro va con el adelanto y los medios de pago, y
+    // eso lo dice el modelo con lo que devuelve registrar_pedido.
+    if (
+      !pedidoEnCurso?.cotizado &&
+      pedidoTrasTurno?.cotizado &&
+      pedidoTrasTurno.tipoZona === 'DOMICILIO' &&
+      pedidoTrasTurno.faltan.length === 0 &&
+      resultado.llamadas.some((ll) => ll.nombre === HERRAMIENTA_COTIZAR) &&
+      !resultado.llamadas.some((ll) => ll.nombre === HERRAMIENTA_REGISTRAR_PEDIDO) &&
+      yaAceptoAntes(mensajes.filter((m) => m.rol === 'USUARIO').map((m) => m.contenido))
+    ) {
+      const r = (await ejecutor(HERRAMIENTA_REGISTRAR_PEDIDO, {})) as {
+        pedido?: string;
+        montoAPagar?: number;
+      };
+      resultado.llamadas.push({
+        nombre: HERRAMIENTA_REGISTRAR_PEDIDO,
+        argumentos: {},
+        resultado: r,
+      });
+      if (r?.pedido) {
+        resultado.reply = conRegistroDirecto(resultado.reply, r.pedido, r.montoAPagar);
+      }
+    }
     resultado.reply = conBloqueDeDatosExacto(
       resultado.reply,
       pedidoTrasTurno?.pedirTodoJunto,
