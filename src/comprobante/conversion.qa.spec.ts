@@ -360,4 +360,70 @@ describeSiHayBase('QA funcional · conversión de informales', () => {
       expect(Number(g.saldo)).toBe(Number((t - 1000.55).toFixed(2)));
     });
   });
+
+  // ── Boleta al crédito con pago inicial (demo ropa, 21-10) ───────────────
+  // El POS ofrece "Pago inicial (opcional)" y arma la cuota por lo que falta;
+  // el backend no lo restaba y la emisión moría con "La suma de cuotas
+  // (S/ 125.00) debe ser igual al saldo a crédito (S/ 225.00)".
+  describe('Boleta al crédito con pago inicial', () => {
+    const vence = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+    const alCredito = (cantidad: number, inicial: number, cuota: number, extra: Record<string, any> = {}) =>
+      convertirABoleta(0, cantidad, {
+        comprobanteOrigenId: undefined,
+        formaPagoTipo: 'Credito',
+        medioPago: 'Efectivo',
+        adelanto: inicial,
+        paymentDetails: { mode: 'SIMPLE', method: 'EFECTIVO', amount: inicial },
+        cuotas: [{ monto: cuota, fechaVencimiento: vence }],
+        ...extra,
+      });
+
+    it('se emite: la cuota es lo que falta y el inicial entra a caja', async () => {
+      const t = totalDe(1); // 280
+      const b: any = await alCredito(1, 100, t - 100, { clienteId: await nuevoCliente() });
+      const g = await guardado(b.id);
+      expect(Number(g.mtoImpVenta)).toBe(t);
+      expect(Number(g.saldo)).toBe(t - 100);
+      expect(g.estadoPago).toBe('PAGO_PARCIAL');
+      expect(g.cuotas).toEqual([{ monto: t - 100, fechaVencimiento: vence }]);
+      expect(await cobradoEnCaja(b.id)).toBe(100);
+    });
+
+    it('con el envío cobrado como ítem (Shalom), la cuota incluye el envío', async () => {
+      const t = totalDe(1) + 18;
+      const b: any = await alCredito(1, 100, t - 100, {
+        clienteId: await nuevoCliente(),
+        detalles: [
+          { productoId, descripcion: 'Producto QA', cantidad: 1, mtoValorUnitario: Number((PRECIO / 1.18).toFixed(2)), mtoPrecioUnitario: PRECIO, tipAfeIgv: '10', unidad: 'NIU' },
+          { productoId: null, descripcion: 'Servicio de envío (Shalom PRO)', cantidad: 1, nuevoValorUnitario: 18, descuento: 0 },
+        ],
+      });
+      const g = await guardado(b.id);
+      expect(Number(g.mtoImpVenta)).toBe(t);
+      expect(Number(g.saldo)).toBe(t - 100);
+      expect(await cobradoEnCaja(b.id)).toBe(100);
+    });
+
+    it('si la cuota no es lo que falta, sigue avisando', async () => {
+      await expect(alCredito(1, 100, 280, { clienteId: await nuevoCliente() })).rejects.toThrow(
+        /La suma de cuotas \(S\/ 280\.00\) debe ser igual al saldo a crédito \(S\/ 180\.00\)/,
+      );
+    });
+
+    it('un inicial que cubre todo no es crédito', async () => {
+      await expect(alCredito(1, 280, 0, { clienteId: await nuevoCliente(), cuotas: [] })).rejects.toThrow(/al contado/);
+    });
+
+    it('sin pago inicial, el crédito sigue siendo por el total', async () => {
+      const b: any = await convertirABoleta(0, 1, {
+        comprobanteOrigenId: undefined, clienteId: await nuevoCliente(),
+        formaPagoTipo: 'Credito', medioPago: 'Efectivo',
+        cuotas: [{ monto: 280, fechaVencimiento: vence }],
+      });
+      const g = await guardado(b.id);
+      expect(Number(g.saldo)).toBe(280);
+      expect(g.estadoPago).toBe('PENDIENTE_PAGO');
+      expect(await cobradoEnCaja(b.id)).toBe(0);
+    });
+  });
 });
