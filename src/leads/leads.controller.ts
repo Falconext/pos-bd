@@ -145,6 +145,28 @@ export class LeadsController {
   }
 
   /**
+   * Mandar una imagen en la conversación desde el panel (multipart: `archivo`
+   * y, opcional, `texto` como pie). También toma el chat.
+   */
+  @Post('conversaciones/:id/imagen')
+  @UseInterceptors(
+    FileInterceptor('archivo', { limits: { fileSize: 10 * 1024 * 1024 } }),
+  )
+  enviarImagenManual(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() archivo: Express.Multer.File,
+    @Body() body: { texto?: string },
+  ) {
+    return this.service.enviarImagenManual(
+      user.empresaId,
+      id,
+      archivo,
+      body?.texto,
+    );
+  }
+
+  /**
    * Tomar (o devolver) el chat. Va por conversación y no por prospecto porque
    * los chats de prueba del negocio no tienen prospecto, y eran justo los que
    * se quedaban sin interruptor.

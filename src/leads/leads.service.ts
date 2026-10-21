@@ -13,7 +13,11 @@ import { ClienteService } from '../cliente/cliente.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { S3Service } from '../s3/s3.service';
 import { LIMITE_TEXTO_WHATSAPP } from './leads.constants';
+
+/** Lo que acepta el chat del panel; WhatsApp recibe hasta 5 MB y se reduce antes. */
+const LIMITE_IMAGEN_PANEL = 10 * 1024 * 1024;
 import { venceEn } from './pausa-bot';
+import sharp from 'sharp';
 
 /**
  * Módulo IA de Ventas / Filtro de Leads (portado de salesfilter-ai).
@@ -615,7 +619,107 @@ export class LeadsService {
       data: { cantidadMensajes: { increment: 1 } },
     });
 
-    // Idempotente: si el vendedor ya había tomado el chat, no se reescribe.
+    const botPausado = await this.tomarChat(conv);
+    return { mensaje, botPausado };
+  }
+
+  /**
+   * Manda una imagen al prospecto desde el chat del panel: la foto de un
+   * producto que no la tiene en el catálogo, una captura, lo que haga falta.
+   *
+   * El vendedor de Hierba Sana no tenía cómo: el cliente pedía ver lo que iba
+   * a recibir, el producto no tenía foto, y desde el panel solo salía texto
+   * (20-10). Como el texto, deja el mensaje en el historial y toma el chat.
+   *
+   * Va a JPG antes de subir: WhatsApp solo acepta JPG y PNG por enlace, y una
+   * foto de celular puede llegar en HEIC o WEBP, o girada.
+   */
+  async enviarImagenManual(
+    empresaId: number,
+    conversacionId: number,
+    archivo: { buffer: Buffer; mimetype: string; size: number } | undefined,
+    texto?: string,
+  ) {
+    if (!archivo?.buffer?.length) throw new BadRequestException('Falta la imagen.');
+    if (!/^image\//.test(archivo.mimetype)) {
+      throw new BadRequestException('El archivo tiene que ser una imagen.');
+    }
+    if (archivo.size > LIMITE_IMAGEN_PANEL) {
+      throw new BadRequestException('La imagen pesa más de 10 MB.');
+    }
+    const pie = (texto || '').trim();
+    // El pie de una imagen en WhatsApp tiene su propio tope, más corto.
+    if (pie.length > 1024) {
+      throw new BadRequestException('El texto de la imagen supera los 1024 caracteres.');
+    }
+    if (!this.s3) throw new BadRequestException('El almacenamiento no está disponible.');
+
+    const conv = await this.prisma.leadConversacion.findFirst({
+      where: { id: conversacionId, empresaId },
+      select: {
+        id: true,
+        telefonoProspecto: true,
+        botActivo: true,
+        prospecto: { select: { id: true } },
+      },
+    });
+    if (!conv) throw new NotFoundException('Conversación no encontrada');
+
+    let jpg: Buffer;
+    try {
+      jpg = await sharp(archivo.buffer)
+        .rotate()
+        .resize({ width: 1600, height: 1600, fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 85 })
+        .toBuffer();
+    } catch {
+      throw new BadRequestException('No se pudo leer la imagen. Prueba con una foto JPG o PNG.');
+    }
+    const url = await this.s3.uploadPDF(
+      jpg,
+      `ia-ventas/empresa-${empresaId}/chat/${conv.id}-${Date.now()}.jpg`,
+      'image/jpeg',
+    );
+
+    const envio = await this.whatsapp.enviarImagenUrl(
+      conv.telefonoProspecto,
+      url,
+      pie || undefined,
+      empresaId,
+    );
+    if (!envio.success)
+      throw new BadRequestException(
+        envio.error || 'No se pudo enviar la imagen por WhatsApp',
+      );
+
+    const mensaje = await this.prisma.leadMensaje.create({
+      data: {
+        conversacionId: conv.id,
+        rol: 'SISTEMA',
+        // El historial es también el contexto de la IA, que lee texto: sin
+        // esto, al reactivarla no sabría que el cliente ya vio la foto.
+        contenido: pie ? `📷 [Imagen] ${pie}` : '📷 [Imagen]',
+        imagenUrl: url,
+      },
+    });
+    await this.prisma.leadConversacion.update({
+      where: { id: conv.id },
+      data: { cantidadMensajes: { increment: 1 } },
+    });
+
+    const botPausado = await this.tomarChat(conv);
+    return { mensaje, botPausado };
+  }
+
+  /**
+   * Pausa la IA porque el vendedor respondió a mano. Devuelve si la pausó.
+   * Idempotente: si el vendedor ya había tomado el chat, no se reescribe.
+   */
+  private async tomarChat(conv: {
+    id: number;
+    botActivo: boolean;
+    prospecto: { id: number } | null;
+  }): Promise<boolean> {
     let botPausado = false;
     if (conv.botActivo) {
       // Vence sola: una pausa permanente convertía cada respuesta manual en
@@ -638,7 +742,6 @@ export class LeadsService {
       ]);
       botPausado = true;
     }
-
-    return { mensaje, botPausado };
+    return botPausado;
   }
 }

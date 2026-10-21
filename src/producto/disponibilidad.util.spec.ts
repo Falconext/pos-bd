@@ -8,7 +8,9 @@ import {
   escribirPrioridadVenta,
   leerDisponibilidad,
   leerPrioridadVenta,
+  nivelDeRecomendacion,
   textoParaElCliente,
+  valorDeColumna,
 } from './disponibilidad.util';
 
 describe('leerDisponibilidad', () => {
@@ -99,5 +101,53 @@ describe('textoParaElCliente', () => {
   it('no promete fecha en lo que va bajo pedido', () => {
     const texto = textoParaElCliente('BAJO_PEDIDO');
     expect(texto).toContain('sin fecha prometida');
+  });
+});
+
+describe('nivelDeRecomendacion: la escala de 4 niveles que lee la IA', () => {
+  it('cada número dice su nivel, en el orden del Excel', () => {
+    expect(nivelDeRecomendacion(4)).toBe('muy alta');
+    expect(nivelDeRecomendacion(3)).toBe('alta');
+    expect(nivelDeRecomendacion(2)).toBe('media');
+    expect(nivelDeRecomendacion(1)).toBe('baja');
+  });
+
+  it('sin prioridad no inventa un nivel', () => {
+    expect(nivelDeRecomendacion(null)).toBeNull();
+    expect(nivelDeRecomendacion(undefined)).toBeNull();
+    expect(nivelDeRecomendacion(0)).toBeNull();
+  });
+
+  it('ida y vuelta con el Excel: lo que se lee es lo que la IA ve', () => {
+    for (const t of ['MUY ALTA', 'alta', 'Media', 'baja']) {
+      expect(nivelDeRecomendacion(leerPrioridadVenta(t))).toBe(t.toLowerCase());
+    }
+  });
+});
+
+describe('valorDeColumna: el encabezado como lo escribió el negocio', () => {
+  it('"Prioridad de venta" (catálogo de Hierba Sana) se reconoce', () => {
+    const fila = { SKU: 'PROD-0001', 'Prioridad de venta': 'media', disponibilidad: 'INMEDIATA' };
+    expect(valorDeColumna(fila, ['PRIORIDAD DE VENTA'])).toBe('media');
+    expect(valorDeColumna(fila, ['DISPONIBILIDAD'])).toBe('INMEDIATA');
+  });
+
+  it('ignora tildes y espacios de más', () => {
+    expect(valorDeColumna({ ' Recomendación ': 'alta' }, ['RECOMENDACION'])).toBe('alta');
+  });
+
+  it('sin la columna devuelve undefined', () => {
+    expect(valorDeColumna({ SKU: 'x' }, ['PRIORIDAD'])).toBeUndefined();
+  });
+});
+
+describe('lo que la IA dice de cada disponibilidad (definición de Hierba Sana, 20-10)', () => {
+  it('bajo reserva: hay que pagar antes', () => {
+    expect(textoParaElCliente('BAJO_PEDIDO')).toMatch(/pagar antes/);
+    expect(textoParaElCliente('BAJO_PEDIDO')).toMatch(/no lo registres sin ese pago/);
+  });
+
+  it('no comercial: se avisa que se retira del catálogo', () => {
+    expect(textoParaElCliente('NO_COMERCIAL')).toMatch(/se retira del catálogo/);
   });
 });

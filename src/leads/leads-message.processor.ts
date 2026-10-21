@@ -74,6 +74,7 @@ import {
 import { EtapaCrm } from './leads-embudo';
 import {
   disponibilidadEfectiva,
+  nivelDeRecomendacion,
   textoParaElCliente,
 } from '../producto/disponibilidad.util';
 import {
@@ -1773,6 +1774,62 @@ export class LeadsMessageProcessor extends WorkerHost {
    * mensaje no menciona ningún producto o no hay coincidencias.
    */
   /**
+   * Avisa al negocio que un cliente pidió la foto de un producto que no la
+   * tiene cargada, para que se la mande desde el chat. Una vez por producto y
+   * conversación: el cliente suele pedirla dos o tres veces seguidas. `false`
+   * si no se pudo avisar; entonces el bot no promete nada.
+   */
+  private async pedirFotoAlNegocio(
+    empresaId: number,
+    conversacionId: number,
+    telefono: string,
+    productoId: number,
+    descripcion: string,
+  ): Promise<boolean> {
+    const previos = await this.prisma.leadMensaje.findMany({
+      where: {
+        conversacionId,
+        rol: 'ASISTENTE',
+        herramientasJson: { not: Prisma.DbNull },
+      },
+      select: { herramientasJson: true },
+    });
+    const yaPedida = previos.some((m) =>
+      (Array.isArray(m.herramientasJson) ? m.herramientasJson : []).some(
+        (ll: any) =>
+          ll?.nombre === HERRAMIENTA_ENVIAR_FOTO &&
+          Number(ll?.argumentos?.productoId) === productoId &&
+          ll?.resultado?.fotoPedidaAlEquipo,
+      ),
+    );
+    if (yaPedida) return true;
+    try {
+      await this.notificaciones.notificarAdminsEmpresa({
+        empresaId,
+        // WARNING: el cliente está esperando la foto en el chat.
+        tipo: 'WARNING',
+        titulo: `📷 Piden foto: ${descripcion}`,
+        mensaje: [
+          `Un cliente quiere ver ${descripcion} y no tiene foto en el catálogo.`,
+          'Entra a IA de Ventas, abre su chat y mándale la foto con el botón de imagen. La IA sigue atendiendo.',
+          'Si cargas la foto en el producto, la próxima vez la manda sola.',
+          '',
+          `WhatsApp: ${telefono}`,
+        ].join('\n'),
+        metaData: {
+          origen: 'ia-ventas-foto',
+          telefono,
+          conversacionId,
+          productoId,
+        },
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Ejecuta las herramientas que pide el modelo durante un turno.
    *
    * Cada herramienta devuelve datos, nunca texto para el cliente: lo que el
@@ -1875,13 +1932,12 @@ export class LeadsMessageProcessor extends WorkerHost {
               nombre: p.descripcion,
               precio: `${p.moneda === 'USD' ? 'US$' : 'S/'} ${Number(p.precioUnitario).toFixed(2)}`,
               disponibilidad: this.textoDisponibilidad(p),
-              // Solo se menciona cuando el negocio marcó el producto para
-              // empujarlo; sin esto el modelo no tiene por qué preferirlo.
-              ...(Number(p.prioridadVenta) >= 2
-                ? {
-                    prioridadDeVenta:
-                      Number(p.prioridadVenta) === 3 ? 'muy alta' : 'alta',
-                  }
+              // El grado en que el negocio lo recomienda (muy alta, alta,
+              // media, baja). Va en todos los que lo tienen: sin la escala
+              // completa el modelo no puede comparar dos que sirven para lo
+              // mismo.
+              ...(nivelDeRecomendacion(p.prioridadVenta)
+                ? { recomendacion: nivelDeRecomendacion(p.prioridadVenta) }
                 : {}),
               tieneFoto: !!p.imagenUrl,
             })),
@@ -1908,10 +1964,23 @@ export class LeadsMessageProcessor extends WorkerHost {
           if (!producto)
             return { error: 'Ese producto no es de este negocio.' };
           if (!producto.imagenUrl) {
+            // El cliente quiere ver lo que va a recibir y el bot no tenía qué
+            // mostrarle: contestaba "no contamos con imagen" y ahí quedaba
+            // (Hierba Sana, 20-10). Ahora se le pide la foto al negocio, que
+            // la manda desde el chat del panel, y el bot sigue atendiendo.
+            const avisado = await this.pedirFotoAlNegocio(
+              empresaId,
+              conversacionId,
+              telefono,
+              productoId,
+              producto.descripcion,
+            );
             return {
               enviada: false,
-              motivo:
-                'Este producto no tiene foto en el catálogo. No le prometas una al cliente.',
+              ...(avisado ? { fotoPedidaAlEquipo: true } : {}),
+              motivo: avisado
+                ? 'Este producto no tiene foto en el catálogo, pero ya se le pidió al equipo: dile al cliente que le compartimos la foto por aquí en un momento, y sigue con la venta. No digas que el sistema no tiene la imagen ni prometas una hora.'
+                : 'Este producto no tiene foto en el catálogo. No le prometas una al cliente.',
             };
           }
           const simbolo = producto.moneda === 'USD' ? 'US$' : 'S/';
@@ -2513,7 +2582,8 @@ export class LeadsMessageProcessor extends WorkerHost {
     const lineas = productos.map((p) => {
       const simbolo = p.moneda === 'USD' ? 'US$' : 'S/';
       const precio = `${simbolo}${Number(p.precioUnitario).toFixed(2)}`;
-      return `- ${p.descripcion}: ${precio} (${this.textoDisponibilidad(p)})`;
+      const nivel = nivelDeRecomendacion(p.prioridadVenta);
+      return `- ${p.descripcion}: ${precio} (${this.textoDisponibilidad(p)}${nivel ? `; recomendación ${nivel}` : ''})`;
     });
     const contexto =
       'PRODUCTOS QUE COINCIDEN A PRIMERA VISTA con el último mensaje (precio y ' +

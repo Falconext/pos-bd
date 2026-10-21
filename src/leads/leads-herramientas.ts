@@ -32,7 +32,8 @@ const buscarProductos: FunctionDeclaration = {
     'Úsala SIEMPRE antes de nombrar, recomendar, cotizar o afirmar que existe o no existe un producto: nunca respondas de memoria ni inventes precios. ' +
     'Busca con términos cortos: el nombre o el ingrediente ("psyllium", "uña de gato"), el órgano o sistema ("riñón", "próstata", "hígado") o la acción ("diurético", "desinflamante"). ' +
     'Si no encuentras nada útil, vuelve a llamarla con otro enfoque (sinónimo, ingrediente, órgano) antes de decirle al cliente que no lo tenemos. ' +
-    'Que un producto aparezca no significa que sirva: revisa para qué es antes de ofrecerlo.',
+    'Que un producto aparezca no significa que sirva: revisa para qué es antes de ofrecerlo. ' +
+    'Cada producto puede traer `recomendacion` (muy alta, alta, media o baja): es cuánto lo recomienda el negocio. Entre los que sirven para lo que necesita el cliente, ofrece primero el de recomendación más alta; baja al siguiente nivel solo si el de arriba no le sirve (por ejemplo, presentación inadecuada para su edad).',
   parameters: {
     type: SchemaType.OBJECT,
     properties: {
@@ -55,7 +56,7 @@ const enviarFoto: FunctionDeclaration = {
   name: HERRAMIENTA_ENVIAR_FOTO,
   description:
     'Envía al cliente la foto de un producto del catálogo. Úsala cuando pida ver el producto, una foto, o diga que quiere asegurarse de no equivocarse. ' +
-    'El productoId sale de buscar_productos. Si el producto no tiene foto te lo dirá: en ese caso no la prometas.',
+    'El productoId sale de buscar_productos. Si el producto no tiene foto en el catálogo, la herramienta se la pide al equipo y te dice qué responder: sigue esa indicación al pie de la letra.',
   parameters: {
     type: SchemaType.OBJECT,
     properties: {
