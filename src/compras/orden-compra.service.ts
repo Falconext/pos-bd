@@ -196,7 +196,7 @@ export class OrdenCompraService {
         estadoEnvioSunat: true,
         cliente: { select: { nombre: true } },
         detalles: {
-          select: { productoId: true, descripcion: true, cantidad: true, unidadesPorPaquete: true, comboId: true },
+          select: { productoId: true, descripcion: true, cantidad: true, unidadesPorPaquete: true, comboId: true, kitQuitados: true },
         },
         ordenesCompra: {
           where: { ordenCompra: { estado: { not: 'ANULADA' } } },

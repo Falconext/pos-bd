@@ -1302,6 +1302,9 @@ model DetalleComprobante {
   // Kit vendido como una sola línea (Empresa.kitsComoUnaLinea): referencia al combo
   // para descontar/reponer el stock de sus componentes.
   comboId            Int?
+  // Productos que el cliente pidió quitar de ese kit (ids de producto). El stock
+  // se descuenta/repone solo de lo que quedó. Null o [] = kit completo.
+  kitQuitados        Json?
   // Paquete vendido como una sola línea (Empresa.paquetesComoUnaLinea): unidades
   // reales por paquete (ej. 10) para descontar/reponer el stock del MISMO
   // producto (cantidad de esta línea × unidadesPorPaquete), aunque la línea

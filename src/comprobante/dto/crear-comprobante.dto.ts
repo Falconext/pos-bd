@@ -26,6 +26,14 @@ class DetalleDto {
   @IsInt()
   comboId?: number | null;
 
+  // Productos quitados de ese kit para esta venta (ver kit-quitados.ts).
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @Type(() => Number)
+  @IsInt({ each: true })
+  kitQuitados?: number[];
+
   // Paquete vendido como UNA línea (Empresa.paquetesComoUnaLinea): con
   // productoId (el mismo producto suelto), cantidad=1 (o N paquetes) al precio
   // completo del paquete; unidadesPorPaquete indica cuántas unidades reales
