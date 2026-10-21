@@ -4915,6 +4915,11 @@ model LeadPedidoBorrador {
   /// dos veces por más que el cliente insista.
   comprobanteId     Int?
   registradoEn      DateTime?
+  /// Cuándo empezó el pedido en curso, si no es el primero de la conversación.
+  /// Los vouchers de antes pagaron un pedido anterior: sin este corte, el
+  /// segundo pedido de un cliente que vuelve nacía "pagado en parte" con la
+  /// plata del primero (QA 21-10: NV01-00000002 con S/ 12 que eran de ayer).
+  pedidoDesde       DateTime?
 
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt

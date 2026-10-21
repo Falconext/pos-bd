@@ -86,6 +86,11 @@ const guardarDatosEnvio: FunctionDeclaration = {
   parameters: {
     type: SchemaType.OBJECT,
     properties: {
+      pedidoAparte: {
+        type: SchemaType.BOOLEAN,
+        description:
+          'true SOLO si el cliente ya tiene un pedido registrado y pide OTRO pedido aparte (otro destino u otra persona, "aparte de mi pedido"). Su pedido registrado queda como está y este empieza de cero. NO lo uses para cambiar o agregar productos a su pedido.',
+      },
       destino: {
         type: SchemaType.STRING,
         description:
@@ -183,6 +188,11 @@ const cotizar: FunctionDeclaration = {
           },
           required: ['productoId', 'nombre', 'cantidad'],
         },
+      },
+      pedidoAparte: {
+        type: SchemaType.BOOLEAN,
+        description:
+          'true SOLO si el cliente ya tiene un pedido registrado y pide OTRO pedido aparte (otro destino u otra persona, "aparte de mi pedido"). Su pedido registrado queda como está y este empieza de cero. NO lo uses para cambiar o agregar productos a su pedido.',
       },
       nombrePack: {
         type: SchemaType.STRING,

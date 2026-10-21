@@ -59,3 +59,25 @@ function unir(partes: string[]): string {
   if (partes.length === 1) return partes[0];
   return `${partes.slice(0, -1).join(', ')} y ${partes.at(-1)}`;
 }
+
+const AFIRMA_PAGO =
+  /(he|hemos)\s+(verificado|confirmado|validado|recibido)\s+(\S+\s+){0,2}(pago|yape|plin|transferencia|abono|adelanto)|verifiqu[eé]\s+(\S+\s+){0,2}(pago|yape|plin|transferencia|abono|adelanto)|(pago|yape|plin|transferencia|abono|adelanto)\s+(verificado|confirmado|validado|recibido)|recib[ií](mos)?\s+(tu|el|su)\s+(pago|yape|plin|transferencia|abono|adelanto)/i;
+
+/** ¿El texto le asegura al cliente que su pago ya está verificado o recibido? */
+export function afirmaPagoVerificado(texto: string): boolean {
+  return AFIRMA_PAGO.test(texto);
+}
+
+/**
+ * El asesor no puede dar por verificado un pago que nadie leyó.
+ *
+ * QA 21-10: el cliente mandó una imagen que no se pudo leer y escribió "ya
+ * yapee los 77"; el modelo contestó "He verificado tu pago de S/ 77.00" y el
+ * pedido quedó "completamente confirmado". Con una captura borrosa o de otro
+ * monto pasa igual. Si no hay ningún voucher leído para este pedido, lo
+ * honesto es decir que una persona lo revisa.
+ */
+export function sinPagoInventado(respuesta: string, hayVoucherLeido: boolean): string {
+  if (hayVoucherLeido || !afirmaPagoVerificado(respuesta)) return respuesta;
+  return 'Gracias, recibí tu constancia. Un asesor del equipo la revisa y te confirma el pago en un momento.';
+}
