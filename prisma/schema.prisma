@@ -195,6 +195,13 @@ model Empresa {
   plinNumero                String?
   plinQrUrl                 String?
   slugTienda                String?            @unique
+  // SEO editable de la tienda (Tienda Virtual → Google). Vacío = se arma solo
+  // (src/seo/seo-texto.ts). googleVerificacion: contenido de la etiqueta
+  // google-site-verification para que el negocio registre SU tienda en Search Console.
+  seoTitulo                 String?
+  seoDescripcion            String?
+  seoImagenUrl              String?
+  googleVerificacion        String?
   /// Pixel de Meta de la tienda online. Sin esto, las campañas pagadas no
   /// pueden medir qué anuncio trajo la venta: se invierte a ciegas.
   metaPixelId               String?
@@ -762,6 +769,10 @@ model Producto {
   imagenUrl           String?
   imagenesExtra       String?
   publicarEnTienda    Boolean                 @default(true)
+  // SEO editable por producto (ficha → Google). Vacío = automático.
+  seoTitulo           String?
+  seoDescripcion      String?
+  seoPalabraClave     String?
   marcaId             Int?
   ratingAvg           Decimal?                @default(0)
   ratingCount         Int?                    @default(0)

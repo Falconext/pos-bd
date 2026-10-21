@@ -764,6 +764,62 @@ RESPUESTA (Texto plano, sin markdown de código a menos que sea necesario):`;
   }
 
   /**
+   * Título, descripción y palabra clave para Google de un producto de tienda
+   * (botón "Sugerir con IA" de la ficha). Lo pidió un cliente que venía de
+   * WordPress + Rank Math: su encargada de marketing escribía esto a mano por
+   * cada producto. Si la descripción del producto es pobre, propone una.
+   */
+  async generarSeoProducto(p: {
+    nombre: string;
+    categoria?: string | null;
+    marca?: string | null;
+    descripcionLarga?: string | null;
+    precio?: number | null;
+    palabraClave?: string | null;
+    tienda: string;
+    rubro?: string | null;
+    lugar?: string | null;
+  }): Promise<{ titulo: string; descripcion: string; palabraClave: string; descripcionLarga: string | null }> {
+    if (!this.model) throw new Error('Gemini AI no está configurado');
+    const descripcion = String(p.descripcionLarga || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    const prompt = `
+Eres especialista en SEO para tiendas online pequeñas de Perú. Escribes en español peruano, claro y sin exagerar, con ortografía y tildes correctas (corazón, fácil, rápido).
+
+PRODUCTO
+- Nombre: ${p.nombre}
+- Categoría: ${p.categoria || 'sin categoría'}
+- Marca: ${p.marca || 'sin marca'}
+- Precio: ${p.precio ? `S/ ${Number(p.precio).toFixed(2)}` : 'sin precio'}
+- Descripción actual: ${descripcion || '(vacía)'}
+- Palabra clave que ya eligió el negocio: ${p.palabraClave || '(ninguna, propón una)'}
+
+TIENDA: ${p.tienda}${p.rubro ? ` (${p.rubro})` : ''}${p.lugar ? `, ${p.lugar}` : ''}
+
+REGLA DE ORTOGRAFÍA: escribe el nombre del producto y la palabra clave con sus tildes ("corazón", "orquídea"), igual que en el nombre de arriba. Google entiende las tildes: quitarlas no ayuda al SEO y se ve mal escrito.
+
+TAREA (JSON puro, sin markdown):
+{
+  "palabraClave": "2 a 4 palabras que un cliente escribiría en Google para encontrar ESTE producto (en minúsculas), sin el nombre de la tienda. Si el negocio ya eligió una, devuélvela igual.",
+  "titulo": "Título para Google de 40 a 60 caracteres. Debe empezar con la palabra clave o contenerla, y terminar con ' | ${p.tienda}' si entra. Sin MAYÚSCULAS sostenidas, sin emojis, SIN precio (el precio cambia y el título quedaría viejo).",
+  "descripcion": "Meta descripción de 130 a 155 caracteres con la palabra clave, un beneficio concreto y una invitación (comprar online o pedir por WhatsApp). SIN precio (Google ya lo muestra aparte). No inventes datos que no estén arriba: nada de envío, delivery, recojo en tienda, venta por mayor, descuentos, stock ni garantías.",
+  "descripcionLarga": ${descripcion.split(' ').length >= 30 ? 'null' : '"Descripción del producto de 50 a 90 palabras, en 2 párrafos cortos, con la palabra clave una vez. Solo con datos de arriba o generales del tipo de producto; nada de promesas que el negocio no hizo."'}
+}`;
+    const result = await this.model.generateContent(prompt);
+    const texto = result.response.text().trim().replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    const inicio = texto.indexOf('{');
+    const fin = texto.lastIndexOf('}');
+    const json = JSON.parse(inicio >= 0 && fin > inicio ? texto.slice(inicio, fin + 1) : texto);
+    const limpio = (v: unknown) => String(v ?? '').replace(/\s+/g, ' ').trim();
+    const mayusculaInicial = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+    return {
+      palabraClave: limpio(json.palabraClave).toLowerCase().slice(0, 80),
+      titulo: mayusculaInicial(limpio(json.titulo)),
+      descripcion: mayusculaInicial(limpio(json.descripcion)),
+      descripcionLarga: json.descripcionLarga ? String(json.descripcionLarga).trim() : null,
+    };
+  }
+
+  /**
    * Selecciona la mejor imagen para un producto entre candidatas externas.
    * Devuelve URL elegida o null si Gemini no pudo decidir con confianza.
    */

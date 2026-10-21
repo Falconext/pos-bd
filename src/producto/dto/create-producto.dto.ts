@@ -10,6 +10,7 @@ import {
   Max,
   Min,
   ValidateNested,
+  MaxLength,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
@@ -313,6 +314,22 @@ export class CreateProductoDto {
   @IsOptional()
   @IsString()
   descripcionLarga?: string;
+
+  // SEO editable (ficha → Google). Vacío = automático (src/seo/seo-texto.ts).
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  seoTitulo?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(320)
+  seoDescripcion?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  seoPalabraClave?: string | null;
 
   /** URL del video del producto (TikTok, YouTube, Instagram, Facebook o mp4). */
   @IsOptional()

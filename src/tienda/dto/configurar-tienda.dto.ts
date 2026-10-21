@@ -7,6 +7,7 @@ import {
   IsInt,
   Min,
   IsNumber,
+  MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -33,6 +34,23 @@ export class ConfigurarTiendaDto {
     message: 'El Pixel de Meta es solo el número de id, sin el script.',
   })
   metaPixelId?: string;
+
+  // SEO de la tienda (Tienda Virtual → Configuración → Google). Vacío = automático.
+  @IsString()
+  @IsOptional()
+  @MaxLength(120)
+  seoTitulo?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(320)
+  seoDescripcion?: string;
+
+  /** Código o etiqueta completa de google-site-verification (se guarda solo el código). */
+  @IsString()
+  @IsOptional()
+  @MaxLength(300)
+  googleVerificacion?: string;
 
   @IsString()
   @IsOptional()
