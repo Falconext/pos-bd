@@ -2,6 +2,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificacionesService } from './notificaciones.service';
 import { num } from '../common/utils/stock';
+import {
+  DIAS_RECORDATORIO,
+  claveAviso,
+  clavesAvisadas,
+  porAvisar,
+} from './aviso-inventario';
 
 type ProductoNotificacion = {
   id: number;
@@ -79,12 +85,15 @@ export class InventarioNotificacionesService {
         productosCriticos.push(producto);
       };
 
-      // 1. Productos con stock global en 0 (compatibilidad legacy)
+      // 1. Productos con stock global en 0 (compatibilidad legacy). Solo los
+      // que no llevan stock por sede: los demás salen en el paso 3, y antes
+      // llegaban dos avisos iguales, el general y el de la sede.
       const productosAgotadosGlobal = await this.prisma.producto.findMany({
         where: {
           empresaId,
           estado: 'ACTIVO',
           stock: 0,
+          stocks: { none: {} },
         },
         select: {
           id: true,
@@ -113,6 +122,7 @@ export class InventarioNotificacionesService {
           estado: 'ACTIVO',
           stock: { gt: 0 },
           stockMinimo: { gt: 0 },
+          stocks: { none: {} },
         },
         select: {
           id: true,
@@ -214,14 +224,24 @@ export class InventarioNotificacionesService {
         });
       }
 
+      // Un producto en cero que nunca tuvo movimiento no se agotó: se
+      // registró sin stock (el aroma que aún no llega) o es un servicio.
+      const agotadosDeVerdad = await this.soloLosQueSeMovieron(
+        empresaId,
+        productosAgotados,
+      );
+      productosAgotados.splice(0, productosAgotados.length, ...agotadosDeVerdad);
+
       const admins = await this.obtenerUsuariosDestino(empresaId);
 
-      // 5. Generar notificaciones si hay productos críticos
+      // 5. Generar notificaciones si hay productos críticos. Es la revisión
+      // diaria: solo lo que no se avisó en los últimos días.
       if (productosAgotados.length > 0) {
         await this.notificarProductosAgotados(
           empresaId,
           productosAgotados,
           admins,
+          true,
         );
       }
 
@@ -230,6 +250,7 @@ export class InventarioNotificacionesService {
           empresaId,
           productosCriticos,
           admins,
+          true,
         );
       }
 
@@ -257,6 +278,7 @@ export class InventarioNotificacionesService {
     empresaId: number,
     productos: ProductoNotificacion[],
     adminsCache?: UsuarioDestino[],
+    soloNuevos = false,
   ) {
     if (productos.length === 0) return;
 
@@ -277,23 +299,28 @@ export class InventarioNotificacionesService {
         ? `⚠️ ${grupo.sedeNombre} · Productos Agotados`
         : '⚠️ Productos Agotados';
 
-      let mensaje = '';
-      if (grupo.productos.length === 1) {
-        mensaje = `El producto "${grupo.productos[0].descripcion}" (${grupo.productos[0].codigo}) está AGOTADO${sedeLabel}.`;
-      } else if (grupo.productos.length <= 5) {
-        const lista = grupo.productos
-          .map((p) => `• ${p.descripcion} (${p.codigo})`)
-          .join('\n');
-        mensaje = `${grupo.productos.length} productos están AGOTADOS${sedeLabel}:\n${lista}`;
-      } else {
-        const lista = grupo.productos
-          .slice(0, 5)
-          .map((p) => `• ${p.descripcion} (${p.codigo})`)
-          .join('\n');
-        mensaje = `${grupo.productos.length} productos están AGOTADOS${sedeLabel}:\n${lista}\n... y ${grupo.productos.length - 5} más. Revisa tu inventario.`;
-      }
-
       for (const admin of destinatarios) {
+        const lista = soloNuevos
+          ? await this.sinAvisar(admin.id, empresaId, titulo, grupo.productos)
+          : grupo.productos;
+        if (lista.length === 0) continue;
+
+        let mensaje = '';
+        if (lista.length === 1) {
+          mensaje = `El producto "${lista[0].descripcion}" (${lista[0].codigo}) está AGOTADO${sedeLabel}.`;
+        } else if (lista.length <= 5) {
+          const items = lista
+            .map((p) => `• ${p.descripcion} (${p.codigo})`)
+            .join('\n');
+          mensaje = `${lista.length} productos están AGOTADOS${sedeLabel}:\n${items}`;
+        } else {
+          const items = lista
+            .slice(0, 5)
+            .map((p) => `• ${p.descripcion} (${p.codigo})`)
+            .join('\n');
+          mensaje = `${lista.length} productos están AGOTADOS${sedeLabel}:\n${items}\n... y ${lista.length - 5} más. Revisa tu inventario.`;
+        }
+
         const notificacion = await this.prisma.notificacion.create({
           data: {
             usuarioId: admin.id,
@@ -302,6 +329,7 @@ export class InventarioNotificacionesService {
             titulo,
             mensaje,
             leida: false,
+            metaData: { claves: lista.map(claveAviso) },
           },
         });
 
@@ -321,6 +349,7 @@ export class InventarioNotificacionesService {
     empresaId: number,
     productos: ProductoNotificacion[],
     adminsCache?: UsuarioDestino[],
+    soloNuevos = false,
   ) {
     if (productos.length === 0) return;
 
@@ -341,30 +370,35 @@ export class InventarioNotificacionesService {
         ? `📦 ${grupo.sedeNombre} · Stock Bajo`
         : '📦 Stock Bajo';
 
-      let mensaje = '';
-      if (grupo.productos.length === 1) {
-        const p = grupo.productos[0];
-        mensaje = `El producto "${p.descripcion}" tiene stock bajo${sedeLabel} (${p.stock} unidades, mínimo: ${p.stockMinimo}).`;
-      } else if (grupo.productos.length <= 5) {
-        const lista = grupo.productos
-          .map(
-            (p) =>
-              `• ${p.descripcion} (${p.codigo}): ${p.stock} unidades (mín: ${p.stockMinimo})`,
-          )
-          .join('\n');
-        mensaje = `${grupo.productos.length} productos tienen stock bajo${sedeLabel}:\n${lista}`;
-      } else {
-        const lista = grupo.productos
-          .slice(0, 5)
-          .map(
-            (p) =>
-              `• ${p.descripcion} (${p.codigo}): ${p.stock} unidades (mín: ${p.stockMinimo})`,
-          )
-          .join('\n');
-        mensaje = `${grupo.productos.length} productos tienen stock bajo${sedeLabel}:\n${lista}\n... y ${grupo.productos.length - 5} más. Considera reabastecer.`;
-      }
-
       for (const admin of destinatarios) {
+        const lista = soloNuevos
+          ? await this.sinAvisar(admin.id, empresaId, titulo, grupo.productos)
+          : grupo.productos;
+        if (lista.length === 0) continue;
+
+        let mensaje = '';
+        if (lista.length === 1) {
+          const p = lista[0];
+          mensaje = `El producto "${p.descripcion}" tiene stock bajo${sedeLabel} (${p.stock} unidades, mínimo: ${p.stockMinimo}).`;
+        } else if (lista.length <= 5) {
+          const items = lista
+            .map(
+              (p) =>
+                `• ${p.descripcion} (${p.codigo}): ${p.stock} unidades (mín: ${p.stockMinimo})`,
+            )
+            .join('\n');
+          mensaje = `${lista.length} productos tienen stock bajo${sedeLabel}:\n${items}`;
+        } else {
+          const items = lista
+            .slice(0, 5)
+            .map(
+              (p) =>
+                `• ${p.descripcion} (${p.codigo}): ${p.stock} unidades (mín: ${p.stockMinimo})`,
+            )
+            .join('\n');
+          mensaje = `${lista.length} productos tienen stock bajo${sedeLabel}:\n${items}\n... y ${lista.length - 5} más. Considera reabastecer.`;
+        }
+
         const notificacion = await this.prisma.notificacion.create({
           data: {
             usuarioId: admin.id,
@@ -373,6 +407,7 @@ export class InventarioNotificacionesService {
             titulo,
             mensaje,
             leida: false,
+            metaData: { claves: lista.map(claveAviso) },
           },
         });
 
@@ -451,6 +486,60 @@ export class InventarioNotificacionesService {
     } catch (error) {
       this.logger.error(`❌ Error al verificar producto ${productoId}:`, error);
     }
+  }
+
+  /**
+   * Los productos de la lista que no se le avisaron a este usuario, con este
+   * mismo título, en los últimos DIAS_RECORDATORIO días. Pasado ese plazo, si
+   * sigue igual, se le recuerda una vez.
+   */
+  private async sinAvisar(
+    usuarioId: number,
+    empresaId: number,
+    titulo: string,
+    productos: ProductoNotificacion[],
+  ): Promise<ProductoNotificacion[]> {
+    const desde = new Date(Date.now() - DIAS_RECORDATORIO * 24 * 60 * 60 * 1000);
+    const previas = await this.prisma.notificacion.findMany({
+      where: { usuarioId, empresaId, titulo, creadoEn: { gte: desde } },
+      select: { metaData: true },
+    });
+    return porAvisar(productos, clavesAvisadas(previas.map((n) => n.metaData)));
+  }
+
+  /**
+   * Deja los productos que se movieron alguna vez (venta, compra, ajuste) en
+   * su sede. Mismo criterio que el resumen de stock bajo (alerta-stock).
+   */
+  private async soloLosQueSeMovieron(
+    empresaId: number,
+    productos: ProductoNotificacion[],
+  ): Promise<ProductoNotificacion[]> {
+    if (productos.length === 0) return productos;
+    const sedesActivas = await this.prisma.sede.count({
+      where: { empresaId, activo: true },
+    });
+    const movimientos = await this.prisma.movimientoKardex.findMany({
+      where: {
+        empresaId,
+        productoId: { in: [...new Set(productos.map((p) => p.id))] },
+      },
+      distinct: ['productoId', 'sedeId'],
+      select: { productoId: true, sedeId: true },
+    });
+    const movidos = new Set<string>();
+    for (const m of movimientos) {
+      movidos.add(`${m.productoId}-${m.sedeId ?? 'g'}`);
+      // Movimientos viejos sin sede: con una sola sede activa son de ella.
+      if (m.sedeId == null && sedesActivas <= 1) movidos.add(`${m.productoId}-*`);
+    }
+    return productos.filter(
+      (p) =>
+        movidos.has(claveAviso(p)) ||
+        movidos.has(`${p.id}-*`) ||
+        // El global (producto sin stock por sede) vale con cualquier movimiento.
+        (p.sedeId == null && movimientos.some((m) => m.productoId === p.id)),
+    );
   }
 
   private async obtenerUsuariosDestino(
