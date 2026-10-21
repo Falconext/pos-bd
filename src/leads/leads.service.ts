@@ -16,8 +16,12 @@ import { LIMITE_TEXTO_WHATSAPP } from './leads.constants';
 
 /** Lo que acepta el chat del panel; WhatsApp recibe hasta 5 MB y se reduce antes. */
 const LIMITE_IMAGEN_PANEL = 10 * 1024 * 1024;
+/** WhatsApp acepta audios de hasta 16 MB. */
+const LIMITE_AUDIO_PANEL = 16 * 1024 * 1024;
 import { venceEn } from './pausa-bot';
 import sharp from 'sharp';
+import { IaVentasService } from './leads-ia.service';
+import { aOggOpus } from './nota-de-voz';
 
 /**
  * Módulo IA de Ventas / Filtro de Leads (portado de salesfilter-ai).
@@ -34,6 +38,9 @@ export class LeadsService {
     private readonly clientes: ClienteService,
     private readonly whatsapp: WhatsAppService,
     @Optional() private readonly s3?: S3Service,
+    @Optional() private readonly ia?: IaVentasService,
+    // Inyectable para las pruebas: en producción es el ffmpeg de verdad.
+    @Optional() private readonly convertirAudio: (b: Buffer) => Promise<Buffer> = aOggOpus,
   ) {}
 
   /**
@@ -796,6 +803,90 @@ export class LeadsService {
 
     const botPausado = await this.tomarChat(conv);
     return { mensaje, botPausado };
+  }
+
+  /**
+   * Manda una nota de voz al prospecto desde el chat del panel.
+   *
+   * Al vendedor le es más rápido hablar que escribir una explicación larga
+   * (cómo se toma un producto, por qué conviene otro). Va a OGG/Opus para que
+   * WhatsApp la muestre como nota de voz. Se transcribe para el historial: la
+   * IA solo lee texto y, al reactivarla, tiene que saber qué se le dijo.
+   */
+  async enviarAudioManual(
+    empresaId: number,
+    conversacionId: number,
+    archivo: { buffer: Buffer; mimetype: string; size: number } | undefined,
+    duracion?: number,
+  ) {
+    if (!archivo?.buffer?.length) throw new BadRequestException('Falta el audio.');
+    // Algunos navegadores mandan la grabación como video/webm (sin imagen).
+    if (!/^(audio\/|video\/webm)/.test(archivo.mimetype)) {
+      throw new BadRequestException('El archivo tiene que ser un audio.');
+    }
+    if (archivo.size > LIMITE_AUDIO_PANEL) {
+      throw new BadRequestException('El audio pesa más de 16 MB.');
+    }
+    if (!this.s3) throw new BadRequestException('El almacenamiento no está disponible.');
+
+    const conv = await this.prisma.leadConversacion.findFirst({
+      where: { id: conversacionId, empresaId },
+      select: {
+        id: true,
+        telefonoProspecto: true,
+        botActivo: true,
+        prospecto: { select: { id: true } },
+      },
+    });
+    if (!conv) throw new NotFoundException('Conversación no encontrada');
+
+    let ogg: Buffer;
+    try {
+      ogg = await this.convertirAudio(archivo.buffer);
+    } catch {
+      throw new BadRequestException('No se pudo leer el audio. Vuelve a grabarlo.');
+    }
+    const url = await this.s3.uploadPDF(
+      ogg,
+      `ia-ventas/empresa-${empresaId}/chat/${conv.id}-${Date.now()}.ogg`,
+      'audio/ogg',
+    );
+
+    const envio = await this.whatsapp.enviarAudio(conv.telefonoProspecto, ogg, empresaId);
+    if (!envio.success)
+      throw new BadRequestException(
+        envio.error || 'No se pudo enviar la nota de voz por WhatsApp',
+      );
+
+    // La transcripción es un extra: si falla, la nota ya salió y queda igual.
+    let transcripcion = '';
+    if (this.ia?.disponible()) {
+      transcripcion = await this.ia
+        .transcribirAudio(ogg, 'audio/ogg')
+        .then((t) => (t || '').trim())
+        .catch(() => '');
+    }
+    const segundos =
+      Number.isFinite(Number(duracion)) && Number(duracion) > 0
+        ? Math.round(Number(duracion))
+        : null;
+
+    const mensaje = await this.prisma.leadMensaje.create({
+      data: {
+        conversacionId: conv.id,
+        rol: 'SISTEMA',
+        contenido: transcripcion ? `[Nota de voz] ${transcripcion}` : '[Nota de voz]',
+        audioUrl: url,
+        esAudio: true,
+      },
+    });
+    await this.prisma.leadConversacion.update({
+      where: { id: conv.id },
+      data: { cantidadMensajes: { increment: 1 } },
+    });
+
+    const botPausado = await this.tomarChat(conv);
+    return { mensaje: { ...mensaje, ...(segundos ? { duracion: segundos } : {}) }, botPausado };
   }
 
   /**

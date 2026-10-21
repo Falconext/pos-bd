@@ -174,6 +174,28 @@ export class LeadsController {
   }
 
   /**
+   * Mandar una nota de voz desde el panel (multipart: `archivo` y, opcional,
+   * `duracion` en segundos). Se convierte a OGG/Opus. También toma el chat.
+   */
+  @Post('conversaciones/:id/audio')
+  @UseInterceptors(
+    FileInterceptor('archivo', { limits: { fileSize: 16 * 1024 * 1024 } }),
+  )
+  enviarAudioManual(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() archivo: Express.Multer.File,
+    @Body() body: { duracion?: string },
+  ) {
+    return this.service.enviarAudioManual(
+      user.empresaId,
+      id,
+      archivo,
+      body?.duracion ? Number(body.duracion) : undefined,
+    );
+  }
+
+  /**
    * Tomar (o devolver) el chat. Va por conversación y no por prospecto porque
    * los chats de prueba del negocio no tienen prospecto, y eran justo los que
    * se quedaban sin interruptor.
