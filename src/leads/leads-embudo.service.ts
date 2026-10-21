@@ -177,11 +177,19 @@ export class LeadsEmbudoService {
           empresaId,
           conversacionId,
         );
-        url = await this.s3.uploadImage(
-          datos.buffer,
-          key,
-          datos.mimeType ?? 'image/jpeg',
-        );
+        // La constancia de una transferencia suele llegar en PDF: se guarda
+        // tal cual, porque pasarla por el conversor de imágenes la rompe.
+        url =
+          datos.mimeType === 'application/pdf'
+            ? await this.s3.uploadPDF(
+                datos.buffer,
+                key.replace(/\.webp$/, '.pdf'),
+              )
+            : await this.s3.uploadImage(
+                datos.buffer,
+                key,
+                datos.mimeType ?? 'image/jpeg',
+              );
       } catch (e) {
         this.logger.warn(
           `No se pudo guardar el voucher de la conversación ${conversacionId}: ${(e as Error).message}`,

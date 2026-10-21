@@ -148,6 +148,7 @@ export class LeadsWebhookController {
                 text: texto,
                 esAudio: msg.type === 'audio',
                 esImagen: msg.type === 'image',
+                esDocumento: msg.type === 'document',
                 // El id del archivo sirve para los tres casos: transcribir la
                 // nota de voz y bajar la imagen del voucher para que el
                 // encargado pueda mirarlo antes de validar el pago.
