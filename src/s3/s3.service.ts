@@ -266,6 +266,27 @@ export class S3Service implements OnModuleInit {
   }
 
   /**
+   * Descarga un objeto completo a memoria. Lo usa el servidor de imágenes
+   * públicas de la tienda (seo/imagen-publica.controller.ts).
+   */
+  async obtenerObjeto(
+    key: string,
+  ): Promise<{ buffer: Buffer; contentType: string | null } | null> {
+    if (!this.isEnabled()) return null;
+    try {
+      const res = await this.s3Client.send(
+        new GetObjectCommand({ Bucket: this.bucketName, Key: key }),
+      );
+      const bytes = await (res.Body as any)?.transformToByteArray?.();
+      if (!bytes) return null;
+      return { buffer: Buffer.from(bytes), contentType: res.ContentType ?? null };
+    } catch (error: any) {
+      if (error?.name === 'NoSuchKey' || error?.$metadata?.httpStatusCode === 404) return null;
+      throw error;
+    }
+  }
+
+  /**
    * URL firmada para descargar/visualizar (GET) un objeto
    */
   async getSignedGetUrl(

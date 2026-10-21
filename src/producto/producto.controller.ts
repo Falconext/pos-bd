@@ -17,6 +17,7 @@ import {
   Delete,
 } from '@nestjs/common';
 import axios from 'axios';
+import { recortar } from '../seo/seo-texto';
 import { ProductoService } from './producto.service';
 import { ProductoMaestroService } from './producto-maestro.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -82,6 +83,39 @@ export class ProductoController {
     );
     res.locals.message = 'Producto creado correctamente';
     return producto;
+  }
+
+  /** "Sugerir con IA" del bloque Google de la ficha de producto. */
+  @Post('ia/seo')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async seoIA(
+    @User() user: any,
+    @Body()
+    body: {
+      nombre: string;
+      categoria?: string;
+      marca?: string;
+      descripcionLarga?: string;
+      precio?: number;
+      palabraClave?: string;
+    },
+  ) {
+    if (!this.geminiService) return { success: false, message: 'La IA no está disponible' };
+    if (!String(body?.nombre || '').trim()) return { success: false, message: 'Primero escribe el nombre del producto' };
+    const tienda = await this.service.datosTiendaParaSeo(user.empresaId);
+    try {
+      const r = await this.geminiService.generarSeoProducto({ ...body, ...tienda });
+      return {
+        success: true,
+        data: {
+          ...r,
+          titulo: recortar(r.titulo, 60),
+          descripcion: recortar(r.descripcion, 160),
+        },
+      };
+    } catch (e: any) {
+      return { success: false, message: 'La IA no respondió, inténtalo de nuevo' };
+    }
   }
 
   @Post('ia/categorizar')

@@ -1,5 +1,6 @@
 import { num, round3 } from '../common/utils/stock';
 import { NOTA_SIN_CONVERTIR } from '../comprobante/convertidos';
+import { suavizarMayusculas } from '../seo/seo-texto';
 import {
   cumpleFiltroStock,
   stockEfectivoDeProducto,
@@ -392,6 +393,9 @@ export class ProductoService {
       precioMaximoVenta?: number | null;
       atributosTecnicos?: Record<string, any> | null;
       descripcionLarga?: string;
+      seoTitulo?: string | null;
+      seoDescripcion?: string | null;
+      seoPalabraClave?: string | null;
       opcionesAtributos?: any;
       valoresAtributos?: any;
       productoPadreId?: number;
@@ -455,6 +459,9 @@ export class ProductoService {
       preciosMayorista,
       atributosTecnicos,
       descripcionLarga,
+      seoTitulo,
+      seoDescripcion,
+      seoPalabraClave,
       publicarEnTienda,
       visibleEnSede,
       vendibleEnSede,
@@ -589,6 +596,7 @@ export class ProductoService {
           porcentajeProvision: porcentajes.porcentajeProvision,
           estado: EstadoType.ACTIVO, // Reactivar usando Enum
           publicarEnTienda: publicarEnTienda ?? true,
+          ...camposSeo({ seoTitulo, seoDescripcion, seoPalabraClave }),
           // Campos Farmacia update on restore
           principioActivo,
           concentracion,
@@ -750,6 +758,7 @@ export class ProductoService {
           valoresAtributos: data.valoresAtributos ?? undefined,
           productoPadreId: data.productoPadreId ?? undefined,
           descripcionLarga: descripcionLarga || undefined,
+          ...camposSeo({ seoTitulo, seoDescripcion, seoPalabraClave }),
         },
       });
 
@@ -3228,6 +3237,9 @@ export class ProductoService {
       productoPadreId?: number | null;
       variantesConfig?: VarianteConfig[];
       descripcionLarga?: string | null;
+      seoTitulo?: string | null;
+      seoDescripcion?: string | null;
+      seoPalabraClave?: string | null;
       publicarEnTienda?: boolean;
       visibleEnSede?: boolean;
       vendibleEnSede?: boolean;
@@ -3765,6 +3777,7 @@ export class ProductoService {
           data.descripcionLarga !== undefined
             ? data.descripcionLarga || null
             : undefined,
+        ...camposSeo(data),
       },
     });
 
@@ -4494,6 +4507,19 @@ export class ProductoService {
       )?.rubro?.nombre ?? null,
     );
     return { maxTotal, maxExtra: Math.max(0, maxTotal - 1) };
+  }
+
+  /** Nombre, rubro y lugar de la tienda para los textos de Google (ver seo-texto.ts). */
+  async datosTiendaParaSeo(empresaId: number) {
+    const e = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { nombreComercial: true, razonSocial: true, distrito: true, provincia: true, rubro: { select: { nombre: true } } },
+    });
+    return {
+      tienda: suavizarMayusculas(e?.nombreComercial || e?.razonSocial || 'la tienda', 'titulo'),
+      rubro: e?.rubro?.nombre ?? null,
+      lugar: [e?.distrito, e?.provincia].filter(Boolean).map((x) => suavizarMayusculas(String(x), 'titulo')).join(', ') || null,
+    };
   }
 
   async subirImagenDesdeUrl(
@@ -6071,4 +6097,22 @@ export class ProductoService {
 
     return this.prisma.fichaTecnicaPlantilla.create({ data });
   }
+}
+
+/**
+ * Campos SEO del producto: `undefined` = no tocar (el formulario viejo o el
+ * móvil no los mandan), vacío = volver a lo automático.
+ */
+function camposSeo(d: {
+  seoTitulo?: string | null;
+  seoDescripcion?: string | null;
+  seoPalabraClave?: string | null;
+}) {
+  const v = (x: string | null | undefined) =>
+    x === undefined ? undefined : String(x ?? '').trim() || null;
+  return {
+    seoTitulo: v(d.seoTitulo),
+    seoDescripcion: v(d.seoDescripcion),
+    seoPalabraClave: v(d.seoPalabraClave),
+  };
 }
