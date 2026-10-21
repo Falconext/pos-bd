@@ -710,10 +710,31 @@ export class LeadsPedidoService {
    * El embudo vuelve a NUEVO: desde ENTREGADO un automatismo no puede
    * avanzar (es terminal), y el segundo pedido quedaba invisible.
    */
-  private async abrirPedidoNuevo(empresaId: number, conversacionId: number) {
+  private async abrirPedidoNuevo(
+    empresaId: number,
+    conversacionId: number,
+    opciones: { sinDestino?: boolean } = {},
+  ) {
     const borrador = await this.prisma.leadPedidoBorrador.update({
       where: { conversacionId },
       data: {
+        // Pedido aparte con el anterior todavía abierto: suele ir a otro lugar
+        // y a otra persona ("le mando uno a mi mamá a Arequipa"). Heredar la
+        // dirección del primero cotizaba el envío equivocado.
+        ...(opciones.sinDestino
+          ? {
+              zona: null,
+              tipoZona: null,
+              lugar: null,
+              destinoRegion: null,
+              costoEnvio: null,
+              direccion: null,
+              referencia: null,
+              agenciaSede: null,
+              recibeNombre: null,
+              recibeDni: null,
+            }
+          : {}),
         comprobanteId: null,
         registradoEn: null,
         cotizacionId: null,
@@ -722,6 +743,7 @@ export class LeadsPedidoService {
         descuentoAplicado: null,
         horario: null,
         notaEntrega: null,
+        pedidoDesde: new Date(),
       },
     });
     const prospecto = await this.prisma.leadProspecto.findFirst({
@@ -750,6 +772,39 @@ export class LeadsPedidoService {
       `Lead: conv ${conversacionId} abre un pedido nuevo (el anterior ya se cerró).`,
     );
     return borrador;
+  }
+
+  /** ¿Hay algún voucher leído (con monto) para el pedido en curso? */
+  async hayVoucherLeido(conversacionId: number): Promise<boolean> {
+    const { monto } = await this.pagadoPorElCliente(
+      conversacionId,
+      Number.MAX_SAFE_INTEGER,
+    );
+    return monto > 0;
+  }
+
+  /**
+   * El cliente pide OTRO pedido aparte del que ya tiene registrado y abierto.
+   * El registrado queda tal cual y se empieza uno nuevo sin su destino.
+   *
+   * QA 21-10: "mándale uno a mi mamá a Arequipa, aparte de mi pedido" cotizó
+   * sobre el pedido registrado y la NV01-00000002 pasó de S/ 77 (2 frascos a
+   * Surco) a S/ 46 (1 frasco a Arequipa). El borrador es uno por
+   * conversación, así que recotizar era editar la nota del primero.
+   */
+  async separarPedidoSiCorresponde(
+    empresaId: number,
+    conversacionId: number,
+    pedidoAparte: unknown,
+  ): Promise<boolean> {
+    if (pedidoAparte !== true) return false;
+    const b = await this.prisma.leadPedidoBorrador.findUnique({
+      where: { conversacionId },
+      select: { comprobanteId: true },
+    });
+    if (!b?.comprobanteId) return false;
+    await this.abrirPedidoNuevo(empresaId, conversacionId, { sinDestino: true });
+    return true;
   }
 
   async cotizar(
@@ -1558,8 +1613,19 @@ export class LeadsPedidoService {
     total: number,
   ): Promise<{ monto: number; medio: string }> {
     try {
+      // Solo los vouchers de ESTE pedido: los de un pedido anterior de la
+      // misma conversación ya pagaron ese pedido.
+      const borrador = await this.prisma.leadPedidoBorrador.findUnique({
+        where: { conversacionId },
+        select: { pedidoDesde: true },
+      });
       const pagos = await this.prisma.leadComprobantePago.findMany({
-        where: { conversacionId, rechazadoEn: null, montoLeido: { not: null } },
+        where: {
+          conversacionId,
+          rechazadoEn: null,
+          montoLeido: { not: null },
+          ...(borrador?.pedidoDesde ? { recibidoEn: { gte: borrador.pedidoDesde } } : {}),
+        },
         select: { montoLeido: true, medioLeido: true },
       });
       const suma = pagos.reduce((a, p) => a + Number(p.montoLeido ?? 0), 0);

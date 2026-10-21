@@ -37,7 +37,7 @@ import {
   venceEn,
 } from './pausa-bot';
 import { conDescargoLegal } from './prompt-asesor';
-import { afirmaCancelacion, sinConfirmacionFalsa } from './confirmacion-falsa';
+import { afirmaCancelacion, sinConfirmacionFalsa, sinPagoInventado } from './confirmacion-falsa';
 import { conRegistroDirecto, yaAceptoAntes } from './registro-directo';
 import {
   BLOQUE_DATOS_DEMO,
@@ -877,6 +877,15 @@ export class LeadsMessageProcessor extends WorkerHost {
       resultado.reply,
       resultado.llamadas,
       !!borradorTrasTurno?.comprobanteId,
+    );
+    // Nunca "verifiqué tu pago" sin un voucher leído.
+    resultado.reply = sinPagoInventado(
+      resultado.reply,
+      // Si no se puede saber, no se toca la respuesta: el guardia es para lo
+      // que se sabe falso, no para lo dudoso.
+      await Promise.resolve()
+        .then(() => this.pedido.hayVoucherLeido(conv.id))
+        .catch(() => true),
     );
     // Nunca "tu pedido quedó cancelado" con la nota viva: el motorizado
     // saldría igual. Si el modelo no canceló, se cancela acá; si no se puede
@@ -2080,6 +2089,11 @@ export class LeadsMessageProcessor extends WorkerHost {
         }
 
         case HERRAMIENTA_GUARDAR_DATOS: {
+          await this.pedido.separarPedidoSiCorresponde(
+            empresaId,
+            conversacionId,
+            argumentos.pedidoAparte,
+          );
           const res = await this.pedido.guardarDatos(
             empresaId,
             conversacionId,
@@ -2103,6 +2117,11 @@ export class LeadsMessageProcessor extends WorkerHost {
           const items = Array.isArray(argumentos.items)
             ? (argumentos.items as ItemPedido[])
             : [];
+          await this.pedido.separarPedidoSiCorresponde(
+            empresaId,
+            conversacionId,
+            argumentos.pedidoAparte,
+          );
           const res = await this.pedido.cotizar(
             empresaId,
             conversacionId,

@@ -1,4 +1,4 @@
-import { afirmaPedidoRegistrado, sinConfirmacionFalsa } from './confirmacion-falsa';
+import { afirmaPagoVerificado, afirmaPedidoRegistrado, sinConfirmacionFalsa, sinPagoInventado } from './confirmacion-falsa';
 import { HERRAMIENTA_REGISTRAR_PEDIDO } from './leads-herramientas';
 
 const fallo = (resultado: unknown) => [
@@ -33,5 +33,26 @@ describe('el asesor no confirma un pedido que no se registró', () => {
     const r = sinConfirmacionFalsa('Tu pedido quedó registrado.', fallo({ error: 'x' }), false);
     expect(r).not.toMatch(/registrado\./);
     expect(r).toContain('Todavía no');
+  });
+});
+
+describe('sinPagoInventado', () => {
+  it('no da por verificado un pago que nadie leyó', () => {
+    const r = sinPagoInventado('¡Muchas gracias por la constancia, Diego! He verificado tu pago de S/ 77.00.', false);
+    expect(r).toContain('Un asesor del equipo la revisa');
+  });
+  it('lo deja si hay voucher leído', () => {
+    const t = 'Recibí tu Yape de S/ 77.00, operación 123.';
+    expect(sinPagoInventado(t, true)).toBe(t);
+  });
+  it('no toca respuestas que no hablan del pago', () => {
+    const t = 'Para tu mamá en Arequipa podemos enviarle 1 frasco.';
+    expect(sinPagoInventado(t, false)).toBe(t);
+  });
+  it('detecta las formas habituales', () => {
+    for (const t of ['Pago verificado ✅', 'Recibimos tu yape', 'Hemos confirmado tu adelanto', 'verifiqué el pago']) {
+      expect(afirmaPagoVerificado(t)).toBe(true);
+    }
+    expect(afirmaPagoVerificado('Puedes yapear al 955 947 892 y nos envías la constancia')).toBe(false);
   });
 });
