@@ -5,21 +5,14 @@
  * reproducir, no como un archivo adjunto) si llega en OGG con Opus. El
  * navegador graba en WEBM y el iPhone en M4A, así que todo pasa por ffmpeg.
  *
- * Railway no trae ffmpeg: se usa el binario de `ffmpeg-static`, y si no está
- * (desarrollo local con node_modules compartidos), el `ffmpeg` del sistema.
+ * El ffmpeg es el del sistema: la imagen de Docker lo instala con apt (como
+ * chromium para Puppeteer). FFMPEG_PATH permite apuntar a otro.
  */
 import { spawn } from 'child_process';
 
 /** Ruta del ffmpeg a usar. */
 export function rutaFfmpeg(): string {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const ruta = require('ffmpeg-static') as string | null;
-    if (ruta) return ruta;
-  } catch {
-    // sin ffmpeg-static instalado
-  }
-  return 'ffmpeg';
+  return process.env.FFMPEG_PATH || 'ffmpeg';
 }
 
 /** Argumentos: OGG/Opus mono a 48 kHz y 32 kbps, lo que graba WhatsApp. */

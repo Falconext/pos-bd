@@ -5,6 +5,7 @@ WORKDIR /app
 # Instalar dependencias de Chromium para Puppeteer (siguiendo guía oficial)
 RUN apt-get update && apt-get install -y \
     chromium \
+    ffmpeg \
     fonts-liberation \
     fonts-noto-color-emoji \
     libasound2 \

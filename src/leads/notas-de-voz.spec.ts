@@ -168,8 +168,7 @@ describe('aOggOpus', () => {
 
 // Conversión de verdad, solo donde hay un ffmpeg con libopus a mano.
 const ffmpegReal = (() => {
-  for (const ruta of [safeFfmpegStatic(), 'ffmpeg']) {
-    if (!ruta) continue;
+  for (const ruta of ['ffmpeg']) {
     try {
       const encoders = execFileSync(ruta, ['-hide_banner', '-encoders'], { stdio: 'pipe' }).toString();
       if (encoders.includes('libopus')) return ruta;
@@ -179,15 +178,6 @@ const ffmpegReal = (() => {
   }
   return null;
 })();
-
-function safeFfmpegStatic(): string | null {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    return require('ffmpeg-static') as string;
-  } catch {
-    return null;
-  }
-}
 
 (ffmpegReal ? it : it.skip)('convierte un WAV real a OGG/Opus', async () => {
   // 0,5 s de silencio en WAV PCM 16 bits mono 8 kHz.
