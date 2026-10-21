@@ -10,6 +10,10 @@ import {
 } from '@google/generative-ai';
 import { GoogleAICacheManager } from '@google/generative-ai/server';
 import * as crypto from 'crypto';
+import {
+  LecturaDeArchivo,
+  parsearLectura,
+} from '../leads/archivo-del-cliente';
 
 /**
  * Modelos, con versión FIJA a propósito.
@@ -994,6 +998,45 @@ Reglas:
       // y lo valida una persona, que es como funcionaba antes.
       this.logger.warn(
         `No se pudo leer el comprobante de pago: ${(e as Error).message}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Lee la foto o el PDF que manda un cliente al agente de ventas: la captura
+   * de una publicación, la foto de un frasco, una receta, una lista.
+   *
+   * Solo describe. Precio y stock los pone el catálogo: lo que diga una
+   * publicación vieja no es lo que cuesta hoy.
+   */
+  async leerArchivoDelCliente(
+    base64: string,
+    mimeType: string,
+  ): Promise<LecturaDeArchivo | null> {
+    if (!this.model) return null;
+    const prompt = `Un cliente le mandó este archivo a una tienda por WhatsApp. Dime qué hay, para que el vendedor lo busque en su catálogo.
+
+Devuelve SOLO un JSON válido, sin markdown, con EXACTAMENTE esta forma:
+{ "tipo": "producto" | "receta" | "documento" | "otro", "productos": [""], "resumen": "" }
+
+Reglas:
+- "producto": foto o captura de uno o más productos (un frasco, una caja, una publicación de Facebook o Instagram, un catálogo).
+- "receta": receta médica o indicación escrita de qué tomar o comprar.
+- "documento": cualquier otro documento con texto (una lista de pedido, una cotización, una ficha).
+- "otro": todo lo demás (una foto personal, un paisaje, un sticker).
+- "productos": cada producto como se lee en el empaque o la publicación, con marca y presentación si aparecen (ej. "Moringa 500 mg Aurelys, 100 cápsulas"). Si es una lista, cada ítem con su cantidad. Si no se lee el nombre, describe lo que se ve (ej. "frasco ámbar de cápsulas sin etiqueta legible"). Máximo 10.
+- "resumen": una o dos frases en español de lo que es o de lo que pide. No copies precios de la imagen, ni DNI, direcciones, teléfonos u otros datos personales.
+- NO inventes nombres ni marcas que no se vean.`;
+    try {
+      const result = await this.model.generateContent([
+        prompt,
+        { inlineData: { mimeType, data: base64 } },
+      ]);
+      return parsearLectura(result.response.text());
+    } catch (e) {
+      this.logger.warn(
+        `No se pudo leer el archivo del cliente: ${(e as Error).message}`,
       );
       return null;
     }

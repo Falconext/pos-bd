@@ -50,6 +50,13 @@ import { conCotizacionExacta } from './cotizacion-exacta';
 import { conBloqueDeDatosExacto } from './datos-en-bloque';
 import { conIndicacionMedica, esAltoRiesgo } from './alto-riesgo';
 import { avisoVoucher, extraerTitular } from './voucher-verificacion';
+import {
+  ArchivoDelCliente,
+  MAX_ARCHIVO_IA_BYTES,
+  contenidoConLectura,
+  esArchivoLegible,
+  textoDelCliente,
+} from './archivo-del-cliente';
 import { conNombreBienEscrito } from './nombre-negocio';
 import { fechaMencionada } from './fecha-mencionada';
 
@@ -130,6 +137,7 @@ interface MensajeEntrante {
   text: string;
   esAudio: boolean;
   esImagen?: boolean;
+  esDocumento?: boolean;
   mediaId?: string;
   nombre?: string;
   timestamp?: string;
@@ -497,8 +505,27 @@ export class LeadsMessageProcessor extends WorkerHost {
     // pago: el candado del anexo. Si todavía no hay nada que pagar, la imagen
     // no se toca — puede ser una receta o la foto de un frasco, y archivarla
     // sin motivo es guardar datos de alguien por nada.
-    if (d.esImagen) {
-      await this.registrarVoucherSiCorresponde(empresa.id, conv.id, d, userMsgId);
+    //
+    // Si no es un voucher, la imagen o el PDF se lee igual: el cliente manda
+    // la captura de una publicación o la foto de un frasco esperando que le
+    // digan el precio, y un PDF puede ser una receta o una lista de pedido.
+    // Antes el modelo solo veía "[el cliente envió una imagen]" y tenía que
+    // pedirle que escribiera el nombre.
+    if (d.esImagen || d.esDocumento) {
+      const archivo = await this.bajarArchivo(empresa.id, d);
+      // Un PDF puede ser la constancia de una transferencia; un .docx no.
+      const puedeSerVoucher =
+        d.esImagen || (!!archivo && esArchivoLegible(archivo.mimeType));
+      const esVoucher = puedeSerVoucher && await this.registrarVoucherSiCorresponde(
+        empresa.id,
+        conv.id,
+        d,
+        userMsgId,
+        archivo,
+      );
+      if (!esVoucher) {
+        await this.leerArchivoDelCliente(d, userMsgId, archivo);
+      }
     }
 
     this.logger.log(
@@ -1424,18 +1451,19 @@ export class LeadsMessageProcessor extends WorkerHost {
     conversacionId: number,
     d: MensajeEntrante,
     mensajeId?: number,
-  ) {
+    archivo?: ArchivoDelCliente | null,
+  ): Promise<boolean> {
     try {
       const borrador = await this.prisma.leadPedidoBorrador.findUnique({
         where: { conversacionId },
         select: { cotizacionId: true, comprobanteId: true },
       });
       // Sin cotización ni pedido no hay nada que pagar todavía.
-      if (!borrador?.cotizacionId && !borrador?.comprobanteId) return;
+      if (!borrador?.cotizacionId && !borrador?.comprobanteId) return false;
 
-      let buffer: Buffer | undefined;
-      let mimeType: string | undefined;
-      if (d.mediaId) {
+      let buffer: Buffer | undefined = archivo?.buffer;
+      let mimeType: string | undefined = archivo?.mimeType;
+      if (!buffer && archivo === undefined && d.mediaId) {
         try {
           const media = await this.whatsapp.descargarMedia(d.mediaId, empresaId);
           buffer = media.buffer;
@@ -1465,7 +1493,7 @@ export class LeadsMessageProcessor extends WorkerHost {
       await this.embudo.registrarComprobantePago(empresaId, conversacionId, {
         mediaId: d.mediaId,
         // El texto que acompaña a la imagen: "ya transferí", "a nombre de…".
-        nota: d.text?.replace('[el cliente envió una imagen]', '').trim(),
+        nota: textoDelCliente(d.text),
         buffer,
         mimeType,
         leido: leido?.esComprobante ? leido : null,
@@ -1495,9 +1523,7 @@ export class LeadsMessageProcessor extends WorkerHost {
               where: { id: mensajeId },
               data: {
                 contenido: `[el cliente envió un comprobante de pago ${partes.join(', ')}]${aviso ? ` ${aviso}` : ''}${
-                  d.text?.replace('[el cliente envió una imagen]', '').trim()
-                    ? ` ${d.text.replace('[el cliente envió una imagen]', '').trim()}`
-                    : ''
+                  textoDelCliente(d.text) ? ` ${textoDelCliente(d.text)}` : ''
                 }`,
               },
             })
@@ -1510,11 +1536,60 @@ export class LeadsMessageProcessor extends WorkerHost {
       this.logger.log(
         `Lead: comprobante de pago de ${d.from} registrado (conv ${conversacionId}).`,
       );
+      return !!leido?.esComprobante;
     } catch (e: any) {
       this.logger.warn(
         `Lead: no se pudo registrar el comprobante de pago: ${e?.message}`,
       );
+      return false;
     }
+  }
+
+  /**
+   * Baja una sola vez la imagen o el PDF que mandó el cliente: lo usan la
+   * lectura del voucher y la del contenido. null si no se pudo o si pesa
+   * demasiado para mandárselo a la IA.
+   */
+  private async bajarArchivo(
+    empresaId: number,
+    d: MensajeEntrante,
+  ): Promise<ArchivoDelCliente | null> {
+    if (!d.mediaId) return null;
+    try {
+      const media = await this.whatsapp.descargarMedia(d.mediaId, empresaId);
+      if (media.buffer.length > MAX_ARCHIVO_IA_BYTES) return null;
+      return media;
+    } catch (e: any) {
+      this.logger.warn(
+        `Lead: no se pudo bajar el archivo de ${d.from}: ${e?.message}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Le cuenta al modelo qué hay en la imagen o el PDF, escribiéndolo en el
+   * propio mensaje del cliente, igual que con el voucher. Best-effort: si la
+   * IA no lo lee, el mensaje queda como estaba y el agente le pide el nombre.
+   */
+  private async leerArchivoDelCliente(
+    d: MensajeEntrante,
+    mensajeId: number,
+    archivo: ArchivoDelCliente | null,
+  ) {
+    if (!archivo || !this.ia.disponible()) return;
+    if (!esArchivoLegible(archivo.mimeType)) return;
+    const lectura = await this.ia
+      .leerArchivoDelCliente(archivo.buffer, archivo.mimeType)
+      .catch(() => null);
+    const contenido = contenidoConLectura(d.text, lectura);
+    if (!contenido) return;
+    await this.prisma.leadMensaje
+      .update({ where: { id: mensajeId }, data: { contenido } })
+      .catch(() => undefined);
+    this.logger.log(
+      `Lead: ${lectura?.tipo} de ${d.from} leído (${lectura?.productos.length ?? 0} productos).`,
+    );
   }
 
   /**
