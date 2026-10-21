@@ -1,3 +1,4 @@
+import { componentesQueQuedan, normalizarKitQuitados } from './kit-quitados';
 import { resolverDespachoAgrupado, selectDespachoAgrupado } from '../envio-despacho/despacho-agrupado';
 import { num, round3 } from '../common/utils/stock';
 import { NOTA_SIN_CONVERTIR } from './convertidos';
@@ -533,6 +534,7 @@ export class ComprobanteService {
                 // boleta como ítem suelto y dejaba de contarse como pack.
                 productoId: true,
                 comboId: true,
+                kitQuitados: true,
                 producto: {
                   select: { id: true, descripcion: true, imagenUrl: true },
                 },
@@ -2622,6 +2624,9 @@ export class ComprobanteService {
           // Kit como una sola línea: se persiste el combo para descontar/reponer
           // el stock de sus componentes (ver expandirKitsParaStock).
           ...(item.comboId != null ? { comboId: Number(item.comboId) } : {}),
+          ...(item.comboId != null && normalizarKitQuitados(item.kitQuitados).length
+            ? { kitQuitados: normalizarKitQuitados(item.kitQuitados) }
+            : {}),
           unidad: unidadLibre || 'ZZ',
           descripcion: String(item.descripcion).trim(),
           // Detalle multilínea bajo el título (cotización de servicios). Solo PDF;
@@ -2904,9 +2909,12 @@ export class ComprobanteService {
    *
    * El resto de líneas pasan tal cual.
    */
-  private async expandirKitsParaStock<T extends { productoId?: number | null; comboId?: number | null; cantidad: number; unidadesPorPaquete?: number | null }>(
+  private async expandirKitsParaStock<T extends { productoId?: number | null; comboId?: number | null; kitQuitados?: unknown; cantidad: number; unidadesPorPaquete?: number | null }>(
     detalles: T[],
     empresaId: number,
+    // Editar una nota: un kit borrado del catálogo no aporta componentes (ni
+    // antes ni después) en vez de impedir guardar la edición.
+    opciones: { ignorarKitsInexistentes?: boolean } = {},
   ): Promise<Array<T | { productoId: number; cantidad: number; deKitId: number }>> {
     const kits = detalles.filter((d) => d.productoId == null && d.comboId != null);
     const tienePaquetes = detalles.some(
@@ -2925,12 +2933,17 @@ export class ComprobanteService {
       if (d.productoId == null && d.comboId != null) {
         const combo = porId.get(Number(d.comboId));
         if (!combo) {
+          if (opciones.ignorarKitsInexistentes) continue;
           throw new BadRequestException(`El kit #${d.comboId} no existe o no pertenece a la empresa`);
         }
         if (!combo.items.length) {
           throw new BadRequestException(`El kit "${combo.nombre}" no tiene productos configurados`);
         }
-        for (const it of combo.items) {
+        const quedan = componentesQueQuedan(combo.items, d.kitQuitados);
+        if (!quedan.length) {
+          throw new BadRequestException(`Al kit "${combo.nombre}" le quitaste todos sus productos`);
+        }
+        for (const it of quedan) {
           resultado.push({
             productoId: it.productoId,
             cantidad: Number(d.cantidad) * Number(it.cantidad || 1),
@@ -4173,7 +4186,11 @@ export class ComprobanteService {
         tipoDoc: true,
         serie: true,
         correlativo: true,
-        detalles: { select: { productoId: true, cantidad: true } },
+        // comboId/kitQuitados/unidadesPorPaquete: sin ellos los kits vendidos
+        // como una línea no devolvían el stock de sus componentes.
+        detalles: {
+          select: { productoId: true, cantidad: true, comboId: true, kitQuitados: true, unidadesPorPaquete: true },
+        },
       },
     });
     if (comp && comp.tipoDoc !== '07') {
@@ -6094,6 +6111,7 @@ export class ComprobanteService {
               data: detalleFinal.map((d: any) => ({
                 productoId: d.productoId,
                 comboId: d.comboId ?? null,
+                kitQuitados: d.kitQuitados ?? undefined,
                 unidad: d.unidad,
                 descripcion: d.descripcion,
                 // Sin esto, editar la cotización borraba el detalle multilínea.
@@ -6549,8 +6567,13 @@ export class ComprobanteService {
 
     // 1) Cantidades ANTERIORES por producto (para mover solo la diferencia en el
     // Kardex, sin registrar el par revertir+aplicar que ensucia el historial).
+    // Kits y paquetes en unidades reales, igual que se descontaron: así quitar un
+    // producto de un kit al editar devuelve ese producto al stock.
     const cantidadAnteriorPorProducto = new Map<number, number>();
-    for (const d of comp.detalles) {
+    const detallesAnterioresStock = await this.expandirKitsParaStock(comp.detalles as any[], empresaId, {
+      ignorarKitsInexistentes: true,
+    });
+    for (const d of detallesAnterioresStock) {
       if (d.productoId == null) continue;
       cantidadAnteriorPorProducto.set(
         d.productoId,
@@ -6646,7 +6669,10 @@ export class ComprobanteService {
     //    delta > 0 ⇒ hay que descontar más (SALIDA); delta < 0 ⇒ devolver (INGRESO);
     //    delta = 0 ⇒ no se genera movimiento. Así el Kardex solo refleja el cambio real.
     const cantidadNuevaPorProducto = new Map<number, number>();
-    for (const d of detalleFinal) {
+    const detallesNuevosStock = await this.expandirKitsParaStock(detalleFinal as any[], empresaId, {
+      ignorarKitsInexistentes: true,
+    });
+    for (const d of detallesNuevosStock) {
       if (d.productoId == null) continue;
       cantidadNuevaPorProducto.set(
         d.productoId,

@@ -43,6 +43,15 @@ describe('notas de venta → una orden de compra', () => {
     expect(porId).toEqual({ 1: 6, 2: 15 }); // 2×6 sueltas + 3 kits × 1
   });
 
+  it('lo que el cliente pidió quitar del kit no se le compra al proveedor', () => {
+    const { lineas } = consolidarVentas(
+      [{ id: 1, documento: 'NV01-1', detalles: [{ productoId: null, comboId: 7, cantidad: 2, kitQuitados: [2] }] }],
+      productos,
+      new Map([[7, [{ productoId: 1, cantidad: 2 }, { productoId: 2, cantidad: 1 }]]]),
+    );
+    expect(lineas.map((l) => [l.productoId, l.cantidadVendida])).toEqual([[1, 4]]);
+  });
+
   it('los servicios no se compran y los ítems libres van al final con costo 0', () => {
     const { lineas, omitidas } = consolidarVentas(
       [{

@@ -10,12 +10,16 @@
  * Sin Prisma, para poder probarlo entero.
  */
 
+import { componentesQueQuedan } from '../comprobante/kit-quitados';
+
 export interface LineaVendida {
     productoId: number | null;
     descripcion?: string | null;
     cantidad?: unknown;
     unidadesPorPaquete?: number | null;
     comboId?: number | null;
+    /** Productos que el cliente pidió quitar del kit: no se compran. */
+    kitQuitados?: unknown;
 }
 
 export interface VentaOrigen {
@@ -131,7 +135,7 @@ export function consolidarVentas(
         for (const d of venta.detalles ?? []) {
             const cantidad = numero(d.cantidad);
             if (cantidad <= 0) continue;
-            const componentes = d.comboId ? kits.get(Number(d.comboId)) : undefined;
+            const componentes = d.comboId ? componentesQueQuedan(kits.get(Number(d.comboId)) ?? [], d.kitQuitados) : undefined;
             if (componentes?.length) {
                 for (const c of componentes) {
                     sumarProducto(c.productoId, cantidad * numero(c.cantidad), documento, texto(d.descripcion));
