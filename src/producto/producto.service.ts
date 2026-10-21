@@ -16,6 +16,7 @@ import {
   escribirPrioridadVenta,
   leerDisponibilidad,
   leerPrioridadVenta,
+  valorDeColumna,
 } from './disponibilidad.util';
 import {
   BadRequestException,
@@ -5582,14 +5583,19 @@ export class ProductoService {
         // Columnas del catálogo de Hierba Sana: qué se le puede prometer al
         // cliente y cuánto empujar el producto. Si vienen vacías o ilegibles se
         // ignoran, y la disponibilidad se sigue deduciendo del stock.
+        // El encabezado se compara sin mayúsculas ni tildes: "Prioridad de
+        // venta" no calzaba con ninguna de las variantes escritas a mano y la
+        // columna se perdía entera.
         const disponibilidadImport = leerDisponibilidad(
-          row['DISPONIBILIDAD'] ?? row['Disponibilidad'] ?? row['disponibilidad'],
+          valorDeColumna(row, ['DISPONIBILIDAD']),
         );
         const prioridadImport = leerPrioridadVenta(
-          row['PRIORIDAD'] ??
-            row['PRIORIDAD DE VENTA'] ??
-            row['Prioridad'] ??
-            row['prioridad'],
+          valorDeColumna(row, [
+            'PRIORIDAD',
+            'PRIORIDAD DE VENTA',
+            'PRIORIDAD VENTA',
+            'RECOMENDACION',
+          ]),
         );
         // Fila sin CÓDIGO: es un producto nuevo que el empresario agregó al final
         // del Excel exportado (caso DEMENVER). Se le genera el siguiente PRxxx en

@@ -3,6 +3,7 @@ import { medioDePago } from './leads-embudo.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { disponibilidadEfectiva } from '../producto/disponibilidad.util';
 import { ComprobanteService } from '../comprobante/comprobante.service';
 import { EnvioDespachoService } from '../envio-despacho/envio-despacho.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
@@ -761,6 +762,7 @@ export class LeadsPedidoService {
     falta?: string;
     error?: string;
     pedirTodoJunto?: string;
+    bajoReserva?: string;
   }> {
     const config = await this.configDe(empresaId);
     // Lo primero, antes de consultar nada: sin zonas configuradas el costo de
@@ -805,7 +807,13 @@ export class LeadsPedidoService {
         id: { in: limpios.map((i) => i.productoId) },
         estado: 'ACTIVO' as never,
       },
-      select: { id: true, descripcion: true, precioUnitario: true },
+      select: {
+        id: true,
+        descripcion: true,
+        precioUnitario: true,
+        disponibilidad: true,
+        stock: true,
+      },
     });
     if (productos.length === 0) {
       return { error: 'Ninguno de esos productos es de este negocio.' };
@@ -923,8 +931,14 @@ export class LeadsPedidoService {
           )
         : {};
 
+    const reserva = this.avisoBajoReserva(productos);
     // El bloque para pedir los datos que faltan, listo para cuando acepte.
-    return { texto, ...nota, ...conBloqueDeDatos(this.faltantes(borrador)) };
+    return {
+      texto,
+      ...nota,
+      ...(reserva ? { bajoReserva: reserva } : {}),
+      ...conBloqueDeDatos(this.faltantes(borrador)),
+    };
   }
 
   /**
@@ -1158,7 +1172,13 @@ export class LeadsPedidoService {
 
     const productos = await this.prisma.producto.findMany({
       where: { empresaId, id: { in: items.map((i) => i.productoId) } },
-      select: { id: true, precioUnitario: true },
+      select: {
+        id: true,
+        descripcion: true,
+        precioUnitario: true,
+        disponibilidad: true,
+        stock: true,
+      },
     });
     // Un pedido cotizado con un id que no existe no se puede registrar:
     // crearInformal lanza "Productos no encontrados" y al cliente le llegaba
@@ -1170,6 +1190,11 @@ export class LeadsPedidoService {
           'Uno de los productos cotizados no está en el catálogo, así que el pedido NO se registró. Búscalo con buscar_productos, vuelve a cotizar con el id exacto y muéstrale al cliente la cotización nueva antes de registrar.',
       };
     }
+    const sinPagoDeReserva = await this.faltaPagoDeReserva(
+      conversacionId,
+      productos,
+    );
+    if (sinPagoDeReserva) return { error: sinPagoDeReserva };
     const calculo = calcularDescuento(
       items.map((i) => ({
         precioUnitario: Number(
@@ -1410,6 +1435,51 @@ export class LeadsPedidoService {
 
   /** El detalle que necesita quien va a despachar, en una sola lectura. */
   /**
+   * Los productos bajo reserva del pedido, para decírselo al cliente al
+   * cotizar. Bajo reserva es lo que el negocio consigue con su proveedor solo
+   * para ese cliente: si se lo pide y el cliente no compra, el producto se
+   * queda en el local. Por eso el negocio exige un pago antes (Hierba Sana,
+   * 20-10): la reserva o, en provincia, el adelanto.
+   */
+  private avisoBajoReserva(
+    productos: { descripcion: string; disponibilidad?: unknown; stock?: unknown }[],
+  ): string | null {
+    const enReserva = productos.filter(
+      (p) => disponibilidadEfectiva(p as never) === 'BAJO_PEDIDO',
+    );
+    if (!enReserva.length) return null;
+    return (
+      `${enReserva.map((p) => p.descripcion).join(', ')} ${enReserva.length > 1 ? 'van' : 'va'} bajo reserva: lo conseguimos para el cliente, sin fecha prometida. ` +
+      'Díselo junto con la cotización y explícale que para pedirlo tiene que pagar antes al menos la reserva (o el adelanto si es de provincia), según las reglas de pago del negocio. ' +
+      'El pedido no se registra hasta que llegue ese comprobante.'
+    );
+  }
+
+  /**
+   * Si el pedido lleva algo bajo reserva y el cliente todavía no pagó nada,
+   * la instrucción para el modelo; si no, `null`. No se exige un monto: el
+   * negocio pide "al menos algo", y la reserva o el adelanto los fija su
+   * contexto. Cualquier pago leído alcanza para registrar.
+   */
+  private async faltaPagoDeReserva(
+    conversacionId: number,
+    productos: { descripcion: string; disponibilidad?: unknown; stock?: unknown }[],
+  ): Promise<string | null> {
+    const aviso = this.avisoBajoReserva(productos);
+    if (!aviso) return null;
+    const { monto } = await this.pagadoPorElCliente(
+      conversacionId,
+      Number.MAX_SAFE_INTEGER,
+    );
+    if (monto > 0) return null;
+    return (
+      'El pedido NO se registró: lleva productos bajo reserva y el cliente todavía no pagó nada. ' +
+      aviso.replace(/ El pedido no se registra hasta que llegue ese comprobante\.$/, '') +
+      ' Pídele el pago y que mande el comprobante por aquí; cuando llegue, vuelve a registrar. No le digas que su pedido quedó registrado.'
+    );
+  }
+
+  /**
    * Cuánto pagó ya el cliente, según los comprobantes que mandó.
    *
    * Se suma lo que la IA leyó de cada captura. Se descartan los rechazados
@@ -1599,8 +1669,15 @@ export class LeadsPedidoService {
 
     const productos = await this.prisma.producto.findMany({
       where: { empresaId, id: { in: items.map((i) => i.productoId) } },
-      select: { id: true, descripcion: true },
+      select: { id: true, descripcion: true, disponibilidad: true, stock: true },
     });
+    // Antes de avisar a la tienda: un producto bajo reserva no se pide al
+    // proveedor para alguien que todavía no pagó nada.
+    const sinPagoDeReserva = await this.faltaPagoDeReserva(
+      conversacionId,
+      productos,
+    );
+    if (sinPagoDeReserva) return { error: sinPagoDeReserva };
     const lista = items
       .map((i) => {
         const p = productos.find((x) => x.id === i.productoId);
