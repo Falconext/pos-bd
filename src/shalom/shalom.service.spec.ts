@@ -304,6 +304,45 @@ describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
     expect(prisma.envioDespacho.update).not.toHaveBeenCalled();
   });
 
+  describe('declaración jurada con cuenta Shalom de empresa', () => {
+    // TIENDA MINERA SAC (21-10): su cuenta Shalom Pro es de una empresa y
+    // Shalom rechaza la guía si lleva declaración jurada.
+    function armar() {
+      const { svc, prisma, lat } = build();
+      lat.getAgencias.mockResolvedValue({ success: true, data: [agencia('7', 'Lima Centro'), agencia('582', 'Cusco Centro')], total: 2 });
+      prisma.empresa.findUnique.mockResolvedValue({ ...empresaCorporativa(), shalomClavesRetiro: '8080' });
+      prisma.envioDespacho.findFirst.mockResolvedValue({
+        id: 55, nroOrden: null, claveOrden: null, claveEnvio: '', agenciaDestino: 'Cusco Centro', shalomAgenciaDestinoId: '582',
+        celularDest: '960501397', nroPaquetes: 1, dniDestinatario: '41829994', nombreDestinatario: 'ALVARADO ARELLANO, DAVID JOHAV',
+        tipoMercaderia: 'Caja',
+        comprobante: { id: 9, serie: 'B0A1', correlativo: 9, cliente: null, detalles: [] },
+      });
+      prisma.envioDespacho.update.mockResolvedValue({ id: 55, nroOrden: '77', claveOrden: 'ABCD' });
+      return { svc, prisma, lat };
+    }
+
+    it('si Shalom la rechaza, registra la guía sin ella y con la misma clave', async () => {
+      const { svc, lat } = armar();
+      lat.createOrder
+        .mockResolvedValueOnce({ success: false, message: 'La declaración jurada solo es para persona natural.' })
+        .mockResolvedValueOnce({ success: true, data: { orderNumber: '77', orderCode: 'ABCD' } });
+      const r = await svc.crearGuiaDesdeDespacho(9, 1, { clave: '8080' });
+      expect(lat.createOrder).toHaveBeenCalledTimes(2);
+      expect(lat.createOrder.mock.calls[0][0].declaracion_jurada).toBe('Artículos de uso personal');
+      expect(lat.createOrder.mock.calls[1][0]).not.toHaveProperty('declaracion_jurada');
+      expect(lat.createOrder.mock.calls[1][0].clave).toBe(lat.createOrder.mock.calls[0][0].clave);
+      expect(r.nroOrden).toBe('77');
+    });
+
+    it('a una cuenta de persona natural se le sigue mandando', async () => {
+      const { svc, lat } = armar();
+      lat.createOrder.mockResolvedValue({ success: true, data: { orderNumber: '77', orderCode: 'ABCD' } });
+      await svc.crearGuiaDesdeDespacho(9, 1, { clave: '8080' });
+      expect(lat.createOrder).toHaveBeenCalledTimes(1);
+      expect(lat.createOrder.mock.calls[0][0].declaracion_jurada).toBe('Artículos de uso personal');
+    });
+  });
+
   describe('claves de retiro', () => {
     const guia = (clave: string, diasAtras: number) => {
       const d = new Date();
