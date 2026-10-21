@@ -1,5 +1,5 @@
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
+import { Logger, Optional } from '@nestjs/common';
 import { Job, Queue, UnrecoverableError } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
@@ -13,11 +13,13 @@ import {
   LEADS_MESSAGES_QUEUE,
 } from './leads.constants';
 import { DisponibilidadProducto, Prisma } from '@prisma/client';
+import { LeadsPagoLinkService } from './leads-pago-link.service';
 import { EjecutorHerramienta } from '../gemini/gemini.service';
 import {
   HERRAMIENTA_AVISAR_VISITA,
   HERRAMIENTA_CANCELAR_PEDIDO,
   HERRAMIENTA_DAR_DEMO,
+  HERRAMIENTA_LINK_PAGO,
   HERRAMIENTA_BUSCAR_PRODUCTOS,
   HERRAMIENTA_COTIZAR,
   HERRAMIENTA_DERIVAR,
@@ -171,6 +173,9 @@ export class LeadsMessageProcessor extends WorkerHost {
     private readonly consultas: LeadsConsultasService,
     private readonly disparadores: LeadsDisparadoresService,
     @InjectQueue(LEADS_MESSAGES_QUEUE) private readonly queue: Queue,
+    // Al final y opcional: los specs arman el procesador con los argumentos
+    // en orden, y sin esto el link de pago simplemente no está.
+    @Optional() private readonly pagoLink?: LeadsPagoLinkService,
   ) {
     super();
   }
@@ -2128,8 +2133,26 @@ export class LeadsMessageProcessor extends WorkerHost {
                 conversacionId,
               })
               .catch(() => undefined);
+            if (await this.pagoLink?.activo(empresaId).catch(() => false)) {
+              return {
+                ...res,
+                pagoConLink: `Este negocio cobra con link de Mercado Pago. Cuando el cliente acepte, ofrécele pagar con el link (${HERRAMIENTA_LINK_PAGO}), con tarjeta o su cuenta de Mercado Pago, además de los medios de pago del contexto.`,
+              };
+            }
           }
           return res;
+        }
+
+        case HERRAMIENTA_LINK_PAGO: {
+          if (!this.pagoLink) {
+            return { noDisponible: 'Pídele el pago con los medios de pago del contexto.' };
+          }
+          const monto = Number(argumentos.monto);
+          return this.pagoLink.generarLink(
+            empresaId,
+            conversacionId,
+            Number.isFinite(monto) && monto > 0 ? monto : undefined,
+          );
         }
 
         case HERRAMIENTA_DERIVAR: {

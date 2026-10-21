@@ -408,10 +408,13 @@ export class LeadsService {
         iaVentasCotizacion: true,
         iaVentasBrochureUrl: true,
         iaVentasConfigJson: true,
+        mpConectado: true,
       },
     });
-    const demos = (empresa?.iaVentasConfigJson as { demos?: ConfigDemos } | null)
-      ?.demos;
+    const json = empresa?.iaVentasConfigJson as
+      | { demos?: ConfigDemos; cobroConLink?: boolean }
+      | null;
+    const demos = json?.demos;
     return {
       iaVentasActiva: empresa?.iaVentasActiva ?? false,
       iaVentasContexto: empresa?.iaVentasContexto ?? '',
@@ -420,6 +423,9 @@ export class LeadsService {
       iaVentasBrochureUrl: empresa?.iaVentasBrochureUrl ?? '',
       // El panel muestra la pestaña "Demos" solo a quien las entrega.
       tieneDemos: Boolean(demos?.cuentas?.length),
+      // El link de pago solo cobra con el Mercado Pago del negocio conectado.
+      cobroConLink: json?.cobroConLink === true,
+      mpConectado: empresa?.mpConectado ?? false,
     };
   }
 
@@ -503,6 +509,8 @@ export class LeadsService {
       videoBienvenidaUrl?: string;
       /** Demos por rubro que entrega la IA. null = sin demos. */
       demos?: ConfigDemos | null;
+      /** Ofrecer el link de Mercado Pago para pagar lo cotizado. */
+      cobroConLink?: boolean;
     },
   ) {
     // El nombre del asesor vive en iaVentasConfigJson junto a zonas, descuentos
@@ -511,7 +519,8 @@ export class LeadsService {
     if (
       data.asesor !== undefined ||
       data.videoBienvenidaUrl !== undefined ||
-      data.demos !== undefined
+      data.demos !== undefined ||
+      data.cobroConLink !== undefined
     ) {
       const actual = await this.prisma.empresa.findUnique({
         where: { id: empresaId },
@@ -531,6 +540,10 @@ export class LeadsService {
       if (data.demos !== undefined) {
         if (data.demos === null) delete json.demos;
         else json.demos = demosValidas(data.demos);
+      }
+      if (data.cobroConLink !== undefined) {
+        if (data.cobroConLink === true) json.cobroConLink = true;
+        else delete json.cobroConLink;
       }
       await this.prisma.empresa.update({
         where: { id: empresaId },
@@ -564,7 +577,11 @@ export class LeadsService {
         iaVentasBrochureUrl: true,
       },
     });
+    // La configuración completa, no solo lo tocado: el panel reemplaza la
+    // suya con esto, y sin `tieneDemos` la pestaña Demos desaparecía al
+    // guardar hasta recargar.
     return {
+      ...(await this.obtenerConfig(empresaId)),
       iaVentasActiva: empresa.iaVentasActiva,
       iaVentasContexto: empresa.iaVentasContexto ?? '',
       iaVentasSeguimiento: empresa.iaVentasSeguimiento,

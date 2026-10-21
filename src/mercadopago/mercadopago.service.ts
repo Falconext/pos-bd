@@ -24,9 +24,26 @@ interface MpTokenResponse {
   expires_in: number;
 }
 
+/**
+ * Quien atiende los pagos de un tipo de cobro que no es un pedido de tienda.
+ * Recibe el pago tal como lo devuelve MP (`/v1/payments/:id`).
+ */
+export type ReceptorDePago = (pago: any) => Promise<void>;
+
 @Injectable()
 export class MercadoPagoService {
   private readonly logger = new Logger(MercadoPagoService.name);
+
+  /**
+   * Cobros que no son de la tienda, por prefijo de `external_reference`
+   * ("lead-" = link de pago del chat de IA de Ventas). Se registran desde
+   * afuera para que este módulo no tenga que conocer a los que cobran con él.
+   */
+  private readonly receptores = new Map<string, ReceptorDePago>();
+
+  registrarReceptor(prefijo: string, receptor: ReceptorDePago) {
+    this.receptores.set(prefijo, receptor);
+  }
 
   constructor(
     private readonly prisma: PrismaService,
@@ -115,6 +132,16 @@ export class MercadoPagoService {
   habilitadaParaEmpresa(empresaId: number): boolean {
     const lista = this.empresasHabilitadas;
     return lista.size === 0 || lista.has(Number(empresaId));
+  }
+
+  /** ¿La empresa puede cobrar con su Mercado Pago ahora mismo? */
+  async estaConectada(empresaId: number): Promise<boolean> {
+    if (!this.configurado || !this.habilitadaParaEmpresa(empresaId)) return false;
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { mpConectado: true },
+    });
+    return Boolean(empresa?.mpConectado);
   }
 
   // ── OAuth: conectar / callback / desconectar ───────────────────────────────
@@ -289,6 +316,43 @@ export class MercadoPagoService {
     slug: string;
     clienteEmail?: string | null;
   }): Promise<{ preferenceId: string; initPoint: string }> {
+    const successUrl = `${this.frontendUrl}/tienda/${params.slug}/seguimiento?codigo=${params.codigoSeguimiento}`;
+    const r = await this.crearCobro({
+      empresaId: params.empresaId,
+      referencia: params.codigoSeguimiento,
+      titulo: params.titulo,
+      total: params.total,
+      clienteEmail: params.clienteEmail,
+      metadata: { pedidoId: params.pedidoId, empresaId: params.empresaId },
+      backUrls: {
+        success: successUrl,
+        pending: successUrl,
+        failure: `${this.frontendUrl}/tienda/${params.slug}/checkout`,
+      },
+    });
+    await this.prisma.pedidoTienda.update({
+      where: { id: params.pedidoId },
+      data: { mpPreferenceId: r.preferenceId },
+    });
+    return r;
+  }
+
+  /**
+   * El cobro en sí: una preferencia de Checkout Pro a nombre de la empresa,
+   * con la comisión de la plataforma. Lo usan la tienda y el link de pago
+   * del chat; cada uno ubica su pago después por `referencia`
+   * (external_reference).
+   */
+  async crearCobro(params: {
+    empresaId: number;
+    referencia: string;
+    titulo: string;
+    total: number;
+    clienteEmail?: string | null;
+    metadata?: Record<string, unknown>;
+    /** Sin back_urls MP muestra su propia pantalla de pago aprobado. */
+    backUrls?: { success: string; pending: string; failure: string };
+  }): Promise<{ preferenceId: string; initPoint: string }> {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: params.empresaId },
       select: {
@@ -316,34 +380,28 @@ export class MercadoPagoService {
     }
     const marketplaceFee = this.calcularMarketplaceFee(total);
 
-    const successUrl = `${this.frontendUrl}/tienda/${params.slug}/seguimiento?codigo=${params.codigoSeguimiento}`;
     const notificationUrl = `${(process.env.BACKEND_URL || 'http://localhost:4001').replace(/\/$/, '')}/api/mercadopago/webhook`;
 
     const body: Record<string, any> = {
       items: [
         {
-          id: params.codigoSeguimiento,
+          id: params.referencia,
           title: params.titulo,
           quantity: 1,
           currency_id: 'PEN',
           unit_price: total,
         },
       ],
-      external_reference: params.codigoSeguimiento,
-      back_urls: {
-        success: successUrl,
-        pending: successUrl,
-        failure: `${this.frontendUrl}/tienda/${params.slug}/checkout`,
-      },
+      external_reference: params.referencia,
       notification_url: notificationUrl,
-      metadata: {
-        pedidoId: params.pedidoId,
-        empresaId: params.empresaId,
-      },
+      metadata: params.metadata ?? { empresaId: params.empresaId },
     };
-    // MP rechaza auto_return si la back_url no es pública HTTPS (p. ej. localhost en dev).
-    if (/^https:\/\//i.test(successUrl)) {
-      body.auto_return = 'approved';
+    if (params.backUrls) {
+      body.back_urls = params.backUrls;
+      // MP rechaza auto_return si la back_url no es pública HTTPS (p. ej. localhost en dev).
+      if (/^https:\/\//i.test(params.backUrls.success)) {
+        body.auto_return = 'approved';
+      }
     }
     if (params.clienteEmail) {
       body.payer = { email: params.clienteEmail };
@@ -360,10 +418,6 @@ export class MercadoPagoService {
       if (!initPoint) {
         throw new Error('MP no devolvió init_point');
       }
-      await this.prisma.pedidoTienda.update({
-        where: { id: params.pedidoId },
-        data: { mpPreferenceId: String(data.id) },
-      });
       return { preferenceId: String(data.id), initPoint };
     } catch (err: any) {
       this.logger.error(
@@ -541,6 +595,12 @@ export class MercadoPagoService {
   ): Promise<{ estado: string } | null> {
     const codigo = pago?.external_reference;
     if (!codigo) return null;
+    for (const [prefijo, receptor] of this.receptores) {
+      if (String(codigo).startsWith(prefijo)) {
+        await receptor(pago);
+        return null;
+      }
+    }
     const pedido = await this.prisma.pedidoTienda.findUnique({
       where: { codigoSeguimiento: codigo },
       select: { id: true, estado: true, total: true, mpPaymentId: true },
