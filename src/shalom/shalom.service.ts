@@ -1059,6 +1059,12 @@ export class ShalomService {
       dto.clave ?? (envio.nroOrden ? null : envio.claveEnvio),
     );
 
+    // La declaración jurada solo la acepta Shalom cuando la cuenta Shalom Pro
+    // que envía es de una persona natural; a una empresa (TIENDA MINERA SAC,
+    // 21-10) le rechaza la guía con "La declaración jurada solo es para
+    // persona natural". En su API es opcional, así que si la rechaza se
+    // registra sin ella.
+    let declarar = true;
     const registrar = (claveRetiro: string) =>
       this.lat.createOrder({
         instanceId: empresa.shalomInstanceId!,
@@ -1072,12 +1078,25 @@ export class ShalomService {
         content: tamano.content,
         clave: claveRetiro,
         cantidad: Number(envio.nroPaquetes) > 0 ? Number(envio.nroPaquetes) : 1,
-        declaracion_jurada: declararContenido(envio.tipoMercaderia, envio.contenidoPaquete),
+        ...(declarar
+          ? { declaracion_jurada: declararContenido(envio.tipoMercaderia, envio.contenidoPaquete) }
+          : {}),
         ...(Number(envio.pesoKg) > 0 ? { peso: String(Number(envio.pesoKg)) } : {}),
       });
     let claveUsada = clave;
     let claveReemplazada: { solicitada: string; usada: string; motivo: string } | null = null;
     let respuesta = await registrar(claveUsada);
+    if (
+      respuesta?.success === false &&
+      /declaraci[oó]n jurada/i.test(String(respuesta?.message ?? '')) &&
+      /persona natural/i.test(String(respuesta?.message ?? ''))
+    ) {
+      this.logger.warn(
+        `Shalom no acepta declaración jurada para la cuenta de la empresa ${empresa.id} (comprobante ${comprobanteId}); se registra sin ella.`,
+      );
+      declarar = false;
+      respuesta = await registrar(claveUsada);
+    }
     // Red de seguridad: la clave del día / configurada se repite entre guías
     // (así trabaja el negocio en el panel de Shalom). Si aun así Shalom la
     // rechazara por la clave, se reintenta UNA vez con una aleatoria en vez de
