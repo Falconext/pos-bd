@@ -3585,6 +3585,7 @@ export class ComprobanteService {
       paymentDetails,
       splitPayments,
       fechaVencimientoCredito,
+      adelanto,
     } = input;
 
     // Régimen RUS: no puede emitir Facturas (solo Boletas). Guard de defensa en profundidad
@@ -3912,6 +3913,31 @@ export class ComprobanteService {
     estadoPagoInicial = inicial.estado;
     saldoInicial = inicial.saldo;
 
+    // Pago inicial de una boleta o factura al crédito: el cliente paga una
+    // parte ahora y el resto queda en cuotas. El POS lo ofrecía ("Pago
+    // inicial (opcional)") y armaba la cuota por lo que faltaba, pero aquí no
+    // se restaba: la emisión moría con "La suma de cuotas (S/ 125.00) debe
+    // ser igual al saldo a crédito (S/ 225.00)" (demo ropa, 21-10) y no había
+    // forma de emitirla salvo financiando también lo ya pagado.
+    const pagoInicialCredito = esPagoCredito
+      ? this.round2(Math.max(0, Number(adelanto) || 0))
+      : 0;
+    if (pagoInicialCredito > 0) {
+      if (pagoInicialCredito >= saldoInicial - 0.009) {
+        throw new BadRequestException(
+          'El pago inicial cubre todo el saldo: emite la venta al contado.',
+        );
+      }
+      saldoInicial = this.round2(saldoInicial - pagoInicialCredito);
+      estadoPagoInicial = 'PAGO_PARCIAL';
+      await this.validarDetallePago(
+        paymentDetails,
+        medioPago,
+        pagoInicialCredito,
+        empresaId,
+      );
+    }
+
     if (esPagoContado) {
       await this.validarDetallePago(
         paymentDetails,
@@ -4084,6 +4110,21 @@ export class ComprobanteService {
         paymentDetails,
         splitPayments,
         montoPagado: montoPagoEmision,
+        documento: `${comprobante.serie}-${comprobante.correlativo}`,
+        fecha,
+      });
+    }
+    // El pago inicial del crédito entra a caja con su medio real; el resto
+    // queda como saldo de las cuotas.
+    if (pagoInicialCredito > 0 && (!importado || afectarCajaImport)) {
+      await this.registrarPagosDeEmision({
+        comprobanteId: comprobante.id,
+        empresaId,
+        usuarioId,
+        medioPago,
+        paymentDetails,
+        splitPayments,
+        montoPagado: pagoInicialCredito,
         documento: `${comprobante.serie}-${comprobante.correlativo}`,
         fecha,
       });
