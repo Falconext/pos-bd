@@ -34,8 +34,9 @@ describe('los 7 disparadores del anexo', () => {
   it('están los 6 automáticos del anexo, el recordatorio acordado y la exclusión operativa, que es una regla', () => {
     // 33.7 no es un disparador: es la prohibición de disparar. Vive como
     // condición dentro de los que tocan productos. El 7mo es el recordatorio
-    // en la fecha que dijo el cliente (Hierba Sana, 19-10).
-    expect(Object.keys(CATALOGO_DISPAROS)).toHaveLength(7);
+    // en la fecha que dijo el cliente (Hierba Sana, 19-10); el 8vo, el
+    // seguimiento de la demo de Krezka (20-10).
+    expect(Object.keys(CATALOGO_DISPAROS)).toHaveLength(8);
     expect(
       CATALOGO_DISPAROS[TipoDisparo.VUELTA_DISPONIBILIDAD].exigeProductoDisponible,
     ).toBe(true);

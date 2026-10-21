@@ -565,6 +565,7 @@ model Empresa {
   leadDocumentos          LeadDocumento[]
   leadConsultas           LeadConsulta[]
   leadDisparos            LeadDisparo[]
+  leadDemos               LeadDemo[]
   soporteConversacion     SoporteConversacion?
   reglasComision          ReglaComision[]
   cobros                  CobroEmpresa[]
@@ -4499,6 +4500,33 @@ enum EstadoLeadConversacion {
 /// La clave única (empresa + tipo + teléfono + referencia) es lo que impide
 /// mandar dos veces el mismo aviso: "la recompra del comprobante 829" es un
 /// solo disparo, por más veces que corra el cron.
+/// Prospecto que pidió una demo por WhatsApp (Krezka). Es el banco que usan
+/// los vendedores para llamar después a quien no siguió conversando: los
+/// datos viven acá y no en el chat, donde nadie los encuentra.
+model LeadDemo {
+  id              Int      @id @default(autoincrement())
+  empresaId       Int
+  empresa         Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  conversacionId  Int?
+  telefono        String
+  nombre          String
+  celular         String?
+  correo          String?
+  ruc             String?
+  razonSocial     String?
+  nombreComercial String?
+  /// A qué se dedica, en sus palabras.
+  rubro           String?
+  /// La demo que recibió ("Ropa y calzado") y si fue la más parecida.
+  demo            String
+  aproximada      Boolean  @default(false)
+  creadoEn        DateTime @default(now())
+  actualizadoEn   DateTime @updatedAt
+
+  @@unique([empresaId, telefono])
+  @@index([empresaId, creadoEn])
+}
+
 model LeadDisparo {
   id             Int               @id @default(autoincrement())
   empresaId      Int
@@ -4538,6 +4566,7 @@ enum TipoDisparoLead {
   RECOMPRA
   REACTIVACION
   RECORDATORIO_ACORDADO
+  SEGUIMIENTO_DEMO
 }
 
 enum EstadoDisparoLead {

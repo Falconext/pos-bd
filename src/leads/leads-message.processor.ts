@@ -2449,7 +2449,47 @@ export class LeadsMessageProcessor extends WorkerHost {
           ll?.nombre === HERRAMIENTA_DAR_DEMO && ll?.resultado?.acceso,
       ),
     );
+    // El banco de prospectos: se guarda siempre, con lo último que dijo.
+    const rucFinal = 'ruc' in ruc ? ruc.ruc : null;
+    const registro = {
+      conversacionId,
+      nombre: datos.nombre!,
+      celular: datos.celular || null,
+      correo: datos.correo || null,
+      ruc: rucFinal,
+      razonSocial: razonSocial ?? null,
+      nombreComercial: datos.nombreComercial || null,
+      rubro: datos.rubro || null,
+      demo: cuenta.rubro,
+      aproximada,
+    };
+    const demo = await this.prisma.leadDemo
+      .upsert({
+        where: { empresaId_telefono: { empresaId, telefono } },
+        create: { empresaId, telefono, ...registro },
+        update: registro,
+        select: { id: true },
+      })
+      .catch((e) => {
+        this.logger.warn(
+          `No se pudo guardar la demo de la conv ${conversacionId}: ${e?.message}`,
+        );
+        return null;
+      });
+
     if (!yaAvisado) {
+      // A las 3 horas, "¿qué tal te pareció?". Si contesta, la IA sigue.
+      if (demo) {
+        await this.disparadores
+          .programar({
+            empresaId,
+            tipo: TipoDisparo.SEGUIMIENTO_DEMO,
+            telefono,
+            referencia: `demo:${demo.id}`,
+            conversacionId,
+          })
+          .catch(() => undefined);
+      }
       await this.prisma.leadConversacion
         .update({
           where: { id: conversacionId },
@@ -2495,7 +2535,7 @@ export class LeadsMessageProcessor extends WorkerHost {
       acceso,
       ...(razonSocial ? { razonSocial } : {}),
       instruccion:
-        'Mándale el enlace, el usuario y la clave tal cual, dile que es una demo de su rubro para que explore el sistema, y ofrécele los dos horarios de la demo en vivo.',
+        'Mándale el enlace, el usuario y la clave tal cual, dile en una línea que es una demo de un negocio de su rubro y que tiene 3 horas para revisarla, y que luego le escribes para saber qué le pareció. En este mensaje NO le ofrezcas la demo en vivo ni horarios, y no le hagas preguntas.',
     };
   }
 

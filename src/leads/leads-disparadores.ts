@@ -34,6 +34,8 @@ export enum TipoDisparo {
   REACTIVACION = 'REACTIVACION',
   /** El cliente dijo cuándo retomaba ("en una semana", "a fin de mes"). */
   RECORDATORIO_ACORDADO = 'RECORDATORIO_ACORDADO',
+  /** Krezka: 3 h después de entregar la demo, "¿qué tal te pareció?". */
+  SEGUIMIENTO_DEMO = 'SEGUIMIENTO_DEMO',
 }
 
 export interface DefinicionDisparo {
@@ -118,6 +120,17 @@ export const CATALOGO_DISPAROS: Record<TipoDisparo, DefinicionDisparo> = {
     categoria: 'UTILITY',
     exigeProductoDisponible: false,
   },
+  [TipoDisparo.SEGUIMIENTO_DEMO]: {
+    tipo: TipoDisparo.SEGUIMIENTO_DEMO,
+    etiqueta: 'Seguimiento de la demo',
+    // Las 3 horas que se le dan para revisarla.
+    demoraHoras: 3,
+    // Sin plantilla en Meta: sale dentro de la ventana de 24 h, que el
+    // prospecto abrió al mandar sus datos.
+    plantilla: 'seguimiento_demo',
+    categoria: 'UTILITY',
+    exigeProductoDisponible: false,
+  },
 };
 
 export interface ConfigDisparadores {
@@ -145,6 +158,9 @@ export const CONFIG_DISPARADORES_DEFECTO: ConfigDisparadores = {
     TipoDisparo.RECOMPRA,
     TipoDisparo.VUELTA_DISPONIBILIDAD,
     TipoDisparo.POST_ENTREGA,
+    // Solo lo programa la entrega de una demo: en un negocio sin demos no
+    // sale nunca.
+    TipoDisparo.SEGUIMIENTO_DEMO,
   ],
   horaDesde: 9,
   horaHasta: 21,

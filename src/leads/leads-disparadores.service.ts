@@ -15,6 +15,7 @@ import {
   decidirEnvio,
   pideBaja,
   proximoHorarioHabil,
+  ventanaAbierta,
 } from './leads-disparadores';
 import { disponibilidadEfectiva } from '../producto/disponibilidad.util';
 
@@ -329,6 +330,26 @@ export class LeadsDisparadoresService {
           : Promise.resolve(true),
       ]);
 
+    // El seguimiento de la demo no tiene plantilla en Meta: con la ventana
+    // cerrada no hay cómo mandarlo. Y si el prospecto siguió conversando
+    // después de recibirla, la pregunta ya se respondió sola.
+    if (tipo === TipoDisparo.SEGUIMIENTO_DEMO) {
+      const ultimo = situacionChat.ultimoMensajeDelCliente;
+      const motivo =
+        ultimo && ultimo.getTime() > d.creadoEn.getTime() + 3600_000
+          ? 'El cliente siguió conversando después de recibir la demo.'
+          : !ventanaAbierta(ultimo, ahora)
+            ? 'Pasaron más de 24 h desde su último mensaje y este aviso no tiene plantilla.'
+            : null;
+      if (motivo) {
+        await this.prisma.leadDisparo.update({
+          where: { id: d.id },
+          data: { estado: 'OMITIDO', motivo },
+        });
+        return { enviado: false, motivo };
+      }
+    }
+
     const veredicto = decidirEnvio({
       tipo,
       config,
@@ -396,6 +417,19 @@ export class LeadsDisparadoresService {
       return { enviado: false, motivo: envio.error };
     }
 
+    // Al chat, para que la IA sepa qué preguntó cuando el prospecto conteste.
+    if (tipo === TipoDisparo.SEGUIMIENTO_DEMO && situacionChat.id) {
+      await this.prisma.leadMensaje
+        .create({
+          data: {
+            conversacionId: situacionChat.id,
+            rol: 'ASISTENTE',
+            contenido: texto,
+          },
+        })
+        .catch(() => undefined);
+    }
+
     await this.prisma.leadDisparo.update({
       where: { id: d.id },
       data: {
@@ -433,6 +467,7 @@ export class LeadsDisparadoresService {
     const pausadoAhora = estaPausado(conv);
 
     return {
+      id: conv?.id ?? null,
       nombre: conv?.nombreProspecto ?? null,
       botPausado: pausadoAhora,
       ultimoMensajeDelCliente: conv?.mensajes[0]?.creadoEn ?? null,
@@ -552,6 +587,11 @@ export class LeadsDisparadoresService {
       case TipoDisparo.REACTIVACION:
         return {
           texto: `${saludo}, hace un tiempo que no sabemos de ti. Tenemos novedades en el catálogo y seguimos a tu disposición.`,
+          parametros: [nombre],
+        };
+      case TipoDisparo.SEGUIMIENTO_DEMO:
+        return {
+          texto: `${saludo}, ¿qué tal te pareció el sistema? ¿Pudiste revisar la demo? Si tienes alguna duda o quieres ver algo en particular, aquí estoy.`,
           parametros: [nombre],
         };
       case TipoDisparo.RECORDATORIO_ACORDADO:

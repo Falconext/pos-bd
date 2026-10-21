@@ -44,7 +44,9 @@ function armar(opciones: { previos?: unknown[]; demos?: unknown } = {}) {
   const prisma = {
     leadMensaje: { findMany: jest.fn().mockResolvedValue(opciones.previos ?? []) },
     leadConversacion: { update: jest.fn().mockResolvedValue({}) },
+    leadDemo: { upsert: jest.fn().mockResolvedValue({ id: 3 }) },
   } as never;
+  const disparadores = { programar: jest.fn().mockResolvedValue({ programado: true }) };
   const pedido = {
     configDe: jest.fn().mockResolvedValue({
       supervisorTelefono: '986114148',
@@ -68,11 +70,11 @@ function armar(opciones: { previos?: unknown[]; demos?: unknown } = {}) {
     pedido,
     {} as never,
     {} as never,
-    {} as never,
+    disparadores as never,
     {} as never,
   );
   const ejecutor = (processor as any).crearEjecutor(22, 70, '51987654321', new Set());
-  return { ejecutor, avisos, notificaciones };
+  return { ejecutor, avisos, notificaciones, prisma: prisma as any, disparadores };
 }
 
 const sunatResponde = (razonSocial: string) =>
@@ -161,6 +163,37 @@ describe('herramienta dar_demo', () => {
       datos: expect.objectContaining({ ruc: '20607429074', razonSocial: 'ROSAS & ASOCIADOS S.A.C.', correo: 'lucia@gmail.com' }),
     });
     expect(notificaciones.notificarAdminsEmpresa).toHaveBeenCalledTimes(1);
+  });
+
+  it('guarda al prospecto en el banco y programa el seguimiento de las 3 horas', async () => {
+    sunatResponde('ROSAS & ASOCIADOS S.A.C.');
+    const { ejecutor, prisma, disparadores } = armar();
+    const r = (await ejecutor(HERRAMIENTA_DAR_DEMO, DATOS)) as any;
+    expect(r.instruccion).toMatch(/3 horas/);
+    expect(r.instruccion).toMatch(/NO le ofrezcas la demo en vivo/);
+    expect(prisma.leadDemo.upsert.mock.calls[0][0]).toMatchObject({
+      where: { empresaId_telefono: { empresaId: 22, telefono: '51987654321' } },
+      create: {
+        nombre: 'Lucía Paredes Soto',
+        correo: 'lucia@gmail.com',
+        ruc: '20607429074',
+        razonSocial: 'ROSAS & ASOCIADOS S.A.C.',
+        nombreComercial: 'Botica Santa Lucía',
+        demo: 'Farmacia y botica',
+      },
+    });
+    expect(disparadores.programar).toHaveBeenCalledWith(
+      expect.objectContaining({ tipo: 'SEGUIMIENTO_DEMO', referencia: 'demo:3', telefono: '51987654321' }),
+    );
+  });
+
+  it('si la vuelve a pedir, actualiza sus datos pero no programa otro seguimiento', async () => {
+    sunatResponde('BOTICA X');
+    const previos = [{ herramientasJson: [{ nombre: HERRAMIENTA_DAR_DEMO, resultado: { acceso: {} } }] }];
+    const { ejecutor, prisma, disparadores } = armar({ previos });
+    await ejecutor(HERRAMIENTA_DAR_DEMO, DATOS);
+    expect(prisma.leadDemo.upsert).toHaveBeenCalled();
+    expect(disparadores.programar).not.toHaveBeenCalled();
   });
 
   it('un RUC que SUNAT no conoce se devuelve para revisar, sin demo', async () => {
