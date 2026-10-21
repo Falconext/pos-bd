@@ -3,13 +3,57 @@ import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { IaVentasService, MensajeConversacion } from './leads-ia.service';
-import { CONFIG_DISPARADORES_DEFECTO, enHorarioHabil } from './leads-disparadores';
+import {
+  CONFIG_DISPARADORES_DEFECTO,
+  TipoDisparo,
+  enHorarioHabil,
+  postergaLaCompra,
+} from './leads-disparadores';
+import { HERRAMIENTA_DAR_DEMO } from './leads-herramientas';
+
+/**
+ * Avisos que ya le van a escribir al cliente cuando él dijo. Con uno de estos
+ * programado, el reenganche de la hora no sale: el cliente pidió tiempo.
+ */
+export const DISPAROS_QUE_ESPERAN_AL_CLIENTE: TipoDisparo[] = [
+  // "Te aviso luego": se le escribe a la mañana siguiente.
+  TipoDisparo.CARRITO_EN_ESPERA,
+  // "El viernes te confirmo": se le escribe ese día.
+  TipoDisparo.RECORDATORIO_ACORDADO,
+];
+
+/**
+ * Por qué NO toca el reenganche de la hora, o `null` si toca. Las excepciones
+ * las fijó Hierba Sana (20-10): el cliente que ya agendó no necesita que le
+ * pregunten si sigue, y al que dijo que avisaba o que escribía después se le
+ * escribe al día siguiente, no a la hora.
+ *
+ * Una despedida ("gracias por la info") NO es excepción: es justo el
+ * cliente que el reenganche puede recuperar.
+ */
+export function motivoParaNoReenganchar(s: {
+  pedidoAgendado: boolean;
+  esperaAvisoProgramado: boolean;
+  ultimoDelCliente: string;
+  /** Herramientas del último mensaje del asistente. */
+  herramientasDelUltimo?: unknown;
+}): string | null {
+  if (s.pedidoAgendado) return 'ya agendó su pedido';
+  // Krezka: al entregar la demo se le dice que tiene 3 horas para revisarla.
+  // Escribirle a la hora lo contradice; la demo tiene su propio seguimiento.
+  const llamadas = Array.isArray(s.herramientasDelUltimo) ? s.herramientasDelUltimo : [];
+  if (llamadas.some((ll: any) => ll?.nombre === HERRAMIENTA_DAR_DEMO && ll?.resultado?.acceso))
+    return 'se le acaba de dar la demo';
+  if (s.esperaAvisoProgramado) return 'tiene un aviso programado para cuando dijo';
+  if (postergaLaCompra(s.ultimoDelCliente)) return 'dijo que avisaba o que escribía después';
+  return null;
+}
 
 /**
  * Seguimiento automático de la IA de Ventas.
  *
- * Cada 30 min busca conversaciones donde el prospecto dejó de responder (el
- * último mensaje es del ASISTENTE) y, si pasó suficiente silencio pero seguimos
+ * Cada 10 min busca conversaciones donde el prospecto dejó de responder (el
+ * último mensaje es del ASISTENTE) y, si pasó una hora de silencio pero seguimos
  * DENTRO de la ventana de 24h de WhatsApp (mensaje libre, sin costo de
  * plantilla), envía UN reenganche generado por la IA. Máximo un seguimiento por
  * silencio: `seguimientos` se reinicia a 0 cuando el prospecto vuelve a escribir
@@ -20,7 +64,9 @@ export class LeadsSeguimientoService {
   private readonly logger = new Logger(LeadsSeguimientoService.name);
 
   // Silencio mínimo antes de reenganchar, y ventana libre de WhatsApp.
-  private static readonly MIN_SILENCIO_HORAS = 4;
+  // Una hora y no cuatro (Hierba Sana, 20-10): a las cuatro se cruzaba con el
+  // aviso de cotización sin cerrar, que sale a las tres.
+  private static readonly MIN_SILENCIO_HORAS = 1;
   private static readonly VENTANA_HORAS = 24;
   private static readonly LOTE = 40;
 
@@ -30,7 +76,8 @@ export class LeadsSeguimientoService {
     private readonly whatsapp: WhatsAppService,
   ) {}
 
-  @Cron('*/30 * * * *', { name: 'leads-seguimiento' })
+  // Cada 10 minutos: con media hora, "a la hora" llegaba a ser hora y media.
+  @Cron('*/10 * * * *', { name: 'leads-seguimiento' })
   async ejecutar(): Promise<void> {
     if (!this.ia.disponible()) return;
     // Solo en horario de atención (9 a. m. a 9 p. m. de Lima, el mismo de
@@ -100,7 +147,7 @@ export class LeadsSeguimientoService {
           where: { conversacionId: conv.id },
           orderBy: { id: 'desc' },
           take: 12,
-          select: { rol: true, contenido: true, creadoEn: true },
+          select: { rol: true, contenido: true, creadoEn: true, herramientasJson: true },
         });
         if (mensajes.length === 0) continue;
 
@@ -114,6 +161,37 @@ export class LeadsSeguimientoService {
           ahora - new Date(ultimoUsuario.creadoEn).getTime() >=
             LeadsSeguimientoService.VENTANA_HORAS * 3600_000
         ) {
+          continue;
+        }
+
+        const [borrador, esperando] = await Promise.all([
+          this.prisma.leadPedidoBorrador.findUnique({
+            where: { conversacionId: conv.id },
+            select: { comprobanteId: true },
+          }),
+          this.prisma.leadDisparo.count({
+            where: {
+              empresaId: conv.empresa.id,
+              telefono: conv.telefonoProspecto,
+              estado: 'PROGRAMADO',
+              tipo: { in: DISPAROS_QUE_ESPERAN_AL_CLIENTE as never },
+            },
+          }),
+        ]);
+        const motivo = motivoParaNoReenganchar({
+          pedidoAgendado: !!borrador?.comprobanteId,
+          esperaAvisoProgramado: esperando > 0,
+          ultimoDelCliente: ultimoUsuario.contenido,
+          herramientasDelUltimo: mensajes[0].herramientasJson,
+        });
+        if (motivo) {
+          // Se marca como atendido para no volver a evaluarlo cada 10 min. Si
+          // el cliente escribe, el contador vuelve a 0 y todo arranca de nuevo.
+          await this.prisma.leadConversacion.update({
+            where: { id: conv.id },
+            data: { seguimientos: { increment: 1 } },
+          });
+          this.logger.log(`Seguimiento: conv ${conv.id} sin reenganche (${motivo}).`);
           continue;
         }
 
