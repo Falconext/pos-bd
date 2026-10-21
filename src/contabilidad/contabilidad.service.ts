@@ -277,6 +277,9 @@ export class ContabilidadService {
           select: { tipoDoc: true, serie: true, correlativo: true },
           take: 1,
         },
+        consolidadoEn: {
+          select: { formal: { select: { tipoDoc: true, serie: true, correlativo: true } } },
+        },
       },
     });
 
@@ -284,15 +287,16 @@ export class ContabilidadService {
     // una Nota de Venta en dólares); se convierte a soles antes de sumar y de
     // mostrar cada fila, o un comprobante en USD infla el reporte como si fuera PEN.
     const todosPen = comprobantes.map(
-      ({ comprobantesDerivados, ...c }) => ({
-        ...c,
-        mtoImpVenta: montoEnPen(c.mtoImpVenta, c.tipoMoneda, c.tipoCambio),
-        convertidoA: comprobantesDerivados[0]
-          ? `${comprobantesDerivados[0].serie}-${String(
-              comprobantesDerivados[0].correlativo,
-            ).padStart(8, '0')}`
-          : null,
-      }),
+      ({ comprobantesDerivados, consolidadoEn, ...c }) => {
+        const formal = comprobantesDerivados[0] ?? consolidadoEn?.formal ?? null;
+        return {
+          ...c,
+          mtoImpVenta: montoEnPen(c.mtoImpVenta, c.tipoMoneda, c.tipoCambio),
+          convertidoA: formal
+            ? `${formal.serie}-${String(formal.correlativo).padStart(8, '0')}`
+            : null,
+        };
+      },
     );
 
     // Un informal ya convertido (NV → Boleta, OT → NV) dejó de ser una venta de

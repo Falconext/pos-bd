@@ -1,3 +1,4 @@
+import { NOTA_SIN_CONVERTIR } from '../comprobante/convertidos';
 import {
   BadRequestException,
   Injectable,
@@ -13,7 +14,13 @@ import {
   pedidosQueEsperan,
   productosRecibidos,
   type PedidoListo,
+  documentoDe,
 } from './pedidos-por-entregar';
+import {
+  consolidarVentas,
+  type ComponenteKit,
+  type ProductoParaComprar,
+} from './consolidar-ventas';
 import {
   ActualizarOrdenCompraDto,
   CrearOrdenCompraDto,
@@ -21,6 +28,9 @@ import {
 } from './dto/orden-compra.dto';
 
 const IGV_RATE = 0.18;
+
+/** Notas informales que se pueden juntar en una orden (preventa). */
+const TIPOS_PREVENTA = ['NV', 'NP', 'TICKET'];
 
 /**
  * Órdenes de Compra: el pedido formal al proveedor ANTES de la compra.
@@ -107,6 +117,8 @@ export class OrdenCompraService {
       igvIncluido,
     );
 
+    const origenIds = await this.origenesValidos(empresaId, dto.comprobanteOrigenIds);
+
     const ultimo = await this.prisma.ordenCompra.aggregate({
       where: { empresaId },
       _max: { numero: true },
@@ -147,9 +159,143 @@ export class OrdenCompraService {
             ),
           })),
         },
+        ...(origenIds.length
+          ? { origenes: { create: origenIds.map((comprobanteId) => ({ comprobanteId })) } }
+          : {}),
       },
       include: { detalles: true, proveedor: true },
     });
+  }
+
+  /** Solo notas de la misma empresa: un id ajeno no se enlaza. */
+  private async origenesValidos(empresaId: number, ids?: number[]): Promise<number[]> {
+    const unicos = [...new Set((ids ?? []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+    if (!unicos.length) return [];
+    const propias = await this.prisma.comprobante.findMany({
+      where: { id: { in: unicos }, empresaId },
+      select: { id: true },
+    });
+    return propias.map((c) => c.id);
+  }
+
+  /**
+   * Notas de venta → una orden de compra. Suma lo vendido en las notas
+   * elegidas (kits abiertos en componentes, paquetes en unidades) y devuelve
+   * las líneas para precargar la orden, con el costo y el stock de la sede.
+   * No crea nada: la orden se guarda recién cuando el usuario elige el
+   * proveedor y confirma.
+   */
+  async desdeVentas(empresaId: number, comprobanteIds: number[], sedeId?: number) {
+    const ventas = await this.prisma.comprobante.findMany({
+      where: { id: { in: comprobanteIds }, empresaId },
+      select: {
+        id: true,
+        tipoDoc: true,
+        serie: true,
+        correlativo: true,
+        estadoEnvioSunat: true,
+        cliente: { select: { nombre: true } },
+        detalles: {
+          select: { productoId: true, descripcion: true, cantidad: true, unidadesPorPaquete: true, comboId: true },
+        },
+        ordenesCompra: {
+          where: { ordenCompra: { estado: { not: 'ANULADA' } } },
+          select: { ordenCompra: { select: { id: true, numero: true } } },
+        },
+      },
+      orderBy: { id: 'asc' },
+    });
+    if (!ventas.length) throw new NotFoundException('No se encontraron las notas elegidas');
+
+    const usables = ventas.filter(
+      (v) => TIPOS_PREVENTA.includes(v.tipoDoc) && v.estadoEnvioSunat !== 'ANULADO',
+    );
+    const descartadas = ventas
+      .filter((v) => !usables.includes(v))
+      .map((v) => ({
+        documento: documentoDe(v),
+        motivo: v.estadoEnvioSunat === 'ANULADO' ? 'Anulada' : 'No es nota de venta ni de pedido',
+      }));
+    if (!usables.length) {
+      throw new BadRequestException('Ninguna de las notas elegidas se puede pedir (anuladas o de otro tipo)');
+    }
+
+    const comboIds = [...new Set(usables.flatMap((v) => v.detalles.map((d) => Number(d.comboId)).filter((n) => n > 0)))];
+    const combos = comboIds.length
+      ? await this.prisma.comboItem.findMany({
+          where: { comboId: { in: comboIds } },
+          select: { comboId: true, productoId: true, cantidad: true },
+        })
+      : [];
+    const kits = new Map<number, ComponenteKit[]>();
+    for (const c of combos) {
+      kits.set(c.comboId, [...(kits.get(c.comboId) ?? []), { productoId: c.productoId, cantidad: c.cantidad }]);
+    }
+
+    const productoIds = [
+      ...new Set([
+        ...usables.flatMap((v) => v.detalles.map((d) => Number(d.productoId)).filter((n) => n > 0)),
+        ...combos.map((c) => c.productoId),
+      ]),
+    ];
+    const filas = productoIds.length
+      ? await this.prisma.producto.findMany({
+          where: { id: { in: productoIds }, empresaId },
+          select: {
+            id: true,
+            codigo: true,
+            descripcion: true,
+            costoPromedio: true,
+            tipoAfectacionIGV: true,
+            stock: true,
+            atributosTecnicos: true,
+            // Las cajas del producto, para poder pedir "5 cajas de 6" en la orden.
+            codigosBarras: {
+              where: { unidadesPorPaquete: { gt: 1 } },
+              select: { codigo: true, alias: true, unidadesPorPaquete: true },
+            },
+            ...(sedeId ? { stocks: { where: { sedeId }, select: { stock: true } } } : {}),
+          },
+        })
+      : [];
+    const productos = new Map<number, ProductoParaComprar>();
+    for (const p of filas as any[]) {
+      productos.set(p.id, {
+        id: p.id,
+        codigo: p.codigo,
+        descripcion: p.descripcion,
+        costo: Number(Number(p.costoPromedio ?? 0).toFixed(2)),
+        gravado: this.comprasService.esAfectacionGravada(p.tipoAfectacionIGV),
+        stock: Number(sedeId ? (p.stocks?.[0]?.stock ?? 0) : p.stock) || 0,
+        seCompra: String(p.atributosTecnicos?.tipoProducto || '').toUpperCase() !== 'SERVICIO',
+      });
+    }
+    const paquetes = new Map((filas as any[]).map((p) => [p.id, p.codigosBarras ?? []]));
+
+    const { lineas, omitidas } = consolidarVentas(
+      usables.map((v) => ({
+        id: v.id,
+        documento: documentoDe(v),
+        cliente: v.cliente?.nombre ?? null,
+        detalles: v.detalles,
+      })),
+      productos,
+      kits,
+    );
+
+    return {
+      comprobanteIds: usables.map((v) => v.id),
+      notas: usables.map((v) => ({
+        id: v.id,
+        documento: documentoDe(v),
+        cliente: v.cliente?.nombre ?? null,
+        // Ya pedida en otra orden vigente: se avisa para no comprar dos veces.
+        ordenes: v.ordenesCompra.map((o) => OrdenCompraService.formatNumero(o.ordenCompra.numero)),
+      })),
+      descartadas,
+      omitidas,
+      lineas: lineas.map((l) => ({ ...l, paquetes: l.productoId ? paquetes.get(l.productoId) ?? [] : [] })),
+    };
   }
 
   async listar(
@@ -199,7 +345,7 @@ export class OrdenCompraService {
           usuario: { select: { nombre: true } },
           sede: { select: { nombre: true } },
           compra: { select: { id: true, serie: true, numero: true } },
-          _count: { select: { detalles: true } },
+          _count: { select: { detalles: true, origenes: true } },
         },
       }),
       this.prisma.ordenCompra.count({ where }),
@@ -241,6 +387,9 @@ export class OrdenCompraService {
         usuario: { select: { nombre: true } },
         sede: { select: { nombre: true } },
         compra: { select: { id: true, serie: true, numero: true } },
+        origenes: {
+          select: { comprobante: { select: { id: true, serie: true, correlativo: true } } },
+        },
       },
     });
     if (!orden) throw new NotFoundException('Orden de compra no encontrada');
@@ -454,7 +603,7 @@ export class OrdenCompraService {
         empresaId,
         tipoDoc: 'NP',
         estadoEnvioSunat: { not: 'ANULADO' as any },
-        comprobantesDerivados: { none: {} },
+        ...NOTA_SIN_CONVERTIR,
         movimientosKardex: { none: { tipoMovimiento: 'SALIDA' as any } },
         detalles: { some: { productoId: { in: productoIds } } },
       },

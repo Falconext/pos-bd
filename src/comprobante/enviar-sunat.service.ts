@@ -352,8 +352,17 @@ export class EnviarSunatService {
 
       // Anti-doble: si viene de un informal que ya generó comisión, no generar.
       if (comp.comprobanteOrigenId != null) {
+        // Facturada junto con otras notas: cualquiera de ellas cuenta.
+        const extras = await this.prisma.comprobanteOrigenExtra.findMany({
+          where: { formalId: comp.id },
+          select: { origenId: true },
+        });
         const origenYaGenero = await this.prisma.comisionVendedor.count({
-          where: { comprobanteId: Number(comp.comprobanteOrigenId) },
+          where: {
+            comprobanteId: {
+              in: [Number(comp.comprobanteOrigenId), ...extras.map((x) => x.origenId)],
+            },
+          },
         });
         if (origenYaGenero > 0) return;
       }

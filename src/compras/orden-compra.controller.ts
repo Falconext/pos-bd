@@ -18,6 +18,7 @@ import { OrdenCompraService } from './orden-compra.service';
 import {
   ActualizarOrdenCompraDto,
   CrearOrdenCompraDto,
+  DesdeVentasDto,
   RecibirOrdenCompraDto,
 } from './dto/orden-compra.dto';
 
@@ -34,6 +35,12 @@ export class OrdenCompraController {
       body,
       req.user.sedeId,
     );
+  }
+
+  // Antes de ':id' para que Nest no lo tome como un id.
+  @Post('desde-ventas')
+  async desdeVentas(@Request() req, @Body() body: DesdeVentasDto) {
+    return this.service.desdeVentas(req.user.empresaId, body.comprobanteIds, req.user.sedeId);
   }
 
   @Get()

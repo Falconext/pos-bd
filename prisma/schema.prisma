@@ -1236,12 +1236,20 @@ model Comprobante {
   comprobanteOrigenId     Int?
   comprobanteOrigen       Comprobante?         @relation("ConversionOrigen", fields: [comprobanteOrigenId], references: [id])
   comprobantesDerivados   Comprobante[]        @relation("ConversionOrigen")
+  ordenesCompra           OrdenCompraOrigen[]  @relation("OrdenCompraOrigenes")
+  // Varias notas facturadas en una sola boleta/factura: la primera queda en
+  // comprobanteOrigenId (como siempre) y las demás acá. `consolidadoEn` va en la
+  // NOTA; `origenesExtra` en el formal.
+  consolidadoEn           ComprobanteOrigenExtra?  @relation("OrigenExtraNota")
+  origenesExtra           ComprobanteOrigenExtra[] @relation("OrigenExtraFormal")
   detalles                DetalleComprobante[]
   leyendas                Leyenda[]
   movimientosKardex       MovimientoKardex[]
   pagos                   Pago[]
   whatsappEnvios          WhatsAppEnvio[]
   envioDespacho           EnvioDespacho?
+  // Va en el envío de otra nota del mismo cliente (un solo paquete).
+  despachoAgrupado        EnvioDespachoNota?   @relation("DespachoNotaExtra")
   comisiones              ComisionVendedor[]
   campanas                CampanaMarketing[]
   productoSeries          ProductoSerie[]
@@ -2520,6 +2528,9 @@ model OrdenCompra {
   usuario         Usuario?             @relation(fields: [usuarioId], references: [id])
   compra          Compra?              @relation(fields: [compraId], references: [id])
   detalles        DetalleOrdenCompra[]
+  // Notas de venta/pedido de las que se armó la orden (preventa: varios
+  // pedidos de clientes, una sola compra al proveedor).
+  origenes        OrdenCompraOrigen[]
 
   @@unique([empresaId, numero])
   @@index([empresaId, estado])
@@ -2545,6 +2556,38 @@ model DetalleOrdenCompra {
   producto           Producto?   @relation(fields: [productoId], references: [id])
 
   @@index([ordenCompraId])
+}
+
+/// Notas que viajan en el envío de otra nota (un solo paquete para varias
+/// ventas del mismo cliente). Una nota va en un solo envío.
+model EnvioDespachoNota {
+  comprobanteId Int           @id
+  despachoId    Int
+  despacho      EnvioDespacho @relation(fields: [despachoId], references: [id], onDelete: Cascade)
+  comprobante   Comprobante   @relation("DespachoNotaExtra", fields: [comprobanteId], references: [id], onDelete: Cascade)
+
+  @@index([despachoId])
+}
+
+/// Notas adicionales de una boleta/factura que junta varias notas de venta.
+/// Una nota entra en un solo formal (origenId es la clave).
+model ComprobanteOrigenExtra {
+  origenId Int         @id
+  formalId Int
+  origen   Comprobante @relation("OrigenExtraNota", fields: [origenId], references: [id], onDelete: Cascade)
+  formal   Comprobante @relation("OrigenExtraFormal", fields: [formalId], references: [id], onDelete: Cascade)
+
+  @@index([formalId])
+}
+
+model OrdenCompraOrigen {
+  ordenCompraId Int
+  comprobanteId Int
+  ordenCompra   OrdenCompra @relation(fields: [ordenCompraId], references: [id], onDelete: Cascade)
+  comprobante   Comprobante @relation("OrdenCompraOrigenes", fields: [comprobanteId], references: [id], onDelete: Cascade)
+
+  @@id([ordenCompraId, comprobanteId])
+  @@index([comprobanteId])
 }
 
 enum EstadoOrdenCompra {
@@ -2673,6 +2716,8 @@ model EnvioDespacho {
   /// se discute con una fecha.
   entregadoEn              DateTime?
   evidencias               EvidenciaEntrega[]
+  /// Otras notas del mismo cliente que viajan en este mismo paquete.
+  notasExtra               EnvioDespachoNota[]
   creadoEn                 DateTime           @default(now())
   actualizadoEn            DateTime           @updatedAt
 

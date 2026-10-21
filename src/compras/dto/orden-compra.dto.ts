@@ -1,5 +1,8 @@
 import {
+  ArrayMaxSize,
+  ArrayNotEmpty,
   IsArray,
+  IsInt,
   IsBoolean,
   IsDateString,
   IsIn,
@@ -87,6 +90,21 @@ export class CrearOrdenCompraDto {
   @ValidateNested({ each: true })
   @Type(() => DetalleOrdenCompraDto)
   detalles: DetalleOrdenCompraDto[];
+
+  // Notas de venta de las que se armó la orden (Notas de venta → Orden de compra).
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  comprobanteOrigenIds?: number[];
+}
+
+/** Notas elegidas en la lista para armar una sola orden. */
+export class DesdeVentasDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(200)
+  @IsInt({ each: true })
+  comprobanteIds: number[];
 }
 
 export class ActualizarOrdenCompraDto extends CrearOrdenCompraDto {}

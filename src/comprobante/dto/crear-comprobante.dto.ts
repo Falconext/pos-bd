@@ -11,6 +11,7 @@ import {
   MaxLength,
   Min,
   ValidateNested,
+  ArrayMaxSize,
 } from 'class-validator';
 
 class DetalleDto {
@@ -390,4 +391,12 @@ export class CrearComprobanteDto {
   @Type(() => Number)
   @IsInt()
   comprobanteOrigenId?: number;
+
+  // Varias notas facturadas juntas: todas las notas, incluida la de
+  // comprobanteOrigenId (que va primera). Mismo cliente y misma moneda.
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsInt({ each: true })
+  comprobanteOrigenIds?: number[];
 }

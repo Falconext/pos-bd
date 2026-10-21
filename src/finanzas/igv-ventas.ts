@@ -1,3 +1,4 @@
+import { NOTA_CONVERTIDA } from '../comprobante/convertidos';
 /**
  * Cómo se descuenta el IGV de las ventas, en un solo lugar.
  *
@@ -111,7 +112,7 @@ export const filtroExcluirConvertidos = {
     {
       NOT: {
         tipoDoc: { in: TIPOS_INFORMALES },
-        comprobantesDerivados: { some: {} },
+        ...NOTA_CONVERTIDA,
       },
     },
     { tipoDoc: { notIn: ['COT', 'OT'] } },

@@ -253,7 +253,7 @@ export class ComprasService {
     return gravadoPorProducto.get(Number(item.productoId)) ?? true;
   }
 
-  private esAfectacionGravada(tipoAfectacionIGV?: string | null): boolean {
+  esAfectacionGravada(tipoAfectacionIGV?: string | null): boolean {
     const cod = String(tipoAfectacionIGV ?? '10').trim();
     return cod === '' || cod.startsWith('1');
   }
