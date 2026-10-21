@@ -51,6 +51,7 @@ export class LeadsController {
       asesor?: string;
       videoBienvenidaUrl?: string;
       demos?: ConfigDemos | null;
+      cobroConLink?: boolean;
     },
   ) {
     return this.service.actualizarConfig(user.empresaId, body);

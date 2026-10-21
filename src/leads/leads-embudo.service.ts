@@ -587,5 +587,7 @@ export function medioDePago(leido: string | null | undefined): string {
   const t = String(leido ?? '').toLowerCase();
   if (t.includes('yape')) return 'YAPE';
   if (t.includes('plin')) return 'PLIN';
+  // El link de pago del chat: se registra igual que en la tienda.
+  if (t.includes('mercado')) return 'MERCADO_PAGO';
   return 'TRANSFERENCIA';
 }

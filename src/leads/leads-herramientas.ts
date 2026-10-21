@@ -24,6 +24,7 @@ export const HERRAMIENTA_DERIVAR = 'derivar_a_asesor';
 export const HERRAMIENTA_AVISAR_RIESGO = 'avisar_cliente_alto_riesgo';
 export const HERRAMIENTA_AGENDAR_RECORDATORIO = 'agendar_recordatorio';
 export const HERRAMIENTA_DAR_DEMO = 'dar_demo';
+export const HERRAMIENTA_LINK_PAGO = 'generar_link_pago';
 
 const buscarProductos: FunctionDeclaration = {
   name: HERRAMIENTA_BUSCAR_PRODUCTOS,
@@ -357,6 +358,30 @@ const darDemo: FunctionDeclaration = {
   },
 };
 
+/**
+ * Link de Mercado Pago para lo cotizado (21-10). Solo cobra en los negocios
+ * que lo activaron y tienen Mercado Pago conectado; al resto les devuelve
+ * `noDisponible`.
+ */
+const generarLinkPago: FunctionDeclaration = {
+  name: HERRAMIENTA_LINK_PAGO,
+  description:
+    'Genera un link de Mercado Pago para que el cliente pague lo cotizado con tarjeta o con su cuenta de Mercado Pago. ' +
+    'Úsala cuando el cliente ya aceptó la cotización y va a pagar (el total, o la reserva o el adelanto que pida el negocio), si cotizar te indicó que el negocio cobra por link o si el cliente pide pagar con tarjeta. ' +
+    'Si te devuelve `link`, mándaselo tal cual. Si te devuelve `noDisponible` o `error`, haz lo que dice. ' +
+    'Nunca le digas que su pago está confirmado: el sistema te avisa en la conversación cuando Mercado Pago lo confirme.',
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      monto: {
+        type: SchemaType.NUMBER,
+        description:
+          'Solo si va a pagar una parte (la reserva o el adelanto que fija el negocio). Para cobrar todo lo que falta, no lo pases.',
+      },
+    },
+  },
+};
+
 export const HERRAMIENTAS_VENTA: FunctionDeclaration[] = [
   buscarProductos,
   enviarFoto,
@@ -369,6 +394,7 @@ export const HERRAMIENTAS_VENTA: FunctionDeclaration[] = [
   avisarAltoRiesgo,
   agendarRecordatorio,
   darDemo,
+  generarLinkPago,
 ];
 
 /**

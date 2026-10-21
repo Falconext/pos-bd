@@ -22,6 +22,8 @@ import { ClienteModule } from '../cliente/cliente.module';
 import { ComprobanteModule } from '../comprobante/comprobante.module';
 import { EnvioDespachoModule } from '../envio-despacho/envio-despacho.module';
 import { PagoModule } from '../pago/pago.module';
+import { MercadoPagoModule } from '../mercadopago/mercadopago.module';
+import { LeadsPagoLinkService } from './leads-pago-link.service';
 import { LEADS_MESSAGES_QUEUE, redisConnection } from './leads.constants';
 
 /**
@@ -45,6 +47,7 @@ import { LEADS_MESSAGES_QUEUE, redisConnection } from './leads.constants';
     EnvioDespachoModule,
     S3Module,
     PagoModule,
+    MercadoPagoModule,
   ],
   controllers: [LeadsController, LeadsWebhookController, LeadsCrmController],
   providers: [
@@ -59,6 +62,7 @@ import { LEADS_MESSAGES_QUEUE, redisConnection } from './leads.constants';
     LeadsConsultasService,
     LeadsBiService,
     LeadsDisparadoresService,
+    LeadsPagoLinkService,
   ],
   exports: [LeadsService, LeadsEmbudoService, LeadsDisparadoresService],
 })

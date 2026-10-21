@@ -1480,6 +1480,68 @@ export class LeadsPedidoService {
   }
 
   /**
+   * Cuánto le falta pagar al cliente por lo que ya se le cotizó, para el
+   * link de pago. Sale de lo guardado en el borrador —ítems con el precio de
+   * HOY del catálogo, envío y descuento—, nunca de lo que diga el modelo.
+   *
+   * Pedido ya registrado: lo que falta es lo que el despacho cobraría al
+   * entregar (o el saldo de la nota), que ya descuenta los adelantos.
+   */
+  async porPagarDelPedido(
+    empresaId: number,
+    conversacionId: number,
+  ): Promise<{ total: number; pagado: number; porPagar: number } | { error: string }> {
+    const borrador = await this.prisma.leadPedidoBorrador.findUnique({
+      where: { conversacionId },
+      select: { itemsJson: true, costoEnvio: true, cotizadoEn: true, comprobanteId: true },
+    });
+    const items = normalizarItems(borrador?.itemsJson);
+    if (!borrador?.cotizadoEn || !items.length) {
+      return {
+        error:
+          'Todavía no hay nada cotizado en esta conversación. Cotiza primero con cotizar y muéstrale el total al cliente.',
+      };
+    }
+    if (borrador.comprobanteId && (await this.pedidoCerrado(borrador.comprobanteId))) {
+      return { error: 'El pedido de esta conversación ya está cerrado: no hay nada por cobrar.' };
+    }
+    const config = await this.configDe(empresaId);
+    const productos = await this.prisma.producto.findMany({
+      where: { empresaId, id: { in: items.map((i) => i.productoId) } },
+      select: { id: true, precioUnitario: true },
+    });
+    const calculo = calcularDescuento(
+      items.map((i) => ({
+        precioUnitario: Number(
+          productos.find((p) => p.id === i.productoId)?.precioUnitario ?? 0,
+        ),
+        cantidad: i.cantidad,
+      })),
+      Number(borrador.costoEnvio ?? 0),
+      config.descuento,
+    );
+    const total = Math.round(calculo.montoAPagar * 100) / 100;
+    if (borrador.comprobanteId) {
+      const [nota, despacho] = await Promise.all([
+        this.prisma.comprobante.findUnique({
+          where: { id: borrador.comprobanteId },
+          select: { saldo: true },
+        }),
+        this.prisma.envioDespacho.findUnique({
+          where: { comprobanteId: borrador.comprobanteId },
+          select: { montoCOD: true },
+        }),
+      ]);
+      const porPagar = Math.round(
+        Number(despacho?.montoCOD ?? nota?.saldo ?? 0) * 100,
+      ) / 100;
+      return { total, pagado: Math.max(0, Math.round((total - porPagar) * 100) / 100), porPagar };
+    }
+    const { monto: pagado } = await this.pagadoPorElCliente(conversacionId, total);
+    return { total, pagado, porPagar: Math.round((total - pagado) * 100) / 100 };
+  }
+
+  /**
    * Cuánto pagó ya el cliente, según los comprobantes que mandó.
    *
    * Se suma lo que la IA leyó de cada captura. Se descartan los rechazados
