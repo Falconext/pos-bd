@@ -604,7 +604,7 @@ export class ErpVentasService {
     });
   }
 
-  private async comprobanteDe(id: number) {
+  async comprobanteDe(id: number) {
     const c: any = await this.prisma.comprobante.findUnique({
       where: { id },
       include: {

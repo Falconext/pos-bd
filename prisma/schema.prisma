@@ -5189,6 +5189,10 @@ model VentaApi {
   comprobanteId Int      @unique
   externalId    String?
   creadoEn      DateTime @default(now())
+  /// Último estado ya avisado por webhook (sale.accepted…). Null = nunca.
+  estadoAvisado String?
+  /// Avisos que la web no recibió; a los 20 se deja de insistir.
+  intentosAviso Int      @default(0)
 
   @@unique([empresaId, externalId])
   @@index([empresaId, creadoEn])
