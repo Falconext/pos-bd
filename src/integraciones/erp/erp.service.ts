@@ -113,7 +113,7 @@ export class ErpApiService {
     },
   });
 
-  private async sedeDe(empresaId: number, locationId: unknown): Promise<number | null> {
+  async sedeDe(empresaId: number, locationId: unknown): Promise<number | null> {
     const id = entero(locationId);
     if (locationId == null || locationId === '') return null;
     const sede = id
@@ -207,7 +207,7 @@ export class ErpApiService {
    * y sus variantes, con la regla del panel y la tienda: PENDIENTE o
    * CONFIRMADA.
    */
-  private async reservasDe(empresaId: number, productos: any[]): Promise<Map<string, number>> {
+  async reservasDe(empresaId: number, productos: any[]): Promise<Map<string, number>> {
     const ids = productos.flatMap((p) => [p.id, ...(p.variantes ?? []).map((v: any) => v.id)]);
     if (!ids.length) return new Map();
     const filas = await this.prisma.reserva.groupBy({
@@ -287,7 +287,7 @@ export class ErpApiService {
     };
   }
 
-  private async sedePrincipal(empresaId: number): Promise<number> {
+  async sedePrincipal(empresaId: number): Promise<number> {
     const s = await this.prisma.sede.findFirst({
       where: { empresaId, activo: true },
       orderBy: [{ esPrincipal: 'desc' }, { id: 'asc' }],

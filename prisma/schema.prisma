@@ -5177,3 +5177,19 @@ model DocumentoInventarioItem {
   @@index([documentoId])
   @@index([productoId])
 }
+
+// Una venta que llegó por la API de Krezka (`/v1/erp/sales`) desde la web del
+// propio negocio. Tabla aparte y no `Comprobante.apiPublicId`: ese campo es de
+// la API de Facturación para integradores, y sus avisos y su medidor toman todo
+// comprobante que lo tenga. Acá además vive el número de pedido de la web,
+// único por negocio, para que un pedido no se emita dos veces.
+model VentaApi {
+  id            String   @id // sale_…: opaco, no delata el volumen ni se adivina
+  empresaId     Int
+  comprobanteId Int      @unique
+  externalId    String?
+  creadoEn      DateTime @default(now())
+
+  @@unique([empresaId, externalId])
+  @@index([empresaId, creadoEn])
+}

@@ -3,6 +3,7 @@ import { IdempotenciaInterceptor } from '../idempotencia/idempotencia.intercepto
 import { ApiKeyAuthGuard } from '../api-keys/api-key-auth.guard';
 import { ApiProducto } from '../api-keys/producto-api';
 import { ErpApiService } from './erp.service';
+import { ErpVentasService } from './erp-ventas.service';
 
 /**
  * De dónde armar las URLs de las fotos: el mismo host por el que entró la
@@ -31,7 +32,33 @@ export function urlBaseDe(req: any): string {
 @UseGuards(ApiKeyAuthGuard)
 @Controller('v1/erp')
 export class ErpApiController {
-  constructor(private readonly erp: ErpApiService) {}
+  constructor(
+    private readonly erp: ErpApiService,
+    private readonly ventas: ErpVentasService,
+  ) {}
+
+  /**
+   * Una venta de la web: boleta, factura o nota de venta, por el mismo camino
+   * del POS. `Idempotency-Key` obligatoria: un reintento de la web no puede
+   * emitir dos boletas. `external_id` (el número de pedido de la web) además
+   * no se repite nunca, aunque cambie la key.
+   */
+  @Post('sales')
+  @HttpCode(201)
+  @UseInterceptors(IdempotenciaInterceptor)
+  crearVenta(@Body() body: unknown, @Request() req: any) {
+    return this.ventas.crear(req.apiEmpresaId, body);
+  }
+
+  @Get('sales')
+  listarVentas(@Query() query: any, @Request() req: any) {
+    return this.ventas.listar(req.apiEmpresaId, query ?? {});
+  }
+
+  @Get('sales/:id')
+  obtenerVenta(@Param('id') id: string, @Request() req: any) {
+    return this.ventas.obtener(req.apiEmpresaId, id);
+  }
 
   @Get('products')
   listar(@Query() query: any, @Request() req: any) {
