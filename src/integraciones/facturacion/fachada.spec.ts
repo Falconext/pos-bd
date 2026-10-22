@@ -102,8 +102,29 @@ describe('las líneas viajan como ítems libres', () => {
     expect(d.descripcion).toBe('Consultoría');
   });
 
-  it('unit_value es el valor SIN IGV', () => {
-    expect(traducirItem(ITEM, 0).nuevoValorUnitario).toBe(500);
+  it('unit_value es el valor SIN IGV: el motor recibe el precio CON IGV', () => {
+    // El motor de emisión (el del POS) lee `nuevoValorUnitario` como precio con
+    // IGV. Pasarle 500 facturaba 500 con IGV incluido (423.73 + 76.27): 18% menos.
+    expect(traducirItem(ITEM, 0).nuevoValorUnitario).toBeCloseTo(590, 10);
+  });
+
+  it('exonerado, inafecto y exportación no llevan IGV', () => {
+    for (const tax_affectation of ['exempt', 'unaffected', 'export']) {
+      expect(traducirItem({ ...ITEM, tax_affectation }, 0).nuevoValorUnitario).toBe(500);
+    }
+  });
+
+  it('gratuito: el valor referencial va con IGV, como lo espera el motor', () => {
+    expect(traducirItem({ ...ITEM, tax_affectation: 'free' }, 0).nuevoValorUnitario).toBeCloseTo(590, 10);
+  });
+
+  it('el descuento se aplica al precio (el motor no lee `descuento`)', () => {
+    const d = traducirItem({ description: 'X', quantity: 2, unit_value: 100, discount: 20 }, 0);
+    // (2 × 100 − 20) / 2 = 90 sin IGV → 106.20 con IGV; total de la línea 212.40
+    expect(d.nuevoValorUnitario).toBeCloseTo(106.2, 10);
+    expect(d.precioUnitarioOriginal).toBeCloseTo(118, 10);
+    expect(d).not.toHaveProperty('descuento');
+    expect(d.nuevoValorUnitario * 2).toBeCloseTo(totalEstimado([{ quantity: 2, unit_value: 100, discount: 20 }]), 2);
   });
 
   it('la unidad por defecto es NIU', () => {
