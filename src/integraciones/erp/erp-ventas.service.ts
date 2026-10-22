@@ -7,6 +7,7 @@ import { estadoPublico } from '../facturacion/estado-publico';
 import { ErpApiService } from './erp.service';
 import { precioDeOferta } from './serializar-producto';
 import { ventaSimulada } from './modo-prueba';
+import { normalizarFormatoPdf } from '../../comprobante/pdf-generator.service';
 import {
   ItemVenta,
   LIMITE_BOLETA_SIN_DOCUMENTO,
@@ -154,6 +155,43 @@ export class ErpVentasService {
       throw new NotFoundException({ code: 'resource_missing', message: `No existe la venta ${id} en este negocio.`, param: 'id' });
     }
     return this.serializar(v, await this.comprobanteDe(v.comprobanteId));
+  }
+
+  /**
+   * El PDF de la venta, para mandárselo al cliente o mostrarlo en la web.
+   *
+   * Es el mismo que imprime el panel. El A4 queda guardado y se reusa; ticket
+   * y A5 se generan cada vez. Una boleta o factura que SUNAT todavía no aceptó
+   * ya tiene PDF, pero conviene esperar a `accepted` antes de enviarlo.
+   */
+  async pdf(empresaId: number, id: string, formato?: string) {
+    await this.erp.asegurarPlan(empresaId);
+    const v = await this.prisma.ventaApi.findFirst({ where: { id: String(id), empresaId } });
+    if (!v) {
+      throw new NotFoundException({ code: 'resource_missing', message: `No existe la venta ${id} en este negocio.`, param: 'id' });
+    }
+    const f = String(formato ?? '').trim();
+    if (f && !['a4', 'a5', 'ticket'].includes(f.toLowerCase())) {
+      throw new BadRequestException({ code: 'parameter_invalid', message: '`format` es a4, a5 o ticket.', param: 'format' });
+    }
+    const formatoPdf = normalizarFormatoPdf(f);
+    let url: string;
+    try {
+      url = await this.comprobantes.generarYSubirPdf(v.comprobanteId, { empresaId }, false, formatoPdf);
+    } catch (e: any) {
+      throw new BadRequestException({
+        code: 'pdf_failed',
+        message: `No se pudo generar el PDF: ${e?.response?.message ?? e?.message ?? 'error desconocido'}. Reintenta en unos segundos.`,
+      });
+    }
+    const c = await this.prisma.comprobante.findUnique({ where: { id: v.comprobanteId }, select: { estadoEnvioSunat: true, tipoDoc: true, sunatCdrResponse: true } });
+    return {
+      object: 'pdf',
+      sale_id: v.id,
+      format: formatoPdf,
+      url,
+      status: c?.tipoDoc === 'NV' ? 'registered' : estadoPublico(c as any),
+    };
   }
 
   /** Lo más reciente primero; se pagina con `starting_after` (el id de la última). */

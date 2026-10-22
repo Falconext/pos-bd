@@ -61,6 +61,12 @@ export class ErpApiController {
     return this.ventas.listar(req.apiEmpresaId, query ?? {});
   }
 
+  /** El PDF de la venta (a4 por defecto, ticket o a5): devuelve su URL. */
+  @Get('sales/:id/pdf')
+  pdfVenta(@Param('id') id: string, @Query('format') formato: string, @Request() req: any) {
+    return this.ventas.pdf(req.apiEmpresaId, id, formato);
+  }
+
   @Get('sales/:id')
   obtenerVenta(@Param('id') id: string, @Request() req: any) {
     return this.ventas.obtener(req.apiEmpresaId, id);
