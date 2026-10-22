@@ -61,6 +61,14 @@ export class ErpApiController {
     return this.ventas.listar(req.apiEmpresaId, query ?? {});
   }
 
+  /** Anula la venta: nota de venta directo; boleta o factura aceptada, con nota de crédito. */
+  @Post('sales/:id/void')
+  @HttpCode(200)
+  @UseInterceptors(IdempotenciaInterceptor)
+  anularVenta(@Param('id') id: string, @Body() body: unknown, @Request() req: any) {
+    return this.ventas.anular(req.apiEmpresaId, id, body, esPrueba(req));
+  }
+
   /** El PDF de la venta (a4 por defecto, ticket o a5): devuelve su URL. */
   @Get('sales/:id/pdf')
   pdfVenta(@Param('id') id: string, @Query('format') formato: string, @Request() req: any) {

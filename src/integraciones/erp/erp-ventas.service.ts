@@ -194,6 +194,104 @@ export class ErpVentasService {
     };
   }
 
+  /**
+   * Anula una venta, como lo exige SUNAT para cada documento:
+   *  - nota de venta: se anula directo (devuelve el stock y quita el cobro);
+   *  - boleta o factura aceptada: nota de crédito "anulación de la operación"
+   *    (motivo 01), que hace lo mismo y se envía a SUNAT;
+   *  - todavía en camino a SUNAT: hay que esperar a que la acepte;
+   *  - rechazada: para SUNAT nunca existió, no hay nada que anular.
+   */
+  async anular(empresaId: number, id: string, body: any, prueba = false) {
+    await this.erp.asegurarPlan(empresaId);
+    if (body == null || typeof body !== 'object' || Array.isArray(body)) {
+      throw new BadRequestException({ code: 'parameter_invalid', message: 'Manda { "reason": "por qué se anula" }.', param: 'body' });
+    }
+    const desconocido = Object.keys(body).find((k) => k !== 'reason');
+    if (desconocido) {
+      throw new BadRequestException({ code: 'unknown_parameter', message: `\`${desconocido}\` no se puede enviar acá; solo \`reason\`.`, param: desconocido });
+    }
+    const motivo = typeof body.reason === 'string' ? body.reason.trim() : '';
+    if (!motivo) throw new BadRequestException({ code: 'parameter_missing', message: 'Falta `reason`: SUNAT exige el motivo de la anulación.', param: 'reason' });
+    if (motivo.length > 100) throw new BadRequestException({ code: 'parameter_invalid', message: '`reason` admite hasta 100 caracteres.', param: 'reason' });
+
+    const v = await this.prisma.ventaApi.findFirst({ where: { id: String(id), empresaId } });
+    if (!v) throw new NotFoundException({ code: 'resource_missing', message: `No existe la venta ${id} en este negocio.`, param: 'id' });
+    const c: any = await this.prisma.comprobante.findUnique({
+      where: { id: v.comprobanteId },
+      include: { cliente: { select: { nombre: true } }, detalles: true },
+    });
+    if (c.estadoEnvioSunat === 'ANULADO') {
+      throw new ConflictException({ code: 'already_voided', message: `La venta ${c.serie}-${c.correlativo} ya está anulada.` });
+    }
+
+    if (c.tipoDoc === 'NV') {
+      if (prueba) return { ...this.serializar(v, c), livemode: false, status: 'voided', void_method: 'direct' };
+      await this.comprobantes.anularComprobante(c.id, motivo, empresaId);
+      return this.obtener(empresaId, v.id);
+    }
+
+    const estado = estadoPublico(c);
+    if (estado === 'rejected') {
+      throw new ConflictException({
+        code: 'invalid_state',
+        message: 'SUNAT rechazó esta venta: para SUNAT nunca existió y no hay nada que anular. Revisa `sunat_message` y emite una nueva.',
+        param: 'status',
+      });
+    }
+    if (estado !== 'accepted' && estado !== 'observed') {
+      throw new ConflictException({
+        code: 'invalid_state',
+        message: `Esta venta todavía está en "${estado}" con SUNAT. Espera a que quede en "accepted" (consulta GET /v1/erp/sales/${v.id}) y vuelve a pedir la anulación.`,
+        param: 'status',
+      });
+    }
+
+    // Boleta o factura aceptada: nota de crédito por anulación de la operación.
+    const motivoNota = await this.prisma.motivoNota.findFirst({ where: { codigo: '01', tipo: 'CREDITO' as never }, select: { id: true } });
+    if (prueba) {
+      const sig = await this.comprobantes.siguienteCorrelativo(empresaId, '07', c.tipoDoc).catch(() => null);
+      return {
+        ...this.serializar(v, c),
+        livemode: false,
+        status: 'voided',
+        void_method: 'credit_note',
+        credit_note: { number: null, number_preview: sig ? `${sig.serie}-${sig.correlativo}` : null, status: 'test', reason: motivo },
+      };
+    }
+    const operacion = await this.prisma.tipoOperacion.findUnique({ where: { codigo: '0101' }, select: { id: true } });
+    const nota: any = await this.comprobantes.crearNotaCredito(
+      {
+        tipoDoc: '07',
+        tipoMoneda: c.tipoMoneda ?? 'PEN',
+        formaPagoMoneda: c.tipoMoneda ?? 'PEN',
+        formaPagoTipo: 'Contado',
+        clienteId: c.clienteId,
+        clienteName: c.cliente?.nombre ?? '',
+        tipoOperacionId: operacion?.id,
+        motivoId: motivoNota?.id,
+        tipDocAfectado: c.tipoDoc,
+        numDocAfectado: `${c.serie}-${c.correlativo}`,
+        leyenda: motivo,
+        observaciones: motivo,
+        // Con motivo 01 la nota copia las líneas del comprobante tal cual.
+        detalles: (c.detalles ?? []).map((d: any) => ({
+          productoId: d.productoId ?? null,
+          descripcion: d.descripcion,
+          cantidad: d.cantidad,
+          nuevoValorUnitario: d.mtoPrecioUnitario,
+          unidadVenta: d.unidad,
+          tipoAfectacionIGV: String(d.tipAfeIgv ?? '10'),
+        })),
+      },
+      empresaId,
+      undefined,
+      c.sedeId ?? undefined,
+    );
+    this.enviar(nota.id);
+    return this.obtener(empresaId, v.id);
+  }
+
   /** Lo más reciente primero; se pagina con `starting_after` (el id de la última). */
   async listar(empresaId: number, query: { limit?: string; starting_after?: string; external_id?: string }) {
     await this.erp.asegurarPlan(empresaId);
@@ -506,14 +604,23 @@ export class ErpVentasService {
     });
   }
 
-  private comprobanteDe(id: number) {
-    return this.prisma.comprobante.findUnique({
+  private async comprobanteDe(id: number) {
+    const c: any = await this.prisma.comprobante.findUnique({
       where: { id },
       include: {
         cliente: { select: { nombre: true, nroDoc: true, tipoDocumento: { select: { codigo: true } } } },
         detalles: { include: { producto: { select: { codigo: true } } } },
       },
-    }) as Promise<any>;
+    });
+    // La nota de crédito que la anuló, si la hay.
+    if (c && c.tipoDoc !== 'NV') {
+      c.notaCredito = await this.prisma.comprobante.findFirst({
+        where: { empresaId: c.empresaId, tipoDoc: '07', numDocAfectado: `${c.serie}-${c.correlativo}` },
+        orderBy: { id: 'desc' },
+        select: { serie: true, correlativo: true, estadoEnvioSunat: true, sunatCdrResponse: true, sunatErrorMsg: true, observaciones: true },
+      });
+    }
+    return c;
   }
 
   serializar(v: { id: string; externalId: string | null; creadoEn: Date }, c: any) {
@@ -548,6 +655,14 @@ export class ErpVentasService {
       currency: 'PEN',
       payment: { method: MEDIO_PUBLICO[String(c.medioPago ?? '').toUpperCase()] ?? null },
       pdf_url: c.s3PdfUrl ?? null,
+      credit_note: c.notaCredito
+        ? {
+            number: `${c.notaCredito.serie}-${c.notaCredito.correlativo}`,
+            status: estadoPublico(c.notaCredito),
+            reason: c.notaCredito.observaciones ?? null,
+            sunat_message: ['FALLIDO_ENVIO', 'RECHAZADO'].includes(c.notaCredito.estadoEnvioSunat) ? c.notaCredito.sunatErrorMsg ?? null : null,
+          }
+        : null,
       created_at: v.creadoEn,
     };
   }
