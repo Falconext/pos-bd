@@ -132,10 +132,35 @@ export class MpSuscripcionService {
       },
     };
 
-    const { data } = await axios.post<PreapprovalMp>(MP_PREAPPROVAL_URL, cuerpo, {
-      headers: this.cabeceras(),
-      timeout: 20000,
-    });
+    // Fuera del try a propósito: si falta el token, ese aviso tiene que llegar
+    // tal cual y no disfrazado de "Mercado Pago no pudo crear la suscripción".
+    const cabeceras = this.cabeceras();
+
+    let data: PreapprovalMp;
+    try {
+      const resp = await axios.post<PreapprovalMp>(MP_PREAPPROVAL_URL, cuerpo, {
+        headers: cabeceras,
+        timeout: 20000,
+      });
+      data = resp.data;
+    } catch (e: any) {
+      // Mercado Pago contesta "User bad request" —un 400 sin detalle— cuando el
+      // correo del titular no le sirve: no es un email válido para MP, o es el
+      // mismo de la cuenta que cobra (nadie puede suscribirse a sí mismo). Tal
+      // cual, el empresario leería "no se pudo activar" y no sabría qué hacer.
+      const mp = e?.response?.data;
+      this.logger.error(
+        `MP rechazó la suscripción de la empresa ${empresa.id} (${e?.response?.status}): ${JSON.stringify(mp)?.slice(0, 300)}`,
+      );
+      if (e?.response?.status === 400) {
+        throw new BadRequestException(
+          `Mercado Pago no aceptó el correo ${email} para la suscripción. Revisa que sea un correo válido y que no sea el mismo de la cuenta de Mercado Pago que cobra.`,
+        );
+      }
+      throw new BadRequestException(
+        'Mercado Pago no pudo crear la suscripción en este momento. Inténtalo de nuevo en unos minutos.',
+      );
+    }
 
     await this.prisma.empresa.update({
       where: { id: empresa.id },

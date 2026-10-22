@@ -85,6 +85,23 @@ describe('Activar el débito', () => {
     await expect(service.crearSuscripcion(90)).rejects.toThrow(/no está configurado/i);
   });
 
+  it('si MP rechaza el correo, lo dice en claro y no "no se pudo activar"', async () => {
+    const { service } = montar();
+    // Lo que de verdad contesta MP: un 400 sin detalle. Probado en producción
+    // con un correo que no le sirvió.
+    http.post.mockRejectedValue({
+      response: { status: 400, data: { message: 'User bad request', status: 400 } },
+    });
+
+    await expect(service.crearSuscripcion(90)).rejects.toThrow(/correo dueno@irba\.pe/i);
+  });
+
+  it('un error pasajero de MP no se confunde con un dato malo', async () => {
+    const { service } = montar();
+    http.post.mockRejectedValue({ response: { status: 500, data: {} } });
+    await expect(service.crearSuscripcion(90)).rejects.toThrow(/en unos minutos/i);
+  });
+
   it('un plan sin costo no genera suscripción', async () => {
     const { service } = montar({ empresa: { ...EMPRESA, plan: { nombre: 'DEMO', costo: 0 } } });
     await expect(service.crearSuscripcion(90)).rejects.toThrow(/costo/i);
