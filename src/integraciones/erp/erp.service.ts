@@ -147,10 +147,21 @@ export class ErpApiService {
         ...(sedeId ? { NOT: { stocks: { some: { sedeId, visibleEnSede: false } } } } : {}),
         ...(busqueda
           ? {
+              // El código de barras de una talla o de un six pack trae al
+              // producto: es lo que escanea un lector o busca la web.
               OR: [
                 { descripcion: { contains: busqueda, mode: 'insensitive' as const } },
                 { codigo: { contains: busqueda, mode: 'insensitive' as const } },
                 { codigoBarras: { equals: busqueda } },
+                {
+                  variantes: {
+                    some: {
+                      estado: 'ACTIVO' as never,
+                      OR: [{ codigoBarras: { equals: busqueda } }, { codigo: { equals: busqueda, mode: 'insensitive' as const } }],
+                    },
+                  },
+                },
+                { codigosBarras: { some: { codigo: { equals: busqueda } } } },
               ],
             }
           : {}),

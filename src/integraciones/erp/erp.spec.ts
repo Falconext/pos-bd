@@ -123,6 +123,9 @@ describe('el servicio', () => {
     const where = prisma.producto.findMany.mock.calls[0][0].where;
     expect(where).toMatchObject({ empresaId: 89, estado: 'ACTIVO', productoPadreId: null, codigo: { notIn: ['DGD', 'IPM', 'PLD'] } });
     expect(where.OR[0]).toEqual({ descripcion: { contains: 'moringa', mode: 'insensitive' } });
+    // También por el código de una talla o de un paquete.
+    expect(where.OR[3].variantes.some.OR[0]).toEqual({ codigoBarras: { equals: 'moringa' } });
+    expect(where.OR[4]).toEqual({ codigosBarras: { some: { codigo: { equals: 'moringa' } } } });
     expect(prisma.producto.findMany.mock.calls[0][0].take).toBe(3);
     expect(r).toMatchObject({ object: 'list', has_more: true, next_cursor: '502' });
     expect(r.data).toHaveLength(2);
