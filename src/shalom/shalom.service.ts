@@ -1016,12 +1016,21 @@ export class ShalomService {
       envio.celularDest,
       cliente?.telefono,
     );
-    const phone = Number(String(telefono).replace(/\D/g, ''));
-    if (!phone) {
+    let digitos = String(telefono).replace(/\D/g, '');
+    if (digitos.length === 11 && digitos.startsWith('51')) digitos = digitos.slice(2);
+    if (!digitos) {
       throw new BadRequestException(
         'Falta el celular del destinatario para generar la guía.',
       );
     }
+    // Shalom registra la guía con cualquier número (aceptó "12345" en el QA del
+    // 21-10) y con uno así el destinatario no recibe los avisos de llegada.
+    if (!/^9\d{8}$/.test(digitos)) {
+      throw new BadRequestException(
+        `El celular del destinatario (${telefono}) no es válido: debe tener 9 dígitos y empezar con 9.`,
+      );
+    }
+    const phone = Number(digitos);
 
     // Tamaño del paquete: id fijo del selector > id del catálogo por cuenta
     // (despachos antiguos) > tamaño por defecto de la empresa > XS.

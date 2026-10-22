@@ -244,6 +244,28 @@ describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
     expect(lat.createOrder).not.toHaveBeenCalled();
   });
 
+  it('un celular que no es de 9 dígitos no llega a Shalom', async () => {
+    const { svc, prisma, lat } = build();
+    lat.getAgencias.mockResolvedValue({
+      success: true,
+      data: [agencia('7', 'Lima Centro'), agencia('582', 'Cusco Centro')],
+      total: 2,
+    });
+    prisma.empresa.findUnique.mockResolvedValue(empresaCorporativa());
+    prisma.envioDespacho.findFirst.mockResolvedValue({
+      id: 57,
+      nroOrden: null,
+      claveOrden: null,
+      agenciaDestino: 'Cusco Centro - CUSCO - CUSCO',
+      celularDest: '12345',
+      dniDestinatario: '47065472',
+      nombreDestinatario: 'ORTEGA ROLDAN, DIEGO JESUS',
+      comprobante: { id: 9, serie: 'B0D1', correlativo: 169, cliente: null, detalles: [] },
+    });
+    await expect(svc.crearGuiaDesdeDespacho(9, 100)).rejects.toThrow(/no es válido: debe tener 9 dígitos/);
+    expect(lat.createOrder).not.toHaveBeenCalled();
+  });
+
   it('documentoParaGuia: solo DNI, RUC o carné reales', () => {
     expect(documentoParaGuia('47065472')).toBe('47065472');
     expect(documentoParaGuia(' 20616250010 ')).toBe('20616250010');
