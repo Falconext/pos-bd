@@ -1110,6 +1110,13 @@ export class ProductoService {
     priorizarStock?: boolean;
     /** Incluir productos NO disponibles en la sede (para asignarlos). */
     incluirOcultos?: boolean;
+    /**
+     * Traer SOLO estos productos, sin importar paginación ni búsqueda. El POS
+     * lo usa para hidratar las líneas de un comprobante que se edita: necesita
+     * sus presentaciones (paquetes) y esos productos rara vez están en la
+     * página del catálogo que se cargó.
+     */
+    ids?: number[];
   }) {
     const {
       empresaId,
@@ -1142,6 +1149,17 @@ export class ProductoService {
       categoriaId: categoriaId ? Number(categoriaId) : undefined,
     };
 
+    // Pedido por ids: es una consulta puntual, no una navegación del catálogo.
+    // Se ignoran búsqueda, sede y "solo vendibles" a propósito: la línea de un
+    // comprobante ya emitido puede apuntar a un producto que hoy está oculto en
+    // la sede o desactivado, y aun así hay que poder mostrar su presentación.
+    const idsPedidos = (params.ids || []).filter((n) => Number.isFinite(n) && n > 0);
+    const porIds = idsPedidos.length > 0;
+    if (porIds) {
+      where.id = { in: idsPedidos };
+      delete where.estado;
+    }
+
     const conVariantes = String(params.incluirVariantes) === 'true';
 
     // Búsqueda flexible por palabras (cada palabra debe aparecer en algún campo).
@@ -1150,11 +1168,13 @@ export class ProductoService {
       : this.busquedaPorPalabras(searchTerm);
     if (searchAnd) where.AND = searchAnd;
 
-    if (!conVariantes) {
+    if (!conVariantes && !porIds) {
       where.productoPadreId = null;
     }
 
-    if (params.sedeId && params.soloVendibles) {
+    if (porIds) {
+      // sin filtros de sede: ver arriba
+    } else if (params.sedeId && params.soloVendibles) {
       where.stocks = {
         some: {
           sedeId: params.sedeId,
