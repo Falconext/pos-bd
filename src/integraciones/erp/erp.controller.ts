@@ -3,6 +3,8 @@ import { IdempotenciaInterceptor } from '../idempotencia/idempotencia.intercepto
 import { ApiKeyAuthGuard } from '../api-keys/api-key-auth.guard';
 import { ApiProducto } from '../api-keys/producto-api';
 import { ErpApiService } from './erp.service';
+import { ErpVentasService } from './erp-ventas.service';
+import { esPrueba } from './modo-prueba';
 
 /**
  * De dónde armar las URLs de las fotos: el mismo host por el que entró la
@@ -24,6 +26,9 @@ export function urlBaseDe(req: any): string {
  * suma el stock dos veces. El PATCH no la necesita: aplicar dos veces el
  * mismo cambio deja el mismo resultado.
  *
+ * Con una clave `sk_test_` las escrituras validan todo y devuelven cómo
+ * habría quedado (`livemode: false`) sin guardar nada: ver `modo-prueba.ts`.
+ *
  * `@ApiProducto('erp')`: una key de facturación (integradores) no lee
  * catálogos, y una de este producto no emite comprobantes.
  */
@@ -31,7 +36,33 @@ export function urlBaseDe(req: any): string {
 @UseGuards(ApiKeyAuthGuard)
 @Controller('v1/erp')
 export class ErpApiController {
-  constructor(private readonly erp: ErpApiService) {}
+  constructor(
+    private readonly erp: ErpApiService,
+    private readonly ventas: ErpVentasService,
+  ) {}
+
+  /**
+   * Una venta de la web: boleta, factura o nota de venta, por el mismo camino
+   * del POS. `Idempotency-Key` obligatoria: un reintento de la web no puede
+   * emitir dos boletas. `external_id` (el número de pedido de la web) además
+   * no se repite nunca, aunque cambie la key.
+   */
+  @Post('sales')
+  @HttpCode(201)
+  @UseInterceptors(IdempotenciaInterceptor)
+  crearVenta(@Body() body: unknown, @Request() req: any) {
+    return this.ventas.crear(req.apiEmpresaId, body, esPrueba(req));
+  }
+
+  @Get('sales')
+  listarVentas(@Query() query: any, @Request() req: any) {
+    return this.ventas.listar(req.apiEmpresaId, query ?? {});
+  }
+
+  @Get('sales/:id')
+  obtenerVenta(@Param('id') id: string, @Request() req: any) {
+    return this.ventas.obtener(req.apiEmpresaId, id);
+  }
 
   @Get('products')
   listar(@Query() query: any, @Request() req: any) {
@@ -47,12 +78,12 @@ export class ErpApiController {
   @HttpCode(201)
   @UseInterceptors(IdempotenciaInterceptor)
   crear(@Body() body: unknown, @Request() req: any) {
-    return this.erp.crearProducto(req.apiEmpresaId, body, urlBaseDe(req));
+    return this.erp.crearProducto(req.apiEmpresaId, body, urlBaseDe(req), esPrueba(req));
   }
 
   @Patch('products/:id')
   actualizar(@Param('id') id: string, @Body() body: unknown, @Request() req: any) {
-    return this.erp.actualizarProducto(req.apiEmpresaId, id, body, urlBaseDe(req));
+    return this.erp.actualizarProducto(req.apiEmpresaId, id, body, urlBaseDe(req), esPrueba(req));
   }
 
   /**
@@ -64,7 +95,7 @@ export class ErpApiController {
   @HttpCode(201)
   @UseInterceptors(IdempotenciaInterceptor)
   ajustarStock(@Param('id') id: string, @Body() body: unknown, @Request() req: any) {
-    return this.erp.ajustarStock(req.apiEmpresaId, id, body);
+    return this.erp.ajustarStock(req.apiEmpresaId, id, body, esPrueba(req));
   }
 
   @Get('locations')

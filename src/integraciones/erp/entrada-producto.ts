@@ -37,9 +37,9 @@ export const MAX_VARIANTES = 200;
 export const invalido = (param: string, message: string, code = 'parameter_invalid') =>
   new BadRequestException({ type: 'invalid_request_error', code, message, param });
 
-const presente = (o: any, k: string) => o != null && Object.prototype.hasOwnProperty.call(o, k);
+export const presente = (o: any, k: string) => o != null && Object.prototype.hasOwnProperty.call(o, k);
 
-function texto(o: any, k: string, max: number, requerido = false, nombre = k): string | undefined {
+export function texto(o: any, k: string, max: number, requerido = false, nombre = k): string | undefined {
   if (!presente(o, k) || o[k] === null) {
     if (requerido) throw invalido(nombre, `Falta \`${nombre}\`.`);
     return undefined;
@@ -51,7 +51,7 @@ function texto(o: any, k: string, max: number, requerido = false, nombre = k): s
   return v;
 }
 
-function monto(
+export function monto(
   o: any,
   k: string,
   opts: { requerido?: boolean; cero?: boolean; nombre?: string } = {},
@@ -69,7 +69,7 @@ function monto(
   return Math.round(n * 1e4) / 1e4;
 }
 
-function entero(o: any, k: string, nombre = k, minimo = 1): number | undefined {
+export function entero(o: any, k: string, nombre = k, minimo = 1): number | undefined {
   if (!presente(o, k) || o[k] === null) return undefined;
   if (!Number.isInteger(o[k]) || o[k] < minimo) {
     throw invalido(nombre, `\`${nombre}\` tiene que ser un número entero${minimo > 1 ? ` desde ${minimo}` : ' (un id válido)'}.`);
@@ -83,7 +83,7 @@ function booleano(o: any, k: string, nombre = k): boolean | undefined {
   return o[k];
 }
 
-function lista(o: any, k: string, max: number): any[] | undefined {
+export function lista(o: any, k: string, max: number): any[] | undefined {
   if (!presente(o, k) || o[k] === null) return undefined;
   if (!Array.isArray(o[k])) throw invalido(k, `\`${k}\` tiene que ser una lista.`);
   if (o[k].length > max) throw invalido(k, `\`${k}\` admite hasta ${max} elementos.`);
@@ -111,13 +111,13 @@ const PISTAS: Record<string, string> = {
   cost: 'El costo cambia con las compras, no editando el producto.',
 };
 
-function soloConocidos(o: any, permitidos: string[]) {
+export function soloConocidos(o: any, permitidos: string[], pistas: Record<string, string> = PISTAS) {
   if (o == null || typeof o !== 'object' || Array.isArray(o)) {
     throw invalido('body', 'El cuerpo tiene que ser un objeto JSON (Content-Type: application/json).');
   }
   const desconocido = Object.keys(o).find((k) => !permitidos.includes(k));
   if (desconocido) {
-    const pista = PISTAS[desconocido] ? ` ${PISTAS[desconocido]}` : '';
+    const pista = pistas[desconocido] ? ` ${pistas[desconocido]}` : '';
     throw invalido(desconocido, `\`${desconocido}\` no es un campo que se pueda enviar acá.${pista}`, 'unknown_parameter');
   }
 }

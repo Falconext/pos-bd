@@ -83,7 +83,9 @@ async function bootstrap() {
     },
     credentials: true,
     methods: ['GET', 'POST', 'DELETE', 'PATCH', 'PUT', 'OPTIONS'],
-    allowedHeaders: ['Authorization', 'Content-Type', 'Accept'],
+    // Idempotency-Key: la piden los POST de la API pública (/v1/…), y el
+    // probador de "API de Krezka" en el panel los hace desde el navegador.
+    allowedHeaders: ['Authorization', 'Content-Type', 'Accept', 'Idempotency-Key'],
   });
 
   // gzip de respuestas grandes (el catálogo para la app móvil offline pesa MBs).
