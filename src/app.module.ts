@@ -17,6 +17,7 @@ import { DoctorModule } from './doctor/doctor.module';
 import { ProductoModule } from './producto/producto.module';
 import { ComprobanteModule } from './comprobante/comprobante.module';
 import { KardexModule } from './kardex/kardex.module';
+import { InventarioDocumentosModule } from './inventario-documentos/inventario-documentos.module';
 import { ExtensionesModule } from './extensiones/extensiones.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { ContabilidadModule } from './contabilidad/contabilidad.module';
@@ -89,6 +90,7 @@ import { MercadoPagoModule } from './mercadopago/mercadopago.module';
     DoctorModule,
     ComprobanteModule,
     KardexModule,
+    InventarioDocumentosModule,
     PagoModule,
     CajaModule,
     ExtensionesModule,

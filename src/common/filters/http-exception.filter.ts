@@ -161,6 +161,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
       code: 0,
       message,
       error: (exception as any)?.name ?? 'Error',
+      // Errores por fila (p. ej. entradas y salidas de inventario): la
+      // pantalla marca cada fila con lo suyo en vez de un solo aviso.
+      ...(Array.isArray(rawObj?.problemas) ? { problemas: rawObj.problemas } : {}),
     });
   }
 }
