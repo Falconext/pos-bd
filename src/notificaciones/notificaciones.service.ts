@@ -2,6 +2,14 @@ import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificacionesGateway } from './notificaciones.gateway';
+import {
+  DIAS_AVISO_RENOVACION,
+  TITULO_AVISO_RENOVACION,
+  corteAvisosObsoletos,
+  diasParaVencerLima,
+  inicioDelDiaLima,
+  mensajeAvisoRenovacion,
+} from './avisos-vencimiento';
 
 export interface SunatNotifMeta {
   comprobanteId?: number;
@@ -25,23 +33,21 @@ export class NotificacionesService {
     this.gateway.enviarEventoAUsuarios(usuariosIds, evento, payload);
   }
 
-  // Verificar suscripciones próximas a vencer
+  // Verificar suscripciones próximas a vencer (ver avisos-vencimiento.ts).
   async verificarSuscripcionesProximasVencer() {
-    const hoy = new Date();
-    const en7Dias = new Date();
-    en7Dias.setDate(hoy.getDate() + 7);
-    const en3Dias = new Date();
-    en3Dias.setDate(hoy.getDate() + 3);
-    const en1Dia = new Date();
-    en1Dia.setDate(hoy.getDate() + 1);
+    const ahora = new Date();
+    // Las fechas de vencimiento se guardan como medianoche UTC del día que
+    // vencen: se comparan contra el día de hoy en Lima, no contra el instante.
+    const lima = new Date(ahora.getTime() - 5 * 3_600_000);
+    const hoy = new Date(
+      Date.UTC(lima.getUTCFullYear(), lima.getUTCMonth(), lima.getUTCDate()),
+    );
+    const limite = new Date(hoy.getTime() + DIAS_AVISO_RENOVACION * 86_400_000);
+    const inicioHoy = inicioDelDiaLima(ahora);
 
-    // Empresas que vencen en 7 días
-    const empresas7Dias = await this.prisma.empresa.findMany({
+    const empresas = await this.prisma.empresa.findMany({
       where: {
-        fechaExpiracion: {
-          gte: hoy,
-          lte: en7Dias,
-        },
+        fechaExpiracion: { gte: hoy, lte: limite },
         estado: 'ACTIVO',
       },
       include: {
@@ -53,37 +59,36 @@ export class NotificacionesService {
       },
     });
 
-    // Crear notificaciones para cada empresa
     const notificaciones: any[] = [];
 
-    for (const empresa of empresas7Dias) {
-      const diasRestantes = Math.ceil(
-        (empresa.fechaExpiracion.getTime() - hoy.getTime()) /
-          (1000 * 60 * 60 * 24),
-      );
+    for (const empresa of empresas) {
+      const dias = diasParaVencerLima(empresa.fechaExpiracion, ahora);
+      const { tipo, mensaje } = mensajeAvisoRenovacion(dias);
 
-      let tipo: 'INFO' | 'WARNING' | 'CRITICAL' = 'INFO';
-      let mensaje = '';
-
-      if (diasRestantes <= 1) {
-        tipo = 'CRITICAL';
-        mensaje = `¡Tu suscripción vence mañana! Renueva ahora para evitar interrupciones.`;
-      } else if (diasRestantes <= 3) {
-        tipo = 'WARNING';
-        mensaje = `Tu suscripción vence en ${diasRestantes} días. Considera renovar pronto.`;
-      } else {
-        tipo = 'INFO';
-        mensaje = `Tu suscripción vence en ${diasRestantes} días.`;
-      }
-
-      // Crear notificación para cada admin de la empresa
       for (const usuario of empresa.usuarios) {
+        // Uno por día: si ya salió hoy (otra instancia, un reintento), nada.
+        const yaAvisado = await this.prisma.notificacion.findFirst({
+          where: {
+            usuarioId: usuario.id,
+            titulo: TITULO_AVISO_RENOVACION,
+            creadoEn: { gte: inicioHoy },
+          },
+          select: { id: true },
+        });
+        if (yaAvisado) continue;
+
+        // El de hoy reemplaza a los de días anteriores: la cuenta regresiva
+        // es una sola, no siete avisos apilados en la campana.
+        await this.prisma.notificacion.deleteMany({
+          where: { usuarioId: usuario.id, titulo: TITULO_AVISO_RENOVACION },
+        });
+
         const notificacion = await this.prisma.notificacion.create({
           data: {
             usuarioId: usuario.id,
             empresaId: empresa.id,
             tipo,
-            titulo: 'Renovación de Suscripción',
+            titulo: TITULO_AVISO_RENOVACION,
             mensaje,
             leida: false,
           },
@@ -103,14 +108,30 @@ export class NotificacionesService {
 
   // Obtener notificaciones de un usuario
   async obtenerNotificacionesUsuario(usuarioId: number, limit = 20) {
+    // Los avisos de vencimiento que quedaron de antes de renovar ya no son
+    // ciertos: no se muestran ni cuentan como no leídos.
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { id: usuarioId },
+      select: { empresa: { select: { fechaExpiracion: true } } },
+    });
+    const vence = usuario?.empresa?.fechaExpiracion;
+    const sinObsoletos = vence
+      ? {
+          NOT: {
+            titulo: TITULO_AVISO_RENOVACION,
+            creadoEn: { lt: corteAvisosObsoletos(vence) },
+          },
+        }
+      : {};
+
     const notificaciones = await this.prisma.notificacion.findMany({
-      where: { usuarioId },
+      where: { usuarioId, ...sinObsoletos },
       orderBy: { creadoEn: 'desc' },
       take: limit,
     });
 
     const noLeidas = await this.prisma.notificacion.count({
-      where: { usuarioId, leida: false },
+      where: { usuarioId, leida: false, ...sinObsoletos },
     });
 
     return {
