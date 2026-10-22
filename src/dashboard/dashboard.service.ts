@@ -445,6 +445,30 @@ export class DashboardService {
     }
   }
 
+  /**
+   * Cuántas ventas hubo en el rango, con el mismo criterio que el total de
+   * headerResumen: sin anuladas, sin cotizaciones ni OT, sin notas ya
+   * convertidas y sin notas de crédito.
+   */
+  async cantidadVentas(
+    empresaId: number,
+    fechaInicio?: string,
+    fechaFin?: string,
+    sedeId?: number,
+  ): Promise<number> {
+    const fechaEmision = this.parseRange(fechaInicio, fechaFin);
+    return this.prisma.comprobante.count({
+      where: {
+        empresaId,
+        ...(sedeId ? { sedeId } : {}),
+        ...(fechaEmision ? { fechaEmision } : {}),
+        estadoEnvioSunat: { not: 'ANULADO' as any },
+        ...this.filtroExcluirConvertidos,
+        tipoDoc: { notIn: ['07', 'COT', 'OT'] },
+      },
+    });
+  }
+
   async ingresosPorComprobante(
     empresaId: number,
     fechaInicio?: string,
