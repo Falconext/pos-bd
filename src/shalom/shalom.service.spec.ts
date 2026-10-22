@@ -1,4 +1,4 @@
-import { ShalomService } from './shalom.service';
+import { ShalomService, documentoParaGuia } from './shalom.service';
 
 /**
  * QA del servicio Shalom: toda falconext-mype usa el proveedor api.shalom-api.lat
@@ -220,6 +220,37 @@ describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
     });
     await expect(svc.crearGuiaDesdeDespacho(9, 100)).rejects.toThrow(/ya tiene la guía/);
     expect(lat.createOrder).not.toHaveBeenCalled();
+  });
+
+  it('un cliente con documento "0" no llega a Shalom: avisa que falta el DNI', async () => {
+    const { svc, prisma, lat } = build();
+    lat.getAgencias.mockResolvedValue({
+      success: true,
+      data: [agencia('7', 'Lima Centro'), agencia('582', 'Cusco Centro')],
+      total: 2,
+    });
+    prisma.empresa.findUnique.mockResolvedValue(empresaCorporativa());
+    prisma.envioDespacho.findFirst.mockResolvedValue({
+      id: 56,
+      nroOrden: null,
+      claveOrden: null,
+      agenciaDestino: 'Cusco Centro - CUSCO - CUSCO',
+      celularDest: '958738281',
+      dniDestinatario: '',
+      nombreDestinatario: '',
+      comprobante: { id: 9, serie: 'NV01', correlativo: 71, cliente: { nombre: 'JAIMITO EL CARTERO', nroDoc: '0' }, detalles: [] },
+    });
+    await expect(svc.crearGuiaDesdeDespacho(9, 100)).rejects.toThrow(/Falta el DNI del destinatario/);
+    expect(lat.createOrder).not.toHaveBeenCalled();
+  });
+
+  it('documentoParaGuia: solo DNI, RUC o carné reales', () => {
+    expect(documentoParaGuia('47065472')).toBe('47065472');
+    expect(documentoParaGuia(' 20616250010 ')).toBe('20616250010');
+    expect(documentoParaGuia('001234567')).toBe('001234567');
+    for (const malo of ['0', '', null, '10000000', '00000000', '11111111', '1234', 'SIN DOC']) {
+      expect(documentoParaGuia(malo as any)).toBe('');
+    }
   });
 
   it('desconectar elimina la instancia en el proveedor para liberar el cupo', async () => {
