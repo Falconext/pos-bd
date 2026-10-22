@@ -41,20 +41,12 @@ const diaLima = (fecha: Date) =>
   fecha.toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
 
 /**
- * Aperturas que nunca se cerraron y que ya no son el turno en curso de nadie.
- *
- * `movs` son APERTURA y CIERRE en orden de fecha. Cada CIERRE se empareja con
- * su apertura: por el vínculo si lo tiene; si es anterior al vínculo, con la
- * última apertura abierta del mismo usuario en la sede, y si no hay, con una
- * del mismo día (un administrador cuadrando el turno de otro).
- *
- * Una apertura sin cierre es el turno en curso —no un pendiente— si está dentro
- * del tope de horas y su usuario no abrió otra después en esa sede.
+ * Aperturas sin cierre. Cada CIERRE se empareja con su apertura: por el
+ * vínculo si lo tiene; si es anterior al vínculo, con la última apertura
+ * abierta del mismo usuario en la sede, y si no hay, con una del mismo día (un
+ * administrador cuadrando el turno de otro). `movs` en orden de fecha.
  */
-export function turnosSinCuadrar<T extends MovimientoTurno>(
-  movs: T[],
-  ahora: Date = new Date(),
-): T[] {
+function aperturasSinCierre<T extends MovimientoTurno>(movs: T[]): T[] {
   const abiertas: T[] = [];
   const mismaSede = (a: T, b: T) => (a.sedeId ?? 0) === (b.sedeId ?? 0);
 
@@ -78,17 +70,43 @@ export function turnosSinCuadrar<T extends MovimientoTurno>(
     }
     if (i >= 0) abiertas.splice(i, 1);
   }
+  return abiertas;
+}
 
-  const desde = ventanaTurnoAbierto(ahora).gte;
-  return abiertas.filter((a) => {
-    const reciente = a.fecha >= desde;
-    const reabrio = movs.some(
-      (o) =>
-        o.tipoMovimiento === 'APERTURA' &&
-        o.fecha > a.fecha &&
-        o.usuarioId === a.usuarioId &&
-        mismaSede(o, a),
-    );
-    return !reciente || reabrio;
-  });
+/** Una apertura sin cierre es el turno en curso de su usuario, no un pendiente. */
+function esTurnoEnCurso<T extends MovimientoTurno>(a: T, movs: T[], ahora: Date): boolean {
+  const reciente = a.fecha >= ventanaTurnoAbierto(ahora).gte;
+  const reabrio = movs.some(
+    (o) =>
+      o.tipoMovimiento === 'APERTURA' &&
+      o.fecha > a.fecha &&
+      o.usuarioId === a.usuarioId &&
+      (o.sedeId ?? 0) === (a.sedeId ?? 0),
+  );
+  return reciente && !reabrio;
+}
+
+/**
+ * Aperturas que nunca se cerraron y que ya no son el turno en curso de nadie.
+ *
+ * Una apertura sin cierre es el turno en curso —no un pendiente— si está dentro
+ * del tope de horas y su usuario no abrió otra después en esa sede.
+ */
+export function turnosSinCuadrar<T extends MovimientoTurno>(
+  movs: T[],
+  ahora: Date = new Date(),
+): T[] {
+  return aperturasSinCierre(movs).filter((a) => !esTurnoEnCurso(a, movs, ahora));
+}
+
+/**
+ * Los turnos abiertos ahora mismo, de todos los usuarios. La caja es por
+ * usuario: sin esto el dueño ve "Caja cerrada" mientras su cajera tiene el
+ * turno abierto (LA DESPENSA HM, 22-10).
+ */
+export function turnosEnCurso<T extends MovimientoTurno>(
+  movs: T[],
+  ahora: Date = new Date(),
+): T[] {
+  return aperturasSinCierre(movs).filter((a) => esTurnoEnCurso(a, movs, ahora));
 }
