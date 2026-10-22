@@ -4,6 +4,7 @@ import { ApiKeyAuthGuard } from '../api-keys/api-key-auth.guard';
 import { ApiProducto } from '../api-keys/producto-api';
 import { ErpApiService } from './erp.service';
 import { ErpVentasService } from './erp-ventas.service';
+import { ErpDatosService } from './erp-datos.service';
 import { esPrueba } from './modo-prueba';
 
 /**
@@ -39,6 +40,7 @@ export class ErpApiController {
   constructor(
     private readonly erp: ErpApiService,
     private readonly ventas: ErpVentasService,
+    private readonly datos: ErpDatosService,
   ) {}
 
   /**
@@ -101,6 +103,43 @@ export class ErpApiController {
   @Get('locations')
   sedes(@Request() req: any) {
     return this.erp.listarSedes(req.apiEmpresaId);
+  }
+
+  /** Crear categorías y marcas: para tener su id antes de crear productos. */
+  @Post('categories')
+  @HttpCode(201)
+  @UseInterceptors(IdempotenciaInterceptor)
+  crearCategoria(@Body() body: unknown, @Request() req: any) {
+    return this.datos.crearCategoria(req.apiEmpresaId, body, esPrueba(req));
+  }
+
+  @Post('brands')
+  @HttpCode(201)
+  @UseInterceptors(IdempotenciaInterceptor)
+  crearMarca(@Body() body: unknown, @Request() req: any) {
+    return this.datos.crearMarca(req.apiEmpresaId, body, esPrueba(req));
+  }
+
+  @Get('customers')
+  listarClientes(@Query() query: any, @Request() req: any) {
+    return this.datos.listarClientes(req.apiEmpresaId, query ?? {});
+  }
+
+  @Get('customers/:id')
+  obtenerCliente(@Param('id') id: string, @Request() req: any) {
+    return this.datos.obtenerCliente(req.apiEmpresaId, id);
+  }
+
+  @Post('customers')
+  @HttpCode(201)
+  @UseInterceptors(IdempotenciaInterceptor)
+  crearCliente(@Body() body: unknown, @Request() req: any) {
+    return this.datos.crearCliente(req.apiEmpresaId, body, esPrueba(req));
+  }
+
+  @Patch('customers/:id')
+  actualizarCliente(@Param('id') id: string, @Body() body: unknown, @Request() req: any) {
+    return this.datos.actualizarCliente(req.apiEmpresaId, id, body, esPrueba(req));
   }
 
   @Get('brands')
