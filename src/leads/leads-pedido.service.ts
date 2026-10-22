@@ -32,10 +32,13 @@ import {
   pedirDatoAlCliente,
   textoDichoPorElCliente,
 } from './procedencia-datos';
+import { perfilValido, type PerfilVendedor } from './perfil-vendedor';
 
 /** Lo que cada empresa configura de su operación comercial. */
 export interface ConfigComercial {
   envio: ConfigEnvio;
+  /** "Mi vendedor": tono, reglas, saludo y temas. Ver `perfil-vendedor.ts`. */
+  vendedor?: PerfilVendedor;
   horario: ConfigHorarioEntrega;
   descuento: ReglasDescuento;
   /** Nombre con el que se presenta quien atiende ("Claudio" en Hierba Sana). */
@@ -144,6 +147,7 @@ export class LeadsPedidoService {
         ? { videoBienvenidaUrl: guardada.videoBienvenidaUrl }
         : {}),
       ...(guardada.mediosPago ? { mediosPago: guardada.mediosPago } : {}),
+      ...(guardada.vendedor ? { vendedor: perfilValido(guardada.vendedor) } : {}),
       ...(guardada.descargoLegal
         ? { descargoLegal: guardada.descargoLegal }
         : {}),

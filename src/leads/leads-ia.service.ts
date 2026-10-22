@@ -124,6 +124,7 @@ export class IaVentasService {
       nombre: negocio?.nombre ?? 'este negocio',
       rubro: negocio?.rubro ?? null,
       asesor: negocio?.asesor ?? null,
+      perfil: negocio?.perfil ?? null,
       contexto:
         businessContext ||
         'No hay información cargada del negocio: no afirmes nada sobre precios, stock ni políticas.',
@@ -198,6 +199,7 @@ export class IaVentasService {
         nombre: negocio?.nombre ?? 'este negocio',
         rubro: negocio?.rubro ?? null,
         asesor: negocio?.asesor ?? null,
+        perfil: negocio?.perfil ?? null,
         contexto: businessContext || 'Sin información cargada del negocio.',
       }) +
       `\n\nEl prospecto dejó de responder. Escribe UN solo mensaje de seguimiento, breve (máximo 2 frases), cálido y natural, sin sonar insistente ni robótico. Retoma su interés y ofrece ayuda o el siguiente paso (una duda, una promo, agendar). No saludes de nuevo como si fuera la primera vez. No repitas textualmente lo último que ya dijiste. Devuelve SOLO el mensaje, sin comillas.`;
