@@ -16,7 +16,7 @@ import {
   TransferenciaCajaDto,
   MarcarDepositadosDto,
 } from './dto/caja.dto';
-import { turnosSinCuadrar, ventanaTurnoAbierto } from './turno-abierto';
+import { turnosEnCurso, turnosSinCuadrar, ventanaTurnoAbierto } from './turno-abierto';
 
 @Injectable()
 export class CajaService {
@@ -136,7 +136,8 @@ export class CajaService {
   }
 
   /**
-   * Turnos que se abrieron, nunca se cerraron y ya no son el turno en curso.
+   * Turnos de la sede sin cierre: los pendientes (se abrieron, nunca se
+   * cerraron y ya no son el turno en curso) y los que están abiertos ahora.
    *
    * Un turno olvidado queda huérfano en silencio: sus gastos y ventas sí se
    * contabilizan, pero NADIE contó el cajón — no hay arqueo ni diferencia
@@ -144,7 +145,7 @@ export class CajaService {
    * en `turnosSinCuadrar`: ya no se hace por día, porque un turno puede
    * cerrarse pasada la medianoche.
    */
-  private async turnosSinCerrar(
+  private async turnosDeLaSede(
     empresaId: number,
     sedeId?: number,
     diasAtras = 60,
@@ -174,15 +175,19 @@ export class CajaService {
       },
     });
 
-    return turnosSinCuadrar(movs)
-      .map((m) => ({
-        id: m.id,
-        fecha: m.fecha,
-        turno: m.turno,
-        sedeId: m.sedeId,
-        sede: m.sede?.nombre ?? null,
-        usuario: m.usuario?.nombre ?? null,
-      }));
+    const fila = (m: (typeof movs)[number]) => ({
+      id: m.id,
+      fecha: m.fecha,
+      turno: m.turno,
+      sedeId: m.sedeId,
+      sede: m.sede?.nombre ?? null,
+      usuarioId: m.usuarioId,
+      usuario: m.usuario?.nombre ?? null,
+    });
+    return {
+      pendientes: turnosSinCuadrar(movs).map(fila),
+      enCurso: turnosEnCurso(movs).map(fila),
+    };
   }
 
   /**
@@ -950,14 +955,21 @@ export class CajaService {
     );
     const egresosRecientes = recientes;
 
-    // Aviso de turnos anteriores sin cerrar (ver turnosSinCerrar).
-    const pendientesDeCierre = await this.turnosSinCerrar(empresaId, sedeId);
+    // Aviso de turnos anteriores sin cerrar (ver turnosDeLaSede), y los
+    // turnos que otros tienen abiertos ahora: la caja es por usuario y, sin
+    // esto, el dueño ve "Caja cerrada" mientras su cajera está vendiendo.
+    const turnos = await this.turnosDeLaSede(empresaId, sedeId);
+    const pendientesDeCierre = turnos.pendientes;
+    const turnosAbiertosEquipo = turnos.enCurso.filter(
+      (t) => t.usuarioId !== usuarioId,
+    );
 
     return {
       estado,
       movimiento,
       ventasDelDia,
       pendientesDeCierre,
+      turnosAbiertosEquipo,
       totalEgresos,
       totalIngresosCaja,
       totalTransferenciasEnviadas,

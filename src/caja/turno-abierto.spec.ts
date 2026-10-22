@@ -6,6 +6,7 @@
  */
 import {
   HORAS_TURNO_ABIERTO,
+  turnosEnCurso,
   turnosSinCuadrar,
   ventanaTurnoAbierto,
   type MovimientoTurno,
@@ -97,5 +98,22 @@ describe('turnosSinCuadrar', () => {
     expect(turnosSinCuadrar([ana, beto, cierreAna], horas(APERTURA_TARDE, 27))).toEqual([]);
     // Pasado el tope, el de Beto sí.
     expect(turnosSinCuadrar([ana, beto, cierreAna], horas(APERTURA_TARDE, 60))).toEqual([beto]);
+  });
+});
+
+describe('turnos en curso del equipo (LA DESPENSA HM, 22-10)', () => {
+  it('el dueño ve el turno que su cajera tiene abierto, y no los pendientes', () => {
+    const viejo = mov('APERTURA', horas(APERTURA_TARDE, -120), { usuarioId: 159 });
+    const cajera = mov('APERTURA', APERTURA_TARDE, { usuarioId: 160 });
+    const enCurso = turnosEnCurso([viejo, cajera], horas(APERTURA_TARDE, 7));
+    expect(enCurso).toEqual([cajera]);
+    expect(turnosSinCuadrar([viejo, cajera], horas(APERTURA_TARDE, 7))).toEqual([viejo]);
+  });
+
+  it('cerrado o pasado el tope, ya no está en curso', () => {
+    const a = mov('APERTURA', APERTURA_TARDE, { usuarioId: 160 });
+    const c = mov('CIERRE', horas(APERTURA_TARDE, 7), { usuarioId: 160, movimientoVinculadoId: a.id });
+    expect(turnosEnCurso([a, c], horas(APERTURA_TARDE, 8))).toEqual([]);
+    expect(turnosEnCurso([a], horas(APERTURA_TARDE, HORAS_TURNO_ABIERTO + 1))).toEqual([]);
   });
 });
