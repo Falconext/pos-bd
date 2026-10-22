@@ -116,6 +116,21 @@ function primeroNoVacio(...valores: Array<string | null | undefined>): string {
 }
 
 /**
+ * El documento solo sirve si es uno de verdad: DNI (8 dígitos), RUC (11) o
+ * carné/pasaporte (9 a 12 letras y números). Las ventas por WhatsApp crean el
+ * cliente con documento "0" o "10000000" (CLIENTES VARIOS), y mandarlo a
+ * Shalom devolvía un error interno que se leía "Shalom no está disponible"
+ * (JAIMITO EL CARTERO, demo.ropa, 21-10).
+ */
+export function documentoParaGuia(v: string | null | undefined): string {
+  const t = String(v ?? '').trim().toUpperCase();
+  if (/^\d{8}$/.test(t)) return /^(\d)\1{7}$/.test(t) || /^10{7}$/.test(t) ? '' : t;
+  if (/^\d{11}$/.test(t)) return t;
+  if (/^[A-Z0-9]{9,12}$/.test(t) && /\d/.test(t)) return t;
+  return '';
+}
+
+/**
  * Servicio Shalom de falconext-mype. Todas las empresas usan el proveedor
  * api.shalom-api.lat (`ShalomLatService`), autenticado con una API key global:
  * tracking, agencias, comprobante, etiqueta y cotización NO requieren cuenta
@@ -971,16 +986,21 @@ export class ShalomService {
     // El despacho guarda los campos del destinatario como cadena vacía cuando no
     // se llenan, así que `??` no sirve para encadenar: hay que saltar los vacíos.
     const dni = primeroNoVacio(
-      dto.dni,
-      envio.dniDestinatario,
-      cliente?.nroDoc,
+      documentoParaGuia(dto.dni),
+      documentoParaGuia(envio.dniDestinatario),
+      documentoParaGuia(cliente?.nroDoc),
     );
     const nombre = primeroNoVacio(
       dto.nombre,
       envio.nombreDestinatario,
       cliente?.nombre,
     );
-    if (!dni || !nombre) {
+    if (!dni) {
+      throw new BadRequestException(
+        'Falta el DNI del destinatario (el cliente no tiene un documento válido): escríbelo en el despacho.',
+      );
+    }
+    if (!nombre) {
       throw new BadRequestException(
         'Falta el nombre o el documento del destinatario para generar la guía.',
       );
@@ -996,12 +1016,21 @@ export class ShalomService {
       envio.celularDest,
       cliente?.telefono,
     );
-    const phone = Number(String(telefono).replace(/\D/g, ''));
-    if (!phone) {
+    let digitos = String(telefono).replace(/\D/g, '');
+    if (digitos.length === 11 && digitos.startsWith('51')) digitos = digitos.slice(2);
+    if (!digitos) {
       throw new BadRequestException(
         'Falta el celular del destinatario para generar la guía.',
       );
     }
+    // Shalom registra la guía con cualquier número (aceptó "12345" en el QA del
+    // 21-10) y con uno así el destinatario no recibe los avisos de llegada.
+    if (!/^9\d{8}$/.test(digitos)) {
+      throw new BadRequestException(
+        `El celular del destinatario (${telefono}) no es válido: debe tener 9 dígitos y empezar con 9.`,
+      );
+    }
+    const phone = Number(digitos);
 
     // Tamaño del paquete: id fijo del selector > id del catálogo por cuenta
     // (despachos antiguos) > tamaño por defecto de la empresa > XS.

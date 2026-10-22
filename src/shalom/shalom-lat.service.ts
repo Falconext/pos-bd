@@ -202,7 +202,7 @@ export class ShalomLatService {
   private mensajeShalom(err: any, doc: string): string {
     const s = err?.shalomStatus;
     if (s === 500 || s === 502 || s === 503 || s === 504) {
-      return 'Shalom no está disponible en este momento (su servicio de rastreo no respondió). Intenta de nuevo en unos minutos.';
+      return 'Shalom no está disponible en este momento (su servicio no respondió). Intenta de nuevo en unos minutos.';
     }
     if (s === 404) {
       return `No se pudo obtener ${doc}. Verifica el N° de orden y la clave, o intenta de nuevo en unos minutos.`;
