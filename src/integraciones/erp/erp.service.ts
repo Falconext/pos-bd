@@ -1,8 +1,9 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ProductoService } from '../../producto/producto.service';
+import { leerAjuste, leerAlta, leerCambio } from './entrada-producto';
 import { PrismaService } from '../../prisma/prisma.service';
-import { S3Service } from '../../s3/s3.service';
 import { CODIGOS_FANTASMA, parseImagenesExtra, serializarProducto } from './serializar-producto';
-import { keyDeS3, leerTokenImagen, tokenImagen } from './imagen-publica';
+import { imagenPublica } from '../../seo/seo-texto';
 
 /** El módulo del plan que habilita la API de Krezka. */
 export const MODULO_API = 'api';
@@ -33,7 +34,7 @@ export class ErpApiService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly s3: S3Service,
+    private readonly productos: ProductoService,
   ) {}
 
   /**
@@ -209,26 +210,204 @@ export class ErpApiService {
     };
   }
 
+  /** Foto en tamaño original: la web decide cómo achicarla (`?w=` acepta 200/400/800/1200). */
   private urlImagen(urlBase: string) {
-    return (productoId: number, indice: number) =>
-      `${urlBase}/api/v1/erp/images/${tokenImagen(productoId, indice)}`;
+    return (url: string) => imagenPublica(url, urlBase)?.replace(/\?.*$/, '') ?? null;
+  }
+
+  // ── Escritura ─────────────────────────────────────────────────────────
+  //
+  // Todo pasa por ProductoService, el mismo camino del panel: así el valor
+  // sin IGV, el código, las sedes y el kardex se calculan igual venga de
+  // donde venga el producto. Lo único propio de la API es validar la entrada
+  // y verificar que lo que se toca sea de este negocio.
+
+  private async sedePrincipal(empresaId: number): Promise<number> {
+    const s = await this.prisma.sede.findFirst({
+      where: { empresaId, activo: true },
+      orderBy: [{ esPrincipal: 'desc' }, { id: 'asc' }],
+      select: { id: true },
+    });
+    if (!s) throw new BadRequestException({ code: 'no_location', message: 'El negocio no tiene ninguna sede activa.' });
+    return s.id;
+  }
+
+  private async verificarCategoria(empresaId: number, categoriaId: number) {
+    const c = await this.prisma.categoria.findFirst({ where: { id: categoriaId, empresaId }, select: { id: true } });
+    if (!c) {
+      throw new NotFoundException({
+        code: 'category_not_found',
+        message: `La categoría ${categoriaId} no existe en este negocio. Consulta GET /v1/erp/categories.`,
+        param: 'category_id',
+      });
+    }
+  }
+
+  private async verificarSkuLibre(empresaId: number, codigo: string, salvo?: number) {
+    const otro = await this.prisma.producto.findFirst({
+      where: { empresaId, codigo, ...(salvo ? { id: { not: salvo } } : {}) },
+      select: { id: true },
+    });
+    if (otro) {
+      throw new ConflictException({
+        code: 'sku_taken',
+        message: `Ya hay un producto con el sku ${codigo} (id ${otro.id}).`,
+        param: 'sku',
+      });
+    }
+  }
+
+  private async productoPropio(empresaId: number, id: unknown) {
+    const productoId = entero(id);
+    const p = productoId
+      ? await this.prisma.producto.findFirst({
+          where: { id: productoId, empresaId, estado: 'ACTIVO' as never, codigo: { notIn: CODIGOS_FANTASMA } },
+          select: { id: true, codigo: true, precioUnitario: true },
+        })
+      : null;
+    if (!p) {
+      throw new NotFoundException({ code: 'product_not_found', message: `El producto ${String(id)} no existe en este negocio.` });
+    }
+    return p;
   }
 
   /**
-   * El enlace firmado nuevo detrás de una URL estable de foto. Fotos que no
-   * están en S3 (una URL externa que pegó el negocio) se devuelven tal cual.
+   * Deja el stock de una sede en `nuevo`, con su movimiento en el kardex.
+   *
+   * La fila de la sede se asegura ANTES: si no existe, la edición del panel
+   * guarda el stock sin movimiento, y un stock sin kardex es justo lo que
+   * hacía saltar avisos de "agotado" falsos (ZABDI, 2026-10-21).
    */
-  async urlFirmadaDeImagen(token: string): Promise<string> {
-    const t = leerTokenImagen(token);
-    const p = t
-      ? await this.prisma.producto.findUnique({
-          where: { id: t.productoId },
-          select: { imagenUrl: true, imagenesExtra: true },
+  private async dejarStockEn(
+    empresaId: number,
+    productoId: number,
+    sedeId: number,
+    nuevo: number,
+    motivo: string,
+    nota?: string,
+  ) {
+    await this.prisma.productoStock.upsert({
+      where: { productoId_sedeId: { productoId, sedeId } },
+      create: { productoId, sedeId, stock: 0 },
+      update: {},
+    });
+    await this.productos.actualizar(
+      {
+        id: productoId,
+        empresaId,
+        sedeId,
+        stock: nuevo,
+        motivoAjusteStock: motivo,
+        detalleAjusteStock: nota ? `${nota} (API)` : 'Desde la API',
+      } as any,
+      undefined,
+    );
+  }
+
+  async crearProducto(empresaId: number, body: unknown, urlBase: string) {
+    await this.asegurarPlan(empresaId);
+    const a = leerAlta(body);
+    const sedeId = a.sedeId ? (await this.sedeDe(empresaId, a.sedeId))! : await this.sedePrincipal(empresaId);
+    if (a.categoriaId) await this.verificarCategoria(empresaId, a.categoriaId);
+    if (a.codigo) await this.verificarSkuLibre(empresaId, a.codigo);
+    let unidadMedidaId: number | undefined;
+    if (a.unidad) {
+      const u = await this.prisma.unidadMedida.findFirst({ where: { codigo: a.unidad }, select: { id: true } });
+      if (!u) {
+        throw new BadRequestException({
+          code: 'parameter_invalid',
+          message: `\`unit\` ${a.unidad} no es un código de unidad de SUNAT conocido (ej. NIU, KGM, LTR, ZZ).`,
+          param: 'unit',
+        });
+      }
+      unidadMedidaId = u.id;
+    }
+
+    const creado: any = await this.productos.crear(
+      {
+        descripcion: a.descripcion,
+        precioUnitario: a.precioUnitario,
+        tipoAfectacionIGV: a.tipoAfectacionIGV,
+        moneda: a.moneda,
+        // El stock inicial va después, como ajuste: así queda en el kardex.
+        stock: 0,
+        codigo: a.codigo,
+        codigoBarras: a.codigoBarras,
+        descripcionLarga: a.descripcionLarga,
+        categoriaId: a.categoriaId,
+        unidadMedidaId,
+        precioOferta: a.precioOferta,
+        publicarEnTienda: a.publicarEnTienda,
+      },
+      empresaId,
+      sedeId,
+    );
+    if (a.stock > 0) {
+      await this.dejarStockEn(empresaId, creado.id, sedeId, a.stock, 'OTRO', 'Stock inicial');
+    }
+    return this.obtenerProducto(empresaId, creado.id, undefined, urlBase);
+  }
+
+  async actualizarProducto(empresaId: number, id: unknown, body: unknown, urlBase: string) {
+    await this.asegurarPlan(empresaId);
+    const p = await this.productoPropio(empresaId, id);
+    const c = leerCambio(body);
+    if (c.categoriaId) await this.verificarCategoria(empresaId, c.categoriaId);
+    if (c.codigo && c.codigo !== p.codigo) await this.verificarSkuLibre(empresaId, c.codigo, p.id);
+    if (c.precioOferta != null) {
+      const precio = c.precioUnitario ?? Number(p.precioUnitario);
+      if (c.precioOferta >= precio) {
+        throw new BadRequestException({
+          code: 'parameter_invalid',
+          message: '`sale_price` tiene que ser menor que `price`.',
+          param: 'sale_price',
+        });
+      }
+    }
+    await this.productos.actualizar({ ...c, id: p.id, empresaId } as any, undefined);
+    return this.obtenerProducto(empresaId, p.id, undefined, urlBase);
+  }
+
+  async ajustarStock(empresaId: number, id: unknown, body: unknown) {
+    await this.asegurarPlan(empresaId);
+    const a = leerAjuste(body);
+    const productoId = entero(id);
+    // Las variantes (talla, color) también tienen su stock: se aceptan.
+    const p = productoId
+      ? await this.prisma.producto.findFirst({
+          where: { id: productoId, empresaId, estado: 'ACTIVO' as never, codigo: { notIn: CODIGOS_FANTASMA } },
+          select: { id: true },
         })
       : null;
-    const url = p && t ? [p.imagenUrl, ...parseImagenesExtra(p.imagenesExtra)].filter(Boolean)[t.indice] : null;
-    if (!url) throw new NotFoundException({ code: 'image_not_found', message: 'La imagen no existe.' });
-    const key = keyDeS3(url);
-    return key ? this.s3.getSignedGetUrl(key, 3600) : url;
+    if (!p) {
+      throw new NotFoundException({ code: 'product_not_found', message: `El producto ${String(id)} no existe en este negocio.` });
+    }
+    const sedeId = a.sedeId ? (await this.sedeDe(empresaId, a.sedeId))! : await this.sedePrincipal(empresaId);
+    const fila = await this.prisma.productoStock.findUnique({
+      where: { productoId_sedeId: { productoId: p.id, sedeId } },
+      select: { stock: true },
+    });
+    const antes = Math.round(Number(fila?.stock ?? 0) * 1000) / 1000;
+    const despues = Math.round((a.nuevo ?? antes + (a.cambio ?? 0)) * 1000) / 1000;
+    if (despues < 0) {
+      throw new BadRequestException({
+        code: 'insufficient_stock',
+        message: `No se puede restar ${Math.abs(a.cambio ?? 0)}: en esa sede hay ${antes}.`,
+        param: 'change',
+      });
+    }
+    if (despues !== antes) {
+      await this.dejarStockEn(empresaId, p.id, sedeId, despues, a.motivo, a.nota);
+    }
+    return {
+      object: 'stock_adjustment',
+      product_id: p.id,
+      location_id: sedeId,
+      previous_quantity: antes,
+      quantity: despues,
+      change: Math.round((despues - antes) * 1000) / 1000,
+      reason: a.razon,
+    };
   }
+
 }

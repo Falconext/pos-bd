@@ -29,15 +29,21 @@ export function parseImagenesExtra(value: unknown): string[] {
   }
 }
 
-/** La oferta vale solo si está activa y dentro de sus fechas. */
+/**
+ * La oferta vigente, con la misma regla que la tienda y el SEO
+ * (`precioVigente`): mayor que 0, menor que el precio y dentro de sus fechas.
+ * `ofertaActiva` no se mira: el panel no lo escribe nunca.
+ */
 export function precioDeOferta(
-  p: { ofertaActiva?: boolean | null; precioOferta?: unknown; fechaInicioOferta?: Date | null; fechaFinOferta?: Date | null },
+  p: { precioUnitario?: unknown; precioOferta?: unknown; fechaInicioOferta?: Date | null; fechaFinOferta?: Date | null },
   ahora = new Date(),
+  precio = num(p.precioUnitario),
 ): number | null {
-  if (!p.ofertaActiva || p.precioOferta == null || num(p.precioOferta) <= 0) return null;
+  const oferta = num(p.precioOferta);
+  if (!(oferta > 0) || !(oferta < precio)) return null;
   if (p.fechaInicioOferta && ahora < new Date(p.fechaInicioOferta)) return null;
   if (p.fechaFinOferta && ahora > new Date(p.fechaFinOferta)) return null;
-  return dinero(p.precioOferta);
+  return dinero(oferta);
 }
 
 export interface FilaStock {
@@ -75,8 +81,12 @@ export function stockDe(
 }
 
 export interface ContextoSerializar {
-  /** URL estable de una imagen (ver imagen-publica.ts), o null si no hay. */
-  urlImagen: (productoId: number, indice: number) => string;
+  /**
+   * URL fija de una foto: las de S3 van por `/api/public/img/…` (la misma
+   * ruta pública que usa el SEO de la tienda; el bucket es privado y los
+   * enlaces firmados vencen). null si la foto no se puede publicar.
+   */
+  urlImagen: (url: string) => string | null;
   sedeId?: number | null;
   ahora?: Date;
 }
@@ -88,7 +98,7 @@ export function serializarProducto(p: any, ctx: ContextoSerializar): Record<stri
   const oferta =
     filaSede?.precioOfertaOverride != null && num(filaSede.precioOfertaOverride) > 0
       ? dinero(filaSede.precioOfertaOverride)
-      : precioDeOferta(p, ctx.ahora);
+      : precioDeOferta(p, ctx.ahora, precio);
   const imagenes = [p.imagenUrl, ...parseImagenesExtra(p.imagenesExtra)].filter(Boolean);
   const disponibilidad = disponibilidadEfectiva({ disponibilidad: p.disponibilidad, stock: total });
 
@@ -107,7 +117,7 @@ export function serializarProducto(p: any, ctx: ContextoSerializar): Record<stri
     unit: p.unidadMedida?.codigo ?? null,
     category: p.categoria ? { id: p.categoria.id, name: p.categoria.nombre } : null,
     brand: p.marca ? { id: p.marca.id, name: p.marca.nombre } : null,
-    images: imagenes.map((_, i) => ctx.urlImagen(p.id, i)),
+    images: imagenes.map((u) => ctx.urlImagen(u)).filter(Boolean),
     stock: total,
     stock_by_location: porSede,
     /** in_stock | backorder | out_of_stock | discontinued */
