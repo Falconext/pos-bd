@@ -236,6 +236,42 @@ export function demoraDe(
   return config.demorasHoras?.[tipo] ?? CATALOGO_DISPAROS[tipo].demoraHoras;
 }
 
+export interface ProductoParaRecompra {
+  id: number;
+  /** null = lo de la empresa; 0 = no se recompra. */
+  diasRecompra: number | null;
+  /** El de su producto padre, si es una variante (talla, color). */
+  diasRecompraPadre?: number | null;
+}
+
+/**
+ * De qué producto del pedido se le recuerda al cliente, y a los cuántos días.
+ *
+ * Un aviso por compra, no uno por ítem: tres mensajes por el mismo pedido es
+ * lo que hace que reporten el número. Va el que se acaba primero, porque es
+ * cuando el cliente necesita reponer. Los que no se recompran (0 días: un
+ * equipo, un mueble) no cuentan; si son todos así, no hay aviso.
+ *
+ * Una variante sin días propios usa los de su padre: la talla M de una
+ * crema dura lo mismo que la L.
+ */
+export function elegirRecompra(
+  idsEnOrden: number[],
+  productos: ProductoParaRecompra[],
+  diasEmpresa: number,
+): { productoId: number; dias: number } | null {
+  const porId = new Map(productos.map((p) => [p.id, p]));
+  let elegido: { productoId: number; dias: number } | null = null;
+  for (const id of idsEnOrden) {
+    const p = porId.get(id);
+    if (!p) continue;
+    const dias = p.diasRecompra ?? p.diasRecompraPadre ?? diasEmpresa;
+    if (!dias || dias <= 0) continue;
+    if (!elegido || dias < elegido.dias) elegido = { productoId: id, dias };
+  }
+  return elegido;
+}
+
 /**
  * Cuándo toca mandarlo.
  *

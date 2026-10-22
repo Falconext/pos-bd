@@ -816,6 +816,10 @@ model Producto {
   /// 2 alta, 1 media. Ordena lo que la IA ve primero; no la obliga a ofrecerlo
   /// si no calza con lo que el cliente pidió.
   prioridadVenta      Int?
+  /// A los cuántos días de entregado se le recuerda al cliente que repone
+  /// (aviso de recompra de la IA de Ventas). null = lo de la empresa (25 días
+  /// por defecto); 0 = no se recompra (un equipo, un mueble).
+  diasRecompra        Int?
   detalleCompras      DetalleCompra[]
   detallesOrdenCompra DetalleOrdenCompra[]
   detalleComprobantes DetalleComprobante[]

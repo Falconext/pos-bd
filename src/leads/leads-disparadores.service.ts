@@ -13,6 +13,8 @@ import {
   TipoDisparo,
   cuandoDisparar,
   decidirEnvio,
+  demoraDe,
+  elegirRecompra,
   pideBaja,
   proximoHorarioHabil,
   ventanaAbierta,
@@ -517,8 +519,12 @@ export class LeadsDisparadoresService {
     return disponibilidadEfectiva(p) === 'INMEDIATA';
   }
 
+  /**
+   * El id de una parte de la referencia. Una referencia puede llevar varias
+   * ("producto:12:comprobante:829", la recompra de esa compra).
+   */
   private idDeReferencia(referencia: string, prefijo: string): number | null {
-    const m = new RegExp(`^${prefijo}:(\\d+)$`).exec(referencia);
+    const m = new RegExp(`(?:^|:)${prefijo}:(\\d+)(?=:|$)`).exec(referencia);
     return m ? Number(m[1]) : null;
   }
 
@@ -848,24 +854,9 @@ export class LeadsDisparadoresService {
       });
       if (r1.programado) programados++;
 
-      // 33.5 — recompra a los 25 días del producto que se llevó. Se toma el
-      // primero del pedido: es el que da nombre al aviso, y mandar uno por
-      // cada ítem sería tres mensajes por la misma compra.
-      const items = Array.isArray(p.itemsJson)
-        ? (p.itemsJson as { productoId?: number }[])
-        : [];
-      const productoId = items[0]?.productoId;
-      if (productoId) {
-        const r2 = await this.programar({
-          empresaId: p.empresaId,
-          tipo: TipoDisparo.RECOMPRA,
-          telefono,
-          referencia: `producto:${productoId}`,
-          desde: entregadoEn,
-          conversacionId: p.conversacionId,
-        });
-        if (r2.programado) programados++;
-      }
+      // 33.5 — recompra: cada producto dice a los cuántos días se acaba
+      // (25 por defecto). Ver elegirRecompra.
+      if (await this.programarRecompra(p, telefono, entregadoEn)) programados++;
     }
 
     if (movidos || programados) {
@@ -873,6 +864,73 @@ export class LeadsDisparadoresService {
         `Sincronización con despacho: ${movidos} etapas al día, ${programados} avisos programados.`,
       );
     }
+  }
+
+  /**
+   * El aviso de recompra de una compra entregada.
+   *
+   * La referencia lleva la compra: antes era solo el producto, y como un
+   * aviso no se repite, el cliente que compraba lo mismo cada mes recibía el
+   * recordatorio una sola vez en la vida. Cada cliente tiene un solo pedido
+   * de chat (el nuevo reemplaza al anterior), así que si volvió a comprar
+   * antes de que saliera el aviso viejo, ese aviso ya no corresponde.
+   */
+  private async programarRecompra(
+    p: { empresaId: number; conversacionId: number; comprobanteId: number | null; itemsJson: unknown },
+    telefono: string,
+    entregadoEn: Date,
+  ): Promise<boolean> {
+    const items = Array.isArray(p.itemsJson)
+      ? (p.itemsJson as { productoId?: number }[])
+      : [];
+    const ids = items
+      .map((i) => Number(i?.productoId))
+      .filter((id) => Number.isInteger(id) && id > 0);
+    if (!ids.length || !p.comprobanteId) return false;
+
+    const [productos, config] = await Promise.all([
+      this.prisma.producto.findMany({
+        where: { id: { in: ids }, empresaId: p.empresaId },
+        select: {
+          id: true,
+          diasRecompra: true,
+          productoPadre: { select: { diasRecompra: true } },
+        },
+      }),
+      this.configDe(p.empresaId),
+    ]);
+    const eleccion = elegirRecompra(
+      ids,
+      productos.map((x) => ({
+        id: x.id,
+        diasRecompra: x.diasRecompra,
+        diasRecompraPadre: x.productoPadre?.diasRecompra ?? null,
+      })),
+      demoraDe(TipoDisparo.RECOMPRA, config) / 24,
+    );
+    if (!eleccion) return false;
+
+    const referencia = `producto:${eleccion.productoId}:comprobante:${p.comprobanteId}`;
+    const r = await this.programar({
+      empresaId: p.empresaId,
+      tipo: TipoDisparo.RECOMPRA,
+      telefono,
+      referencia,
+      programadoPara: new Date(entregadoEn.getTime() + eleccion.dias * 24 * 3600_000),
+      conversacionId: p.conversacionId,
+    });
+    if (!r.programado) return false;
+    await this.prisma.leadDisparo.updateMany({
+      where: {
+        empresaId: p.empresaId,
+        telefono,
+        tipo: TipoDisparo.RECOMPRA as never,
+        estado: 'PROGRAMADO',
+        referencia: { not: referencia },
+      },
+      data: { estado: 'CANCELADO', motivo: 'Volvió a comprar: el aviso va por la compra nueva' },
+    });
+    return true;
   }
 
   /** Lo que el panel muestra: qué está por salir y qué salió. */
