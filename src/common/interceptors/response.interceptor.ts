@@ -7,10 +7,15 @@ import {
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 
-/** Las rutas de la API pública de Logística NO usan el envelope del ERP:
- *  devuelven el recurso limpio (Order, OrderList, …) tal como el contrato OpenAPI. */
+/**
+ * Las APIs públicas (`/api/v1/…`: Logística, Facturación, la API del negocio)
+ * NO usan el envelope del ERP: devuelven el recurso limpio y sus errores con
+ * el formato del contrato OpenAPI. Antes solo se exceptuaba `/v1/logistics`, y
+ * Facturación respondía envuelta en `{ code, message, data }`, distinto de lo
+ * que documenta el portal.
+ */
 function esApiPublica(url: string | undefined): boolean {
-  return typeof url === 'string' && url.includes('/v1/logistics');
+  return typeof url === 'string' && /(^|\/)v1\//.test(url.split('?')[0]);
 }
 
 @Injectable()

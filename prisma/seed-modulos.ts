@@ -129,7 +129,8 @@ async function seedModulos() {
   
   // Módulos que son add-on de pago: NO se auto-asignan a todos los planes.
   // Se asignan manualmente al plan que los contrata (ej. 'leads' = IA de Ventas).
-  const MODULOS_NO_AUTOASIGNAR = ['leads'];
+  // Se venden aparte: IA de Ventas y la API de Krezka.
+  const MODULOS_NO_AUTOASIGNAR = ['leads', 'api'];
 
   // Asignar todos los módulos a cada plan existente (migración)
   for (const plan of planes) {

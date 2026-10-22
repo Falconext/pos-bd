@@ -8,8 +8,18 @@ import { SetMetadata } from '@nestjs/common';
  * columna, una sola key comprometida alcanzaría para firmar comprobantes ante
  * SUNAT a nombre de la empresa.
  */
-export const PRODUCTOS_API = ['logistica', 'facturacion'] as const;
+// `erp` es la API de Krezka para el propio negocio (catálogo, stock): la que
+// usa su web. Distinta de `facturacion`, que es para integradores que emiten
+// por RUCs ajenos.
+export const PRODUCTOS_API = ['logistica', 'facturacion', 'erp'] as const;
 export type ProductoApi = (typeof PRODUCTOS_API)[number];
+
+/** Cómo se llama cada API en los mensajes que lee el integrador. */
+export const NOMBRE_PRODUCTO_API: Record<ProductoApi, string> = {
+  logistica: 'Logística',
+  facturacion: 'Facturación',
+  erp: 'Krezka (catálogo y stock)',
+};
 
 export const CLAVE_PRODUCTO_API = 'producto_api';
 
