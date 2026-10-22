@@ -4787,6 +4787,9 @@ model LeadMensaje {
   // Imagen que mandó el vendedor desde el chat del panel. `contenido` dice
   // "[Imagen]" para que la IA, que solo lee texto, sepa que el cliente la vio.
   imagenUrl        String?
+  // Nota de voz que mandó el vendedor desde el panel (OGG/Opus en S3).
+  // `contenido` lleva "[Nota de voz]" y la transcripción, para la IA.
+  audioUrl         String?
   // Herramientas que la IA pidió al generar ESTE mensaje (nombre, argumentos y
   // resultado). Es la caja negra del turno: sin esto no hay forma de saber por
   // qué el asistente dijo lo que dijo, ni de alimentar la analítica de consultas.

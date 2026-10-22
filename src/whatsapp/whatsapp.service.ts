@@ -1000,6 +1000,69 @@ export class WhatsAppService {
   }
 
   /**
+   * Envía una NOTA DE VOZ (OGG/Opus ya convertido). Se sube a la Media API y
+   * se manda por id con `voice: true`, que es lo que hace que WhatsApp la
+   * muestre como nota de voz y no como un archivo de audio.
+   */
+  async enviarAudio(
+    numero: string,
+    ogg: Buffer,
+    empresaId?: number,
+  ): Promise<{ success: boolean; error?: string }> {
+    let token: string;
+    let phoneId: string;
+    if (empresaId) {
+      try {
+        ({ token, phoneId } = await this.getCredentialsForEmpresa(empresaId));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'WhatsApp no configurado';
+        return { success: false, error: msg };
+      }
+    } else {
+      ({ token, phoneId } = this.getCredentials());
+    }
+    if (!token || !phoneId)
+      return { success: false, error: 'WhatsApp no configurado' };
+
+    const to = this.formatearNumero(numero);
+    try {
+      const form = new FormData();
+      form.append('messaging_product', 'whatsapp');
+      form.append('type', 'audio/ogg');
+      form.append('file', ogg, {
+        filename: 'nota-de-voz.ogg',
+        contentType: 'audio/ogg',
+      });
+      const up = await axios.post(`${this.apiUrl}/${phoneId}/media`, form, {
+        headers: { Authorization: `Bearer ${token}`, ...form.getHeaders() },
+      });
+      if (!up.data?.id) return { success: false, error: 'WhatsApp no aceptó el audio' };
+
+      await axios.post(
+        `${this.apiUrl}/${phoneId}/messages`,
+        {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          ...campoDestino(to),
+          type: 'audio',
+          audio: { id: up.data.id, voice: true },
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+      return { success: true };
+    } catch (error) {
+      const msg = error.response?.data?.error?.message || error.message;
+      this.logger.warn(`WhatsApp nota de voz fallida a ${to}: ${msg}`);
+      return { success: false, error: msg };
+    }
+  }
+
+  /**
    * Envía una IMAGEN por URL (con caption opcional). Útil para mandar la foto del
    * producto en la conversación de la IA de Ventas. Dentro de la ventana de 24h
    * es un mensaje de servicio (libre, sin costo de plantilla).
