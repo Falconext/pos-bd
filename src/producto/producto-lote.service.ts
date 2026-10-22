@@ -96,6 +96,15 @@ export class ProductoLoteService {
   /**
    * Crear nuevo lote al ingresar mercadería
    */
+  /** ¿El lote es de ese producto y el producto de esa empresa? */
+  async esDeLaEmpresa(loteId: number, productoId: number, empresaId: number): Promise<boolean> {
+    const l = await this.prisma.productoLote.findFirst({
+      where: { id: loteId, productoId, producto: { empresaId } },
+      select: { id: true },
+    });
+    return !!l;
+  }
+
   async crearLote(data: {
     productoId: number;
     empresaId: number;

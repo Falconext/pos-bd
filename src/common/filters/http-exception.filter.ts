@@ -6,9 +6,15 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 
-/** Rutas de la API pública de Logística: usan el formato de error del contrato. */
+/**
+ * Las APIs públicas (`/api/v1/…`: Logística, Facturación, la API del negocio)
+ * NO usan el envelope del ERP: devuelven el recurso limpio y sus errores con
+ * el formato del contrato OpenAPI. Antes solo se exceptuaba `/v1/logistics`, y
+ * Facturación respondía envuelta en `{ code, message, data }`, distinto de lo
+ * que documenta el portal.
+ */
 function esApiPublica(url: string | undefined): boolean {
-  return typeof url === 'string' && url.includes('/v1/logistics');
+  return typeof url === 'string' && /(^|\/)v1\//.test(url.split('?')[0]);
 }
 
 /**
@@ -127,6 +133,19 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     // API pública: { error: { type, code, message, param } } (contrato OpenAPI).
     if (esApiPublica(request?.originalUrl ?? request?.url)) {
+      // El parser de JSON de Express falla antes de llegar al controlador y su
+      // mensaje ("Unexpected token 'n'…") no le dice al integrador qué hacer.
+      if (status === 400 && (exception as any)?.type === 'entity.parse.failed' || /is not valid JSON|Unexpected token .* JSON/i.test(String(message))) {
+        response.status(400).json({
+          error: {
+            type: 'invalid_request_error',
+            code: 'invalid_json',
+            message: 'El cuerpo no es un JSON válido. Revisa comillas, comas y llaves, y manda la cabecera Content-Type: application/json.',
+            param: 'body',
+          },
+        });
+        return;
+      }
       const error: Record<string, any> = {
         type: rawObj.type ?? tipoPorStatus(status),
         code: rawObj.code ?? codigoPorStatus(status),

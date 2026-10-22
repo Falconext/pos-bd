@@ -11,6 +11,7 @@ import compression from 'compression';
 import { PrismaService } from './prisma/prisma.service';
 import { initializeDatabase } from './common/utils/init-db';
 import { ensurePlanesVentas } from './common/utils/ensure-planes-ventas';
+import { ensureModuloApi } from './common/utils/ensure-modulo-api';
 import { ensureTiposOperacion } from './common/utils/ensure-tipos-operacion';
 import { httpSecurityHeaders } from './common/security/http-security.middleware';
 import { authRateLimit } from './common/security/rate-limit.middleware';
@@ -158,6 +159,7 @@ async function bootstrap() {
   // deploy sincroniza el schema con `db push` (que no ejecuta migraciones de datos).
   try {
     const prismaService = app.get(PrismaService);
+    await ensureModuloApi(prismaService);
     await ensurePlanesVentas(prismaService);
     logger.log('Planes de IA de Ventas asegurados.');
   } catch (e) {

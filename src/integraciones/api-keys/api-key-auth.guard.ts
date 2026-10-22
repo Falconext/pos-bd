@@ -9,7 +9,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { ApiKeysService } from './api-keys.service';
 import { RateLimitsService } from '../rate-limits/rate-limits.service';
-import { CLAVE_PRODUCTO_API, esProductoApi, type ProductoApi } from './producto-api';
+import { CLAVE_PRODUCTO_API, NOMBRE_PRODUCTO_API, esProductoApi, type ProductoApi } from './producto-api';
 
 /**
  * Autenticación por API key para las APIs públicas, de cualquier producto.
@@ -63,7 +63,7 @@ export class ApiKeyAuthGuard implements CanActivate {
       if (resultado.motivo === 'producto') {
         throw new ForbiddenException({
           code: 'product_forbidden',
-          message: `Esta API key no pertenece a la API de ${producto}. Genera una para este producto.`,
+          message: `Esta API key no pertenece a la API de ${NOMBRE_PRODUCTO_API[producto] ?? producto}. Genera una para esta API.`,
         });
       }
       throw new UnauthorizedException({
