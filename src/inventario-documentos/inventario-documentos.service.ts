@@ -109,9 +109,9 @@ export class InventarioDocumentosService {
     };
   }
 
-  async obtener(empresaId: number, id: number) {
+  async obtener(empresaId: number, id: number, sedeId?: number) {
     const d = await this.prisma.documentoInventario.findFirst({
-      where: { id, empresaId },
+      where: { id, empresaId, ...(sedeId ? { sedeId } : {}) },
       include: {
         items: {
           orderBy: { id: 'asc' },
