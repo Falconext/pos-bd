@@ -82,6 +82,7 @@ import {
   postergaLaCompra,
 } from './leads-disparadores';
 import { EtapaCrm } from './leads-embudo';
+import { pideBrochure } from './brochure';
 import {
   disponibilidadEfectiva,
   nivelDeRecomendacion,
@@ -1303,15 +1304,21 @@ export class LeadsMessageProcessor extends WorkerHost {
   }
 
   /**
-   * Brochure/catálogo: si el prospecto pide más info y la empresa tiene un
-   * enlace configurado, se envía UNA vez por conversación (PDF o imagen).
+   * Brochure/catálogo: si el prospecto lo pide (ver `pideBrochure`) y la
+   * empresa tiene un enlace configurado, se envía UNA vez por conversación
+   * (PDF o imagen).
    */
   private async enviarBrochureSiCorresponde(
     empresa: { id: number; iaVentasBrochureUrl: string | null },
     conv: { id: number; telefonoProspecto: string },
     contenido: string,
   ): Promise<void> {
-    if (!empresa.iaVentasBrochureUrl || !this.quiereBrochure(contenido)) return;
+    if (!empresa.iaVentasBrochureUrl) return;
+    // Se llama después de guardar la respuesta: 1 = es el primer turno.
+    const respuestas = await this.prisma.leadMensaje.count({
+      where: { conversacionId: conv.id, rol: 'ASISTENTE' },
+    });
+    if (!pideBrochure(contenido, respuestas <= 1)) return;
 
     const est = await this.prisma.leadConversacion.findUnique({
       where: { id: conv.id },
@@ -2877,13 +2884,6 @@ export class LeadsMessageProcessor extends WorkerHost {
     return productos.sort(
       (a, b) =>
         rango[disponibilidadEfectiva(a)] - rango[disponibilidadEfectiva(b)],
-    );
-  }
-
-  // ¿El mensaje pide el brochure/catálogo o más información?
-  private quiereBrochure(texto: string): boolean {
-    return /\b(brochure|folleto|cat[aá]logo|pdf|presentaci[oó]n|m[aá]s info|mas info|m[aá]s informaci[oó]n|mas informaci[oó]n|m[aá]s detalles|mas detalles|inform[aá]ci[oó]n completa|mandame info|m[aá]ndame info|env[ií]ame|cu[eé]ntame m[aá]s)\b/i.test(
-      texto || '',
     );
   }
 
