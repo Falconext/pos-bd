@@ -137,6 +137,18 @@ export class RegistrarEgresoDto {
   metodoPago?: string;
 }
 
+/** Plata que entra al cajón durante el turno sin ser una venta. */
+export class RegistrarIngresoCajaDto {
+  @IsNumber()
+  @Min(0.01, { message: 'El monto debe ser mayor a 0' })
+  @Transform(({ value }) => parseFloat(value))
+  monto: number;
+
+  @IsString()
+  @IsNotEmpty({ message: 'Escribe de dónde sale la plata' })
+  descripcion: string;
+}
+
 export class TransferenciaCajaDto {
   @IsInt()
   @Min(1, { message: 'Selecciona la sede destino' })

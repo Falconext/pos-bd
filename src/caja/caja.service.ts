@@ -11,10 +11,12 @@ import {
   CierreCajaDto,
   MovimientoCajaDto,
   RegistrarEgresoDto,
+  RegistrarIngresoCajaDto,
   EditarEgresoDto,
   TransferenciaCajaDto,
   MarcarDepositadosDto,
 } from './dto/caja.dto';
+import { turnosSinCuadrar, ventanaTurnoAbierto } from './turno-abierto';
 
 @Injectable()
 export class CajaService {
@@ -91,8 +93,10 @@ export class CajaService {
       );
     }
 
-    // Que siga pendiente de verdad: si ya tiene cierre en ese día y sede, no
-    // hay nada que cuadrar y un segundo CIERRE duplicaría el arqueo.
+    // Que siga pendiente de verdad: si ya tiene cierre, no hay nada que
+    // cuadrar y un segundo CIERRE duplicaría el arqueo. Desde el 21-10 el
+    // cierre apunta a su apertura; los anteriores se reconocen por caer en el
+    // mismo día y sede.
     const { gte, lte } = this.parseRangeDates(
       this.diaLima(apertura.fecha),
       this.diaLima(apertura.fecha),
@@ -100,10 +104,16 @@ export class CajaService {
     const cierre = await this.prisma.movimientoCaja.findFirst({
       where: {
         empresaId,
-        ...(apertura.sedeId ? { sedeId: apertura.sedeId } : {}),
         tipoMovimiento: 'CIERRE',
         estado: 'ACTIVO',
-        fecha: { gte, lte },
+        OR: [
+          { movimientoVinculadoId: apertura.id },
+          {
+            movimientoVinculadoId: null,
+            ...(apertura.sedeId ? { sedeId: apertura.sedeId } : {}),
+            fecha: { gte, lte },
+          },
+        ],
       },
       select: { id: true },
     });
@@ -126,12 +136,13 @@ export class CajaService {
   }
 
   /**
-   * Turnos de días ANTERIORES que se abrieron y nunca se cerraron.
+   * Turnos que se abrieron, nunca se cerraron y ya no son el turno en curso.
    *
-   * `verificarCajaAbierta` solo mira el día de hoy, así que una caja que
-   * quedó abierta ayer no bloquea nada y queda huérfana en silencio: sus
-   * gastos y ventas sí se contabilizan, pero NADIE contó el cajón — no hay
-   * arqueo ni diferencia registrada. Esto lo hace visible.
+   * Un turno olvidado queda huérfano en silencio: sus gastos y ventas sí se
+   * contabilizan, pero NADIE contó el cajón — no hay arqueo ni diferencia
+   * registrada. Esto lo hace visible. El emparejamiento apertura→cierre vive
+   * en `turnosSinCuadrar`: ya no se hace por día, porque un turno puede
+   * cerrarse pasada la medianoche.
    */
   private async turnosSinCerrar(
     empresaId: number,
@@ -147,7 +158,7 @@ export class CajaService {
         ...(sedeId ? { sedeId } : {}),
         estado: 'ACTIVO',
         tipoMovimiento: { in: ['APERTURA', 'CIERRE'] },
-        fecha: { gte: desde, lt: hoyInicio },
+        fecha: { gte: desde },
       },
       orderBy: { fecha: 'asc' },
       select: {
@@ -155,22 +166,15 @@ export class CajaService {
         fecha: true,
         tipoMovimiento: true,
         sedeId: true,
+        usuarioId: true,
+        movimientoVinculadoId: true,
         turno: true,
         usuario: { select: { nombre: true } },
         sede: { select: { nombre: true } },
       },
     });
 
-    // Se agrupa por (día de Lima + sede): un día con apertura y sin cierre
-    // en esa sede es un turno que quedó sin cuadrar.
-    const clave = (m: (typeof movs)[number]) =>
-      `${m.fecha.toLocaleDateString('en-CA', { timeZone: 'America/Lima' })}|${m.sedeId ?? 0}`;
-    const conCierre = new Set(
-      movs.filter((m) => m.tipoMovimiento === 'CIERRE').map(clave),
-    );
-
-    return movs
-      .filter((m) => m.tipoMovimiento === 'APERTURA' && !conCierre.has(clave(m)))
+    return turnosSinCuadrar(movs)
       .map((m) => ({
         id: m.id,
         fecha: m.fecha,
@@ -181,24 +185,25 @@ export class CajaService {
       }));
   }
 
-  // Verificar si la caja está abierta para el usuario
+  /**
+   * El turno abierto del usuario: su última APERTURA sin CIERRE después,
+   * aunque sea de ayer (ver turno-abierto.ts: el turno sigue hasta que lo
+   * cierren, con tope de horas).
+   */
   async verificarCajaAbierta(
     usuarioId: number,
     empresaId: number,
     sedeId?: number,
-    // Sync offline: evaluar el día en que ocurrió la operación, no "hoy".
+    // Sync offline: evaluar el momento en que ocurrió la operación, no "ahora".
     fechaRef?: Date,
   ) {
-    const dia = fechaRef ? this.diaLima(fechaRef) : undefined;
-    const { gte: hoyInicio, lte: hoyFin } = this.parseRangeDates(dia, dia);
-
     // Solo considerar APERTURA y CIERRE — los EGRESO/INGRESO no cambian el estado de la caja
     const ultimoMovimiento = await this.prisma.movimientoCaja.findFirst({
       where: {
         usuarioId,
         empresaId,
         ...(sedeId ? { sedeId } : {}),
-        fecha: { gte: hoyInicio, lte: hoyFin },
+        fecha: ventanaTurnoAbierto(fechaRef),
         estado: 'ACTIVO',
         tipoMovimiento: { in: ['APERTURA', 'CIERRE'] },
       },
@@ -211,17 +216,15 @@ export class CajaService {
     return null;
   }
 
-  // Verificar si hay una caja abierta en una sede hoy, sin importar qué
-  // usuario la abrió — usado para saber si una sede destino puede recibir
-  // una transferencia entre cajas.
+  // Verificar si hay una caja abierta en una sede, sin importar qué usuario
+  // la abrió — usado para saber si una sede destino puede recibir una
+  // transferencia entre cajas.
   async verificarCajaAbiertaEnSede(empresaId: number, sedeId: number) {
-    const { gte: hoyInicio, lte: hoyFin } = this.parseRangeDates();
-
     const ultimoMovimiento = await this.prisma.movimientoCaja.findFirst({
       where: {
         empresaId,
         sedeId,
-        fecha: { gte: hoyInicio, lte: hoyFin },
+        fecha: ventanaTurnoAbierto(),
         estado: 'ACTIVO',
         tipoMovimiento: { in: ['APERTURA', 'CIERRE'] },
       },
@@ -277,8 +280,13 @@ export class CajaService {
       opts?.realizadoEn,
     );
     if (cajaAbierta) {
+      const deOtroDia =
+        this.diaLima(cajaAbierta.fecha) !==
+        this.diaLima(opts?.realizadoEn ?? new Date());
       throw new BadRequestException(
-        'Ya existe una caja abierta para el día de hoy',
+        deOtroDia
+          ? `Tu turno del ${this.diaLima(cajaAbierta.fecha)} sigue abierto. Ciérralo antes de abrir uno nuevo.`
+          : 'Ya tienes una caja abierta.',
       );
     }
 
@@ -339,8 +347,12 @@ export class CajaService {
     // Egresos en efectivo del turno (dinero que salió de la caja) — sin
     // contar las transferencias a otra sede, que se calculan aparte para no
     // mezclarlas con gastos reales del negocio.
-    const [egresosTurno, transferenciasEnviadas, transferenciasRecibidas] =
-      await Promise.all([
+    const [
+      egresosTurno,
+      transferenciasEnviadas,
+      transferenciasRecibidas,
+      ingresosCaja,
+    ] = await Promise.all([
         this.prisma.movimientoCaja.aggregate({
           where: {
             empresaId,
@@ -378,8 +390,21 @@ export class CajaService {
           },
           _sum: { monto: true },
         }),
+        // Plata que se metió al cajón durante el turno sin ser una venta.
+        this.prisma.movimientoCaja.aggregate({
+          where: {
+            empresaId,
+            ...(sedeId ? { sedeId } : {}),
+            tipoMovimiento: 'INGRESO',
+            esTransferencia: false,
+            fecha: { gte: desde, lte: hasta },
+            estado: 'ACTIVO',
+          },
+          _sum: { monto: true },
+        }),
       ]);
     const totalEgresos = Number(egresosTurno._sum.monto || 0);
+    const totalIngresosCaja = Number(ingresosCaja._sum.monto || 0);
     const totalTransferenciasEnviadas = Number(
       transferenciasEnviadas._sum.monto || 0,
     );
@@ -389,11 +414,12 @@ export class CajaService {
     const fondoInicial = Number(montoInicial || 0);
 
     // Lo que DEBERÍA haber al cierre = fondo de apertura + ventas del turno
-    // + transferencias recibidas de otra sede − egresos − transferencias
-    // enviadas a otra sede.
+    // + ingresos de caja + transferencias recibidas de otra sede − egresos
+    // − transferencias enviadas a otra sede.
     const montoEsperado =
       fondoInicial +
       ventasDelTurno.totalIngresos +
+      totalIngresosCaja +
       totalTransferenciasRecibidas -
       totalEgresos -
       totalTransferenciasEnviadas;
@@ -401,6 +427,7 @@ export class CajaService {
       ventasDelTurno,
       fondoInicial,
       totalEgresos,
+      totalIngresosCaja,
       totalTransferenciasEnviadas,
       totalTransferenciasRecibidas,
       montoEsperado,
@@ -444,6 +471,7 @@ export class CajaService {
       fechaCorte,
       ventasDelDia: arqueo.ventasDelTurno,
       totalEgresos: arqueo.totalEgresos,
+      totalIngresosCaja: arqueo.totalIngresosCaja,
       totalTransferenciasEnviadas: arqueo.totalTransferenciasEnviadas,
       totalTransferenciasRecibidas: arqueo.totalTransferenciasRecibidas,
       montoEsperado: arqueo.montoEsperado,
@@ -479,16 +507,20 @@ export class CajaService {
     });
     if (!cierre) throw new NotFoundException('Cierre de turno no encontrado');
 
-    // La apertura del turno es la última anterior al cierre en la misma sede.
-    // Se busca así y no por día porque se permiten varios turnos por día.
+    // La apertura del turno: la que el cierre tiene vinculada (desde el
+    // 21-10); en los cierres anteriores, la última antes del cierre en la
+    // misma sede. No se busca por día porque se permiten varios turnos por
+    // día y un turno puede pasar la medianoche.
     const apertura = await this.prisma.movimientoCaja.findFirst({
-      where: {
-        empresaId,
-        ...(cierre.sedeId ? { sedeId: cierre.sedeId } : {}),
-        tipoMovimiento: 'APERTURA',
-        estado: 'ACTIVO',
-        fecha: { lte: cierre.fecha },
-      },
+      where: cierre.movimientoVinculadoId
+        ? { id: cierre.movimientoVinculadoId, empresaId }
+        : {
+            empresaId,
+            ...(cierre.sedeId ? { sedeId: cierre.sedeId } : {}),
+            tipoMovimiento: 'APERTURA',
+            estado: 'ACTIVO',
+            fecha: { lte: cierre.fecha },
+          },
       orderBy: { fecha: 'desc' },
       include: { usuario: { select: { nombre: true } } },
     });
@@ -511,7 +543,7 @@ export class CajaService {
       cliente: { select: { nombre: true, nroDoc: true } },
     } as const;
 
-    const [informales, formales, egresos] = await Promise.all([
+    const [informales, formales, movimientosCaja] = await Promise.all([
       this.prisma.comprobante.findMany({
         where: {
           empresaId,
@@ -539,7 +571,7 @@ export class CajaService {
         where: {
           empresaId,
           ...(sedeDelTurno ? { sedeId: sedeDelTurno } : {}),
-          tipoMovimiento: 'EGRESO',
+          tipoMovimiento: { in: ['EGRESO', 'INGRESO'] },
           estado: 'ACTIVO',
           fecha: { gte: desde, lte: hasta },
         },
@@ -547,6 +579,10 @@ export class CajaService {
         orderBy: { fecha: 'asc' },
       }),
     ]);
+    const salidas = movimientosCaja.filter((m) => m.tipoMovimiento === 'EGRESO');
+    const ingresos = movimientosCaja.filter(
+      (m) => m.tipoMovimiento === 'INGRESO',
+    );
 
     const documentos = [...informales, ...formales]
       .sort((a, b) => a.creadoEn.getTime() - b.creadoEn.getTime())
@@ -591,7 +627,15 @@ export class CajaService {
         observaciones: cierre.observaciones ?? null,
       },
       documentos,
-      egresos: egresos.map((e) => ({
+      ingresos: ingresos.map((e) => ({
+        id: e.id,
+        fecha: e.fecha,
+        monto: Number(e.monto ?? 0),
+        concepto: e.descripcionGasto ?? e.observaciones ?? '',
+        esTransferencia: e.esTransferencia ?? false,
+        usuario: e.usuario?.nombre ?? null,
+      })),
+      egresos: salidas.map((e) => ({
         id: e.id,
         fecha: e.fecha,
         monto: Number(e.monto ?? 0),
@@ -640,9 +684,7 @@ export class CajaService {
           opts?.realizadoEn,
         );
     if (!cajaAbierta) {
-      throw new BadRequestException(
-        'No hay una caja abierta para cerrar en el día de hoy',
-      );
+      throw new BadRequestException('No hay una caja abierta para cerrar.');
     }
 
     // Ya no bloqueamos por cierres previos del día; permitimos múltiples turnos.
@@ -675,6 +717,7 @@ export class CajaService {
     const {
       fondoInicial,
       totalEgresos,
+      totalIngresosCaja,
       totalTransferenciasEnviadas,
       totalTransferenciasRecibidas,
       montoEsperado,
@@ -717,6 +760,9 @@ export class CajaService {
         fechaCierre: fechaActual,
         turno: turnoApertura,
         estado: 'ACTIVO',
+        // La apertura que cierra: así el turno se empareja con su cierre
+        // aunque pase la medianoche (ver turno-abierto.ts).
+        movimientoVinculadoId: cajaAbierta.id,
         // El CIERRE se fecha dentro del día del turno, no en el día en que se
         // cuadró: todo lo que agrupa por día (el aviso de turnos pendientes, el
         // historial, los reportes) lo busca ahí. Con la fecha de hoy, el turno
@@ -742,6 +788,7 @@ export class CajaService {
         ventasDelTurno,
         fondoInicial,
         totalEgresos,
+        totalIngresosCaja,
         totalTransferenciasEnviadas,
         totalTransferenciasRecibidas,
         montoEsperado,
@@ -810,8 +857,14 @@ export class CajaService {
         ? { gte: cajaAbierta.fecha }
         : this.parseRangeDates();
 
-    const [resumen, transferEnviadas, transferRecibidas, recientes] =
-      await Promise.all([
+    const [
+      resumen,
+      transferEnviadas,
+      transferRecibidas,
+      recientes,
+      ingresosCaja,
+      ingresosRecientes,
+    ] = await Promise.all([
         this.prisma.movimientoCaja.aggregate({
           where: {
             empresaId,
@@ -862,8 +915,33 @@ export class CajaService {
           take: 10,
           include: { usuario: { select: { nombre: true } } },
         }),
+        this.prisma.movimientoCaja.aggregate({
+          where: {
+            empresaId,
+            ...(sedeId ? { sedeId } : {}),
+            tipoMovimiento: 'INGRESO',
+            esTransferencia: false,
+            fecha: rangoEgresos,
+            estado: 'ACTIVO',
+          },
+          _sum: { monto: true },
+        }),
+        this.prisma.movimientoCaja.findMany({
+          where: {
+            empresaId,
+            ...(sedeId ? { sedeId } : {}),
+            tipoMovimiento: 'INGRESO',
+            esTransferencia: false,
+            fecha: rangoEgresos,
+            estado: 'ACTIVO',
+          },
+          orderBy: { fecha: 'desc' },
+          take: 10,
+          include: { usuario: { select: { nombre: true } } },
+        }),
       ]);
     const totalEgresos = Number(resumen._sum.monto || 0);
+    const totalIngresosCaja = Number(ingresosCaja._sum.monto || 0);
     const totalTransferenciasEnviadas = Number(
       transferEnviadas._sum.monto || 0,
     );
@@ -881,9 +959,11 @@ export class CajaService {
       ventasDelDia,
       pendientesDeCierre,
       totalEgresos,
+      totalIngresosCaja,
       totalTransferenciasEnviadas,
       totalTransferenciasRecibidas,
       egresosRecientes,
+      ingresosRecientes,
       fecha: new Date(),
     };
   }
@@ -1448,6 +1528,54 @@ export class CajaService {
     };
   }
 
+  /**
+   * Meter plata al cajón durante el turno sin que sea una venta: sencillo,
+   * un aporte del dueño, un cobro suelto. Suma al efectivo esperado del cierre.
+   * Pedido de LA DESPENSA HM (21-10). Siempre es efectivo: es plata que entra
+   * al cajón.
+   */
+  async registrarIngreso(
+    usuarioId: number,
+    empresaId: number,
+    dto: RegistrarIngresoCajaDto,
+    sedeId?: number,
+  ) {
+    const cajaAbierta = await this.verificarCajaAbierta(
+      usuarioId,
+      empresaId,
+      sedeId,
+    );
+    if (!cajaAbierta) {
+      throw new BadRequestException(
+        'No hay una caja abierta. Abre un turno antes de registrar un ingreso.',
+      );
+    }
+
+    const ingreso = await this.prisma.movimientoCaja.create({
+      data: {
+        usuarioId,
+        empresaId,
+        sedeId,
+        tipoMovimiento: 'INGRESO',
+        monto: dto.monto,
+        categoriaGasto: 'INGRESO DE CAJA',
+        descripcionGasto: dto.descripcion.trim(),
+        metodoPago: 'Efectivo',
+        esTransferencia: false,
+        estado: 'ACTIVO',
+      },
+      include: {
+        usuario: { select: { nombre: true, email: true } },
+      },
+    });
+
+    return {
+      code: 1,
+      message: 'Ingreso registrado correctamente',
+      data: ingreso,
+    };
+  }
+
   /** Aprueba un egreso PENDIENTE: pasa a contar en los totales del cierre. */
   async aprobarEgreso(empresaId: number, egresoId: number, adminId: number) {
     const egreso = await this.prisma.movimientoCaja.findFirst({
@@ -1658,10 +1786,51 @@ export class CajaService {
     usuarioRol?: string,
     usuarioId?: number,
   ) {
+    return this.eliminarMovimientoManual(
+      'EGRESO',
+      empresaId,
+      id,
+      usuarioRol,
+      usuarioId,
+    );
+  }
+
+  /** Borra un ingreso de caja, con las mismas reglas que un gasto. */
+  async eliminarIngreso(
+    empresaId: number,
+    id: number,
+    usuarioRol?: string,
+    usuarioId?: number,
+  ) {
+    return this.eliminarMovimientoManual(
+      'INGRESO',
+      empresaId,
+      id,
+      usuarioRol,
+      usuarioId,
+    );
+  }
+
+  private async eliminarMovimientoManual(
+    tipo: 'EGRESO' | 'INGRESO',
+    empresaId: number,
+    id: number,
+    usuarioRol?: string,
+    usuarioId?: number,
+  ) {
+    const etiqueta = tipo === 'EGRESO' ? 'Gasto' : 'Ingreso';
     const egreso = await this.prisma.movimientoCaja.findFirst({
-      where: { id, empresaId, tipoMovimiento: 'EGRESO', estado: 'ACTIVO' },
+      where: {
+        id,
+        empresaId,
+        tipoMovimiento: tipo,
+        estado: 'ACTIVO',
+        // Una transferencia entre sedes no se borra desde acá: tiene su
+        // contraparte en la otra caja.
+        ...(tipo === 'INGRESO' ? { esTransferencia: false } : {}),
+      },
     });
-    if (!egreso) throw new NotFoundException('Gasto no encontrado');
+    if (!egreso) throw new NotFoundException(`${etiqueta} no encontrado`);
 
     // Si el gasto ya entró en un cierre, borrarlo descuadra ESE arqueo de
     // forma retroactiva y silenciosa: el efectivo esperado se calculó
@@ -1692,7 +1861,7 @@ export class CajaService {
       });
       if (!esAdmin) {
         throw new BadRequestException(
-          `Este gasto ya fue incluido en el cierre de caja del ${cuando}. ` +
+          `Este ${etiqueta.toLowerCase()} ya fue incluido en el cierre de caja del ${cuando}. ` +
             'Eliminarlo descuadraría ese arqueo: pídeselo a un administrador.',
         );
       }
@@ -1713,7 +1882,7 @@ export class CajaService {
       });
       return {
         code: 1,
-        message: `Gasto eliminado. OJO: el cierre del ${cuando} ya no cuadra con este movimiento.`,
+        message: `${etiqueta} eliminado. OJO: el cierre del ${cuando} ya no cuadra con este movimiento.`,
       };
     }
 
@@ -1722,7 +1891,7 @@ export class CajaService {
       data: { estado: 'INACTIVO' },
     });
 
-    return { code: 1, message: 'Gasto eliminado correctamente' };
+    return { code: 1, message: `${etiqueta} eliminado correctamente` };
   }
 
   // ── Depósito bancario del efectivo de caja (trazabilidad) ──────────────

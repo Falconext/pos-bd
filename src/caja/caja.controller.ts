@@ -22,6 +22,7 @@ import {
   CierreCajaDto,
   EstadoCajaDto,
   RegistrarEgresoDto,
+  RegistrarIngresoCajaDto,
   EditarEgresoDto,
   TransferenciaCajaDto,
   MarcarDepositadosDto,
@@ -359,6 +360,36 @@ export class CajaController {
   ) {
     // El rol decide si puede borrar un gasto ya incluido en un cierre.
     return await this.cajaService.eliminarEgreso(
+      user.empresaId,
+      id,
+      user.rol,
+      user.id,
+    );
+  }
+
+  // ── Ingresos de caja: plata que entra al cajón sin ser una venta ──────
+
+  @Post('ingreso')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async registrarIngreso(
+    @User() user: any,
+    @Body() dto: RegistrarIngresoCajaDto,
+  ) {
+    return await this.cajaService.registrarIngreso(
+      user.id,
+      user.empresaId,
+      dto,
+      user.sedeId,
+    );
+  }
+
+  @Delete('ingreso/:id')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async eliminarIngreso(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return await this.cajaService.eliminarIngreso(
       user.empresaId,
       id,
       user.rol,
