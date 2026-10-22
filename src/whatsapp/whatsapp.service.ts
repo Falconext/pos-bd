@@ -811,6 +811,37 @@ export class WhatsAppService {
   }
 
   /**
+   * Reporte diario al dueño (leads/reporte-diario). Vive en la WABA de Krezka,
+   * no en la de cada negocio: sale del número de Krezka.
+   * {{1}} negocio, {{2}} vendido, {{3}} cuántas ventas, {{4}} lo demás.
+   */
+  private readonly PLANTILLA_RESUMEN_DIA: PlantillaWhatsApp = {
+    name: 'resumen_del_dia',
+    body: 'Resumen de hoy en {{1}}: vendiste {{2}} en {{3}} ventas. Además: {{4}}. Revisa el detalle en tu panel de Krezka.',
+    example: [
+      'Hierba Sana',
+      'S/ 1,240.50',
+      '18',
+      '+27% vs. ayer (S/ 980.00) · lo que más salió: Moringa 90 cápsulas · 34 personas nuevas por WhatsApp',
+    ],
+  };
+
+  /** Alta idempotente de la plantilla del reporte diario en la WABA de `empresaId` (Krezka). */
+  async crearPlantillaResumenDia(empresaId: number) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { whatsappBusinessId: true, whatsappApiToken: true },
+    });
+    const token = empresa?.whatsappApiToken || this.systemUserToken;
+    if (!empresa?.whatsappBusinessId || !token) {
+      return { creadas: [], existentes: [], errores: ['Sin cuenta de WhatsApp Business conectada'] };
+    }
+    return this.crearPlantillasEnWaba(empresa.whatsappBusinessId, token, [
+      this.PLANTILLA_RESUMEN_DIA,
+    ]);
+  }
+
+  /**
    * Da de alta las plantillas de IA de Ventas en la WABA de una empresa que ya
    * tiene su número conectado (el alta al conectar solo crea las de despacho).
    */

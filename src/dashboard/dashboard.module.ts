@@ -10,5 +10,7 @@ import { ProductoModule } from '../producto/producto.module';
   imports: [PrismaModule, GeminiModule, ProductoModule],
   controllers: [DashboardController, DashboardPublicController],
   providers: [DashboardService],
+  // El reporte diario por WhatsApp (leads) usa los mismos números del panel.
+  exports: [DashboardService],
 })
 export class DashboardModule {}

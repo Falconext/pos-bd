@@ -35,6 +35,10 @@ import { LEADS_MESSAGES_QUEUE, redisConnection } from './leads.constants';
  *          infraestructura de MYPE (WhatsApp, Gemini, notificaciones).
  * Próxima: RAG (pgvector + documentos de entrenamiento).
  */
+import { DashboardModule } from '../dashboard/dashboard.module';
+import { ReporteDiarioService } from './reporte-diario.service';
+import { ReporteDiarioController } from './reporte-diario.controller';
+
 @Module({
   imports: [
     BullModule.forRoot({ connection: redisConnection() }),
@@ -48,8 +52,9 @@ import { LEADS_MESSAGES_QUEUE, redisConnection } from './leads.constants';
     S3Module,
     PagoModule,
     MercadoPagoModule,
+    DashboardModule,
   ],
-  controllers: [LeadsController, LeadsWebhookController, LeadsCrmController],
+  controllers: [LeadsController, LeadsWebhookController, LeadsCrmController, ReporteDiarioController],
   providers: [
     LeadsService,
     LeadsMessageProcessor,
@@ -63,6 +68,7 @@ import { LEADS_MESSAGES_QUEUE, redisConnection } from './leads.constants';
     LeadsBiService,
     LeadsDisparadoresService,
     LeadsPagoLinkService,
+    ReporteDiarioService,
   ],
   exports: [LeadsService, LeadsEmbudoService, LeadsDisparadoresService],
 })
