@@ -66,6 +66,24 @@ import {
   type EnCaminoDeProducto,
 } from '../compras/stock-en-camino';
 
+
+/**
+ * Días de recompra: entero de 0 a 365, o null para volver a lo de la empresa.
+ * Se valida acá porque el PUT de productos recibe el body sin pasar por el
+ * DTO, y un 400 o un -1 se guardaban tal cual. undefined = no tocar.
+ */
+export function diasRecompraValido(v: unknown): number | null | undefined {
+  if (v === undefined) return undefined;
+  if (v === null || v === '') return null;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 0 || n > 365) {
+    throw new BadRequestException(
+      'Los días para recordar la recompra van de 1 a 365 (0 = no se recompra).',
+    );
+  }
+  return n;
+}
+
 @Injectable()
 export class ProductoService {
   constructor(
@@ -413,6 +431,8 @@ export class ProductoService {
       disponibilidad?: DisponibilidadProducto;
       /** Empuje frente a equivalentes: 3 muy alta, 2 alta, 1 media. */
       prioridadVenta?: number;
+      /** Días hasta el aviso de recompra. null = lo de la empresa; 0 = no se recompra. */
+      diasRecompra?: number | null;
     },
     empresaId: number,
     sedeId?: number,
@@ -471,6 +491,7 @@ export class ProductoService {
       ubicacionSede,
       disponibilidad,
       prioridadVenta,
+      diasRecompra,
     } = data;
 
     const porcentajes = this.normalizarPorcentajes(
@@ -585,6 +606,7 @@ export class ProductoService {
           stockMaximo: stockMaximo != null ? stockMaximo : undefined,
           disponibilidad: disponibilidad ?? undefined,
           prioridadVenta: prioridadVenta ?? undefined,
+          diasRecompra: diasRecompraValido(diasRecompra) ?? undefined,
           categoriaId:
             categoriaId && Number(categoriaId) > 0
               ? Number(categoriaId)
@@ -695,6 +717,7 @@ export class ProductoService {
           stockMaximo: stockMaximo != null ? stockMaximo : undefined,
           disponibilidad: disponibilidad ?? undefined,
           prioridadVenta: prioridadVenta ?? undefined,
+          diasRecompra: diasRecompraValido(diasRecompra) ?? undefined,
           categoriaId:
             categoriaId && Number(categoriaId) > 0
               ? Number(categoriaId)
@@ -3253,6 +3276,8 @@ export class ProductoService {
       disponibilidad?: DisponibilidadProducto | null;
       /** Empuje frente a equivalentes: 3 muy alta, 2 alta, 1 media. */
       prioridadVenta?: number | null;
+      /** Días hasta el aviso de recompra. null = lo de la empresa; 0 = no se recompra. */
+      diasRecompra?: number | null;
 
       sedeId?: number; // Nueva propiedad opcional para identificar dónde se ajusta el stock
       /** Sede cuyo costo se corrige (la que muestra el Kardex); 0 = todas. */
@@ -3654,6 +3679,7 @@ export class ProductoService {
           data.disponibilidad !== undefined ? data.disponibilidad : undefined,
         prioridadVenta:
           data.prioridadVenta !== undefined ? data.prioridadVenta : undefined,
+        diasRecompra: diasRecompraValido(data.diasRecompra),
         moneda: data.moneda !== undefined ? data.moneda : undefined,
         valorUnitario:
           data.valorUnitario !== undefined

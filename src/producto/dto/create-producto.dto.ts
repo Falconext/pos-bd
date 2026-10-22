@@ -11,6 +11,7 @@ import {
   Min,
   ValidateNested,
   MaxLength,
+  ValidateIf,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
@@ -134,6 +135,18 @@ export class CreateProductoDto {
   @Min(1)
   @Max(4)
   prioridadVenta?: number;
+
+  /**
+   * A los cuántos días de entregado se le recuerda reponer. null = lo de la
+   * empresa; 0 = este producto no se recompra.
+   */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsInt()
+  @Min(0)
+  @Max(365)
+  @Type(() => Number)
+  diasRecompra?: number | null;
 
   @IsOptional()
   @IsInt()
