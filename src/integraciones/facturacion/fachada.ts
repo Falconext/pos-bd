@@ -185,14 +185,23 @@ export const traducirItem = (item: ItemPublico, indice: number): any => {
     `${donde}.discount`,
   );
 
+  // El motor de emisión (el mismo del POS) recibe en `nuevoValorUnitario` el
+  // precio CON IGV y ya descontado, y de ahí saca el valor sin IGV. El contrato
+  // público habla en valor SIN IGV y descuento aparte; mandarlos tal cual
+  // facturaba un 18% menos y el descuento no se aplicaba nunca (el motor no
+  // lee `descuento`). Se traduce acá, sin redondear: el motor redondea por
+  // línea, y redondear antes descuadraría la regla 3271 con cantidades altas.
+  const conIgv = afectacion === 'taxed' || afectacion === 'free' ? 1 + IGV : 1;
+  const netoUnitario = (valor * cantidad - descuento) / cantidad;
   return {
     // Ítem libre: el integrador tiene su catálogo, no el nuestro.
     productoId: null,
     descripcion: item.description!.trim(),
     codigoProducto: item.product_code?.trim() || undefined,
     cantidad,
-    nuevoValorUnitario: valor,
-    descuento,
+    nuevoValorUnitario: netoUnitario * conIgv,
+    // Solo para mostrar el precio de lista y el ahorro en el PDF.
+    ...(descuento > 0 ? { precioUnitarioOriginal: valor * conIgv } : {}),
     unidadVenta: item.unit?.trim() || 'NIU',
     tipoAfectacionIGV: AFECTACION[afectacion],
   };
