@@ -207,7 +207,7 @@ export function textoConocimiento(p: PerfilVendedor | null | undefined): string 
   const temas = p?.conocimiento ?? [];
   if (!temas.length) return '';
   return [
-    'INFORMACIÓN DEL NEGOCIO POR TEMA (no la copies tal cual: úsala para responder lo que pregunten)',
+    'INFORMACIÓN DEL NEGOCIO POR TEMA (no la copies tal cual: úsala para responder lo que pregunten. Si algo de aquí contradice al texto de arriba, vale esto: es lo más puntual y lo más reciente)',
     ...temas.map(
       (t) => `- ${NOMBRE_CATEGORIA[t.categoria]} · ${t.titulo}: ${t.texto}`,
     ),

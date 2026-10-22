@@ -91,6 +91,9 @@ describe('base de conocimiento por tema', () => {
     expect(contexto).toContain('Café de origen peruano.');
     expect(contexto).toContain('Horarios · Atención: L-S de 9am a 9pm');
     expect(contexto).toContain('Devoluciones · Cambios: Hasta 7 días con boleta');
+    // El texto general va primero y queda intacto; los temas, después y mandan.
+    expect(contexto.indexOf('Café de origen peruano.')).toBeLessThan(contexto.indexOf('POR TEMA'));
+    expect(contexto).toContain('vale esto');
   });
 
   it('descarta temas sin título o sin texto, y la categoría desconocida va a Otros', () => {
