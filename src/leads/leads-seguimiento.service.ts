@@ -10,6 +10,7 @@ import {
   postergaLaCompra,
 } from './leads-disparadores';
 import { HERRAMIENTA_DAR_DEMO } from './leads-herramientas';
+import { perfilValido } from './perfil-vendedor';
 
 /**
  * Avisos que ya le van a escribir al cliente cuando él dijo. Con uno de estos
@@ -129,6 +130,7 @@ export class LeadsSeguimientoService {
             razonSocial: true,
             nombreComercial: true,
             iaVentasContexto: true,
+            iaVentasConfigJson: true,
             rubro: { select: { nombre: true } },
           },
         },
@@ -212,9 +214,22 @@ export class LeadsSeguimientoService {
         if (emp.iaVentasContexto) partes.push(emp.iaVentasContexto);
         const businessContext = partes.join('\n');
 
+        // El seguimiento también habla como el vendedor que configuró el
+        // dueño: con su nombre, su tono y sin sus palabras prohibidas.
+        const cfg = (emp.iaVentasConfigJson ?? {}) as {
+          asesor?: string;
+          vendedor?: unknown;
+        };
         const texto = await this.ia.generarSeguimiento(
           historial,
           businessContext,
+          {
+            nombre: emp.nombreComercial || emp.razonSocial,
+            rubro: emp.rubro?.nombre ?? null,
+            asesor: cfg.asesor ?? null,
+            perfil: cfg.vendedor ? perfilValido(cfg.vendedor) : null,
+            contexto: businessContext,
+          },
         );
         if (!texto) continue;
 

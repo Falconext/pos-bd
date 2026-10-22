@@ -758,6 +758,7 @@ export class LeadsMessageProcessor extends WorkerHost {
           nombre: empresa.nombreComercial || empresa.razonSocial,
           rubro: empresa.rubro?.nombre ?? null,
           asesor: config.asesor ?? null,
+          perfil: config.vendedor ?? null,
           contexto: businessContext,
         },
         contextoDelTurno,

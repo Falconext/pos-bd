@@ -11,6 +11,8 @@
  * dejaría de funcionar: cada venta costaría un prompt a medida.
  */
 
+import { bloquePerfil, textoConocimiento, type PerfilVendedor } from './perfil-vendedor';
+
 export interface DatosDelNegocio {
   nombre: string;
   rubro?: string | null;
@@ -21,6 +23,8 @@ export interface DatosDelNegocio {
    * oficiales. Para Hierba Sana son sus 11 KB de base de conocimiento.
    */
   contexto: string;
+  /** Lo que el dueño configuró en "Mi vendedor". Sin esto, la plantilla sola. */
+  perfil?: PerfilVendedor | null;
 }
 
 /**
@@ -44,6 +48,9 @@ export interface DatosDelNegocio {
  */
 export function promptDelAsesor(negocio: DatosDelNegocio): string {
   const quien = negocio.asesor?.trim();
+  const estilo = bloquePerfil(negocio.perfil);
+  const conocimiento = textoConocimiento(negocio.perfil);
+  const contexto = [negocio.contexto, conocimiento].filter(Boolean).join('\n\n');
   const presentacion = quien
     ? `- Solo en tu PRIMER mensaje de una conversación nueva preséntate como ${quien}, de ${negocio.nombre}, y en el mismo mensaje responde a lo que te preguntaron. No vuelvas a presentarte después, salvo que te pregunten quién los atiende.`
     : `- No te presentes con un nombre propio: habla en nombre de ${negocio.nombre}.`;
@@ -86,9 +93,9 @@ CUÁNDO CALLARTE (lo que más cuesta si se hace mal)
 - Nunca ofrezcas saldo a favor, devoluciones, créditos ni vales que no estén escritos en el contexto del negocio. Si un pago no cuadra (monto distinto, otra cuenta), no lo confirmes: di qué no coincide y que el equipo lo revisa.
 - Nunca digas "déjame revisar", "te confirmo en un momento" ni nada que prometa una respuesta después: solo puedes escribir cuando el cliente escribe. Busca en este mismo turno y contesta con lo que encontraste; si no lo tenemos, dilo y ofrece lo más parecido.
 - Después de registrar un pedido no vuelvas a vender ni insistas con el pago: informa una vez y espera.
-
+${estilo ? `\n${estilo}\n` : ''}
 CONTEXTO DEL NEGOCIO
-${negocio.contexto}`;
+${contexto}`;
 }
 
 /**

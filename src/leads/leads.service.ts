@@ -1,3 +1,9 @@
+import {
+  envioValido,
+  mediosPagoValidos,
+  perfilValido,
+  textoMediosPago,
+} from './perfil-vendedor';
 import { demosValidas, type ConfigDemos } from './demos';
 import {
   Injectable,
@@ -433,9 +439,20 @@ export class LeadsService {
       },
     });
     const json = empresa?.iaVentasConfigJson as
-      | { demos?: ConfigDemos; cobroConLink?: boolean }
+      | {
+          demos?: ConfigDemos;
+          cobroConLink?: boolean;
+          asesor?: string;
+          vendedor?: unknown;
+          envio?: unknown;
+          mediosPago?: string;
+          mediosPagoLista?: unknown;
+        }
       | null;
     const demos = json?.demos;
+    // Medios de pago escritos a mano antes de que existiera la lista: se
+    // muestran como uno solo para que el dueño los vea y los ordene.
+    const mediosPagoLista = mediosPagoValidos(json?.mediosPagoLista);
     return {
       iaVentasActiva: empresa?.iaVentasActiva ?? false,
       iaVentasContexto: empresa?.iaVentasContexto ?? '',
@@ -447,6 +464,15 @@ export class LeadsService {
       // El link de pago solo cobra con el Mercado Pago del negocio conectado.
       cobroConLink: json?.cobroConLink === true,
       mpConectado: empresa?.mpConectado ?? false,
+      // "Mi vendedor". Que estas claves vengan es lo que le dice al panel que
+      // el servidor ya entiende la pantalla nueva.
+      asesor: json?.asesor ?? '',
+      vendedor: perfilValido(json?.vendedor),
+      envio: envioValido(json?.envio),
+      mediosPagoLista:
+        mediosPagoLista.length || !json?.mediosPago
+          ? mediosPagoLista
+          : [{ nombre: 'Medios de pago', detalle: json.mediosPago }],
     };
   }
 
@@ -532,6 +558,12 @@ export class LeadsService {
       demos?: ConfigDemos | null;
       /** Ofrecer el link de Mercado Pago para pagar lo cotizado. */
       cobroConLink?: boolean;
+      /** "Mi vendedor": tono, reglas, saludo y temas. */
+      vendedor?: unknown;
+      /** Zonas de envío y tarifas, como las edita el panel. */
+      envio?: unknown;
+      /** Medios de pago (Yape, BCP…) con su titular. */
+      mediosPagoLista?: unknown;
     },
   ) {
     // El nombre del asesor vive en iaVentasConfigJson junto a zonas, descuentos
@@ -541,7 +573,10 @@ export class LeadsService {
       data.asesor !== undefined ||
       data.videoBienvenidaUrl !== undefined ||
       data.demos !== undefined ||
-      data.cobroConLink !== undefined
+      data.cobroConLink !== undefined ||
+      data.vendedor !== undefined ||
+      data.envio !== undefined ||
+      data.mediosPagoLista !== undefined
     ) {
       const actual = await this.prisma.empresa.findUnique({
         where: { id: empresaId },
@@ -565,6 +600,30 @@ export class LeadsService {
       if (data.cobroConLink !== undefined) {
         if (data.cobroConLink === true) json.cobroConLink = true;
         else delete json.cobroConLink;
+      }
+      if (data.vendedor !== undefined) {
+        const perfil = perfilValido(data.vendedor);
+        if (Object.keys(perfil).length) json.vendedor = perfil;
+        else delete json.vendedor;
+      }
+      if (data.envio !== undefined) {
+        // Sin zonas se borra entera: vacío es "sin configurar", y el flujo
+        // deriva a una persona en vez de cotizar un envío inventado.
+        const envio = envioValido(data.envio);
+        if (envio.zonas.length) json.envio = envio;
+        else delete json.envio;
+      }
+      if (data.mediosPagoLista !== undefined) {
+        // La lista es lo que edita el panel; el texto es lo que ya leen el
+        // flujo del pedido y la verificación de vouchers. Se guardan juntos.
+        const medios = mediosPagoValidos(data.mediosPagoLista);
+        if (medios.length) {
+          json.mediosPagoLista = medios;
+          json.mediosPago = textoMediosPago(medios);
+        } else {
+          delete json.mediosPagoLista;
+          delete json.mediosPago;
+        }
       }
       await this.prisma.empresa.update({
         where: { id: empresaId },
