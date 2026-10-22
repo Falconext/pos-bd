@@ -28,7 +28,9 @@ export class WebhooksService {
     empresaId: number,
     event: string,
     order: any,
-    producto: 'logistica' | 'facturacion' = 'logistica',
+    producto: 'logistica' | 'facturacion' | 'erp' = 'logistica',
+    /** Solo a este endpoint (`we_…`): el aviso de prueba de la API de Krezka. */
+    soloEndpointId?: string,
   ) {
     let endpoints: Array<{
       id: number;
@@ -38,7 +40,7 @@ export class WebhooksService {
     }> = [];
     try {
       endpoints = await this.prisma.webhookEndpoint.findMany({
-        where: { empresaId, activo: true, producto },
+        where: { empresaId, activo: true, producto, ...(soloEndpointId ? { endpointId: soloEndpointId } : {}) },
         select: { id: true, url: true, secret: true, eventos: true },
       });
     } catch {
@@ -48,6 +50,7 @@ export class WebhooksService {
     // Filtra por suscripción: lista vacía = suscrito a todos los eventos.
     const suscritos = endpoints.filter(
       (e) =>
+        !!soloEndpointId ||
         !Array.isArray(e.eventos) ||
         e.eventos.length === 0 ||
         e.eventos.includes(event),
@@ -127,7 +130,7 @@ export class WebhooksService {
   async createEndpoint(
     empresaId: number,
     payload: { url: string; events: string[] },
-    producto: 'logistica' | 'facturacion' = 'logistica',
+    producto: 'logistica' | 'facturacion' | 'erp' = 'logistica',
   ) {
     const url = typeof payload?.url === 'string' ? payload.url.trim() : '';
     if (!url || !/^https?:\/\//i.test(url)) {
@@ -158,7 +161,7 @@ export class WebhooksService {
    */
   async listEndpoints(
     empresaId: number,
-    producto: 'logistica' | 'facturacion' = 'logistica',
+    producto: 'logistica' | 'facturacion' | 'erp' = 'logistica',
   ) {
     const registros = await this.prisma.webhookEndpoint.findMany({
       where: { empresaId, producto },

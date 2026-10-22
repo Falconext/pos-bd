@@ -1,9 +1,11 @@
-import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, Request, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, Request, UseGuards, UseInterceptors } from '@nestjs/common';
 import { IdempotenciaInterceptor } from '../idempotencia/idempotencia.interceptor';
 import { ApiKeyAuthGuard } from '../api-keys/api-key-auth.guard';
 import { ApiProducto } from '../api-keys/producto-api';
 import { ErpApiService } from './erp.service';
 import { ErpVentasService } from './erp-ventas.service';
+import { ErpDatosService } from './erp-datos.service';
+import { ErpAvisosService } from './erp-avisos.service';
 import { esPrueba } from './modo-prueba';
 
 /**
@@ -39,6 +41,8 @@ export class ErpApiController {
   constructor(
     private readonly erp: ErpApiService,
     private readonly ventas: ErpVentasService,
+    private readonly datos: ErpDatosService,
+    private readonly avisos: ErpAvisosService,
   ) {}
 
   /**
@@ -57,6 +61,20 @@ export class ErpApiController {
   @Get('sales')
   listarVentas(@Query() query: any, @Request() req: any) {
     return this.ventas.listar(req.apiEmpresaId, query ?? {});
+  }
+
+  /** Anula la venta: nota de venta directo; boleta o factura aceptada, con nota de crédito. */
+  @Post('sales/:id/void')
+  @HttpCode(200)
+  @UseInterceptors(IdempotenciaInterceptor)
+  anularVenta(@Param('id') id: string, @Body() body: unknown, @Request() req: any) {
+    return this.ventas.anular(req.apiEmpresaId, id, body, esPrueba(req));
+  }
+
+  /** El PDF de la venta (a4 por defecto, ticket o a5): devuelve su URL. */
+  @Get('sales/:id/pdf')
+  pdfVenta(@Param('id') id: string, @Query('format') formato: string, @Request() req: any) {
+    return this.ventas.pdf(req.apiEmpresaId, id, formato);
   }
 
   @Get('sales/:id')
@@ -101,6 +119,70 @@ export class ErpApiController {
   @Get('locations')
   sedes(@Request() req: any) {
     return this.erp.listarSedes(req.apiEmpresaId);
+  }
+
+  /** Crear categorías y marcas: para tener su id antes de crear productos. */
+  @Post('categories')
+  @HttpCode(201)
+  @UseInterceptors(IdempotenciaInterceptor)
+  crearCategoria(@Body() body: unknown, @Request() req: any) {
+    return this.datos.crearCategoria(req.apiEmpresaId, body, esPrueba(req));
+  }
+
+  @Post('brands')
+  @HttpCode(201)
+  @UseInterceptors(IdempotenciaInterceptor)
+  crearMarca(@Body() body: unknown, @Request() req: any) {
+    return this.datos.crearMarca(req.apiEmpresaId, body, esPrueba(req));
+  }
+
+  @Get('customers')
+  listarClientes(@Query() query: any, @Request() req: any) {
+    return this.datos.listarClientes(req.apiEmpresaId, query ?? {});
+  }
+
+  @Get('customers/:id')
+  obtenerCliente(@Param('id') id: string, @Request() req: any) {
+    return this.datos.obtenerCliente(req.apiEmpresaId, id);
+  }
+
+  @Post('customers')
+  @HttpCode(201)
+  @UseInterceptors(IdempotenciaInterceptor)
+  crearCliente(@Body() body: unknown, @Request() req: any) {
+    return this.datos.crearCliente(req.apiEmpresaId, body, esPrueba(req));
+  }
+
+  @Patch('customers/:id')
+  actualizarCliente(@Param('id') id: string, @Body() body: unknown, @Request() req: any) {
+    return this.datos.actualizarCliente(req.apiEmpresaId, id, body, esPrueba(req));
+  }
+
+  /**
+   * Webhooks: la web recibe un aviso firmado cuando SUNAT acepta, observa o
+   * rechaza una venta, o cuando se anula. Es configuración, no venta: se
+   * administra igual con clave de prueba o real.
+   */
+  @Post('webhook_endpoints')
+  @HttpCode(201)
+  crearWebhook(@Body() body: unknown, @Request() req: any) {
+    return this.avisos.crearEndpoint(req.apiEmpresaId, body);
+  }
+
+  @Get('webhook_endpoints')
+  listarWebhooks(@Request() req: any) {
+    return this.avisos.listarEndpoints(req.apiEmpresaId);
+  }
+
+  @Delete('webhook_endpoints/:id')
+  borrarWebhook(@Param('id') id: string, @Request() req: any) {
+    return this.avisos.borrarEndpoint(req.apiEmpresaId, id);
+  }
+
+  @Post('webhook_endpoints/:id/test')
+  @HttpCode(200)
+  probarWebhook(@Param('id') id: string, @Request() req: any) {
+    return this.avisos.probarEndpoint(req.apiEmpresaId, id);
   }
 
   @Get('brands')
