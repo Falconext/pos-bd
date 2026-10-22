@@ -7,6 +7,7 @@ import { repartirPago } from './cobro-varias';
 import { parseFechaEmision } from '../common/utils/fecha';
 import { diaDeEnvio } from './dia-de-envio';
 import { aplicarDescuentoGlobal } from './descuento-global';
+import { conObservacionDelivery, separarDelivery } from './delivery-del-pedido';
 import { excluirNotasCreditoDeAnulacion } from '../common/utils/notas-credito.util';
 import {
   SunatValidezClient,
@@ -618,6 +619,18 @@ export class ComprobanteService {
         }
       }
 
+      // Notas que armó el bot de IA de Ventas: al convertirlas, el delivery no
+      // va en la boleta (ver delivery-del-pedido.ts). El panel lo necesita para
+      // mostrar el mismo total que va a salir.
+      const delChat = new Set<number>();
+      if (informalIds.length > 0) {
+        const pedidos = await this.prisma.leadPedidoBorrador.findMany({
+          where: { empresaId, comprobanteId: { in: informalIds } },
+          select: { comprobanteId: true },
+        });
+        for (const p of pedidos) if (p.comprobanteId != null) delChat.add(p.comprobanteId);
+      }
+
       // Detalles sin productoId (líneas guardadas sin vínculo, muy común en
       // cotizaciones re-versionadas o ítems agregados a mano con el mismo
       // nombre del producto): re-vincular por descripción exacta contra el
@@ -766,6 +779,7 @@ export class ComprobanteService {
             detalles,
             comprobante,
             convertidoA,
+            pedidoDelChat: delChat.has(it.id),
             anulacionEnTramite: anulacionEnTramite.has(it.id),
             anulacionEstado: anulacionNoConfirmada.has(it.id)
               ? 'NO_CONFIRMADA'
@@ -3698,6 +3712,28 @@ export class ComprobanteService {
       extraYaGeneroComision = extra.generoComision;
     }
 
+    // El delivery de un pedido del chat no se factura: se saca del total y
+    // queda como observación (ver delivery-del-pedido.ts). Solo si alguna de
+    // las notas que se convierten la armó el bot.
+    let detallesAEmitir = detalles;
+    let observacionesAEmitir = observaciones;
+    if (esConversionDesdeInformal) {
+      const delChat = await this.prisma.leadPedidoBorrador.findFirst({
+        where: {
+          empresaId,
+          comprobanteId: { in: [Number(comprobanteOrigenId), ...origenesExtraIds] },
+        },
+        select: { id: true },
+      });
+      if (delChat) {
+        const s = separarDelivery(detalles);
+        if (s.delivery > 0) {
+          detallesAEmitir = s.lineas;
+          observacionesAEmitir = conObservacionDelivery(observaciones, s.delivery, s.descripciones);
+        }
+      }
+    }
+
     // Map retencion fields to detraccion fields if present
     const finalMontoDetraccion = retencionMonto || montoDetraccion;
     const finalPorcentajeDetraccion =
@@ -3752,7 +3788,7 @@ export class ComprobanteService {
       Math.max(0, Number(montoDescuentoGlobal ?? 0)),
     );
     const detallesEfectivos = aplicarDescuentoGlobal(
-      detalles,
+      detallesAEmitir,
       descuentoGlobalFormal,
     );
 
@@ -3983,7 +4019,7 @@ export class ComprobanteService {
       formaPagoMoneda,
       tipoMoneda,
       tipoCambio: input.tipoCambio != null ? Number(input.tipoCambio) : 1,
-      observaciones: observaciones ?? null,
+      observaciones: observacionesAEmitir ?? null,
       ordenCompraCliente: ordenCompraCliente ?? null,
       clienteId: finalClienteId,
       empresaId,
