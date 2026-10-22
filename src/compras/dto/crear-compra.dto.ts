@@ -11,6 +11,27 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
+/**
+ * Una parte del pago al contado: "S/ 300 en efectivo y S/ 200 por Yape".
+ * Cada una se guarda como su propio PagoCompra; solo la de efectivo sale de la
+ * caja, que es lo que hace cuadrar el cierre.
+ */
+export class PagoInicialCompraDto {
+  @IsString()
+  metodo: string;
+
+  @IsNumber()
+  monto: number;
+
+  @IsOptional()
+  @IsNumber()
+  cuentaBancariaId?: number;
+
+  @IsOptional()
+  @IsString()
+  referencia?: string;
+}
+
 class DetalleCompraDto {
   @IsOptional()
   @IsNumber()
@@ -144,6 +165,14 @@ export class CrearCompraDto {
   @IsOptional()
   @IsString()
   referenciaInicial?: string;
+
+  // Pago mixto al contado. Si viene, reemplaza a montoPagadoInicial /
+  // metodoPagoInicial / cuentaBancariaIdInicial / referenciaInicial.
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PagoInicialCompraDto)
+  pagosIniciales?: PagoInicialCompraDto[];
 
   @IsOptional()
   @IsString()
