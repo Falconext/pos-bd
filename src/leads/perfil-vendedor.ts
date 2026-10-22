@@ -281,7 +281,10 @@ export function mediosPagoValidos(input: unknown): MedioPago[] {
     if (!m || typeof m !== 'object') continue;
     const r = m as Record<string, unknown>;
     const nombre = texto(r.nombre, 40);
-    const detalle = texto(r.detalle, 120);
+    // Generoso: los medios escritos a mano antes de la lista ("Yape … · BCP …
+    // · contraentrega solo en Lima") vienen en un solo texto largo y cortarlo
+    // es darle al cliente datos de pago incompletos.
+    const detalle = texto(r.detalle, 1000);
     if (!nombre || !detalle) continue;
     const titular = texto(r.titular, 80);
     out.push({ nombre, detalle, ...(titular ? { titular } : {}) });
@@ -296,6 +299,14 @@ export function mediosPagoValidos(input: unknown): MedioPago[] {
  */
 export function textoMediosPago(medios: MedioPago[]): string {
   return medios
-    .map((m) => `${m.nombre}: ${m.detalle}${m.titular ? ` (titular: ${m.titular})` : ''}`)
+    .map((m) =>
+      // El texto de antes, mostrado como un solo medio, vuelve tal cual.
+      m.nombre === MEDIOS_DE_ANTES && !m.titular
+        ? m.detalle
+        : `${m.nombre}: ${m.detalle}${m.titular ? ` (titular: ${m.titular})` : ''}`,
+    )
     .join(' · ');
 }
+
+/** Nombre con el que el panel muestra los medios escritos antes de la lista. */
+export const MEDIOS_DE_ANTES = 'Medios de pago';

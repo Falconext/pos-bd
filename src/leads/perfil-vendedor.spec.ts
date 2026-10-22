@@ -181,4 +181,13 @@ describe('medios de pago', () => {
     expect(texto).toBe('Yape: 987 654 321 (titular: María Pía Torres) · BCP: 191-1234567-0-12');
     expect(extraerTitular(texto)).toBe('María Pía Torres');
   });
+
+  it('el texto de antes se guarda tal cual y no se corta', () => {
+    const largo =
+      'Yape: 955 947 892 · titular: Hierba Sana EIRL · BCP soles 191-12345678-0-12 · Interbank 200-3001234567 · Contraentrega solo en Lima Metropolitana';
+    const medios = mediosPagoValidos([{ nombre: 'Medios de pago', detalle: largo }]);
+    expect(medios[0].detalle).toBe(largo);
+    expect(textoMediosPago(medios)).toBe(largo);
+    expect(extraerTitular(textoMediosPago(medios))).toBe('Hierba Sana EIRL');
+  });
 });
