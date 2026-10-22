@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { LeadsConsultasService } from './leads-consultas.service';
 import { EtapaCrm } from './leads-embudo';
+import { ventasPorAnuncio } from './anuncio-origen';
 
 /**
  * E2 — BI y analítica operativa (punto 27 del anexo).
@@ -15,6 +16,9 @@ import { EtapaCrm } from './leads-embudo';
  * Cada número de acá sale de filas, no de releer los chats con IA: así el
  * reporte da lo mismo cada vez que se abre y no cuesta tokens.
  */
+
+const esAnulado = (c: { estadoPago?: unknown; estadoEnvioSunat?: unknown }) =>
+  String(c.estadoPago) === 'ANULADO' || String(c.estadoEnvioSunat) === 'ANULADO';
 
 export interface RangoBi {
   desde?: string;
@@ -39,13 +43,93 @@ export class LeadsBiService {
 
   async resumen(empresaId: number, q: RangoBi = {}) {
     const creadoEn = this.rango(q);
-    const [productos, malestares, embudo, demografia] = await Promise.all([
+    const [productos, malestares, embudo, demografia, anuncios] = await Promise.all([
       this.productosConsultados(empresaId, creadoEn),
       this.malestaresConsultados(empresaId, creadoEn),
       this.conversionYTicket(empresaId, creadoEn),
       this.demografia(empresaId, creadoEn),
+      this.anuncios(empresaId, creadoEn),
     ]);
-    return { productos, malestares, ...embudo, demografia };
+    return { productos, malestares, ...embudo, demografia, anuncios };
+  }
+
+  /**
+   * Qué anuncio de Facebook/Instagram trajo cada venta.
+   *
+   * Cuenta a los que llegaron por un anuncio en el rango y lo que compraron
+   * después, aunque pagaran días más tarde: la pregunta es "de los que trajo
+   * este anuncio, cuántos compraron". Las pruebas del propio negocio no
+   * tienen prospecto y no entran, y una venta anulada no es venta.
+   */
+  async anuncios(empresaId: number, creadoEn?: object) {
+    const llegadas = await this.prisma.leadAnuncioOrigen.findMany({
+      where: {
+        empresaId,
+        ...(creadoEn && { creadoEn }),
+        conversacion: { prospecto: { isNot: null } },
+      },
+      select: {
+        conversacionId: true,
+        anuncioId: true,
+        tipo: true,
+        titulo: true,
+        url: true,
+        imagenUrl: true,
+        creadoEn: true,
+      },
+    });
+    const convIds = [...new Set(llegadas.map((l) => l.conversacionId))];
+
+    const [pedidos, sinAnuncio] = await Promise.all([
+      convIds.length
+        ? this.prisma.leadPedidoBorrador.findMany({
+            where: { empresaId, conversacionId: { in: convIds }, comprobanteId: { not: null } },
+            select: { conversacionId: true, comprobanteId: true, registradoEn: true },
+          })
+        : Promise.resolve([]),
+      this.prisma.leadConversacion.count({
+        where: {
+          empresaId,
+          ...(creadoEn && { creadoEn }),
+          prospecto: { isNot: null },
+          anuncios: { none: {} },
+        },
+      }),
+    ]);
+    const ids = pedidos
+      .map((p) => p.comprobanteId)
+      .filter((x): x is number => x != null);
+    const comprobantes = ids.length
+      ? await this.prisma.comprobante.findMany({
+          where: { id: { in: ids }, empresaId },
+          select: {
+            id: true,
+            mtoImpVenta: true,
+            fechaEmision: true,
+            estadoPago: true,
+            estadoEnvioSunat: true,
+          },
+        })
+      : [];
+    const porId = new Map(comprobantes.map((c) => [c.id, c]));
+    const ventas = pedidos.flatMap((p) => {
+      const c = porId.get(p.comprobanteId as number);
+      if (!c) return [];
+      if (esAnulado(c)) return [];
+      return [
+        {
+          conversacionId: p.conversacionId,
+          monto: Number(c.mtoImpVenta ?? 0),
+          fecha: p.registradoEn ?? c.fechaEmision,
+        },
+      ];
+    });
+
+    return {
+      filas: ventasPorAnuncio(llegadas, ventas),
+      conversacionesPorAnuncio: convIds.length,
+      conversacionesSinAnuncio: sinAnuncio,
+    };
   }
 
   /**
@@ -132,21 +216,27 @@ export class LeadsBiService {
     const comprobantes = ids.length
       ? await this.prisma.comprobante.findMany({
           where: { id: { in: ids }, empresaId },
-          select: { mtoImpVenta: true },
+          select: { id: true, mtoImpVenta: true, estadoPago: true, estadoEnvioSunat: true },
         })
       : [];
 
-    const montos = comprobantes.map((c) => Number(c.mtoImpVenta ?? 0));
+    // Una venta anulada no es venta: antes sumaba al "Vendido" y al número
+    // de pedidos, y con ella subían la conversión y el ticket promedio.
+    const vigentes = comprobantes.filter((c) => !esAnulado(c));
+    const idsVigentes = new Set(vigentes.map((c) => c.id));
+    const pedidosVigentes = pedidos.filter((p) => idsVigentes.has(p.comprobanteId as number));
+
+    const montos = vigentes.map((c) => Number(c.mtoImpVenta ?? 0));
     const vendido = montos.reduce((a, m) => a + m, 0);
-    const descuentos = pedidos.reduce(
+    const descuentos = pedidosVigentes.reduce(
       (a, p) => a + Number(p.descuentoAplicado ?? 0),
       0,
     );
 
     return {
       conversaciones,
-      pedidos: pedidos.length,
-      tasaConversion: this.porcentaje(pedidos.length, conversaciones),
+      pedidos: pedidosVigentes.length,
+      tasaConversion: this.porcentaje(pedidosVigentes.length, conversaciones),
       vendido: this.dos(vendido),
       // Promedio sobre los pedidos que EXISTEN: dividir por las
       // conversaciones daría un "ticket promedio" que ningún cliente pagó.

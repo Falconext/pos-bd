@@ -4769,11 +4769,43 @@ model LeadConversacion {
   mensajes            LeadMensaje[]
   prospecto           LeadProspecto?
   borrador            LeadPedidoBorrador?
+  anuncios            LeadAnuncioOrigen[]
   creadoEn            DateTime               @default(now())
   actualizadoEn       DateTime               @updatedAt
 
   @@unique([empresaId, telefonoProspecto])
   @@index([empresaId, estado])
+}
+
+/// De qué anuncio llegó el cliente.
+///
+/// Cuando alguien toca un anuncio de Facebook o Instagram con botón de
+/// WhatsApp, su primer mensaje trae la etiqueta del anuncio (`referral`).
+/// Hasta el 2026-10-21 se descartaba, y el negocio pagaba publicidad sin saber
+/// qué anuncio le traía ventas. Una fila por mensaje con etiqueta: el mismo
+/// cliente puede volver por otro anuncio otro día, y la venta se le cuenta al
+/// último anuncio por el que llegó antes de comprar.
+model LeadAnuncioOrigen {
+  id             Int              @id @default(autoincrement())
+  empresaId      Int
+  conversacionId Int
+  conversacion   LeadConversacion @relation(fields: [conversacionId], references: [id], onDelete: Cascade)
+  /// Id del anuncio (o de la publicación) en Meta: lo que agrupa el reporte.
+  anuncioId      String
+  /// "ad" o "post".
+  tipo           String?
+  titulo         String?
+  texto          String?
+  url            String?
+  imagenUrl      String?
+  /// Id del clic. Es lo que hay que devolverle a Meta para avisarle que ese
+  /// clic terminó en compra (API de Conversiones, paso 2).
+  ctwaClid       String?
+  whatsappMsgId  String           @unique
+  creadoEn       DateTime         @default(now())
+
+  @@index([empresaId, creadoEn])
+  @@index([conversacionId])
 }
 
 model LeadMensaje {

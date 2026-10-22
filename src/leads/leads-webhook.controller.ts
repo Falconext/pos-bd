@@ -155,6 +155,9 @@ export class LeadsWebhookController {
                 mediaId: msg.audio?.id ?? msg.image?.id ?? msg.document?.id,
                 nombre: contacto?.profile?.name ?? contacto?.profile?.username,
                 timestamp: msg.timestamp,
+                // Si tocó un anuncio de Facebook/Instagram para escribir, su
+                // primer mensaje trae de cuál vino.
+                referral: msg.referral,
               },
               {
                 // Meta reentrega el mismo mensaje cuando duda de nuestro 200.

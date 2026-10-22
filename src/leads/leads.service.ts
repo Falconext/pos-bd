@@ -255,6 +255,19 @@ export class LeadsService {
       },
       orderBy: [{ puntaje: 'desc' }, { actualizadoEn: 'desc' }],
       take: 200,
+      include: {
+        // El último anuncio de Facebook/Instagram por el que llegó, para que
+        // el vendedor sepa qué vio el cliente antes de escribir.
+        conversacion: {
+          select: {
+            anuncios: {
+              orderBy: { creadoEn: 'desc' },
+              take: 1,
+              select: { anuncioId: true, tipo: true, titulo: true, texto: true, url: true, creadoEn: true },
+            },
+          },
+        },
+      },
     });
 
     // Adjunta el código de la cotización (COT que la IA generó desde el chat),
@@ -276,8 +289,9 @@ export class LeadsService {
       ]),
     );
 
-    return prospectos.map((p) => ({
+    return prospectos.map(({ conversacion, ...p }) => ({
       ...p,
+      anuncio: conversacion?.anuncios[0] ?? null,
       cotizacion:
         p.cotizacionId && codigoPorId.has(p.cotizacionId)
           ? { id: p.cotizacionId, codigo: codigoPorId.get(p.cotizacionId)! }
