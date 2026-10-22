@@ -55,8 +55,8 @@ describe('el producto que ve la web', () => {
       images: ['img:p501.webp', 'img:extra-1.webp'],
     });
     expect(p.stock_by_location).toEqual([
-      { location_id: 1, location: 'Principal', quantity: 12 },
-      { location_id: 2, location: 'Miraflores', quantity: 3 },
+      { location_id: 1, location: 'Principal', quantity: 12, reserved: 0, available: 12 },
+      { location_id: 2, location: 'Miraflores', quantity: 3, reserved: 0, available: 3 },
     ]);
     const texto = JSON.stringify(p);
     expect(texto).not.toMatch(/costo|comision|12\.4/i);
@@ -105,6 +105,7 @@ describe('el producto que ve la web', () => {
 describe('el servicio', () => {
   function armar(opts: { conPlan?: boolean; productos?: any[] } = {}) {
     const prisma: any = {
+      reserva: { groupBy: jest.fn(async () => []) },
       empresa: { findFirst: jest.fn(async () => (opts.conPlan === false ? null : { id: 89 })) },
       sede: { findFirst: jest.fn(async ({ where }: any) => (where.id === 2 ? { id: 2 } : null)) },
       producto: {
@@ -213,6 +214,7 @@ describe('lo que manda la web', () => {
 describe('escribir', () => {
   function armar(o: { stockActual?: number | null; rubro?: string; variantes?: number; servicio?: boolean } = {}) {
     const prisma: any = {
+      reserva: { groupBy: jest.fn(async () => []) },
       empresa: {
         findFirst: jest.fn(async () => ({ id: 89 })),
         findUnique: jest.fn(async () => ({ rubro: { nombre: o.rubro ?? 'Tienda' } })),
@@ -382,6 +384,7 @@ describe('cada rubro', () => {
 describe('reglas que dependen del negocio', () => {
   function armar(o: { rubro?: string; variantes?: number; servicio?: boolean; conLotes?: number } = {}) {
     const prisma: any = {
+      reserva: { groupBy: jest.fn(async () => []) },
       empresa: { findFirst: jest.fn(async () => ({ id: 89 })), findUnique: jest.fn(async () => ({ rubro: { nombre: o.rubro ?? 'Tienda de ropa' } })) },
       sede: { findFirst: jest.fn(async () => ({ id: 16 })) },
       producto: {
@@ -442,5 +445,48 @@ describe('reglas que dependen del negocio', () => {
     await expect(armar().crearProducto(89, { name: 'X', price: 1, images: fotos }, 'x')).rejects.toMatchObject({
       response: { param: 'images', message: expect.stringContaining('hasta 3 fotos') },
     });
+  });
+});
+
+describe('reservas, foto por variante y fechas de oferta', () => {
+  it('lo reservado no se puede vender: available = stock − reservado, y decide si está agotado', () => {
+    const reservas = new Map([['501-1', 12], ['501-2', 1]]);
+    const p = serializarProducto(PRODUCTO, { urlImagen: URL_IMG, reservas });
+    expect(p).toMatchObject({ stock: 15, reserved: 13, available: 2, availability: 'in_stock' });
+    expect(p.stock_by_location).toEqual([
+      { location_id: 1, location: 'Principal', quantity: 12, reserved: 12, available: 0 },
+      { location_id: 2, location: 'Miraflores', quantity: 3, reserved: 1, available: 2 },
+    ]);
+    const enSede1 = serializarProducto(PRODUCTO, { urlImagen: URL_IMG, reservas, sedeId: 1 });
+    expect(enSede1).toMatchObject({ stock: 12, reserved: 12, available: 0, availability: 'out_of_stock' });
+  });
+
+  it('una variante con su propia foto', () => {
+    const p = serializarProducto(
+      { ...PRODUCTO, variantes: [{ id: 601, codigo: 'Z-42-N', valoresAtributos: { Talla: '42' }, precioUnitario: 0, estado: 'ACTIVO', imagenUrl: 'https://cdn.x/negra.jpg', stocks: [] }] },
+      { urlImagen: (u) => `img:${u}` },
+    );
+    expect((p.variants as any[])[0].image).toBe('img:https://cdn.x/negra.jpg');
+    expect(() =>
+      leerAlta({ name: 'Z', price: 1, variant_options: [{ name: 'Talla', values: ['42'] }], variants: [{ attributes: { Talla: '42' }, image: 'http://x.com/a.jpg' }] }),
+    ).toThrow(/variants\[0\]\.image/);
+  });
+
+  it('oferta con fechas: va con sale_price y el fin no puede ser antes del inicio', () => {
+    const a = leerAlta({ name: 'X', price: 100, sale_price: 80, sale_starts_on: '2026-11-27', sale_ends_on: '2026-11-30' });
+    expect(a.ofertaDesde?.toISOString()).toBe('2026-11-27T05:00:00.000Z');
+    expect(a.ofertaHasta?.toISOString()).toBe('2026-12-01T04:59:59.000Z');
+    expect(() => leerAlta({ name: 'X', price: 100, sale_ends_on: '2026-11-30' })).toThrow(/van con `sale_price`/);
+    expect(() => leerAlta({ name: 'X', price: 100, sale_price: 80, sale_starts_on: '2026-12-05', sale_ends_on: '2026-12-01' })).toThrow(/antes de/);
+    expect(() => leerAlta({ name: 'X', price: 100, sale_price: 80, sale_ends_on: '30/11/2026' })).toThrow(/YYYY-MM-DD/);
+    expect(leerCambio({ sale_ends_on: null })).toEqual({ ofertaHasta: null });
+  });
+
+  it('fuera de su ventana, la oferta no aplica (Black Friday que todavía no empieza)', () => {
+    const p = serializarProducto(
+      { ...PRODUCTO, precioOferta: 25, fechaInicioOferta: new Date('2026-11-27T05:00:00Z'), fechaFinOferta: new Date('2026-12-01T04:59:59Z') },
+      { urlImagen: URL_IMG, ahora: new Date('2026-10-22T12:00:00Z') },
+    );
+    expect(p).toMatchObject({ sale_price: null, sale_starts_on: '2026-11-27', sale_ends_on: '2026-11-30' });
   });
 });

@@ -202,6 +202,24 @@ export interface Lote {
   costo?: number;
 }
 
+/** Una fecha YYYY-MM-DD de Lima; null la quita; undefined = no vino. */
+function fecha(o: any, k: string, horaLima = '12:00:00'): Date | null | undefined {
+  if (!presente(o, k)) return undefined;
+  if (o[k] === null) return null;
+  const s = String(o[k]);
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(`${s}T${horaLima}-05:00`) : new Date(NaN);
+  if (Number.isNaN(d.getTime())) throw invalido(k, `\`${k}\` va como fecha YYYY-MM-DD (ej. 2026-12-31).`);
+  return d;
+}
+
+/** Las fechas de la oferta: desde el inicio del primer día hasta el final del último. */
+function fechasOferta(o: any): { ofertaDesde?: Date | null; ofertaHasta?: Date | null } {
+  const desde = fecha(o, 'sale_starts_on', '00:00:00');
+  const hasta = fecha(o, 'sale_ends_on', '23:59:59');
+  if (desde && hasta && hasta < desde) throw invalido('sale_ends_on', '`sale_ends_on` es antes de `sale_starts_on`.');
+  return { ofertaDesde: desde, ofertaHasta: hasta };
+}
+
 function lote(o: any, param = 'batch'): Lote | undefined {
   if (!presente(o, param) || o[param] === null) return undefined;
   const b = o[param];
@@ -229,6 +247,7 @@ export interface VarianteEntrada {
   codigo?: string;
   codigoBarras?: string;
   precio?: number;
+  imagen?: string;
   stock: number;
 }
 
@@ -295,13 +314,16 @@ function variantes(o: any, opciones: OpcionVariante[] | undefined): VarianteEntr
     const clave = JSON.stringify(Object.entries(valores).sort());
     if (vistas.has(clave)) throw invalido(p, `La combinación de \`${p}\` ya está en otra variante.`);
     vistas.add(clave);
-    const otro = Object.keys(x).find((k) => !['attributes', 'sku', 'barcode', 'price', 'stock'].includes(k));
-    if (otro) throw invalido(`${p}.${otro}`, `\`${p}.${otro}\` no existe. Campos: attributes, sku, barcode, price, stock.`, 'unknown_parameter');
+    const otro = Object.keys(x).find((k) => !['attributes', 'sku', 'barcode', 'price', 'stock', 'image'].includes(k));
+    if (otro) throw invalido(`${p}.${otro}`, `\`${p}.${otro}\` no existe. Campos: attributes, sku, barcode, price, stock, image.`, 'unknown_parameter');
+    const imagen = texto(x, 'image', 1000, false, `${p}.image`);
+    if (imagen && !/^https:\/\/\S+$/i.test(imagen)) throw invalido(`${p}.image`, `\`${p}.image\` tiene que ser una URL https pública de la foto.`);
     return {
       valores,
       codigo: texto(x, 'sku', 60, false, `${p}.sku`) || undefined,
       codigoBarras: texto(x, 'barcode', 60, false, `${p}.barcode`) || undefined,
       precio: monto(x, 'price', { nombre: `${p}.price` }),
+      imagen: imagen || undefined,
       stock: monto(x, 'stock', { cero: true, nombre: `${p}.stock` }) ?? 0,
     };
   });
@@ -309,12 +331,12 @@ function variantes(o: any, opciones: OpcionVariante[] | undefined): VarianteEntr
 
 const CAMPOS_ALTA = [
   'name', 'price', 'sku', 'barcode', 'description', 'category_id', 'brand_id', 'unit', 'tax', 'currency',
-  'sale_price', 'published_in_store', 'stock', 'location_id', 'type', 'images', 'cost',
+  'sale_price', 'sale_starts_on', 'sale_ends_on', 'published_in_store', 'stock', 'location_id', 'type', 'images', 'cost',
   'wholesale_prices', 'packs', 'pharmacy', 'batch', 'variant_options', 'variants',
 ];
 const CAMPOS_CAMBIO = [
   'name', 'price', 'sku', 'barcode', 'description', 'category_id', 'brand_id', 'sale_price',
-  'published_in_store', 'images', 'wholesale_prices', 'packs', 'pharmacy',
+  'sale_starts_on', 'sale_ends_on', 'published_in_store', 'images', 'wholesale_prices', 'packs', 'pharmacy',
 ];
 
 export interface AltaProducto {
@@ -329,6 +351,8 @@ export interface AltaProducto {
   tipoAfectacionIGV: string;
   moneda: 'PEN' | 'USD';
   precioOferta?: number;
+  ofertaDesde?: Date | null;
+  ofertaHasta?: Date | null;
   publicarEnTienda?: boolean;
   stock: number;
   sedeId?: number;
@@ -357,6 +381,9 @@ export function leerAlta(body: any): AltaProducto {
   const oferta = monto(body, 'sale_price');
   if (oferta !== undefined && oferta >= precio) {
     throw invalido('sale_price', '`sale_price` es el precio de oferta: tiene que ser menor que `price`.');
+  }
+  if ((presente(body, 'sale_starts_on') || presente(body, 'sale_ends_on')) && oferta === undefined) {
+    throw invalido('sale_price', 'Las fechas de oferta van con `sale_price` (el precio de oferta).');
   }
   const esServicio = tipo === 'service';
   const opciones = opcionesVariante(body);
@@ -391,6 +418,7 @@ export function leerAlta(body: any): AltaProducto {
     tipoAfectacionIGV: IMPUESTO_A_AFECTACION[tax],
     moneda: currency,
     precioOferta: oferta,
+    ...fechasOferta(body),
     publicarEnTienda: booleano(body, 'published_in_store'),
     stock,
     sedeId: entero(body, 'location_id'),
@@ -416,6 +444,8 @@ export interface CambioProducto {
   marcaId?: number | null;
   /** null = quitar la oferta. */
   precioOferta?: number | null;
+  ofertaDesde?: Date | null;
+  ofertaHasta?: Date | null;
   publicarEnTienda?: boolean;
   imagenes?: string[];
   preciosMayorista?: { cantidadMinima: number; precio: number }[];
@@ -436,6 +466,7 @@ export function leerCambio(body: any): CambioProducto {
     marcaId: presente(body, 'brand_id') ? (body.brand_id === null ? null : entero(body, 'brand_id')) : undefined,
     precioOferta: presente(body, 'sale_price') ? (body.sale_price === null ? null : monto(body, 'sale_price')) : undefined,
     publicarEnTienda: booleano(body, 'published_in_store'),
+    ...fechasOferta(body),
     imagenes: imagenes(body),
     preciosMayorista: presente(body, 'wholesale_prices') ? (preciosMayorista(body) ?? []) : undefined,
     presentaciones: presente(body, 'packs') ? (presentaciones(body) ?? []) : undefined,

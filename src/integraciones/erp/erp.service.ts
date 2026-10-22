@@ -104,6 +104,7 @@ export class ErpApiService {
         codigoBarras: true,
         valoresAtributos: true,
         precioUnitario: true,
+        imagenUrl: true,
         stock: true,
         estado: true,
         stocks: { select: { sedeId: true, stock: true, sede: { select: { nombre: true } } } },
@@ -173,7 +174,7 @@ export class ErpApiService {
     });
     const hayMas = filas.length > limite;
     const pagina = hayMas ? filas.slice(0, limite) : filas;
-    const ctx = { sedeId, urlImagen: this.urlImagen(urlBase) };
+    const ctx = { sedeId, urlImagen: this.urlImagen(urlBase), reservas: await this.reservasDe(empresaId, pagina) };
     return {
       object: 'list',
       data: pagina.map((p) => serializarProducto(p, ctx)),
@@ -198,7 +199,23 @@ export class ErpApiService {
         message: `El producto ${String(id)} no existe en este negocio.`,
       });
     }
-    return serializarProducto(p, { sedeId, urlImagen: this.urlImagen(urlBase) });
+    return serializarProducto(p, { sedeId, urlImagen: this.urlImagen(urlBase), reservas: await this.reservasDe(empresaId, [p]) });
+  }
+
+  /**
+   * Lo reservado por producto y sede (`productoId-sedeId`), de los productos
+   * y sus variantes, con la regla del panel y la tienda: PENDIENTE o
+   * CONFIRMADA.
+   */
+  private async reservasDe(empresaId: number, productos: any[]): Promise<Map<string, number>> {
+    const ids = productos.flatMap((p) => [p.id, ...(p.variantes ?? []).map((v: any) => v.id)]);
+    if (!ids.length) return new Map();
+    const filas = await this.prisma.reserva.groupBy({
+      by: ['productoId', 'sedeId'],
+      where: { empresaId, productoId: { in: ids }, estado: { in: ['PENDIENTE', 'CONFIRMADA'] as never } },
+      _sum: { cantidad: true },
+    });
+    return new Map(filas.map((f) => [`${f.productoId}-${f.sedeId}`, Number(f._sum.cantidad ?? 0)]));
   }
 
   async listarSedes(empresaId: number) {
@@ -547,6 +564,8 @@ export class ErpApiService {
         marcaId: a.marcaId,
         unidadMedidaId,
         precioOferta: a.precioOferta,
+        fechaInicioOferta: a.ofertaDesde,
+        fechaFinOferta: a.ofertaHasta,
         publicarEnTienda: a.publicarEnTienda,
         imagenUrl: a.imagenes?.[0],
         costoUnitario: a.costo,
@@ -562,6 +581,7 @@ export class ErpApiService {
                 codigo: v.codigo,
                 codigoBarras: v.codigoBarras ?? null,
                 precioUnitario: v.precio ?? a.precioUnitario,
+                imagenUrl: v.imagen ?? null,
                 stock: 0,
               })),
             }
@@ -624,12 +644,14 @@ export class ErpApiService {
         });
       }
     }
-    const { imagenes, presentaciones, farmacia, ...resto } = c;
+    const { imagenes, presentaciones, farmacia, ofertaDesde, ofertaHasta, ...resto } = c;
     await this.productos.actualizar(
       {
         ...resto,
         ...(farmacia ?? {}),
         ...(presentaciones ? { codigosBarrasExtra: presentaciones } : {}),
+        ...(ofertaDesde !== undefined ? { fechaInicioOferta: ofertaDesde } : {}),
+        ...(ofertaHasta !== undefined ? { fechaFinOferta: ofertaHasta } : {}),
         id: p.id,
         empresaId,
       } as any,
