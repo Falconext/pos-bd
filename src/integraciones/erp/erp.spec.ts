@@ -114,7 +114,7 @@ describe('el servicio', () => {
       },
     };
     const productos: any = { crear: jest.fn(), actualizar: jest.fn() };
-    return { s: new ErpApiService(prisma, productos), prisma, productos };
+    return { s: new ErpApiService(prisma, productos, {} as any, {} as any), prisma, productos };
   }
 
   it('solo productos de este negocio, activos, sin los internos, paginando por id', async () => {
@@ -188,7 +188,7 @@ describe('lo que manda la web', () => {
     expect(() => leerAlta({ name: 'X', price: '10' })).toThrow(expect.objectContaining({ response: expect.objectContaining({ param: 'price' }) }));
     expect(() => leerAlta({ name: 'X', price: 10, sale_price: 12 })).toThrow(expect.objectContaining({ response: expect.objectContaining({ param: 'sale_price' }) }));
     expect(() => leerAlta({ name: 'X', price: 10, tax: 'iva' })).toThrow(expect.objectContaining({ response: expect.objectContaining({ param: 'tax' }) }));
-    expect(() => leerAlta({ name: 'X', price: 10, cost: 5 })).toThrow(expect.objectContaining({ response: expect.objectContaining({ param: 'cost' }) }));
+    expect(() => leerAlta({ name: 'X', price: 10, cost_price: 5 })).toThrow(expect.objectContaining({ response: expect.objectContaining({ param: 'cost_price', code: 'unknown_parameter' }) }));
   });
 
   it('cambio: solo lo que viene; null quita la oferta; el stock no va acá', () => {
@@ -208,19 +208,35 @@ describe('lo que manda la web', () => {
 });
 
 describe('escribir', () => {
-  function armar(o: { stockActual?: number | null } = {}) {
+  function armar(o: { stockActual?: number | null; rubro?: string; variantes?: number; servicio?: boolean } = {}) {
     const prisma: any = {
-      empresa: { findFirst: jest.fn(async () => ({ id: 89 })) },
+      empresa: {
+        findFirst: jest.fn(async () => ({ id: 89 })),
+        findUnique: jest.fn(async () => ({ rubro: { nombre: o.rubro ?? 'Tienda' } })),
+      },
       sede: { findFirst: jest.fn(async ({ where }: any) => (where.id === 99 ? null : { id: where.id ?? 16 })) },
+      marca: { findFirst: jest.fn(async () => null) },
+      productoCodigoBarras: { findMany: jest.fn(async () => []) },
+      productoLote: { count: jest.fn(async () => 0), findFirst: jest.fn(async () => null) },
       categoria: { findFirst: jest.fn(async ({ where }: any) => (where.id === 7 ? { id: 7 } : null)) },
       unidadMedida: { findFirst: jest.fn(async ({ where }: any) => (where.codigo === 'NIU' ? { id: 1 } : null)) },
       producto: {
         findFirst: jest.fn(async ({ where }: any) => {
           if (where.codigo && !where.id) return where.codigo === 'USADO' ? { id: 77 } : null;
           if (where.codigo && where.id?.not) return where.codigo === 'USADO' ? { id: 77 } : null;
-          return where.id === 501 ? { ...PRODUCTO, id: 501 } : null;
+          return where.id === 501
+            ? {
+                ...PRODUCTO,
+                id: 501,
+                productoPadreId: null,
+                atributosTecnicos: o.servicio ? { tipoProducto: 'SERVICIO' } : null,
+                _count: { variantes: o.variantes ?? 0 },
+              }
+            : null;
         }),
-        findMany: jest.fn(async () => []),
+        findMany: jest.fn(async ({ where }: any) =>
+          where.OR ? (where.OR.some((c: any) => c.codigo?.in?.includes('USADO')) ? [{ id: 77, codigo: 'USADO' }] : []) : [{ id: 601, valoresAtributos: { Talla: 'M' } }],
+        ),
       },
       productoStock: {
         upsert: jest.fn(async () => ({})),
@@ -231,7 +247,9 @@ describe('escribir', () => {
       crear: jest.fn(async () => ({ id: 501 })),
       actualizar: jest.fn(async () => ({})),
     };
-    return { s: new ErpApiService(prisma, productos), prisma, productos };
+    const lotes: any = { crearLote: jest.fn(async () => ({})), aumentarStockLote: jest.fn(), descontarStockLote: jest.fn() };
+    const kardex: any = { registrarMovimiento: jest.fn(async () => ({ id: 9 })) };
+    return { s: new ErpApiService(prisma, productos, lotes, kardex), prisma, productos, lotes, kardex };
   }
 
   it('crear usa el alta del panel y carga el stock inicial como ajuste en el kardex', async () => {
@@ -287,5 +305,139 @@ describe('escribir', () => {
     const { s, productos } = armar({ stockActual: 12 });
     expect(await s.ajustarStock(89, 501, { quantity: 12, reason: 'stock_count' })).toMatchObject({ change: 0 });
     expect(productos.actualizar).not.toHaveBeenCalled();
+  });
+});
+
+describe('cada rubro', () => {
+  it('servicio: sin stock, sin lotes, sin presentaciones', () => {
+    expect(leerAlta({ name: 'Cambio de aceite', price: 80, type: 'service' })).toMatchObject({ esServicio: true });
+    expect(() => leerAlta({ name: 'X', price: 1, type: 'service', stock: 3 })).toThrow(/servicio no tiene stock/);
+    expect(() => leerAlta({ name: 'X', price: 1, type: 'servicio' })).toThrow(/`product` o `service`/);
+  });
+
+  it('variantes: el stock va en cada una y la combinación tiene que existir', () => {
+    const a = leerAlta({
+      name: 'Polo', price: 40,
+      variant_options: [{ name: 'Talla', values: ['S', 'M'] }, { name: 'Color', values: ['Negro'] }],
+      variants: [{ attributes: { talla: 'm', COLOR: 'negro' }, sku: 'POLO-M-N', stock: 4 }],
+    });
+    expect(a.variantes).toEqual([{ valores: { Talla: 'M', Color: 'Negro' }, codigo: 'POLO-M-N', codigoBarras: undefined, precio: undefined, stock: 4 }]);
+    expect(() => leerAlta({ name: 'P', price: 1, variants: [] })).toThrow(/primero define `variant_options`/);
+    expect(() => leerAlta({ name: 'P', price: 1, stock: 5, variant_options: [{ name: 'Talla', values: ['S'] }] })).toThrow(/stock va en cada una/);
+    expect(() =>
+      leerAlta({ name: 'P', price: 1, variant_options: [{ name: 'Talla', values: ['S'] }], variants: [{ attributes: { Talla: 'XL' } }] }),
+    ).toThrow(/Talla "XL" no está en variant_options \(S\)/);
+    expect(() =>
+      leerAlta({ name: 'P', price: 1, variant_options: [{ name: 'Talla', values: ['S', 's'] }] }),
+    ).toThrow(/repetido/);
+    expect(() =>
+      leerAlta({ name: 'P', price: 1, variant_options: [{ name: 'A', values: Array.from({ length: 30 }, (_, i) => `a${i}`) }, { name: 'B', values: Array.from({ length: 10 }, (_, i) => `b${i}`) }] }),
+    ).toThrow(/300 combinaciones; el máximo es 200/);
+  });
+
+  it('farmacia: campos propios y lote con vencimiento', () => {
+    const a = leerAlta({
+      name: 'Paracetamol 500mg x100', price: 12, stock: 50,
+      batch: { number: 'L2401', expires_on: '2027-05-31', cost: 6 },
+      pharmacy: { active_ingredient: 'Paracetamol', concentration: '500 mg', requires_prescription: false, digemid_code: 'E-123' },
+    });
+    expect(a.lote).toMatchObject({ numero: 'L2401', costo: 6 });
+    expect(a.farmacia).toEqual({ principioActivo: 'Paracetamol', concentracion: '500 mg', codigoDigemid: 'E-123', requiereReceta: false });
+    expect(() => leerAlta({ name: 'X', price: 1, stock: 5, batch: { number: 'L1', expires_on: '31/05/2027' } })).toThrow(/YYYY-MM-DD/);
+    expect(() => leerAlta({ name: 'X', price: 1, pharmacy: { dosis: '1' } })).toThrow(/pharmacy.dosis/);
+    expect(() => leerAlta({ name: 'X', price: 1, batch: { number: 'L1', expires_on: '2027-01-01' } })).toThrow(/manda también `stock`/);
+  });
+
+  it('bodega y ferretería: presentaciones y precios por mayor', () => {
+    const a = leerAlta({
+      name: 'Cerveza Pilsen 355ml', price: 4.5,
+      packs: [{ barcode: '7750000000123', units: 6, price: 24, name: 'Six pack' }],
+      wholesale_prices: [{ min_quantity: 24, price: 4 }, { min_quantity: 12, price: 4.2 }],
+    });
+    expect(a.presentaciones).toEqual([{ codigo: '7750000000123', unidadesPorPaquete: 6, precioPaquete: 24, alias: 'Six pack' }]);
+    expect(a.preciosMayorista?.map((x) => x.cantidadMinima)).toEqual([12, 24]);
+    expect(() => leerAlta({ name: 'X', price: 1, packs: [{ barcode: '1', units: 1, price: 1 }] })).toThrow(/units/);
+    expect(() => leerAlta({ name: 'X', price: 1, wholesale_prices: [{ min_quantity: 12, price: 1 }, { min_quantity: 12, price: 2 }] })).toThrow(/dos precios/);
+  });
+
+  it('lo que no se maneja así dice dónde va', () => {
+    expect(() => leerAlta({ name: 'X', price: 1, components: [1, 2] })).toThrow(/Combos/);
+    expect(() => leerAlta({ name: 'X', price: 1, image_url: 'https://x' })).toThrow(/`images`/);
+    expect(() => leerAlta({ name: 'X', price: 1, expiration_date: '2027-01-01' })).toThrow(/dentro de `batch`/);
+    expect(() => leerAlta({ name: 'X', price: '12.5' })).toThrow(/sin comillas/);
+    expect(() => leerAlta({ name: 'X', price: 1, images: ['http://inseguro.com/a.jpg'] })).toThrow(/https/);
+    expect(() => leerCambio({ variants: [] })).toThrow(/usa el panel/);
+    expect(() => leerCambio({ type: 'service' })).toThrow(/no se cambia/);
+  });
+
+  it('ajuste con lote: solo con change', () => {
+    expect(leerAjuste({ change: 10, reason: 'found', batch: { number: 'L1', expires_on: '2027-01-01' } }).lote?.numero).toBe('L1');
+    expect(() => leerAjuste({ quantity: 10, reason: 'found', batch: { number: 'L1' } })).toThrow(/usa `change`/);
+  });
+});
+
+describe('reglas que dependen del negocio', () => {
+  function armar(o: { rubro?: string; variantes?: number; servicio?: boolean; conLotes?: number } = {}) {
+    const prisma: any = {
+      empresa: { findFirst: jest.fn(async () => ({ id: 89 })), findUnique: jest.fn(async () => ({ rubro: { nombre: o.rubro ?? 'Tienda de ropa' } })) },
+      sede: { findFirst: jest.fn(async () => ({ id: 16 })) },
+      producto: {
+        findFirst: jest.fn(async () => ({ id: 501, codigo: 'P', precioUnitario: 10, productoPadreId: null, atributosTecnicos: o.servicio ? { tipoProducto: 'SERVICIO' } : null, _count: { variantes: o.variantes ?? 0 } })),
+        findMany: jest.fn(async () => [{ id: 601, valoresAtributos: { Talla: 'M' } }]),
+      },
+      productoLote: { count: jest.fn(async () => o.conLotes ?? 0) },
+      productoStock: { findUnique: jest.fn(async () => ({ stock: 5 })) },
+    };
+    return new ErpApiService(prisma, {} as any, {} as any, {} as any);
+  }
+
+  it('farmacia sin lote: explica cómo mandarlo', async () => {
+    await expect(armar({ rubro: 'Farmacia' }).crearProducto(89, { name: 'X', price: 1, stock: 5 }, 'x')).rejects.toMatchObject({
+      response: { code: 'batch_required', param: 'batch' },
+    });
+    await expect(armar({ rubro: 'Botica' }).ajustarStock(89, 501, { change: 5, reason: 'found' })).rejects.toMatchObject({
+      response: { code: 'batch_required' },
+    });
+  });
+
+  it('droguería también exige lote; fabricación lo acepta pero no lo exige', async () => {
+    await expect(
+      armar({ rubro: 'Droguería y Distribuidora Farmacéutica' }).crearProducto(89, { name: 'X', price: 1, stock: 5 }, 'x'),
+    ).rejects.toMatchObject({ response: { code: 'batch_required' } });
+    // Fabricación sin lote: no es este error (sigue al alta, que acá no está armada).
+    await expect(
+      armar({ rubro: 'Fabricación y producción' }).crearProducto(89, { name: 'X', price: 1, stock: 5 }, 'x'),
+    ).rejects.not.toMatchObject({ response: { code: 'batch_required' } });
+  });
+
+  it('un producto que ya tiene lotes se ajusta por lote en cualquier rubro', async () => {
+    await expect(armar({ rubro: 'Fabricación y producción', conLotes: 2 }).ajustarStock(89, 501, { change: 1, reason: 'found' })).rejects.toMatchObject({
+      response: { code: 'batch_required', message: expect.stringContaining('Este producto se maneja por lotes') },
+    });
+  });
+
+  it('una tienda de ropa no maneja lotes', async () => {
+    await expect(
+      armar().crearProducto(89, { name: 'X', price: 1, stock: 5, batch: { number: 'L1', expires_on: '2027-01-01' } }, 'x'),
+    ).rejects.toMatchObject({ response: { code: 'batches_not_enabled' } });
+  });
+
+  it('el stock del producto con variantes se ajusta en cada variante, y dice sus ids', async () => {
+    await expect(armar({ variantes: 2 }).ajustarStock(89, 501, { change: 1, reason: 'found' })).rejects.toMatchObject({
+      response: { code: 'product_has_variants', message: expect.stringContaining('601 = M') },
+    });
+  });
+
+  it('un servicio no tiene stock', async () => {
+    await expect(armar({ servicio: true }).ajustarStock(89, 501, { change: 1, reason: 'found' })).rejects.toMatchObject({
+      response: { code: 'service_has_no_stock' },
+    });
+  });
+
+  it('más fotos de las que admite el panel', async () => {
+    const fotos = ['https://a.com/1.jpg', 'https://a.com/2.jpg', 'https://a.com/3.jpg', 'https://a.com/4.jpg'];
+    await expect(armar().crearProducto(89, { name: 'X', price: 1, images: fotos }, 'x')).rejects.toMatchObject({
+      response: { param: 'images', message: expect.stringContaining('hasta 3 fotos') },
+    });
   });
 });

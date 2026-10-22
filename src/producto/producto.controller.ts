@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  NotFoundException,
   Body,
   Controller,
   Get,
@@ -1563,6 +1564,13 @@ export class ProductoController {
   ) {
     if (body.cantidad <= 0)
       throw new BadRequestException('Cantidad debe ser positiva');
+
+    // El lote tiene que ser de ese producto y el producto de esta empresa.
+    // Antes no se miraba: `aumentarStockLote` busca solo por id, así que con
+    // el id de un lote ajeno se cambiaba el stock de otra empresa.
+    if (!(await this.loteService.esDeLaEmpresa(loteId, Number(body.productoId), user.empresaId))) {
+      throw new NotFoundException('Lote no encontrado');
+    }
 
     const tipoMovimiento = body.tipo === 'INCREMENTO' ? 'INGRESO' : 'SALIDA';
 

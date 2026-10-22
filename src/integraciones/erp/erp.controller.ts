@@ -72,6 +72,16 @@ export class ErpApiController {
     return this.erp.listarSedes(req.apiEmpresaId);
   }
 
+  @Get('brands')
+  marcas(@Request() req: any) {
+    return this.erp.listarMarcas(req.apiEmpresaId);
+  }
+
+  @Get('units')
+  unidades(@Request() req: any) {
+    return this.erp.listarUnidades(req.apiEmpresaId);
+  }
+
   @Get('categories')
   categorias(@Request() req: any) {
     return this.erp.listarCategorias(req.apiEmpresaId);

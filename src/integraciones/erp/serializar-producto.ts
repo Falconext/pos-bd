@@ -100,11 +100,32 @@ export function serializarProducto(p: any, ctx: ContextoSerializar): Record<stri
       ? dinero(filaSede.precioOfertaOverride)
       : precioDeOferta(p, ctx.ahora, precio);
   const imagenes = [p.imagenUrl, ...parseImagenesExtra(p.imagenesExtra)].filter(Boolean);
-  const disponibilidad = disponibilidadEfectiva({ disponibilidad: p.disponibilidad, stock: total });
+  // Un servicio no tiene stock: está disponible salvo que el negocio diga
+  // otra cosa. Deducirlo del stock lo mostraba "agotado" en la web.
+  const esServicioP = String(p.atributosTecnicos?.tipoProducto ?? '').toUpperCase() === 'SERVICIO';
+  const disponibilidad = esServicioP
+    ? (p.disponibilidad ?? 'INMEDIATA')
+    : disponibilidadEfectiva({ disponibilidad: p.disponibilidad, stock: total });
+
+  const esServicio = String(p.atributosTecnicos?.tipoProducto ?? '').toUpperCase() === 'SERVICIO';
+  const farmacia = {
+    active_ingredient: p.principioActivo || null,
+    concentration: p.concentracion || null,
+    presentation: p.presentacion || null,
+    laboratory: p.laboratorio || null,
+    digemid_code: p.codigoDigemid || null,
+    requires_prescription: p.requiereReceta === true,
+    controlled: p.controlado === true,
+    refrigerated: p.refrigerado === true,
+  };
+  const tieneFarmacia =
+    Object.values(farmacia).some((v) => v !== null && v !== false);
 
   return {
     object: 'product',
     id: p.id,
+    /** product | service. Un servicio no tiene stock. */
+    type: esServicio ? 'service' : 'product',
     sku: p.codigo,
     barcode: p.codigoBarras || null,
     name: p.descripcion,
@@ -129,6 +150,25 @@ export function serializarProducto(p: any, ctx: ContextoSerializar): Record<stri
           : disponibilidad === 'NO_COMERCIAL'
             ? 'discontinued'
             : 'out_of_stock',
+    wholesale_prices: Array.isArray(p.preciosMayorista)
+      ? p.preciosMayorista
+          .filter((x: any) => num(x?.cantidadMinima) > 1 && num(x?.precio) > 0)
+          .map((x: any) => ({ min_quantity: num(x.cantidadMinima), price: dinero(x.precio) }))
+      : [],
+    /** Presentaciones: el mismo producto vendido por paquete (caja x12, six pack). */
+    packs: (p.codigosBarras ?? []).map((c: any) => ({
+      barcode: c.codigo,
+      units: c.unidadesPorPaquete,
+      price: c.precioPaquete != null ? dinero(c.precioPaquete) : null,
+      name: c.alias ?? null,
+    })),
+    pharmacy: tieneFarmacia ? farmacia : null,
+    /** Lotes con stock, el que vence primero arriba (farmacia, alimentos). */
+    batches: (p.lotes ?? []).map((l: any) => ({
+      number: l.lote,
+      expires_on: l.fechaVencimiento ? new Date(l.fechaVencimiento).toISOString().slice(0, 10) : null,
+      quantity: cantidad(l.stockActual),
+    })),
     published_in_store: p.publicarEnTienda !== false,
     featured: p.destacado === true,
     attributes: p.valoresAtributos ?? null,
