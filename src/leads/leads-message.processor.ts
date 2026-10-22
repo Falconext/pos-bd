@@ -37,6 +37,7 @@ import {
   venceEn,
 } from './pausa-bot';
 import { conDescargoLegal } from './prompt-asesor';
+import { origenDeAnuncio, type ReferralWhatsapp } from './anuncio-origen';
 import { afirmaCancelacion, sinConfirmacionFalsa, sinPagoInventado } from './confirmacion-falsa';
 import { conRegistroDirecto, yaAceptoAntes } from './registro-directo';
 import {
@@ -143,6 +144,7 @@ interface MensajeEntrante {
   mediaId?: string;
   nombre?: string;
   timestamp?: string;
+  referral?: ReferralWhatsapp;
 }
 
 /**
@@ -404,6 +406,12 @@ export class LeadsMessageProcessor extends WorkerHost {
       },
       select: { id: true, estado: true },
     });
+
+    // De qué anuncio vino. Antes de todo lo demás y sin frenar nada: que no
+    // se pueda guardar la etiqueta no es motivo para no atender al cliente.
+    await this.guardarOrigenDeAnuncio(empresa.id, conv.id, d).catch((e) =>
+      this.logger.warn(`Lead: no se guardó el anuncio de ${d.messageId}: ${e?.message}`),
+    );
 
     // Cerrada y el cliente vuelve a escribir: se reabre. Solo desde CERRADA —
     // CALIFICADA y TRANSFERIDA las decide otra parte del sistema.
@@ -1654,6 +1662,23 @@ export class LeadsMessageProcessor extends WorkerHost {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Guarda la etiqueta del anuncio que trae el mensaje, si la trae. Una
+   * reentrega de Meta no la duplica: el id del mensaje es único.
+   */
+  private async guardarOrigenDeAnuncio(
+    empresaId: number,
+    conversacionId: number,
+    d: MensajeEntrante,
+  ): Promise<void> {
+    const origen = origenDeAnuncio(d.referral);
+    if (!origen) return;
+    await this.prisma.leadAnuncioOrigen.createMany({
+      data: [{ empresaId, conversacionId, whatsappMsgId: d.messageId, ...origen }],
+      skipDuplicates: true,
+    });
   }
 
   private async persistirMensajeUsuario(
