@@ -18,6 +18,7 @@ import { SunatGuiaService } from './sunat-guia.service';
 import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
 import { generarQrGreDataUrl } from './qr-guia.util';
 import * as XLSX from 'xlsx';
+import { conObservacionDelivery, separarDelivery } from '../comprobante/delivery-del-pedido';
 
 @Injectable()
 export class GuiaRemisionService {
@@ -1234,6 +1235,25 @@ export class GuiaRemisionService {
     };
     const tipoRelacionado = TIPO_EN_CATALOGO_61[comprobante.tipoDoc];
 
+    // El delivery de un pedido del chat es un servicio, no un bien que se
+    // traslada: no va en la guía, queda como observación (ver
+    // delivery-del-pedido.ts).
+    let detallesGuia = comprobante.detalles;
+    let observaciones = `Ref. ${refLabel} ${numeroComprobante}`;
+    const delChat = await this.prisma.leadPedidoBorrador.findFirst({
+      where: { empresaId, comprobanteId: comprobante.id },
+      select: { id: true },
+    });
+    if (delChat) {
+      const s = separarDelivery(
+        comprobante.detalles.map((d) => ({ ...d, nuevoValorUnitario: Number(d.mtoPrecioUnitario) })),
+      );
+      if (s.delivery > 0) {
+        detallesGuia = s.lineas;
+        observaciones = conObservacionDelivery(observaciones, s.delivery, s.descripciones);
+      }
+    }
+
     return {
       clienteId: cliente?.id,
       destinatarioTipoDoc,
@@ -1241,7 +1261,7 @@ export class GuiaRemisionService {
       destinatarioRazonSocial: cliente?.nombre || '',
       llegadaDireccion: cliente?.direccion || '',
       llegadaUbigeo: cliente?.ubigeo || '',
-      observaciones: `Ref. ${refLabel} ${numeroComprobante}`,
+      observaciones,
       // El comprobante que origina el traslado se sugiere ya cargado: es el dato
       // que SUNAT imprime como "Documentos Relacionados" en la guía.
       documentosRelacionados: tipoRelacionado
@@ -1259,7 +1279,7 @@ export class GuiaRemisionService {
         serie: comprobante.serie,
         correlativo: comprobante.correlativo,
       },
-      detalles: comprobante.detalles.map((d, index) => ({
+      detalles: detallesGuia.map((d, index) => ({
         productoId: d.productoId ?? undefined,
         // codigoProducto es solo informativo (no viaja en el XML SUNAT, ver
         // buildDespatchLines): si el ítem no tiene producto vinculado (ítem
