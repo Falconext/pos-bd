@@ -4,6 +4,7 @@ import { ApiKeyAuthGuard } from '../api-keys/api-key-auth.guard';
 import { ApiProducto } from '../api-keys/producto-api';
 import { ErpApiService } from './erp.service';
 import { ErpVentasService } from './erp-ventas.service';
+import { esPrueba } from './modo-prueba';
 
 /**
  * De dónde armar las URLs de las fotos: el mismo host por el que entró la
@@ -24,6 +25,9 @@ export function urlBaseDe(req: any): string {
  * si la web reintenta por un timeout, no se crea el producto dos veces ni se
  * suma el stock dos veces. El PATCH no la necesita: aplicar dos veces el
  * mismo cambio deja el mismo resultado.
+ *
+ * Con una clave `sk_test_` las escrituras validan todo y devuelven cómo
+ * habría quedado (`livemode: false`) sin guardar nada: ver `modo-prueba.ts`.
  *
  * `@ApiProducto('erp')`: una key de facturación (integradores) no lee
  * catálogos, y una de este producto no emite comprobantes.
@@ -47,7 +51,7 @@ export class ErpApiController {
   @HttpCode(201)
   @UseInterceptors(IdempotenciaInterceptor)
   crearVenta(@Body() body: unknown, @Request() req: any) {
-    return this.ventas.crear(req.apiEmpresaId, body);
+    return this.ventas.crear(req.apiEmpresaId, body, esPrueba(req));
   }
 
   @Get('sales')
@@ -74,12 +78,12 @@ export class ErpApiController {
   @HttpCode(201)
   @UseInterceptors(IdempotenciaInterceptor)
   crear(@Body() body: unknown, @Request() req: any) {
-    return this.erp.crearProducto(req.apiEmpresaId, body, urlBaseDe(req));
+    return this.erp.crearProducto(req.apiEmpresaId, body, urlBaseDe(req), esPrueba(req));
   }
 
   @Patch('products/:id')
   actualizar(@Param('id') id: string, @Body() body: unknown, @Request() req: any) {
-    return this.erp.actualizarProducto(req.apiEmpresaId, id, body, urlBaseDe(req));
+    return this.erp.actualizarProducto(req.apiEmpresaId, id, body, urlBaseDe(req), esPrueba(req));
   }
 
   /**
@@ -91,7 +95,7 @@ export class ErpApiController {
   @HttpCode(201)
   @UseInterceptors(IdempotenciaInterceptor)
   ajustarStock(@Param('id') id: string, @Body() body: unknown, @Request() req: any) {
-    return this.erp.ajustarStock(req.apiEmpresaId, id, body);
+    return this.erp.ajustarStock(req.apiEmpresaId, id, body, esPrueba(req));
   }
 
   @Get('locations')

@@ -4,6 +4,7 @@ import { leerAjuste, leerAlta, leerCambio, type Lote } from './entrada-producto'
 import { ProductoLoteService } from '../../producto/producto-lote.service';
 import { KardexService } from '../../kardex/kardex.service';
 import { recalcularStockPadre } from '../../producto/variantes.util';
+import { productoSimulado } from './modo-prueba';
 import { getMaxImagenesProducto, usaLotes } from '../../common/utils/rubro-features';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CODIGOS_FANTASMA, parseImagenesExtra, serializarProducto } from './serializar-producto';
@@ -498,7 +499,7 @@ export class ErpApiService {
     }
   }
 
-  async crearProducto(empresaId: number, body: unknown, urlBase: string) {
+  async crearProducto(empresaId: number, body: unknown, urlBase: string, prueba = false) {
     await this.asegurarPlan(empresaId);
     const a = leerAlta(body);
     const ctx = await this.contextoNegocio(empresaId);
@@ -548,6 +549,8 @@ export class ErpApiService {
       }
       unidadMedidaId = u.id;
     }
+    // Clave de prueba: todo lo de arriba se validó de verdad; no se crea.
+    if (prueba) return productoSimulado(a, sedeId);
 
     const creado: any = await this.productos.crear(
       {
@@ -614,7 +617,7 @@ export class ErpApiService {
     return this.obtenerProducto(empresaId, creado.id, undefined, urlBase);
   }
 
-  async actualizarProducto(empresaId: number, id: unknown, body: unknown, urlBase: string) {
+  async actualizarProducto(empresaId: number, id: unknown, body: unknown, urlBase: string, prueba = false) {
     await this.asegurarPlan(empresaId);
     const p = await this.productoPropio(empresaId, id);
     const c = leerCambio(body);
@@ -644,6 +647,10 @@ export class ErpApiService {
         });
       }
     }
+    if (prueba) {
+      // El producto tal como está, y lo que se le habría cambiado.
+      return { ...(await this.obtenerProducto(empresaId, p.id, undefined, urlBase)), livemode: false, changes: body };
+    }
     const { imagenes, presentaciones, farmacia, ofertaDesde, ofertaHasta, ...resto } = c;
     await this.productos.actualizar(
       {
@@ -672,7 +679,7 @@ export class ErpApiService {
     return String((p.atributosTecnicos as any)?.tipoProducto ?? '').toUpperCase() === 'SERVICIO';
   }
 
-  async ajustarStock(empresaId: number, id: unknown, body: unknown) {
+  async ajustarStock(empresaId: number, id: unknown, body: unknown, prueba = false) {
     await this.asegurarPlan(empresaId);
     const a = leerAjuste(body);
     const p = await this.productoPropio(empresaId, id);
@@ -717,6 +724,34 @@ export class ErpApiService {
     });
     const antes = Math.round(Number(fila?.stock ?? 0) * 1000) / 1000;
 
+    if (a.lote && prueba) {
+      // Lo mismo que revisan entrarALote / salirDeLote, sin mover nada.
+      const cambio = a.cambio!;
+      const existente = await this.prisma.productoLote.findFirst({
+        where: { productoId: p.id, lote: a.lote.numero },
+        select: { activo: true, stockActual: true },
+      });
+      if (cambio > 0 && !existente && !a.lote.vence) {
+        throw new BadRequestException({ code: 'parameter_invalid', message: `El lote ${a.lote.numero} es nuevo: manda \`batch.expires_on\` (YYYY-MM-DD).`, param: 'batch.expires_on' });
+      }
+      if (cambio < 0 && (!existente || !existente.activo)) {
+        throw new NotFoundException({ code: 'batch_not_found', message: `El producto no tiene un lote activo ${a.lote.numero}.`, param: 'batch.number' });
+      }
+      if (cambio < 0 && Number(existente!.stockActual) < -cambio) {
+        throw new BadRequestException({ code: 'insufficient_stock', message: `El lote ${a.lote.numero} tiene ${Number(existente!.stockActual)}; no se pueden sacar ${-cambio}.`, param: 'change' });
+      }
+      return {
+        object: 'stock_adjustment',
+        livemode: false,
+        product_id: p.id,
+        location_id: sedeId,
+        batch: a.lote.numero,
+        previous_quantity: antes,
+        quantity: Math.round((antes + cambio) * 1000) / 1000,
+        change: cambio,
+        reason: a.razon,
+      };
+    }
     if (a.lote) {
       const cambio = a.cambio!;
       if (cambio > 0) await this.entrarALote(empresaId, p.id, sedeId, cambio, a.lote, a.nota);
@@ -746,7 +781,7 @@ export class ErpApiService {
         param: 'change',
       });
     }
-    if (despues !== antes) {
+    if (despues !== antes && !prueba) {
       await this.dejarStockEn(empresaId, p.id, sedeId, despues, a.motivo, a.nota, p.productoPadreId);
     }
     return {
@@ -757,6 +792,7 @@ export class ErpApiService {
       quantity: despues,
       change: Math.round((despues - antes) * 1000) / 1000,
       reason: a.razon,
+      ...(prueba ? { livemode: false } : {}),
     };
   }
 

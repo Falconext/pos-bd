@@ -6,6 +6,7 @@ import { nuevoIdPublico } from '../facturacion/serializador';
 import { estadoPublico } from '../facturacion/estado-publico';
 import { ErpApiService } from './erp.service';
 import { precioDeOferta } from './serializar-producto';
+import { ventaSimulada } from './modo-prueba';
 import {
   ItemVenta,
   LIMITE_BOLETA_SIN_DOCUMENTO,
@@ -31,6 +32,7 @@ interface ProductoVenta {
   fechaInicioOferta: Date | null;
   fechaFinOferta: Date | null;
   moneda: string;
+  tipoAfectacionIGV: string;
   productoPadreId: number | null;
   atributosTecnicos: unknown;
   _count: { variantes: number };
@@ -70,7 +72,7 @@ export class ErpVentasService {
     private readonly enviarSunat: EnviarSunatService,
   ) {}
 
-  async crear(empresaId: number, body: unknown) {
+  async crear(empresaId: number, body: unknown, prueba = false) {
     await this.erp.asegurarPlan(empresaId);
     const venta = leerVenta(body);
     const tipo = tipoQueCorresponde(venta);
@@ -99,6 +101,32 @@ export class ErpVentasService {
         code: 'customer_required',
         message: `Una boleta de más de S/ ${LIMITE_BOLETA_SIN_DOCUMENTO} (esta es de S/ ${total.toFixed(2)}) tiene que identificar al comprador: manda \`customer\` con su DNI.`,
         param: 'customer',
+      });
+    }
+
+    if (prueba) {
+      // Clave de prueba: todo lo de arriba se revisó de verdad. No se crea
+      // el cliente, no se emite, no se mueve stock ni caja.
+      const tipoDoc = TIPOS_DOCUMENTO[tipo];
+      const sig = await this.comprobantes.siguienteCorrelativo(empresaId, tipoDoc).catch(() => null);
+      const docPublico: Record<string, string> = { '1': 'dni', '6': 'ruc', '4': 'ce', '7': 'passport' };
+      return ventaSimulada({
+        tipo,
+        numeroSiguiente: sig ? `${sig.serie}-${sig.correlativo}` : null,
+        sedeId,
+        externalId: venta.externalId,
+        cliente: venta.cliente?.numero
+          ? { tipo: docPublico[venta.cliente.tipoDocumento!], numero: venta.cliente.numero, nombre: venta.cliente.nombre }
+          : undefined,
+        medioPago: MEDIO_PUBLICO[venta.medioPago] ?? null,
+        lineas: lineas.map((l) => ({
+          productoId: l.producto?.id ?? null,
+          sku: l.producto?.codigo ?? null,
+          descripcion: l.descripcion,
+          cantidad: l.cantidad,
+          precio: l.precio,
+          afectacion: l.producto ? String(l.producto.tipoAfectacionIGV ?? '10') : '10',
+        })),
       });
     }
 
@@ -186,6 +214,7 @@ export class ErpVentasService {
             fechaInicioOferta: true,
             fechaFinOferta: true,
             moneda: true,
+            tipoAfectacionIGV: true,
             productoPadreId: true,
             atributosTecnicos: true,
             _count: { select: { variantes: { where: { estado: 'ACTIVO' as never } } } },
@@ -455,6 +484,7 @@ export class ErpVentasService {
     const conDoc = c.cliente && c.cliente.nroDoc && c.cliente.nombre !== 'CLIENTES VARIOS';
     return {
       object: 'sale',
+      livemode: true,
       id: v.id,
       external_id: v.externalId,
       document_type: tipo,
