@@ -1,4 +1,5 @@
 import {
+  MEDIOS_DE_ANTES,
   envioValido,
   mediosPagoValidos,
   perfilValido,
@@ -472,7 +473,7 @@ export class LeadsService {
       mediosPagoLista:
         mediosPagoLista.length || !json?.mediosPago
           ? mediosPagoLista
-          : [{ nombre: 'Medios de pago', detalle: json.mediosPago }],
+          : [{ nombre: MEDIOS_DE_ANTES, detalle: json.mediosPago }],
     };
   }
 
