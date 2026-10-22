@@ -855,6 +855,7 @@ model Producto {
   contratosVehiculares     ContratoVehicular[]
   listaPrecioItems         ListaPrecioItem[]
   reglasComision           ReglaComision[]
+  documentosInventario     DocumentoInventarioItem[]
 
   @@unique([empresaId, codigo])
   @@unique([empresaId, codigoDigemid])
@@ -5133,4 +5134,46 @@ model ConsumoApiMes {
   /// Un período por integrador: la última defensa contra cobrar dos veces.
   @@unique([integradorId, periodo])
   @@index([periodo])
+}
+
+// Entradas y salidas de mercadería que no son compra ni venta (inventario
+// inicial, devolución de un cliente, consumo propio, merma…), con varios
+// productos en un solo documento numerado: NE-000001 / NS-000001. El stock se
+// mueve por el kardex como cualquier otro movimiento; esto es el papel que
+// los agrupa y dice por qué.
+enum TipoDocumentoInventario {
+  ENTRADA
+  SALIDA
+}
+
+model DocumentoInventario {
+  id        Int                       @id @default(autoincrement())
+  empresaId Int
+  sedeId    Int
+  tipo      TipoDocumentoInventario
+  numero    Int
+  motivo    String
+  detalle   String?
+  usuarioId Int?
+  fecha     DateTime                  @default(now())
+  items     DocumentoInventarioItem[]
+
+  @@unique([empresaId, tipo, numero])
+  @@index([empresaId, fecha])
+}
+
+model DocumentoInventarioItem {
+  id                 Int                 @id @default(autoincrement())
+  documentoId        Int
+  productoId         Int
+  cantidad           Decimal             @db.Decimal(12, 3)
+  costoUnitario      Decimal?
+  lote               String?
+  fechaVencimiento   DateTime?
+  movimientoKardexId Int?
+  documento          DocumentoInventario @relation(fields: [documentoId], references: [id], onDelete: Cascade)
+  producto           Producto            @relation(fields: [productoId], references: [id])
+
+  @@index([documentoId])
+  @@index([productoId])
 }

@@ -15,10 +15,15 @@ const ETIQUETAS: Record<string, string> = {
   CONSUMO_INTERNO: 'Consumo interno del negocio',
   PERDIDA: 'Pérdida o robo',
   DEVOLUCION_PROVEEDOR: 'Devolución al proveedor',
+  MUESTRA: 'Muestra o regalo a un cliente',
+  DONACION: 'Donación',
   // Ingresos
   ENCONTRADO: 'Encontrado en inventario',
   DEVOLUCION_CLIENTE: 'Devolución de un cliente',
   CONTEO: 'Corrección por conteo físico',
+  INVENTARIO_INICIAL: 'Inventario inicial',
+  BONIFICACION: 'Bonificación o regalo del proveedor',
+  PRODUCCION: 'Producción propia',
   // Ambos
   ERROR_REGISTRO: 'Error de registro anterior',
   OTRO: 'Otro motivo',
