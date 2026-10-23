@@ -88,10 +88,21 @@ export class WebhooksService {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
-                  'Falconext-Event': event,
-                  'Falconext-Order-Id': orderId,
-                  'Falconext-Attempt': String(attempt),
-                  'Falconext-Signature': `t=${t},v1=${signature}`,
+                  // La API de Krezka (erp) firma con su propia marca: el
+                  // negocio integra con Krezka, no con Falconext.
+                  ...(producto === 'erp'
+                    ? {
+                        'Krezka-Event': event,
+                        'Krezka-Sale-Id': orderId,
+                        'Krezka-Attempt': String(attempt),
+                        'Krezka-Signature': `t=${t},v1=${signature}`,
+                      }
+                    : {
+                        'Falconext-Event': event,
+                        'Falconext-Order-Id': orderId,
+                        'Falconext-Attempt': String(attempt),
+                        'Falconext-Signature': `t=${t},v1=${signature}`,
+                      }),
                 },
                 body: rawBody,
                 signal: controller.signal,
