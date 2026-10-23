@@ -62,6 +62,7 @@ import {
 } from './archivo-del-cliente';
 import { conNombreBienEscrito } from './nombre-negocio';
 import { fechaMencionada } from './fecha-mencionada';
+import { pistaDireccion } from './pregunta-direccion';
 
 /** Frases de "retomo después" que acompañan a una fecha. */
 const POSPONE =
@@ -732,6 +733,12 @@ export class LeadsMessageProcessor extends WorkerHost {
       pedidoEnCurso?.cotizado
         ? `PEDIDO YA COTIZADO: ${pedidoEnCurso.cotizado}. Si en este mensaje el cliente agrega, quita o cambia un producto o una cantidad, llama a cotizar con la lista COMPLETA ya actualizada y muéstrale la cotización nueva antes de seguir.`
         : '',
+      // 21 y 23-10 (Hierba Sana): "Dirección" a secas se tomaba como que el
+      // cliente iba a dar la suya y el bot le pedía sus datos para agendar.
+      pistaDireccion(
+        contenido,
+        [...mensajes].reverse().find((m) => m.rol === 'ASISTENTE')?.contenido,
+      ),
       relevantes.contexto,
       contextoRag,
     ]
