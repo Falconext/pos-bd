@@ -79,3 +79,22 @@ export function aOggOpus(
     proc.stdin?.end(entrada);
   });
 }
+
+/**
+ * ¿El OGG trae sonido, o solo las cabeceras?
+ *
+ * Hierba Sana, 23-10: dos notas de voz al mismo cliente salieron de 348
+ * bytes — la página OpusHead y la OpusTags, ningún paquete de audio. El
+ * micrófono no entregó nada (el navegador a veces arranca con la pista
+ * muda), ffmpeg terminó bien igual, y a WhatsApp se le mandó una nota que
+ * el cliente no podía reproducir. Una página con audio tiene posición de
+ * granulo mayor que cero; las de cabecera, cero.
+ */
+export function tieneAudio(ogg: Buffer): boolean {
+  let i = ogg.indexOf('OggS');
+  while (i >= 0 && i + 14 <= ogg.length) {
+    if (ogg.readBigInt64LE(i + 6) > 0n) return true;
+    i = ogg.indexOf('OggS', i + 4);
+  }
+  return false;
+}

@@ -7,10 +7,20 @@ import { EventEmitter } from 'events';
 import { execFileSync } from 'child_process';
 import { BadRequestException } from '@nestjs/common';
 import { LeadsService } from './leads.service';
-import { ARGS_OGG_OPUS, aOggOpus } from './nota-de-voz';
+import { ARGS_OGG_OPUS, aOggOpus, tieneAudio } from './nota-de-voz';
+
+/** Una página Ogg mínima: lo que importa es la posición de granulo. */
+const paginaOgg = (granulo: number) => {
+  const b = Buffer.alloc(27);
+  b.write('OggS', 0);
+  b.writeBigInt64LE(BigInt(granulo), 6);
+  return b;
+};
+/** Cabeceras OpusHead + OpusTags y nada más: lo que salió en Hierba Sana el 23-10. */
+const oggSinAudio = Buffer.concat([paginaOgg(0), paginaOgg(0)]);
 
 describe('enviarAudioManual', () => {
-  const ogg = Buffer.from('OggS-falso');
+  const ogg = Buffer.concat([oggSinAudio, paginaOgg(960)]);
 
   function armar(
     opts: {
@@ -114,6 +124,14 @@ describe('enviarAudioManual', () => {
     expect(whatsapp.enviarAudio).not.toHaveBeenCalled();
   });
 
+  it('una grabación sin sonido no se le manda al cliente', async () => {
+    const { service, whatsapp, s3, prisma } = armar({ convertir: () => Promise.resolve(oggSinAudio) });
+    await expect(service.enviarAudioManual(89, 500, webm)).rejects.toThrow('salió sin sonido');
+    expect(whatsapp.enviarAudio).not.toHaveBeenCalled();
+    expect(s3.uploadPDF).not.toHaveBeenCalled();
+    expect(prisma.leadMensaje.create).not.toHaveBeenCalled();
+  });
+
   it('acepta el m4a del iPhone y el video/webm que mandan algunos navegadores', async () => {
     const { service, whatsapp } = armar();
     await service.enviarAudioManual(89, 500, { buffer: Buffer.from('m4a'), mimetype: 'audio/mp4', size: 3 });
@@ -198,4 +216,13 @@ const ffmpegReal = (() => {
   const ogg = await aOggOpus(wav, { ffmpeg: ffmpegReal! });
   expect(ogg.subarray(0, 4).toString()).toBe('OggS');
   expect(ogg.includes(Buffer.from('OpusHead'))).toBe(true);
+});
+
+describe('tieneAudio', () => {
+  it('solo cabeceras (granulo 0) no es audio; una página con granulo sí', () => {
+    expect(tieneAudio(oggSinAudio)).toBe(false);
+    expect(tieneAudio(Buffer.concat([oggSinAudio, paginaOgg(960)]))).toBe(true);
+    expect(tieneAudio(Buffer.alloc(0))).toBe(false);
+    expect(tieneAudio(Buffer.from('no es ogg'))).toBe(false);
+  });
 });
