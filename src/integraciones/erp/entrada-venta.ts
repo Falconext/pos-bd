@@ -8,7 +8,7 @@
  * `erp-ventas.service.ts`. Los mensajes van para el programador de la web:
  * dicen qué campo, qué estaba mal y cómo mandarlo.
  */
-import { entero, invalido, lista, monto, presente, soloConocidos, texto } from './entrada-producto';
+import { IMPUESTO_A_AFECTACION, entero, invalido, lista, monto, presente, soloConocidos, texto } from './entrada-producto';
 
 /** Qué se emite. La nota de venta no va a SUNAT. */
 export const TIPOS_DOCUMENTO = {
@@ -65,6 +65,10 @@ export interface ItemVenta {
   /** Precio unitario CON IGV. Si no viene, el del catálogo (con su oferta). */
   precio?: number;
   lote?: string;
+  /** Solo ítems libres: Catálogo 07 ('10' gravado, '20' exonerado, '30' inafecto). */
+  afectacion?: string;
+  /** Solo ítems libres: unidad de SUNAT (NIU, ZZ, KGM…). */
+  unidad?: string;
 }
 
 export interface ClienteVenta {
@@ -132,7 +136,7 @@ function leerItem(it: any, i: number): ItemVenta {
   if (it == null || typeof it !== 'object' || Array.isArray(it)) {
     throw invalido(donde, `\`${donde}\` tiene que ser un objeto.`);
   }
-  soloConocidos(it, ['product_id', 'sku', 'barcode', 'description', 'quantity', 'unit_price', 'batch'], {
+  soloConocidos(it, ['product_id', 'sku', 'barcode', 'description', 'quantity', 'unit_price', 'batch', 'tax', 'unit'], {
     price: `El precio va como \`${donde}.unit_price\` (con IGV).`,
     discount: PISTAS_VENTA.discount,
     variant_id: `Una talla o color es un producto propio: manda su id en \`${donde}.product_id\` (está en \`variants\` de GET /v1/erp/products/{id}).`,
@@ -169,7 +173,23 @@ function leerItem(it: any, i: number): ItemVenta {
   if (lote && !identificadores) {
     throw invalido(`${donde}.batch`, 'Un ítem libre no tiene lote.');
   }
-  return { productoId, sku, codigoBarras, descripcion, cantidad, precio, lote };
+  // Afectación y unidad solo se mandan en ítems libres: un producto del
+  // catálogo ya tiene las suyas y mandarlas distinto descuadraría su IGV.
+  const tax = texto(it, 'tax', 20, false, `${donde}.tax`);
+  const unidad = texto(it, 'unit', 3, false, `${donde}.unit`)?.toUpperCase();
+  if ((tax || unidad) && identificadores) {
+    throw invalido(
+      tax ? `${donde}.tax` : `${donde}.unit`,
+      `Un producto del catálogo usa su propia afectación y unidad; \`tax\` y \`unit\` son solo para ítems libres (con \`description\`).`,
+    );
+  }
+  if (tax && !IMPUESTO_A_AFECTACION[tax]) {
+    throw invalido(`${donde}.tax`, '`tax` es `taxed` (con IGV), `exempt` (exonerado, p. ej. Ley de Amazonía) o `unaffected` (inafecto).');
+  }
+  if (unidad && !/^[A-Z0-9]{2,3}$/.test(unidad)) {
+    throw invalido(`${donde}.unit`, '`unit` es un código de unidad de SUNAT (NIU unidad, ZZ servicio, KGM kilo…). Consulta GET /v1/erp/units.');
+  }
+  return { productoId, sku, codigoBarras, descripcion, cantidad, precio, lote, afectacion: tax ? IMPUESTO_A_AFECTACION[tax] : undefined, unidad };
 }
 
 export function leerVenta(body: any): Venta {
@@ -192,10 +212,10 @@ export function leerVenta(body: any): Venta {
 
   const items = lista(body, 'items', MAX_ITEMS);
   if (!items?.length) throw invalido('items', 'La venta necesita al menos un ítem en `items`.');
+  // Una venta puede ser solo de ítems libres: la web que tiene su propio
+  // catálogo y su propio stock y solo quiere facturar (pedido de un
+  // prospecto, 2026-10-22) no tiene por qué cargar sus productos en Krezka.
   const leidos = items.map(leerItem);
-  if (!leidos.some((it) => it.productoId || it.sku || it.codigoBarras)) {
-    throw invalido('items', 'La venta necesita al menos un producto del catálogo; los ítems libres (como el envío) van junto a productos.');
-  }
 
   if (!presente(body, 'payment') || body.payment == null || typeof body.payment !== 'object') {
     throw invalido('payment', `Falta \`payment\`: { "method": "card" }. Medios: ${Object.keys(MEDIOS_PAGO).join(', ')}.`);

@@ -29,8 +29,15 @@ describe('leerVenta', () => {
     expect(error({ ...base, items: [...base.items, { description: 'Envío', quantity: 1 }] }).message).toMatch(/unit_price/);
   });
 
-  it('solo ítems libres no es una venta del catálogo', () => {
-    expect(error({ ...base, items: [{ description: 'Envío', quantity: 1, unit_price: 10 }] }).message).toMatch(/al menos un producto/);
+  it('una venta puede ser solo de ítems libres (facturar sin catálogo en Krezka)', () => {
+    const v = leerVenta({ ...base, items: [{ description: 'Polera talla M', quantity: 2, unit_price: 59.9, tax: 'exempt', unit: 'niu' }] });
+    expect(v.items[0]).toMatchObject({ descripcion: 'Polera talla M', precio: 59.9, afectacion: '20', unidad: 'NIU' });
+  });
+
+  it('tax y unit son solo para ítems libres, y con valores válidos', () => {
+    expect(error({ ...base, items: [{ product_id: 1, quantity: 1, tax: 'exempt' }] }).message).toMatch(/solo para ítems libres/);
+    expect(error({ ...base, items: [{ description: 'X', quantity: 1, unit_price: 1, tax: 'free' }] }).param).toBe('items[0].tax');
+    expect(error({ ...base, items: [{ description: 'X', quantity: 1, unit_price: 1, unit: 'unidad' }] }).param).toBe('items[0].unit');
   });
 
   it('un ítem identifica el producto de una sola forma', () => {
