@@ -2673,6 +2673,9 @@ model EnvioDespacho {
   claveEnvio               String?
   nroOrden                 String?
   claveOrden               String?
+  /// Recordatorios de recojo ya mandados en la estadía actual en agencia.
+  recordatoriosRecojo      Int                @default(0)
+  ultimoRecordatorioRecojoEn DateTime?
   // Estado de rastreo Shalom (persistido: read-through cache + scheduler)
   shalomEstado             String? // etapa actual: registrado|origen|transito|destino|entregado
   shalomEntregado          Boolean            @default(false)
@@ -2810,6 +2813,10 @@ model DespachoMensajeTemplate {
   mensajeEntregado   String?
   notificarEnCamino  Boolean @default(true)
   notificarEntregado Boolean @default(true)
+  /// Recordatorio diario al cliente mientras el paquete espera en la agencia
+  /// (Shalom/Olva): cuántos días como máximo. 0 = apagado. Es una plantilla
+  /// fuera de la ventana de 24h, la paga el negocio a Meta: por eso nace apagado.
+  recordatorioRecojoDias Int     @default(0)
 
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt

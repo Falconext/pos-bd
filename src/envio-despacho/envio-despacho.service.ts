@@ -26,6 +26,13 @@ import { parseFechaSoloDia } from '../common/utils/fecha';
 import { ModuleRef } from '@nestjs/core';
 import { PagoService } from '../pago/pago.service';
 import { LeadsEmbudoService } from '../leads/leads-embudo.service';
+import {
+  llegadaAAgencia,
+  saldoParaRetirar,
+  textoDePlantilla,
+  tocaRecordatorioRecojo,
+  ultimos9,
+} from './recojo-agencia';
 
 const ESTADOS_NOTIFICABLES = new Set([
   EstadoDespacho.EN_CAMINO,
@@ -350,6 +357,13 @@ export class EnvioDespachoService {
           dto.estado === EstadoDespacho.ENTREGADO && {
             entregadoEn: new Date(),
           }),
+        // Cada llegada a la agencia es una estadía nueva: los recordatorios
+        // de recojo vuelven a contar desde cero.
+        ...(estadoCambia &&
+          dto.estado === EstadoDespacho.EN_AGENCIA && {
+            recordatoriosRecojo: 0,
+            ultimoRecordatorioRecojoEn: null,
+          }),
         ...(dto.fechaEstimada !== undefined && {
           fechaEstimada: parseFechaSoloDia(dto.fechaEstimada),
         }),
@@ -445,6 +459,7 @@ export class EnvioDespachoService {
       mensajeEntregado: MENSAJES_DEFAULT.ENTREGADO,
       notificarEnCamino: true,
       notificarEntregado: true,
+      recordatorioRecojoDias: 0,
     };
     return {
       ...base,
@@ -457,11 +472,23 @@ export class EnvioDespachoService {
 
   async upsertConfig(empresaId: number, dto: DespachoConfigDto) {
     await this.validarPlanAutomatizacion(empresaId);
-    return this.prisma.despachoMensajeTemplate.upsert({
+    const guardado = await this.prisma.despachoMensajeTemplate.upsert({
       where: { empresaId },
       create: { empresaId, ...dto },
       update: dto,
     });
+    // Las plantillas del recordatorio se agregaron después de que muchos
+    // negocios conectaron su número: se dan de alta (idempotente) al
+    // encenderlo, y Meta tarda un rato en aprobarlas.
+    if ((dto.recordatorioRecojoDias ?? 0) > 0) {
+      const r = await this.whatsapp.crearPlantillasDespachoEmpresa(empresaId).catch((e) => ({
+        creadas: [] as string[],
+        existentes: [] as string[],
+        errores: [String(e?.message ?? e)],
+      }));
+      return { ...guardado, plantillas: r };
+    }
+    return guardado;
   }
 
   /**
@@ -789,6 +816,9 @@ export class EnvioDespachoService {
         select: {
           serie: true,
           correlativo: true,
+          // Sin esto el aviso de llegada nunca llevaba el saldo: se leía un
+          // campo que no se pedía y siempre salía la versión sin cobro.
+          saldo: true,
           cliente: { select: { nombre: true, telefono: true } },
         },
       }),
@@ -796,42 +826,37 @@ export class EnvioDespachoService {
     ]);
 
     const telefono = comprobante?.cliente?.telefono;
-    if (!telefono) return;
+    if (!comprobante || !telefono) return;
 
     const esEnCamino = estado === EstadoDespacho.EN_CAMINO;
     const esEnAgencia = estado === EstadoDespacho.EN_AGENCIA;
     const pedidoRef = `${comprobante.serie}-${String(comprobante.correlativo).padStart(8, '0')}`;
 
-    const nombre = comprobante?.cliente?.nombre ?? 'Cliente';
+    const nombre = comprobante.cliente?.nombre ?? 'Cliente';
 
     if (esEnAgencia) {
-      const saldo = Number((comprobante as any)?.saldo ?? 0);
-      const agencia =
-        (
-          await this.prisma.envioDespacho.findFirst({
-            where: { comprobanteId },
-            select: { agenciaDestino: true },
-          })
-        )?.agenciaDestino ?? 'la agencia';
+      const envio = await this.prisma.envioDespacho.findFirst({
+        where: { comprobanteId },
+        select: { agenciaDestino: true, montoCOD: true },
+      });
+      const agencia = envio?.agenciaDestino || 'la agencia';
+      const saldo = saldoParaRetirar(comprobante.saldo, envio?.montoCOD);
       // Plantilla aprobada por Meta: se entrega fuera de la ventana de 24h, sin bloqueo.
       if (saldo > 0) {
         // pedido_en_destino_cobro → {{1}} nombre, {{2}} pedido, {{3}} agencia, {{4}} saldo
-        await this.whatsapp.enviarPlantilla(
-          telefono,
-          'pedido_en_destino_cobro',
-          'es',
-          [nombre, pedidoRef, agencia, saldo.toFixed(2)],
-          empresaId,
-        );
+        await this.avisarAlCliente(empresaId, telefono, 'pedido_en_destino_cobro', [
+          nombre,
+          pedidoRef,
+          agencia,
+          saldo.toFixed(2),
+        ]);
       } else {
         // pedido_en_destino → {{1}} nombre, {{2}} pedido, {{3}} agencia
-        await this.whatsapp.enviarPlantilla(
-          telefono,
-          'pedido_en_destino',
-          'es',
-          [nombre, pedidoRef, agencia],
-          empresaId,
-        );
+        await this.avisarAlCliente(empresaId, telefono, 'pedido_en_destino', [
+          nombre,
+          pedidoRef,
+          agencia,
+        ]);
       }
       return;
     }
@@ -846,26 +871,161 @@ export class EnvioDespachoService {
     // Meta exige plantillas de contenido fijo aprobado.
     if (esEnCamino) {
       // pedido_en_camino → {{1}} nombre, {{2}} pedido, {{3}} repartidor
-      await this.whatsapp.enviarPlantilla(
-        telefono,
-        'pedido_en_camino',
-        'es',
+      await this.avisarAlCliente(empresaId, telefono, 'pedido_en_camino', [
+        nombre,
+        pedidoRef,
         // "Repartidor asignado: Sin asignar" le llegaba así al cliente. El
         // texto de la plantilla es fijo, así que el hueco se llena con algo
         // que se pueda leer.
-        [nombre, pedidoRef, repartidorNombre ?? 'nuestro equipo de reparto'],
-        empresaId,
-      );
+        repartidorNombre ?? 'nuestro equipo de reparto',
+      ]);
     } else {
       // pedido_entregado → {{1}} nombre, {{2}} pedido
-      await this.whatsapp.enviarPlantilla(
-        telefono,
-        'pedido_entregado',
-        'es',
-        [nombre, pedidoRef],
-        empresaId,
-      );
+      await this.avisarAlCliente(empresaId, telefono, 'pedido_entregado', [nombre, pedidoRef]);
     }
+  }
+
+  /**
+   * Manda una plantilla de despacho y, si salió, la deja en el chat del bot.
+   *
+   * Hierba Sana, 23-10: el empresario vende por su número personal y registra
+   * la venta en Krezka. Los avisos de Shalom le llegan al cliente desde el
+   * número del negocio, pero si el cliente contestaba, el bot no sabía de qué
+   * pedido le hablaban. Con el aviso en el historial (como SISTEMA, igual que
+   * lo que escribe el vendedor, para que no dispare el seguimiento por
+   * silencio) el bot y el vendedor ven lo mismo que vio el cliente.
+   */
+  private async avisarAlCliente(
+    empresaId: number,
+    telefono: string,
+    plantilla: string,
+    valores: string[],
+  ): Promise<boolean> {
+    const r = await this.whatsapp.enviarPlantilla(telefono, plantilla, 'es', valores, empresaId);
+    if (!r.success) {
+      this.logger.warn(`WA ${plantilla} no salió a ${telefono}: ${r.error}`);
+      return false;
+    }
+    const cuerpo = this.whatsapp.cuerpoPlantillaDespacho(plantilla);
+    const nueve = ultimos9(telefono);
+    if (!cuerpo || !nueve) return true;
+    try {
+      const conv = await this.prisma.leadConversacion.findFirst({
+        where: { empresaId, telefonoProspecto: { endsWith: nueve } },
+        select: { id: true },
+      });
+      if (conv) {
+        await this.prisma.leadMensaje.create({
+          data: { conversacionId: conv.id, rol: 'SISTEMA', contenido: textoDePlantilla(cuerpo, valores) },
+        });
+        await this.prisma.leadConversacion.update({
+          where: { id: conv.id },
+          data: { cantidadMensajes: { increment: 1 } },
+        });
+      }
+    } catch (e: any) {
+      // El aviso ya le llegó al cliente; no dejarlo en el chat no es motivo de error.
+      this.logger.warn(`No se pudo dejar el aviso ${plantilla} en el chat: ${e?.message}`);
+    }
+    return true;
+  }
+
+  /**
+   * Recordatorio diario de recojo (ver recojo-agencia.ts). Lo llama el
+   * scheduler una vez al día. Solo envíos con rastreo automático (Shalom/Olva):
+   * sin él nadie marca la entrega y se le recordaría a quien ya recogió.
+   */
+  async recordarRecojosPendientes(ahora = new Date()): Promise<{ enviados: number; revisados: number }> {
+    const envios = await this.prisma.envioDespacho.findMany({
+      where: {
+        estado: EstadoDespacho.EN_AGENCIA as any,
+        OR: [
+          {
+            transportista: { in: ['SHALOM_PRO', 'SHALOM_COD'] },
+            shalomEntregado: false,
+            comprobante: { empresa: { shalomAutoTrackingActivo: true } },
+          },
+          {
+            transportista: 'OLVA',
+            olvaEntregado: false,
+            comprobante: { empresa: { olvaAutoTrackingActivo: true } },
+          },
+        ],
+        comprobante: { empresa: { despachoMensajeTemplate: { recordatorioRecojoDias: { gt: 0 } } } },
+      },
+      select: {
+        id: true,
+        agenciaDestino: true,
+        montoCOD: true,
+        historial: true,
+        actualizadoEn: true,
+        recordatoriosRecojo: true,
+        ultimoRecordatorioRecojoEn: true,
+        comprobante: {
+          select: {
+            empresaId: true,
+            serie: true,
+            correlativo: true,
+            saldo: true,
+            cliente: { select: { nombre: true, telefono: true } },
+            empresa: { select: { despachoMensajeTemplate: { select: { recordatorioRecojoDias: true } } } },
+          },
+        },
+      },
+      take: 300,
+    });
+
+    let enviados = 0;
+    for (const e of envios) {
+      const c = e.comprobante;
+      const telefono = c.cliente?.telefono;
+      const nueve = ultimos9(telefono);
+      if (!telefono || !nueve) continue;
+      const ultimoDelCliente = await this.prisma.leadMensaje.findFirst({
+        where: {
+          rol: 'USUARIO',
+          conversacion: { empresaId: c.empresaId, telefonoProspecto: { endsWith: nueve } },
+        },
+        orderBy: { creadoEn: 'desc' },
+        select: { creadoEn: true },
+      });
+      const decision = tocaRecordatorioRecojo({
+        llegadaEn: llegadaAAgencia(e.historial, e.actualizadoEn),
+        enviados: e.recordatoriosRecojo,
+        ultimoEn: e.ultimoRecordatorioRecojoEn,
+        maxDias: c.empresa.despachoMensajeTemplate?.recordatorioRecojoDias ?? 0,
+        ultimoMensajeClienteEn: ultimoDelCliente?.creadoEn ?? null,
+        ahora,
+      });
+      if (!decision.toca) continue;
+
+      const pedidoRef = `${c.serie}-${String(c.correlativo).padStart(8, '0')}`;
+      const nombre = c.cliente?.nombre ?? 'Cliente';
+      const agencia = e.agenciaDestino || 'la agencia';
+      const saldo = saldoParaRetirar(c.saldo, e.montoCOD);
+      const salio =
+        saldo > 0
+          ? await this.avisarAlCliente(c.empresaId, telefono, 'recordatorio_recojo_cobro', [
+              nombre,
+              pedidoRef,
+              agencia,
+              saldo.toFixed(2),
+            ])
+          : await this.avisarAlCliente(c.empresaId, telefono, 'recordatorio_recojo', [
+              nombre,
+              pedidoRef,
+              agencia,
+            ]);
+      // Si no salió (plantilla sin aprobar, sin medio de pago en Meta) no se
+      // cuenta: mañana se vuelve a intentar.
+      if (!salio) continue;
+      await this.prisma.envioDespacho.update({
+        where: { id: e.id },
+        data: { recordatoriosRecojo: { increment: 1 }, ultimoRecordatorioRecojoEn: ahora },
+      });
+      enviados++;
+    }
+    return { enviados, revisados: envios.length };
   }
 
   /**

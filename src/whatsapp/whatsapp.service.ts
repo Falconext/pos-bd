@@ -674,6 +674,19 @@ export class WhatsAppService {
       example: ['Juan', 'B001-00000123'],
     },
     {
+      // Recordatorio diario mientras el paquete espera en la agencia
+      // (envio-despacho/recojo-agencia.ts). {{1}} nombre, {{2}} pedido, {{3}} agencia.
+      name: 'recordatorio_recojo',
+      body: 'Hola {{1}}, te recordamos que tu pedido {{2}} sigue esperándote en {{3}}. Si tienes alguna duda para recogerlo, respóndenos por aquí.',
+      example: ['Juan', 'B001-00000123', 'Shalom Cusco Centro'],
+    },
+    {
+      // Igual, con saldo por pagar. {{4}} monto.
+      name: 'recordatorio_recojo_cobro',
+      body: 'Hola {{1}}, tu pedido {{2}} sigue esperándote en la agencia {{3}}. Para retirarlo falta el pago de S/ {{4}}. Respóndenos por aquí y lo coordinamos.',
+      example: ['Juan', 'B001-00000123', 'Shalom Cusco Centro', '25.00'],
+    },
+    {
       // La usa enviarGuia(): {{1}} destinatario, {{2}} serie-correlativo.
       name: 'guia_enviada',
       body: 'Hola {{1}}, te compartimos tu guía de remisión {{2}}. Gracias por tu compra. 📄',
@@ -873,6 +886,28 @@ export class WhatsAppService {
       `Plantillas IA de Ventas (empresa ${empresaId}): ${res.creadas.length} creadas, ${res.existentes.length} ya existían, ${res.errores.length} con error.`,
     );
     return res;
+  }
+
+  /** El cuerpo de una plantilla de despacho, para dejar en el chat lo que le llegó al cliente. */
+  cuerpoPlantillaDespacho(nombre: string): string | null {
+    return this.PLANTILLAS_DESPACHO.find((p) => p.name === nombre)?.body ?? null;
+  }
+
+  /**
+   * Alta idempotente de las plantillas de despacho en la WABA de una empresa
+   * ya conectada. Las que se agregan después de conectar (p. ej. el
+   * recordatorio de recojo) no existen en su cuenta hasta que se llama esto.
+   */
+  async crearPlantillasDespachoEmpresa(empresaId: number) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { whatsappBusinessId: true, whatsappApiToken: true },
+    });
+    const token = empresa?.whatsappApiToken || this.systemUserToken;
+    if (!empresa?.whatsappBusinessId || !token) {
+      return { creadas: [], existentes: [], errores: ['Sin cuenta de WhatsApp Business conectada'] };
+    }
+    return this.crearPlantillasDespacho(empresa.whatsappBusinessId, token);
   }
 
   /**

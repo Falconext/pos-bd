@@ -64,6 +64,7 @@ import { conNombreBienEscrito } from './nombre-negocio';
 import { enFormatoWhatsapp } from './formato-whatsapp';
 import { fechaMencionada } from './fecha-mencionada';
 import { pistaDireccion } from './pregunta-direccion';
+import { contextoPedidosDelCliente } from './pedidos-del-cliente';
 
 /** Frases de "retomo después" que acompañan a una fecha. */
 const POSPONE =
@@ -724,6 +725,7 @@ export class LeadsMessageProcessor extends WorkerHost {
       .filter((s) => s && s.trim())
       .join('\n\n');
     const pedidoEnCurso = await this.estadoDelPedido(conv.id);
+    const pedidosDelCliente = await this.pedidosDelCliente(empresa.id, conv.telefonoProspecto);
     const contextoDelTurno = [
       // La fecha va acá y no en el prompt fijo: cambia cada día y rompería el
       // caché. La necesita la IA para convertir "en una semana" en una fecha.
@@ -740,6 +742,7 @@ export class LeadsMessageProcessor extends WorkerHost {
         contenido,
         [...mensajes].reverse().find((m) => m.rol === 'ASISTENTE')?.contenido,
       ),
+      pedidosDelCliente,
       relevantes.contexto,
       contextoRag,
     ]
@@ -2722,6 +2725,72 @@ export class LeadsMessageProcessor extends WorkerHost {
    * conversación, para no inflar el reporte de no habidos.
    */
   /** El pedido en curso para este turno; si no se puede leer, se sigue sin él. */
+  /**
+   * Pedidos en curso de este celular registrados en el panel (ver
+   * pedidos-del-cliente.ts): con envío sin entregar o con saldo pendiente,
+   * de los últimos 60 días.
+   */
+  private async pedidosDelCliente(empresaId: number, telefono: string): Promise<string> {
+    // Un @usuario de WhatsApp (BSUID) no es un celular: no se cruza con nada.
+    if (!/^\+?\d{9,15}$/.test(telefono)) return '';
+    const nueve = telefono.replace(/\D/g, '').slice(-9);
+    try {
+      const desde = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+      const filas = await this.prisma.comprobante.findMany({
+        where: {
+          empresaId,
+          fechaEmision: { gte: desde },
+          tipoDoc: { notIn: ['COT', '07', '08'] },
+          NOT: [{ estadoPago: 'ANULADO' }, { estadoEnvioSunat: 'ANULADO' }],
+          AND: [
+            {
+              OR: [
+                { cliente: { telefono: { endsWith: nueve } } },
+                { envioDespacho: { celularDest: { endsWith: nueve } } },
+              ],
+            },
+            {
+              OR: [
+                { envioDespacho: { estado: { in: ['PREPARANDO', 'EN_CAMINO', 'EN_AGENCIA', 'EN_DESTINO'] } } },
+                { saldo: { gt: 0.009 }, estadoPago: { in: ['PENDIENTE_PAGO', 'PAGO_PARCIAL'] } },
+              ],
+            },
+          ],
+        },
+        select: {
+          serie: true,
+          correlativo: true,
+          fechaEmision: true,
+          mtoImpVenta: true,
+          saldo: true,
+          detalles: { select: { descripcion: true, cantidad: true }, take: 4 },
+          envioDespacho: {
+            select: { estado: true, transportista: true, agenciaDestino: true, codigoGuia: true },
+          },
+        },
+        orderBy: { fechaEmision: 'desc' },
+        take: 3,
+      });
+      return contextoPedidosDelCliente(
+        filas.map((f) => ({
+          serie: f.serie,
+          correlativo: f.correlativo,
+          fechaEmision: f.fechaEmision,
+          total: Number(f.mtoImpVenta ?? 0),
+          saldo: Number(f.saldo ?? 0),
+          productos: f.detalles.map((d) => `${d.descripcion} x ${Number(d.cantidad)}`),
+          despacho: f.envioDespacho
+            ? { ...f.envioDespacho, estado: String(f.envioDespacho.estado) }
+            : null,
+        })),
+      );
+    } catch (e) {
+      // Sin esto el bot responde igual que antes; no es motivo para no responder.
+      this.logger.warn(`Lead: no se pudieron leer los pedidos del cliente: ${(e as Error).message}`);
+      return '';
+    }
+  }
+
   private async estadoDelPedido(conversacionId: number) {
     try {
       return (await this.pedido.estadoParaElTurno(conversacionId)) ?? null;
