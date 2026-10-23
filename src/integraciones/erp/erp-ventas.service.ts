@@ -7,6 +7,7 @@ import { estadoPublico } from '../facturacion/estado-publico';
 import { ErpApiService } from './erp.service';
 import { precioDeOferta } from './serializar-producto';
 import { ventaSimulada } from './modo-prueba';
+import { afectacionPorDefecto } from '../../producto/afectacion-igv';
 import { normalizarFormatoPdf } from '../../comprobante/pdf-generator.service';
 import {
   ItemVenta,
@@ -45,6 +46,9 @@ interface ProductoVenta {
 /** Una línea ya resuelta, lista para la emisión. */
 interface LineaResuelta {
   producto?: ProductoVenta;
+  /** Ítems libres: afectación y unidad propias. */
+  afectacion?: string;
+  unidad?: string;
   unidadesPorPaquete: number;
   descripcion: string;
   cantidad: number;
@@ -126,7 +130,7 @@ export class ErpVentasService {
           descripcion: l.descripcion,
           cantidad: l.cantidad,
           precio: l.precio,
-          afectacion: l.producto ? String(l.producto.tipoAfectacionIGV ?? '10') : '10',
+          afectacion: l.producto ? String(l.producto.tipoAfectacionIGV ?? '10') : l.afectacion ?? '10',
         })),
       });
     }
@@ -362,6 +366,24 @@ export class ErpVentasService {
       : [];
 
     const reservas = await this.erp.reservasDe(empresaId, productos);
+    // Un ítem libre sin `tax` toma la afectación por defecto del negocio: en
+    // uno de la Ley de Amazonía, exonerado; si no, gravado (como el POS).
+    const empresa = await this.prisma.empresa.findUnique({ where: { id: empresaId }, select: { leyAmazonia: true } });
+    const afectacionLibre = afectacionPorDefecto(empresa);
+    const unidadesPedidas = [...new Set(items.filter((i) => i.unidad).map((i) => i.unidad!))];
+    if (unidadesPedidas.length) {
+      const conocidas = new Set(
+        (await this.prisma.unidadMedida.findMany({ where: { codigo: { in: unidadesPedidas } }, select: { codigo: true } })).map((u) => u.codigo),
+      );
+      const mala = unidadesPedidas.find((u) => !conocidas.has(u));
+      if (mala) {
+        throw new BadRequestException({
+          code: 'parameter_invalid',
+          message: `\`${mala}\` no es una unidad de SUNAT conocida. Consulta GET /v1/erp/units (NIU unidad, ZZ servicio, KGM kilo…).`,
+          param: 'items',
+        });
+      }
+    }
     const lineas: LineaResuelta[] = [];
     const pedido = new Map<number, number>(); // unidades base pedidas por producto
     const porLote = new Map<string, number>();
@@ -369,7 +391,14 @@ export class ErpVentasService {
     items.forEach((it, i) => {
       const donde = `items[${i}]`;
       if (!it.productoId && !it.sku && !it.codigoBarras) {
-        lineas.push({ descripcion: it.descripcion!, cantidad: it.cantidad, precio: it.precio!, unidadesPorPaquete: 1 });
+        lineas.push({
+          descripcion: it.descripcion!,
+          cantidad: it.cantidad,
+          precio: it.precio!,
+          unidadesPorPaquete: 1,
+          afectacion: it.afectacion ?? afectacionLibre,
+          unidad: it.unidad ?? 'NIU',
+        });
         return;
       }
       let paquete: ProductoVenta['codigosBarras'][number] | undefined;
@@ -577,7 +606,8 @@ export class ErpVentasService {
               descripcion: l.descripcion,
               cantidad: l.cantidad,
               nuevoValorUnitario: l.precio,
-              unidadVenta: 'ZZ',
+              unidadVenta: l.unidad ?? 'NIU',
+              tipoAfectacionIGV: l.afectacion ?? '10',
             },
       ),
     };
