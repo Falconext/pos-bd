@@ -10,6 +10,7 @@ import {
   postergaLaCompra,
 } from './leads-disparadores';
 import { HERRAMIENTA_DAR_DEMO } from './leads-herramientas';
+import { enFormatoWhatsapp } from './formato-whatsapp';
 import { perfilValido } from './perfil-vendedor';
 
 /**
@@ -232,17 +233,18 @@ export class LeadsSeguimientoService {
           },
         );
         if (!texto) continue;
+        const textoWhatsapp = enFormatoWhatsapp(texto);
 
         await this.prisma.leadMensaje.create({
           data: {
             conversacionId: conv.id,
             rol: 'ASISTENTE',
-            contenido: texto,
+            contenido: textoWhatsapp,
           },
         });
         const envio = await this.whatsapp.enviarTexto(
           conv.telefonoProspecto,
-          texto,
+          textoWhatsapp,
           emp.id,
         );
         if (!envio.success) {

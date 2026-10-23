@@ -61,6 +61,7 @@ import {
   textoDelCliente,
 } from './archivo-del-cliente';
 import { conNombreBienEscrito } from './nombre-negocio';
+import { enFormatoWhatsapp } from './formato-whatsapp';
 import { fechaMencionada } from './fecha-mencionada';
 import { pistaDireccion } from './pregunta-direccion';
 
@@ -1028,9 +1029,11 @@ export class LeadsMessageProcessor extends WorkerHost {
       });
     }
 
-    resultado.reply = conNombreBienEscrito(
-      resultado.reply,
-      empresa.nombreComercial || empresa.razonSocial,
+    resultado.reply = enFormatoWhatsapp(
+      conNombreBienEscrito(
+        resultado.reply,
+        empresa.nombreComercial || empresa.razonSocial,
+      ),
     );
 
     // Persistir la respuesta y enviarla desde el número de la empresa.
