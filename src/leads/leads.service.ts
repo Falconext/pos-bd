@@ -28,7 +28,7 @@ const LIMITE_AUDIO_PANEL = 16 * 1024 * 1024;
 import { venceEn } from './pausa-bot';
 import sharp from 'sharp';
 import { IaVentasService } from './leads-ia.service';
-import { aOggOpus } from './nota-de-voz';
+import { aOggOpus, tieneAudio } from './nota-de-voz';
 
 /**
  * Módulo IA de Ventas / Filtro de Leads (portado de salesfilter-ai).
@@ -934,6 +934,11 @@ export class LeadsService {
       ogg = await this.convertirAudio(archivo.buffer);
     } catch {
       throw new BadRequestException('No se pudo leer el audio. Vuelve a grabarlo.');
+    }
+    if (!tieneAudio(ogg)) {
+      throw new BadRequestException(
+        'La grabación salió sin sonido: el micrófono no captó nada. Revisa que el micrófono esté activo y vuelve a grabarla.',
+      );
     }
     const url = await this.s3.uploadPDF(
       ogg,
