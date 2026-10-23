@@ -10,6 +10,7 @@ import { ResellerService } from '../reseller/reseller.service';
 import { CobroEmpresaService } from '../suscripcion/cobro-empresa.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { EnvioDespachoService } from '../envio-despacho/envio-despacho.service';
 
 @Injectable()
 export class SchedulerService {
@@ -33,6 +34,7 @@ export class SchedulerService {
     private readonly prisma: PrismaService,
     private readonly whatsappService: WhatsAppService,
     private readonly alertaStock: AlertaStockService,
+    private readonly envioDespacho: EnvioDespachoService,
   ) {}
 
   /**
@@ -87,6 +89,24 @@ export class SchedulerService {
       this.logger.error(
         `[Shalom] Error al verificar envíos: ${error?.message || 'Error desconocido'}`,
       );
+    }
+  }
+
+  // Recordatorio de recojo a los clientes con paquete esperando en agencia
+  // (Shalom/Olva), una vez al día a media mañana. Mismo interruptor que el
+  // rastreo: un backend de desarrollo contra la base de producción mandaría
+  // WhatsApp a clientes reales.
+  @Cron('30 10 * * *', {
+    name: 'recordar-recojo-agencia',
+    timeZone: 'America/Lima',
+  })
+  async recordarRecojoAgenciaCron(): Promise<void> {
+    if (!this.shalomJobsEnabled()) return;
+    try {
+      const r = await this.envioDespacho.recordarRecojosPendientes();
+      this.logger.log(`📦 Recordatorios de recojo: ${r.enviados} enviados de ${r.revisados} en agencia.`);
+    } catch (error: any) {
+      this.logger.error(`[Recojo] Error al recordar recojos: ${error?.message || 'Error desconocido'}`);
     }
   }
 
