@@ -65,6 +65,7 @@ import { enFormatoWhatsapp } from './formato-whatsapp';
 import { fechaMencionada } from './fecha-mencionada';
 import { pistaDireccion } from './pregunta-direccion';
 import { contextoPedidosDelCliente } from './pedidos-del-cliente';
+import { saldoParaRetirar } from '../envio-despacho/recojo-agencia';
 
 /** Frases de "retomo después" que acompañan a una fecha. */
 const POSPONE =
@@ -2765,7 +2766,7 @@ export class LeadsMessageProcessor extends WorkerHost {
           saldo: true,
           detalles: { select: { descripcion: true, cantidad: true }, take: 4 },
           envioDespacho: {
-            select: { estado: true, transportista: true, agenciaDestino: true, codigoGuia: true },
+            select: { estado: true, transportista: true, agenciaDestino: true, codigoGuia: true, montoCOD: true },
           },
         },
         orderBy: { fechaEmision: 'desc' },
@@ -2777,10 +2778,18 @@ export class LeadsMessageProcessor extends WorkerHost {
           correlativo: f.correlativo,
           fechaEmision: f.fechaEmision,
           total: Number(f.mtoImpVenta ?? 0),
-          saldo: Number(f.saldo ?? 0),
+          // Lo mismo que le dice el aviso de la agencia: el saldo de la nota o,
+          // si no hay, el contra entrega del envío. Si no, el aviso cobraba
+          // S/ 10 y el bot decía "pagado".
+          saldo: saldoParaRetirar(f.saldo, f.envioDespacho?.montoCOD),
           productos: f.detalles.map((d) => `${d.descripcion} x ${Number(d.cantidad)}`),
           despacho: f.envioDespacho
-            ? { ...f.envioDespacho, estado: String(f.envioDespacho.estado) }
+            ? {
+                estado: String(f.envioDespacho.estado),
+                transportista: f.envioDespacho.transportista,
+                agenciaDestino: f.envioDespacho.agenciaDestino,
+                codigoGuia: f.envioDespacho.codigoGuia,
+              }
             : null,
         })),
       );
