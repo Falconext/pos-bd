@@ -11,6 +11,8 @@ type PublicBranding = {
   email: string;
   phone: string;
   whatsapp: string;
+  /** A dónde lleva "Coordinar pago" cuando el plan vence: cobranza, no ventas. */
+  whatsappCobranza: string;
   logo: string;
   logoWhite: string;
   favicon?: string;
@@ -159,6 +161,9 @@ export class BrandingService {
       email: reseller.whiteLabelEmail || defaults.email,
       phone: reseller.whiteLabelTelefono || defaults.phone,
       whatsapp: reseller.whiteLabelWhatsapp || defaults.whatsapp,
+      // Al cliente de un reseller le cobra el reseller.
+      whatsappCobranza:
+        reseller.whiteLabelWhatsapp || defaults.whatsappCobranza,
       logo: reseller.whiteLabelLogoUrl || defaults.logo,
       logoWhite:
         reseller.whiteLabelLogoWhiteUrl ||
@@ -214,6 +219,7 @@ export class BrandingService {
         email: 'ventas@krezka.com',
         phone: '+51 932 332 556',
         whatsapp: '51932332556',
+        whatsappCobranza: '51986114148',
         logo: '/assets/krezka/krezka.png',
         logoWhite: '/assets/krezka/krezkawhite.png',
         favicon: '/favicon.ico',
@@ -234,6 +240,7 @@ export class BrandingService {
       email: 'ventas@falconext.pe',
       phone: '+51 932 332 556',
       whatsapp: '51932332556',
+      whatsappCobranza: '51932332556',
       logo: '/assets/fnlogo.png',
       logoWhite: '/assets/logofalconwhite.png',
       favicon: '/favicon.ico',
