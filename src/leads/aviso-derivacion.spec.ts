@@ -122,10 +122,11 @@ describe('qué dice el aviso', () => {
     expect(t).toContain('Diego Ortega');
     expect(t).toContain('mayorista');
     expect(t).toContain('Botica San Lucas');
-    // El enlace para escribirle de una, que es lo único que de verdad se usa
-    // desde el celular.
+    // Su número sigue a la vista, pero a contestar se manda a la bandeja: con
+    // el wa.me le escribían desde un WhatsApp personal, otro número.
     expect(t).toContain('https://wa.me/51991065217');
-    expect(t).toContain('/administrador/leads');
+    expect(t).toContain('/administrador/leads/chats');
+    expect(t).not.toContain('Escríbele tú');
   });
 
   it('el motivo se lee, no se muestra con guiones bajos', async () => {

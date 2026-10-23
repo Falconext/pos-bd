@@ -27,7 +27,7 @@ export interface ConfigDemos {
 }
 
 export const BLOQUE_DATOS_DEMO = [
-  '*DATOS PARA CREAR SU DEMO*',
+  '*DATOS PARA CREAR TU DEMO*',
   '-Nombres y Apellidos:',
   '-Número de celular:',
   '-Correo electrónico:',

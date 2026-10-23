@@ -55,6 +55,7 @@ export class LeadsController {
       vendedor?: unknown;
       envio?: unknown;
       mediosPagoLista?: unknown;
+      supervisorTelefono?: string;
     },
   ) {
     return this.service.actualizarConfig(user.empresaId, body);

@@ -448,6 +448,7 @@ export class LeadsService {
           envio?: unknown;
           mediosPago?: string;
           mediosPagoLista?: unknown;
+          supervisorTelefono?: string;
         }
       | null;
     const demos = json?.demos;
@@ -474,6 +475,7 @@ export class LeadsService {
         mediosPagoLista.length || !json?.mediosPago
           ? mediosPagoLista
           : [{ nombre: MEDIOS_DE_ANTES, detalle: json.mediosPago }],
+      supervisorTelefono: json?.supervisorTelefono ?? '',
     };
   }
 
@@ -565,6 +567,8 @@ export class LeadsService {
       envio?: unknown;
       /** Medios de pago (Yape, BCP…) con su titular. */
       mediosPagoLista?: unknown;
+      /** A quién le llegan por WhatsApp los avisos de derivación y de demo. Vacío = a los administradores. */
+      supervisorTelefono?: string;
     },
   ) {
     // El nombre del asesor vive en iaVentasConfigJson junto a zonas, descuentos
@@ -577,7 +581,8 @@ export class LeadsService {
       data.cobroConLink !== undefined ||
       data.vendedor !== undefined ||
       data.envio !== undefined ||
-      data.mediosPagoLista !== undefined
+      data.mediosPagoLista !== undefined ||
+      data.supervisorTelefono !== undefined
     ) {
       const actual = await this.prisma.empresa.findUnique({
         where: { id: empresaId },
@@ -625,6 +630,16 @@ export class LeadsService {
           delete json.mediosPagoLista;
           delete json.mediosPago;
         }
+      }
+      if (data.supervisorTelefono !== undefined) {
+        // Sin él los avisos van a los administradores. En Krezka eso era el
+        // celular de postventa, y ventas no se enteraba de los chats que la
+        // IA le pasaba.
+        const tel = String(data.supervisorTelefono).replace(/\D/g, '');
+        if (!tel) delete json.supervisorTelefono;
+        else if (tel.length < 9)
+          throw new BadRequestException('El número de aviso debe tener 9 dígitos');
+        else json.supervisorTelefono = tel;
       }
       await this.prisma.empresa.update({
         where: { id: empresaId },
