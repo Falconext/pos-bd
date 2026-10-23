@@ -236,7 +236,7 @@ describe('herramienta dar_demo', () => {
     const { ejecutor } = armar();
     const r = (await ejecutor(HERRAMIENTA_DAR_DEMO, { rubro: 'farmacia', nombre: 'Lucía Paredes' })) as any;
     expect(r.faltan).toEqual(['correo electrónico', 'RUC (o que te diga que aún no tiene)']);
-    expect(r.bloque).toContain('*DATOS PARA CREAR SU DEMO*');
+    expect(r.bloque).toContain('*DATOS PARA CREAR TU DEMO*');
   });
 
   it('a ventas le avisa una sola vez por conversación', async () => {

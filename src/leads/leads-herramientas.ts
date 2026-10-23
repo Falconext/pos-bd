@@ -341,7 +341,7 @@ const darDemo: FunctionDeclaration = {
   name: HERRAMIENTA_DAR_DEMO,
   description:
     'Entrega al prospecto los accesos (enlace, usuario y clave) a la demo del sistema de SU rubro. ' +
-    'Úsala cuando el prospecto ya te mandó sus datos del bloque DATOS PARA CREAR SU DEMO. Pasa todo lo que dijo; si te devuelve `faltan`, pídele solo eso. ' +
+    'Úsala cuando el prospecto ya te mandó sus datos del bloque DATOS PARA CREAR TU DEMO. Pasa todo lo que dijo; si te devuelve `faltan`, pídele solo eso. ' +
     'Si te devuelve `opciones`, ninguna demo es de su rubro: vuelve a llamarla con `demo` = la opción más parecida a su negocio. ' +
     'Si te devuelve `acceso`, mándale el enlace, el usuario y la clave tal cual. Nunca escribas accesos que esta herramienta no te dio.',
   parameters: {

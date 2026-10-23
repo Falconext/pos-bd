@@ -279,9 +279,11 @@ export class LeadsAlertaService {
       '',
       p.detalle?.trim() ? `📝 ${p.detalle.trim()}` : null,
       '',
-      'La IA dejó de responder en ese chat. Escríbele tú:',
-      wa,
-      `Ver en el panel: ${this.frontendUrl()}/administrador/leads`,
+      // Desde la bandeja se le contesta con el número del negocio; con el
+      // wa.me le escribía alguien desde su WhatsApp personal y el cliente
+      // terminaba hablando con otro número.
+      'La IA dejó de responder en ese chat. Contéstale desde la bandeja, con el número del negocio:',
+      `${this.frontendUrl()}/administrador/leads/chats`,
     ]
       .filter((l) => l !== null)
       .join('\n');
