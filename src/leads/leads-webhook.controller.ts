@@ -144,6 +144,9 @@ export class LeadsWebhookController {
               {
                 phoneNumberId,
                 from: remitente,
+                // El @usuario (BSUID) aunque venga también el número: con él
+                // se une la conversación que empezó sin número.
+                bsuid: msg.from_user_id ?? contacto?.user_id,
                 messageId: msg.id,
                 text: texto,
                 esAudio: msg.type === 'audio',
