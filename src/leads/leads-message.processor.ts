@@ -38,7 +38,7 @@ import {
 } from './pausa-bot';
 import { conDescargoLegal } from './prompt-asesor';
 import { origenDeAnuncio, type ReferralWhatsapp } from './anuncio-origen';
-import { afirmaCancelacion, sinConfirmacionFalsa, sinPagoInventado } from './confirmacion-falsa';
+import { afirmaCancelacion, afirmaDerivacion, sinConfirmacionFalsa, sinPagoInventado } from './confirmacion-falsa';
 import { conRegistroDirecto, yaAceptoAntes } from './registro-directo';
 import {
   BLOQUE_DATOS_DEMO,
@@ -938,6 +938,22 @@ export class LeadsMessageProcessor extends WorkerHost {
         resultado.reply =
           'Entiendo. Como tu pedido ya está en proceso, la cancelación la revisa una persona del equipo: ya le avisé y te escribe por aquí.';
       }
+    }
+    // Nunca "alguien del equipo te escribe" sin avisarle a nadie: si el modelo
+    // lo prometió y no derivó, se deriva acá (ver `afirmaDerivacion`).
+    if (
+      !resultado.llamadas.some((ll) => ll.nombre === HERRAMIENTA_DERIVAR) &&
+      afirmaDerivacion(resultado.reply, config.vendedor?.mensajeDerivacion)
+    ) {
+      const argumentos = {
+        motivo: 'pide_hablar_con_persona',
+        detalle: `La IA le dijo al cliente que una persona lo contactará. Lo último que escribió: "${contenido.slice(0, 300)}"`,
+      };
+      resultado.llamadas.push({
+        nombre: HERRAMIENTA_DERIVAR,
+        argumentos,
+        resultado: await ejecutor(HERRAMIENTA_DERIVAR, argumentos),
+      });
     }
     resultado.reply = conCotizacionExacta(resultado.reply, resultado.llamadas);
     // Con lo que quedó guardado DESPUÉS del turno: si el cliente ya dio

@@ -55,6 +55,38 @@ export function afirmaCancelacion(texto: string): boolean {
   return AFIRMA_CANCELACION.test(texto);
 }
 
+/**
+ * QA 23-10 (Krezka): en 10 de 13 chats que terminaban en ventas el modelo
+ * escribió "Alguien de nuestro equipo de ventas se contactará contigo" sin
+ * llamar a derivar_a_asesor. Nadie recibía aviso y la IA seguía contestando:
+ * el cliente esperaba a una persona que no sabía que la esperaban.
+ *
+ * Solo cuenta lo que se afirma, no lo que se ofrece: "¿quieres que alguien de
+ * ventas se comunique contigo?" no es una derivación.
+ */
+const AFIRMA_DERIVACION =
+  /\b(se|te)\s+(contactar|comunicar|escribir)[aá]n?(?![a-záéíóúñ])|\bya\s+(le\s+|les\s+)?(inform|avis)[eé](?![a-záéíóúñ])|\bte\s+(paso|derivo|comunico|transfiero)\s+con\b/i;
+
+// Y que hable de alguien del equipo: "Diego te escribirá" en capacitación es
+// un contacto que el cliente ya tiene, no un chat que se pausa.
+const QUIEN_ATIENDE =
+  /\b(alguien|equipo|ventas|asesor|asesora|persona|ejecutiv[oa]|encargad[oa])\b/i;
+
+/** ¿El texto le asegura al cliente que ya lo pasaron con una persona? */
+export function afirmaDerivacion(
+  texto: string,
+  mensajeDerivacion?: string | null,
+): boolean {
+  const plano = (t: string) => t.toLowerCase().replace(/\s+/g, ' ').trim();
+  const propio = plano(mensajeDerivacion ?? '');
+  if (propio && plano(texto).includes(propio)) return true;
+  // Frase por frase, para que una pregunta no cuente como afirmación.
+  return texto
+    .split(/(?<=[.!?¡¿\n])\s*/)
+    .filter((f) => !f.trim().endsWith('?'))
+    .some((f) => AFIRMA_DERIVACION.test(f) && QUIEN_ATIENDE.test(f));
+}
+
 function unir(partes: string[]): string {
   if (partes.length === 1) return partes[0];
   return `${partes.slice(0, -1).join(', ')} y ${partes.at(-1)}`;
