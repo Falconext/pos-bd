@@ -26,6 +26,7 @@ import { parseFechaSoloDia } from '../common/utils/fecha';
 import { ModuleRef } from '@nestjs/core';
 import { PagoService } from '../pago/pago.service';
 import { LeadsEmbudoService } from '../leads/leads-embudo.service';
+import { formasDePagoParaElAviso } from './pago-repartidor';
 import {
   llegadaAAgencia,
   quienReparte,
@@ -399,7 +400,7 @@ export class EnvioDespachoService {
         comprobanteId,
         empresaId,
         dto.estado as EstadoDespacho,
-        quienReparte(updated.repartidor),
+        updated.repartidor ?? null,
       ).catch((e) => this.logger.warn(`WA despacho fallido: ${e.message}`));
     }
 
@@ -461,6 +462,8 @@ export class EnvioDespachoService {
       notificarEnCamino: true,
       notificarEntregado: true,
       recordatorioRecojoDias: 0,
+      pagoRepartidorPropio: null,
+      pagoRepartidorContratado: null,
     };
     return {
       ...base,
@@ -481,7 +484,7 @@ export class EnvioDespachoService {
     // Las plantillas del recordatorio se agregaron después de que muchos
     // negocios conectaron su número: se dan de alta (idempotente) al
     // encenderlo, y Meta tarda un rato en aprobarlas.
-    if ((dto.recordatorioRecojoDias ?? 0) > 0) {
+    if ((dto.recordatorioRecojoDias ?? 0) > 0 || dto.pagoRepartidorPropio || dto.pagoRepartidorContratado) {
       const r = await this.whatsapp.crearPlantillasDespachoEmpresa(empresaId).catch((e) => ({
         creadas: [] as string[],
         existentes: [] as string[],
@@ -809,8 +812,9 @@ export class EnvioDespachoService {
     comprobanteId: number,
     empresaId: number,
     estado: EstadoDespacho,
-    repartidorNombre: string | null,
+    repartidor: { nombre?: string | null; celular?: string | null; tipo?: string | null } | null,
   ): Promise<void> {
+    const repartidorNombre = quienReparte(repartidor);
     const [comprobante, config] = await Promise.all([
       this.prisma.comprobante.findFirst({
         where: { id: comprobanteId },
@@ -871,6 +875,25 @@ export class EnvioDespachoService {
     // El texto libre personalizable por empresa (config.mensaje*) ya no aplica aquí:
     // Meta exige plantillas de contenido fijo aprobado.
     if (esEnCamino) {
+      // Con saldo por cobrar y formas de pago configuradas para ese tipo de
+      // repartidor, el aviso dice cuánto y cómo pagar (pago-repartidor.ts).
+      const envio = await this.prisma.envioDespacho.findFirst({
+        where: { comprobanteId },
+        select: { montoCOD: true },
+      });
+      const saldo = saldoParaRetirar(comprobante.saldo, envio?.montoCOD);
+      const formas = repartidorNombre ? formasDePagoParaElAviso(repartidor?.tipo, config) : null;
+      if (saldo > 0 && formas) {
+        const salio = await this.avisarAlCliente(empresaId, telefono, comprobanteId, 'pedido_en_camino_pago', [
+          nombre,
+          pedidoRef,
+          repartidorNombre!,
+          saldo.toFixed(2),
+          formas,
+        ]);
+        // Si Meta todavía no aprueba la plantilla, sale el aviso de siempre.
+        if (salio) return;
+      }
       // pedido_en_camino → {{1}} nombre, {{2}} pedido, {{3}} repartidor
       await this.avisarAlCliente(empresaId, telefono, comprobanteId, 'pedido_en_camino', [
         nombre,

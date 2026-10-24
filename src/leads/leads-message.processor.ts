@@ -66,7 +66,8 @@ import { fechaMencionada } from './fecha-mencionada';
 import { pistaDireccion } from './pregunta-direccion';
 import { contextoPedidosDelCliente } from './pedidos-del-cliente';
 import { conversacionDelMismoCliente, esTelefono } from './unir-usuario-whatsapp';
-import { saldoParaRetirar } from '../envio-despacho/recojo-agencia';
+import { quienReparte, saldoParaRetirar } from '../envio-despacho/recojo-agencia';
+import { formasDePagoParaElAviso } from '../envio-despacho/pago-repartidor';
 
 /** Frases de "retomo después" que acompañan a una fecha. */
 const POSPONE =
@@ -2791,12 +2792,25 @@ export class LeadsMessageProcessor extends WorkerHost {
           saldo: true,
           detalles: { select: { descripcion: true, cantidad: true }, take: 4 },
           envioDespacho: {
-            select: { estado: true, transportista: true, agenciaDestino: true, codigoGuia: true, montoCOD: true },
+            select: {
+              estado: true,
+              transportista: true,
+              agenciaDestino: true,
+              codigoGuia: true,
+              montoCOD: true,
+              repartidor: { select: { nombre: true, celular: true, tipo: true } },
+            },
           },
         },
         orderBy: { fechaEmision: 'desc' },
         take: 3,
       });
+      const configDespacho = filas.some((f) => f.envioDespacho?.repartidor)
+        ? await this.prisma.despachoMensajeTemplate.findUnique({
+            where: { empresaId },
+            select: { pagoRepartidorPropio: true, pagoRepartidorContratado: true },
+          })
+        : null;
       return contextoPedidosDelCliente(
         filas.map((f) => ({
           serie: f.serie,
@@ -2814,6 +2828,8 @@ export class LeadsMessageProcessor extends WorkerHost {
                 transportista: f.envioDespacho.transportista,
                 agenciaDestino: f.envioDespacho.agenciaDestino,
                 codigoGuia: f.envioDespacho.codigoGuia,
+                repartidor: quienReparte(f.envioDespacho.repartidor),
+                formasDePago: formasDePagoParaElAviso(f.envioDespacho.repartidor?.tipo, configDespacho),
               }
             : null,
         })),
