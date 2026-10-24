@@ -29,4 +29,15 @@ describe('pedidos en curso del cliente en el contexto del bot', () => {
     ]);
     expect(t).toContain('total S/ 59.90; pagado.');
   });
+
+  it('con repartidor y sus formas de pago (Hierba Sana 24-10)', () => {
+    const t = contextoPedidosDelCliente([
+      {
+        serie: 'NV01', correlativo: 4, fechaEmision: new Date('2026-10-23T17:00:00Z'), total: 71, saldo: 71, productos: ['Miel x 1'],
+        despacho: { estado: 'EN_CAMINO', transportista: 'PROPIOS', repartidor: 'Stiven León (cel. 920 450 428)', formasDePago: 'Yape 955 947 892 o ZIPAGO; no en efectivo' },
+      },
+    ]);
+    expect(t).toContain('envío por reparto propio: en camino, lo lleva Stiven León (cel. 920 450 428)');
+    expect(t).toContain('formas de pago al recibir: Yape 955 947 892 o ZIPAGO; no en efectivo');
+  });
 });

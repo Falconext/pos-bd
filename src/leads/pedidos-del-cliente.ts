@@ -19,6 +19,10 @@ export interface PedidoDelCliente {
     transportista?: string | null;
     agenciaDestino?: string | null;
     codigoGuia?: string | null;
+    /** "Tony Cayo (cel. 955 947 892)". */
+    repartidor?: string | null;
+    /** Cómo pagarle al recibir, según si es del equipo o contratado. */
+    formasDePago?: string | null;
   } | null;
 }
 
@@ -51,8 +55,9 @@ export function contextoPedidosDelCliente(pedidos: PedidoDelCliente[]): string {
       partes.push(
         `envío${via ? ` por ${via}` : ''}: ${estado}${p.despacho.agenciaDestino ? ` (agencia ${p.despacho.agenciaDestino})` : ''}${
           p.despacho.codigoGuia ? `, guía ${p.despacho.codigoGuia}` : ''
-        }`,
+        }${p.despacho.repartidor ? `, lo lleva ${p.despacho.repartidor}` : ''}`,
       );
+      if (p.despacho.formasDePago && p.saldo > 0.009) partes.push(`formas de pago al recibir: ${p.despacho.formasDePago}`);
     }
     return `- ${partes.join('; ')}.`;
   });

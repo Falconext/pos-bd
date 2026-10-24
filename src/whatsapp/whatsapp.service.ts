@@ -654,6 +654,14 @@ export class WhatsAppService {
       example: ['Juan', 'B001-00000123', 'Pedro'],
     },
     {
+      // "En camino" con el monto y cómo pagarle según quién reparte
+      // (envio-despacho/pago-repartidor.ts). {{1}} nombre, {{2}} pedido,
+      // {{3}} repartidor, {{4}} monto, {{5}} formas de pago.
+      name: 'pedido_en_camino_pago',
+      body: 'Hola {{1}}, tu pedido {{2}} ya está en camino con {{3}}. Monto a pagar al recibir: S/ {{4}}. Formas de pago: {{5}}. ¡Pronto llega!',
+      example: ['Juan', 'B001-00000123', 'Pedro Ruiz (cel. 955 111 222)', '71.00', 'efectivo, Yape 955 947 892 o ZIPAGO desde tu banca móvil'],
+    },
+    {
       name: 'pedido_en_destino',
       body: 'Hola {{1}}, tu pedido {{2}} llegó a {{3}} y está listo para recojo. 📦',
       example: ['Juan', 'B001-00000123', 'Shalom Cusco Centro'],

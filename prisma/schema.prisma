@@ -2817,6 +2817,11 @@ model DespachoMensajeTemplate {
   /// (Shalom/Olva): cuántos días como máximo. 0 = apagado. Es una plantilla
   /// fuera de la ventana de 24h, la paga el negocio a Meta: por eso nace apagado.
   recordatorioRecojoDias Int     @default(0)
+  /// Formas de pago que se le dicen al cliente en el aviso "en camino",
+  /// según quién reparte: alguien del equipo (PLANILLA) o un contratado
+  /// (EVENTUAL). Vacío = el aviso sale sin formas de pago.
+  pagoRepartidorPropio      String?
+  pagoRepartidorContratado  String?
 
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt
