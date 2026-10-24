@@ -210,6 +210,10 @@ export class ShalomService {
    * `shalomAgenciaDestinoId` (el ter_id que se guardó al crear la guía).
    */
   async datosRotulo(comprobanteId: number, empresaId: number) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { shalomClaveEnRotulo: true },
+    });
     const envio = await this.prisma.envioDespacho.findFirst({
       where: { comprobanteId, comprobante: { empresaId } },
       select: {
@@ -253,8 +257,11 @@ export class ShalomService {
     return {
       nroOrden: envio.nroOrden,
       claveOrden: envio.claveOrden,
-      // Para la etiqueta 80×50: clave de retiro (solo Shalom), celular y referencia.
-      claveEnvio: /SHALOM/.test(String(envio.transportista ?? '')) ? envio.claveEnvio : null,
+      // La clave de retiro solo si la empresa lo pidió: el rótulo va por fuera
+      // del paquete, junto al DNI, y así cualquiera que lo vea tiene los dos
+      // datos del retiro (24-10). La clave se le manda al cliente por WhatsApp.
+      claveEnvio:
+        empresa?.shalomClaveEnRotulo && /SHALOM/.test(String(envio.transportista ?? '')) ? envio.claveEnvio : null,
       celular: primeroNoVacio(envio.celularDest, envio.comprobante?.cliente?.telefono),
       transportista: envio.transportista,
       referencia: envio.comprobante ? `${envio.comprobante.serie}-${String(envio.comprobante.correlativo).padStart(8, '0')}` : '',
@@ -581,6 +588,7 @@ export class ShalomService {
         shalomAgenciaOrigenNombre: true,
         shalomAutoGuiaActivo: true,
         shalomClavesRetiro: true,
+        shalomClaveEnRotulo: true,
         shalomTamanoDefault: true,
         plan: { select: { nombre: true, features: { select: { featureKey: true, enabled: true } } } },
       },
@@ -603,6 +611,7 @@ export class ShalomService {
       // La venta genera la guía sola (opt-in por empresa).
       autoGuiaActivo: empresa.shalomAutoGuiaActivo,
       clavesRetiro: empresa.shalomClavesRetiro ?? '',
+      claveEnRotulo: empresa.shalomClaveEnRotulo,
       tamanoDefault: empresa.shalomTamanoDefault ?? 'XS',
     };
   }
@@ -623,6 +632,7 @@ export class ShalomService {
       agenciaOrigenNombre: null,
       autoGuiaActivo: false,
       clavesRetiro: '',
+      claveEnRotulo: false,
       tamanoDefault: 'XS',
     };
   }
@@ -756,6 +766,7 @@ export class ShalomService {
       | 'securityCode'
       | 'autoGuiaActivo'
       | 'clavesRetiro'
+      | 'claveEnRotulo'
       | 'tamanoDefault'
     >,
   ) {
@@ -794,6 +805,9 @@ export class ShalomService {
           : {}),
         ...(dto.autoGuiaActivo !== undefined
           ? { shalomAutoGuiaActivo: Boolean(dto.autoGuiaActivo) }
+          : {}),
+        ...(dto.claveEnRotulo !== undefined
+          ? { shalomClaveEnRotulo: Boolean(dto.claveEnRotulo) }
           : {}),
       },
     });

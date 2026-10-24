@@ -543,3 +543,30 @@ describe('ShalomService (proveedor único api.shalom-api.lat)', () => {
     });
   });
 });
+
+describe('rótulo: la clave de retiro solo si la empresa lo pide (24-10)', () => {
+  const { ShalomService: Svc } = require('./shalom.service');
+  const envio = {
+    nroOrden: '101070619', claveOrden: 'J7MH', claveEnvio: '8448', celularDest: '987780983', transportista: 'SHALOM_PRO',
+    nombreDestinatario: 'ORTEGA ROLDAN, DIEGO JESUS', dniDestinatario: '47065472', tipoEnvio: 'AGENCIA',
+    agenciaDestino: 'CERRO DE PASCO', direccionDestino: '', shalomAgenciaDestinoId: null,
+    comprobante: { serie: 'B0A1', correlativo: 61, cliente: { nombre: 'DIEGO', nroDoc: '47065472', telefono: '987780983' } },
+  };
+  const armar = (claveEnRotulo: boolean, transportista = 'SHALOM_PRO') => {
+    const prisma = {
+      empresa: { findUnique: jest.fn().mockResolvedValue({ shalomClaveEnRotulo: claveEnRotulo }) },
+      envioDespacho: { findFirst: jest.fn().mockResolvedValue({ ...envio, transportista }) },
+    };
+    return new Svc(prisma as any, { getAgencias: jest.fn().mockResolvedValue({ data: [] }) } as any);
+  };
+
+  it('por defecto no sale', async () => {
+    expect((await armar(false).datosRotulo(1, 2)).claveEnvio).toBeNull();
+  });
+  it('sale si la empresa lo activó', async () => {
+    expect((await armar(true).datosRotulo(1, 2)).claveEnvio).toBe('8448');
+  });
+  it('nunca para otro courier', async () => {
+    expect((await armar(true, 'OLVA').datosRotulo(1, 2)).claveEnvio).toBeNull();
+  });
+});
