@@ -50,6 +50,7 @@ import {
   type DatosDemo,
 } from './demos';
 import { conCotizacionExacta } from './cotizacion-exacta';
+import { precioNoPedido, sinPrecioNoPedido, tieneMonto } from './precio-no-pedido';
 import { conBloqueDeDatosExacto } from './datos-en-bloque';
 import { conIndicacionMedica, esAltoRiesgo } from './alto-riesgo';
 import { avisoVoucher, extraerTitular } from './voucher-verificacion';
@@ -966,6 +967,15 @@ export class LeadsMessageProcessor extends WorkerHost {
       });
     }
     resultado.reply = conCotizacionExacta(resultado.reply, resultado.llamadas);
+    // Nunca un precio que el cliente no pidió (opcional por empresa).
+    const delCliente = historial.filter((m) => m.role === 'user').map((m) => m.content);
+    if (config.precioSoloSiPregunta && precioNoPedido(resultado.reply, delCliente)) {
+      const reescrita = await this.ia.reescribirSinPrecio(resultado.reply).catch(() => '');
+      resultado.reply =
+        reescrita && !tieneMonto(reescrita)
+          ? reescrita
+          : sinPrecioNoPedido(resultado.reply, delCliente);
+    }
     // Con lo que quedó guardado DESPUÉS del turno: si el cliente ya dio
     // algún dato, el bloque pide solo lo que falta.
     const pedidoTrasTurno = await this.estadoDelPedido(conv.id);

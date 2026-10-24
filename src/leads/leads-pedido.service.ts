@@ -69,6 +69,8 @@ export interface ConfigComercial {
   numerosInternos?: string[];
   /** Demos por rubro que la IA entrega (Krezka). Ver `demos.ts`. */
   demos?: ConfigDemos;
+  /** Quitar montos si el cliente nunca preguntó por precio (Krezka). Ver `precio-no-pedido.ts`. */
+  precioSoloSiPregunta?: boolean;
 }
 
 /** Campos que la IA puede ir guardando a medida que el cliente los dice. */
@@ -160,6 +162,7 @@ export class LeadsPedidoService {
       ...(Array.isArray(guardada.demos?.cuentas) && guardada.demos?.enlace
         ? { demos: guardada.demos }
         : {}),
+      ...(guardada.precioSoloSiPregunta === true ? { precioSoloSiPregunta: true } : {}),
     };
   }
 
