@@ -75,3 +75,15 @@ export function saldoParaRetirar(saldo: unknown, montoCOD: unknown): number {
 export function textoDePlantilla(cuerpo: string, valores: string[]): string {
   return cuerpo.replace(/\{\{(\d+)\}\}/g, (_m, n: string) => valores[Number(n) - 1] ?? '');
 }
+
+/**
+ * Cómo se nombra al repartidor en el aviso "en camino": con su celular, para
+ * que el cliente sepa a quién esperar y a quién llamar (Hierba Sana 23-10:
+ * Edwing lo escribía a mano en el chat). Sin repartidor asignado, null.
+ */
+export function quienReparte(r: { nombre?: string | null; celular?: string | null } | null | undefined): string | null {
+  const nombre = r?.nombre?.trim();
+  if (!nombre) return null;
+  const d = String(r?.celular ?? '').replace(/\D/g, '').slice(-9);
+  return d.length === 9 ? `${nombre} (cel. ${d.slice(0, 3)} ${d.slice(3, 6)} ${d.slice(6)})` : nombre;
+}

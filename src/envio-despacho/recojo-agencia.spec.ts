@@ -1,4 +1,4 @@
-import { llegadaAAgencia, saldoParaRetirar, textoDePlantilla, tocaRecordatorioRecojo, ultimos9 } from './recojo-agencia';
+import { llegadaAAgencia, quienReparte, saldoParaRetirar, textoDePlantilla, tocaRecordatorioRecojo, ultimos9 } from './recojo-agencia';
 
 const h = (iso: string) => new Date(iso);
 
@@ -75,5 +75,13 @@ describe('recordatorio de recojo en agencia', () => {
     expect(ultimos9('51991065217')).toBe('991065217');
     expect(ultimos9('123')).toBeNull();
     expect(textoDePlantilla('Hola {{1}}, tu pedido {{2}}.', ['Ana', 'NV01-5'])).toBe('Hola Ana, tu pedido NV01-5.');
+  });
+});
+
+describe('quién reparte (aviso en camino)', () => {
+  it('nombre y celular', () => {
+    expect(quienReparte({ nombre: 'Tony Cayo', celular: '+51 955947892' })).toBe('Tony Cayo (cel. 955 947 892)');
+    expect(quienReparte({ nombre: 'Tony Cayo', celular: null })).toBe('Tony Cayo');
+    expect(quienReparte(null)).toBeNull();
   });
 });

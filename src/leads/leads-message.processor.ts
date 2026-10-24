@@ -65,6 +65,7 @@ import { enFormatoWhatsapp } from './formato-whatsapp';
 import { fechaMencionada } from './fecha-mencionada';
 import { pistaDireccion } from './pregunta-direccion';
 import { contextoPedidosDelCliente } from './pedidos-del-cliente';
+import { conversacionDelMismoCliente, esTelefono } from './unir-usuario-whatsapp';
 import { saldoParaRetirar } from '../envio-despacho/recojo-agencia';
 
 /** Frases de "retomo después" que acompañan a una fecha. */
@@ -141,6 +142,8 @@ interface TareaRespuesta {
 interface MensajeEntrante {
   phoneNumberId: string;
   from: string;
+  /** BSUID del remitente ("PE.…"), si Meta lo manda. */
+  bsuid?: string;
   messageId: string;
   text: string;
   esAudio: boolean;
@@ -389,7 +392,13 @@ export class LeadsMessageProcessor extends WorkerHost {
       return;
     }
 
-    // 2) Upsert de la conversación (una por prospecto/empresa).
+    // 2) Si el cliente escribía con su @usuario y ahora llega con número, es
+    // la misma conversación (ver unir-usuario-whatsapp.ts).
+    await this.unirConversacionSinNumero(empresa.id, d).catch((e) =>
+      this.logger.warn(`Lead: no se pudo unir la conversación de ${d.from}: ${e?.message}`),
+    );
+
+    // Upsert de la conversación (una por prospecto/empresa).
     const conv = await this.prisma.leadConversacion.upsert({
       where: {
         empresaId_telefonoProspecto: {
@@ -2814,6 +2823,47 @@ export class LeadsMessageProcessor extends WorkerHost {
       this.logger.warn(`Lead: no se pudieron leer los pedidos del cliente: ${(e as Error).message}`);
       return '';
     }
+  }
+
+  private async unirConversacionSinNumero(empresaId: number, d: MensajeEntrante): Promise<void> {
+    if (!esTelefono(d.from)) return;
+    const ya = await this.prisma.leadConversacion.findUnique({
+      where: { empresaId_telefonoProspecto: { empresaId, telefonoProspecto: d.from } },
+      select: { id: true },
+    });
+    if (ya) return;
+    const candidatas = await this.prisma.leadConversacion.findMany({
+      where: {
+        empresaId,
+        OR: [
+          ...(d.bsuid ? [{ telefonoProspecto: d.bsuid }] : []),
+          // Sin número: los BSUID empiezan con el código del país en letras.
+          { telefonoProspecto: { startsWith: 'PE.' }, actualizadoEn: { gte: new Date(Date.now() - 30 * 864e5) } },
+        ],
+      },
+      select: { id: true, telefonoProspecto: true, borrador: { select: { celular: true } } },
+      take: 200,
+    });
+    const id = conversacionDelMismoCliente(
+      d.from,
+      d.bsuid,
+      candidatas.map((c) => ({ id: c.id, telefonoProspecto: c.telefonoProspecto, celularEntrega: c.borrador?.celular })),
+    );
+    if (!id) return;
+    const anterior = candidatas.find((c) => c.id === id)!.telefonoProspecto;
+    await this.prisma.$transaction([
+      this.prisma.leadConversacion.update({ where: { id }, data: { telefonoProspecto: d.from } }),
+      this.prisma.leadProspecto.updateMany({ where: { conversacionId: id }, data: { telefonoProspecto: d.from } }),
+    ]);
+    // Los avisos programados y las consultas siguen al cliente; si alguno
+    // choca con uno que ya tenía el número, queda el que estaba.
+    await this.prisma.leadDisparo
+      .updateMany({ where: { empresaId, telefono: anterior }, data: { telefono: d.from } })
+      .catch(() => undefined);
+    await this.prisma.leadConsulta
+      .updateMany({ where: { empresaId, telefono: anterior }, data: { telefono: d.from } })
+      .catch(() => undefined);
+    this.logger.log(`Lead: conversación ${id} (${anterior}) ahora con su número ${d.from}.`);
   }
 
   private async estadoDelPedido(conversacionId: number) {

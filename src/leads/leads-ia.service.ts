@@ -206,10 +206,21 @@ export class IaVentasService {
 
     const reply = await this.gemini.chatConHistorial(
       systemPrompt,
-      conversacion.map((m) => ({
-        role: m.role === 'user' ? ('user' as const) : ('model' as const),
-        content: m.content,
-      })),
+      [
+        ...conversacion.map((m) => ({
+          role: m.role === 'user' ? ('user' as const) : ('model' as const),
+          content: m.content,
+        })),
+        // El historial de un seguimiento termina SIEMPRE en el asesor (por eso
+        // es un seguimiento), y Gemini rechaza con 400 "Requests ending with a
+        // model turn are not supported": ningún seguimiento llegó a salir
+        // (Hierba Sana, 23-10). El turno final del usuario es la orden.
+        {
+          role: 'user' as const,
+          content:
+            '[Indicación interna, no la escribió el cliente: lleva más de una hora sin responder. Escribe ahora el mensaje de seguimiento.]',
+        },
+      ],
       160,
     );
     return reply.trim();

@@ -28,6 +28,7 @@ import { PagoService } from '../pago/pago.service';
 import { LeadsEmbudoService } from '../leads/leads-embudo.service';
 import {
   llegadaAAgencia,
+  quienReparte,
   saldoParaRetirar,
   textoDePlantilla,
   tocaRecordatorioRecojo,
@@ -398,7 +399,7 @@ export class EnvioDespachoService {
         comprobanteId,
         empresaId,
         dto.estado as EstadoDespacho,
-        updated.repartidor?.nombre ?? null,
+        quienReparte(updated.repartidor),
       ).catch((e) => this.logger.warn(`WA despacho fallido: ${e.message}`));
     }
 
@@ -844,7 +845,7 @@ export class EnvioDespachoService {
       // Plantilla aprobada por Meta: se entrega fuera de la ventana de 24h, sin bloqueo.
       if (saldo > 0) {
         // pedido_en_destino_cobro → {{1}} nombre, {{2}} pedido, {{3}} agencia, {{4}} saldo
-        await this.avisarAlCliente(empresaId, telefono, 'pedido_en_destino_cobro', [
+        await this.avisarAlCliente(empresaId, telefono, comprobanteId, 'pedido_en_destino_cobro', [
           nombre,
           pedidoRef,
           agencia,
@@ -852,7 +853,7 @@ export class EnvioDespachoService {
         ]);
       } else {
         // pedido_en_destino → {{1}} nombre, {{2}} pedido, {{3}} agencia
-        await this.avisarAlCliente(empresaId, telefono, 'pedido_en_destino', [
+        await this.avisarAlCliente(empresaId, telefono, comprobanteId, 'pedido_en_destino', [
           nombre,
           pedidoRef,
           agencia,
@@ -871,7 +872,7 @@ export class EnvioDespachoService {
     // Meta exige plantillas de contenido fijo aprobado.
     if (esEnCamino) {
       // pedido_en_camino → {{1}} nombre, {{2}} pedido, {{3}} repartidor
-      await this.avisarAlCliente(empresaId, telefono, 'pedido_en_camino', [
+      await this.avisarAlCliente(empresaId, telefono, comprobanteId, 'pedido_en_camino', [
         nombre,
         pedidoRef,
         // "Repartidor asignado: Sin asignar" le llegaba así al cliente. El
@@ -881,7 +882,7 @@ export class EnvioDespachoService {
       ]);
     } else {
       // pedido_entregado → {{1}} nombre, {{2}} pedido
-      await this.avisarAlCliente(empresaId, telefono, 'pedido_entregado', [nombre, pedidoRef]);
+      await this.avisarAlCliente(empresaId, telefono, comprobanteId, 'pedido_entregado', [nombre, pedidoRef]);
     }
   }
 
@@ -898,6 +899,7 @@ export class EnvioDespachoService {
   private async avisarAlCliente(
     empresaId: number,
     telefono: string,
+    comprobanteId: number,
     plantilla: string,
     valores: string[],
   ): Promise<boolean> {
@@ -908,12 +910,22 @@ export class EnvioDespachoService {
     }
     const cuerpo = this.whatsapp.cuerpoPlantillaDespacho(plantilla);
     const nueve = ultimos9(telefono);
-    if (!cuerpo || !nueve) return true;
+    if (!cuerpo) return true;
     try {
-      const conv = await this.prisma.leadConversacion.findFirst({
-        where: { empresaId, telefonoProspecto: { endsWith: nueve } },
-        select: { id: true },
-      });
+      // Primero la conversación donde el bot cerró ESTA venta: puede ser la de
+      // un @usuario sin número (Erica, Hierba Sana 23-10), que por teléfono no
+      // se encuentra. Si no la cerró el bot, la de ese celular.
+      const conv =
+        (await this.prisma.leadConversacion.findFirst({
+          where: { empresaId, borrador: { comprobanteId } },
+          select: { id: true },
+        })) ??
+        (nueve
+          ? await this.prisma.leadConversacion.findFirst({
+              where: { empresaId, telefonoProspecto: { endsWith: nueve } },
+              select: { id: true },
+            })
+          : null);
       if (conv) {
         await this.prisma.leadMensaje.create({
           data: { conversacionId: conv.id, rol: 'SISTEMA', contenido: textoDePlantilla(cuerpo, valores) },
@@ -955,6 +967,7 @@ export class EnvioDespachoService {
       },
       select: {
         id: true,
+        comprobanteId: true,
         agenciaDestino: true,
         montoCOD: true,
         historial: true,
@@ -1005,13 +1018,13 @@ export class EnvioDespachoService {
       const saldo = saldoParaRetirar(c.saldo, e.montoCOD);
       const salio =
         saldo > 0
-          ? await this.avisarAlCliente(c.empresaId, telefono, 'recordatorio_recojo_cobro', [
+          ? await this.avisarAlCliente(c.empresaId, telefono, e.comprobanteId, 'recordatorio_recojo_cobro', [
               nombre,
               pedidoRef,
               agencia,
               saldo.toFixed(2),
             ])
-          : await this.avisarAlCliente(c.empresaId, telefono, 'recordatorio_recojo', [
+          : await this.avisarAlCliente(c.empresaId, telefono, e.comprobanteId, 'recordatorio_recojo', [
               nombre,
               pedidoRef,
               agencia,

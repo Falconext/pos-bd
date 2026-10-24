@@ -357,6 +357,12 @@ Responde SOLO con el array JSON, nada más.`;
       model: MODELO_CHAT,
       systemInstruction,
     });
+    // Los modelos nuevos rechazan una conversación que termina en el modelo
+    // (400 "Requests ending with a model turn are not supported"). Red de
+    // seguridad para cualquier llamador: se pide que continúe.
+    if (messages.length && messages[messages.length - 1].role === 'model') {
+      messages = [...messages, { role: 'user', content: '[Continúa.]' }];
+    }
     const result = await model.generateContent({
       contents: messages.map((m) => ({
         role: m.role,
