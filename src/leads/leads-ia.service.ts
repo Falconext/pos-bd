@@ -227,6 +227,21 @@ export class IaVentasService {
   }
 
   /**
+   * El mismo mensaje sin precios ni nombres de plan. Para el guardia de
+   * `precio-no-pedido.ts`: cortar la oración con el monto se llevaba también
+   * la solución que venía en ella ("con el Corporativo (S/ 99.90) creas las
+   * guías…"); reescribir la conserva.
+   */
+  async reescribirSinPrecio(mensaje: string): Promise<string> {
+    const texto = await this.gemini.chatConHistorial(
+      'Eres editor de mensajes de WhatsApp. Reescribe el mensaje que te pasan quitando TODO precio o monto (S/ …), lo de la instalación y los nombres de planes (Emprendedor, Negocio, Corporativo, Start, Pro, Scale, Full). Todo lo demás queda igual: el mismo tono, lo que resuelve, las mismas preguntas, emojis y bloques de datos tal cual. No agregues nada. Devuelve SOLO el mensaje, sin comillas.',
+      [{ role: 'user', content: mensaje }],
+      500,
+    );
+    return texto.trim();
+  }
+
+  /**
    * Extrae los ítems que el prospecto CONFIRMÓ querer comprar (producto del
    * catálogo + cantidad explícita), para armar un borrador de cotización. Es
    * conservador: solo devuelve ítems del catálogo dado y cantidades que el

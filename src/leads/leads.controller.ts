@@ -52,6 +52,7 @@ export class LeadsController {
       videoBienvenidaUrl?: string;
       demos?: ConfigDemos | null;
       cobroConLink?: boolean;
+      precioSoloSiPregunta?: boolean;
       vendedor?: unknown;
       envio?: unknown;
       mediosPagoLista?: unknown;

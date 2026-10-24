@@ -443,6 +443,7 @@ export class LeadsService {
       | {
           demos?: ConfigDemos;
           cobroConLink?: boolean;
+          precioSoloSiPregunta?: boolean;
           asesor?: string;
           vendedor?: unknown;
           envio?: unknown;
@@ -465,6 +466,7 @@ export class LeadsService {
       tieneDemos: Boolean(demos?.cuentas?.length),
       // El link de pago solo cobra con el Mercado Pago del negocio conectado.
       cobroConLink: json?.cobroConLink === true,
+      precioSoloSiPregunta: json?.precioSoloSiPregunta === true,
       mpConectado: empresa?.mpConectado ?? false,
       // "Mi vendedor". Que estas claves vengan es lo que le dice al panel que
       // el servidor ya entiende la pantalla nueva.
@@ -561,6 +563,8 @@ export class LeadsService {
       demos?: ConfigDemos | null;
       /** Ofrecer el link de Mercado Pago para pagar lo cotizado. */
       cobroConLink?: boolean;
+      /** Quitar montos de la respuesta si el cliente nunca preguntó por precio. */
+      precioSoloSiPregunta?: boolean;
       /** "Mi vendedor": tono, reglas, saludo y temas. */
       vendedor?: unknown;
       /** Zonas de envío y tarifas, como las edita el panel. */
@@ -579,6 +583,7 @@ export class LeadsService {
       data.videoBienvenidaUrl !== undefined ||
       data.demos !== undefined ||
       data.cobroConLink !== undefined ||
+      data.precioSoloSiPregunta !== undefined ||
       data.vendedor !== undefined ||
       data.envio !== undefined ||
       data.mediosPagoLista !== undefined ||
@@ -606,6 +611,10 @@ export class LeadsService {
       if (data.cobroConLink !== undefined) {
         if (data.cobroConLink === true) json.cobroConLink = true;
         else delete json.cobroConLink;
+      }
+      if (data.precioSoloSiPregunta !== undefined) {
+        if (data.precioSoloSiPregunta === true) json.precioSoloSiPregunta = true;
+        else delete json.precioSoloSiPregunta;
       }
       if (data.vendedor !== undefined) {
         const perfil = perfilValido(data.vendedor);
