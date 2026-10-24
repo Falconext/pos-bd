@@ -243,6 +243,9 @@ model Empresa {
   // Shalom no permite repetir la clave del día anterior: al generar la guía se
   // toma la primera que no se usó ayer. Vacío = clave aleatoria por envío.
   shalomClavesRetiro        String?
+  /// La clave de retiro en el rótulo impreso. Apagada: el rótulo va pegado por
+  /// fuera del paquete y junto al DNI la clave deja de proteger el retiro.
+  shalomClaveEnRotulo Boolean @default(false)
   // Tamaño de paquete Shalom por defecto (SOBRE|XXS|XS|S|M|L) cuando el
   // despacho no elige uno. Null = XS (comportamiento histórico).
   shalomTamanoDefault       String?

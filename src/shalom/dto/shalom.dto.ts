@@ -17,6 +17,8 @@ export class ConectarInstanciaDto {
   @IsOptional() @IsBoolean() autoGuiaActivo?: boolean;
   /** Claves de retiro propias, separadas por coma (ej. "1010,1011"). */
   @IsOptional() @IsString() clavesRetiro?: string;
+  /** Mostrar la clave de retiro en el rótulo impreso (por defecto no). */
+  @IsOptional() @IsBoolean() claveEnRotulo?: boolean;
   /** Tamaño de paquete por defecto (SOBRE|XXS|XS|S|M|L). */
   @IsOptional() @IsString() tamanoDefault?: string;
 }
@@ -26,6 +28,8 @@ export class ConfigInstanciaDto {
   @IsOptional() @IsString() securityCode?: string;
   /** Claves de retiro propias, separadas por coma (ej. "1010,1011"). */
   @IsOptional() @IsString() clavesRetiro?: string;
+  /** Mostrar la clave de retiro en el rótulo impreso (por defecto no). */
+  @IsOptional() @IsBoolean() claveEnRotulo?: boolean;
   @IsOptional() @IsString() agenciaOrigenId?: string;
   @IsOptional() @IsString() agenciaOrigenNombre?: string;
   @IsOptional() @IsBoolean() autoGuiaActivo?: boolean;
