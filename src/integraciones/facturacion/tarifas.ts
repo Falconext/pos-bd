@@ -6,83 +6,77 @@
  * le regala plata a Krezka, y las dos se descubren tarde. Acá se puede probar
  * cada borde sin base de datos.
  *
- * Las reglas son las publicadas en el portal, y hay una que es fácil de
- * implementar mal: **el tramo se aplica sobre el total del mes, no por
- * escalones**. 25,000 comprobantes son 25,000 × 0.04, NO 20,000 × 0.05 más
- * 5,000 × 0.04. La diferencia es S/200 en ese ejemplo, y el texto que el
- * integrador leyó antes de firmar dice lo primero.
+ * Tarifa (24-10, la misma de apisunat, deducida de sus órdenes de pago): se
+ * cobra **por empresa emisora (RUC) y por mes**, y el integrador paga la suma
+ * de sus empresas.
  *
- * Que el precio BAJE al subir de tramo tiene una consecuencia que conviene
- * tener presente: justo después del corte, facturar más puede costar menos en
- * total. A 20,000 son S/1,000 y a 20,001 son S/800. Es intencional —así se
- * publicó— y por eso no se "corrige" redondeando hacia arriba.
+ *   - hasta 20 comprobantes: S/ 0.05 cada uno (18 → S/ 0.90);
+ *   - de 21 a 100: S/ 5.00 fijo;
+ *   - más de 100: S/ 5.00 + S/ 0.05 por cada uno sobre 100;
+ *   - todo más IGV. Las pruebas (`sk_test_`) no se cobran: ni se emiten.
+ *
+ * Sin mínimo mensual: una empresa que no emitió no paga nada. La tarifa
+ * anterior (S/ 0.05 con mínimo de S/ 30 por integrador) cobraba S/ 30 a quien
+ * recién empezaba, que es justo a quien queremos traer.
  */
 
-/** Los tramos publicados, de menor a mayor. `hasta` es inclusivo. */
-export interface Tramo {
-  hasta: number;
-  precio: number;
-}
-
-export const TRAMOS: readonly Tramo[] = [
-  { hasta: 20_000, precio: 0.05 },
-  { hasta: 50_000, precio: 0.04 },
-  { hasta: Number.POSITIVE_INFINITY, precio: 0.03 },
-];
-
-/** Mínimo mensual, sin IGV. Se cobra aunque no se emita nada. */
-export const MINIMO_MENSUAL = 30;
+export const PRECIO_UNITARIO = 0.05;
+/** Hasta aquí se cobra por comprobante. */
+export const HASTA_POR_UNIDAD = 20;
+/** Lo que se cobra fijo de 21 a `INCLUIDOS_EN_FIJO`. */
+export const CARGO_FIJO = 5;
+export const INCLUIDOS_EN_FIJO = 100;
 
 export const IGV = 0.18;
 
 const aCentimos = (n: number): number =>
   Math.round((n + Number.EPSILON) * 100) / 100;
 
-/** El precio unitario que corresponde a un volumen mensual. */
-export const precioPorComprobante = (cantidad: number): number => {
-  const n = Math.max(0, Math.floor(cantidad));
-  for (const t of TRAMOS) if (n <= t.hasta) return t.precio;
-  return TRAMOS[TRAMOS.length - 1].precio;
+/** Lo que paga UNA empresa emisora por sus comprobantes del mes, sin IGV. */
+export const cargoDelEmisor = (cantidad: number): number => {
+  const n = Math.max(0, Math.floor(Number(cantidad) || 0));
+  if (n <= HASTA_POR_UNIDAD) return aCentimos(n * PRECIO_UNITARIO);
+  if (n <= INCLUIDOS_EN_FIJO) return CARGO_FIJO;
+  return aCentimos(CARGO_FIJO + (n - INCLUIDOS_EN_FIJO) * PRECIO_UNITARIO);
 };
 
 export interface Liquidacion {
+  /** Comprobantes cobrables del mes, sumando todas las empresas. */
   cantidad: number;
+  /** Precio promedio por comprobante (subtotal / cantidad), solo informativo. */
   precioUnitario: number;
-  /** Lo consumido antes de aplicar el mínimo. */
+  /** Lo que paga cada empresa, en el mismo orden en que se pasaron. */
+  porEmisor: number[];
   subtotalConsumo: number;
-  /** Cuánto se agregó para llegar al mínimo. 0 si no hizo falta. */
+  /** Ya no hay mínimo: siempre 0. Se conserva por el registro del mes. */
   ajusteMinimo: number;
   /** Base imponible: lo que se factura sin IGV. */
   subtotal: number;
   igv: number;
   total: number;
-  /** Verdadero cuando lo que manda es el mínimo y no el consumo. */
+  /** Ya no hay mínimo: siempre falso. */
   aplicoMinimo: boolean;
 }
 
-/**
- * La liquidación del mes.
- *
- * El mínimo no se suma al consumo: lo reemplaza cuando el consumo queda por
- * debajo. Sumarlo cobraría S/30 extra a todo el mundo, que no es lo que dice
- * "mínimo mensual de S/30".
- */
-export const liquidar = (cantidad: number): Liquidacion => {
-  const n = Math.max(0, Math.floor(Number(cantidad) || 0));
-  const precioUnitario = precioPorComprobante(n);
-  const subtotalConsumo = aCentimos(n * precioUnitario);
-  const aplicoMinimo = subtotalConsumo < MINIMO_MENSUAL;
-  const subtotal = aplicoMinimo ? MINIMO_MENSUAL : subtotalConsumo;
+/** La liquidación del mes de un integrador: la suma de sus empresas. */
+export const liquidar = (conteosPorEmisor: number[] | number): Liquidacion => {
+  const conteos = (Array.isArray(conteosPorEmisor) ? conteosPorEmisor : [conteosPorEmisor]).map((n) =>
+    Math.max(0, Math.floor(Number(n) || 0)),
+  );
+  const porEmisor = conteos.map(cargoDelEmisor);
+  const cantidad = conteos.reduce((a, b) => a + b, 0);
+  const subtotal = aCentimos(porEmisor.reduce((a, b) => a + b, 0));
   const igv = aCentimos(subtotal * IGV);
   return {
-    cantidad: n,
-    precioUnitario,
-    subtotalConsumo,
-    ajusteMinimo: aCentimos(subtotal - subtotalConsumo),
+    cantidad,
+    precioUnitario: cantidad ? Math.round((subtotal / cantidad) * 10000) / 10000 : 0,
+    porEmisor,
+    subtotalConsumo: subtotal,
+    ajusteMinimo: 0,
     subtotal,
     igv,
     total: aCentimos(subtotal + igv),
-    aplicoMinimo,
+    aplicoMinimo: false,
   };
 };
 

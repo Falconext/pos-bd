@@ -100,10 +100,13 @@ export class MedidorApiService {
       porEmisor.set(k, e);
     }
 
+    const emisores = [...porEmisor.values()];
+    const vivo = liquidar(emisores.map((e) => e.count));
     const l: Liquidacion = cerrado
       ? {
           cantidad: cerrado.cantidad,
           precioUnitario: cerrado.precioUnitario,
+          porEmisor: vivo.porEmisor,
           subtotalConsumo: cerrado.subtotal - 0,
           ajusteMinimo: 0,
           subtotal: cerrado.subtotal,
@@ -111,7 +114,7 @@ export class MedidorApiService {
           total: cerrado.total,
           aplicoMinimo: cerrado.aplicoMinimo,
         }
-      : liquidar(cobrables.length);
+      : vivo;
 
     return {
       object: 'usage',
@@ -125,7 +128,11 @@ export class MedidorApiService {
       total: l.total,
       minimum_applied: l.aplicoMinimo,
       currency: 'PEN',
-      by_issuer: [...porEmisor.values()].sort((a, b) => b.count - a.count),
+      // Lo que paga cada empresa (sin IGV): hasta 20 a S/ 0.05, de 21 a 100
+      // S/ 5 fijo, más de 100 S/ 5 + S/ 0.05 por cada uno extra.
+      by_issuer: emisores
+        .map((e, i) => ({ ...e, charge: vivo.porEmisor[i] }))
+        .sort((a, b) => b.count - a.count),
     };
   }
 
@@ -147,7 +154,10 @@ export class MedidorApiService {
     // Solo los que nadie cobró todavía. Un comprobante que SUNAT aceptó
     // después del cierre anterior cae acá, en el período que le toca ahora.
     const sinCobrar = cobrables.filter((c) => !c.apiPeriodoFacturado);
-    const l = liquidar(sinCobrar.length);
+    // La tarifa es por empresa: se cuenta cuántos tiene cada una.
+    const porEmpresa = new Map<number, number>();
+    for (const c of sinCobrar) porEmpresa.set(c.empresaId, (porEmpresa.get(c.empresaId) ?? 0) + 1);
+    const l = liquidar([...porEmpresa.values()]);
 
     try {
       await this.prisma.$transaction([
@@ -253,14 +263,15 @@ export class MedidorApiService {
     });
     if (ya) return { cobroId: ya.id, yaEstaba: true, total: Number(ya.monto) };
 
+    // Sin mínimo mensual: un mes sin comprobantes no genera cobro.
+    if (!consumo.total) return { cobroId: 0, yaEstaba: false, total: 0 };
+
     // Vence a 15 días del cierre, como cualquier factura a crédito.
     const vence = new Date();
     vence.setDate(vence.getDate() + 15);
 
     const detalle =
-      consumo.cantidad === 0
-        ? 'sin consumo, mínimo mensual'
-        : `${consumo.cantidad.toLocaleString('es-PE')} comprobantes × S/ ${consumo.precioUnitario.toFixed(2)}`;
+      `${consumo.cantidad.toLocaleString('es-PE')} comprobantes aceptados`;
 
     try {
       const cobro = await this.prisma.cobroEmpresa.create({

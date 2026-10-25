@@ -20,14 +20,19 @@ import { MedidorApiService } from './medidor.service';
  * por producto— por lo mismo: dos motores de entrega con reintentos y firma
  * HMAC es un motor que se arregla y otro que se olvida.
  */
+import { ConsolaFacturacionController } from './consola.controller';
+import { ConsolaFacturacionService } from './consola.service';
+import { EmpresaModule } from '../../empresa/empresa.module';
+
 @Module({
-  imports: [PrismaModule, ComprobanteModule, IntegracionesModule],
-  controllers: [FacturacionApiController],
+  imports: [PrismaModule, ComprobanteModule, IntegracionesModule, EmpresaModule],
+  controllers: [FacturacionApiController, ConsolaFacturacionController],
   providers: [
     FacturacionApiService,
     EmisoresService,
     AvisosFacturacionService,
     MedidorApiService,
+    ConsolaFacturacionService,
   ],
   exports: [
     FacturacionApiService,

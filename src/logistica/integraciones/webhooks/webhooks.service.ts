@@ -88,12 +88,20 @@ export class WebhooksService {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
-                  // La API de Krezka (erp) firma con su propia marca: el
-                  // negocio integra con Krezka, no con Falconext.
+                  // La API de Krezka (erp) y la de Facturación firman con la
+                  // marca Krezka: quien integra lo hace con Krezka, no con
+                  // Falconext. Logística sigue con sus encabezados.
                   ...(producto === 'erp'
                     ? {
                         'Krezka-Event': event,
                         'Krezka-Sale-Id': orderId,
+                        'Krezka-Attempt': String(attempt),
+                        'Krezka-Signature': `t=${t},v1=${signature}`,
+                      }
+                    : producto === 'facturacion'
+                    ? {
+                        'Krezka-Event': event,
+                        'Krezka-Invoice-Id': orderId,
                         'Krezka-Attempt': String(attempt),
                         'Krezka-Signature': `t=${t},v1=${signature}`,
                       }

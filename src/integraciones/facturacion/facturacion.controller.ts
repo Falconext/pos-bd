@@ -19,6 +19,7 @@ import { EmisoresService } from '../emisores/emisores.service';
 import { WebhooksService } from '../../logistica/integraciones/webhooks/webhooks.service';
 import { FacturacionApiService } from './facturacion.service';
 import { MedidorApiService } from './medidor.service';
+import { esClaveDePrueba } from './modo-prueba';
 
 /**
  * La API pública de facturación.
@@ -59,7 +60,7 @@ export class FacturacionApiController {
   @HttpCode(202)
   @UseInterceptors(IdempotenciaInterceptor)
   async crear(@Body() cuerpo: any, @Request() req: any) {
-    return this.facturacion.emitir(req.apiEmpresaId, cuerpo);
+    return this.facturacion.emitir(req.apiEmpresaId, cuerpo, esClaveDePrueba(req));
   }
 
   @Get('invoices')
@@ -128,14 +129,14 @@ export class FacturacionApiController {
   @HttpCode(202)
   @UseInterceptors(IdempotenciaInterceptor)
   async anular(@Param('id') id: string, @Body() cuerpo: any, @Request() req: any) {
-    return this.facturacion.anular(req.apiEmpresaId, id, cuerpo?.reason);
+    return this.facturacion.anular(req.apiEmpresaId, id, cuerpo?.reason, esClaveDePrueba(req));
   }
 
   @Post('credit_notes')
   @HttpCode(202)
   @UseInterceptors(IdempotenciaInterceptor)
   async crearNotaCredito(@Body() cuerpo: any, @Request() req: any) {
-    return this.facturacion.crearNotaCredito(req.apiEmpresaId, cuerpo);
+    return this.facturacion.crearNotaCredito(req.apiEmpresaId, cuerpo, esClaveDePrueba(req));
   }
 
   @Get('credit_notes/:id')
