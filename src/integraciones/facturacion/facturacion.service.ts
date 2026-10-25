@@ -13,6 +13,8 @@ import { nuevoIdPublico, serializarComprobante } from './serializador';
 import { ErrorDeContrato } from './fachada';
 import { esFinal, estadoPublico } from './estado-publico';
 import { puedeEmitir } from './habilitacion';
+import { comprobanteSimulado, notaCreditoSimulada } from './modo-prueba';
+import { randomBytes } from 'crypto';
 
 /**
  * La API de facturación, apoyada en el motor que ya factura para 61 empresas.
@@ -110,11 +112,24 @@ export class FacturacionApiService {
    * Si el disparo falla, el comprobante igual queda en `PENDIENTE` y el
    * scheduler lo recoge: no se pierde.
    */
-  async emitir(integradorId: number, entrada: ComprobantePublico) {
+  async emitir(integradorId: number, entrada: ComprobantePublico, prueba = false) {
     const emisor = await this.emisores.resolverParaIntegrador(
       integradorId,
       String(entrada.issuer_id ?? ''),
     );
+
+    // Clave de prueba: se valida todo de verdad y se devuelve cómo habría
+    // quedado (modo-prueba.ts). Va antes de la puerta de habilitación: probar
+    // la integración es justo lo que se hace ANTES de estar habilitado.
+    if (prueba) {
+      const { tipoDoc } = validarEntrada(entrada);
+      const siguiente = await this.comprobantes.siguienteCorrelativo(emisor.id, tipoDoc).catch(() => null);
+      return {
+        ...comprobanteSimulado(entrada, emisor.apiPublicId!, siguiente as any),
+        // Un id de prueba (no guardado) para encadenar la baja o la nota en el sandbox.
+        id: `inv_test_${randomBytes(9).toString('base64url')}`,
+      };
+    }
 
     // La puerta va antes que todo lo demás: el correlativo se asigna al crear
     // el comprobante, así que un emisor no habilitado quema uno por intento.
@@ -301,7 +316,14 @@ export class FacturacionApiService {
    * mensaje lo dice así. Sobre un rechazado directamente no tiene sentido —
    * ese comprobante nunca existió para SUNAT.
    */
-  async anular(integradorId: number, invoiceId: string, motivo: string) {
+  async anular(integradorId: number, invoiceId: string, motivo: string, prueba = false) {
+    if (prueba && String(invoiceId).startsWith('inv_test_')) {
+      const texto = String(motivo ?? '').trim();
+      if (!texto) {
+        throw new ErrorDeContrato('parameter_missing', 'El campo reason es obligatorio: SUNAT exige el motivo de la baja.', 'reason');
+      }
+      return { id: invoiceId, object: 'invoice', livemode: false, status: 'voided', reason: texto, message: 'Clave de prueba: no se envió la baja a SUNAT.' };
+    }
     const c = await this.comprobanteDelIntegrador(integradorId, invoiceId);
     const estado = estadoPublico(c);
 
@@ -325,9 +347,47 @@ export class FacturacionApiService {
       throw new ErrorDeContrato('parameter_invalid', 'El campo reason no puede superar los 100 caracteres.', 'reason');
     }
 
-    await this.comprobantes.anularComprobante(c.id, texto, c.empresaId);
+    // Ya tiene su nota de anulación (no rechazada): una segunda anularía dos veces.
+    const yaAnulada = await this.prisma.comprobante.findFirst({
+      where: {
+        empresaId: c.empresaId,
+        tipoDoc: '07',
+        numDocAfectado: `${c.serie}-${c.correlativo}`,
+        motivo: { codigo: '01' },
+        estadoEnvioSunat: { not: 'RECHAZADO' as never },
+      },
+      select: { apiPublicId: true },
+    });
+    if (yaAnulada) {
+      throw new ErrorDeContrato(
+        'already_voided',
+        `Este comprobante ya tiene su nota de crédito de anulación${yaAnulada.apiPublicId ? ` (${yaAnulada.apiPublicId})` : ''}.`,
+      );
+    }
+    if (prueba) {
+      return {
+        ...serializarComprobante(c, c.empresa.apiPublicId),
+        livemode: false,
+        status: 'voided',
+        message: 'Clave de prueba: todo se validó, pero la baja no se envió a SUNAT.',
+      };
+    }
+    // Un comprobante aceptado se anula con una nota de crédito por "anulación
+    // de la operación" (motivo 01) por el total, igual que en el panel y en la
+    // API de Krezka. Antes se llamaba a `anularComprobante`, que rechaza todo
+    // comprobante formal ya emitido: la baja fallaba siempre (revisión 24-10).
+    const nota: any = await this.crearNotaCredito(integradorId, {
+      issuer_id: c.empresa.apiPublicId,
+      affects_invoice_id: invoiceId,
+      reason_code: '01',
+      description: texto,
+    });
     const actualizado = await this.comprobanteDelIntegrador(integradorId, invoiceId);
-    return serializarComprobante(actualizado, actualizado.empresa.apiPublicId);
+    return {
+      ...serializarComprobante(actualizado, actualizado.empresa.apiPublicId),
+      void_method: 'credit_note',
+      credit_note: { id: nota?.id, full_number: nota?.full_number, status: nota?.status },
+    };
   }
 
   /** Lo que el contrato admite como sustento de una nota de crédito. */
@@ -342,11 +402,33 @@ export class FacturacionApiService {
    * sea del integrador: sin eso, conocer un `inv_…` ajeno bastaría para
    * emitir notas contra las ventas de otro.
    */
-  async crearNotaCredito(integradorId: number, entrada: any) {
+  async crearNotaCredito(integradorId: number, entrada: any, prueba = false) {
     const emisor = await this.emisores.resolverParaIntegrador(
       integradorId,
       String(entrada?.issuer_id ?? ''),
     );
+    // En el sandbox, contra una factura de prueba (`inv_test_…`): no existe,
+    // pero se validan el motivo y la descripción igual que en vivo.
+    if (prueba && String(entrada?.affects_invoice_id ?? '').startsWith('inv_test_')) {
+      const motivo = String(entrada?.reason_code ?? '');
+      if (!FacturacionApiService.MOTIVOS_NOTA.has(motivo)) {
+        throw new ErrorDeContrato('parameter_invalid', 'reason_code debe ser un código del catálogo 09 de SUNAT (01 a 13).', 'reason_code');
+      }
+      const descripcion = String(entrada?.description ?? '').trim();
+      if (!descripcion) {
+        throw new ErrorDeContrato('parameter_missing', 'El campo description es obligatorio: es el sustento de la nota.', 'description');
+      }
+      return {
+        ...notaCreditoSimulada(
+          { apiPublicId: entrada.affects_invoice_id, serie: 'F001', correlativo: 0, mtoImpVenta: null },
+          emisor.apiPublicId!,
+          motivo,
+          descripcion,
+          null,
+        ),
+        affects_number: null,
+      };
+    }
     const afectado = await this.comprobanteDelIntegrador(
       integradorId,
       String(entrada?.affects_invoice_id ?? ''),
@@ -381,6 +463,13 @@ export class FacturacionApiService {
       throw new ErrorDeContrato('parameter_missing', 'El campo description es obligatorio: es el sustento de la nota.', 'description');
     }
 
+    if (prueba) {
+      const siguiente = await this.comprobantes
+        .siguienteCorrelativo(emisor.id, '07', afectado.tipoDoc)
+        .catch(() => null);
+      return notaCreditoSimulada(afectado as any, emisor.apiPublicId!, motivo, descripcion, siguiente as any);
+    }
+
     const creada = await this.comprobantes.crearNotaCredito(
       {
         tipoDoc: '07',
@@ -392,7 +481,11 @@ export class FacturacionApiService {
         clienteId: afectado.clienteId,
         clienteName: afectado.cliente?.nombre ?? '',
         tipoOperacionId: await this.tipoOperacionPorDefecto(),
-        motivoId: Number(motivo),
+        // Por código del catálogo 09, no por id: el id de la tabla no tiene
+        // por qué coincidir con el código.
+        motivoId:
+          (await this.prisma.motivoNota.findFirst({ where: { codigo: motivo, tipo: 'CREDITO' as never }, select: { id: true } }))?.id ??
+          Number(motivo),
         tipDocAfectado: afectado.tipoDoc,
         numDocAfectado: `${afectado.serie}-${afectado.correlativo}`,
         leyenda: descripcion,
@@ -402,7 +495,10 @@ export class FacturacionApiService {
           productoId: d.productoId ?? null,
           descripcion: d.descripcion,
           cantidad: d.cantidad,
-          nuevoValorUnitario: d.mtoValorUnitario,
+          // El motor recibe el precio CON IGV: con el valor sin IGV la nota
+          // salía 18% menor que la factura que anula (mismo error que se
+          // corrigió en la emisión).
+          nuevoValorUnitario: d.mtoPrecioUnitario ?? d.mtoValorUnitario * (String(d.tipAfeIgv ?? '10') === '10' ? 1.18 : 1),
           unidadVenta: d.unidad,
           tipoAfectacionIGV: String(d.tipAfeIgv ?? '10'),
         })),

@@ -154,25 +154,25 @@ correr('medidor y cierre mensual, contra Postgres real', () => {
       const c: any = await medidor.consumo(INT_A, PERIODO);
       expect(c.billable_count).toBe(3);
       expect(c.by_issuer).toEqual([
-        { issuer_id: 'iss_qaA1', name: 'EMISOR A1', ruc: expect.any(String), count: 2 },
-        { issuer_id: 'iss_qaA2', name: 'EMISOR A2', ruc: expect.any(String), count: 1 },
+        { issuer_id: 'iss_qaA1', name: 'EMISOR A1', ruc: expect.any(String), count: 2, charge: 0.1 },
+        { issuer_id: 'iss_qaA2', name: 'EMISOR A2', ruc: expect.any(String), count: 1, charge: 0.05 },
       ]);
     });
   });
 
   describe('el cobro', () => {
-    it('aplica el mínimo mensual cuando el consumo queda debajo', async () => {
+    it('hasta 20 por empresa se cobra S/ 0.05 cada uno, sin mínimo', async () => {
       await emitido(EMISOR_A1, clienteA1, 'EMITIDO');
       const c: any = await medidor.consumo(INT_A, PERIODO);
-      expect(c.subtotal).toBe(30);
-      expect(c.minimum_applied).toBe(true);
-      expect(c.total).toBe(35.4);
+      expect(c.subtotal).toBe(0.05);
+      expect(c.minimum_applied).toBe(false);
+      expect(c.total).toBe(0.06);
     });
 
-    it('un mes sin un solo comprobante igual paga el mínimo', async () => {
+    it('un mes sin un solo comprobante no paga nada', async () => {
       const c: any = await medidor.consumo(INT_A, PERIODO);
       expect(c.billable_count).toBe(0);
-      expect(c.total).toBe(35.4);
+      expect(c.total).toBe(0);
     });
   });
 
@@ -286,8 +286,8 @@ correr('medidor y cierre mensual, contra Postgres real', () => {
         where: { empresaId: INT_A, periodo: PERIODO, concepto: 'API_FACTURACION' } });
       expect(cobro).toBeTruthy();
       expect(cobro!.estado).toBe('PENDIENTE');
-      // 3 comprobantes caen bajo el mínimo: S/30 + IGV.
-      expect(Number(cobro!.monto)).toBe(35.4);
+      // 3 comprobantes de una empresa: 3 × S/ 0.05 + IGV.
+      expect(Number(cobro!.monto)).toBe(0.18);
       expect(cobro!.descripcion).toContain('3 comprobantes');
     });
 
@@ -326,17 +326,15 @@ correr('medidor y cierre mensual, contra Postgres real', () => {
       const todos = await prisma.cobroEmpresa.findMany({
         where: { empresaId: INT_A, periodo: PERIODO }, orderBy: { concepto: 'asc' } });
       expect(todos.map((c) => c.concepto)).toEqual(['API_FACTURACION', 'MENSUALIDAD']);
-      expect(todos.map((c) => Number(c.monto))).toEqual([35.4, 149]);
+      expect(todos.map((c) => Number(c.monto))).toEqual([0.06, 149]);
     });
 
-    it('el cobro lleva el total CON IGV, que es lo que se le cobra', async () => {
-      for (let i = 0; i < 1000; i++) {} // sin emitir: solo el mínimo
+    it('un mes sin comprobantes no genera cobro', async () => {
       await medidor.cerrarPeriodo(INT_A, PERIODO);
-      await medidor.facturarConsumo(INT_A, PERIODO);
-      const c = await prisma.cobroEmpresa.findFirst({
-        where: { empresaId: INT_A, periodo: PERIODO, concepto: 'API_FACTURACION' } });
-      expect(Number(c!.monto)).toBe(35.4); // 30 + 18%
-      expect(c!.descripcion).toContain('mínimo mensual');
+      const f = await medidor.facturarConsumo(INT_A, PERIODO);
+      expect(f.total).toBe(0);
+      expect(await prisma.cobroEmpresa.count({
+        where: { empresaId: INT_A, periodo: PERIODO, concepto: 'API_FACTURACION' } })).toBe(0);
     });
 
     it('el cron cierra y factura en la misma pasada', async () => {
@@ -344,11 +342,16 @@ correr('medidor y cierre mensual, contra Postgres real', () => {
       await medidor.cerrarMesAnterior();
       const periodo = new Date();
       const p = `${periodo.getFullYear()}-${String(periodo.getMonth()).padStart(2, '0')}`;
-      // El cron cierra el mes ANTERIOR al de hoy; basta con que haya creado
-      // el cobro de ese período para los integradores con emisores.
-      const n = await prisma.cobroEmpresa.count({
-        where: { empresaId: { in: [INT_A, INT_B] }, concepto: 'API_FACTURACION' } });
-      expect(n).toBeGreaterThanOrEqual(2);
+      // El cron cierra el mes ANTERIOR al de hoy para todos los integradores
+      // con emisores. Ya no hay mínimo: cobra a quien consumió (A) y no le
+      // genera cobro a quien no emitió nada en ese mes (B).
+      void p;
+      const a = await prisma.consumoApiMes.count({ where: { integradorId: { in: [INT_A, INT_B] } } });
+      expect(a).toBe(2); // los dos quedaron cerrados
+      const cobrosB = await prisma.cobroEmpresa.count({
+        where: { empresaId: INT_B, concepto: 'API_FACTURACION', monto: { gt: 0 } } });
+      const consumoB = await prisma.consumoApiMes.findFirst({ where: { integradorId: INT_B } });
+      expect(cobrosB).toBe(consumoB && consumoB.total > 0 ? 1 : 0);
     });
   });
 });

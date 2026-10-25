@@ -183,7 +183,9 @@ export class EmisoresService {
       // Cuándo se espera que SUNAT lo tenga listo. Orientativo: QPSE dice
       // ~24 h "aunque pueden demorar más si SUNAT presenta intermitencias".
       available_at:
-        f.apiEmisorEstado === 'pendiente' && f.apiEmisorDesde
+        // Sin credenciales todavía no corre el reloj de las 24 h: decir una
+        // fecha a una empresa que ni pidió producción confundía (QA 25-10).
+        listo && f.apiEmisorEstado === 'pendiente' && f.apiEmisorDesde
           ? new Date(f.apiEmisorDesde.getTime() + 24 * 60 * 60 * 1000)
           : undefined,
       created_at: f.fechaActivacion,

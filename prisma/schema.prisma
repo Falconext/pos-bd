@@ -504,6 +504,9 @@ model Empresa {
   /// Por qué quedó bloqueado, en las palabras de SUNAT. Se le devuelve al
   /// integrador para que sepa qué tiene que arreglar su cliente.
   apiEmisorMotivo         String?
+  /// Cuenta de la consola de developers.krezka.com (integrador que se registró
+  /// solo). No usa el sistema Krezka: solo emite por la API para sus empresas.
+  esIntegradorApi Boolean @default(false)
   resellerMovimientos     ResellerMovimiento[]
   brand                   String                         @default("falconext")
   producto                String                         @default("facturacion")
