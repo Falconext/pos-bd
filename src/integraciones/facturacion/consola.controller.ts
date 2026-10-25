@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Query, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseIntPipe, Post, Query, Request, UseGuards } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -54,6 +54,14 @@ export class ConsolaFacturacionController {
   @Post('empresas/:id/produccion')
   pasarAProduccion(@Request() req: any, @Param('id') id: string, @Body() body: any) {
     return this.consola.pasarAProduccion(req.user.empresaId, id, body);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_EMPRESA')
+  @Post('probar')
+  @HttpCode(200)
+  probar(@Request() req: any, @Body() body: any) {
+    return this.consola.probar(req.user.empresaId, body);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

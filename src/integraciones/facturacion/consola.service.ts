@@ -16,6 +16,7 @@ import { WebhooksService } from '../../logistica/integraciones/webhooks/webhooks
 import { MedidorApiService } from './medidor.service';
 import { rucValido, MENSAJE_RUC_INVALIDO } from '../erp/ruc';
 import { QpseClient, QpseEmpresaCuenta } from '../../common/utils/qpse.client';
+import { FacturacionApiService } from './facturacion.service';
 
 /**
  * La consola de developers.krezka.com: lo que en apisunat es "Mis Empresas".
@@ -47,6 +48,7 @@ export class ConsolaFacturacionService {
     private readonly webhooks: WebhooksService,
     private readonly medidor: MedidorApiService,
     private readonly qpse: QpseClient,
+    private readonly facturacion: FacturacionApiService,
   ) {}
 
   /** Los planes de la consola: sin módulos del ERP, sin tope de comprobantes. */
@@ -316,6 +318,19 @@ export class ConsolaFacturacionService {
 
   private static mensajeQpse(err: unknown): string {
     return String((err as any)?.message ?? err ?? '').replace(/^QPSE:\s*/, '');
+  }
+
+  // ── Probar ───────────────────────────────────────────────────────────
+
+  /**
+   * El formulario "Probar" de la consola: lo mismo que `POST /v1/invoicing/
+   * invoices` con una clave `sk_test_`, pero con la sesión. Así se prueba el
+   * primer comprobante antes de tener una clave y se ve el JSON exacto que
+   * hay que mandar. Corre las validaciones de verdad; no emite ni cobra.
+   */
+  async probar(empresaId: number, body: any) {
+    await this.integrador(empresaId);
+    return this.facturacion.emitir(empresaId, body ?? {}, true);
   }
 
   // ── Claves ───────────────────────────────────────────────────────────
