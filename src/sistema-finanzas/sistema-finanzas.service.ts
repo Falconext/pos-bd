@@ -203,11 +203,12 @@ export class SistemaFinanzasService {
     // Mensualidades cobradas a clientes directos (sin reseller). Antes esta
     // plata no aparecía en ningún lado: "ingresos cobrados" solo miraba
     // ResellerMovimiento, así que el panel mostraba el canal reseller como si
-    // fuera todo el ingreso de la plataforma.
+    // fuera todo el ingreso de la plataforma. El consumo de la API de
+    // facturación entra por el mismo circuito (CobroEmpresa) con su propio tipo.
     const [cobrosDirectosMes, cobrosDirectosAnio] = await Promise.all([
       this.prisma.ingresoSistema.aggregate({
         where: {
-          tipo: 'SUSCRIPCION',
+          tipo: { in: ['SUSCRIPCION', 'API_FACTURACION'] },
           cobroEmpresaId: { not: null },
           fecha: { gte: inicioMes },
           ...(empresaIds.length > 0 && (sistemaNegocio || sistemaProducto)
@@ -218,7 +219,7 @@ export class SistemaFinanzasService {
       }),
       this.prisma.ingresoSistema.aggregate({
         where: {
-          tipo: 'SUSCRIPCION',
+          tipo: { in: ['SUSCRIPCION', 'API_FACTURACION'] },
           cobroEmpresaId: { not: null },
           fecha: { gte: inicioAnio },
           ...(empresaIds.length > 0 && (sistemaNegocio || sistemaProducto)

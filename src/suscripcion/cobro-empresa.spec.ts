@@ -175,6 +175,20 @@ describe('Registrar el pago', () => {
     expect(update.estado).toBe('ACTIVO');
   });
 
+  it('el consumo de la API no alarga el plan ni se asienta como mensualidad', async () => {
+    const prisma = prismaBase();
+    prisma.cobroEmpresa.findUnique.mockResolvedValue(cobro({ concepto: 'API_FACTURACION', monto: 5.9 }));
+    prisma.cobroEmpresa.update.mockImplementation(({ data }: any) => Promise.resolve(data));
+
+    await montar(prisma).registrarPago(5, { medioPago: 'MERCADO_PAGO', fechaCobro: HOY });
+
+    expect(prisma.empresa.update).not.toHaveBeenCalled();
+    expect(prisma.cobroEmpresa.update.mock.calls[0][0].data.cubreHasta).toBeNull();
+    const ingreso = prisma.ingresoSistema.create.mock.calls[0][0].data;
+    expect(ingreso.tipo).toBe('API_FACTURACION');
+    expect(ingreso.concepto).toMatch(/^API de facturación 2026-10/);
+  });
+
   it('deja el ingreso ligado a la empresa y al cobro', async () => {
     const prisma = prismaBase();
     prisma.cobroEmpresa.findUnique.mockResolvedValue(cobro());

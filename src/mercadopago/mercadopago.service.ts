@@ -337,6 +337,86 @@ export class MercadoPagoService {
     return r;
   }
 
+  // ── Cobros de la plataforma (Krezka le cobra a sus clientes) ──────────────
+
+  /**
+   * El access token de la cuenta de Mercado Pago de la plataforma. No es la
+   * app del marketplace (`MP_CLIENT_ID`/`SECRET`): con esa cada tienda cobra
+   * para sí; con esta cobra Krezka. Es la misma que usan las suscripciones.
+   */
+  private get tokenPlataforma() {
+    return (process.env.MP_ACCESS_TOKEN_PLATAFORMA || '').trim();
+  }
+
+  plataformaConfigurada(): boolean {
+    return Boolean(this.tokenPlataforma);
+  }
+
+  /**
+   * Un link de pago a la cuenta de la plataforma. Sin comisión de marketplace:
+   * el cobro es de la propia plataforma.
+   */
+  async crearCobroPlataforma(params: {
+    referencia: string;
+    titulo: string;
+    total: number;
+    clienteEmail?: string | null;
+    backUrls?: { success: string; pending: string; failure: string };
+  }): Promise<{ preferenceId: string; initPoint: string }> {
+    if (!this.tokenPlataforma) {
+      throw new BadRequestException('El pago con Mercado Pago todavía no está configurado.');
+    }
+    const total = Math.round(Number(params.total) * 100) / 100;
+    if (!(total > 0)) throw new BadRequestException('Monto inválido para Mercado Pago');
+
+    const body: Record<string, any> = {
+      items: [{ id: params.referencia, title: params.titulo, quantity: 1, currency_id: 'PEN', unit_price: total }],
+      external_reference: params.referencia,
+      notification_url: `${(process.env.BACKEND_URL || 'http://localhost:4001').replace(/\/$/, '')}/api/mercadopago/webhook`,
+    };
+    if (params.backUrls) {
+      body.back_urls = params.backUrls;
+      if (/^https:\/\//i.test(params.backUrls.success)) body.auto_return = 'approved';
+    }
+    if (params.clienteEmail) body.payer = { email: params.clienteEmail };
+
+    try {
+      const { data } = await axios.post(MP_PREFERENCES_URL, body, {
+        headers: { Authorization: `Bearer ${this.tokenPlataforma}` },
+      });
+      const initPoint = data.init_point || data.sandbox_init_point;
+      if (!initPoint) throw new Error('MP no devolvió init_point');
+      return { preferenceId: String(data.id), initPoint };
+    } catch (err: any) {
+      this.logger.error(`Error creando cobro MP de la plataforma: ${JSON.stringify(err?.response?.data) || err?.message}`);
+      throw new BadRequestException('No se pudo iniciar el pago con Mercado Pago');
+    }
+  }
+
+  /**
+   * Los pagos de la cuenta de la plataforma para una referencia, del más nuevo
+   * al más viejo. Con `paymentId` trae solo ese. Es el respaldo del webhook:
+   * cuando el cliente vuelve del pago se confirma acá aunque el aviso no llegue.
+   */
+  async pagosPlataforma(referencia: string, paymentId?: string): Promise<any[]> {
+    if (!this.tokenPlataforma) return [];
+    const headers = { Authorization: `Bearer ${this.tokenPlataforma}` };
+    try {
+      if (paymentId && /^\d+$/.test(paymentId)) {
+        const { data } = await axios.get(`${MP_PAYMENTS_URL}/${paymentId}`, { headers });
+        return data?.external_reference === referencia ? [data] : [];
+      }
+      const { data } = await axios.get(`${MP_PAYMENTS_URL}/search`, {
+        headers,
+        params: { external_reference: referencia, sort: 'date_created', criteria: 'desc' },
+      });
+      return Array.isArray(data?.results) ? data.results : [];
+    } catch (err: any) {
+      this.logger.warn(`No se pudo consultar pagos MP de ${referencia}: ${err?.response?.data?.message || err?.message}`);
+      return [];
+    }
+  }
+
   /**
    * El cobro en sí: una preferencia de Checkout Pro a nombre de la empresa,
    * con la comisión de la plataforma. Lo usan la tienda y el link de pago
@@ -742,6 +822,18 @@ export class MercadoPagoService {
       } catch {
         // token de otra empresa: seguir probando
         continue;
+      }
+    }
+    // Los cobros de la propia plataforma (consumo de la API, por ejemplo) se
+    // pagan a la cuenta de Krezka, que no es ninguna de las conectadas.
+    if (this.tokenPlataforma) {
+      try {
+        const { data } = await axios.get(`${MP_PAYMENTS_URL}/${paymentId}`, {
+          headers: { Authorization: `Bearer ${this.tokenPlataforma}` },
+        });
+        if (data?.id) return data;
+      } catch {
+        // no es un pago de la plataforma
       }
     }
     return null;

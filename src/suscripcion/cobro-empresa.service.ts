@@ -178,6 +178,10 @@ export class CobroEmpresaService {
     }
 
     const ahora = datos.fechaCobro ?? new Date();
+    // El consumo de la API de facturación se paga por lo ya usado: no compra
+    // tiempo de suscripción. Tratarlo como mensualidad alargaba el plan y lo
+    // asentaba como "Mensualidad" en finanzas.
+    const esConsumoApi = cobro.concepto === 'API_FACTURACION';
     const dias = cobro.empresa.plan?.duracionDias || 30;
     const vencimiento = cobro.empresa.fechaExpiracion;
     const limiteParaEncadenar = new Date(vencimiento);
@@ -201,22 +205,26 @@ export class CobroEmpresaService {
           medioPago: datos.medioPago ?? cobro.medioPago ?? 'OTRO',
           referencia: datos.referencia ?? cobro.referencia,
           fechaCobro: ahora,
-          cubreHasta,
+          cubreHasta: esConsumoApi ? null : cubreHasta,
           motivo: null,
         },
       });
 
-      await tx.empresa.update({
-        where: { id: cobro.empresaId },
-        data: { fechaExpiracion: cubreHasta, estado: 'ACTIVO' },
-      });
+      if (!esConsumoApi) {
+        await tx.empresa.update({
+          where: { id: cobro.empresaId },
+          data: { fechaExpiracion: cubreHasta, estado: 'ACTIVO' },
+        });
+      }
 
       // El ingreso es lo que hace que el panel de finanzas vea la plata de los
       // clientes directos; hasta ahora solo sumaba el canal reseller.
       await tx.ingresoSistema.create({
         data: {
-          concepto: `Mensualidad ${cobro.periodo} — ${cobro.empresa.razonSocial}`,
-          tipo: 'SUSCRIPCION',
+          concepto: esConsumoApi
+            ? `API de facturación ${cobro.periodo} — ${cobro.empresa.razonSocial}`
+            : `Mensualidad ${cobro.periodo} — ${cobro.empresa.razonSocial}`,
+          tipo: esConsumoApi ? 'API_FACTURACION' : 'SUSCRIPCION',
           monto: new Decimal(monto),
           fecha: ahora,
           empresaId: cobro.empresaId,
@@ -231,7 +239,9 @@ export class CobroEmpresaService {
     await this.avisarAdmins(cobro.empresaId, {
       tipo: 'INFO',
       titulo: 'Pago registrado',
-      mensaje: `Recibimos tu pago de S/ ${monto.toFixed(2)}. Tu plan queda activo hasta el ${cubreHasta.toLocaleDateString('es-PE')}.`,
+      mensaje: esConsumoApi
+        ? `Recibimos tu pago de S/ ${monto.toFixed(2)} por el consumo de la API de ${cobro.periodo}.`
+        : `Recibimos tu pago de S/ ${monto.toFixed(2)}. Tu plan queda activo hasta el ${cubreHasta.toLocaleDateString('es-PE')}.`,
     });
 
     return resultado;
