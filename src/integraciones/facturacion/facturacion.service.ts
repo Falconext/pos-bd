@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, HttpException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ComprobanteService } from '../../comprobante/comprobante.service';
 import { EnviarSunatService } from '../../comprobante/enviar-sunat.service';
@@ -15,6 +15,7 @@ import { esFinal, estadoPublico } from './estado-publico';
 import { puedeEmitir } from './habilitacion';
 import { comprobanteSimulado, notaCreditoSimulada } from './modo-prueba';
 import { randomBytes } from 'crypto';
+import { estaVencido, mensajeCobroVencido } from './cobro-vencido';
 
 /**
  * La API de facturación, apoyada en el motor que ya factura para 61 empresas.
@@ -130,6 +131,8 @@ export class FacturacionApiService {
         id: `inv_test_${randomBytes(9).toString('base64url')}`,
       };
     }
+
+    await this.exigirCobrosAlDia(integradorId);
 
     // La puerta va antes que todo lo demás: el correlativo se asigna al crear
     // el comprobante, así que un emisor no habilitado quema uno por intento.
@@ -381,7 +384,7 @@ export class FacturacionApiService {
       affects_invoice_id: invoiceId,
       reason_code: '01',
       description: texto,
-    });
+    }, false, false); // anular sigue permitido con un cobro vencido
     const actualizado = await this.comprobanteDelIntegrador(integradorId, invoiceId);
     return {
       ...serializarComprobante(actualizado, actualizado.empresa.apiPublicId),
@@ -402,7 +405,27 @@ export class FacturacionApiService {
    * sea del integrador: sin eso, conocer un `inv_…` ajeno bastaría para
    * emitir notas contra las ventas de otro.
    */
-  async crearNotaCredito(integradorId: number, entrada: any, prueba = false) {
+  /**
+   * Con un cobro de la API vencido no se emite (regla del 25-10). Probar,
+   * consultar y anular siguen: cortar la anulación dejaría al integrador sin
+   * poder corregir lo ya emitido, y eso perjudica a sus clientes, no a él.
+   * Va antes de crear nada para no gastar correlativos.
+   */
+  private async exigirCobrosAlDia(integradorId: number) {
+    const pendientes = await this.prisma.cobroEmpresa.findMany({
+      where: { empresaId: integradorId, concepto: 'API_FACTURACION', estado: 'PENDIENTE' },
+      select: { periodo: true, monto: true, fechaVencimiento: true },
+      orderBy: { periodo: 'asc' },
+    });
+    const ahora = new Date();
+    const vencidos = pendientes
+      .filter((c) => estaVencido(c.fechaVencimiento, ahora))
+      .map((c) => ({ periodo: c.periodo, monto: Number(c.monto) }));
+    if (!vencidos.length) return;
+    throw new HttpException({ code: 'payment_required', message: mensajeCobroVencido(vencidos) }, 402);
+  }
+
+  async crearNotaCredito(integradorId: number, entrada: any, prueba = false, exigirPago = true) {
     const emisor = await this.emisores.resolverParaIntegrador(
       integradorId,
       String(entrada?.issuer_id ?? ''),
@@ -469,6 +492,8 @@ export class FacturacionApiService {
         .catch(() => null);
       return notaCreditoSimulada(afectado as any, emisor.apiPublicId!, motivo, descripcion, siguiente as any);
     }
+
+    if (exigirPago) await this.exigirCobrosAlDia(integradorId);
 
     const creada = await this.comprobantes.crearNotaCredito(
       {
