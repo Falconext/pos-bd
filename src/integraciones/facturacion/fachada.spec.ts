@@ -279,3 +279,29 @@ describe('el cliente que se busca o se crea', () => {
     expect([t('ruc'), t('dni'), t('ce'), t('passport'), t('other')]).toEqual(['6', '1', '4', '7', '0']);
   });
 });
+
+describe('los errores de contrato salen como 400, no 500 (QA prod 25-10)', () => {
+  const { HttpExceptionFilter } = require('../../common/filters/http-exception.filter');
+  const { ErrorDeContrato } = require('./fachada');
+  const responder = (url: string) => {
+    const res: any = { status: jest.fn(() => res), json: jest.fn(() => res) };
+    const host: any = { switchToHttp: () => ({ getResponse: () => res, getRequest: () => ({ originalUrl: url }) }) };
+    return { res, host };
+  };
+  it('factura a un DNI → 400 invalid_request_error con su code y param', () => {
+    const { res, host } = responder('/api/v1/invoicing/invoices');
+    new HttpExceptionFilter().catch(new ErrorDeContrato('parameter_invalid', 'Una factura exige RUC.', 'customer.document_type'), host);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({ error: { type: 'invalid_request_error', code: 'parameter_invalid', message: 'Una factura exige RUC.', param: 'customer.document_type' } });
+  });
+  it('estado inválido → 409', () => {
+    const { res, host } = responder('/api/v1/invoicing/invoices/inv_x/void');
+    new HttpExceptionFilter().catch(new ErrorDeContrato('already_voided', 'Ya anulado.'), host);
+    expect(res.status).toHaveBeenCalledWith(409);
+  });
+  it('un Error común sigue siendo 500', () => {
+    const { res, host } = responder('/api/v1/invoicing/invoices');
+    new HttpExceptionFilter().catch(new Error('boom'), host);
+    expect(res.status).toHaveBeenCalledWith(500);
+  });
+});

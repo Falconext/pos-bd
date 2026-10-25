@@ -115,6 +115,27 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     const errorPrisma = mapearErrorPrisma(exception);
 
+    // Errores de contrato de la API de facturación (`ErrorDeContrato`): son
+    // errores del integrador, no del servidor. Al ser un Error simple caían en
+    // 500 "server_error" y el integrador creía que la API estaba caída (QA en
+    // producción, 25-10). Se detecta por forma para no importar el módulo.
+    const contrato =
+      exception instanceof Error && !(exception instanceof HttpException) && typeof (exception as any).codigo === 'string'
+        ? (exception as any)
+        : null;
+    if (contrato) {
+      const status409 = ['invalid_state', 'already_voided', 'duplicate_external_id'].includes(contrato.codigo);
+      const s = status409 ? HttpStatus.CONFLICT : HttpStatus.BAD_REQUEST;
+      const error: Record<string, any> = { type: 'invalid_request_error', code: contrato.codigo, message: contrato.message };
+      if (contrato.parametro) error.param = contrato.parametro;
+      if (esApiPublica(request?.originalUrl ?? request?.url)) {
+        response.status(s).json({ error });
+      } else {
+        response.status(s).json({ code: 0, message: contrato.message, error: 'ErrorDeContrato' });
+      }
+      return;
+    }
+
     const status = errorPrisma
       ? errorPrisma.status
       : exception instanceof HttpException
