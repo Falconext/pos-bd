@@ -102,6 +102,41 @@ export function calcularPrecioNuevo(opts: {
 }
 
 /**
+ * Precio nuevo de un PACK que tiene precio propio en la lista (six pack, caja
+ * x12, blíster x10).
+ *
+ * Cuando el proveedor sube el precio sube la unidad y el pack a la vez; si el
+ * reprecio movía solo la unidad, el pack quedaba más barato de lo debido —o 6
+ * sueltas más caras que el six pack— sin que nadie lo notara. Regla, por
+ * operación:
+ *  - % (subir/bajar): el mismo % que la unidad, así se conserva la relación.
+ *  - S/ (subir/bajar): el monto POR UNIDAD × las unidades del pack: si al
+ *    proveedor le subieron S/1 la unidad, el six pack sube S/6.
+ *  - Fijar utilidad %: sobre el costo del pack (costo de la unidad × unidades).
+ *  - Fijar precio S/: no aplica a un pack (un six pack no vale lo mismo que la
+ *    unidad); devuelve null y la fila queda como está.
+ */
+export function calcularPrecioPack(opts: {
+  precioActual: number;
+  costoUnidadConIgv: number;
+  unidades: number;
+  operacion: OperacionReprecio;
+  modo: ModoReprecio;
+  valor: number;
+}): number | null {
+  const unidades = Number(opts.unidades);
+  if (!Number.isFinite(unidades) || unidades < 1) return null;
+  if (opts.operacion === 'REEMPLAZAR' && opts.modo === 'MONTO') return null;
+  return calcularPrecioNuevo({
+    precioActual: opts.precioActual,
+    costoConIgv: redondear(opts.costoUnidadConIgv * unidades),
+    operacion: opts.operacion,
+    modo: opts.modo,
+    valor: opts.modo === 'MONTO' ? Number(opts.valor) * unidades : opts.valor,
+  });
+}
+
+/**
  * Un reprecio no puede dejar un precio en cero o negativo: eso sería regalar el
  * producto sin que nadie lo decidiera. Se devuelve null y la fila se salta.
  */

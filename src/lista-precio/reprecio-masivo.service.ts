@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import {
   calcularPrecioNuevo,
+  calcularPrecioPack,
   costoConIgv,
   esGravado,
   utilidadSobreCosto,
@@ -151,7 +152,73 @@ export class ReprecioMasivoService {
       };
     });
 
-    return { filas, total: filas.length };
+    // Los packs que tienen precio PROPIO en esta lista se mueven con su
+    // unidad (ver calcularPrecioPack). Los que no lo tienen ya cobran el
+    // precio de paquete del producto, que no es parte de la lista.
+    const itemsPack = await this.prisma.listaPrecioItem.findMany({
+      where: {
+        listaPrecioId: op.listaPrecioId,
+        productoId: { in: productos.map((p) => p.id) },
+        presentacionCodigo: { not: '' },
+      },
+      select: { productoId: true, presentacionCodigo: true, precioUnitario: true },
+    });
+    const presentaciones = itemsPack.length
+      ? await this.prisma.productoCodigoBarras.findMany({
+          where: {
+            empresaId,
+            productoId: { in: [...new Set(itemsPack.map((i) => i.productoId))] },
+            codigo: { in: [...new Set(itemsPack.map((i) => i.presentacionCodigo))] },
+          },
+          select: { productoId: true, codigo: true, unidadesPorPaquete: true, alias: true },
+        })
+      : [];
+    const presentacion = new Map(presentaciones.map((x) => [`${x.productoId}|${x.codigo}`, x]));
+    const filaUnidad = new Map(filas.map((f) => [f.productoId, f]));
+
+    const filasPack = itemsPack.flatMap((i) => {
+      const pres = presentacion.get(`${i.productoId}|${i.presentacionCodigo}`);
+      const unidad = filaUnidad.get(i.productoId);
+      // Si la presentación ya no existe no se sabe cuántas unidades trae:
+      // mejor no tocar ese precio que inventarle una cantidad.
+      if (!pres || !unidad || (pres.unidadesPorPaquete ?? 1) < 2) return [];
+      const unidades = pres.unidadesPorPaquete;
+      const costoPack = Math.round(unidad.costoConIgv * unidades * 100) / 100;
+      const precioActual = Math.round(Number(i.precioUnitario) * 100) / 100;
+      const precioNuevo = calcularPrecioPack({
+        precioActual,
+        costoUnidadConIgv: unidad.costoConIgv,
+        unidades,
+        operacion: op.operacion,
+        modo: op.modo,
+        valor: op.valor,
+      });
+      return [{
+        productoId: i.productoId,
+        presentacionCodigo: i.presentacionCodigo,
+        presentacion: pres.alias?.trim() || `x${unidades}`,
+        unidades,
+        codigo: unidad.codigo,
+        descripcion: unidad.descripcion,
+        costoNeto: Math.round(unidad.costoNeto * unidades * 100) / 100,
+        costoConIgv: costoPack,
+        precioActual,
+        precioNuevo,
+        utilidadActual: utilidadSobreCosto(precioActual, costoPack),
+        utilidadNueva: precioNuevo != null ? utilidadSobreCosto(precioNuevo, costoPack) : null,
+        sinCosto: unidad.sinCosto,
+        seAplica: precioNuevo != null && precioNuevo !== precioActual,
+        // Con "fijar precio S/" el pack no cambia a propósito; la pantalla lo dice.
+        packPrecioFijo: op.operacion === 'REEMPLAZAR' && op.modo === 'MONTO',
+      }];
+    });
+
+    // Cada pack va justo debajo de su unidad, para leerlos juntos.
+    const ordenadas = filas.flatMap((f) => [
+      { ...f, presentacionCodigo: '' },
+      ...filasPack.filter((k) => k.productoId === f.productoId),
+    ]);
+    return { filas: ordenadas, total: ordenadas.length };
   }
 
   /**
@@ -181,24 +248,25 @@ export class ReprecioMasivoService {
       where: {
         listaPrecioId: op.listaPrecioId,
         productoId: { in: aplicables.map((f) => f.productoId) },
-        presentacionCodigo: '',
       },
-      select: { productoId: true, precioUnitario: true },
+      select: { productoId: true, presentacionCodigo: true, precioUnitario: true },
     });
+    const clave = (productoId: number, presentacionCodigo?: string) => `${productoId}|${presentacionCodigo || ''}`;
     const anteriorEnLista = new Map(
-      yaEnLista.map((i) => [i.productoId, Number(i.precioUnitario)]),
+      yaEnLista.map((i) => [clave(i.productoId, i.presentacionCodigo), Number(i.precioUnitario)]),
     );
 
-    const detalle = aplicables.map((f) => ({
-      productoId: f.productoId,
-      presentacionCodigo: '',
-      // null = no tenía precio propio en la lista. Deshacer = borrar el item,
-      // no escribirle el precio del producto, que lo dejaría "clavado".
-      precioAnterior: anteriorEnLista.has(f.productoId)
-        ? anteriorEnLista.get(f.productoId)!
-        : null,
-      precioNuevo: f.precioNuevo!,
-    }));
+    const detalle = aplicables.map((f) => {
+      const k = clave(f.productoId, f.presentacionCodigo);
+      return {
+        productoId: f.productoId,
+        presentacionCodigo: f.presentacionCodigo || '',
+        // null = no tenía precio propio en la lista. Deshacer = borrar el item,
+        // no escribirle el precio del producto, que lo dejaría "clavado".
+        precioAnterior: anteriorEnLista.has(k) ? anteriorEnLista.get(k)! : null,
+        precioNuevo: f.precioNuevo!,
+      };
+    });
 
     await this.prisma.$transaction([
       ...aplicables.map((f) =>
@@ -207,13 +275,13 @@ export class ReprecioMasivoService {
             listaPrecioId_productoId_presentacionCodigo: {
               listaPrecioId: op.listaPrecioId,
               productoId: f.productoId,
-              presentacionCodigo: '',
+              presentacionCodigo: f.presentacionCodigo || '',
             },
           },
           create: {
             listaPrecioId: op.listaPrecioId,
             productoId: f.productoId,
-            presentacionCodigo: '',
+            presentacionCodigo: f.presentacionCodigo || '',
             precioUnitario: f.precioNuevo!,
           },
           update: { precioUnitario: f.precioNuevo! },
@@ -308,8 +376,10 @@ export class ReprecioMasivoService {
             this.prisma.listaPrecioItem.deleteMany({
               where: {
                 listaPrecioId: lote.listaPrecioId,
-                presentacionCodigo: '',
-                productoId: { in: aBorrar.map((d) => d.productoId) },
+                OR: aBorrar.map((d) => ({
+                  productoId: d.productoId,
+                  presentacionCodigo: d.presentacionCodigo || '',
+                })),
               },
             }),
           ]

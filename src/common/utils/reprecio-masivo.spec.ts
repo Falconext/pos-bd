@@ -1,5 +1,6 @@
 import {
   calcularPrecioNuevo,
+  calcularPrecioPack,
   costoConIgv,
   esGravado,
   precioDesdeUtilidad,
@@ -125,5 +126,40 @@ describe('Operaciones del reprecio', () => {
 
   it('redondea a dos decimales', () => {
     expect(calcularPrecioNuevo({ precioActual: 10, costoConIgv: 5, operacion: 'AUMENTAR', modo: 'PORCENTAJE', valor: 3.333 })).toBe(10.33);
+  });
+});
+
+describe('calcularPrecioPack — el pack se mueve con la unidad', () => {
+  const pack = { precioActual: 35, costoUnidadConIgv: 4, unidades: 6 };
+
+  it('% sube el pack en la misma proporción que la unidad', () => {
+    expect(calcularPrecioPack({ ...pack, operacion: 'AUMENTAR', modo: 'PORCENTAJE', valor: 10 })).toBe(38.5);
+    expect(calcularPrecioPack({ ...pack, operacion: 'DISMINUIR', modo: 'PORCENTAJE', valor: 10 })).toBe(31.5);
+  });
+
+  it('S/ sube el monto por unidad × las unidades del pack', () => {
+    expect(calcularPrecioPack({ ...pack, operacion: 'AUMENTAR', modo: 'MONTO', valor: 1 })).toBe(41);
+    expect(calcularPrecioPack({ ...pack, operacion: 'DISMINUIR', modo: 'MONTO', valor: 0.5 })).toBe(32);
+  });
+
+  it('fijar utilidad va sobre el costo del pack, no de la unidad', () => {
+    // 6 × 4 = 24 de costo; 40% → 33.60
+    expect(calcularPrecioPack({ ...pack, operacion: 'REEMPLAZAR', modo: 'PORCENTAJE', valor: 40 })).toBe(33.6);
+  });
+
+  it('sin costo no se fija utilidad', () => {
+    expect(calcularPrecioPack({ ...pack, costoUnidadConIgv: 0, operacion: 'REEMPLAZAR', modo: 'PORCENTAJE', valor: 40 })).toBeNull();
+  });
+
+  it('un precio fijo no se le pone a un pack', () => {
+    expect(calcularPrecioPack({ ...pack, operacion: 'REEMPLAZAR', modo: 'MONTO', valor: 49.9 })).toBeNull();
+  });
+
+  it('nunca deja el pack en cero o negativo', () => {
+    expect(calcularPrecioPack({ ...pack, operacion: 'DISMINUIR', modo: 'MONTO', valor: 10 })).toBeNull();
+  });
+
+  it('sin unidades válidas no calcula', () => {
+    expect(calcularPrecioPack({ ...pack, unidades: 0, operacion: 'AUMENTAR', modo: 'PORCENTAJE', valor: 10 })).toBeNull();
   });
 });
