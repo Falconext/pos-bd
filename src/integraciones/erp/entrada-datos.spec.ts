@@ -21,9 +21,9 @@ describe('categorías y marcas', () => {
 
 describe('clientes', () => {
   it('alta con RUC, normaliza el celular', () => {
-    expect(leerClienteNuevo({ document_type: 'ruc', document_number: '20123456789', name: 'ACME SAC', phone: '987 654-321' })).toMatchObject({
+    expect(leerClienteNuevo({ document_type: 'ruc', document_number: '20131312955', name: 'ACME SAC', phone: '987 654-321' })).toMatchObject({
       tipo: 'RUC',
-      numero: '20123456789',
+      numero: '20131312955',
       nombre: 'ACME SAC',
       telefono: '987654321',
     });

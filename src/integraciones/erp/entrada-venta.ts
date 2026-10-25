@@ -8,6 +8,7 @@
  * `erp-ventas.service.ts`. Los mensajes van para el programador de la web:
  * dicen qué campo, qué estaba mal y cómo mandarlo.
  */
+import { MENSAJE_RUC_INVALIDO, rucValido } from './ruc';
 import { IMPUESTO_A_AFECTACION, entero, invalido, lista, monto, presente, soloConocidos, texto } from './entrada-producto';
 
 /** Qué se emite. La nota de venta no va a SUNAT. */
@@ -110,8 +111,8 @@ function leerCliente(body: any): ClienteVenta | undefined {
   if (tipo === 'dni' && !/^\d{8}$/.test(numero!)) {
     throw invalido('customer.document_number', 'El DNI tiene 8 dígitos.');
   }
-  if (tipo === 'ruc' && !/^(10|15|17|20)\d{9}$/.test(numero!)) {
-    throw invalido('customer.document_number', 'El RUC tiene 11 dígitos y empieza con 10, 15, 17 o 20.');
+  if (tipo === 'ruc' && !rucValido(numero!)) {
+    throw invalido('customer.document_number', MENSAJE_RUC_INVALIDO);
   }
   const nombre = texto(c, 'name', 200, false, 'customer.name');
   if (conDocumento && !nombre) {

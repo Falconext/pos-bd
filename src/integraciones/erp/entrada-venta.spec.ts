@@ -62,8 +62,12 @@ describe('leerVenta', () => {
     expect(error({ ...base, customer: { document_type: 'dni', document_number: '47065472' } }).param).toBe('customer.name');
   });
 
+  it('un RUC con el dígito verificador mal no pasa (prueba de integrador 24-10)', () => {
+    expect(error({ ...base, customer: { document_type: 'ruc', document_number: '20123456789', name: 'X' } }).message).toMatch(/verificador/);
+  });
+
   it('con RUC y sin decir el tipo, sale factura; si no, boleta', () => {
-    const conRuc = leerVenta({ ...base, customer: { document_type: 'ruc', document_number: '20123456789', name: 'ACME SAC' } });
+    const conRuc = leerVenta({ ...base, customer: { document_type: 'ruc', document_number: '20131312955', name: 'ACME SAC' } });
     expect(tipoQueCorresponde(conRuc)).toBe('invoice');
     expect(tipoQueCorresponde(leerVenta(base))).toBe('receipt');
     expect(tipoQueCorresponde(leerVenta({ ...base, document_type: 'sales_note' }))).toBe('sales_note');
