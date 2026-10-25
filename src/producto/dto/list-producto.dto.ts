@@ -104,4 +104,17 @@ export class ListProductoDto {
   @IsOptional()
   @Transform(({ value }) => value === true || value === 'true' || value === '1')
   incluirVariantes?: boolean;
+
+  // Ids concretos a traer ("12,45,78"), sin importar la paginación ni el filtro.
+  // Lo pide el POS para hidratar las líneas de un comprobante que se edita: sus
+  // productos casi nunca caen en la página del catálogo que está cargada, y sin
+  // esto la línea se queda sin sus presentaciones.
+  @IsOptional()
+  @Transform(({ value }) =>
+    String(value ?? '')
+      .split(',')
+      .map((v) => Number(String(v).trim()))
+      .filter((v) => Number.isFinite(v) && v > 0),
+  )
+  ids?: number[];
 }
