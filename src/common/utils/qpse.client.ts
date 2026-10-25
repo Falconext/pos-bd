@@ -56,6 +56,17 @@ export interface QpseAccessTokenResponse {
   expires_in?: string | number;
 }
 
+export interface QpseEmpresaCuenta {
+  external_id: string;
+  ruc: string;
+  name?: string;
+  environment: 'demo' | 'production' | string;
+  soap_type_id?: string;
+  username?: string;
+  password?: string;
+  is_active?: boolean;
+}
+
 @Injectable()
 export class QpseClient {
   private readonly logger = new Logger(QpseClient.name);
@@ -264,6 +275,53 @@ export class QpseClient {
       return data;
     } catch (error) {
       throw this.wrapError('consultar ticket QPSE', error);
+    }
+  }
+
+  // ── Cuenta de Krezka en QPSE (API Token, no el token CPE) ───────────
+  // Docs: docs.qpse.pe → Empresas. Con esto la consola de developers da de
+  // alta y pasa a producción una empresa sin que nadie entre al panel de QPSE.
+
+  private cuentaHeaders() {
+    if (!this.integrationToken) throw new HttpException('QPSE: falta QPSE_ACCESS_TOKEN.', 500);
+    return { Authorization: `Bearer ${this.integrationToken}`, Accept: 'application/json' };
+  }
+
+  /** Las empresas de nuestra cuenta (con su usuario y contraseña de firma). */
+  async cuentaEmpresas(): Promise<QpseEmpresaCuenta[]> {
+    try {
+      const { data } = await this.client.get('/api/empresas', { baseURL: this.authBaseUrl, headers: this.cuentaHeaders() });
+      return Array.isArray(data?.data) ? data.data : [];
+    } catch (error) {
+      throw this.wrapError('listar empresas de la cuenta QPSE', error);
+    }
+  }
+
+  /** Registra el RUC en nuestra cuenta (queda en demo). Plan 01 = por comprobante. */
+  async cuentaCrearEmpresa(ruc: string): Promise<{ username?: string; password?: string; message?: string }> {
+    try {
+      const { data } = await this.client.post(
+        '/api/empresa/crear',
+        { ruc, tipo_de_plan: '01' },
+        { baseURL: this.authBaseUrl, headers: this.cuentaHeaders() },
+      );
+      return data ?? {};
+    } catch (error) {
+      throw this.wrapError('registrar empresa en QPSE', error);
+    }
+  }
+
+  /** Pasa la empresa a producción. IRREVERSIBLE en QPSE. */
+  async cuentaPasarAProduccion(externalId: string): Promise<any> {
+    try {
+      const { data } = await this.client.post(
+        '/api/empresa/produccion',
+        { external_id: externalId, plan_type: '01' },
+        { baseURL: this.authBaseUrl, headers: this.cuentaHeaders() },
+      );
+      return data;
+    } catch (error) {
+      throw this.wrapError('pasar empresa a producción en QPSE', error);
     }
   }
 
