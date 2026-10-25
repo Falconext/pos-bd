@@ -2,7 +2,7 @@ import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger, Optional } from '@nestjs/common';
 import { Job, Queue, UnrecoverableError } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
-import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { MensajeriaService } from './mensajeria.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { RagVentasService, codigosDeFichas } from './leads-rag.service';
 import { LeadsAlertaService } from './leads-alerta.service';
@@ -142,7 +142,12 @@ interface TareaRespuesta {
 }
 
 interface MensajeEntrante {
-  phoneNumberId: string;
+  /** Por qué red llegó. Sin valor es WhatsApp (los jobs de antes no lo traen). */
+  canal?: 'WHATSAPP' | 'INSTAGRAM';
+  /** WhatsApp: el número de la empresa que recibió el mensaje. */
+  phoneNumberId?: string;
+  /** Instagram: la cuenta profesional que recibió el mensaje. */
+  instagramAccountId?: string;
   from: string;
   /** BSUID del remitente ("PE.…"), si Meta lo manda. */
   bsuid?: string;
@@ -176,7 +181,7 @@ export class LeadsMessageProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly ia: IaVentasService,
     private readonly rag: RagVentasService,
-    private readonly whatsapp: WhatsAppService,
+    private readonly whatsapp: MensajeriaService,
     private readonly notificaciones: NotificacionesService,
     private readonly alerta: LeadsAlertaService,
     private readonly comprobante: ComprobanteService,
@@ -382,23 +387,46 @@ export class LeadsMessageProcessor extends WorkerHost {
    * disparaba el suyo y el cliente recibía tres contestaciones sueltas.
    */
   private async ingresar(d: MensajeEntrante): Promise<void> {
-    // 1) ¿Qué empresa tiene conectado este número?
-    const empresa = await this.prisma.empresa.findFirst({
-      where: { whatsappPhoneNumberId: d.phoneNumberId },
-      select: { id: true, iaVentasActiva: true },
-    });
+    const esInstagram = d.canal === 'INSTAGRAM';
+    // 1) ¿Qué empresa tiene conectado este número (o esta cuenta de Instagram)?
+    const empresa = esInstagram
+      ? await this.prisma.empresa.findFirst({
+          where: { instagramAccountId: d.instagramAccountId, instagramActivo: true },
+          select: { id: true, iaVentasActiva: true },
+        })
+      : await this.prisma.empresa.findFirst({
+          where: { whatsappPhoneNumberId: d.phoneNumberId },
+          select: { id: true, iaVentasActiva: true },
+        });
     if (!empresa) {
       this.logger.warn(
-        `Mensaje entrante de ${d.from} para phoneNumberId ${d.phoneNumberId} sin empresa asociada; se ignora.`,
+        esInstagram
+          ? `Mensaje de Instagram de ${d.from} para la cuenta ${d.instagramAccountId} sin empresa conectada; se ignora.`
+          : `Mensaje entrante de ${d.from} para phoneNumberId ${d.phoneNumberId} sin empresa asociada; se ignora.`,
       );
       return;
     }
 
-    // 2) Si el cliente escribía con su @usuario y ahora llega con número, es
-    // la misma conversación (ver unir-usuario-whatsapp.ts).
-    await this.unirConversacionSinNumero(empresa.id, d).catch((e) =>
-      this.logger.warn(`Lead: no se pudo unir la conversación de ${d.from}: ${e?.message}`),
-    );
+    if (esInstagram) {
+      // Instagram no manda el nombre en el webhook: se pide el perfil la
+      // primera vez, para que la bandeja muestre "@usuario" y no un número.
+      if (!d.nombre) {
+        const ya = await this.prisma.leadConversacion.findUnique({
+          where: { empresaId_telefonoProspecto: { empresaId: empresa.id, telefonoProspecto: d.from } },
+          select: { nombreProspecto: true },
+        });
+        if (!ya?.nombreProspecto) {
+          const p = await this.whatsapp.perfilInstagram(d.from, empresa.id).catch(() => ({} as any));
+          d.nombre = p?.nombre || (p?.usuario ? `@${p.usuario}` : undefined);
+        }
+      }
+    } else {
+      // 2) Si el cliente escribía con su @usuario y ahora llega con número, es
+      // la misma conversación (ver unir-usuario-whatsapp.ts).
+      await this.unirConversacionSinNumero(empresa.id, d).catch((e) =>
+        this.logger.warn(`Lead: no se pudo unir la conversación de ${d.from}: ${e?.message}`),
+      );
+    }
 
     // Upsert de la conversación (una por prospecto/empresa).
     const conv = await this.prisma.leadConversacion.upsert({
@@ -412,7 +440,8 @@ export class LeadsMessageProcessor extends WorkerHost {
         empresaId: empresa.id,
         telefonoProspecto: d.from,
         nombreProspecto: d.nombre ?? null,
-        numeroWhatsappId: d.phoneNumberId,
+        numeroWhatsappId: d.phoneNumberId ?? null,
+        canal: esInstagram ? 'INSTAGRAM' : 'WHATSAPP',
         cantidadMensajes: 0,
       },
       // El cliente escribió → reinicia el contador de seguimientos (silencio nuevo).
@@ -629,6 +658,7 @@ export class LeadsMessageProcessor extends WorkerHost {
         nombreProspecto: true,
         botActivo: true,
         pausadoHasta: true,
+        canal: true,
       },
     });
     if (!conv) return false;
@@ -729,6 +759,12 @@ export class LeadsMessageProcessor extends WorkerHost {
     // mensaje.
     const businessContext = [
       contextoEmpresa,
+      // El prompt base está escrito para WhatsApp. Por Instagram el formato no
+      // se ve (los asteriscos quedan a la vista) y no tenemos el celular del
+      // cliente: hay que pedírselo para el pedido o la entrega.
+      conv.canal === 'INSTAGRAM'
+        ? 'CANAL: esta conversación es por mensaje directo de INSTAGRAM, no por WhatsApp. Lo que dicen las reglas sobre WhatsApp vale igual, salvo: no uses asteriscos ni ningún formato (Instagram muestra el texto tal cual) y no tienes el celular del cliente, así que pídeselo cuando haga falta para el pedido o la entrega.'
+        : '',
       // Mientras un cliente siga teniendo los números copiados en su texto
       // libre, las dos versiones conviven en el prompt. Por eso el bloque
       // dice de sí mismo que es el que manda.

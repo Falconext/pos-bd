@@ -216,6 +216,15 @@ model Empresa {
   // para re-registrar el mismo número, así que hay que conservarlo.
   whatsappPin               String?
   whatsappActivo            Boolean            @default(true)
+  // IA de Ventas por Instagram (DM). Se conecta con el login de Instagram
+  // para empresas: `instagramAccountId` es el id de la cuenta profesional y es
+  // por donde el webhook ubica a la empresa. El token es de larga duración
+  // (~60 días) y se renueva solo antes de vencer.
+  instagramAccountId        String?            @unique
+  instagramUsername         String?
+  instagramToken            String?
+  instagramTokenExpira      DateTime?
+  instagramActivo           Boolean            @default(false)
   // Rastreo automático Shalom (cron 30 min): opt-in por empresa. Con `false`
   // (default) el cron NO actualiza estados ni envía WhatsApp a los clientes de
   // esta empresa — se activa recién cuando el empresario está avisado.
@@ -4822,6 +4831,10 @@ model LeadConversacion {
   estado              EstadoLeadConversacion @default(ACTIVA)
   cantidadMensajes    Int                    @default(0)
   numeroWhatsappId    String? // phoneNumberId por el que entró
+  // Por qué red entró: WHATSAPP o INSTAGRAM. En Instagram `telefonoProspecto`
+  // guarda `ig:<id del usuario>`: el prefijo evita que se confunda con un
+  // número (pedidos por celular, fusión de usuarios @nick de WhatsApp).
+  canal               String                 @default("WHATSAPP")
   // Seguimiento automático: nº de nudges enviados en el silencio actual (se
   // reinicia a 0 cuando el prospecto vuelve a escribir) y cuándo fue el último.
   seguimientos        Int                    @default(0)

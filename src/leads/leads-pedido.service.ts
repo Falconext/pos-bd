@@ -403,7 +403,9 @@ export class LeadsPedidoService {
   ): Promise<number | null> {
     try {
       const dni = (borrador.dni ?? '').trim();
-      const celular = (borrador.celular ?? '').trim() || telefono;
+      // Por Instagram no hay teléfono: el id "ig:…" no puede quedar como el
+      // celular del cliente.
+      const celular = (borrador.celular ?? '').trim() || (/^\+?\d{8,15}$/.test(telefono) ? telefono : '');
       const nombre = (borrador.nombre ?? '').trim();
 
       if (dni) {
