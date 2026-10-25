@@ -51,6 +51,13 @@ export class ConsolaFacturacionController {
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN_EMPRESA')
+  @Post('empresas/:id/produccion')
+  pasarAProduccion(@Request() req: any, @Param('id') id: string, @Body() body: any) {
+    return this.consola.pasarAProduccion(req.user.empresaId, id, body);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_EMPRESA')
   @Get('claves')
   claves(@Request() req: any) {
     return this.consola.listarClaves(req.user.empresaId);

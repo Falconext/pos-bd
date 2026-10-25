@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { randomInt } from 'crypto';
@@ -14,6 +15,7 @@ import { EmisoresService } from '../emisores/emisores.service';
 import { WebhooksService } from '../../logistica/integraciones/webhooks/webhooks.service';
 import { MedidorApiService } from './medidor.service';
 import { rucValido, MENSAJE_RUC_INVALIDO } from '../erp/ruc';
+import { QpseClient, QpseEmpresaCuenta } from '../../common/utils/qpse.client';
 
 /**
  * La consola de developers.krezka.com: lo que en apisunat es "Mis Empresas".
@@ -44,6 +46,7 @@ export class ConsolaFacturacionService {
     private readonly emisores: EmisoresService,
     private readonly webhooks: WebhooksService,
     private readonly medidor: MedidorApiService,
+    private readonly qpse: QpseClient,
   ) {}
 
   /** Los planes de la consola: sin módulos del ERP, sin tope de comprobantes. */
@@ -228,6 +231,91 @@ export class ConsolaFacturacionService {
     await this.sedeYUsuario(nueva.id, direccion);
     await this.emisores.vincular(empresaId, nueva.id);
     return this.verEmpresa(empresaId, (await this.prisma.empresa.findUnique({ where: { id: nueva.id }, select: { apiPublicId: true } }))!.apiPublicId!);
+  }
+
+  // ── Pasar a producción ───────────────────────────────────────────────
+
+  /**
+   * "Pasar a producción" sin que nadie entre al panel de QPSE.
+   *
+   * Contra la cuenta de Krezka en QPSE: si el RUC no está, se registra; si
+   * está en demo, se pasa a producción (IRREVERSIBLE allá, por eso se pide
+   * `confirm: true`); y con el usuario y contraseña de firma que devuelve se
+   * deja la empresa en vivo. Queda `pendiente` las ~24 h que tarda el alta
+   * ante SUNAT (habilitacion.ts), así no quema correlativos mientras tanto.
+   *
+   * Cada paso se puede repetir: si se corta a la mitad (o hacen doble clic),
+   * el segundo intento retoma donde quedó en vez de fallar.
+   *
+   * Es el mismo flujo que el pase a producción de los resellers en Vendify:
+   * la afiliación a QPSE es de la cuenta de Krezka y QPSE hace el alta ante
+   * SUNAT, así que al contribuyente no se le pide trámite en SOL. Si SUNAT
+   * igual lo rechaza (0111/0154), queda `not_authorized` con el motivo.
+   */
+  async pasarAProduccion(empresaId: number, issuerId: string, body: any) {
+    await this.integrador(empresaId);
+    const e = await this.emisores.resolverParaIntegrador(empresaId, issuerId);
+    if (!e.usaDemo && e.usuarioPse?.trim()) return this.emisores.vistaPublica(e);
+    if (body?.confirm !== true) {
+      throw new BadRequestException('Confirma el pase a producción: no se puede deshacer.');
+    }
+    const ruc = String(e.ruc ?? '');
+
+    let fila = await this.filaQpse(ruc);
+    if (!fila) {
+      try {
+        await this.qpse.cuentaCrearEmpresa(ruc);
+      } catch (err) {
+        const msg = ConsolaFacturacionService.mensajeQpse(err);
+        // Doble clic o reintento: ya la registramos nosotros. Se sigue.
+        if (!/registrada en su cuenta/i.test(msg)) {
+          if (/otra cuenta/i.test(msg)) {
+            throw new ConflictException(
+              'Ese RUC ya está afiliado con otro proveedor que usa el mismo PSE (QPSE). Para facturar con Krezka, la empresa tiene que darse de baja allí primero. Si necesitas ayuda, escríbenos.',
+            );
+          }
+          throw new BadRequestException(`No pudimos registrar la empresa en el PSE: ${msg}`);
+        }
+      }
+      fila = await this.filaQpse(ruc);
+      if (!fila) throw new ServiceUnavailableException('El PSE no confirmó el registro. Intenta de nuevo en unos minutos.');
+    }
+
+    if (fila.environment !== 'production') {
+      try {
+        await this.qpse.cuentaPasarAProduccion(fila.external_id);
+      } catch (err) {
+        const msg = ConsolaFacturacionService.mensajeQpse(err);
+        if (!/ya se encuentra en producci/i.test(msg)) {
+          throw new ServiceUnavailableException(`El PSE no pudo pasar la empresa a producción: ${msg}`);
+        }
+      }
+      fila = (await this.filaQpse(ruc)) ?? fila;
+    }
+    if (!fila.username?.trim() || !fila.password?.trim()) {
+      throw new ServiceUnavailableException('El PSE todavía no entregó las credenciales de firma. Intenta de nuevo en unos minutos.');
+    }
+
+    await this.prisma.empresa.update({
+      where: { id: e.id },
+      data: {
+        usuarioPse: fila.username.trim(),
+        contrasenaPse: fila.password.trim(),
+        usaDemo: false,
+        apiEmisorEstado: 'pendiente',
+        apiEmisorDesde: new Date(),
+        apiEmisorMotivo: null,
+      },
+    });
+    return this.verEmpresa(empresaId, issuerId);
+  }
+
+  private async filaQpse(ruc: string): Promise<QpseEmpresaCuenta | undefined> {
+    return (await this.qpse.cuentaEmpresas()).find((f) => String(f.ruc).trim() === ruc);
+  }
+
+  private static mensajeQpse(err: unknown): string {
+    return String((err as any)?.message ?? err ?? '').replace(/^QPSE:\s*/, '');
   }
 
   // ── Claves ───────────────────────────────────────────────────────────
