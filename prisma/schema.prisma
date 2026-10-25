@@ -507,6 +507,11 @@ model Empresa {
   /// Cuenta de la consola de developers.krezka.com (integrador que se registró
   /// solo). No usa el sistema Krezka: solo emite por la API para sus empresas.
   esIntegradorApi Boolean @default(false)
+  /// A nombre de quién factura Krezka el consumo de la API a esta cuenta:
+  /// { tipo: 'ruc' | 'dni', numero, nombre, direccion?, email? }. La cuenta de
+  /// la consola no es un contribuyente (su `ruc` es un DEV… de relleno), así
+  /// que sin esto no hay a quién emitirle la factura del pago.
+  datosFacturacion Json?
   resellerMovimientos     ResellerMovimiento[]
   brand                   String                         @default("falconext")
   producto                String                         @default("facturacion")
@@ -3281,6 +3286,13 @@ model CobroEmpresa {
   actualizadoEn    DateTime  @updatedAt
 
   empresa Empresa         @relation(fields: [empresaId], references: [id])
+  /// La factura o boleta que Krezka emitió por este pago (consumo de la API).
+  comprobanteId    Int?
+  /// Cuándo salió el recordatorio previo al vencimiento y el aviso de bloqueo.
+  /// Se marcan ANTES de mandar el correo (updateMany con la marca en null):
+  /// con dos backends corriendo el cron, solo uno gana y nadie recibe dos.
+  avisoPrevioEn    DateTime?
+  avisoBloqueoEn   DateTime?
   ingreso IngresoSistema?
 
   @@unique([empresaId, periodo, concepto])

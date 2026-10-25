@@ -189,6 +189,26 @@ describe('Registrar el pago', () => {
     expect(ingreso.concepto).toMatch(/^API de facturación 2026-10/);
   });
 
+  it('después del pago avisa a quien se registró (la factura de la API)', async () => {
+    const prisma = prismaBase();
+    prisma.cobroEmpresa.findUnique.mockResolvedValue(cobro({ concepto: 'API_FACTURACION' }));
+    prisma.cobroEmpresa.update.mockImplementation(({ data }: any) => Promise.resolve(data));
+    const service = montar(prisma);
+    const hook = jest.fn().mockResolvedValue(undefined);
+    service.registrarAlPagar(hook);
+    await service.registrarPago(5, { fechaCobro: HOY });
+    expect(hook).toHaveBeenCalledWith({ id: 5, empresaId: 90, concepto: 'API_FACTURACION' });
+  });
+
+  it('si lo de después del pago falla, el pago queda igual', async () => {
+    const prisma = prismaBase();
+    prisma.cobroEmpresa.findUnique.mockResolvedValue(cobro());
+    prisma.cobroEmpresa.update.mockImplementation(({ data }: any) => Promise.resolve(data));
+    const service = montar(prisma);
+    service.registrarAlPagar(jest.fn().mockRejectedValue(new Error('SUNAT caído')));
+    await expect(service.registrarPago(5, { fechaCobro: HOY })).resolves.toMatchObject({ estado: 'APLICADO' });
+  });
+
   it('deja el ingreso ligado a la empresa y al cobro', async () => {
     const prisma = prismaBase();
     prisma.cobroEmpresa.findUnique.mockResolvedValue(cobro());

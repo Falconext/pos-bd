@@ -183,6 +183,30 @@ export class FacturacionApiService {
   }
 
   /**
+   * Emite como la propia plataforma: la factura que Krezka le hace a un
+   * integrador por su consumo. Pasa por las mismas validaciones y la misma
+   * traducción que la API, pero la empresa emisora no es un emisor de un
+   * integrador, así que no lleva sus puertas (habilitación, cobro al día).
+   */
+  async emitirComoPlataforma(empresaId: number, entrada: ComprobantePublico) {
+    validarEntrada(entrada);
+    const clienteId = await this.resolverCliente(empresaId, entrada.customer!);
+    const dto = traducirComprobante(entrada, {
+      clienteId,
+      tipoOperacionId: await this.tipoOperacionPorDefecto(),
+    });
+    const creado = await this.comprobantes.crearFormal(dto, empresaId, dto.tipoDoc === '01' ? '01' : '03');
+    void this.enviarSunat.execute(creado.id).catch((e) => {
+      console.error(`[api-facturacion] envío a SUNAT de la factura de plataforma ${creado.id} falló:`, e?.message);
+    });
+    const c = await this.prisma.comprobante.findUnique({
+      where: { id: creado.id },
+      select: { id: true, serie: true, correlativo: true },
+    });
+    return { id: c!.id, numero: `${c!.serie}-${String(c!.correlativo).padStart(8, '0')}` };
+  }
+
+  /**
    * Un comprobante por su id público.
    *
    * La consulta exige que el emisor pertenezca al integrador. Sin esa
