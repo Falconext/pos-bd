@@ -333,6 +333,51 @@ export class ConsolaFacturacionService {
     return this.facturacion.emitir(empresaId, body ?? {}, true);
   }
 
+  // ── Documentos ───────────────────────────────────────────────────────
+
+  /*
+   * "Mis documentos": lo mismo que /v1/invoicing pero con la sesión, para
+   * quien quiere ver, descargar o emitir sin escribir código. Todo pasa por
+   * FacturacionApiService: un comprobante emitido aquí y uno emitido por la
+   * API son el mismo comprobante, se cuentan igual y avisan igual.
+   */
+
+  async listarDocumentos(empresaId: number, q: { issuer_id?: string; cursor?: string; limit?: string }) {
+    await this.integrador(empresaId);
+    return this.facturacion.listar(empresaId, {
+      issuerId: q?.issuer_id || undefined,
+      cursor: q?.cursor || undefined,
+      limite: Number(q?.limit) || 25,
+    });
+  }
+
+  async verDocumento(empresaId: number, id: string) {
+    await this.integrador(empresaId);
+    return this.facturacion.obtener(empresaId, id);
+  }
+
+  async archivoDocumento(empresaId: number, id: string, archivo: string, formato?: string) {
+    await this.integrador(empresaId);
+    if (archivo === 'xml') return this.facturacion.xml(empresaId, id);
+    if (archivo === 'cdr') return this.facturacion.cdr(empresaId, id);
+    if (archivo === 'pdf') {
+      const f = ['a4', 'a5', 'ticket'].includes(String(formato)) ? (formato as any) : 'a4';
+      return this.facturacion.pdf(empresaId, id, f);
+    }
+    throw new NotFoundException('Ese archivo no existe.');
+  }
+
+  /** Emite DE VERDAD: va a SUNAT y se cobra. La puerta de habilitación aplica igual. */
+  async emitirDocumento(empresaId: number, body: any) {
+    await this.integrador(empresaId);
+    return this.facturacion.emitir(empresaId, body ?? {}, false);
+  }
+
+  async anularDocumento(empresaId: number, id: string, body: any) {
+    await this.integrador(empresaId);
+    return this.facturacion.anular(empresaId, id, body?.reason, false);
+  }
+
   // ── Claves ───────────────────────────────────────────────────────────
 
   async listarClaves(empresaId: number) {
