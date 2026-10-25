@@ -39,7 +39,7 @@ describe('ConsolaFacturacionService.pasarAProduccion', () => {
       resolverParaIntegrador: jest.fn(async () => ({ ...emisor })),
       vistaPublica: jest.fn((e: any) => ({ id: e.apiPublicId, environment: e.usaDemo ? 'test' : 'live' })),
     };
-    svc = new ConsolaFacturacionService(prisma, {} as any, {} as any, emisores, {} as any, {} as any, qpse, {} as any);
+    svc = new ConsolaFacturacionService(prisma, {} as any, {} as any, emisores, {} as any, {} as any, qpse, {} as any, {} as any);
   });
 
   it('sin confirmación no toca QPSE', async () => {

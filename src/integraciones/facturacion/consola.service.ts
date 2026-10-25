@@ -17,6 +17,8 @@ import { MedidorApiService } from './medidor.service';
 import { rucValido, MENSAJE_RUC_INVALIDO } from '../erp/ruc';
 import { QpseClient, QpseEmpresaCuenta } from '../../common/utils/qpse.client';
 import { FacturacionApiService } from './facturacion.service';
+import { ClienteService } from '../../cliente/cliente.service';
+import { CobrosApiService } from './cobros-api.service';
 
 /**
  * La consola de developers.krezka.com: lo que en apisunat es "Mis Empresas".
@@ -49,6 +51,7 @@ export class ConsolaFacturacionService {
     private readonly medidor: MedidorApiService,
     private readonly qpse: QpseClient,
     private readonly facturacion: FacturacionApiService,
+    private readonly clientes: ClienteService,
   ) {}
 
   /** Los planes de la consola: sin módulos del ERP, sin tope de comprobantes. */
@@ -376,6 +379,74 @@ export class ConsolaFacturacionService {
   async anularDocumento(empresaId: number, id: string, body: any) {
     await this.integrador(empresaId);
     return this.facturacion.anular(empresaId, id, body?.reason, false);
+  }
+
+  // ── Datos de facturación ─────────────────────────────────────────────
+
+  /** A nombre de quién le facturamos el consumo. */
+  async verDatosFacturacion(empresaId: number) {
+    await this.integrador(empresaId);
+    const e = await this.prisma.empresa.findUnique({ where: { id: empresaId }, select: { datosFacturacion: true } });
+    const d = (e?.datosFacturacion ?? null) as any;
+    return {
+      object: 'billing_details',
+      complete: !!CobrosApiService.datosValidos(d),
+      document_type: d?.tipo ?? null,
+      document_number: d?.numero ?? null,
+      name: d?.nombre ?? null,
+      address: d?.direccion ?? null,
+      email: d?.email ?? null,
+    };
+  }
+
+  async guardarDatosFacturacion(empresaId: number, body: any) {
+    await this.integrador(empresaId);
+    const tipo = String(body?.document_type ?? '').toLowerCase();
+    const numero = String(body?.document_number ?? '').replace(/\D/g, '');
+    const nombre = String(body?.name ?? '').trim();
+    const direccion = String(body?.address ?? '').trim();
+    const email = String(body?.email ?? '').trim().toLowerCase();
+    if (tipo !== 'ruc' && tipo !== 'dni') throw new BadRequestException('Elige RUC o DNI.');
+    if (tipo === 'ruc' && !rucValido(numero)) throw new BadRequestException(MENSAJE_RUC_INVALIDO);
+    if (tipo === 'dni' && !/^\d{8}$/.test(numero)) throw new BadRequestException('El DNI tiene 8 dígitos.');
+    if (nombre.length < 3) throw new BadRequestException(tipo === 'ruc' ? 'Escribe la razón social.' : 'Escribe el nombre completo.');
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) throw new BadRequestException('El correo no es válido.');
+    // Una factura a un RUC lleva dirección fiscal; sin ella SUNAT la puede observar.
+    if (tipo === 'ruc' && direccion.length < 5) throw new BadRequestException('Escribe la dirección fiscal.');
+    await this.prisma.empresa.update({
+      where: { id: empresaId },
+      data: {
+        datosFacturacion: {
+          tipo,
+          numero,
+          nombre,
+          ...(direccion ? { direccion } : {}),
+          ...(email ? { email } : {}),
+        },
+      },
+    });
+    return this.verDatosFacturacion(empresaId);
+  }
+
+  /** Autocompleta nombre y dirección desde SUNAT (RUC) o RENIEC (DNI). */
+  async consultarDocumento(empresaId: number, tipo: string, numero: string) {
+    await this.integrador(empresaId);
+    const t = String(tipo).toLowerCase();
+    const n = String(numero ?? '').replace(/\D/g, '');
+    if (t === 'ruc') {
+      if (!rucValido(n)) throw new BadRequestException(MENSAJE_RUC_INVALIDO);
+      const r: any = await this.empresas.consultarRuc(n).catch(() => null);
+      if (!r?.nombre_o_razon_social) throw new BadRequestException('No encontramos ese RUC en SUNAT. Escribe los datos a mano.');
+      return { name: String(r.nombre_o_razon_social).trim(), address: String(r.direccion_completa || r.direccion || '').trim() || null };
+    }
+    if (t === 'dni') {
+      if (!/^\d{8}$/.test(n)) throw new BadRequestException('El DNI tiene 8 dígitos.');
+      const r: any = await this.clientes.consultarDocumento(n, 'DNI').catch(() => null);
+      const nombre = r?.nombre_completo || [r?.nombres, r?.apellido_paterno, r?.apellido_materno].filter(Boolean).join(' ');
+      if (!nombre) throw new BadRequestException('No encontramos ese DNI. Escribe el nombre a mano.');
+      return { name: String(nombre).trim(), address: null };
+    }
+    throw new BadRequestException('Elige RUC o DNI.');
   }
 
   // ── Claves ───────────────────────────────────────────────────────────

@@ -26,9 +26,10 @@ import { EmpresaModule } from '../../empresa/empresa.module';
 import { MercadoPagoModule } from '../../mercadopago/mercadopago.module';
 import { SuscripcionModule } from '../../suscripcion/suscripcion.module';
 import { CobrosApiService } from './cobros-api.service';
+import { ClienteModule } from '../../cliente/cliente.module';
 
 @Module({
-  imports: [PrismaModule, ComprobanteModule, IntegracionesModule, EmpresaModule, MercadoPagoModule, SuscripcionModule],
+  imports: [PrismaModule, ComprobanteModule, IntegracionesModule, EmpresaModule, MercadoPagoModule, SuscripcionModule, ClienteModule],
   controllers: [FacturacionApiController, ConsolaFacturacionController],
   providers: [
     FacturacionApiService,

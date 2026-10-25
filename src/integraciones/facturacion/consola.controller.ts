@@ -197,6 +197,42 @@ export class ConsolaFacturacionController {
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN_EMPRESA')
+  @Get('datos-facturacion')
+  datosFacturacion(@Request() req: any) {
+    return this.consola.verDatosFacturacion(req.user.empresaId);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_EMPRESA')
+  @Post('datos-facturacion')
+  @HttpCode(200)
+  guardarDatosFacturacion(@Request() req: any, @Body() body: any) {
+    return this.consola.guardarDatosFacturacion(req.user.empresaId, body);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_EMPRESA')
+  @Get('datos-facturacion/consultar')
+  consultarDocumento(@Request() req: any, @Query('tipo') tipo: string, @Query('numero') numero: string) {
+    return this.consola.consultarDocumento(req.user.empresaId, tipo, numero);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_EMPRESA')
+  @Get('cobros/:id/factura')
+  async facturaCobro(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Res() res: any) {
+    await this.consola.perfil(req.user.empresaId);
+    const a = await this.cobros.pdfFactura(req.user.empresaId, id);
+    res.set({
+      'Content-Type': a.contentType,
+      'Content-Disposition': `attachment; filename="${a.filename}"`,
+      'Content-Length': String(a.buffer.length),
+    });
+    return res.send(a.buffer);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_EMPRESA')
   @Get('cobros')
   async listarCobros(@Request() req: any) {
     await this.consola.perfil(req.user.empresaId);

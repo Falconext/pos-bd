@@ -36,6 +36,18 @@ import {
 export class CobroEmpresaService {
   private readonly logger = new Logger(CobroEmpresaService.name);
 
+  /**
+   * Quién quiere enterarse de que un cobro se pagó. Lo usa la API de
+   * facturación para emitir la factura del consumo. Va como registro y no
+   * como dependencia para que este módulo no conozca a los que cobran con él,
+   * igual que los receptores de Mercado Pago.
+   */
+  private readonly alPagar: Array<(cobro: { id: number; empresaId: number; concepto: string }) => Promise<void>> = [];
+
+  registrarAlPagar(fn: (cobro: { id: number; empresaId: number; concepto: string }) => Promise<void>) {
+    this.alPagar.push(fn);
+  }
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificaciones: NotificacionesService,
@@ -243,6 +255,14 @@ export class CobroEmpresaService {
         ? `Recibimos tu pago de S/ ${monto.toFixed(2)} por el consumo de la API de ${cobro.periodo}.`
         : `Recibimos tu pago de S/ ${monto.toFixed(2)}. Tu plan queda activo hasta el ${cubreHasta.toLocaleDateString('es-PE')}.`,
     });
+
+    // Después del pago, nunca dentro: si lo que viene después (emitir la
+    // factura, mandar un correo) falla, el pago igual quedó registrado.
+    for (const fn of this.alPagar) {
+      await fn({ id: cobro.id, empresaId: cobro.empresaId, concepto: cobro.concepto }).catch((e: any) =>
+        this.logger.error(`Después del pago del cobro ${cobro.id}: ${e?.message}`),
+      );
+    }
 
     return resultado;
   }
