@@ -131,7 +131,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
       if (esApiPublica(request?.originalUrl ?? request?.url)) {
         response.status(s).json({ error });
       } else {
-        response.status(s).json({ code: 0, message: contrato.message, error: 'ErrorDeContrato' });
+        // `param` deja a la consola de developers marcar el campo con el problema.
+        response.status(s).json({
+          code: 0,
+          message: contrato.message,
+          error: 'ErrorDeContrato',
+          ...(contrato.parametro ? { param: contrato.parametro } : {}),
+        });
       }
       return;
     }
