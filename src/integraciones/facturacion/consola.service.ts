@@ -247,9 +247,10 @@ export class ConsolaFacturacionService {
    * Cada paso se puede repetir: si se corta a la mitad (o hacen doble clic),
    * el segundo intento retoma donde quedó en vez de fallar.
    *
-   * Lo que esto NO resuelve —y no puede— es la afiliación del contribuyente:
-   * en SUNAT SOL tiene que haber autorizado a QPSE como su PSE. Sin eso SUNAT
-   * rechaza con 0111/0154 y la empresa queda `not_authorized` con el motivo.
+   * Es el mismo flujo que el pase a producción de los resellers en Vendify:
+   * la afiliación a QPSE es de la cuenta de Krezka y QPSE hace el alta ante
+   * SUNAT, así que al contribuyente no se le pide trámite en SOL. Si SUNAT
+   * igual lo rechaza (0111/0154), queda `not_authorized` con el motivo.
    */
   async pasarAProduccion(empresaId: number, issuerId: string, body: any) {
     await this.integrador(empresaId);
