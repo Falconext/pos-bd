@@ -3,6 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { MercadoPagoService } from '../../mercadopago/mercadopago.service';
 import { CobroEmpresaService } from '../../suscripcion/cobro-empresa.service';
 import { MedidorApiService } from './medidor.service';
+import { estaVencido } from './cobro-vencido';
 
 /** Cómo viaja un cobro de la API en el `external_reference` de Mercado Pago. */
 export const PREFIJO_COBRO_API = 'cobro-api-';
@@ -52,7 +53,8 @@ export class CobrosApiService implements OnModuleInit {
         currency: 'PEN',
         status: c.estado === 'APLICADO' ? 'paid' : 'pending',
         due_date: c.fechaVencimiento.toISOString().slice(0, 10),
-        overdue: c.estado === 'PENDIENTE' && c.fechaVencimiento < new Date(),
+        // Mismo criterio que el bloqueo de emisión: vencido desde el día siguiente (Lima).
+        overdue: c.estado === 'PENDIENTE' && estaVencido(c.fechaVencimiento),
         paid_at: c.fechaCobro ?? undefined,
         payment_method: c.medioPago ?? undefined,
       })),
@@ -155,7 +157,8 @@ export class CobrosApiService implements OnModuleInit {
           <h2 style="margin:0 0 12px">Tu consumo de ${c.periodo}</h2>
           <p>${c.descripcion ?? 'API de facturación'}.</p>
           <p style="font-size:28px;font-weight:600;margin:16px 0">${monto} <span style="font-size:14px;font-weight:400;color:#71717a">con IGV</span></p>
-          <p>Vence el <strong>${vence}</strong>. Puedes ver el detalle y pagar con Mercado Pago desde tu consola:</p>
+          <p>Vence el <strong>${vence}</strong>. Si no se paga ese día, desde el día siguiente se pausa la emisión de comprobantes hasta que se pague.</p>
+          <p>Puedes ver el detalle y pagar con Mercado Pago desde tu consola:</p>
           <p><a href="${enlace}" style="display:inline-block;background:#7c3aed;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">Ver y pagar</a></p>
           <p style="color:#71717a;font-size:13px">Si prefieres pagar por transferencia o Yape, responde este correo.</p>
         </div>`;
