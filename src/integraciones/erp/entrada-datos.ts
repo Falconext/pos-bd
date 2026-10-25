@@ -7,6 +7,7 @@
  *
  * Puro: valida y normaliza. Lo que toca la base vive en `erp-datos.service.ts`.
  */
+import { MENSAJE_RUC_INVALIDO, rucValido } from './ruc';
 import { invalido, presente, soloConocidos, texto } from './entrada-producto';
 
 /** El nombre de una categoría o marca. */
@@ -67,8 +68,8 @@ export function leerClienteNuevo(body: any): ClienteEntrada {
   if (!tipo) throw invalido('document_type', `\`document_type\` es uno de: ${Object.keys(TIPO_DOC_PANEL).join(', ')}.`);
   const numero = texto(body, 'document_number', 20, true)!.replace(/\s/g, '');
   if (tipo === 'DNI' && !/^\d{8}$/.test(numero)) throw invalido('document_number', 'El DNI tiene 8 dígitos.');
-  if (tipo === 'RUC' && !/^(10|15|17|20)\d{9}$/.test(numero)) {
-    throw invalido('document_number', 'El RUC tiene 11 dígitos y empieza con 10, 15, 17 o 20.');
+  if (tipo === 'RUC' && !rucValido(numero)) {
+    throw invalido('document_number', MENSAJE_RUC_INVALIDO);
   }
   return {
     tipo,
