@@ -23,6 +23,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { ConsolaFacturacionService } from './consola.service';
+import { CobrosApiService } from './cobros-api.service';
 
 /**
  * Emitir y anular desde la consola llevan `Idempotency-Key` como en la API:
@@ -48,7 +49,10 @@ class CuentaDeLaSesion implements NestInterceptor {
 @ApiExcludeController()
 @Controller('facturacion/consola')
 export class ConsolaFacturacionController {
-  constructor(private readonly consola: ConsolaFacturacionService) {}
+  constructor(
+    private readonly consola: ConsolaFacturacionService,
+    private readonly cobros: CobrosApiService,
+  ) {}
 
   @Post('registro')
   registrar(@Body() body: any) {
@@ -189,6 +193,32 @@ export class ConsolaFacturacionController {
   @Delete('webhooks/:id')
   borrarWebhook(@Request() req: any, @Param('id') id: string) {
     return this.consola.borrarWebhook(req.user.empresaId, id);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_EMPRESA')
+  @Get('cobros')
+  async listarCobros(@Request() req: any) {
+    await this.consola.perfil(req.user.empresaId);
+    return this.cobros.listar(req.user.empresaId);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_EMPRESA')
+  @Post('cobros/:id/pagar')
+  @HttpCode(200)
+  async pagarCobro(@Request() req: any, @Param('id', ParseIntPipe) id: number) {
+    await this.consola.perfil(req.user.empresaId);
+    return this.cobros.linkDePago(req.user.empresaId, id);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_EMPRESA')
+  @Post('cobros/:id/verificar')
+  @HttpCode(200)
+  async verificarCobro(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: any) {
+    await this.consola.perfil(req.user.empresaId);
+    return this.cobros.verificar(req.user.empresaId, id, body?.payment_id ? String(body.payment_id) : undefined);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

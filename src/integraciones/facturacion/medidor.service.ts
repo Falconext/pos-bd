@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
 import { estadoPublico } from './estado-publico';
@@ -10,6 +10,7 @@ import {
   periodoDe,
   rangoDelPeriodo,
 } from './tarifas';
+import { CobrosApiService } from './cobros-api.service';
 
 /**
  * Cuánto consumió cada integrador y cuánto se le cobra.
@@ -38,7 +39,11 @@ export class MedidorApiService {
   /** El concepto con que viaja el consumo de la API a `CobroEmpresa`. */
   static readonly CONCEPTO = 'API_FACTURACION';
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    /** Avisa al integrador el cobro nuevo. Opcional: el medidor no depende de él. */
+    @Optional() @Inject(forwardRef(() => CobrosApiService)) private readonly avisos?: CobrosApiService,
+  ) {}
 
   /**
    * Los comprobantes de un integrador que entran en un período.
@@ -218,7 +223,8 @@ export class MedidorApiService {
         // puede volver a pedir. Al revés —cerrar sin poder reabrir— sería
         // perder el consumo del mes.
         try {
-          await this.facturarConsumo(i.id, periodo);
+          const cobro = await this.facturarConsumo(i.id, periodo);
+          if (cobro.cobroId && !cobro.yaEstaba) await this.avisos?.avisarCobroNuevo(i.id, cobro.cobroId);
         } catch (ef: any) {
           console.error(`[api-facturacion] cerrado ${periodo} de ${i.razonSocial} pero no se pudo emitir el cobro:`, ef?.message);
         }
