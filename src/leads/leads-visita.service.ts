@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { MensajeriaService } from './mensajeria.service';
@@ -114,6 +115,69 @@ export class LeadsVisitaService {
       indicacionesEnviadas,
       yaTeniaIndicaciones: !!visita.indicacionesEn,
     };
+  }
+
+  /**
+   * La víspera, a las 7 p. m.: "te esperamos mañana" con cómo llegar.
+   *
+   * La víspera y no la mañana: los avisos salen de 9 a 21 h y Hierba Sana
+   * abre antes (Percy iba a las 8 a. m.); a las 9 ya habría llegado, o se
+   * habría perdido. Solo dentro de las 24 h desde que el cliente escribió:
+   * fuera de esa ventana WhatsApp exige plantilla, y en ese caso no se manda.
+   */
+  @Cron('0 19 * * *', { name: 'leads-visitas-recordatorio', timeZone: 'America/Lima' })
+  async recordarVisitasDeManana(ahora = new Date()): Promise<void> {
+    const hoy = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(ahora);
+    const manana = new Date(`${hoy}T00:00:00Z`);
+    manana.setUTCDate(manana.getUTCDate() + 1);
+    const visitas = await this.prisma.leadVisitaTienda.findMany({
+      where: { estado: 'AGENDADA', fecha: manana, recordatorioEn: null },
+      select: { id: true, empresaId: true, conversacionId: true, telefono: true, nombre: true },
+      take: 200,
+    });
+    for (const v of visitas) {
+      try {
+        const [empresa, ultimoCliente] = await Promise.all([
+          this.prisma.empresa.findUnique({
+            where: { id: v.empresaId },
+            select: { iaVentasActiva: true, iaVentasConfigJson: true, nombreComercial: true, razonSocial: true },
+          }),
+          this.prisma.leadMensaje.findFirst({
+            where: { conversacionId: v.conversacionId, rol: 'USUARIO' },
+            orderBy: { id: 'desc' },
+            select: { creadoEn: true },
+          }),
+        ]);
+        if (!empresa?.iaVentasActiva) continue;
+        if (!ultimoCliente || ahora.getTime() - ultimoCliente.creadoEn.getTime() >= 24 * 3600_000) {
+          this.logger.log(`Visita ${v.id}: sin recordatorio, fuera de la ventana de 24 h.`);
+          continue;
+        }
+        const tienda = tiendaValida((empresa.iaVentasConfigJson as { tienda?: unknown } | null)?.tienda);
+        if (!tieneComoLlegar(tienda)) continue;
+        const negocio = empresa.nombreComercial || empresa.razonSocial;
+        const saludo = `¡Hola${v.nombre ? ` ${v.nombre.split(' ')[0]}` : ''}! Te esperamos mañana en ${negocio} 🌿`;
+        const texto = `${saludo}\n\n${textoComoLlegar(tienda, negocio)}`;
+        if (tienda.lat != null && tienda.lng != null) {
+          await this.mensajeria.enviarUbicacion(
+            v.telefono,
+            { lat: tienda.lat, lng: tienda.lng, nombre: negocio, direccion: tienda.direccion || undefined },
+            v.empresaId,
+          );
+        }
+        const r = await this.mensajeria.enviarTexto(v.telefono, texto, v.empresaId);
+        if (!r.success) {
+          this.logger.warn(`Visita ${v.id}: recordatorio no salió: ${r.error}`);
+          continue;
+        }
+        await this.prisma.leadMensaje.create({
+          data: { conversacionId: v.conversacionId, rol: 'ASISTENTE', contenido: texto },
+        });
+        await this.prisma.leadVisitaTienda.update({ where: { id: v.id }, data: { recordatorioEn: new Date() } });
+      } catch (e: any) {
+        this.logger.warn(`Visita ${v.id}: error en el recordatorio: ${e?.message}`);
+      }
+    }
   }
 
   /** Mapa + foto con las indicaciones. True si salió algo. */

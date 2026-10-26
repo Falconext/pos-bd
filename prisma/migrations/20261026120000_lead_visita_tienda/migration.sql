@@ -13,6 +13,7 @@ CREATE TABLE "LeadVisitaTienda" (
     "comprobanteId" INTEGER,
     "estado" "EstadoVisitaTienda" NOT NULL DEFAULT 'AGENDADA',
     "indicacionesEn" TIMESTAMP(3),
+    "recordatorioEn" TIMESTAMP(3),
     "creadoEn" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "actualizadoEn" TIMESTAMP(3) NOT NULL,
 
