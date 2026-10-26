@@ -807,10 +807,13 @@ export class ComprobanteService {
                 Number(it.mtoImpVenta || 0) - Number((it as any).saldo || 0),
               );
               const yaEmitido = formales.reduce((a, f) => a + f.mtoImpVenta, 0);
+              const total = totalDeLineas(pendientes);
+              // Nota cobrada entera: el saldo también (mismo criterio que la conversión).
+              const notaPagada = Number((it as any).saldo || 0) <= 0.01;
               porConvertir = {
                 detalles: pendientes,
-                total: totalDeLineas(pendientes),
-                yaCobrado: this.round2(Math.max(0, cobrado - yaEmitido)),
+                total,
+                yaCobrado: notaPagada ? total : this.round2(Math.max(0, cobrado - yaEmitido)),
               };
             }
           }
@@ -3806,10 +3809,14 @@ export class ComprobanteService {
       );
       // Lo cobrado en la nota ya se aplicó en parte a los formales anteriores:
       // al saldo le toca solo lo que sobra, o se daría por pagado de más.
+      // Nota cobrada entera: cualquier parte está pagada. Restar daba un
+      // centavo de diferencia por el redondeo de cada línea.
       if (saldoNota) {
-        montoYaCobradoEnOrigen = this.round2(
-          Math.max(0, montoYaCobradoEnOrigen - saldoNota.yaEmitido),
-        );
+        const notaPagada =
+          montoYaCobradoEnOrigen >= this.round2(Number(origen.mtoImpVenta || 0)) - 0.01;
+        montoYaCobradoEnOrigen = notaPagada
+          ? this.round2(Number(origen.mtoImpVenta || 0))
+          : this.round2(Math.max(0, montoYaCobradoEnOrigen - saldoNota.yaEmitido));
       }
     }
 

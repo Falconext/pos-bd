@@ -449,6 +449,19 @@ describeSiHayBase('QA funcional · conversión de informales', () => {
       await expect(conLineas(nv.id, nv.clienteId, [[otroProductoId, 'Otro QA', 1]])).rejects.toThrow(/ya fue convertido/);
     });
 
+    it('nota cobrada entera: el saldo no queda debiendo centavos de redondeo', async () => {
+      const nv = await crearNotaDeDos();
+      // La primera parte se registró con un centavo de más (redondeo por línea):
+      // al saldo le quedarían 559.99 cobrados contra 560.
+      const primera: any = await conLineas(nv.id, nv.clienteId, [[productoId, 'Producto QA', 3]]);
+      await prisma.comprobante.update({ where: { id: primera.id }, data: { mtoImpVenta: totalDe(3) + 0.01 } });
+      const saldo: any = await conLineas(nv.id, nv.clienteId, [[otroProductoId, 'Otro QA', 2]]);
+      const g = await guardado(saldo.id);
+      expect(Number(g.saldo)).toBe(0);
+      expect(g.estadoPago).toBe('COMPLETADO');
+      expect(await cobradoEnCaja(saldo.id)).toBe(0);
+    });
+
     it('si la nota se cobró a medias, al saldo le toca solo lo que sobra', async () => {
       const nv = await crearNotaDeDos();
       // La nota de 1400 tiene 1400 cobrados; se quita 1000 para dejar 400.
