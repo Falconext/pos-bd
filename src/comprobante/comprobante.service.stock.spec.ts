@@ -26,7 +26,10 @@ describe('ComprobanteService - Stock Management', () => {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       create: jest.fn(),
       findFirst: jest.fn(),
+      delete: jest.fn(),
     },
+    detalleComprobante: { deleteMany: jest.fn() },
+    leyenda: { deleteMany: jest.fn() },
     producto: {
       findUnique: jest.fn(),
       update: jest.fn(),
@@ -52,6 +55,7 @@ describe('ComprobanteService - Stock Management', () => {
     },
     movimientoKardex: {
       findMany: jest.fn().mockResolvedValue([]),
+      deleteMany: jest.fn(),
     },
     movimientoKardexLote: {
       findMany: jest.fn().mockResolvedValue([]),
@@ -96,7 +100,11 @@ describe('ComprobanteService - Stock Management', () => {
         },
         {
           provide: EnviarSunatService,
-          useValue: { enviarComprobante: jest.fn(), anularEnSunat: jest.fn() },
+          useValue: {
+            enviarComprobante: jest.fn(),
+            anularEnSunat: jest.fn(),
+            registrarComisionesAlAceptar: jest.fn(),
+          },
         },
         {
           provide: ComisionesService,
@@ -111,6 +119,10 @@ describe('ComprobanteService - Stock Management', () => {
 
   afterEach(() => {
     jest.clearAllMocks();
+    // Los mockResolvedValueOnce sin consumir no pasan a la prueba siguiente.
+    mockPrismaService.comprobante.findUnique.mockReset();
+    mockPrismaService.comprobante.findFirst.mockReset();
+    mockPrismaService.motivoNota.findUnique.mockReset();
     // Restore defaults after clear
     mockPrismaService.pago.deleteMany.mockResolvedValue({ count: 0 });
     mockPrismaService.comisionVendedor.deleteMany.mockResolvedValue({ count: 0 });
@@ -547,6 +559,89 @@ describe('ComprobanteService - Stock Management', () => {
       expect(mockPrismaService.pago.deleteMany).toHaveBeenCalledWith({
         where: { comprobanteId: 11 },
       });
+    });
+  });
+
+  /**
+   * Borrado de un comprobante que SUNAT rechazó por datos (al emitir o en el
+   * reintento automático). TIENDA MINERA, 26-10: el stock quedó 6 unidades por
+   * encima sin una sola fila en el kardex que lo explicara.
+   */
+  describe('eliminarComprobante (rechazo fatal de SUNAT)', () => {
+    const nota = {
+      id: 50,
+      empresaId: 88,
+      tipoDoc: '07',
+      serie: 'FC01',
+      correlativo: 1,
+      numDocAfectado: 'F0A1-3',
+      motivoId: 1,
+      detalles: [{ productoId: 7, cantidad: 2 }],
+    };
+
+    it('una nota de crédito: quita el stock que devolvió y la factura vuelve a estar vigente', async () => {
+      mockPrismaService.comprobante.findUnique
+        .mockResolvedValueOnce(nota)
+        .mockResolvedValueOnce({ id: 20, detalles: [] });
+      mockPrismaService.motivoNota.findUnique.mockResolvedValue({ codigo: '01' });
+      mockPrismaService.comprobante.findFirst.mockResolvedValue({
+        id: 20,
+        serie: 'F0A1',
+        correlativo: 3,
+        mtoImpVenta: 100,
+      });
+      mockPrismaService.movimientoKardex.findMany.mockResolvedValue([
+        { productoId: 7, cantidad: 2, sedeId: 117, costoUnitario: 10 },
+      ]);
+
+      await service.eliminarComprobante(50);
+
+      expect(mockKardexService.registrarMovimiento).toHaveBeenCalledTimes(1);
+      expect(mockKardexService.registrarMovimiento).toHaveBeenCalledWith(
+        expect.objectContaining({
+          productoId: 7,
+          tipoMovimiento: 'SALIDA',
+          cantidad: 2,
+          sedeId: 117,
+          comprobanteId: 50,
+        }),
+      );
+      expect(mockPrismaService.comprobante.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 20 },
+          data: expect.objectContaining({ estadoEnvioSunat: 'EMITIDO' }),
+        }),
+      );
+      expect(mockPrismaService.movimientoKardex.deleteMany).toHaveBeenCalledWith({
+        where: { comprobanteId: 50 },
+      });
+      expect(mockPrismaService.comprobante.delete).toHaveBeenCalledWith({ where: { id: 50 } });
+    });
+
+    it('una boleta: devuelve el stock que descontó', async () => {
+      mockPrismaService.comprobante.findUnique.mockResolvedValueOnce({
+        ...nota,
+        tipoDoc: '03',
+        serie: 'B0A1',
+        numDocAfectado: null,
+        motivoId: null,
+      });
+      mockPrismaService.movimientoKardex.findMany.mockResolvedValue([
+        { id: 1, productoId: 7, sedeId: 117, tipoMovimiento: 'SALIDA' },
+      ]);
+      mockPrismaService.producto.findUnique.mockResolvedValue({
+        stock: 5,
+        costoPromedio: 10,
+        atributosTecnicos: null,
+      });
+
+      await service.eliminarComprobante(50);
+
+      expect(mockKardexService.registrarMovimiento).toHaveBeenCalledWith(
+        expect.objectContaining({ productoId: 7, tipoMovimiento: 'INGRESO', cantidad: 2 }),
+      );
+      expect(mockPrismaService.motivoNota.findUnique).not.toHaveBeenCalled();
+      expect(mockPrismaService.comprobante.delete).toHaveBeenCalledWith({ where: { id: 50 } });
     });
   });
 });

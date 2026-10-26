@@ -4390,10 +4390,13 @@ export class ComprobanteService {
     const comp = await this.prisma.comprobante.findUnique({
       where: { id },
       select: {
+        id: true,
         empresaId: true,
         tipoDoc: true,
         serie: true,
         correlativo: true,
+        numDocAfectado: true,
+        motivoId: true,
         // comboId/kitQuitados/unidadesPorPaquete: sin ellos los kits vendidos
         // como una línea no devolvían el stock de sus componentes.
         detalles: {
@@ -4401,6 +4404,14 @@ export class ComprobanteService {
         },
       },
     });
+    // Una nota de crédito rechazada nunca existió: la factura que anulaba
+    // vuelve a estar vigente y el stock que devolvió se quita. Sin esto, al
+    // borrar abajo sus movimientos, el stock quedaba sumado sin ningún rastro
+    // en el kardex y la factura anulada por una nota que SUNAT no aceptó.
+    if (comp?.tipoDoc === '07') {
+      await this.revertirAnulacionPorNotaDescartada(comp);
+      await this.deshacerDevolucionDeStockDeNota(comp);
+    }
     if (comp && comp.tipoDoc !== '07') {
       await this.revertirStock(comp.detalles as any[], {
         empresaId: comp.empresaId,
