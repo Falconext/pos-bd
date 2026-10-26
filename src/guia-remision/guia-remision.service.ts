@@ -1,3 +1,4 @@
+import { emisionAlEnviar } from './emision-al-enviar';
 import {
   Injectable,
   NotFoundException,
@@ -355,13 +356,28 @@ export class GuiaRemisionService {
     this.validateGuiaRemision({ ...guia, ...updateDto } as any);
 
     // Si se actualizan detalles, eliminar los anteriores y crear los nuevos
+    // El correlativo no se edita: lo asigna la creación (o el auto-avance de
+    // numeración repetida). El formulario mandaba 0 al editar y la guía salía
+    // a SUNAT como T001-00000000. Solo si cambia la serie toca el siguiente
+    // número de esa serie.
     const {
       detalles,
       documentosRelacionados,
       vehiculosSecundarios,
       conductoresSecundarios,
+      correlativo: _correlativoIgnorado,
       ...guiaData
     } = updateDto;
+    const serieNueva = guiaData.serie ? String(guiaData.serie).trim().toUpperCase() : null;
+    if (serieNueva && serieNueva !== guia.serie) {
+      const ultima = await this.prisma.guiaRemision.findFirst({
+        where: { empresaId, serie: serieNueva },
+        orderBy: { correlativo: 'desc' },
+        select: { correlativo: true },
+      });
+      (guiaData as any).serie = serieNueva;
+      (guiaData as any).correlativo = (ultima?.correlativo ?? 0) + 1;
+    }
     const docsRelacionados =
       this.normalizarDocumentosRelacionados(documentosRelacionados);
     const vehSecundarios = this.normalizarVehiculosSecundarios(vehiculosSecundarios);
@@ -518,6 +534,31 @@ export class GuiaRemisionService {
 
     try {
       let guiaParaEnviar = guia;
+      // Si SUNAT todavía no la recibió, se emite ahora: fecha y hora del envío
+      // (ver emision-al-enviar.ts). Con `documentoId` ya hay un envío en curso
+      // y cambiarle la fecha lo haría otro documento.
+      if (!guia.documentoId) {
+        // Correlativo 0 (lo dejaba la edición antes del arreglo): SUNAT lo
+        // rechaza; toma el siguiente número de su serie.
+        let correlativo: number | undefined;
+        if (!(Number(guia.correlativo) >= 1)) {
+          const ultima = await this.prisma.guiaRemision.findFirst({
+            where: { empresaId, serie: guia.serie },
+            orderBy: { correlativo: 'desc' },
+            select: { correlativo: true },
+          });
+          correlativo = Math.max(ultima?.correlativo ?? 0, 0) + 1;
+        }
+        guiaParaEnviar = (await this.prisma.guiaRemision.update({
+          where: { id },
+          data: { ...emisionAlEnviar(guia, new Date()), ...(correlativo ? { correlativo } : {}) },
+          include: {
+            detalles: { include: { producto: true } },
+            empresa: true,
+            cliente: true,
+          },
+        })) as any;
+      }
       let resultado = await this.sunatGuiaService.enviarGuia(
         guiaParaEnviar,
         empresa.usuarioPse || '',
