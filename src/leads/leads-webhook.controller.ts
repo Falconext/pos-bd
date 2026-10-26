@@ -13,6 +13,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import * as crypto from 'crypto';
 import { JOB_INGRESAR_MENSAJE, LEADS_MESSAGES_QUEUE } from './leads.constants';
+import { mensajesDeInstagram } from '../instagram/instagram-webhook';
 
 /**
  * Webhook público de WhatsApp Cloud API para el módulo de leads.
@@ -83,6 +84,11 @@ export class LeadsWebhookController {
     if (!rawBody) return false;
     if (this.coincideFirma(rawBody, signature, secret)) return true;
 
+    // Los mensajes de Instagram (login de Instagram) los firma Meta con la
+    // clave de la app de Instagram, que es otra.
+    const deInstagram = process.env.INSTAGRAM_APP_SECRET;
+    if (deInstagram && this.coincideFirma(rawBody, signature, deInstagram)) return true;
+
     const anterior = process.env.META_APP_SECRET_PREV;
     if (anterior && this.coincideFirma(rawBody, signature, anterior)) {
       this.logger.warn(
@@ -103,6 +109,26 @@ export class LeadsWebhookController {
     }
 
     const body: any = req.body ?? {};
+    if (body.object === 'instagram') {
+      // Mismo trato que WhatsApp: se encola antes de contestar y, si la cola
+      // falla, un 500 hace que Meta reentregue.
+      try {
+        for (const m of mensajesDeInstagram(body)) {
+          await this.queue.add(JOB_INGRESAR_MENSAJE, m, {
+            // BullMQ no acepta ":" en el id del job.
+            jobId: `in-${m.messageId.replace(/:/g, '-')}`,
+            attempts: 3,
+            backoff: { type: 'exponential', delay: 2000 },
+            removeOnComplete: true,
+            removeOnFail: true,
+          });
+        }
+      } catch (e: any) {
+        this.logger.error(`Webhook leads (Instagram): error encolando: ${e?.message}`);
+        return res.status(500).send('retry');
+      }
+      return res.status(200).send('EVENT_RECEIVED');
+    }
     if (body.object !== 'whatsapp_business_account') {
       return res.status(200).send('EVENT_RECEIVED');
     }

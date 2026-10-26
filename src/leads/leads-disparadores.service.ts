@@ -3,7 +3,8 @@ import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { estaPausado } from './pausa-bot';
 import { esNumeroInterno, numerosInternos } from './numeros-internos';
-import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { MensajeriaService } from './mensajeria.service';
+import { esDestinoInstagram } from '../instagram/instagram-texto';
 import { EtapaCrm, etapaDesdeDespacho } from './leads-embudo';
 import { LeadsEmbudoService } from './leads-embudo.service';
 import {
@@ -41,7 +42,7 @@ export class LeadsDisparadoresService {
 
   constructor(
     private prisma: PrismaService,
-    private whatsapp: WhatsAppService,
+    private whatsapp: MensajeriaService,
     private embudo: LeadsEmbudoService,
   ) {}
 
@@ -387,6 +388,19 @@ export class LeadsDisparadoresService {
         data: { estado: 'OMITIDO', motivo: veredicto.motivo },
       });
       return { enviado: false, motivo: veredicto.motivo };
+    }
+
+    // Instagram no tiene plantillas: con la ventana cerrada no hay cómo
+    // escribirle. No es un error del envío, es que el canal no lo permite.
+    if (veredicto.via === 'plantilla' && esDestinoInstagram(d.telefono)) {
+      await this.prisma.leadDisparo.update({
+        where: { id: d.id },
+        data: {
+          estado: 'OMITIDO',
+          motivo: 'Instagram: pasaron las 24 h desde el último mensaje del cliente y no hay plantillas.',
+        },
+      });
+      return { enviado: false, motivo: 'instagram_fuera_de_ventana' };
     }
 
     const { texto, parametros } = await this.armarMensaje(

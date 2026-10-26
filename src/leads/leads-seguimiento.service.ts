@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
-import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { MensajeriaService } from './mensajeria.service';
 import { IaVentasService, MensajeConversacion } from './leads-ia.service';
 import {
   CONFIG_DISPARADORES_DEFECTO,
@@ -75,7 +75,7 @@ export class LeadsSeguimientoService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ia: IaVentasService,
-    private readonly whatsapp: WhatsAppService,
+    private readonly whatsapp: MensajeriaService,
   ) {}
 
   // Cada 10 minutos: con media hora, "a la hora" llegaba a ser hora y media.
@@ -114,13 +114,12 @@ export class LeadsSeguimientoService {
             ],
           },
         },
-        empresa: {
-          is: {
-            iaVentasActiva: true,
-            iaVentasSeguimiento: true,
-            whatsappActivo: true,
-          },
-        },
+        // El seguimiento solo corre dentro de las 24 h, que en Instagram es
+        // igual: vale para los dos canales, cada uno con su conexión activa.
+        OR: [
+          { canal: 'WHATSAPP', empresa: { is: { iaVentasActiva: true, iaVentasSeguimiento: true, whatsappActivo: true } } },
+          { canal: 'INSTAGRAM', empresa: { is: { iaVentasActiva: true, iaVentasSeguimiento: true, instagramActivo: true } } },
+        ],
       },
       select: {
         id: true,

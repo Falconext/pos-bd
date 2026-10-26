@@ -17,6 +17,8 @@ import { LeadsCrmController } from './leads-crm.controller';
 import { S3Module } from '../s3/s3.module';
 import { GeminiModule } from '../gemini/gemini.module';
 import { WhatsAppModule } from '../whatsapp/whatsapp.module';
+import { InstagramModule } from '../instagram/instagram.module';
+import { MensajeriaService } from './mensajeria.service';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 import { ClienteModule } from '../cliente/cliente.module';
 import { ComprobanteModule } from '../comprobante/comprobante.module';
@@ -45,6 +47,7 @@ import { ReporteDiarioController } from './reporte-diario.controller';
     BullModule.registerQueue({ name: LEADS_MESSAGES_QUEUE }),
     GeminiModule,
     WhatsAppModule,
+    InstagramModule,
     NotificacionesModule,
     ClienteModule,
     ComprobanteModule,
@@ -69,6 +72,7 @@ import { ReporteDiarioController } from './reporte-diario.controller';
     LeadsDisparadoresService,
     LeadsPagoLinkService,
     ReporteDiarioService,
+    MensajeriaService,
   ],
   exports: [LeadsService, LeadsEmbudoService, LeadsDisparadoresService],
 })

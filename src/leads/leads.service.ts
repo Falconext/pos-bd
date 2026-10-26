@@ -17,7 +17,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EstadoLeadProspecto, TipoLeadDocumento } from '@prisma/client';
 import { RagVentasService } from './leads-rag.service';
 import { ClienteService } from '../cliente/cliente.service';
-import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { MensajeriaService } from './mensajeria.service';
 import { S3Service } from '../s3/s3.service';
 import { LIMITE_TEXTO_WHATSAPP } from './leads.constants';
 
@@ -43,7 +43,7 @@ export class LeadsService {
     private readonly prisma: PrismaService,
     private readonly rag: RagVentasService,
     private readonly clientes: ClienteService,
-    private readonly whatsapp: WhatsAppService,
+    private readonly whatsapp: MensajeriaService,
     @Optional() private readonly s3?: S3Service,
     @Optional() private readonly ia?: IaVentasService,
     // Inyectable para las pruebas: en producción es el ffmpeg de verdad.
