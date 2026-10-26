@@ -361,6 +361,107 @@ describeSiHayBase('QA funcional · conversión de informales', () => {
     });
   });
 
+  // ── RONDA 6 · nota convertida en partes (IRBA, 26-10) ───────────────────
+  // NV01-1 con 5 productos: 3 a factura, y la boleta por los otros 2 no salía
+  // porque la nota ya figuraba como convertida.
+  describe('Ronda 6 · saldo de una nota convertida en parte', () => {
+    let otroProductoId: number;
+    const lineaDe = (pid: number, desc: string, cantidad: number) => ({
+      productoId: pid, descripcion: desc, cantidad, unidad: 'NIU',
+      mtoValorUnitario: Number((PRECIO / 1.18).toFixed(2)), mtoPrecioUnitario: PRECIO,
+      mtoValorVenta: Number(((PRECIO * cantidad) / 1.18).toFixed(2)),
+      mtoBaseIgv: Number(((PRECIO * cantidad) / 1.18).toFixed(2)),
+      igv: Number((PRECIO * cantidad - (PRECIO * cantidad) / 1.18).toFixed(2)),
+      totalImpuestos: Number((PRECIO * cantidad - (PRECIO * cantidad) / 1.18).toFixed(2)),
+      tipAfeIgv: 10, porcentajeIgv: 18,
+    });
+    const crearNotaDeDos = async () => {
+      const t = totalDe(5); // 3 de uno + 2 del otro
+      const cli = await nuevoCliente();
+      const nv = await prisma.comprobante.create({
+        data: {
+          tipoDoc: 'NV', serie: 'NV01', correlativo: 1 + Math.floor(Math.random() * 100000),
+          fechaEmision: new Date(), formaPagoTipo: 'Contado', formaPagoMoneda: 'PEN',
+          tipoMoneda: 'PEN', medioPago: 'EFECTIVO',
+          mtoOperGravadas: Number((t / 1.18).toFixed(2)), mtoIGV: Number((t - t / 1.18).toFixed(2)),
+          valorVenta: Number((t / 1.18).toFixed(2)), totalImpuestos: Number((t - t / 1.18).toFixed(2)),
+          subTotal: t, mtoImpVenta: t, clienteId: cli, empresaId, sedeId, usuarioId,
+          saldo: 0, estadoPago: 'COMPLETADO',
+          detalles: { create: [lineaDe(productoId, 'Producto QA', 3), lineaDe(otroProductoId, 'Otro QA', 2)] },
+        },
+        select: { id: true },
+      });
+      await prisma.pago.create({ data: { comprobanteId: nv.id, empresaId, monto: t, medioPago: 'EFECTIVO', usuarioId } });
+      return { ...nv, clienteId: cli };
+    };
+    const conLineas = (nvId: number, cli: number, lineas: Array<[number, string, number]>) =>
+      convertirABoleta(nvId, 1, {
+        clienteId: cli,
+        detalles: lineas.map(([pid, desc, cantidad]) => ({
+          productoId: pid, descripcion: desc, cantidad,
+          mtoValorUnitario: Number((PRECIO / 1.18).toFixed(2)), mtoPrecioUnitario: PRECIO, tipAfeIgv: '10', unidad: 'NIU',
+        })),
+      });
+
+    beforeAll(async () => {
+      otroProductoId = (await prisma.producto.create({
+        data: {
+          codigo: `O${sello}`, descripcion: 'Otro QA', unidadMedidaId: unidadId,
+          tipoAfectacionIGV: '10', precioUnitario: PRECIO, valorUnitario: 237.29,
+          empresaId, stock: 1000,
+        }, select: { id: true },
+      })).id;
+    });
+
+    it('la primera parte sale y la segunda también, sin cobrar ni descontar de nuevo', async () => {
+      const nv = await crearNotaDeDos();
+      const primera: any = await conLineas(nv.id, nv.clienteId, [[productoId, 'Producto QA', 3]]);
+      expect(await cobradoEnCaja(primera.id)).toBe(0);
+
+      const saldo: any = await conLineas(nv.id, nv.clienteId, [[otroProductoId, 'Otro QA', 2]]);
+      const g = await guardado(saldo.id);
+      expect(Number(g.mtoImpVenta)).toBe(totalDe(2));
+      expect(Number(g.saldo)).toBe(0);
+      expect(g.estadoPago).toBe('COMPLETADO');
+      expect(await cobradoEnCaja(saldo.id)).toBe(0);
+      expect(await prisma.movimientoKardex.count({ where: { comprobanteId: saldo.id } })).toBe(0);
+    });
+
+    it('no deja volver a emitir lo que ya salió', async () => {
+      const nv = await crearNotaDeVenta({ total: totalDe(1), formaPagoTipo: 'Contado', pagado: totalDe(1) });
+      const dos = await crearNotaDeDos();
+      await conLineas(dos.id, dos.clienteId, [[productoId, 'Producto QA', 3]]);
+      await expect(conLineas(dos.id, dos.clienteId, [[productoId, 'Producto QA', 1]])).rejects.toThrow(
+        /ya se convirtió en parte .*Producto QA: ya no queda por convertir/,
+      );
+      await expect(conLineas(dos.id, dos.clienteId, [[otroProductoId, 'Otro QA', 3]])).rejects.toThrow(
+        /Otro QA: quedan 2, se pidió 3/,
+      );
+      // Una nota convertida entera sigue bloqueada como siempre.
+      await convertirABoleta(nv.id, 1, { clienteId: nv.clienteId });
+      await expect(convertirABoleta(nv.id, 1, { clienteId: nv.clienteId })).rejects.toThrow(/ya fue convertido/);
+    });
+
+    it('con todo emitido, la nota ya no admite otra conversión', async () => {
+      const nv = await crearNotaDeDos();
+      await conLineas(nv.id, nv.clienteId, [[productoId, 'Producto QA', 3]]);
+      await conLineas(nv.id, nv.clienteId, [[otroProductoId, 'Otro QA', 2]]);
+      await expect(conLineas(nv.id, nv.clienteId, [[otroProductoId, 'Otro QA', 1]])).rejects.toThrow(/ya fue convertido/);
+    });
+
+    it('si la nota se cobró a medias, al saldo le toca solo lo que sobra', async () => {
+      const nv = await crearNotaDeDos();
+      // La nota de 1400 tiene 1400 cobrados; se quita 1000 para dejar 400.
+      await prisma.pago.deleteMany({ where: { comprobanteId: nv.id } });
+      await prisma.pago.create({ data: { comprobanteId: nv.id, empresaId, monto: 1000, medioPago: 'EFECTIVO', usuarioId } });
+      await prisma.comprobante.update({ where: { id: nv.id }, data: { saldo: 400, estadoPago: 'PAGO_PARCIAL' } });
+      const primera: any = await conLineas(nv.id, nv.clienteId, [[productoId, 'Producto QA', 3]]); // 840, cubierto
+      expect(await cobradoEnCaja(primera.id)).toBe(0);
+      const saldo: any = await conLineas(nv.id, nv.clienteId, [[otroProductoId, 'Otro QA', 2]]); // 560, quedan 160 cobrados
+      expect(await cobradoEnCaja(saldo.id)).toBe(560 - 160);
+    });
+  });
+
   // ── Boleta al crédito con pago inicial (demo ropa, 21-10) ───────────────
   // El POS ofrece "Pago inicial (opcional)" y arma la cuota por lo que falta;
   // el backend no lo restaba y la emisión moría con "La suma de cuotas
