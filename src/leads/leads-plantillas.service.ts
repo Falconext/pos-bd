@@ -348,9 +348,12 @@ export class LeadsPlantillasService {
     return { eliminada: true };
   }
 
-  /** ¿Algún envío pendiente la usa? Se completa con los envíos masivos. */
-  protected async enUso(_id: number): Promise<boolean> {
-    return false;
+  /** ¿Algún envío programado o en curso la usa? */
+  private async enUso(id: number): Promise<boolean> {
+    const n = await this.prisma.leadEnvioMasivo.count({
+      where: { plantillaId: id, estado: { in: ['PROGRAMADO', 'ENVIANDO'] } },
+    });
+    return n > 0;
   }
 
   /** Imagen para la cabecera (JPG/PNG, máx. 5 MB: el límite de Meta). */

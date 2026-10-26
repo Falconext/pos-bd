@@ -610,6 +610,7 @@ model Empresa {
   leadEtiquetas           LeadEtiqueta[]
   leadSegmentos           LeadSegmento[]
   leadPlantillas          LeadPlantilla[]
+  leadEnviosMasivos       LeadEnvioMasivo[]
   soporteConversacion     SoporteConversacion?
   reglasComision          ReglaComision[]
   cobros                  CobroEmpresa[]
@@ -4654,10 +4655,15 @@ model LeadDisparo {
   textoEnviado   String?
   enviadoEn      DateTime?
   intentos       Int               @default(0)
+  /// Envío masivo al que pertenece (solo tipo ENVIO_MASIVO).
+  envioMasivoId  Int?
+  /// Id del mensaje en WhatsApp (wamid): con él llegan entregado/leído.
+  wamid          String?           @unique
   creadoEn       DateTime          @default(now())
   actualizadoEn  DateTime          @updatedAt
 
   @@unique([empresaId, tipo, telefono, referencia])
+  @@index([envioMasivoId, estado])
   @@index([empresaId, estado, programadoPara])
   @@index([empresaId, telefono])
 }
@@ -4671,6 +4677,9 @@ enum TipoDisparoLead {
   REACTIVACION
   RECORDATORIO_ACORDADO
   SEGUIMIENTO_DEMO
+  /// Un destinatario de un envío masivo (LeadEnvioMasivo). Cuenta para el
+  /// tope de mensajes comerciales igual que la recompra o la reactivación.
+  ENVIO_MASIVO
 }
 
 enum EstadoDisparoLead {
@@ -4979,6 +4988,42 @@ model LeadPlantilla {
 
   @@unique([empresaId, nombreMeta])
   @@index([empresaId, estado])
+}
+
+/// Un envío masivo: una plantilla a un segmento, en una fecha.
+///
+/// Cada destinatario es una fila de LeadDisparo (tipo ENVIO_MASIVO) y por eso
+/// hereda las reglas del motor de avisos: baja, tope de comerciales, horario
+/// y ventana de 24 h. Acá queda la foto de lo que se mandó (filtros y
+/// plantilla), para que el historial se entienda aunque después se edite el
+/// segmento o se borre la plantilla.
+model LeadEnvioMasivo {
+  id                 Int       @id @default(autoincrement())
+  empresaId          Int
+  empresa            Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  nombre             String
+  segmentoId         Int?
+  filtrosJson        Json
+  plantillaId        Int?
+  /// Copia de la plantilla al confirmar (título, nombre en Meta, textos).
+  plantillaJson      Json
+  /// Valores de {{dato1}} y {{dato2}} para este envío.
+  valoresJson        Json?
+  /// PROGRAMADO, ENVIANDO, TERMINADO o CANCELADO.
+  estado             String    @default("PROGRAMADO")
+  programadoPara     DateTime
+  /// Ritmo: cuántos mensajes por minuto, para cuidar la calidad del número.
+  porMinuto          Int       @default(30)
+  totalDestinatarios Int       @default(0)
+  nota               String?
+  creadoPorId        Int?
+  iniciadoEn         DateTime?
+  terminadoEn        DateTime?
+  creadoEn           DateTime  @default(now())
+  actualizadoEn      DateTime  @updatedAt
+
+  @@index([empresaId, creadoEn])
+  @@index([estado, programadoPara])
 }
 
 model LeadAnuncioOrigen {

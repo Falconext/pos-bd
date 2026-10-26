@@ -6,6 +6,7 @@ import { LeadsService } from './leads.service';
 import { LeadsEtiquetasService } from './leads-etiquetas.service';
 import { LeadsSegmentosService } from './leads-segmentos.service';
 import { LeadsPlantillasService } from './leads-plantillas.service';
+import { LeadsEnviosService } from './leads-envios.service';
 import { LeadsEnviosController } from './leads-envios.controller';
 import { LeadsMessageProcessor } from './leads-message.processor';
 import { IaVentasService } from './leads-ia.service';
@@ -90,6 +91,7 @@ import { ReporteDiarioController } from './reporte-diario.controller';
     LeadsEtiquetasService,
     LeadsSegmentosService,
     LeadsPlantillasService,
+    LeadsEnviosService,
   ],
   exports: [LeadsService, LeadsEmbudoService, LeadsDisparadoresService],
 })

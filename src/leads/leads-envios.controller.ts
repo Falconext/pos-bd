@@ -18,7 +18,14 @@ import { ModuleAccessGuard } from '../common/guards/module-access.guard';
 import { RequiresModule } from '../common/decorators/module.decorator';
 import { User } from '../common/decorators/user.decorator';
 import { LeadsSegmentosService } from './leads-segmentos.service';
-import { FiltrosDto, GuardarSegmentoDto, PlantillaDto } from './dto/envios.dto';
+import {
+  CrearEnvioDto,
+  FiltrosDto,
+  GuardarSegmentoDto,
+  PlantillaDto,
+  ProbarEnvioDto,
+} from './dto/envios.dto';
+import { LeadsEnviosService } from './leads-envios.service';
 import { LeadsPlantillasService } from './leads-plantillas.service';
 import {
   erroresDe,
@@ -37,6 +44,7 @@ export class LeadsEnviosController {
   constructor(
     private readonly segmentos: LeadsSegmentosService,
     private readonly plantillas: LeadsPlantillasService,
+    private readonly envios: LeadsEnviosService,
   ) {}
 
   // ─── Segmentos ─────────────────────────────────────────────────────────
@@ -148,5 +156,54 @@ export class LeadsEnviosController {
   @Delete('plantillas/:id')
   eliminarPlantilla(@User() user: any, @Param('id', ParseIntPipe) id: number) {
     return this.plantillas.eliminar(user.empresaId, id);
+  }
+
+  // ─── Envíos ────────────────────────────────────────────────────────────
+
+  @Get('envios')
+  listarEnvios(@User() user: any) {
+    return this.envios.listar(user.empresaId);
+  }
+
+  @Get('envios/nivel')
+  nivelMensajeria(@User() user: any) {
+    return this.envios.nivel(user.empresaId);
+  }
+
+  /** La plantilla con estos valores, a los números del propio negocio. */
+  @Post('envios/prueba')
+  probarEnvio(@User() user: any, @Body() dto: ProbarEnvioDto) {
+    return this.envios.probar(user.empresaId, dto);
+  }
+
+  /** Confirma el envío: congela los destinatarios y lo deja programado. */
+  @Post('envios')
+  crearEnvio(@User() user: any, @Body() dto: CrearEnvioDto) {
+    return this.envios.crear(user.empresaId, user.sub ?? user.id ?? null, dto);
+  }
+
+  @Get('envios/:id')
+  detalleEnvio(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Query('estado') estado?: string,
+  ) {
+    const validos = [
+      'PROGRAMADO',
+      'ENVIADO',
+      'OMITIDO',
+      'FALLIDO',
+      'CANCELADO',
+    ];
+    return this.envios.detalle(
+      user.empresaId,
+      id,
+      validos.includes(estado ?? '') ? estado : undefined,
+    );
+  }
+
+  @Post('envios/:id/cancelar')
+  cancelarEnvio(@User() user: any, @Param('id', ParseIntPipe) id: number) {
+    return this.envios.cancelar(user.empresaId, id);
   }
 }

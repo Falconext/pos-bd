@@ -3,6 +3,7 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
   Min,
 } from 'class-validator';
@@ -32,4 +33,48 @@ export class GuardarSegmentoDto {
 export class PlantillaDto {
   @IsObject()
   plantilla!: Record<string, unknown>;
+}
+
+export class CrearEnvioDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  nombre?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  segmentoId?: number;
+
+  @IsOptional()
+  @IsObject()
+  filtros?: Record<string, unknown>;
+
+  @IsInt()
+  @Min(1)
+  plantillaId!: number;
+
+  @IsOptional()
+  @IsObject()
+  valores?: { dato1?: string; dato2?: string };
+
+  @IsOptional()
+  @IsString()
+  programadoPara?: string | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(500)
+  porMinuto?: number;
+}
+
+export class ProbarEnvioDto {
+  @IsInt()
+  @Min(1)
+  plantillaId!: number;
+
+  @IsOptional()
+  @IsObject()
+  valores?: { dato1?: string; dato2?: string };
 }

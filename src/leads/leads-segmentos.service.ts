@@ -506,7 +506,7 @@ export class LeadsSegmentosService {
     return out;
   }
 
-  private async internosDe(empresaId: number): Promise<string[]> {
+  async internosDe(empresaId: number): Promise<string[]> {
     const [admins, empresa] = await Promise.all([
       this.prisma.usuario.findMany({
         where: { empresaId, rol: 'ADMIN_EMPRESA' },
@@ -551,7 +551,10 @@ export class LeadsSegmentosService {
 
 /** Los tipos de aviso que cuentan para el tope de mensajes comerciales. */
 export function tiposMarketing(): string[] {
-  return Object.values(CATALOGO_DISPAROS)
-    .filter((d) => d.categoria === 'MARKETING')
-    .map((d) => d.tipo as string);
+  return [
+    ...Object.values(CATALOGO_DISPAROS)
+      .filter((d) => d.categoria === 'MARKETING')
+      .map((d) => d.tipo as string),
+    'ENVIO_MASIVO',
+  ];
 }

@@ -266,7 +266,12 @@ export class LeadsDisparadoresService {
   @Cron('*/15 * * * *', { name: 'leads-disparadores' })
   async ejecutar(): Promise<void> {
     const pendientes = await this.prisma.leadDisparo.findMany({
-      where: { estado: 'PROGRAMADO', programadoPara: { lte: new Date() } },
+      where: {
+        estado: 'PROGRAMADO',
+        programadoPara: { lte: new Date() },
+        // Los de un envío masivo los manda su propio cron, con ritmo.
+        tipo: { not: 'ENVIO_MASIVO' },
+      },
       orderBy: { programadoPara: 'asc' },
       take: this.POR_CORRIDA,
     });
@@ -500,9 +505,14 @@ export class LeadsDisparadoresService {
     const desde = new Date(
       Date.now() - config.topeMarketingDias * 24 * 3600_000,
     );
-    const tiposMarketing = Object.values(CATALOGO_DISPAROS)
-      .filter((d) => d.categoria === 'MARKETING')
-      .map((d) => d.tipo);
+    const tiposMarketing = [
+      ...Object.values(CATALOGO_DISPAROS)
+        .filter((d) => d.categoria === 'MARKETING')
+        .map((d) => d.tipo as string),
+      // Una promoción masiva también es un mensaje comercial: sin contarla,
+      // el cliente recibía la campaña y además la recompra la misma semana.
+      'ENVIO_MASIVO',
+    ];
     return this.prisma.leadDisparo.count({
       where: {
         empresaId,
@@ -953,10 +963,11 @@ export class LeadsDisparadoresService {
     empresaId: number,
     filtros: { estado?: string; tipo?: string } = {},
   ) {
+    // Los envíos masivos tienen su propia pantalla: acá solo los avisos.
     const where = {
       empresaId,
       ...(filtros.estado ? { estado: filtros.estado as never } : {}),
-      ...(filtros.tipo ? { tipo: filtros.tipo as never } : {}),
+      tipo: (filtros.tipo ?? { not: 'ENVIO_MASIVO' }) as never,
     };
     const [filas, porEstado, bajas] = await Promise.all([
       this.prisma.leadDisparo.findMany({
@@ -978,7 +989,7 @@ export class LeadsDisparadoresService {
       }),
       this.prisma.leadDisparo.groupBy({
         by: ['estado'],
-        where: { empresaId },
+        where: { empresaId, tipo: { not: 'ENVIO_MASIVO' } },
         _count: { _all: true },
       }),
       this.prisma.leadBajaAvisos.count({ where: { empresaId } }),
