@@ -18,6 +18,7 @@ import { S3Module } from '../s3/s3.module';
 import { GeminiModule } from '../gemini/gemini.module';
 import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 import { InstagramModule } from '../instagram/instagram.module';
+import { MessengerModule } from '../messenger/messenger.module';
 import { MensajeriaService } from './mensajeria.service';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 import { ClienteModule } from '../cliente/cliente.module';
@@ -48,6 +49,7 @@ import { ReporteDiarioController } from './reporte-diario.controller';
     GeminiModule,
     WhatsAppModule,
     InstagramModule,
+    MessengerModule,
     NotificacionesModule,
     ClienteModule,
     ComprobanteModule,
