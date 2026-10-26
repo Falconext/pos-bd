@@ -49,8 +49,8 @@ export class InstagramController {
   /** Responder por privado a quien comenta en las publicaciones. */
   @Put('comentarios')
   @Roles('ADMIN_EMPRESA')
-  comentarios(@User() user: any, @Body() body: { activo?: boolean; clave?: string | null }) {
-    return this.instagram.configurarComentarios(user.empresaId, Boolean(body?.activo), body?.clave ?? null);
+  comentarios(@User() user: any, @Body() body: { activo?: boolean; clave?: string | null; publico?: string | null }) {
+    return this.instagram.configurarComentarios(user.empresaId, Boolean(body?.activo), body?.clave ?? null, body?.publico);
   }
 
   @Delete()

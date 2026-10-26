@@ -186,7 +186,33 @@ export class InstagramService {
       where: { id: conv.id },
       data: { igComentarioRespondido: true },
     });
+    await this.responderEnPublico(empresaId, conv.igComentarioId!);
     return { success: true };
+  }
+
+  /**
+   * Si el empresario lo activó, deja en el comentario un texto fijo (no de la
+   * IA: en público no deben salir precios). Va después del privado para que
+   * "te escribimos por DM" sea cierto. Si falla, el privado ya salió: solo se
+   * registra.
+   */
+  private async responderEnPublico(empresaId: number, comentarioId: string) {
+    const e = await this.prisma.empresa
+      .findUnique({ where: { id: empresaId }, select: { instagramComentarioPublico: true } })
+      .catch(() => null);
+    const texto = e?.instagramComentarioPublico?.trim();
+    if (!texto) return;
+    try {
+      const { token } = await this.credenciales(empresaId);
+      await axios.post(
+        `${this.api}/${comentarioId}/replies`,
+        { message: texto },
+        { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 },
+      );
+    } catch (err: any) {
+      if (esTokenAnulado(err)) await this.marcarTokenAnulado(empresaId, err);
+      this.logger.warn(`No se pudo responder en público el comentario ${comentarioId}: ${this.motivo(err)}`);
+    }
   }
 
   /** Nombre y @usuario del cliente, para mostrarlo en la bandeja. */
@@ -325,6 +351,7 @@ export class InstagramService {
         instagramErrorToken: true,
         instagramComentarios: true,
         instagramComentariosClave: true,
+        instagramComentarioPublico: true,
       },
     });
     return {
@@ -337,11 +364,16 @@ export class InstagramService {
       motivoReconectar: e?.instagramErrorToken ?? null,
       comentarios: Boolean(e?.instagramComentarios),
       comentariosClave: e?.instagramComentariosClave ?? '',
+      comentarioPublico: e?.instagramComentarioPublico ?? '',
     };
   }
 
-  /** Responder o no los comentarios de las publicaciones, y con qué palabras. */
-  async configurarComentarios(empresaId: number, activo: boolean, clave?: string | null) {
+  /**
+   * Responder o no los comentarios de las publicaciones, con qué palabras y,
+   * si viene `publico`, qué texto dejar en el comentario. `publico` sin enviar
+   * deja el que había.
+   */
+  async configurarComentarios(empresaId: number, activo: boolean, clave?: string | null, publico?: string | null) {
     const limpia = String(clave ?? '')
       .split(',')
       .map((p) => p.trim())
@@ -349,7 +381,11 @@ export class InstagramService {
       .join(', ');
     await this.prisma.empresa.update({
       where: { id: empresaId },
-      data: { instagramComentarios: Boolean(activo), instagramComentariosClave: limpia || null },
+      data: {
+        instagramComentarios: Boolean(activo),
+        instagramComentariosClave: limpia || null,
+        ...(publico !== undefined ? { instagramComentarioPublico: String(publico ?? '').trim().slice(0, 300) || null } : {}),
+      },
     });
     return this.estado(empresaId);
   }

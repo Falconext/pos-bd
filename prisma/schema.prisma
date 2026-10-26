@@ -234,6 +234,9 @@ model Empresa {
   // comentarios que las mencionen; vacío = todos.
   instagramComentarios      Boolean            @default(false)
   instagramComentariosClave String?
+  // Texto fijo que además se publica en el comentario ("Te escribimos por DM").
+  // null = solo el mensaje privado.
+  instagramComentarioPublico String?
   // IA de Ventas por Messenger (página de Facebook). El token de página sale
   // de un token de usuario de larga duración, así que no vence solo; deja de
   // servir si el empresario cambia la clave o quita el acceso (error 190).
