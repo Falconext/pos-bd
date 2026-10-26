@@ -58,9 +58,25 @@ export class LeadsController {
       mediosPagoLista?: unknown;
       supervisorTelefono?: string;
       despedida?: unknown;
+      tienda?: unknown;
     },
   ) {
     return this.service.actualizarConfig(user.empresaId, body);
+  }
+
+  /**
+   * Foto de la fachada o del stand (JPG/PNG, máx. 5 MB). Se le manda al
+   * cliente que agenda una visita, con las indicaciones para llegar.
+   */
+  @Post('tienda-foto')
+  @UseInterceptors(
+    FileInterceptor('archivo', { limits: { fileSize: 5 * 1024 * 1024 } }),
+  )
+  subirFotoTienda(
+    @User() user: any,
+    @UploadedFile() archivo: Express.Multer.File,
+  ) {
+    return this.service.subirFotoTienda(user.empresaId, archivo);
   }
 
   /**

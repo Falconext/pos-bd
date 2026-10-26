@@ -14,9 +14,11 @@ import {
 } from './leads.constants';
 import { DisponibilidadProducto, Prisma } from '@prisma/client';
 import { LeadsPagoLinkService } from './leads-pago-link.service';
+import { LeadsVisitaService } from './leads-visita.service';
 import { EjecutorHerramienta } from '../gemini/gemini.service';
 import {
   HERRAMIENTA_AVISAR_VISITA,
+  HERRAMIENTA_AGENDAR_VISITA,
   HERRAMIENTA_CANCELAR_PEDIDO,
   HERRAMIENTA_DAR_DEMO,
   HERRAMIENTA_LINK_PAGO,
@@ -195,6 +197,7 @@ export class LeadsMessageProcessor extends WorkerHost {
     // Al final y opcional: los specs arman el procesador con los argumentos
     // en orden, y sin esto el link de pago simplemente no está.
     @Optional() private readonly pagoLink?: LeadsPagoLinkService,
+    @Optional() private readonly visitas?: LeadsVisitaService,
   ) {
     super();
   }
@@ -2579,9 +2582,29 @@ export class LeadsMessageProcessor extends WorkerHost {
               'Pasa por la tienda a recoger',
             );
           }
+          // A la lista de visitas, con la ubicación y la foto la primera vez.
+          if (res?.avisado && this.visitas) {
+            const v = await this.visitas
+              .registrar(empresaId, conversacionId, telefono, {
+                cuando: String(argumentos.cuando ?? ''),
+                fecha: argumentos.fecha,
+                conPedido: true,
+              })
+              .catch(() => null);
+            if (v?.indicacionesEnviadas) return { ...res, indicacionesEnviadas: true };
+          }
           // Un fallo acá NO deriva: el cliente igual va a ir a la tienda, y
           // apagar el bot lo dejaría sin a quién preguntarle.
           return res;
+        }
+
+        case HERRAMIENTA_AGENDAR_VISITA: {
+          if (!this.visitas) return { error: 'No disponible.' };
+          return this.visitas.registrar(empresaId, conversacionId, telefono, {
+            cuando: String(argumentos.cuando ?? ''),
+            fecha: argumentos.fecha,
+            conPedido: false,
+          });
         }
 
         case HERRAMIENTA_CANCELAR_PEDIDO:

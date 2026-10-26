@@ -4852,6 +4852,7 @@ model LeadConversacion {
   prospecto           LeadProspecto?
   borrador            LeadPedidoBorrador?
   anuncios            LeadAnuncioOrigen[]
+  visitaTienda        LeadVisitaTienda?
   creadoEn            DateTime               @default(now())
   actualizadoEn       DateTime               @updatedAt
 
@@ -4888,6 +4889,42 @@ model LeadAnuncioOrigen {
 
   @@index([empresaId, creadoEn])
   @@index([conversacionId])
+}
+
+/// Clientes que dijeron que van a ir a la tienda física.
+///
+/// Hierba Sana (26-10): "nos están sorprendiendo clientes en la tienda" y
+/// "muchos dicen que nos vienen buscando 1 hora". Antes solo quedaba
+/// registro si el cliente ya había cotizado y decidido recoger; el que decía
+/// "primero quiero visitarte el martes a las 8" no figuraba en ningún lado.
+/// Una por conversación: si vuelve a agendar, se actualiza la misma.
+model LeadVisitaTienda {
+  id             Int                @id @default(autoincrement())
+  empresaId      Int
+  conversacionId Int                @unique
+  conversacion   LeadConversacion   @relation(fields: [conversacionId], references: [id], onDelete: Cascade)
+  telefono       String
+  nombre         String?
+  /// Cuándo va a ir, en palabras del cliente ("el martes 27 a las 8 am").
+  cuando         String?
+  /// El día, si se pudo sacar de `cuando`. Sin fecha = "dice que vendrá".
+  fecha          DateTime?          @db.Date
+  /// Nota de venta del recojo, si la visita viene con pedido.
+  comprobanteId  Int?
+  estado         EstadoVisitaTienda @default(AGENDADA)
+  /// Cuándo se le mandaron la ubicación, la foto y las indicaciones.
+  indicacionesEn DateTime?
+  creadoEn       DateTime           @default(now())
+  actualizadoEn  DateTime           @updatedAt
+
+  @@index([empresaId, fecha])
+}
+
+enum EstadoVisitaTienda {
+  AGENDADA
+  VINO
+  NO_VINO
+  CANCELADA
 }
 
 model LeadMensaje {

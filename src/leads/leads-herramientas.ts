@@ -19,6 +19,7 @@ export const HERRAMIENTA_GUARDAR_DATOS = 'guardar_datos_envio';
 export const HERRAMIENTA_COTIZAR = 'cotizar';
 export const HERRAMIENTA_REGISTRAR_PEDIDO = 'registrar_pedido';
 export const HERRAMIENTA_AVISAR_VISITA = 'avisar_visita_tienda';
+export const HERRAMIENTA_AGENDAR_VISITA = 'agendar_visita_tienda';
 export const HERRAMIENTA_CANCELAR_PEDIDO = 'cancelar_pedido';
 export const HERRAMIENTA_DERIVAR = 'derivar_a_asesor';
 export const HERRAMIENTA_AVISAR_RIESGO = 'avisar_cliente_alto_riesgo';
@@ -230,8 +231,40 @@ const avisarVisitaTienda: FunctionDeclaration = {
         description:
           'Cuándo va a pasar, en palabras del cliente ("mañana a las 2 de la tarde", "el sábado por la mañana").',
       },
+      fecha: {
+        type: SchemaType.STRING,
+        description: 'El día de la visita como AAAA-MM-DD, calculado con el día de HOY de la información de apoyo. Omítelo si no dijo el día.',
+      },
     },
     required: ['cuando'],
+  },
+};
+
+/**
+ * El cliente va a ir a la tienda SIN pedido: a conocer, a ver los productos,
+ * a consultar en persona. Hierba Sana (26-10): "Primero quiero visitarte la
+ * tienda el martes 27, 8 am" no quedaba registrado en ningún lado, y los
+ * que llegaban se perdían buscando el local.
+ */
+const agendarVisitaTienda: FunctionDeclaration = {
+  name: HERRAMIENTA_AGENDAR_VISITA,
+  description:
+    'Registra que el cliente va a visitar la tienda física sin haber hecho un pedido todavía (quiere conocer, ver los productos o consultar en persona). ' +
+    `Si ya cotizó y decidió recoger su pedido en tienda, NO uses esta: usa ${HERRAMIENTA_AVISAR_VISITA}. ` +
+    'Úsala apenas diga que va a ir, aunque no sepa cuándo; si dio día u hora, pásalos. Si vuelve a cambiar el día, llámala otra vez. ' +
+    'Le manda sola la ubicación en el mapa, la foto del local y las indicaciones para llegar: si te devuelve `indicacionesEnviadas`, no le repitas la dirección completa, solo dile que le acabas de mandar cómo llegar y que lo esperan.',
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      cuando: {
+        type: SchemaType.STRING,
+        description: 'Cuándo dice que va a ir, en sus palabras ("el martes 27 a las 8 am"). Vacío si no lo dijo.',
+      },
+      fecha: {
+        type: SchemaType.STRING,
+        description: 'El día como AAAA-MM-DD, calculado con el día de HOY de la información de apoyo. Omítelo si no dijo el día.',
+      },
+    },
   },
 };
 
@@ -399,6 +432,7 @@ export const HERRAMIENTAS_VENTA: FunctionDeclaration[] = [
   cotizar,
   registrarPedido,
   avisarVisitaTienda,
+  agendarVisitaTienda,
   cancelarPedido,
   derivar,
   avisarAltoRiesgo,
@@ -428,6 +462,7 @@ CÓMO SE CIERRA UNA VENTA
 - Para cotizar usa ${HERRAMIENTA_COTIZAR}. El envío y el descuento los calcula ella: tú no sumas ni aplicas descuentos. Copia su texto tal cual.
 - Cuando el cliente acepte y no falte ningún dato, llama a ${HERRAMIENTA_REGISTRAR_PEDIDO} y a nada más: no vuelvas a buscar ni a cotizar lo que ya cotizaste. Solo después de que te confirme puedes decirle que su pedido quedó agendado.
 - Si recoge en tienda, también se cotiza con ${HERRAMIENTA_COTIZAR} (sin envío) y se cierra con ${HERRAMIENTA_AVISAR_VISITA}, que registra el pedido.
+- Si dice que va a ir a la tienda a conocer o a ver antes de comprar, regístralo con ${HERRAMIENTA_AGENDAR_VISITA}.
 - Si el cliente cancela un pedido ya registrado, usa ${HERRAMIENTA_CANCELAR_PEDIDO}.
 - Si el prospecto te manda sus datos para la demo, usa ${HERRAMIENTA_DAR_DEMO}.
 - Lo que no te toca resolver se deriva con ${HERRAMIENTA_DERIVAR}: mayoristas, reclamos, comprobantes de pago, seguimiento de pedidos ya hechos y quien pida hablar con una persona. Esos casos y nada más: una duda que puedas contestar con el contexto se contesta. Nunca digas que ya informaste a un asesor si en ese mismo turno no la llamaste.

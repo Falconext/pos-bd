@@ -14,6 +14,7 @@ import { User } from '../common/decorators/user.decorator';
 import { LeadsEmbudoService } from './leads-embudo.service';
 import { LeadsBiService } from './leads-bi.service';
 import { LeadsDisparadoresService } from './leads-disparadores.service';
+import { LeadsVisitaService, type FiltroVisitas } from './leads-visita.service';
 import { EtapaCrm } from './leads-embudo';
 import { MoverEtapaDto, RechazarPagoDto, RangoBiDto } from './dto/crm.dto';
 
@@ -31,7 +32,32 @@ export class LeadsCrmController {
     private readonly embudo: LeadsEmbudoService,
     private readonly analitica: LeadsBiService,
     private readonly disparadores: LeadsDisparadoresService,
+    private readonly visitas: LeadsVisitaService,
   ) {}
+
+  /**
+   * Quiénes van a venir a la tienda: con fecha, sin fecha ("dice que
+   * vendrá") y con reserva pagada. Pedido de Hierba Sana, 26-10.
+   */
+  @Get('visitas')
+  listarVisitas(@User() user: any, @Query('filtro') filtro?: FiltroVisitas) {
+    return this.visitas.listar(user.empresaId, filtro);
+  }
+
+  @Patch('visitas/:id')
+  marcarVisita(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { estado: string },
+  ) {
+    return this.visitas.marcar(user.empresaId, id, body?.estado);
+  }
+
+  /** Vuelve a mandarle la ubicación, la foto y las indicaciones. */
+  @Post('visitas/:id/como-llegar')
+  reenviarComoLlegar(@User() user: any, @Param('id', ParseIntPipe) id: number) {
+    return this.visitas.reenviarComoLlegar(user.empresaId, id);
+  }
 
   /** El tablero del embudo: las 12 columnas con sus pedidos. */
   @Get('embudo')

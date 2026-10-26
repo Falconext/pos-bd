@@ -29,6 +29,7 @@ import { venceEn } from './pausa-bot';
 import sharp from 'sharp';
 import { IaVentasService } from './leads-ia.service';
 import { despedidaValida } from './despedida';
+import { tiendaValida } from './visita-tienda';
 import { aOggOpus, tieneAudio } from './nota-de-voz';
 
 /**
@@ -458,6 +459,27 @@ export class LeadsService {
     return { videoBienvenidaUrl: url };
   }
 
+  /** Foto del local para quien agenda una visita (ver leads-visita.service). */
+  async subirFotoTienda(
+    empresaId: number,
+    archivo: { buffer: Buffer; mimetype: string; size: number },
+  ) {
+    if (!archivo?.buffer?.length) throw new BadRequestException('Falta la foto.');
+    if (!['image/jpeg', 'image/png'].includes(archivo.mimetype)) {
+      throw new BadRequestException('La foto tiene que ser JPG o PNG.');
+    }
+    if (!this.s3) throw new BadRequestException('El almacenamiento no está disponible.');
+    const ext = archivo.mimetype === 'image/png' ? 'png' : 'jpg';
+    const fotoUrl = await this.s3.uploadPDF(
+      archivo.buffer,
+      `ia-ventas/empresa-${empresaId}/tienda-${Date.now()}.${ext}`,
+      archivo.mimetype,
+    );
+    const actual = await this.obtenerConfig(empresaId);
+    await this.actualizarConfig(empresaId, { tienda: { ...actual.tienda, fotoUrl } });
+    return { fotoUrl };
+  }
+
   /** Configuración de la IA de ventas de la empresa (toggle + contexto). */
   async obtenerConfig(empresaId: number) {
     const empresa = await this.prisma.empresa.findUnique({
@@ -484,6 +506,7 @@ export class LeadsService {
           mediosPagoLista?: unknown;
           supervisorTelefono?: string;
           despedida?: unknown;
+          tienda?: unknown;
         }
       | null;
     const demos = json?.demos;
@@ -513,6 +536,7 @@ export class LeadsService {
           : [{ nombre: MEDIOS_DE_ANTES, detalle: json.mediosPago }],
       supervisorTelefono: json?.supervisorTelefono ?? '',
       despedida: despedidaValida(json?.despedida),
+      tienda: tiendaValida(json?.tienda),
     };
   }
 
@@ -610,6 +634,8 @@ export class LeadsService {
       supervisorTelefono?: string;
       /** Mensaje al cerrar la conversación (ver despedida.ts). */
       despedida?: unknown;
+      /** Dirección, mapa, foto e indicaciones para quien va a la tienda. */
+      tienda?: unknown;
     },
   ) {
     // El nombre del asesor vive en iaVentasConfigJson junto a zonas, descuentos
@@ -625,7 +651,8 @@ export class LeadsService {
       data.envio !== undefined ||
       data.mediosPagoLista !== undefined ||
       data.supervisorTelefono !== undefined ||
-      data.despedida !== undefined
+      data.despedida !== undefined ||
+      data.tienda !== undefined
     ) {
       const actual = await this.prisma.empresa.findUnique({
         where: { id: empresaId },
@@ -694,6 +721,12 @@ export class LeadsService {
         const d = despedidaValida(data.despedida);
         if (d.texto) json.despedida = { activa: d.activa, texto: d.texto };
         else delete json.despedida;
+      }
+      if (data.tienda !== undefined) {
+        const t = tiendaValida(data.tienda);
+        const vacia = !t.direccion && !t.mapsUrl && t.lat == null && !t.indicaciones && !t.fotoUrl;
+        if (vacia) delete json.tienda;
+        else json.tienda = t;
       }
       await this.prisma.empresa.update({
         where: { id: empresaId },
