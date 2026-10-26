@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -44,6 +44,13 @@ export class InstagramController {
     if (!body?.code) throw new BadRequestException('Falta el código de Instagram.');
     if (!body.redirectUri || !redirectPermitido(body.redirectUri)) throw new BadRequestException('Dirección de retorno no permitida.');
     return this.instagram.conectar(user.empresaId, body.code, body.redirectUri);
+  }
+
+  /** Responder por privado a quien comenta en las publicaciones. */
+  @Put('comentarios')
+  @Roles('ADMIN_EMPRESA')
+  comentarios(@User() user: any, @Body() body: { activo?: boolean; clave?: string | null }) {
+    return this.instagram.configurarComentarios(user.empresaId, Boolean(body?.activo), body?.clave ?? null);
   }
 
   @Delete()

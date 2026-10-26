@@ -2,6 +2,7 @@ import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger, Optional } from '@nestjs/common';
 import { Job, Queue, UnrecoverableError } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
+import { comentarioCalza } from '../instagram/instagram-webhook';
 import { MensajeriaService } from './mensajeria.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { RagVentasService, codigosDeFichas } from './leads-rag.service';
@@ -143,11 +144,16 @@ interface TareaRespuesta {
 
 interface MensajeEntrante {
   /** Por qué red llegó. Sin valor es WhatsApp (los jobs de antes no lo traen). */
-  canal?: 'WHATSAPP' | 'INSTAGRAM';
+  canal?: 'WHATSAPP' | 'INSTAGRAM' | 'MESSENGER';
   /** WhatsApp: el número de la empresa que recibió el mensaje. */
   phoneNumberId?: string;
   /** Instagram: la cuenta profesional que recibió el mensaje. */
   instagramAccountId?: string;
+  /** Messenger: la página de Facebook que recibió el mensaje. */
+  facebookPageId?: string;
+  /** Instagram: vino de un comentario en una publicación (ver instagram-webhook.ts). */
+  comentarioId?: string;
+  comentarioTexto?: string;
   from: string;
   /** BSUID del remitente ("PE.…"), si Meta lo manda. */
   bsuid?: string;
@@ -388,36 +394,69 @@ export class LeadsMessageProcessor extends WorkerHost {
    */
   private async ingresar(d: MensajeEntrante): Promise<void> {
     const esInstagram = d.canal === 'INSTAGRAM';
-    // 1) ¿Qué empresa tiene conectado este número (o esta cuenta de Instagram)?
+    const esMessenger = d.canal === 'MESSENGER';
+    const canal = esInstagram ? 'INSTAGRAM' : esMessenger ? 'MESSENGER' : 'WHATSAPP';
+    // 1) ¿Qué empresa tiene conectado este número (o esta cuenta/página)?
     const empresa = esInstagram
       ? await this.prisma.empresa.findFirst({
           where: { instagramAccountId: d.instagramAccountId, instagramActivo: true },
-          select: { id: true, iaVentasActiva: true },
+          select: { id: true, iaVentasActiva: true, instagramComentarios: true, instagramComentariosClave: true },
         })
-      : await this.prisma.empresa.findFirst({
-          where: { whatsappPhoneNumberId: d.phoneNumberId },
-          select: { id: true, iaVentasActiva: true },
-        });
+      : esMessenger
+        ? await this.prisma.empresa.findFirst({
+            where: { facebookPageId: d.facebookPageId, facebookActivo: true },
+            select: { id: true, iaVentasActiva: true },
+          })
+        : await this.prisma.empresa.findFirst({
+            where: { whatsappPhoneNumberId: d.phoneNumberId },
+            select: { id: true, iaVentasActiva: true },
+          });
     if (!empresa) {
       this.logger.warn(
         esInstagram
           ? `Mensaje de Instagram de ${d.from} para la cuenta ${d.instagramAccountId} sin empresa conectada; se ignora.`
-          : `Mensaje entrante de ${d.from} para phoneNumberId ${d.phoneNumberId} sin empresa asociada; se ignora.`,
+          : esMessenger
+            ? `Mensaje de Messenger de ${d.from} para la página ${d.facebookPageId} sin empresa conectada; se ignora.`
+            : `Mensaje entrante de ${d.from} para phoneNumberId ${d.phoneNumberId} sin empresa asociada; se ignora.`,
       );
       return;
     }
 
-    if (esInstagram) {
-      // Instagram no manda el nombre en el webhook: se pide el perfil la
-      // primera vez, para que la bandeja muestre "@usuario" y no un número.
+    // Comentario en una publicación: solo si la empresa lo activó y, si puso
+    // palabras clave, solo los que las mencionan. Si no, ni se guarda: un
+    // comentario suelto no es una conversación.
+    if (d.comentarioId) {
+      const e = empresa as { instagramComentarios?: boolean; instagramComentariosClave?: string | null };
+      if (!e.instagramComentarios || !comentarioCalza(d.comentarioTexto ?? '', e.instagramComentariosClave)) return;
+      // Si ya conversan por DM, la respuesta va por DM como siempre: el
+      // comentario entra como un mensaje más.
+      const ya = await this.prisma.leadConversacion.findUnique({
+        where: { empresaId_telefonoProspecto: { empresaId: empresa.id, telefonoProspecto: d.from } },
+        select: { id: true, igComentarioId: true },
+      });
+      const yaConversan = Boolean(ya && !ya.igComentarioId);
+      if (yaConversan) {
+        d.comentarioId = undefined;
+        d.text = `[El cliente comentó en una publicación de Instagram: "${d.comentarioTexto ?? ''}"]`;
+      }
+    }
+
+    if (esInstagram || esMessenger) {
+      // Ni Instagram ni Messenger mandan el nombre en el webhook: se pide el
+      // perfil la primera vez, para que la bandeja muestre un nombre y no un id.
       if (!d.nombre) {
         const ya = await this.prisma.leadConversacion.findUnique({
           where: { empresaId_telefonoProspecto: { empresaId: empresa.id, telefonoProspecto: d.from } },
           select: { nombreProspecto: true },
         });
         if (!ya?.nombreProspecto) {
-          const p = await this.whatsapp.perfilInstagram(d.from, empresa.id).catch(() => ({} as any));
-          d.nombre = p?.nombre || (p?.usuario ? `@${p.usuario}` : undefined);
+          if (esInstagram) {
+            const p = await this.whatsapp.perfilInstagram(d.from, empresa.id).catch(() => ({} as any));
+            d.nombre = p?.nombre || (p?.usuario ? `@${p.usuario}` : undefined);
+          } else {
+            const p = await this.whatsapp.perfilMessenger(d.from, empresa.id).catch(() => ({} as any));
+            d.nombre = p?.nombre || undefined;
+          }
         }
       }
     } else {
@@ -441,13 +480,21 @@ export class LeadsMessageProcessor extends WorkerHost {
         telefonoProspecto: d.from,
         nombreProspecto: d.nombre ?? null,
         numeroWhatsappId: d.phoneNumberId ?? null,
-        canal: esInstagram ? 'INSTAGRAM' : 'WHATSAPP',
+        canal,
         cantidadMensajes: 0,
+        igComentarioId: d.comentarioId ?? null,
       },
       // El cliente escribió → reinicia el contador de seguimientos (silencio nuevo).
       update: {
         seguimientos: 0,
         ...(d.nombre ? { nombreProspecto: d.nombre } : {}),
+        // Un comentario nuevo abre una nueva respuesta privada; un DM cierra
+        // el modo comentario: ya se le puede escribir normal.
+        ...(d.comentarioId
+          ? { igComentarioId: d.comentarioId, igComentarioRespondido: false }
+          : esInstagram
+            ? { igComentarioId: null, igComentarioRespondido: false }
+            : {}),
       },
       select: { id: true, estado: true },
     });
@@ -764,7 +811,9 @@ export class LeadsMessageProcessor extends WorkerHost {
       // cliente: hay que pedírselo para el pedido o la entrega.
       conv.canal === 'INSTAGRAM'
         ? 'CANAL: esta conversación es por mensaje directo de INSTAGRAM, no por WhatsApp. Lo que dicen las reglas sobre WhatsApp vale igual, salvo: no uses asteriscos ni ningún formato (Instagram muestra el texto tal cual) y no tienes el celular del cliente, así que pídeselo cuando haga falta para el pedido o la entrega.'
-        : '',
+        : conv.canal === 'MESSENGER'
+          ? 'CANAL: esta conversación es por MESSENGER (página de Facebook), no por WhatsApp. Lo que dicen las reglas sobre WhatsApp vale igual, salvo: no uses asteriscos ni ningún formato (Messenger muestra el texto tal cual) y no tienes el celular del cliente, así que pídeselo cuando haga falta para el pedido o la entrega.'
+          : '',
       // Mientras un cliente siga teniendo los números copiados en su texto
       // libre, las dos versiones conviven en el prompt. Por eso el bloque
       // dice de sí mismo que es el que manda.
@@ -1131,7 +1180,7 @@ export class LeadsMessageProcessor extends WorkerHost {
     );
     if (!envio.success) {
       this.logger.warn(
-        `Lead: envío WhatsApp falló a ${conv.telefonoProspecto}: ${envio.error}`,
+        `Lead: envío por ${conv.canal ?? 'WHATSAPP'} falló a ${conv.telefonoProspecto}: ${envio.error}`,
       );
     }
 
