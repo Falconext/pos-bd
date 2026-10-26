@@ -167,7 +167,13 @@ export function normalizarFiltros(
 export interface HechosContacto {
   etiquetaIds: number[];
   /** Compras con su fecha y lo que llevó. */
-  compras: { fecha: Date; productoIds: number[]; categoriaIds: number[] }[];
+  compras: {
+    fecha: Date;
+    productoIds: number[];
+    categoriaIds: number[];
+    /** Total del comprobante; lo usan las métricas del envío. */
+    monto?: number;
+  }[];
   /** Lo que preguntó, con fecha y si lo había. */
   consultas: { fecha: Date; productoId: number | null; hubo: boolean }[];
   ultimoMensajeDelCliente: Date | null;

@@ -387,7 +387,7 @@ export class LeadsSegmentosService {
    * la tienda física quedaba como "no compró" y recibía la promo de
    * bienvenida.
    */
-  private async comprasDe(
+  async comprasDe(
     empresaId: number,
     convs: { id: number; telefonoProspecto: string }[],
   ): Promise<Map<number, HechosContacto['compras']>> {
@@ -445,6 +445,7 @@ export class LeadsSegmentosService {
         fechaEmision: true,
         estadoPago: true,
         estadoEnvioSunat: true,
+        mtoImpVenta: true,
         detalles: {
           select: {
             productoId: true,
@@ -469,6 +470,7 @@ export class LeadsSegmentosService {
         continue;
       const compra = {
         fecha: c.fechaEmision,
+        monto: Number(c.mtoImpVenta ?? 0),
         productoIds: c.detalles
           .map((d) => d.productoId)
           .filter((x): x is number => x != null),

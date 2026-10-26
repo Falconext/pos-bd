@@ -113,3 +113,82 @@ export function esFallaDePlantilla(motivo: string | null | undefined): boolean {
     motivo ?? '',
   );
 }
+
+// ─── Resultados ─────────────────────────────────────────────────────────────
+
+/** Una respuesta cuenta si llega dentro de este plazo desde que se le mandó. */
+export const HORAS_RESPUESTA = 72;
+/** Una compra se atribuye al envío si ocurre dentro de este plazo. */
+export const DIAS_COMPRA = 7;
+
+/** Medianoche de Lima del día de `fecha` (Lima es UTC-5 todo el año). */
+export function inicioDelDiaLima(fecha: Date): Date {
+  const enLima = new Date(fecha.getTime() - 5 * 3600_000);
+  return new Date(
+    Date.UTC(
+      enLima.getUTCFullYear(),
+      enLima.getUTCMonth(),
+      enLima.getUTCDate(),
+      5,
+      0,
+      0,
+      0,
+    ),
+  );
+}
+
+/**
+ * ¿Esta compra se cuenta como venta del envío? Desde el inicio del día en que
+ * se mandó: las notas de venta guardan solo la fecha (quedan a las 00:00 o a
+ * las 12:00), y con la hora exacta una compra de esa misma tarde quedaba
+ * fuera. El costo es contar alguna compra de esa mañana anterior al envío.
+ */
+export function compraDelEnvio(compra: Date, enviadoEn: Date): boolean {
+  const desde = inicioDelDiaLima(enviadoEn).getTime();
+  const hasta = enviadoEn.getTime() + DIAS_COMPRA * 24 * 3600_000;
+  return compra.getTime() >= desde && compra.getTime() <= hasta;
+}
+
+export interface EstadoDeMeta {
+  id: string;
+  status: string;
+  timestamp?: string | number;
+  errors?: {
+    code?: number;
+    title?: string;
+    message?: string;
+    error_data?: { details?: string };
+  }[];
+}
+
+/**
+ * Lo que hay que actualizar en el destinatario por un estado de WhatsApp.
+ * "read" implica entregado aunque el "delivered" no haya llegado (Meta no
+ * garantiza el orden ni que lleguen todos).
+ */
+export function cambiosPorEstado(
+  e: EstadoDeMeta,
+): { entregadoEn?: Date; leidoEn?: Date; fallo?: string } | null {
+  const ts = Number(e.timestamp);
+  const cuando =
+    Number.isFinite(ts) && ts > 0 ? new Date(ts * 1000) : new Date();
+  switch (e.status) {
+    case 'delivered':
+      return { entregadoEn: cuando };
+    case 'read':
+      return { entregadoEn: cuando, leidoEn: cuando };
+    case 'failed': {
+      const err = e.errors?.[0];
+      const detalle =
+        err?.error_data?.details ||
+        err?.message ||
+        err?.title ||
+        'Meta no pudo entregarlo';
+      return {
+        fallo: `${err?.code ? `(#${err.code}) ` : ''}${detalle}`.slice(0, 300),
+      };
+    }
+    default:
+      return null;
+  }
+}

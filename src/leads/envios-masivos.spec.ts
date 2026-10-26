@@ -9,7 +9,10 @@
 import {
   RITMO_MAX,
   RITMO_MIN,
+  cambiosPorEstado,
+  compraDelEnvio,
   decidirDestinatario,
+  inicioDelDiaLima,
   esFallaDePlantilla,
   excedeNivel,
   fechaProgramada,
@@ -124,5 +127,68 @@ describe('esFallaDePlantilla', () => {
     expect(esFallaDePlantilla('(#132015) Template is paused')).toBe(true);
     expect(esFallaDePlantilla('(#131026) Message undeliverable')).toBe(false);
     expect(esFallaDePlantilla(null)).toBe(false);
+  });
+});
+
+describe('estados de WhatsApp', () => {
+  it('read implica entregado; failed trae el motivo', () => {
+    expect(
+      cambiosPorEstado({
+        id: 'w',
+        status: 'delivered',
+        timestamp: '1793050000',
+      }),
+    ).toEqual({
+      entregadoEn: new Date(1793050000 * 1000),
+    });
+    expect(
+      cambiosPorEstado({ id: 'w', status: 'read', timestamp: 1793050060 }),
+    ).toEqual({
+      entregadoEn: new Date(1793050060 * 1000),
+      leidoEn: new Date(1793050060 * 1000),
+    });
+    expect(
+      cambiosPorEstado({
+        id: 'w',
+        status: 'failed',
+        errors: [
+          {
+            code: 131049,
+            title: 'x',
+            error_data: { details: 'No entregado por salud del ecosistema' },
+          },
+        ],
+      }),
+    ).toEqual({ fallo: '(#131049) No entregado por salud del ecosistema' });
+    expect(cambiosPorEstado({ id: 'w', status: 'sent' })).toBeNull();
+  });
+});
+
+describe('compraDelEnvio', () => {
+  // 27-10 a las 15:00 de Lima.
+  const enviado = new Date('2026-10-27T20:00:00Z');
+
+  it('cuenta las compras del mismo día (aunque la nota diga 00:00) hasta 7 días después', () => {
+    expect(compraDelEnvio(new Date('2026-10-27T05:00:00Z'), enviado)).toBe(
+      true,
+    );
+    expect(compraDelEnvio(new Date('2026-11-03T19:00:00Z'), enviado)).toBe(
+      true,
+    );
+  });
+
+  it('no cuenta lo del día anterior ni lo de después de la semana', () => {
+    expect(compraDelEnvio(new Date('2026-10-27T04:59:00Z'), enviado)).toBe(
+      false,
+    );
+    expect(compraDelEnvio(new Date('2026-11-03T21:00:00Z'), enviado)).toBe(
+      false,
+    );
+  });
+
+  it('inicioDelDiaLima es la medianoche de Lima', () => {
+    expect(
+      inicioDelDiaLima(new Date('2026-10-28T03:00:00Z')).toISOString(),
+    ).toBe('2026-10-27T05:00:00.000Z');
   });
 });

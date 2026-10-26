@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { MensajeriaService } from './mensajeria.service';
@@ -24,7 +25,11 @@ import {
   variablesDe,
 } from './plantillas-propias';
 import {
+  EstadoDeMeta,
   EstadoEnvio,
+  HORAS_RESPUESTA,
+  cambiosPorEstado,
+  compraDelEnvio,
   decidirDestinatario,
   esFallaDePlantilla,
   excedeNivel,
@@ -535,6 +540,146 @@ export class LeadsEnviosService {
     return { resultados };
   }
 
+  // ─── Estados de WhatsApp (webhook) ─────────────────────────────────────
+
+  /**
+   * Entregado / leído / falló, por el id del mensaje. Llegan por cada mensaje
+   * que manda el negocio (también las respuestas de la IA): los que no son de
+   * un envío masivo no coinciden con ningún destinatario y no pasa nada.
+   */
+  async registrarEstados(estados: EstadoDeMeta[]) {
+    let aplicados = 0;
+    for (const e of estados ?? []) {
+      if (!e?.id) continue;
+      const cambio = cambiosPorEstado(e);
+      if (!cambio) continue;
+      if (cambio.fallo) {
+        const r = await this.prisma.leadDisparo.updateMany({
+          where: { wamid: e.id },
+          data: { estado: 'FALLIDO', motivo: cambio.fallo },
+        });
+        aplicados += r.count;
+        continue;
+      }
+      // Solo se completa lo que falta: un "delivered" que llega después del
+      // "read" no tiene que pisar nada.
+      if (cambio.entregadoEn) {
+        const r = await this.prisma.leadDisparo.updateMany({
+          where: { wamid: e.id, entregadoEn: null },
+          data: { entregadoEn: cambio.entregadoEn },
+        });
+        aplicados += r.count;
+      }
+      if (cambio.leidoEn) {
+        const r = await this.prisma.leadDisparo.updateMany({
+          where: { wamid: e.id, leidoEn: null },
+          data: { leidoEn: cambio.leidoEn },
+        });
+        aplicados += r.count;
+      }
+    }
+    return { aplicados };
+  }
+
+  // ─── Resultados ────────────────────────────────────────────────────────
+
+  /**
+   * Los que respondieron: escribieron dentro de las 72 h siguientes a su
+   * mensaje. Por envío, en una sola consulta.
+   */
+  private async respondieron(
+    envioIds: number[],
+  ): Promise<Map<number, Set<number>>> {
+    const out = new Map<number, Set<number>>();
+    if (!envioIds.length) return out;
+    const filas = await this.prisma.$queryRaw<
+      { envioId: number; disparoId: number }[]
+    >`
+      SELECT DISTINCT d."envioMasivoId" AS "envioId", d.id AS "disparoId"
+        FROM "LeadDisparo" d
+        JOIN "LeadMensaje" m
+          ON m."conversacionId" = d."conversacionId"
+         AND m.rol = 'USUARIO'
+         AND m."creadoEn" > d."enviadoEn"
+         AND m."creadoEn" <= d."enviadoEn" + (${HORAS_RESPUESTA} * interval '1 hour')
+       WHERE d."envioMasivoId" IN (${Prisma.join(envioIds)})
+         AND d.estado = 'ENVIADO'`;
+    for (const f of filas) {
+      const k = Number(f.envioId);
+      if (!out.has(k)) out.set(k, new Set());
+      out.get(k)!.add(Number(f.disparoId));
+    }
+    return out;
+  }
+
+  /**
+   * Los que compraron dentro de los 7 días, por el chat o en caja, y cuánto.
+   * Es "compraron después de recibirlo", no "compraron por el mensaje": no hay
+   * forma honesta de saber lo segundo, y el panel lo dice así.
+   */
+  private async compraron(
+    empresaId: number,
+    enviados: {
+      id: number;
+      conversacionId: number | null;
+      telefono: string;
+      enviadoEn: Date | null;
+    }[],
+  ): Promise<{ porDisparo: Map<number, number>; monto: number }> {
+    const conConv = enviados.filter((d) => d.conversacionId && d.enviadoEn);
+    const porDisparo = new Map<number, number>();
+    if (!conConv.length) return { porDisparo, monto: 0 };
+    const compras = await this.segmentos.comprasDe(
+      empresaId,
+      conConv.map((d) => ({
+        id: d.conversacionId as number,
+        telefonoProspecto: d.telefono,
+      })),
+    );
+    let monto = 0;
+    for (const d of conConv) {
+      const delEnvio = (compras.get(d.conversacionId as number) ?? []).filter(
+        (c) => compraDelEnvio(c.fecha, d.enviadoEn as Date),
+      );
+      if (!delEnvio.length) continue;
+      const total = delEnvio.reduce((a, c) => a + (c.monto ?? 0), 0);
+      porDisparo.set(d.id, Math.round(total * 100) / 100);
+      monto += total;
+    }
+    return { porDisparo, monto: Math.round(monto * 100) / 100 };
+  }
+
+  private async entregadosYLeidos(envioIds: number[]) {
+    const out = new Map<number, { entregados: number; leidos: number }>();
+    if (!envioIds.length) return out;
+    const [entregados, leidos] = await Promise.all([
+      this.prisma.leadDisparo.groupBy({
+        by: ['envioMasivoId'],
+        where: {
+          envioMasivoId: { in: envioIds },
+          estado: 'ENVIADO',
+          entregadoEn: { not: null },
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.leadDisparo.groupBy({
+        by: ['envioMasivoId'],
+        where: {
+          envioMasivoId: { in: envioIds },
+          estado: 'ENVIADO',
+          leidoEn: { not: null },
+        },
+        _count: { _all: true },
+      }),
+    ]);
+    for (const id of envioIds) out.set(id, { entregados: 0, leidos: 0 });
+    for (const g of entregados)
+      out.get(g.envioMasivoId as number)!.entregados = g._count._all;
+    for (const g of leidos)
+      out.get(g.envioMasivoId as number)!.leidos = g._count._all;
+    return out;
+  }
+
   // ─── Consultar ─────────────────────────────────────────────────────────
 
   private async envioDe(empresaId: number, id: number) {
@@ -566,8 +711,19 @@ export class LeadsEnviosService {
       orderBy: { creadoEn: 'desc' },
       take: 100,
     });
-    const conteos = await this.conteos(envios.map((e) => e.id));
-    return envios.map((e) => this.resumen(e, conteos.get(e.id) ?? {}));
+    const ids = envios.map((e) => e.id);
+    const [conteos, lecturas, respuestas] = await Promise.all([
+      this.conteos(ids),
+      this.entregadosYLeidos(ids),
+      this.respondieron(ids),
+    ]);
+    return envios.map((e) => ({
+      ...this.resumen(e, conteos.get(e.id) ?? {}),
+      resultados: {
+        ...(lecturas.get(e.id) ?? { entregados: 0, leidos: 0 }),
+        respondieron: respuestas.get(e.id)?.size ?? 0,
+      },
+    }));
   }
 
   private resumen(
@@ -615,10 +771,29 @@ export class LeadsEnviosService {
           estado: true,
           motivo: true,
           enviadoEn: true,
+          entregadoEn: true,
+          leidoEn: true,
           textoEnviado: true,
         },
       }),
     ]);
+    // Las compras y respuestas se miden sobre TODOS los enviados, no sobre la
+    // página filtrada que se está mirando.
+    const enviados = await this.prisma.leadDisparo.findMany({
+      where: { envioMasivoId: id, estado: 'ENVIADO' },
+      select: {
+        id: true,
+        conversacionId: true,
+        telefono: true,
+        enviadoEn: true,
+      },
+    });
+    const [lecturas, respuestas, compras] = await Promise.all([
+      this.entregadosYLeidos([id]),
+      this.respondieron([id]),
+      this.compraron(empresaId, enviados),
+    ]);
+    const respondio = respuestas.get(id) ?? new Set<number>();
     const convs = await this.prisma.leadConversacion.findMany({
       where: {
         id: {
@@ -635,8 +810,16 @@ export class LeadsEnviosService {
       plantillaJson: e.plantillaJson,
       valores: e.valoresJson,
       filtros: e.filtrosJson,
+      resultados: {
+        ...(lecturas.get(id) ?? { entregados: 0, leidos: 0 }),
+        respondieron: respondio.size,
+        compraron: compras.porDisparo.size,
+        ventas: compras.monto,
+      },
       destinatarios: filas.map((f) => ({
         ...f,
+        respondio: respondio.has(f.id),
+        compra: compras.porDisparo.get(f.id) ?? null,
         nombre: f.conversacionId
           ? (porId.get(f.conversacionId)?.nombreProspecto ?? null)
           : null,

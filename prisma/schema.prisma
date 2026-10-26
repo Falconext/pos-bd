@@ -4659,6 +4659,9 @@ model LeadDisparo {
   envioMasivoId  Int?
   /// Id del mensaje en WhatsApp (wamid): con él llegan entregado/leído.
   wamid          String?           @unique
+  /// Lo que avisa Meta por webhook (statuses) después de aceptarlo.
+  entregadoEn    DateTime?
+  leidoEn        DateTime?
   creadoEn       DateTime          @default(now())
   actualizadoEn  DateTime          @updatedAt
 

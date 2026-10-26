@@ -13,9 +13,13 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import * as crypto from 'crypto';
 import { JOB_INGRESAR_MENSAJE, LEADS_MESSAGES_QUEUE } from './leads.constants';
-import { mensajesDeInstagram, mensajesDeMessenger } from '../instagram/instagram-webhook';
+import {
+  mensajesDeInstagram,
+  mensajesDeMessenger,
+} from '../instagram/instagram-webhook';
 import { ecosDeCambio, JOB_ECO_VENDEDOR } from './eco-vendedor';
 import { LeadsPlantillasService } from './leads-plantillas.service';
+import { LeadsEnviosService } from './leads-envios.service';
 
 /**
  * Webhook público de WhatsApp Cloud API para el módulo de leads.
@@ -30,6 +34,7 @@ export class LeadsWebhookController {
   constructor(
     @InjectQueue(LEADS_MESSAGES_QUEUE) private readonly queue: Queue,
     private readonly plantillas: LeadsPlantillasService,
+    private readonly envios: LeadsEnviosService,
   ) {}
 
   // Verificación del webhook (Meta hace GET con hub.challenge).
@@ -90,7 +95,8 @@ export class LeadsWebhookController {
     // Los mensajes de Instagram (login de Instagram) los firma Meta con la
     // clave de la app de Instagram, que es otra.
     const deInstagram = process.env.INSTAGRAM_APP_SECRET;
-    if (deInstagram && this.coincideFirma(rawBody, signature, deInstagram)) return true;
+    if (deInstagram && this.coincideFirma(rawBody, signature, deInstagram))
+      return true;
 
     const anterior = process.env.META_APP_SECRET_PREV;
     if (anterior && this.coincideFirma(rawBody, signature, anterior)) {
@@ -115,7 +121,10 @@ export class LeadsWebhookController {
     if (body.object === 'instagram' || body.object === 'page') {
       // Mismo trato que WhatsApp: se encola antes de contestar y, si la cola
       // falla, un 500 hace que Meta reentregue. `page` es Messenger.
-      const mensajes = body.object === 'instagram' ? mensajesDeInstagram(body) : mensajesDeMessenger(body);
+      const mensajes =
+        body.object === 'instagram'
+          ? mensajesDeInstagram(body)
+          : mensajesDeMessenger(body);
       try {
         for (const m of mensajes) {
           await this.queue.add(JOB_INGRESAR_MENSAJE, m, {
@@ -128,7 +137,9 @@ export class LeadsWebhookController {
           });
         }
       } catch (e: any) {
-        this.logger.error(`Webhook leads (${body.object}): error encolando: ${e?.message}`);
+        this.logger.error(
+          `Webhook leads (${body.object}): error encolando: ${e?.message}`,
+        );
         return res.status(500).send('retry');
       }
       return res.status(200).send('EVENT_RECEIVED');
@@ -162,9 +173,23 @@ export class LeadsWebhookController {
             await this.plantillas
               .aplicarWebhook(String(entry.id), value)
               .catch((e) =>
-                this.logger.warn(`Webhook leads: estado de plantilla no aplicado: ${e?.message}`),
+                this.logger.warn(
+                  `Webhook leads: estado de plantilla no aplicado: ${e?.message}`,
+                ),
               );
             continue;
+          }
+          // Entregado / leído / falló de los mensajes que mandó el negocio.
+          // Tampoco se encola: es un update por id y, si falla, se pierde
+          // solo una métrica, no un mensaje.
+          if (Array.isArray(value.statuses) && value.statuses.length) {
+            await this.envios
+              .registrarEstados(value.statuses)
+              .catch((e) =>
+                this.logger.warn(
+                  `Webhook leads: estados no aplicados: ${e?.message}`,
+                ),
+              );
           }
           const phoneNumberId = value.metadata?.phone_number_id;
           const contactos: any[] = value.contacts ?? [];
