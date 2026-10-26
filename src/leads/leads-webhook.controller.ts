@@ -13,7 +13,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import * as crypto from 'crypto';
 import { JOB_INGRESAR_MENSAJE, LEADS_MESSAGES_QUEUE } from './leads.constants';
-import { mensajesDeInstagram } from '../instagram/instagram-webhook';
+import { mensajesDeInstagram, mensajesDeMessenger } from '../instagram/instagram-webhook';
 
 /**
  * Webhook público de WhatsApp Cloud API para el módulo de leads.
@@ -109,11 +109,12 @@ export class LeadsWebhookController {
     }
 
     const body: any = req.body ?? {};
-    if (body.object === 'instagram') {
+    if (body.object === 'instagram' || body.object === 'page') {
       // Mismo trato que WhatsApp: se encola antes de contestar y, si la cola
-      // falla, un 500 hace que Meta reentregue.
+      // falla, un 500 hace que Meta reentregue. `page` es Messenger.
+      const mensajes = body.object === 'instagram' ? mensajesDeInstagram(body) : mensajesDeMessenger(body);
       try {
-        for (const m of mensajesDeInstagram(body)) {
+        for (const m of mensajes) {
           await this.queue.add(JOB_INGRESAR_MENSAJE, m, {
             // BullMQ no acepta ":" en el id del job.
             jobId: `in-${m.messageId.replace(/:/g, '-')}`,
@@ -124,7 +125,7 @@ export class LeadsWebhookController {
           });
         }
       } catch (e: any) {
-        this.logger.error(`Webhook leads (Instagram): error encolando: ${e?.message}`);
+        this.logger.error(`Webhook leads (${body.object}): error encolando: ${e?.message}`);
         return res.status(500).send('retry');
       }
       return res.status(200).send('EVENT_RECEIVED');

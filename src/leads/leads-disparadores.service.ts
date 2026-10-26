@@ -5,6 +5,7 @@ import { estaPausado } from './pausa-bot';
 import { esNumeroInterno, numerosInternos } from './numeros-internos';
 import { MensajeriaService } from './mensajeria.service';
 import { esDestinoInstagram } from '../instagram/instagram-texto';
+import { esDestinoMessenger } from '../messenger/messenger-texto';
 import { EtapaCrm, etapaDesdeDespacho } from './leads-embudo';
 import { LeadsEmbudoService } from './leads-embudo.service';
 import {
@@ -390,14 +391,14 @@ export class LeadsDisparadoresService {
       return { enviado: false, motivo: veredicto.motivo };
     }
 
-    // Instagram no tiene plantillas: con la ventana cerrada no hay cómo
-    // escribirle. No es un error del envío, es que el canal no lo permite.
-    if (veredicto.via === 'plantilla' && esDestinoInstagram(d.telefono)) {
+    // Instagram y Messenger no tienen plantillas: con la ventana cerrada no
+    // hay cómo escribirle. No es un error del envío, es que el canal no lo permite.
+    if (veredicto.via === 'plantilla' && (esDestinoInstagram(d.telefono) || esDestinoMessenger(d.telefono))) {
       await this.prisma.leadDisparo.update({
         where: { id: d.id },
         data: {
           estado: 'OMITIDO',
-          motivo: 'Instagram: pasaron las 24 h desde el último mensaje del cliente y no hay plantillas.',
+          motivo: `${esDestinoMessenger(d.telefono) ? 'Messenger' : 'Instagram'}: pasaron las 24 h desde el último mensaje del cliente y no hay plantillas.`,
         },
       });
       return { enviado: false, motivo: 'instagram_fuera_de_ventana' };

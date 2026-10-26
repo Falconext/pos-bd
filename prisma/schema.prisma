@@ -225,6 +225,23 @@ model Empresa {
   instagramToken            String?
   instagramTokenExpira      DateTime?
   instagramActivo           Boolean            @default(false)
+  // Meta anuló el token (error 190: cambiaron la clave, cerraron la sesión,
+  // quitaron el permiso). Guarda el motivo y deja de intentar enviar hasta que
+  // el empresario reconecte; el panel muestra el aviso "Reconectar".
+  instagramErrorToken       String?
+  // Comentarios en publicaciones → un mensaje privado de la IA. Apagado por
+  // defecto. Con palabras clave (separadas por coma) solo responde los
+  // comentarios que las mencionen; vacío = todos.
+  instagramComentarios      Boolean            @default(false)
+  instagramComentariosClave String?
+  // IA de Ventas por Messenger (página de Facebook). El token de página sale
+  // de un token de usuario de larga duración, así que no vence solo; deja de
+  // servir si el empresario cambia la clave o quita el acceso (error 190).
+  facebookPageId            String?            @unique
+  facebookPageNombre        String?
+  facebookPageToken         String?
+  facebookActivo            Boolean            @default(false)
+  facebookErrorToken        String?
   // Rastreo automático Shalom (cron 30 min): opt-in por empresa. Con `false`
   // (default) el cron NO actualiza estados ni envía WhatsApp a los clientes de
   // esta empresa — se activa recién cuando el empresario está avisado.
@@ -4831,10 +4848,16 @@ model LeadConversacion {
   estado              EstadoLeadConversacion @default(ACTIVA)
   cantidadMensajes    Int                    @default(0)
   numeroWhatsappId    String? // phoneNumberId por el que entró
-  // Por qué red entró: WHATSAPP o INSTAGRAM. En Instagram `telefonoProspecto`
-  // guarda `ig:<id del usuario>`: el prefijo evita que se confunda con un
+  // Por qué red entró: WHATSAPP, INSTAGRAM o MESSENGER. En Instagram
+  // `telefonoProspecto` guarda `ig:<id del usuario>` y en Messenger
+  // `fb:<id del usuario en la página>`: el prefijo evita que se confunda con un
   // número (pedidos por celular, fusión de usuarios @nick de WhatsApp).
   canal               String                 @default("WHATSAPP")
+  // Instagram, conversación que nace de un comentario: el primer mensaje solo
+  // puede ir como "respuesta privada" a ese comentario (uno solo) y después
+  // hay que esperar que el cliente escriba. Se limpia cuando escribe.
+  igComentarioId          String?
+  igComentarioRespondido  Boolean                @default(false)
   // Seguimiento automático: nº de nudges enviados en el silencio actual (se
   // reinicia a 0 cuando el prospecto vuelve a escribir) y cuándo fue el último.
   seguimientos        Int                    @default(0)

@@ -120,11 +120,13 @@ export class LeadsSeguimientoService {
             ],
           },
         },
-        // El seguimiento solo corre dentro de las 24 h, que en Instagram es
-        // igual: vale para los dos canales, cada uno con su conexión activa.
+        // El seguimiento solo corre dentro de las 24 h, que en Instagram y
+        // Messenger es igual: vale para los tres canales, cada uno con su
+        // conexión activa.
         OR: [
           { canal: 'WHATSAPP', empresa: { is: { iaVentasActiva: true, iaVentasSeguimiento: true, whatsappActivo: true } } },
           { canal: 'INSTAGRAM', empresa: { is: { iaVentasActiva: true, iaVentasSeguimiento: true, instagramActivo: true } } },
+          { canal: 'MESSENGER', empresa: { is: { iaVentasActiva: true, iaVentasSeguimiento: true, facebookActivo: true } } },
         ],
       },
       select: {
