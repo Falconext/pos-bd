@@ -608,6 +608,7 @@ model Empresa {
   leadDisparos            LeadDisparo[]
   leadDemos               LeadDemo[]
   leadEtiquetas           LeadEtiqueta[]
+  leadSegmentos           LeadSegmento[]
   soporteConversacion     SoporteConversacion?
   reglasComision          ReglaComision[]
   cobros                  CobroEmpresa[]
@@ -4929,6 +4930,21 @@ model LeadConversacionEtiqueta {
 
   @@id([conversacionId, etiquetaId])
   @@index([etiquetaId])
+}
+
+/// Un segmento guardado: filtros con nombre ("Compraron perfume, 60 días").
+/// Se guardan los filtros y no la lista de teléfonos porque el segmento cambia
+/// solo: quien compra mañana entra mañana.
+model LeadSegmento {
+  id            Int      @id @default(autoincrement())
+  empresaId     Int
+  empresa       Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  nombre        String
+  filtrosJson   Json
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  @@index([empresaId])
 }
 
 model LeadAnuncioOrigen {
