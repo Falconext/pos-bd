@@ -7,7 +7,8 @@ import { repartirPago } from './cobro-varias';
 import { parseFechaEmision } from '../common/utils/fecha';
 import { diaDeEnvio } from './dia-de-envio';
 import { aplicarDescuentoGlobal } from './descuento-global';
-import { conObservacionDelivery, separarDelivery } from './delivery-del-pedido';
+import { conObservacionDelivery, esLineaDeDelivery, separarDelivery } from './delivery-del-pedido';
+import { excesosSobreSaldo, lineasPorConvertir, totalDeLineas } from './saldo-por-convertir';
 import { excluirNotasCreditoDeAnulacion } from '../common/utils/notas-credito.util';
 import {
   SunatValidezClient,
@@ -594,12 +595,27 @@ export class ComprobanteService {
         )
         .map((it) => it.id);
       const convertidoMap = new Map<number, string>();
+      // Formales de cada nota, para saber si quedó algo sin convertir.
+      const derivadosPorNota = new Map<number, { mtoImpVenta: number; detalles: any[] }[]>();
+      const consolidadas = new Set<number>();
       if (informalIds.length > 0) {
         const derivados = await this.prisma.comprobante.findMany({
           where: { comprobanteOrigenId: { in: informalIds } },
-          select: { comprobanteOrigenId: true, serie: true, correlativo: true },
+          orderBy: { id: 'asc' },
+          select: {
+            comprobanteOrigenId: true,
+            serie: true,
+            correlativo: true,
+            mtoImpVenta: true,
+            detalles: { select: { productoId: true, comboId: true, descripcion: true, cantidad: true } },
+          },
         });
         for (const d of derivados) {
+          if (d.comprobanteOrigenId != null) {
+            const lista = derivadosPorNota.get(d.comprobanteOrigenId) ?? [];
+            lista.push({ mtoImpVenta: Number(d.mtoImpVenta || 0), detalles: d.detalles });
+            derivadosPorNota.set(d.comprobanteOrigenId, lista);
+          }
           if (d.comprobanteOrigenId != null && !convertidoMap.has(d.comprobanteOrigenId)) {
             convertidoMap.set(
               d.comprobanteOrigenId,
@@ -613,6 +629,7 @@ export class ComprobanteService {
           select: { origenId: true, formal: { select: { serie: true, correlativo: true } } },
         });
         for (const x of extras) {
+          consolidadas.add(x.origenId);
           if (!convertidoMap.has(x.origenId)) {
             convertidoMap.set(x.origenId, `${x.formal.serie}-${String(x.formal.correlativo).padStart(8, '0')}`);
           }
@@ -774,11 +791,38 @@ export class ComprobanteService {
             }),
           );
           resolverDespachoAgrupado(it as any);
+          // Convertida solo en parte: lo que falta, para ofrecer "Convertir
+          // saldo" (ver saldo-por-convertir.ts). Misma regla que valida la
+          // conversión; el delivery del chat no cuenta como saldo.
+          let porConvertir: { detalles: any[]; total: number; yaCobrado: number } | null = null;
+          const formales = derivadosPorNota.get(it.id);
+          if (formales?.length && !consolidadas.has(it.id)) {
+            const lineasNota = delChat.has(it.id)
+              ? detalles.filter((l: any) => !esLineaDeDelivery(l))
+              : detalles;
+            const pendientes = lineasPorConvertir(lineasNota, formales.flatMap((f) => f.detalles));
+            if (pendientes.length > 0) {
+              const cobrado = Math.max(
+                0,
+                Number(it.mtoImpVenta || 0) - Number((it as any).saldo || 0),
+              );
+              const yaEmitido = formales.reduce((a, f) => a + f.mtoImpVenta, 0);
+              const total = totalDeLineas(pendientes);
+              // Nota cobrada entera: el saldo también (mismo criterio que la conversión).
+              const notaPagada = Number((it as any).saldo || 0) <= 0.01;
+              porConvertir = {
+                detalles: pendientes,
+                total,
+                yaCobrado: notaPagada ? total : this.round2(Math.max(0, cobrado - yaEmitido)),
+              };
+            }
+          }
           return {
             ...it,
             detalles,
             comprobante,
             convertidoA,
+            porConvertir,
             pedidoDelChat: delChat.has(it.id),
             anulacionEnTramite: anulacionEnTramite.has(it.id),
             anulacionEstado: anulacionNoConfirmada.has(it.id)
@@ -1440,6 +1484,62 @@ export class ComprobanteService {
       select: { formal: { select: { serie: true, correlativo: true } } },
     });
     return extra?.formal ?? null;
+  }
+
+  /**
+   * Lo que falta convertir de una nota que ya tiene formales (ver
+   * saldo-por-convertir.ts). Null si no hay nada pendiente o si la nota se
+   * facturó junto con otras: esa vía siempre lleva la nota completa.
+   * `yaEmitido` es lo que suman los formales que ya salieron de ella, para que
+   * la conversión del saldo use solo lo cobrado que todavía no se aplicó.
+   */
+  private async saldoPorConvertir(notaId: number): Promise<{
+    pendientes: any[];
+    total: number;
+    yaEmitido: number;
+    formales: string[];
+    delChat: boolean;
+  } | null> {
+    const consolidada = await this.prisma.comprobanteOrigenExtra.findUnique({
+      where: { origenId: notaId },
+      select: { origenId: true },
+    });
+    if (consolidada) return null;
+    const [nota, formales, delChat] = await Promise.all([
+      this.prisma.detalleComprobante.findMany({
+        where: { comprobanteId: notaId },
+        orderBy: { id: 'asc' },
+      }),
+      this.prisma.comprobante.findMany({
+        where: { comprobanteOrigenId: notaId },
+        orderBy: { id: 'asc' },
+        select: {
+          serie: true,
+          correlativo: true,
+          mtoImpVenta: true,
+          detalles: { select: { productoId: true, comboId: true, descripcion: true, cantidad: true } },
+        },
+      }),
+      this.prisma.leadPedidoBorrador.findFirst({
+        where: { comprobanteId: notaId },
+        select: { id: true },
+      }),
+    ]);
+    if (formales.length === 0) return null;
+    // El delivery de un pedido del chat nunca va al formal: no es saldo.
+    const lineasNota = delChat ? nota.filter((l) => !esLineaDeDelivery(l)) : nota;
+    const pendientes = lineasPorConvertir(
+      lineasNota,
+      formales.flatMap((f) => f.detalles),
+    );
+    if (pendientes.length === 0) return null;
+    return {
+      pendientes,
+      total: totalDeLineas(pendientes),
+      yaEmitido: this.round2(formales.reduce((a, f) => a + Number(f.mtoImpVenta || 0), 0)),
+      formales: formales.map((f) => `${f.serie}-${String(f.correlativo).padStart(8, '0')}`),
+      delChat: !!delChat,
+    };
   }
 
   /**
@@ -3623,6 +3723,8 @@ export class ComprobanteService {
     // ¿Cuánta plata del origen YA entró a caja? La conversión no cobra de nuevo:
     // solo emite el documento formal de una venta ya cobrada.
     let montoYaCobradoEnOrigen = 0;
+    // Si la nota ya se convirtió en parte: lo que le falta.
+    let saldoNota: Awaited<ReturnType<ComprobanteService['saldoPorConvertir']>> = null;
 
     // Validar que el comprobante origen pertenezca a esta empresa (seguridad)
     if (esConversionDesdeInformal) {
@@ -3660,8 +3762,25 @@ export class ComprobanteService {
       // los reportes y en las comisiones. `editarNotaVenta` ya bloqueaba por lo
       // mismo; la conversión no lo hacía.
       // También si se facturó junto con otras notas en otro formal.
+      // Convertida solo en parte: puede salir otro formal, pero únicamente con
+      // lo que falta (ver saldo-por-convertir.ts).
       const yaConvertido = await this.formalQueContieneNota(Number(comprobanteOrigenId));
       if (yaConvertido) {
+        saldoNota = await this.saldoPorConvertir(Number(comprobanteOrigenId));
+      }
+      if (yaConvertido && saldoNota) {
+        const nuevas = ((detalles as any[]) ?? []).filter(
+          (l) => !saldoNota!.delChat || !esLineaDeDelivery(l),
+        );
+        const excesos = excesosSobreSaldo(saldoNota.pendientes, nuevas);
+        if (excesos.length > 0) {
+          throw new BadRequestException(
+            `${origen.serie}-${origen.correlativo} ya se convirtió en parte ` +
+              `(${saldoNota.formales.join(', ')}). Solo se puede emitir lo que falta: ` +
+              `${excesos.join('; ')}.`,
+          );
+        }
+      } else if (yaConvertido) {
         throw new BadRequestException(
           `${origen.serie}-${origen.correlativo} ya fue convertido a ` +
             `${yaConvertido.serie}-${String(yaConvertido.correlativo).padStart(8, '0')}. ` +
@@ -3688,6 +3807,17 @@ export class ComprobanteService {
           ? this.round2(Number(origen.mtoImpVenta || 0))
           : 0,
       );
+      // Lo cobrado en la nota ya se aplicó en parte a los formales anteriores:
+      // al saldo le toca solo lo que sobra, o se daría por pagado de más.
+      // Nota cobrada entera: cualquier parte está pagada. Restar daba un
+      // centavo de diferencia por el redondeo de cada línea.
+      if (saldoNota) {
+        const notaPagada =
+          montoYaCobradoEnOrigen >= this.round2(Number(origen.mtoImpVenta || 0)) - 0.01;
+        montoYaCobradoEnOrigen = notaPagada
+          ? this.round2(Number(origen.mtoImpVenta || 0))
+          : this.round2(Math.max(0, montoYaCobradoEnOrigen - saldoNota.yaEmitido));
+      }
     }
 
     // Varias notas facturadas juntas. La primera ya se validó arriba como
@@ -3701,6 +3831,11 @@ export class ComprobanteService {
         )
       : [];
     let extraYaGeneroComision = false;
+    if (saldoNota && origenesExtraIds.length > 0) {
+      throw new BadRequestException(
+        'El saldo de una nota convertida en parte se emite solo, no junto con otras notas.',
+      );
+    }
     if (origenesExtraIds.length > 0) {
       const extra = await this.validarNotasParaFacturarJuntas(
         empresaId,
