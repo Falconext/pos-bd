@@ -3190,7 +3190,7 @@ export class LeadsMessageProcessor extends WorkerHost {
   ): Promise<HechosLead> {
     const mensajesCliente = historial.filter((m) => m.role === 'user').length;
     try {
-      const [prospecto, borrador, retoma] = await Promise.all([
+      const [prospecto, borrador, retoma, visita] = await Promise.all([
         this.prisma.leadProspecto.findUnique({
           where: { conversacionId },
           select: { etapa: true },
@@ -3207,11 +3207,17 @@ export class LeadsMessageProcessor extends WorkerHost {
             estado: 'PROGRAMADO',
           },
         }),
+        // La visita sin pedido ("primero quiero conocer la tienda") vive en
+        // LeadVisitaTienda, no en el borrador (QA 26-10: Percy quedaba tibio).
+        this.prisma.leadVisitaTienda.count({
+          where: { conversacionId, estado: 'AGENDADA' },
+        }),
       ]);
       return {
         etapa: prospecto?.etapa ?? 'NUEVO',
         pedidoRegistrado: borrador?.comprobanteId != null,
-        visitaAgendada: borrador?.tipoZona === 'RECOJO' && !!borrador.horario?.trim(),
+        visitaAgendada:
+          visita > 0 || (borrador?.tipoZona === 'RECOJO' && !!borrador.horario?.trim()),
         retomaAgendado: retoma > 0,
         mensajesCliente,
       };

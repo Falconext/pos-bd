@@ -35,7 +35,13 @@ export class LeadsVisitaService {
     conversacionId: number,
     telefono: string,
     datos: { cuando: string; fecha?: unknown; conPedido: boolean },
-  ): Promise<{ registrada: boolean; fecha: string | null; indicacionesEnviadas: boolean; yaTeniaIndicaciones: boolean }> {
+  ): Promise<{
+    registrada: boolean;
+    fecha: string | null;
+    indicacionesEnviadas: boolean;
+    yaTeniaIndicaciones: boolean;
+    aviso?: string;
+  }> {
     const cuando = datos.cuando.trim().slice(0, 200) || null;
     const fecha = cuando ? fechaDeVisita(cuando, datos.fecha) : null;
     const [conv, borrador] = await Promise.all([
@@ -109,11 +115,20 @@ export class LeadsVisitaService {
     this.logger.log(
       `Lead: visita a tienda (empresa ${empresaId}, conv ${conversacionId}, ${fecha ?? 'sin fecha'}, indicaciones ${indicacionesEnviadas ? 'enviadas' : 'no'}).`,
     );
+    const yaTeniaIndicaciones = !!visita.indicacionesEn;
     return {
       registrada: true,
       fecha,
       indicacionesEnviadas,
-      yaTeniaIndicaciones: !!visita.indicacionesEn,
+      yaTeniaIndicaciones,
+      // QA 26-10: sin esto el modelo decía "te acabo de mandar la ubicación"
+      // aunque no hubiera salido nada.
+      ...(!indicacionesEnviadas && !yaTeniaIndicaciones
+        ? {
+            aviso:
+              'NO se le mandó la ubicación ni la foto. No digas que se la enviaste: dale tú la dirección de la tienda que tienes en el contexto.',
+          }
+        : {}),
     };
   }
 

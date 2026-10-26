@@ -147,6 +147,12 @@ export class LeadsSeguimientoService {
       orderBy: { actualizadoEn: 'asc' },
     });
 
+    // La despedida tras el reenganche va primero y aparte: con un return
+    // temprano por "no hay a quién reenganchar" no corría nunca (QA 26-10).
+    await this.despedirTrasReenganche(ahora).catch((e: any) =>
+      this.logger.warn(`Despedida tras reenganche: ${e?.message}`),
+    );
+
     if (candidatas.length === 0) return;
     let enviados = 0;
 
@@ -288,7 +294,6 @@ export class LeadsSeguimientoService {
       );
     }
 
-    await this.despedirTrasReenganche(ahora);
   }
 
   /**

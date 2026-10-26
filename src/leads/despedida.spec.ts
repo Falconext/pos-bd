@@ -41,3 +41,43 @@ describe('la despedida del negocio', () => {
     ).toBe(true);
   });
 });
+
+describe('la despedida tras el reenganche en el cron', () => {
+  // QA 26-10: con un return temprano por "no hay a quién reenganchar" la
+  // despedida de las 2 horas no salía nunca.
+  it('sale aunque en ese ciclo no haya nadie a quien reenganchar', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { LeadsSeguimientoService } = require('./leads-seguimiento.service');
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-26T16:30:00Z')); // 11:30 Lima
+    const hace = (min: number) => new Date(Date.now() - min * 60_000);
+    const prisma = {
+      leadConversacion: {
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([]) // candidatas al reenganche
+          .mockResolvedValueOnce([
+            {
+              id: 7,
+              telefonoProspecto: '51900000107',
+              ultimoSeguimientoEn: hace(130),
+              empresa: { id: 89, iaVentasConfigJson: { despedida: { activa: true, texto: TEXTO_HIERBA_SANA } } },
+            },
+          ]),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      leadMensaje: {
+        findFirst: jest
+          .fn()
+          .mockResolvedValueOnce({ rol: 'ASISTENTE', creadoEn: hace(130) }) // el reenganche
+          .mockResolvedValueOnce({ creadoEn: hace(200) }), // último del cliente
+        create: jest.fn().mockResolvedValue({}),
+      },
+    };
+    const enviarTexto = jest.fn().mockResolvedValue({ success: true });
+    const svc = new LeadsSeguimientoService(prisma, { disponible: () => true }, { enviarTexto });
+    await svc.ejecutar();
+    jest.useRealTimers();
+    expect(enviarTexto).toHaveBeenCalledWith('51900000107', TEXTO_HIERBA_SANA, 89);
+    expect(prisma.leadConversacion.update).toHaveBeenCalledWith({ where: { id: 7 }, data: { seguimientos: 2 } });
+  });
+});

@@ -10,7 +10,7 @@
  * legal: el modelo la incumple justo en el mensaje que importa.
  */
 import type { LlamadaHerramienta } from '../gemini/gemini.service';
-import { HERRAMIENTA_REGISTRAR_PEDIDO } from './leads-herramientas';
+import { HERRAMIENTA_AGENDAR_VISITA, HERRAMIENTA_REGISTRAR_PEDIDO } from './leads-herramientas';
 
 const AFIRMA_REGISTRO =
   /(qued[oó]|ha quedado|est[aá]|fue|hemos|he|se ha)\s+(\S+\s+){0,3}(registrad|agendad|confirmad)|pedido\s+(registrado|agendado|confirmado)|se ha agendado/i;
@@ -30,6 +30,15 @@ export function sinConfirmacionFalsa(
   pedidoRegistrado: boolean,
 ): string {
   if (pedidoRegistrado || !afirmaPedidoRegistrado(respuesta)) return respuesta;
+  // "Tu visita quedó agendada para el martes" es verdad si en este turno se
+  // registró la visita (QA 26-10: la guardia la cambiaba por "todavía no pude
+  // registrar tu pedido" a un cliente que solo iba a conocer la tienda).
+  const visitaAgendada = llamadas.some(
+    (ll) =>
+      ll.nombre === HERRAMIENTA_AGENDAR_VISITA &&
+      (ll.resultado as { registrada?: unknown } | undefined)?.registrada === true,
+  );
+  if (visitaAgendada && !/\bpedido/i.test(respuesta)) return respuesta;
 
   const intento = [...llamadas]
     .reverse()
