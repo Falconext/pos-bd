@@ -1,3 +1,4 @@
+import { avisoOtroNumero, esOtroNumero, lineaCelular } from './celular-de-otro';
 import type { ConfigDemos } from './demos';
 import { medioDePago } from './leads-embudo.service';
 import { Injectable, Logger } from '@nestjs/common';
@@ -303,6 +304,30 @@ export class LeadsPedidoService {
       if (valor) {
         cambios[campo] = valor;
         guardado.push(campo);
+      }
+    }
+
+    // Celular nuevo que no es el del chat: se le avisa al cliente con qué
+    // número se coordina la entrega (ver celular-de-otro.ts).
+    // Best-effort: si no se puede leer, se guarda igual y no se avisa.
+    if (typeof cambios.celular === 'string') {
+      try {
+        const [antes, conv] = await Promise.all([
+          this.prisma.leadPedidoBorrador.findUnique({
+            where: { conversacionId },
+            select: { celular: true },
+          }),
+          this.prisma.leadConversacion.findUnique({
+            where: { id: conversacionId },
+            select: { telefonoProspecto: true },
+          }),
+        ]);
+        const chat = conv?.telefonoProspecto ?? '';
+        if (antes?.celular !== cambios.celular && esOtroNumero(cambios.celular, chat)) {
+          aclaraciones.push(avisoOtroNumero(cambios.celular, chat));
+        }
+      } catch {
+        /* sin aviso */
       }
     }
 
@@ -1999,6 +2024,7 @@ export class LeadsPedidoService {
       horario: string | null;
       agenciaSede: string | null;
       notaEntrega?: string | null;
+      recibeNombre?: string | null;
     },
     calculo: ReturnType<typeof calcularDescuento>,
     adelanto: number,
@@ -2017,7 +2043,11 @@ export class LeadsPedidoService {
       );
     }
     if (perfil?.sintomas) l.push(`Síntomas: ${perfil.sintomas}`);
-    if (b.celular) l.push(`Celular: ${b.celular}`);
+    if (b.celular) l.push(lineaCelular(b.celular, telefono, b.recibeNombre));
+    // Si el celular es de otro, el nombre ya va en esa línea.
+    if (b.recibeNombre && !(b.celular && esOtroNumero(b.celular, telefono))) {
+      l.push(`Recibe: ${b.recibeNombre}`);
+    }
     if (b.zona) l.push(`Destino: ${b.zona}${b.lugar ? ` — ${b.lugar}` : ''}`);
     if (b.direccion) l.push(`Dirección: ${b.direccion}`);
     if (b.referencia) l.push(`Referencia: ${b.referencia}`);
