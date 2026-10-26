@@ -56,3 +56,22 @@ describe('sinPagoInventado', () => {
     expect(afirmaPagoVerificado('Puedes yapear al 955 947 892 y nos envías la constancia')).toBe(false);
   });
 });
+
+describe('una visita agendada no es una confirmación falsa', () => {
+  const visita = [{ nombre: 'agendar_visita_tienda', argumentos: {}, resultado: { registrada: true } }] as never;
+
+  it('deja pasar "tu visita quedó agendada" si la visita se registró', () => {
+    const r = '¡Listo, Percy! Tu visita quedó agendada para el martes 27 a las 8 am.';
+    expect(sinConfirmacionFalsa(r, visita, false)).toBe(r);
+  });
+
+  it('pero no si dice que el pedido quedó registrado', () => {
+    const r = 'Tu pedido quedó registrado y tu visita agendada.';
+    expect(sinConfirmacionFalsa(r, visita, false)).not.toBe(r);
+  });
+
+  it('ni si la visita no se registró', () => {
+    const r = 'Tu visita quedó agendada para el martes.';
+    expect(sinConfirmacionFalsa(r, [], false)).not.toBe(r);
+  });
+});

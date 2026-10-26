@@ -1074,6 +1074,62 @@ export class WhatsAppService {
   }
 
   /**
+   * Envía una UBICACIÓN: WhatsApp la muestra como un mapa que se abre en
+   * Google Maps o Waze con un toque. Es lo que pidió Hierba Sana para los
+   * clientes que van a la tienda y se perdían buscándola.
+   */
+  async enviarUbicacion(
+    numero: string,
+    ubicacion: { lat: number; lng: number; nombre?: string; direccion?: string },
+    empresaId?: number,
+  ): Promise<{ success: boolean; error?: string }> {
+    let token: string;
+    let phoneId: string;
+    if (empresaId) {
+      try {
+        ({ token, phoneId } = await this.getCredentialsForEmpresa(empresaId));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'WhatsApp no configurado';
+        return { success: false, error: msg };
+      }
+    } else {
+      ({ token, phoneId } = this.getCredentials());
+    }
+    if (!token || !phoneId)
+      return { success: false, error: 'WhatsApp no configurado' };
+
+    const to = this.formatearNumero(numero);
+    try {
+      await axios.post(
+        `${this.apiUrl}/${phoneId}/messages`,
+        {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          ...campoDestino(to),
+          type: 'location',
+          location: {
+            latitude: ubicacion.lat,
+            longitude: ubicacion.lng,
+            ...(ubicacion.nombre ? { name: ubicacion.nombre } : {}),
+            ...(ubicacion.direccion ? { address: ubicacion.direccion } : {}),
+          },
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+      return { success: true };
+    } catch (error) {
+      const msg = error.response?.data?.error?.message || error.message;
+      this.logger.warn(`WhatsApp ubicación fallida a ${to}: ${msg}`);
+      return { success: false, error: msg };
+    }
+  }
+
+  /**
    * Envía una NOTA DE VOZ (OGG/Opus ya convertido). Se sube a la Media API y
    * se manda por id con `voice: true`, que es lo que hace que WhatsApp la
    * muestre como nota de voz y no como un archivo de audio.

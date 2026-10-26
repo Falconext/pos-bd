@@ -12,6 +12,12 @@ import {
 import { HERRAMIENTA_DAR_DEMO } from './leads-herramientas';
 import { enFormatoWhatsapp } from './formato-whatsapp';
 import { perfilValido } from './perfil-vendedor';
+import {
+  HORAS_TRAS_REENGANCHE,
+  YA_SE_DESPIDIO,
+  despedirsePorMotivo,
+  textoDespedida,
+} from './despedida';
 
 /**
  * Avisos que ya le van a escribir al cliente cuando él dijo. Con uno de estos
@@ -141,6 +147,12 @@ export class LeadsSeguimientoService {
       orderBy: { actualizadoEn: 'asc' },
     });
 
+    // La despedida tras el reenganche va primero y aparte: con un return
+    // temprano por "no hay a quién reenganchar" no corría nunca (QA 26-10).
+    await this.despedirTrasReenganche(ahora).catch((e: any) =>
+      this.logger.warn(`Despedida tras reenganche: ${e?.message}`),
+    );
+
     if (candidatas.length === 0) return;
     let enviados = 0;
 
@@ -188,6 +200,14 @@ export class LeadsSeguimientoService {
           ultimoDelCliente: ultimoUsuario.contenido,
           herramientasDelUltimo: mensajes[0].herramientasJson,
         });
+        // Venta cerrada o "lo consulto con mi médico": en vez de callarse, la
+        // despedida del negocio, si la tiene encendida.
+        const despedida = textoDespedida(conv.empresa.iaVentasConfigJson);
+        if (despedida && despedirsePorMotivo(motivo)) {
+          await this.despedirse(conv.id, conv.telefonoProspecto, conv.empresa.id, despedida);
+          this.logger.log(`Seguimiento: conv ${conv.id} despedida (${motivo}).`);
+          continue;
+        }
         if (motivo) {
           // Se marca como atendido para no volver a evaluarlo cada 10 min. Si
           // el cliente escribe, el contador vuelve a 0 y todo arranca de nuevo.
@@ -273,5 +293,84 @@ export class LeadsSeguimientoService {
         `Seguimiento automático: ${enviados} reenganche(s) enviados.`,
       );
     }
+
+  }
+
+  /**
+   * Caso 3 de la despedida: se le mandó el reenganche y a las 2 horas sigue
+   * sin contestar. Solo si el reenganche es lo último del chat: si después
+   * habló una persona del equipo, la conversación sigue viva por otro lado.
+   */
+  private async despedirTrasReenganche(ahora: number): Promise<void> {
+    const convs = await this.prisma.leadConversacion.findMany({
+      where: {
+        estado: 'ACTIVA' as any,
+        seguimientos: 1,
+        ultimoSeguimientoEn: {
+          lte: new Date(ahora - HORAS_TRAS_REENGANCHE * 3600_000),
+          gte: new Date(ahora - LeadsSeguimientoService.VENTANA_HORAS * 3600_000),
+        },
+        empresa: { is: { iaVentasActiva: true, iaVentasSeguimiento: true } },
+      },
+      select: {
+        id: true,
+        telefonoProspecto: true,
+        ultimoSeguimientoEn: true,
+        empresa: { select: { id: true, iaVentasConfigJson: true } },
+      },
+      take: LeadsSeguimientoService.LOTE,
+      orderBy: { ultimoSeguimientoEn: 'asc' },
+    });
+
+    for (const conv of convs) {
+      try {
+        const texto = textoDespedida(conv.empresa.iaVentasConfigJson);
+        if (!texto || !conv.ultimoSeguimientoEn) continue;
+        const [ultimo, ultimoCliente] = await Promise.all([
+          this.prisma.leadMensaje.findFirst({
+            where: { conversacionId: conv.id },
+            orderBy: { id: 'desc' },
+            select: { rol: true, creadoEn: true },
+          }),
+          this.prisma.leadMensaje.findFirst({
+            where: { conversacionId: conv.id, rol: 'USUARIO' },
+            orderBy: { id: 'desc' },
+            select: { creadoEn: true },
+          }),
+        ]);
+        const esElReenganche =
+          ultimo?.rol === 'ASISTENTE' &&
+          ultimo.creadoEn.getTime() >= conv.ultimoSeguimientoEn.getTime() - 60_000;
+        const dentroDeVentana =
+          !!ultimoCliente &&
+          ahora - ultimoCliente.creadoEn.getTime() <
+            LeadsSeguimientoService.VENTANA_HORAS * 3600_000;
+        if (!esElReenganche || !dentroDeVentana) continue;
+        await this.despedirse(conv.id, conv.telefonoProspecto, conv.empresa.id, texto);
+        this.logger.log(`Seguimiento: conv ${conv.id} despedida (reenganche sin respuesta).`);
+      } catch (e: any) {
+        this.logger.warn(`Despedida: error en conversación ${conv.id}: ${e?.message}`);
+      }
+    }
+  }
+
+  /** Manda la despedida tal cual la escribió el negocio y la deja registrada. */
+  private async despedirse(
+    conversacionId: number,
+    telefono: string,
+    empresaId: number,
+    texto: string,
+  ): Promise<void> {
+    await this.prisma.leadMensaje.create({
+      data: { conversacionId, rol: 'ASISTENTE', contenido: texto },
+    });
+    const envio = await this.whatsapp.enviarTexto(telefono, texto, empresaId);
+    if (!envio.success) {
+      this.logger.warn(`Despedida: envío falló a ${telefono}: ${envio.error}`);
+    }
+    await this.prisma.leadConversacion.update({
+      where: { id: conversacionId },
+      data: { seguimientos: YA_SE_DESPIDIO },
+    });
   }
 }

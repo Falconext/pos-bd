@@ -18,6 +18,7 @@ import { S3Module } from '../s3/s3.module';
 import { GeminiModule } from '../gemini/gemini.module';
 import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 import { InstagramModule } from '../instagram/instagram.module';
+import { LeadsVisitaService } from './leads-visita.service';
 import { MessengerModule } from '../messenger/messenger.module';
 import { MensajeriaService } from './mensajeria.service';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module';
@@ -75,6 +76,7 @@ import { ReporteDiarioController } from './reporte-diario.controller';
     LeadsPagoLinkService,
     ReporteDiarioService,
     MensajeriaService,
+    LeadsVisitaService,
   ],
   exports: [LeadsService, LeadsEmbudoService, LeadsDisparadoresService],
 })

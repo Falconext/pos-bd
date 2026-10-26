@@ -220,6 +220,11 @@ export class LeadsPagoLinkService implements OnModuleInit {
           '',
           `WhatsApp: ${conv.telefonoProspecto}`,
         ].join('\n'),
+        metaData: {
+          origen: 'ia-ventas-pago',
+          conversacionId,
+          telefono: conv.telefonoProspecto,
+        },
       })
       .catch(() => undefined);
 

@@ -15,9 +15,11 @@ import {
 } from './leads.constants';
 import { DisponibilidadProducto, Prisma } from '@prisma/client';
 import { LeadsPagoLinkService } from './leads-pago-link.service';
+import { LeadsVisitaService } from './leads-visita.service';
 import { EjecutorHerramienta } from '../gemini/gemini.service';
 import {
   HERRAMIENTA_AVISAR_VISITA,
+  HERRAMIENTA_AGENDAR_VISITA,
   HERRAMIENTA_CANCELAR_PEDIDO,
   HERRAMIENTA_DAR_DEMO,
   HERRAMIENTA_LINK_PAGO,
@@ -65,6 +67,7 @@ import {
 import { conNombreBienEscrito } from './nombre-negocio';
 import { enFormatoWhatsapp } from './formato-whatsapp';
 import { fechaMencionada } from './fecha-mencionada';
+import { ajustarPuntaje, rangoTemperatura, type HechosLead } from './temperatura-por-hechos';
 import { pistaDireccion } from './pregunta-direccion';
 import { contextoPedidosDelCliente } from './pedidos-del-cliente';
 import { conversacionDelMismoCliente, esTelefono } from './unir-usuario-whatsapp';
@@ -108,6 +111,7 @@ import {
   MensajeConversacion,
   RespuestaVenta,
   CalificacionBant,
+  estadoDesdeScore,
   estadoProspectoDesde,
 } from './leads-ia.service';
 
@@ -199,6 +203,7 @@ export class LeadsMessageProcessor extends WorkerHost {
     // Al final y opcional: los specs arman el procesador con los argumentos
     // en orden, y sin esto el link de pago simplemente no está.
     @Optional() private readonly pagoLink?: LeadsPagoLinkService,
+    @Optional() private readonly visitas?: LeadsVisitaService,
   ) {
     super();
   }
@@ -2430,7 +2435,7 @@ export class LeadsMessageProcessor extends WorkerHost {
               tipo: 'WARNING',
               titulo: `🙋 Un cliente necesita a una persona (${motivo})`,
               mensaje: `${detalle || 'Sin detalle.'}\n\nWhatsApp: ${telefono}`,
-              metaData: { origen: 'ia-ventas-derivacion', motivo, telefono },
+              metaData: { origen: 'ia-ventas-derivacion', motivo, telefono, conversacionId },
             })
             .catch(() => undefined);
           // Aviso por WhatsApp a quien atiende. La notificación in-app sola
@@ -2499,7 +2504,7 @@ export class LeadsMessageProcessor extends WorkerHost {
               tipo: 'WARNING',
               titulo: '⚠️ Cliente de alto riesgo: hacer seguimiento',
               mensaje: `${riesgo || 'Sin detalle.'}${recomendado ? `\nSe le recomendó: ${recomendado}` : ''}\n\nWhatsApp: ${telefono}`,
-              metaData: { origen: 'ia-ventas-alto-riesgo', telefono },
+              metaData: { origen: 'ia-ventas-alto-riesgo', telefono, conversacionId },
             })
             .catch(() => undefined);
           const conv = await this.prisma.leadConversacion.findUnique({
@@ -2626,9 +2631,29 @@ export class LeadsMessageProcessor extends WorkerHost {
               'Pasa por la tienda a recoger',
             );
           }
+          // A la lista de visitas, con la ubicación y la foto la primera vez.
+          if (res?.avisado && this.visitas) {
+            const v = await this.visitas
+              .registrar(empresaId, conversacionId, telefono, {
+                cuando: String(argumentos.cuando ?? ''),
+                fecha: argumentos.fecha,
+                conPedido: true,
+              })
+              .catch(() => null);
+            if (v?.indicacionesEnviadas) return { ...res, indicacionesEnviadas: true };
+          }
           // Un fallo acá NO deriva: el cliente igual va a ir a la tienda, y
           // apagar el bot lo dejaría sin a quién preguntarle.
           return res;
+        }
+
+        case HERRAMIENTA_AGENDAR_VISITA: {
+          if (!this.visitas) return { error: 'No disponible.' };
+          return this.visitas.registrar(empresaId, conversacionId, telefono, {
+            cuando: String(argumentos.cuando ?? ''),
+            fecha: argumentos.fecha,
+            conPedido: false,
+          });
         }
 
         case HERRAMIENTA_CANCELAR_PEDIDO:
@@ -2787,7 +2812,7 @@ export class LeadsMessageProcessor extends WorkerHost {
           tipo: 'INFO',
           titulo: `🎯 Demo entregada: ${datos.nombre}`,
           mensaje: `Demo de ${cuenta.rubro}${aproximada ? ' (la más parecida)' : ''}. Rubro: ${datos.rubro}. Correo: ${datos.correo}. ${'ruc' in ruc ? `RUC ${ruc.ruc}${razonSocial ? ` · ${razonSocial}` : ''}` : 'Sin RUC'}.\n\nWhatsApp: ${telefono}`,
-          metaData: { origen: 'ia-ventas-demo', telefono, demo: cuenta.rubro },
+          metaData: { origen: 'ia-ventas-demo', telefono, conversacionId, demo: cuenta.rubro },
         })
         .catch(() => undefined);
       await this.alerta
@@ -3152,6 +3177,61 @@ export class LeadsMessageProcessor extends WorkerHost {
     );
   }
 
+  /**
+   * Lo que el cliente hizo, comprobado en la base. Si la consulta falla se
+   * asume que no hizo nada: un lead que queda tibio de más se recupera
+   * mirando el embudo, una alerta falsa de "caliente" es justo la queja.
+   */
+  private async hechosDelLead(
+    empresaId: number,
+    conversacionId: number,
+    telefono: string,
+    historial: MensajeConversacion[],
+  ): Promise<HechosLead> {
+    const mensajesCliente = historial.filter((m) => m.role === 'user').length;
+    try {
+      const [prospecto, borrador, retoma, visita] = await Promise.all([
+        this.prisma.leadProspecto.findUnique({
+          where: { conversacionId },
+          select: { etapa: true },
+        }),
+        this.prisma.leadPedidoBorrador.findUnique({
+          where: { conversacionId },
+          select: { comprobanteId: true, tipoZona: true, horario: true },
+        }),
+        this.prisma.leadDisparo.count({
+          where: {
+            empresaId,
+            telefono,
+            tipo: 'RECORDATORIO_ACORDADO',
+            estado: 'PROGRAMADO',
+          },
+        }),
+        // La visita sin pedido ("primero quiero conocer la tienda") vive en
+        // LeadVisitaTienda, no en el borrador (QA 26-10: Percy quedaba tibio).
+        this.prisma.leadVisitaTienda.count({
+          where: { conversacionId, estado: 'AGENDADA' },
+        }),
+      ]);
+      return {
+        etapa: prospecto?.etapa ?? 'NUEVO',
+        pedidoRegistrado: borrador?.comprobanteId != null,
+        visitaAgendada:
+          visita > 0 || (borrador?.tipoZona === 'RECOJO' && !!borrador.horario?.trim()),
+        retomaAgendado: retoma > 0,
+        mensajesCliente,
+      };
+    } catch {
+      return {
+        etapa: 'NUEVO',
+        pedidoRegistrado: false,
+        visitaAgendada: false,
+        retomaAgendado: false,
+        mensajesCliente,
+      };
+    }
+  }
+
   /** Crea/actualiza el LeadProspecto con la calificación y alerta si es caliente. */
   private async aplicarCalificacion(
     empresa: {
@@ -3176,9 +3256,18 @@ export class LeadsMessageProcessor extends WorkerHost {
       return;
     }
 
+    // La temperatura la ponen los hechos (datos, pago o entrega agendados),
+    // no solo la opinión de la IA. Ver temperatura-por-hechos.ts.
+    const rango = rangoTemperatura(
+      await this.hechosDelLead(empresa.id, conversacionId, quien.telefono, historial),
+    );
+    const puntaje = ajustarPuntaje(cal.score.total, rango);
+    const estado = estadoDesdeScore(puntaje);
+    const debeAvisar = rango.alertar && estado === 'CALIENTE';
+
     const data = {
-      puntaje: cal.score.total,
-      estado: estadoProspectoDesde(cal.status),
+      puntaje,
+      estado: estadoProspectoDesde(estado),
       presupuesto: cal.score.budget,
       autoridad: cal.score.authority,
       necesidad: cal.score.need,
@@ -3202,7 +3291,7 @@ export class LeadsMessageProcessor extends WorkerHost {
     });
 
     // Alerta de lead CALIENTE al vendedor (una sola vez, reusa notificaciones de MYPE).
-    if (cal.debeTransferir && !prospecto.notificadoEn) {
+    if (debeAvisar && !prospecto.notificadoEn) {
       const nombre = quien.nombre || quien.telefono;
 
       // Cotización automática (opt-in): si el prospecto confirmó productos +
@@ -3230,13 +3319,15 @@ export class LeadsMessageProcessor extends WorkerHost {
       await this.notificaciones.notificarAdminsEmpresa({
         empresaId: empresa.id,
         tipo: 'INFO',
-        titulo: `🔥 Lead caliente: ${nombre}`,
+        titulo: `🔥 ${rango.motivo}: ${nombre}`,
         mensaje: `${cal.resumen}\n\nAcción sugerida: ${cal.proximaAccion}`,
         metaData: {
           origen: 'ia-ventas',
           prospectoId: prospecto.id,
+          conversacionId,
           telefono: quien.telefono,
-          puntaje: cal.score.total,
+          puntaje,
+          motivo: rango.motivo,
         },
       });
       // Alerta multicanal (correo + WhatsApp al vendedor), best-effort.
@@ -3246,7 +3337,12 @@ export class LeadsMessageProcessor extends WorkerHost {
         prospectoId: prospecto.id,
         nombreProspecto: nombre,
         telefonoProspecto: quien.telefono,
-        cal,
+        cal: {
+          ...cal,
+          score: { ...cal.score, total: puntaje },
+          status: estado,
+          puntosClave: [rango.motivo ?? '', ...cal.puntosClave].filter(Boolean),
+        },
         cotizacion: cotizacion
           ? {
               codigo: `${cotizacion.serie}-${String(cotizacion.correlativo).padStart(8, '0')}`,

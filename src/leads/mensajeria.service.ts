@@ -65,6 +65,25 @@ export class MensajeriaService {
     return this.wa.enviarDocumentoUrl(numero, pdfUrl, filename, caption, empresaId);
   }
 
+  /** Por Instagram y Messenger no hay mensaje de ubicación: va el enlace de Google Maps. */
+  enviarUbicacion(
+    numero: string,
+    ubicacion: { lat: number; lng: number; nombre?: string; direccion?: string },
+    empresaId?: number,
+  ): Promise<Resultado> {
+    if (esDestinoInstagram(numero) || esDestinoMessenger(numero)) {
+      const texto = [
+        ubicacion.nombre,
+        ubicacion.direccion,
+        `https://www.google.com/maps?q=${ubicacion.lat},${ubicacion.lng}`,
+      ]
+        .filter(Boolean)
+        .join('\n');
+      return this.enviarTexto(numero, texto, empresaId);
+    }
+    return this.wa.enviarUbicacion(numero, ubicacion, empresaId);
+  }
+
   async enviarAudio(numero: string, ogg: Buffer, empresaId?: number): Promise<Resultado> {
     if (esDestinoInstagram(numero)) {
       return { success: false, error: 'Por Instagram todavía no se pueden mandar notas de voz desde el panel: escríbele un mensaje.' };

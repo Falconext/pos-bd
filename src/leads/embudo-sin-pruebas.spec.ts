@@ -131,9 +131,11 @@ describe('la calificación BANT', () => {
       .aplicarCalificacion(empresa, 52, { telefono: CLIENTE, nombre: 'Diego' }, cal, [])
       .catch(() => undefined); // lo de después (alertas) no es lo que se prueba
     expect(prospectosCreados).toHaveLength(1);
+    // 40 y no el 96 de la IA: sin datos, pago ni entrega agendados es una
+    // consulta, y una consulta no es un lead caliente (temperatura-por-hechos).
     expect(prospectosCreados[0]).toMatchObject({
       telefonoProspecto: CLIENTE,
-      puntaje: 96,
+      puntaje: 40,
     });
   });
 });
