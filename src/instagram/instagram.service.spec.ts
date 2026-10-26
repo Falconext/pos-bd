@@ -8,6 +8,7 @@ const ax = axios as jest.Mocked<typeof axios>;
 describe('InstagramService', () => {
   let prisma: any;
   let svc: InstagramService;
+  let notificaciones: any;
 
   beforeEach(() => {
     jest.resetAllMocks();
@@ -21,9 +22,15 @@ describe('InstagramService', () => {
         findFirst: jest.fn(async () => null),
         findMany: jest.fn(async () => []),
         update: jest.fn(async () => ({})),
+        updateMany: jest.fn(async () => ({ count: 1 })),
+      },
+      leadConversacion: {
+        findUnique: jest.fn(async () => null),
+        update: jest.fn(async () => ({})),
       },
     };
-    svc = new InstagramService(prisma);
+    notificaciones = { notificarAdminsEmpresa: jest.fn(async () => undefined) };
+    svc = new InstagramService(prisma, notificaciones);
   });
 
   it('conecta: token largo, cuenta profesional (user_id), suscripción y guardado', async () => {
@@ -83,6 +90,74 @@ describe('InstagramService', () => {
     expect(r.renovados).toBe(1);
     expect(ax.get.mock.calls[0][0]).toMatch(/refresh_access_token$/);
     expect(prisma.empresa.update).toHaveBeenCalledWith({ where: { id: 7 }, data: expect.objectContaining({ instagramToken: 'nuevo' }) });
+  });
+
+  const anulado = {
+    response: { data: { error: { code: 190, error_subcode: 460, message: 'Error validating access token: The session has been invalidated because the user changed their password.' } } },
+  };
+
+  it('token anulado (190): marca la cuenta para reconectar y avisa a los admins una sola vez', async () => {
+    ax.post.mockRejectedValue(anulado);
+    const r = await svc.enviarTexto('ig:555', 'hola', 7);
+    expect(r).toMatchObject({ success: false });
+    expect(prisma.empresa.updateMany).toHaveBeenCalledWith({
+      where: { id: 7, instagramErrorToken: null },
+      data: { instagramErrorToken: expect.stringMatching(/session has been invalidated/) },
+    });
+    expect(notificaciones.notificarAdminsEmpresa).toHaveBeenCalledTimes(1);
+
+    // Ya estaba marcada (count 0): no se repite el aviso.
+    prisma.empresa.updateMany.mockResolvedValueOnce({ count: 0 });
+    await svc.enviarTexto('ig:555', 'hola', 7);
+    expect(notificaciones.notificarAdminsEmpresa).toHaveBeenCalledTimes(1);
+  });
+
+  it('con el token marcado como anulado ni intenta enviar', async () => {
+    prisma.empresa.findUnique.mockResolvedValueOnce({ instagramAccountId: '178', instagramToken: 'tok', instagramActivo: true, instagramErrorToken: 'x' });
+    const r = await svc.enviarTexto('ig:555', 'hola', 7);
+    expect(r.success).toBe(false);
+    expect(r.error).toMatch(/volver a conectar/);
+    expect(ax.post).not.toHaveBeenCalled();
+  });
+
+  it('otro error (no 190) no marca nada', async () => {
+    ax.post.mockRejectedValueOnce({ response: { data: { error: { code: 10, message: 'fuera de la ventana' } } } });
+    await svc.enviarTexto('ig:555', 'hola', 7);
+    expect(prisma.empresa.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('estado: conectado con el token anulado pide reconectar', async () => {
+    prisma.empresa.findUnique.mockResolvedValueOnce({ instagramActivo: true, instagramUsername: 'krezka.peru', instagramErrorToken: 'sesión invalidada' });
+    expect(await svc.estado(7)).toMatchObject({ conectado: true, requiereReconectar: true, motivoReconectar: 'sesión invalidada' });
+  });
+
+  it('reconectar limpia la marca', async () => {
+    ax.post.mockResolvedValueOnce({ data: { access_token: 'corto' } });
+    ax.get
+      .mockResolvedValueOnce({ data: { access_token: 'largo', expires_in: 100 } })
+      .mockResolvedValueOnce({ data: { user_id: '17841400', username: 'x' } });
+    ax.post.mockResolvedValueOnce({ data: { success: true } });
+    await svc.conectar(7, 'c', 'https://app.krezka.com/administrador/instagram/callback');
+    expect(prisma.empresa.update.mock.calls[0][0].data).toMatchObject({ instagramErrorToken: null });
+    expect(ax.post.mock.calls[1][2]).toMatchObject({ params: { subscribed_fields: 'messages,comments' } });
+  });
+
+  it('comentario: el primer texto sale como respuesta privada (comment_id) y solo uno', async () => {
+    prisma.leadConversacion.findUnique.mockResolvedValue({ id: 50, igComentarioId: 'c1', igComentarioRespondido: false });
+    ax.post.mockResolvedValue({ data: {} });
+    const largo = ['Hola Ana', 'x'.repeat(900), 'y'.repeat(900)].join('\n\n');
+    const r = await svc.enviarTexto('ig:555', largo, 7);
+    expect(r.success).toBe(true);
+    expect(ax.post).toHaveBeenCalledTimes(1);
+    expect((ax.post.mock.calls[0][1] as any).recipient).toEqual({ comment_id: 'c1' });
+    expect(prisma.leadConversacion.update).toHaveBeenCalledWith({ where: { id: 50 }, data: { igComentarioRespondido: true } });
+  });
+
+  it('comentario ya respondido: lo que sigue (fotos, seguimientos) espera a que el cliente escriba', async () => {
+    prisma.leadConversacion.findUnique.mockResolvedValue({ id: 50, igComentarioId: 'c1', igComentarioRespondido: true });
+    expect((await svc.enviarTexto('ig:555', 'otra cosa', 7)).success).toBe(false);
+    expect((await svc.enviarAdjunto('ig:555', 'image', 'https://s3/f.jpg', undefined, 7)).success).toBe(false);
+    expect(ax.post).not.toHaveBeenCalled();
   });
 
   it('solo vuelve a direcciones del panel (o a las configuradas)', () => {

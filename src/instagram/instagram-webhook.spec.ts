@@ -43,3 +43,52 @@ describe('Instagram: webhook', () => {
     expect(mensajesDeInstagram({ object: 'whatsapp_business_account', entry: [] })).toEqual([]);
   });
 });
+
+describe('Instagram: comentarios y Messenger', () => {
+  const { comentariosDeInstagram, mensajesDeMessenger, comentarioCalza } = jest.requireActual('./instagram-webhook');
+
+  const comentario = (value: any, cuenta = '178414') => ({
+    object: 'instagram',
+    entry: [{ id: cuenta, time: 1730000000, changes: [{ field: 'comments', value }] }],
+  });
+
+  it('un comentario entra a la cola con el autor como ig:<id> y la indicación para la IA', () => {
+    const [m] = comentariosDeInstagram(
+      comentario({ id: 'c1', text: 'precio?', from: { id: '555', username: 'ana' }, media: { id: 'p1' } }),
+    );
+    expect(m).toMatchObject({
+      canal: 'INSTAGRAM',
+      from: 'ig:555',
+      messageId: 'igc:c1',
+      comentarioId: 'c1',
+      comentarioTexto: 'precio?',
+      nombre: '@ana',
+    });
+    expect(m.text).toMatch(/UN solo mensaje privado/);
+    // También sale por la función general del webhook.
+    expect(mensajesDeInstagram(comentario({ id: 'c1', text: 'precio?', from: { id: '555' } }))).toHaveLength(1);
+  });
+
+  it('los comentarios de la propia cuenta (sus respuestas) no entran', () => {
+    expect(comentariosDeInstagram(comentario({ id: 'c2', text: 'gracias!', from: { id: '178414' } }))).toEqual([]);
+  });
+
+  it('palabras clave: sin palabras valen todos; con palabras, sin importar tildes ni mayúsculas', () => {
+    expect(comentarioCalza('lindo', null)).toBe(true);
+    expect(comentarioCalza('¿Cuánto PRECIO tiene?', 'precio, info')).toBe(true);
+    expect(comentarioCalza('Info por favor', 'informacion, INFO')).toBe(true);
+    expect(comentarioCalza('😍😍', 'precio, info')).toBe(false);
+  });
+
+  it('Messenger: el cliente queda como fb:<id> y la empresa se ubica por la página', () => {
+    const [m] = mensajesDeMessenger({
+      object: 'page',
+      entry: [{ id: '1020', messaging: [{ sender: { id: '888' }, recipient: { id: '1020' }, timestamp: 1730000000000, message: { mid: 'mm1', text: 'hola' } }] }],
+    });
+    expect(m).toMatchObject({ canal: 'MESSENGER', facebookPageId: '1020', from: 'fb:888', messageId: 'fb:mm1', text: 'hola' });
+    expect(m.instagramAccountId).toBeUndefined();
+    // Un webhook de página no se lee como Instagram ni al revés.
+    expect(mensajesDeInstagram({ object: 'page', entry: [] })).toEqual([]);
+    expect(mensajesDeMessenger({ object: 'instagram', entry: [] })).toEqual([]);
+  });
+});

@@ -15,7 +15,12 @@ describe('MensajeriaService: por dónde sale cada mensaje', () => {
     descargarAdjunto: jest.fn(async () => ({ buffer: Buffer.from(''), mimeType: 'image/jpeg' })),
     perfil: jest.fn(async () => ({ usuario: 'cliente' })),
   };
-  const m = new MensajeriaService(wa as any, ig as any);
+  const fb = {
+    enviarTexto: jest.fn(async () => ({ success: true })),
+    enviarAdjunto: jest.fn(async () => ({ success: true })),
+    perfil: jest.fn(async () => ({ nombre: 'Ana Pérez' })),
+  };
+  const m = new MensajeriaService(wa as any, ig as any, fb as any);
   beforeEach(() => jest.clearAllMocks());
 
   it('un teléfono sigue por WhatsApp, igual que antes', async () => {
@@ -60,5 +65,20 @@ describe('MensajeriaService: por dónde sale cada mensaje', () => {
     await m.descargarMedia('1234567890', 7);
     expect(ig.descargarAdjunto).toHaveBeenCalledWith('https://lookaside.fbsbx.com/x');
     expect(wa.descargarMedia).toHaveBeenCalledWith('1234567890', 7);
+  });
+
+  it('fb:<id> sale por Messenger; el PDF va como archivo, no como enlace', async () => {
+    await m.enviarTexto('fb:777', 'hola', 7);
+    await m.enviarDocumentoUrl('fb:777', 'https://s3/brochure.pdf', 'Catálogo.pdf', 'Te paso el catálogo', 7);
+    expect(fb.enviarTexto).toHaveBeenCalledWith('fb:777', 'hola', 7);
+    expect(fb.enviarAdjunto).toHaveBeenCalledWith('fb:777', 'file', 'https://s3/brochure.pdf', 'Te paso el catálogo', 7);
+    expect(wa.enviarTexto).not.toHaveBeenCalled();
+    expect(ig.enviarTexto).not.toHaveBeenCalled();
+  });
+
+  it('Messenger tampoco tiene plantillas', async () => {
+    const r = await m.enviarPlantilla('fb:777', 'recompra_25', 'es', [], 7);
+    expect(r.success).toBe(false);
+    expect(wa.enviarPlantilla).not.toHaveBeenCalled();
   });
 });
