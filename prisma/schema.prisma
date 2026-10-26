@@ -609,6 +609,7 @@ model Empresa {
   leadDemos               LeadDemo[]
   leadEtiquetas           LeadEtiqueta[]
   leadSegmentos           LeadSegmento[]
+  leadPlantillas          LeadPlantilla[]
   soporteConversacion     SoporteConversacion?
   reglasComision          ReglaComision[]
   cobros                  CobroEmpresa[]
@@ -4945,6 +4946,39 @@ model LeadSegmento {
   actualizadoEn DateTime @updatedAt
 
   @@index([empresaId])
+}
+
+/// Plantilla de WhatsApp escrita por la empresa para sus envíos masivos.
+/// Vive acá Y en la WABA del negocio: acá el texto con variables con nombre
+/// ({{nombre}}, {{dato1}}) y el estado de revisión; en Meta, la versión
+/// aprobada con {{1}}, {{2}}. Una plantilla aprobada no se edita: se duplica.
+model LeadPlantilla {
+  id                Int       @id @default(autoincrement())
+  empresaId         Int
+  empresa           Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  titulo            String
+  /// Nombre en la WABA (minúsculas y _), único por empresa.
+  nombreMeta        String
+  categoria         String    @default("MARKETING")
+  idioma            String    @default("es")
+  cabeceraTipo      String    @default("NINGUNA")
+  cabeceraTexto     String?
+  cabeceraImagenUrl String?
+  cuerpo            String
+  pie               String?
+  botonesJson       Json?
+  ejemplosJson      Json?
+  /// BORRADOR, PENDIENTE, APROBADA, RECHAZADA, PAUSADA o DESACTIVADA.
+  estado            String    @default("BORRADOR")
+  motivoRechazo     String?
+  metaId            String?
+  enviadaEn         DateTime?
+  revisadaEn        DateTime?
+  creadoEn          DateTime  @default(now())
+  actualizadoEn     DateTime  @updatedAt
+
+  @@unique([empresaId, nombreMeta])
+  @@index([empresaId, estado])
 }
 
 model LeadAnuncioOrigen {

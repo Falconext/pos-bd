@@ -27,3 +27,9 @@ export class GuardarSegmentoDto {
   @IsObject()
   filtros?: Record<string, unknown>;
 }
+
+/** La plantilla va entera en `plantilla`; la normaliza el servicio. */
+export class PlantillaDto {
+  @IsObject()
+  plantilla!: Record<string, unknown>;
+}

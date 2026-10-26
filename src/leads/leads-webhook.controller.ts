@@ -15,6 +15,7 @@ import * as crypto from 'crypto';
 import { JOB_INGRESAR_MENSAJE, LEADS_MESSAGES_QUEUE } from './leads.constants';
 import { mensajesDeInstagram, mensajesDeMessenger } from '../instagram/instagram-webhook';
 import { ecosDeCambio, JOB_ECO_VENDEDOR } from './eco-vendedor';
+import { LeadsPlantillasService } from './leads-plantillas.service';
 
 /**
  * Webhook público de WhatsApp Cloud API para el módulo de leads.
@@ -28,6 +29,7 @@ export class LeadsWebhookController {
 
   constructor(
     @InjectQueue(LEADS_MESSAGES_QUEUE) private readonly queue: Queue,
+    private readonly plantillas: LeadsPlantillasService,
   ) {}
 
   // Verificación del webhook (Meta hace GET con hub.challenge).
@@ -154,6 +156,16 @@ export class LeadsWebhookController {
             });
           }
           const value = change.value ?? {};
+          // Meta aprobó o rechazó una plantilla. No se encola: es una
+          // actualización chica, y si falla la consulta periódica la recoge.
+          if (change.field === 'message_template_status_update') {
+            await this.plantillas
+              .aplicarWebhook(String(entry.id), value)
+              .catch((e) =>
+                this.logger.warn(`Webhook leads: estado de plantilla no aplicado: ${e?.message}`),
+              );
+            continue;
+          }
           const phoneNumberId = value.metadata?.phone_number_id;
           const contactos: any[] = value.contacts ?? [];
           for (const msg of value.messages ?? []) {
@@ -236,12 +248,28 @@ export class LeadsWebhookController {
 function textoDeMensaje(msg: {
   type?: string;
   text?: { body?: string };
+  button?: { text?: string; payload?: string };
+  interactive?: {
+    button_reply?: { title?: string };
+    list_reply?: { title?: string };
+  };
   image?: { id?: string; caption?: string };
   document?: { id?: string; caption?: string; filename?: string };
 }): string | null {
   switch (msg.type) {
     case 'text':
       return msg.text?.body ?? '';
+    // El cliente tocó un botón de respuesta rápida de una plantilla
+    // ("Lo quiero", "Ver catálogo"). Antes se descartaba: justo la respuesta
+    // de quien más interés mostró en un envío masivo.
+    case 'button':
+      return msg.button?.text ?? msg.button?.payload ?? '';
+    case 'interactive':
+      return (
+        msg.interactive?.button_reply?.title ??
+        msg.interactive?.list_reply?.title ??
+        ''
+      );
     case 'audio':
       return '';
     case 'image':
