@@ -5,9 +5,12 @@
  */
 import { EventEmitter } from 'events';
 import { execFileSync } from 'child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { BadRequestException } from '@nestjs/common';
 import { LeadsService } from './leads.service';
-import { ARGS_OGG_OPUS, aOggOpus, tieneAudio } from './nota-de-voz';
+import { argsOggOpus, aOggOpus, tieneAudio } from './nota-de-voz';
 
 /** Una página Ogg mínima: lo que importa es la posición de granulo. */
 const paginaOgg = (granulo: number) => {
@@ -153,40 +156,43 @@ describe('aOggOpus', () => {
     const proc: any = new EventEmitter();
     proc.stdout = new EventEmitter();
     proc.stderr = new EventEmitter();
-    proc.stdin = Object.assign(new EventEmitter(), {
-      end: jest.fn(() => {
-        setImmediate(() => {
-          if (opts.salida) proc.stdout.emit('data', opts.salida);
-          if (opts.error) proc.stderr.emit('data', Buffer.from(opts.error));
-          proc.emit('close', opts.codigo ?? 0);
-        });
-      }),
-    });
     proc.kill = jest.fn();
+    setImmediate(() => {
+      if (opts.salida) proc.stdout.emit('data', opts.salida);
+      if (opts.error) proc.stderr.emit('data', Buffer.from(opts.error));
+      proc.emit('close', opts.codigo ?? 0);
+    });
     return proc;
   }
 
-  it('pasa el audio por stdin y devuelve el OGG de stdout', async () => {
-    const proc = procesoFalso({ salida: Buffer.from('OggS') });
-    const spawnFn = jest.fn(() => proc) as any;
-    const r = await aOggOpus(Buffer.from('webm'), { ffmpeg: '/bin/ffmpeg', spawnFn });
+  it('le pasa el audio a ffmpeg como archivo (no por stdin) y lo borra al terminar', async () => {
+    let leido = '';
+    let ruta = '';
+    const spawnFn = jest.fn((_bin: string, args: string[]) => {
+      ruta = args[args.indexOf('-i') + 1];
+      leido = readFileSync(ruta).toString();
+      return procesoFalso({ salida: Buffer.from('OggS') });
+    }) as any;
+    const r = await aOggOpus(Buffer.from('m4a'), { ffmpeg: '/bin/ffmpeg', spawnFn });
     expect(r.toString()).toBe('OggS');
-    expect(spawnFn).toHaveBeenCalledWith('/bin/ffmpeg', ARGS_OGG_OPUS, expect.anything());
-    expect(proc.stdin.end).toHaveBeenCalledWith(Buffer.from('webm'));
-    expect(ARGS_OGG_OPUS).toEqual(expect.arrayContaining(['libopus', 'ogg', '1']));
+    expect(spawnFn).toHaveBeenCalledWith('/bin/ffmpeg', argsOggOpus(ruta), expect.anything());
+    expect(ruta).not.toBe('pipe:0');
+    expect(leido).toBe('m4a');
+    expect(existsSync(ruta)).toBe(false);
+    expect(argsOggOpus('x')).toEqual(expect.arrayContaining(['libopus', 'ogg', '1']));
   });
 
   it('falla con el error de ffmpeg o si no devuelve nada', async () => {
-    const malo = procesoFalso({ codigo: 1, error: 'Invalid data found' });
-    await expect(aOggOpus(Buffer.from('x'), { spawnFn: (() => malo) as any })).rejects.toThrow('Invalid data found');
-    const vacio = procesoFalso({ codigo: 0 });
-    await expect(aOggOpus(Buffer.from('x'), { spawnFn: (() => vacio) as any })).rejects.toThrow('código 0');
+    const malo = () => procesoFalso({ codigo: 1, error: 'Invalid data found' });
+    await expect(aOggOpus(Buffer.from('x'), { spawnFn: malo as any })).rejects.toThrow('Invalid data found');
+    const vacio = () => procesoFalso({ codigo: 0 });
+    await expect(aOggOpus(Buffer.from('x'), { spawnFn: vacio as any })).rejects.toThrow('código 0');
   });
 });
 
 // Conversión de verdad, solo donde hay un ffmpeg con libopus a mano.
 const ffmpegReal = (() => {
-  for (const ruta of ['ffmpeg']) {
+  for (const ruta of [process.env.FFMPEG_PATH, 'ffmpeg'].filter(Boolean) as string[]) {
     try {
       const encoders = execFileSync(ruta, ['-hide_banner', '-encoders'], { stdio: 'pipe' }).toString();
       if (encoders.includes('libopus')) return ruta;
@@ -216,6 +222,20 @@ const ffmpegReal = (() => {
   const ogg = await aOggOpus(wav, { ffmpeg: ffmpegReal! });
   expect(ogg.subarray(0, 4).toString()).toBe('OggS');
   expect(ogg.includes(Buffer.from('OpusHead'))).toBe(true);
+});
+
+(ffmpegReal ? it : it.skip)('convierte un M4A de Android (índice al final) de más de 6 segundos', async () => {
+  // Así graba Android: AAC a 128 kbps con el moov detrás del audio. Por stdin
+  // ffmpeg devolvía solo las cabeceras y la nota se rechazaba "sin sonido".
+  const dir = mkdtempSync(join(tmpdir(), 'm4a-'));
+  const m4a = join(dir, 'nota.m4a');
+  execFileSync(ffmpegReal!, ['-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=20',
+    '-c:a', 'aac', '-b:a', '128k', m4a]);
+  const buf = readFileSync(m4a);
+  rmSync(dir, { recursive: true, force: true });
+  expect(buf.indexOf('moov')).toBeGreaterThan(buf.indexOf('mdat'));
+  const ogg = await aOggOpus(buf, { ffmpeg: ffmpegReal! });
+  expect(tieneAudio(ogg)).toBe(true);
 });
 
 describe('tieneAudio', () => {
