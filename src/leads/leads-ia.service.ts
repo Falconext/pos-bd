@@ -460,7 +460,10 @@ function aplicarBoostCierre(
 
   const acepta = tieneIntencionCierre(userText);
   const dioTelefono = /(?:\+?\d[\d\s-]{6,}\d)/.test(userText);
-  const dioNombre = /\b([a-záéíóúñ]{2,}\s+[a-záéíóúñ]{2,})\b/i.test(userText);
+  // Antes también contaba "dio su nombre" con cualquier par de palabras
+  // seguidas: "tengo hemorroides" pasaba por nombre y casi todo salía
+  // caliente (Hierba Sana, 26-10). Que dejó sus datos lo dice la etapa del
+  // embudo, no una regex (ver temperatura-por-hechos.ts).
 
   const score: ScoreBant = { ...parsed.score };
   const puntosClave = [...parsed.puntosClave];
@@ -470,7 +473,7 @@ function aplicarBoostCierre(
     score.timeline = Math.max(score.timeline, 22);
     puntosClave.push('Prospecto confirma intención de avanzar.');
   }
-  if (dioTelefono || dioNombre) {
+  if (dioTelefono) {
     score.authority = Math.max(score.authority, 16);
     score.need = Math.max(score.need, 23);
     score.timeline = Math.max(score.timeline, 23);
@@ -507,11 +510,10 @@ function calificacionHeuristica(
       userText,
     );
   const dioTelefono = /(?:\+?\d[\d\s-]{6,}\d)/.test(userText);
-  const dioNombre = /\b([a-záéíóúñ]{2,}\s+[a-záéíóúñ]{2,})\b/i.test(userText);
 
   const score: ScoreBant = {
     budget: 10,
-    authority: dioNombre ? 14 : 8,
+    authority: 8,
     need: preguntaDiferencia ? 14 : 10,
     timeline: 8,
     total: 0,

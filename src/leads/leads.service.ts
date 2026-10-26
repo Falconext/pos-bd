@@ -334,6 +334,38 @@ export class LeadsService {
     });
   }
 
+  /**
+   * La conversación más reciente de un teléfono, o null si nunca escribió.
+   *
+   * Se compara por los últimos 9 dígitos: WhatsApp guarda "51987654321" y en
+   * un comprobante el celular suele estar como "987 654 321".
+   */
+  async conversacionPorTelefono(empresaId: number, telefono: string) {
+    const digitos = (telefono || '').replace(/\D/g, '');
+    if (digitos.length < 9) return null;
+    return this.prisma.leadConversacion.findFirst({
+      where: { empresaId, telefonoProspecto: { endsWith: digitos.slice(-9) } },
+      orderBy: { actualizadoEn: 'desc' },
+      select: {
+        id: true,
+        telefonoProspecto: true,
+        nombreProspecto: true,
+        actualizadoEn: true,
+        prospecto: {
+          select: {
+            id: true,
+            estado: true,
+            etapa: true,
+            puntaje: true,
+            resumen: true,
+            proximaAccion: true,
+            sintomas: true,
+          },
+        },
+      },
+    });
+  }
+
   /** Detalle de una conversación con sus mensajes. */
   async obtenerConversacion(empresaId: number, id: number) {
     const conv = await this.prisma.leadConversacion.findFirst({

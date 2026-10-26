@@ -1467,7 +1467,7 @@ export class LeadsPedidoService {
           adelanto,
           telefono,
         ),
-        metaData: { origen: 'ia-ventas-pedido', comprobanteId, telefono },
+        metaData: { origen: 'ia-ventas-pedido', comprobanteId, telefono, conversacionId },
       })
       .catch(() => undefined);
 
@@ -1842,7 +1842,7 @@ export class LeadsPedidoService {
           'SIN RESERVA: el stock NO está apartado. Si quieres asegurarlo, sepáralo tú.',
           `WhatsApp: ${telefono}`,
         ].join('\n'),
-        metaData: { origen: 'ia-ventas-visita-tienda', telefono },
+        metaData: { origen: 'ia-ventas-visita-tienda', telefono, conversacionId },
       })
       .catch(() => undefined);
 
@@ -1968,7 +1968,12 @@ export class LeadsPedidoService {
         ]
           .filter(Boolean)
           .join('\n'),
-        metaData: { origen: 'ia-ventas-cancelacion', comprobanteId: nota.id },
+        metaData: {
+          origen: 'ia-ventas-cancelacion',
+          comprobanteId: nota.id,
+          telefono: borrador.celular ?? undefined,
+          conversacionId,
+        },
       })
       .catch(() => undefined);
     this.logger.log(

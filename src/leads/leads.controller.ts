@@ -135,6 +135,19 @@ export class LeadsController {
     return this.service.listarConversaciones(user.empresaId);
   }
 
+  /**
+   * La conversación de un cliente por su teléfono, con el resumen para entrar
+   * en contexto. Para ir al chat desde el embudo, una notificación o un
+   * comprobante sin tener que buscarlo a mano (Hierba Sana, 26-10).
+   */
+  @Get('conversaciones/por-telefono/:telefono')
+  conversacionPorTelefono(
+    @User() user: any,
+    @Param('telefono') telefono: string,
+  ) {
+    return this.service.conversacionPorTelefono(user.empresaId, telefono);
+  }
+
   @Get('conversaciones/:id')
   obtenerConversacion(
     @User() user: any,
