@@ -160,6 +160,45 @@ describe('InstagramService', () => {
     expect(ax.post).not.toHaveBeenCalled();
   });
 
+  it('con respuesta pública activada: tras el privado deja el texto fijo en el comentario', async () => {
+    prisma.leadConversacion.findUnique.mockResolvedValue({ id: 50, igComentarioId: 'c1', igComentarioRespondido: false });
+    prisma.empresa.findUnique.mockResolvedValue({
+      instagramAccountId: '178',
+      instagramToken: 'tok',
+      instagramActivo: true,
+      instagramComentarioPublico: '¡Hola! Te escribimos por DM 📩',
+    });
+    ax.post.mockResolvedValue({ data: {} });
+    expect((await svc.enviarTexto('ig:555', 'S/ 69.90 al mes', 7)).success).toBe(true);
+    expect(ax.post).toHaveBeenCalledTimes(2);
+    expect((ax.post.mock.calls[0][1] as any).recipient).toEqual({ comment_id: 'c1' });
+    expect(ax.post.mock.calls[1][0]).toMatch(/\/c1\/replies$/);
+    expect(ax.post.mock.calls[1][1]).toEqual({ message: '¡Hola! Te escribimos por DM 📩' });
+  });
+
+  it('si la respuesta pública falla, el privado igual cuenta como enviado', async () => {
+    prisma.leadConversacion.findUnique.mockResolvedValue({ id: 50, igComentarioId: 'c1', igComentarioRespondido: false });
+    prisma.empresa.findUnique.mockResolvedValue({
+      instagramAccountId: '178',
+      instagramToken: 'tok',
+      instagramActivo: true,
+      instagramComentarioPublico: 'Te escribimos por DM',
+    });
+    ax.post.mockResolvedValueOnce({ data: {} }).mockRejectedValueOnce({ response: { data: { error: { code: 10, message: 'sin permiso' } } } });
+    expect((await svc.enviarTexto('ig:555', 'hola', 7)).success).toBe(true);
+    expect(prisma.leadConversacion.update).toHaveBeenCalled();
+  });
+
+  it('configurar: el texto público se guarda recortado; sin mandarlo no se toca', async () => {
+    prisma.empresa.findUnique.mockResolvedValue({});
+    await svc.configurarComentarios(7, true, 'precio, info', '  Te escribimos por DM  ');
+    expect(prisma.empresa.update.mock.calls[0][0].data).toMatchObject({ instagramComentarioPublico: 'Te escribimos por DM' });
+    await svc.configurarComentarios(7, true, 'precio', '');
+    expect(prisma.empresa.update.mock.calls[1][0].data).toMatchObject({ instagramComentarioPublico: null });
+    await svc.configurarComentarios(7, false, null);
+    expect(prisma.empresa.update.mock.calls[2][0].data).not.toHaveProperty('instagramComentarioPublico');
+  });
+
   it('solo vuelve a direcciones del panel (o a las configuradas)', () => {
     expect(redirectPermitido('https://app.krezka.com/administrador/instagram/callback')).toBe(true);
     expect(redirectPermitido('https://malo.com/robar')).toBe(false);
