@@ -381,6 +381,16 @@ const FRASES_DE_POSTERGAR = [
   'manana te escribo',
   'lo consulto y',
   'tengo que consultarlo',
+  // "Lo consulto con mi médico / con mi familia" (Hierba Sana, 26-10): la
+  // compra queda en pausa igual que con "te aviso".
+  'lo consulto con',
+  'consultarlo con',
+  'consultar con mi',
+  'consultare con',
+  'consultarle a mi',
+  'preguntarle a mi',
+  'lo converso con',
+  'hablarlo con mi',
   'cuando cobre',
   'a fin de mes',
   'el proximo mes',

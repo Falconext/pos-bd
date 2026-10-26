@@ -28,6 +28,7 @@ const LIMITE_AUDIO_PANEL = 16 * 1024 * 1024;
 import { venceEn } from './pausa-bot';
 import sharp from 'sharp';
 import { IaVentasService } from './leads-ia.service';
+import { despedidaValida } from './despedida';
 import { aOggOpus, tieneAudio } from './nota-de-voz';
 
 /**
@@ -482,6 +483,7 @@ export class LeadsService {
           mediosPago?: string;
           mediosPagoLista?: unknown;
           supervisorTelefono?: string;
+          despedida?: unknown;
         }
       | null;
     const demos = json?.demos;
@@ -510,6 +512,7 @@ export class LeadsService {
           ? mediosPagoLista
           : [{ nombre: MEDIOS_DE_ANTES, detalle: json.mediosPago }],
       supervisorTelefono: json?.supervisorTelefono ?? '',
+      despedida: despedidaValida(json?.despedida),
     };
   }
 
@@ -605,6 +608,8 @@ export class LeadsService {
       mediosPagoLista?: unknown;
       /** A quién le llegan por WhatsApp los avisos de derivación y de demo. Vacío = a los administradores. */
       supervisorTelefono?: string;
+      /** Mensaje al cerrar la conversación (ver despedida.ts). */
+      despedida?: unknown;
     },
   ) {
     // El nombre del asesor vive en iaVentasConfigJson junto a zonas, descuentos
@@ -619,7 +624,8 @@ export class LeadsService {
       data.vendedor !== undefined ||
       data.envio !== undefined ||
       data.mediosPagoLista !== undefined ||
-      data.supervisorTelefono !== undefined
+      data.supervisorTelefono !== undefined ||
+      data.despedida !== undefined
     ) {
       const actual = await this.prisma.empresa.findUnique({
         where: { id: empresaId },
@@ -681,6 +687,13 @@ export class LeadsService {
         else if (tel.length < 9)
           throw new BadRequestException('El número de aviso debe tener 9 dígitos');
         else json.supervisorTelefono = tel;
+      }
+      if (data.despedida !== undefined) {
+        // Se guarda el texto aunque esté apagada: el dueño la apaga un rato
+        // y no tiene que volver a escribirla.
+        const d = despedidaValida(data.despedida);
+        if (d.texto) json.despedida = { activa: d.activa, texto: d.texto };
+        else delete json.despedida;
       }
       await this.prisma.empresa.update({
         where: { id: empresaId },
