@@ -607,6 +607,7 @@ model Empresa {
   leadConsultas           LeadConsulta[]
   leadDisparos            LeadDisparo[]
   leadDemos               LeadDemo[]
+  leadEtiquetas           LeadEtiqueta[]
   soporteConversacion     SoporteConversacion?
   reglasComision          ReglaComision[]
   cobros                  CobroEmpresa[]
@@ -4879,6 +4880,7 @@ model LeadConversacion {
   borrador            LeadPedidoBorrador?
   anuncios            LeadAnuncioOrigen[]
   visitaTienda        LeadVisitaTienda?
+  etiquetas           LeadConversacionEtiqueta[]
   creadoEn            DateTime               @default(now())
   actualizadoEn       DateTime               @updatedAt
 
@@ -4894,6 +4896,41 @@ model LeadConversacion {
 /// qué anuncio le traía ventas. Una fila por mensaje con etiqueta: el mismo
 /// cliente puede volver por otro anuncio otro día, y la venta se le cuenta al
 /// último anuncio por el que llegó antes de comprar.
+/// Etiqueta que el negocio le pone a sus contactos: "mayorista", "compró
+/// perfume", "pidió talla 38". Es la base de los envíos masivos: sin una forma
+/// de marcar a la gente, el único filtro posible es la temperatura del lead,
+/// que la IA reescribe sola y no dice nada de lo que el cliente compra.
+model LeadEtiqueta {
+  id             Int                        @id @default(autoincrement())
+  empresaId      Int
+  empresa        Empresa                    @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  nombre         String
+  /// Clave de la paleta del panel ("violeta", "verde"…), no un hex libre:
+  /// así los chips se leen igual en claro y en oscuro.
+  color          String                     @default("gris")
+  conversaciones LeadConversacionEtiqueta[]
+  creadoEn       DateTime                   @default(now())
+
+  @@unique([empresaId, nombre])
+  @@index([empresaId])
+}
+
+/// Qué etiqueta tiene cada chat. Va contra la conversación y no contra el
+/// prospecto porque hay una conversación por teléfono y siempre existe; el
+/// prospecto no (los números internos del negocio no lo generan).
+model LeadConversacionEtiqueta {
+  conversacionId Int
+  conversacion   LeadConversacion @relation(fields: [conversacionId], references: [id], onDelete: Cascade)
+  etiquetaId     Int
+  etiqueta       LeadEtiqueta     @relation(fields: [etiquetaId], references: [id], onDelete: Cascade)
+  /// Usuario que la puso, para saber de dónde salió una marca rara.
+  usuarioId      Int?
+  creadoEn       DateTime         @default(now())
+
+  @@id([conversacionId, etiquetaId])
+  @@index([etiquetaId])
+}
+
 model LeadAnuncioOrigen {
   id             Int              @id @default(autoincrement())
   empresaId      Int

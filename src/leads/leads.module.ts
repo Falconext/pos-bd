@@ -3,6 +3,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { LeadsController } from './leads.controller';
 import { LeadsWebhookController } from './leads-webhook.controller';
 import { LeadsService } from './leads.service';
+import { LeadsEtiquetasService } from './leads-etiquetas.service';
 import { LeadsMessageProcessor } from './leads-message.processor';
 import { IaVentasService } from './leads-ia.service';
 import { RagVentasService } from './leads-rag.service';
@@ -77,6 +78,7 @@ import { ReporteDiarioController } from './reporte-diario.controller';
     ReporteDiarioService,
     MensajeriaService,
     LeadsVisitaService,
+    LeadsEtiquetasService,
   ],
   exports: [LeadsService, LeadsEmbudoService, LeadsDisparadoresService],
 })
