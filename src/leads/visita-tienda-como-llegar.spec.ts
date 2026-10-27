@@ -1,4 +1,4 @@
-import { coordenadasDeMaps, fechaDeVisita, textoComoLlegar, tiendaValida } from './visita-tienda';
+import { coordenadasDeMaps, fechaDeVisita, imagenesComoLlegar, textoComoLlegar, tieneComoLlegar, tiendaValida } from './visita-tienda';
 
 // Domingo 25 de octubre de 2026, 7 p. m. de Lima (el chat de Percy).
 const HOY = new Date('2026-10-26T00:00:00Z');
@@ -49,5 +49,26 @@ describe('la tienda y cómo llegar', () => {
     const t = tiendaValida({ mapsUrl: 'https://maps.google.com/?q=-12.05,-77.03', direccion: 'X' });
     expect(t.lat).toBe(-12.05);
     expect(textoComoLlegar(t, 'N')).not.toContain('maps.google');
+  });
+});
+
+describe('el mensaje que escribió el negocio', () => {
+  const DIRECCION = 'Av. Emancipación 687 (Vía del Metropolitano), Stand D 27-28';
+  const MENSAJE = `¡Genial! Para cuando nos visites 🌿\n📍 Dirección: Av. Emancipacion 687 (Via del Metropolitano), Stand D 27-28.\n🔸 Si ingresas por la puerta principal…`;
+
+  it('si ya trae la dirección va tal cual, sin título ni dirección repetida', () => {
+    const t = tiendaValida({ direccion: DIRECCION, indicaciones: MENSAJE, mapsUrl: 'https://maps.google.com/?q=-12.04,-77.03' });
+    expect(textoComoLlegar(t, 'Hierba Sana')).toBe(MENSAJE);
+  });
+
+  it('cabe un mensaje de bienvenida largo', () => {
+    const largo = 'a'.repeat(1400);
+    expect(tiendaValida({ indicaciones: largo }).indicaciones).toHaveLength(1400);
+  });
+
+  it('el croquis va antes que la foto del local', () => {
+    const t = tiendaValida({ fotoUrl: 'https://s3/foto.jpg', croquisUrl: 'https://s3/croquis.jpg' });
+    expect(imagenesComoLlegar(t)).toEqual(['https://s3/croquis.jpg', 'https://s3/foto.jpg']);
+    expect(tieneComoLlegar(tiendaValida({ croquisUrl: 'https://s3/c.jpg' }))).toBe(true);
   });
 });

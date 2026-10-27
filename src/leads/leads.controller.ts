@@ -67,6 +67,7 @@ export class LeadsController {
   /**
    * Foto de la fachada o del stand (JPG/PNG, máx. 5 MB). Se le manda al
    * cliente que agenda una visita, con las indicaciones para llegar.
+   * `?tipo=croquis` la guarda como el plano para llegar adentro.
    */
   @Post('tienda-foto')
   @UseInterceptors(
@@ -75,8 +76,13 @@ export class LeadsController {
   subirFotoTienda(
     @User() user: any,
     @UploadedFile() archivo: Express.Multer.File,
+    @Query('tipo') tipo?: string,
   ) {
-    return this.service.subirFotoTienda(user.empresaId, archivo);
+    return this.service.subirFotoTienda(
+      user.empresaId,
+      archivo,
+      tipo === 'croquis' ? 'croquis' : 'foto',
+    );
   }
 
   /**

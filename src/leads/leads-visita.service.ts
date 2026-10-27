@@ -3,7 +3,14 @@ import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { MensajeriaService } from './mensajeria.service';
-import { fechaDeVisita, textoComoLlegar, tieneComoLlegar, tiendaValida } from './visita-tienda';
+import {
+  fechaDeVisita,
+  imagenesComoLlegar,
+  LARGO_PIE_DE_FOTO,
+  textoComoLlegar,
+  tieneComoLlegar,
+  tiendaValida,
+} from './visita-tienda';
 
 export type FiltroVisitas = 'proximas' | 'sin_fecha' | 'con_reserva' | 'pasadas' | 'todas';
 
@@ -195,7 +202,11 @@ export class LeadsVisitaService {
     }
   }
 
-  /** Mapa + foto con las indicaciones. True si salió algo. */
+  /**
+   * Mapa, croquis y foto, y las indicaciones. Con una sola imagen y un texto
+   * corto, el texto va de pie de foto; si no, las imágenes primero y el texto
+   * al final, que es lo que el cliente lee. True si salió algo.
+   */
   private async enviarComoLlegar(empresaId: number, telefono: string): Promise<boolean> {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
@@ -215,8 +226,15 @@ export class LeadsVisitaService {
       salio ||= r.success;
     }
     const texto = textoComoLlegar(tienda, negocio);
-    const r = tienda.fotoUrl
-      ? await this.mensajeria.enviarImagenUrl(telefono, tienda.fotoUrl, texto, empresaId)
+    const imagenes = imagenesComoLlegar(tienda);
+    const conPie = imagenes.length === 1 && texto.length <= LARGO_PIE_DE_FOTO;
+    for (const url of conPie ? [] : imagenes) {
+      const img = await this.mensajeria.enviarImagenUrl(telefono, url, undefined, empresaId);
+      salio ||= img.success;
+      if (!img.success) this.logger.warn(`Visita: no salió una imagen a ${telefono}: ${img.error}`);
+    }
+    const r = conPie
+      ? await this.mensajeria.enviarImagenUrl(telefono, imagenes[0], texto, empresaId)
       : await this.mensajeria.enviarTexto(telefono, texto, empresaId);
     salio ||= r.success;
     if (!r.success) this.logger.warn(`Visita: no salieron las indicaciones a ${telefono}: ${r.error}`);

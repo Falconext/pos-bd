@@ -459,10 +459,14 @@ export class LeadsService {
     return { videoBienvenidaUrl: url };
   }
 
-  /** Foto del local para quien agenda una visita (ver leads-visita.service). */
+  /**
+   * Foto del local o croquis para quien agenda una visita (ver
+   * leads-visita.service).
+   */
   async subirFotoTienda(
     empresaId: number,
     archivo: { buffer: Buffer; mimetype: string; size: number },
+    tipo: 'foto' | 'croquis' = 'foto',
   ) {
     if (!archivo?.buffer?.length) throw new BadRequestException('Falta la foto.');
     if (!['image/jpeg', 'image/png'].includes(archivo.mimetype)) {
@@ -470,14 +474,15 @@ export class LeadsService {
     }
     if (!this.s3) throw new BadRequestException('El almacenamiento no está disponible.');
     const ext = archivo.mimetype === 'image/png' ? 'png' : 'jpg';
-    const fotoUrl = await this.s3.uploadPDF(
+    const url = await this.s3.uploadPDF(
       archivo.buffer,
-      `ia-ventas/empresa-${empresaId}/tienda-${Date.now()}.${ext}`,
+      `ia-ventas/empresa-${empresaId}/${tipo === 'croquis' ? 'croquis' : 'tienda'}-${Date.now()}.${ext}`,
       archivo.mimetype,
     );
+    const campo = tipo === 'croquis' ? 'croquisUrl' : 'fotoUrl';
     const actual = await this.obtenerConfig(empresaId);
-    await this.actualizarConfig(empresaId, { tienda: { ...actual.tienda, fotoUrl } });
-    return { fotoUrl };
+    await this.actualizarConfig(empresaId, { tienda: { ...actual.tienda, [campo]: url } });
+    return { [campo]: url };
   }
 
   /** Configuración de la IA de ventas de la empresa (toggle + contexto). */
@@ -724,7 +729,8 @@ export class LeadsService {
       }
       if (data.tienda !== undefined) {
         const t = tiendaValida(data.tienda);
-        const vacia = !t.direccion && !t.mapsUrl && t.lat == null && !t.indicaciones && !t.fotoUrl;
+        const vacia =
+          !t.direccion && !t.mapsUrl && t.lat == null && !t.indicaciones && !t.fotoUrl && !t.croquisUrl;
         if (vacia) delete json.tienda;
         else json.tienda = t;
       }

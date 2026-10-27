@@ -3,8 +3,8 @@
  *
  * Hierba Sana (26-10): clientes que llegan sin aviso, y otros que "nos
  * vienen buscando 1 hora" porque el local está dentro del Mercado La Merced.
- * Al agendar se le manda la ubicación (mapa de WhatsApp), la foto de la
- * fachada y las indicaciones que el negocio escribió, una sola vez.
+ * Al agendar se le manda la ubicación (mapa de WhatsApp), el croquis y la
+ * foto de la fachada, y las indicaciones que el negocio escribió, una sola vez.
  */
 import { fechaMencionada } from './fecha-mencionada';
 
@@ -19,7 +19,15 @@ export interface ConfigTienda {
   indicaciones: string;
   /** Foto de la fachada o del stand. */
   fotoUrl: string;
+  /** Plano o croquis para llegar adentro (un mercado, una galería). */
+  croquisUrl: string;
 }
+
+/** Tope de las indicaciones: un mensaje completo de bienvenida cabe. */
+export const LARGO_INDICACIONES = 1500;
+
+/** Tope del pie de foto en WhatsApp; más largo, el texto va aparte. */
+export const LARGO_PIE_DE_FOTO = 1000;
 
 const texto = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 
@@ -65,24 +73,43 @@ export function tiendaValida(raw: unknown): ConfigTienda {
     mapsUrl,
     lat,
     lng,
-    indicaciones: texto(t.indicaciones, 800),
+    indicaciones: texto(t.indicaciones, LARGO_INDICACIONES),
     fotoUrl: texto(t.fotoUrl, 500),
+    croquisUrl: texto(t.croquisUrl, 500),
   };
 }
 
 /** Hay algo que mandarle al cliente para que llegue. */
 export function tieneComoLlegar(t: ConfigTienda): boolean {
-  return t.lat != null || !!t.mapsUrl || !!t.fotoUrl || !!t.indicaciones;
+  return t.lat != null || !!t.mapsUrl || !!t.fotoUrl || !!t.croquisUrl || !!t.indicaciones;
 }
+
+/** Las imágenes a mandar, en orden: primero el croquis, luego el local. */
+export function imagenesComoLlegar(t: ConfigTienda): string[] {
+  return [t.croquisUrl, t.fotoUrl].filter(Boolean);
+}
+
+const plano = (v: string) =>
+  v
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
 
 /**
  * El texto que acompaña a la foto (o va solo, si no hay foto): dirección,
  * indicaciones y, si no se pudo mandar el mapa, el link.
+ *
+ * Si las indicaciones ya traen la dirección, el negocio escribió el mensaje
+ * entero, con su saludo (Hierba Sana, 27-10): va tal cual, sin el título
+ * ni la dirección repetida encima.
  */
 export function textoComoLlegar(t: ConfigTienda, negocio: string): string {
+  const mensajeCompleto = !!t.direccion && plano(t.indicaciones).includes(plano(t.direccion));
   return [
-    `📍 *Cómo llegar a ${negocio}*`,
-    t.direccion,
+    mensajeCompleto ? '' : `📍 *Cómo llegar a ${negocio}*`,
+    mensajeCompleto ? '' : t.direccion,
     t.indicaciones,
     t.lat == null && t.mapsUrl ? `Mapa: ${t.mapsUrl}` : '',
   ]
