@@ -903,26 +903,11 @@ export class VerificarPendientesSunatService {
         });
       }
 
-      await this.prisma.$transaction(async (tx) => {
-        const movimientos = await tx.movimientoKardex.findMany({
-          where: { comprobanteId: id },
-          select: { id: true },
-        });
-        if (movimientos.length) {
-          const movIds = movimientos.map((m) => m.id);
-          await tx.movimientoKardexLote.deleteMany({
-            where: { movimientoId: { in: movIds } },
-          });
-          await tx.movimientoKardex.deleteMany({
-            where: { id: { in: movIds } },
-          });
-        }
-        await tx.detalleComprobante.deleteMany({
-          where: { comprobanteId: id },
-        });
-        await tx.leyenda.deleteMany({ where: { comprobanteId: id } });
-        await tx.comprobante.delete({ where: { id } });
-      });
+      // El mismo borrado que al crear la venta: devuelve el stock de la
+      // boleta/factura y deshace lo que hizo una nota de crédito. Antes aquí
+      // solo se borraban las filas del kardex, y el stock quedaba movido por
+      // un documento que ya no existía, sin rastro de por qué.
+      await this.comprobanteService.eliminarComprobante(id);
       this.logger.log(
         `🗑️ Comprobante ${id} eliminado automáticamente (error SUNAT fatal)`,
       );
