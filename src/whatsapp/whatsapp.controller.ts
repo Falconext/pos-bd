@@ -26,13 +26,20 @@ export class WhatsAppController {
 
   /**
    * Conectar el WhatsApp propio de la empresa (Meta Embedded Signup).
-   * POST /whatsapp/embedded-signup  { code, phoneNumberId, wabaId }
+   * POST /whatsapp/embedded-signup  { code, phoneNumberId, wabaId, coexistencia? }
+   * `coexistencia`: el número sigue funcionando en la app WhatsApp Business.
    */
   @Post('embedded-signup')
   @Roles('ADMIN_EMPRESA')
   async embeddedSignup(
     @Body()
-    body: { code?: string; accessToken?: string; phoneNumberId?: string; wabaId?: string },
+    body: {
+      code?: string;
+      accessToken?: string;
+      phoneNumberId?: string;
+      wabaId?: string;
+      coexistencia?: boolean;
+    },
     @User() user: any,
   ) {
     if (!user?.empresaId)

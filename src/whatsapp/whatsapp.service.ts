@@ -271,6 +271,10 @@ export class WhatsAppService {
   /** Descubre wabaId + phoneNumberId a partir del token (cuando no llegan del signup). */
   private async discoverPhoneFromToken(
     token: string,
+    // Si el signup ya dijo la WABA, el número se busca SOLO ahí: el token
+    // puede ver otras WABAs del mismo dueño y tomar el primer número de otra
+    // conectaría un número equivocado.
+    soloWaba?: string,
   ): Promise<{ wabaId?: string; phoneNumberId?: string; displayNumber?: string }> {
     let debug: any;
     try {
@@ -289,7 +293,7 @@ export class WhatsAppService {
     const waScope = scopes.find(
       (s) => s?.scope === 'whatsapp_business_management',
     );
-    const wabaIds: string[] = waScope?.target_ids || [];
+    const wabaIds: string[] = soloWaba ? [soloWaba] : waScope?.target_ids || [];
     for (const wabaId of wabaIds) {
       try {
         const phones = await axios.get(`${this.apiUrl}/${wabaId}/phone_numbers`, {
@@ -428,6 +432,24 @@ export class WhatsAppService {
     };
   }
 
+  /**
+   * Estado de un número en coexistencia. Está operativo cuando ya pasó a
+   * Cloud API (`platform_type: CLOUD_API`); `status` puede tardar en decir
+   * CONNECTED, así que no se exige.
+   */
+  private async estadoCoexistencia(
+    phoneNumberId: string,
+    token: string,
+  ): Promise<{ estado: string; conectado: boolean; motivo?: string }> {
+    const { status, platformType } = await this.fetchEstadoNumero(phoneNumberId, token);
+    const conectado = platformType === 'CLOUD_API';
+    return {
+      estado: status ?? 'DESCONOCIDO',
+      conectado,
+      motivo: conectado ? undefined : `el número figura como ${platformType ?? 'desconocido'}`,
+    };
+  }
+
   private async fetchDisplayNumber(
     phoneNumberId: string,
     token: string,
@@ -467,7 +489,14 @@ export class WhatsAppService {
 
   async conectarEmbeddedSignup(
     empresaId: number,
-    input: { code?: string; accessToken?: string; phoneNumberId?: string; wabaId?: string },
+    input: {
+      code?: string;
+      accessToken?: string;
+      phoneNumberId?: string;
+      wabaId?: string;
+      /** Número de la app WhatsApp Business que sigue funcionando en el celular. */
+      coexistencia?: boolean;
+    },
   ): Promise<{
     phoneNumberId: string;
     wabaId: string;
@@ -494,7 +523,7 @@ export class WhatsAppService {
     let { phoneNumberId, wabaId } = input;
     let numeroVisible: string | undefined;
     if (!phoneNumberId || !wabaId) {
-      const disc = await this.discoverPhoneFromToken(token);
+      const disc = await this.discoverPhoneFromToken(token, wabaId);
       phoneNumberId = phoneNumberId || disc.phoneNumberId;
       wabaId = wabaId || disc.wabaId;
       numeroVisible = disc.displayNumber;
@@ -520,7 +549,11 @@ export class WhatsAppService {
 
     // 4.b) Encender el número en Cloud API. Sin este paso queda PENDING: el
     //      asistente de Meta solo lo agrega y verifica por SMS.
-    const activacion = await this.activarNumero(empresaId, phoneNumberId, token);
+    //      En coexistencia NO: el número ya está registrado por la app del
+    //      celular, y Meta pide saltarse este paso.
+    const activacion = input.coexistencia
+      ? await this.estadoCoexistencia(phoneNumberId, token)
+      : await this.activarNumero(empresaId, phoneNumberId, token);
     if (!numeroVisible)
       numeroVisible = await this.fetchDisplayNumber(phoneNumberId, token);
 
@@ -549,7 +582,7 @@ export class WhatsAppService {
     const plantillas = await this.crearPlantillasDespacho(wabaId, token);
 
     this.logger.log(
-      `Empresa ${empresaId} conectó WhatsApp propio (${numeroVisible ?? phoneNumberId}) — estado ${activacion.estado}, token ${usaTokenPlataforma ? 'de plataforma (permanente)' : 'del cliente (60 días)'}.`,
+      `Empresa ${empresaId} conectó WhatsApp propio${input.coexistencia ? ' en coexistencia' : ''} (${numeroVisible ?? phoneNumberId}) — estado ${activacion.estado}, token ${usaTokenPlataforma ? 'de plataforma (permanente)' : 'del cliente (60 días)'}.`,
     );
     if (!activacion.conectado) {
       this.logger.warn(

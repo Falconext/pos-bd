@@ -40,6 +40,7 @@ import {
   venceEn,
 } from './pausa-bot';
 import { conDescargoLegal } from './prompt-asesor';
+import { JOB_ECO_VENDEDOR, type EcoVendedor } from './eco-vendedor';
 import { origenDeAnuncio, type ReferralWhatsapp } from './anuncio-origen';
 import { afirmaCancelacion, afirmaDerivacion, sinConfirmacionFalsa, sinPagoInventado } from './confirmacion-falsa';
 import { conRegistroDirecto, yaAceptoAntes } from './registro-directo';
@@ -225,7 +226,95 @@ export class LeadsMessageProcessor extends WorkerHost {
         throw e;
       }
     }
+    if (job.name === JOB_ECO_VENDEDOR) {
+      return this.registrarEcoVendedor(job.data as unknown as EcoVendedor);
+    }
     return this.ingresar(job.data as MensajeEntrante);
+  }
+
+  /**
+   * El dueño contestó desde la app WhatsApp Business de su celular
+   * (coexistencia, ver eco-vendedor.ts): se guarda como respuesta del vendedor
+   * y la IA se calla en ese chat, igual que cuando responde desde el panel.
+   */
+  private async registrarEcoVendedor(e: EcoVendedor): Promise<void> {
+    const empresa = await this.prisma.empresa.findFirst({
+      where: { whatsappPhoneNumberId: e.phoneNumberId },
+      select: { id: true },
+    });
+    if (!empresa) return;
+
+    const ya = await this.prisma.leadMensaje.findUnique({
+      where: { whatsappMsgId: e.messageId },
+      select: { id: true },
+    });
+    if (ya) return;
+
+    // Si el dueño le escribe primero a alguien, la conversación nace acá y
+    // nace pausada: cuando esa persona conteste, la IA no se mete en un chat
+    // que empezó el dueño.
+    const conv = await this.prisma.leadConversacion.upsert({
+      where: { empresaId_telefonoProspecto: { empresaId: empresa.id, telefonoProspecto: e.to } },
+      create: {
+        empresaId: empresa.id,
+        telefonoProspecto: e.to,
+        numeroWhatsappId: e.phoneNumberId,
+        canal: 'WHATSAPP',
+        cantidadMensajes: 0,
+      },
+      update: {},
+      select: {
+        id: true,
+        botActivo: true,
+        pausadoHasta: true,
+        prospecto: { select: { id: true } },
+      },
+    });
+
+    // Red de seguridad: Meta dice que lo que mandamos por la API no vuelve
+    // como eco, pero si alguna vez volviera, la IA se pausaría a sí misma.
+    if (e.texto) {
+      const propio = await this.prisma.leadMensaje.findFirst({
+        where: {
+          conversacionId: conv.id,
+          rol: 'ASISTENTE',
+          contenido: e.texto,
+          creadoEn: { gte: new Date(Date.now() - 5 * 60 * 1000) },
+        },
+        select: { id: true },
+      });
+      if (propio) return;
+    }
+
+    try {
+      await this.prisma.leadMensaje.create({
+        data: {
+          conversacionId: conv.id,
+          rol: 'SISTEMA',
+          contenido: e.texto || '[Mensaje]',
+          whatsappMsgId: e.messageId,
+        },
+      });
+    } catch (err) {
+      if (esCodigoPrisma(err, 'P2002')) return; // otra entrega del mismo eco
+      throw err;
+    }
+
+    // Pausa temporal, y se alarga mientras el dueño siga escribiendo. Una
+    // pausa sin vencimiento (derivación o IA apagada a mano) no se toca.
+    const pausaDefinitiva = !conv.botActivo && !conv.pausadoHasta;
+    const data = pausaDefinitiva
+      ? {}
+      : { botActivo: false, pausadoHasta: venceEn(), motivoPausa: 'respondió desde el celular' };
+    await this.prisma.$transaction([
+      this.prisma.leadConversacion.update({
+        where: { id: conv.id },
+        data: { ...data, cantidadMensajes: { increment: 1 } },
+      }),
+      ...(conv.prospecto && !pausaDefinitiva
+        ? [this.prisma.leadProspecto.update({ where: { id: conv.prospecto.id }, data })]
+        : []),
+    ]);
   }
 
   /**
@@ -988,6 +1077,17 @@ export class LeadsMessageProcessor extends WorkerHost {
         removeOnComplete: true,
         removeOnFail: true,
       });
+      return false;
+    }
+
+    // Una persona tomó el chat mientras la IA pensaba (desde el panel o desde
+    // el celular): su respuesta manda y la de la IA ya no se envía.
+    const pausaNueva = await this.prisma.leadConversacion.findUnique({
+      where: { id: conv.id },
+      select: { botActivo: true, pausadoHasta: true },
+    });
+    if (estaPausado(pausaNueva)) {
+      this.logger.log(`Lead: conv ${conv.id} la tomó una persona mientras la IA respondía; no se envía.`);
       return false;
     }
 
