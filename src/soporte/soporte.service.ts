@@ -11,6 +11,25 @@ import { NOMBRE_DEL_BOT, SoporteBotService } from './soporte-bot.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { empresaKrezkaId } from '../leads/reporte-diario';
 import { debeAvisar, telefonosDeAviso, textoDeAviso } from './soporte-aviso';
+import { S3Service } from '../s3/s3.service';
+import { aOggOpus, tieneAudio } from '../leads/nota-de-voz';
+import sharp from 'sharp';
+
+/** Archivo que llega por multipart. */
+export interface ArchivoSoporte {
+  buffer: Buffer;
+  mimetype: string;
+  size: number;
+}
+
+/** Lo que acompaña al texto de un mensaje: una foto o una nota de voz. */
+interface Adjunto {
+  imagenUrl?: string;
+  audioUrl?: string;
+}
+
+const LIMITE_IMAGEN = 10 * 1024 * 1024;
+const LIMITE_AUDIO = 16 * 1024 * 1024;
 
 /** Con qué nombre se presenta el asistente ante el empresario. */
 const MARCA_SOPORTE = 'Krezka';
@@ -41,7 +60,83 @@ export class SoporteService {
     private readonly bot: SoporteBotService,
     // Al final y opcional: los specs arman el servicio con los tres de arriba.
     @Optional() private readonly whatsapp?: WhatsAppService,
+    @Optional() private readonly s3?: S3Service,
   ) {}
+
+  // ── Fotos y notas de voz ──────────────────────────────────────────────────
+
+  /**
+   * Sube la foto o la nota de voz y devuelve el adjunto con su texto para la
+   * bandeja. La foto va a JPG (las de celular llegan en HEIC, WEBP o giradas)
+   * y la voz a OGG/Opus, igual que en el chat de IA de Ventas.
+   */
+  private async subirAdjunto(
+    empresaId: number,
+    tipo: 'imagen' | 'audio',
+    archivo: ArchivoSoporte | undefined,
+    pie?: string,
+  ): Promise<{ adjunto: Adjunto; contenido: string }> {
+    if (!this.s3) throw new BadRequestException('El almacenamiento no está disponible.');
+    if (!archivo?.buffer?.length) {
+      throw new BadRequestException(tipo === 'imagen' ? 'Falta la imagen.' : 'Falta el audio.');
+    }
+    const base = `soporte/empresa-${empresaId}/${Date.now()}`;
+    const texto = (pie ?? '').trim().slice(0, 1000);
+    if (tipo === 'imagen') {
+      if (!/^image\//.test(archivo.mimetype)) throw new BadRequestException('El archivo tiene que ser una imagen.');
+      if (archivo.size > LIMITE_IMAGEN) throw new BadRequestException('La imagen pesa más de 10 MB.');
+      let jpg: Buffer;
+      try {
+        jpg = await sharp(archivo.buffer)
+          .rotate()
+          .resize({ width: 1600, height: 1600, fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 85 })
+          .toBuffer();
+      } catch {
+        throw new BadRequestException('No se pudo leer la imagen. Prueba con una foto JPG o PNG.');
+      }
+      const url = await this.s3.uploadPDF(jpg, `${base}.jpg`, 'image/jpeg');
+      return { adjunto: { imagenUrl: url }, contenido: texto ? `[Imagen] ${texto}` : '[Imagen]' };
+    }
+    // Algunos navegadores mandan la grabación como video/webm (sin imagen).
+    if (!/^(audio\/|video\/webm)/.test(archivo.mimetype)) throw new BadRequestException('El archivo tiene que ser un audio.');
+    if (archivo.size > LIMITE_AUDIO) throw new BadRequestException('El audio pesa más de 16 MB.');
+    let ogg: Buffer;
+    try {
+      ogg = await aOggOpus(archivo.buffer);
+    } catch {
+      throw new BadRequestException('No se pudo leer el audio. Vuelve a grabarlo.');
+    }
+    if (!tieneAudio(ogg)) {
+      throw new BadRequestException('La grabación salió sin sonido. Revisa el micrófono y vuelve a grabarla.');
+    }
+    const url = await this.s3.uploadPDF(ogg, `${base}.ogg`, 'audio/ogg');
+    return { adjunto: { audioUrl: url }, contenido: '[Nota de voz]' };
+  }
+
+  async enviarAdjuntoEmpresa(
+    empresaId: number,
+    usuarioId: number,
+    tipo: 'imagen' | 'audio',
+    archivo: ArchivoSoporte | undefined,
+    pie?: string,
+  ) {
+    const { adjunto, contenido } = await this.subirAdjunto(empresaId, tipo, archivo, pie);
+    return this.enviarMensajeEmpresa(empresaId, usuarioId, contenido, adjunto);
+  }
+
+  async enviarAdjuntoSistema(
+    id: number,
+    sistemaNegocio: string | null,
+    autorId: number,
+    tipo: 'imagen' | 'audio',
+    archivo: ArchivoSoporte | undefined,
+    pie?: string,
+  ) {
+    const conversacion = await this.obtenerConversacionEscopeada(id, sistemaNegocio);
+    const { adjunto, contenido } = await this.subirAdjunto(conversacion.empresaId, tipo, archivo, pie);
+    return this.enviarMensajeSistema(id, sistemaNegocio, autorId, contenido, adjunto);
+  }
 
   /**
    * El hilo de la empresa, creándolo si es su primera consulta.
@@ -100,6 +195,7 @@ export class SoporteService {
     empresaId: number,
     usuarioId: number,
     contenido: string,
+    adjunto: Adjunto = {},
   ) {
     const texto = contenido.trim();
     // Antes se devolvía OK sin guardar nada: el que escribía solo espacios veía
@@ -115,6 +211,7 @@ export class SoporteService {
           rol: 'EMPRESA',
           autorNombre,
           contenido: texto,
+          ...adjunto,
         },
       }),
       this.prisma.soporteConversacion.update({
@@ -130,7 +227,7 @@ export class SoporteService {
     // la base. Dejar que el error suba haría que el empresario vea un fallo,
     // reintente y termine con el mensaje duplicado. Un socket caído no puede
     // costarle eso: se avisa lo que se pueda y el envío se da por hecho.
-    await this.notificarSistema(empresaId, actualizada.id, mensaje.id, autorNombre, texto).catch(
+    await this.notificarSistema(empresaId, actualizada.id, mensaje.id, autorNombre, texto, adjunto).catch(
       (error) =>
         this.logger.warn(
           `[soporte] no se pudo avisar a Krezka del mensaje de la empresa ${empresaId}: ${error?.message}`,
@@ -150,12 +247,15 @@ export class SoporteService {
     // El asistente contesta si le toca. Va al final y sin dejar subir el error
     // por el mismo motivo que el aviso: el mensaje del empresario ya está
     // guardado, y que la IA falle no puede hacerle ver un fallo y reintentar.
-    await this.responderConAsistente(actualizada.id, empresaId, texto).catch(
-      (error) =>
-        this.logger.warn(
-          `[soporte] el asistente no pudo responder a la empresa ${empresaId}: ${error?.message}`,
-        ),
-    );
+    // Una foto o una voz no las lee: que las vea una persona.
+    if (!adjunto.imagenUrl && !adjunto.audioUrl) {
+      await this.responderConAsistente(actualizada.id, empresaId, texto).catch(
+        (error) =>
+          this.logger.warn(
+            `[soporte] el asistente no pudo responder a la empresa ${empresaId}: ${error?.message}`,
+          ),
+      );
+    }
     return actualizada;
   }
 
@@ -248,6 +348,7 @@ export class SoporteService {
     mensajeId: number,
     autorNombre: string,
     contenido: string,
+    adjunto: Adjunto = {},
   ) {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
@@ -274,6 +375,7 @@ export class SoporteService {
         empresaNombre: empresa?.nombreComercial || empresa?.razonSocial,
         autorNombre,
         contenido,
+        ...adjunto,
         rol: 'EMPRESA',
       },
     );
@@ -350,6 +452,7 @@ export class SoporteService {
     sistemaNegocio: string | null,
     autorId: number,
     contenido: string,
+    adjunto: Adjunto = {},
   ) {
     const texto = contenido.trim();
     // Antes se devolvía OK sin guardar nada: el que escribía solo espacios veía
@@ -360,7 +463,7 @@ export class SoporteService {
 
     const [mensaje, actualizada] = await this.prisma.$transaction([
       this.prisma.soporteMensaje.create({
-        data: { conversacionId: id, rol: 'SISTEMA', autorNombre, contenido: texto },
+        data: { conversacionId: id, rol: 'SISTEMA', autorNombre, contenido: texto, ...adjunto },
       }),
       this.prisma.soporteConversacion.update({
         where: { id },
@@ -374,7 +477,7 @@ export class SoporteService {
     ]);
 
     // Mismo criterio que del lado de la empresa: el mensaje ya está guardado.
-    await this.notificarEmpresa(conversacion.empresaId, id, mensaje.id, autorNombre, texto).catch(
+    await this.notificarEmpresa(conversacion.empresaId, id, mensaje.id, autorNombre, texto, adjunto).catch(
       (error) =>
         this.logger.warn(
           `[soporte] no se pudo avisar a la empresa ${conversacion.empresaId}: ${error?.message}`,
@@ -406,6 +509,7 @@ export class SoporteService {
     mensajeId: number,
     autorNombre: string,
     contenido: string,
+    adjunto: Adjunto = {},
   ) {
     const usuarios = await this.prisma.usuario.findMany({
       where: {
@@ -422,7 +526,7 @@ export class SoporteService {
       // El id real del mensaje viaja en el aviso: sin él, quien lo recibe no
       // puede distinguir un mensaje nuevo de uno que ya tiene, y un evento
       // repetido (reconexión, dos pestañas) lo muestra duplicado.
-      { conversacionId, empresaId, mensajeId, autorNombre, contenido, rol: 'SISTEMA' },
+      { conversacionId, empresaId, mensajeId, autorNombre, contenido, ...adjunto, rol: 'SISTEMA' },
     );
   }
 }
