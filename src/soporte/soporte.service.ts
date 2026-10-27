@@ -3,10 +3,14 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { NOMBRE_DEL_BOT, SoporteBotService } from './soporte-bot.service';
+import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { empresaKrezkaId } from '../leads/reporte-diario';
+import { debeAvisar, telefonosDeAviso, textoDeAviso } from './soporte-aviso';
 
 /** Con qué nombre se presenta el asistente ante el empresario. */
 const MARCA_SOPORTE = 'Krezka';
@@ -35,6 +39,8 @@ export class SoporteService {
     private readonly prisma: PrismaService,
     private readonly notificaciones: NotificacionesService,
     private readonly bot: SoporteBotService,
+    // Al final y opcional: los specs arman el servicio con los tres de arriba.
+    @Optional() private readonly whatsapp?: WhatsAppService,
   ) {}
 
   /**
@@ -131,6 +137,16 @@ export class SoporteService {
         ),
     );
 
+    // Y al celular del equipo, si es el primer mensaje sin leer y estamos en
+    // horario (ver soporte-aviso.ts). Mismo trato: nunca tumba el envío.
+    if (debeAvisar(actualizada.noLeidosSistema)) {
+      await this.avisarPorWhatsapp(empresaId, autorNombre, texto).catch((error) =>
+        this.logger.warn(
+          `[soporte] no se pudo avisar por WhatsApp del mensaje de la empresa ${empresaId}: ${error?.message}`,
+        ),
+      );
+    }
+
     // El asistente contesta si le toca. Va al final y sin dejar subir el error
     // por el mismo motivo que el aviso: el mensaje del empresario ya está
     // guardado, y que la IA falle no puede hacerle ver un fallo y reintentar.
@@ -190,6 +206,38 @@ export class SoporteService {
       this.logger.warn(
         `[soporte] no se pudo entregar la respuesta del asistente a la empresa ${empresaId}: ${error?.message}`,
       ),
+    );
+  }
+
+  /**
+   * Aviso al celular del equipo desde el número de Krezka. Primero texto libre
+   * (llega si ese número le escribió a Krezka en las últimas 24 h) y, si
+   * WhatsApp lo rechaza, la plantilla `aviso_equipo`, que llega siempre.
+   */
+  private async avisarPorWhatsapp(empresaId: number, autorNombre: string, contenido: string) {
+    const destinos = telefonosDeAviso(process.env.SOPORTE_AVISO_TELEFONOS);
+    if (!this.whatsapp || destinos.length === 0) return;
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { nombreComercial: true, razonSocial: true },
+    });
+    const nombre = empresa?.nombreComercial || empresa?.razonSocial || `Empresa ${empresaId}`;
+    const panel = (process.env.FRONTEND_URL || 'https://app.krezka.com').split(',')[0].replace(/\/$/, '');
+    const texto = textoDeAviso(nombre, autorNombre, contenido, panel);
+    const krezka = empresaKrezkaId();
+    await Promise.allSettled(
+      destinos.map(async (numero) => {
+        const r = await this.whatsapp!.enviarTexto(numero, texto, krezka);
+        if (r.success) return;
+        const p = await this.whatsapp!.enviarPlantilla(
+          numero,
+          'aviso_equipo',
+          'es',
+          [`Mensaje de soporte de ${nombre}`.slice(0, 200), autorNombre.slice(0, 100)],
+          krezka,
+        );
+        if (!p.success) this.logger.warn(`[soporte] aviso a ${numero}: falló texto (${r.error}) y plantilla (${p.error}).`);
+      }),
     );
   }
 
