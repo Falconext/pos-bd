@@ -14,6 +14,7 @@ import { Queue } from 'bullmq';
 import * as crypto from 'crypto';
 import { JOB_INGRESAR_MENSAJE, LEADS_MESSAGES_QUEUE } from './leads.constants';
 import { mensajesDeInstagram, mensajesDeMessenger } from '../instagram/instagram-webhook';
+import { ecosDeCambio, JOB_ECO_VENDEDOR } from './eco-vendedor';
 
 /**
  * Webhook público de WhatsApp Cloud API para el módulo de leads.
@@ -141,6 +142,17 @@ export class LeadsWebhookController {
     try {
       for (const entry of body.entry ?? []) {
         for (const change of entry.changes ?? []) {
+          // Lo que el dueño contestó desde su celular (coexistencia). Solo
+          // llega de números conectados así; en los demás esto no encola nada.
+          for (const eco of ecosDeCambio(change)) {
+            await this.queue.add(JOB_ECO_VENDEDOR, eco, {
+              jobId: `eco-${eco.messageId}`,
+              attempts: 3,
+              backoff: { type: 'exponential', delay: 2000 },
+              removeOnComplete: true,
+              removeOnFail: true,
+            });
+          }
           const value = change.value ?? {};
           const phoneNumberId = value.metadata?.phone_number_id;
           const contactos: any[] = value.contacts ?? [];
