@@ -7,14 +7,20 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { User } from '../common/decorators/user.decorator';
 import { SoporteService } from './soporte.service';
 import { EnviarMensajeSoporteDto } from './dto/soporte.dto';
+
+/** Foto o nota de voz: `archivo` por multipart y, en la foto, `texto` opcional como pie. */
+const ADJUNTO = FileInterceptor('archivo', { limits: { fileSize: 16 * 1024 * 1024 } });
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('soporte')
@@ -46,6 +52,22 @@ export class SoporteController {
   }
 
   // ── Bandeja Krezka (ADMIN_SISTEMA) ──────────────────────────────────────────
+
+  /** Foto al soporte (multipart `archivo` + `texto` opcional). */
+  @Post('mensajes/imagen')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  @UseInterceptors(ADJUNTO)
+  enviarImagen(@User() user: any, @UploadedFile() archivo: Express.Multer.File, @Body() body: { texto?: string }) {
+    return this.service.enviarAdjuntoEmpresa(user.empresaId, user.id, 'imagen', archivo, body?.texto);
+  }
+
+  /** Nota de voz al soporte (multipart `archivo`). */
+  @Post('mensajes/audio')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  @UseInterceptors(ADJUNTO)
+  enviarAudio(@User() user: any, @UploadedFile() archivo: Express.Multer.File) {
+    return this.service.enviarAdjuntoEmpresa(user.empresaId, user.id, 'audio', archivo);
+  }
 
   @Get('sistema/conversaciones')
   @Roles('ADMIN_SISTEMA')
@@ -81,6 +103,29 @@ export class SoporteController {
       user.id,
       dto.contenido,
     );
+  }
+
+  @Post('sistema/conversaciones/:id/imagen')
+  @Roles('ADMIN_SISTEMA')
+  @UseInterceptors(ADJUNTO)
+  enviarImagenSistema(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() archivo: Express.Multer.File,
+    @Body() body: { texto?: string },
+  ) {
+    return this.service.enviarAdjuntoSistema(id, user.sistemaNegocio ?? null, user.id, 'imagen', archivo, body?.texto);
+  }
+
+  @Post('sistema/conversaciones/:id/audio')
+  @Roles('ADMIN_SISTEMA')
+  @UseInterceptors(ADJUNTO)
+  enviarAudioSistema(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() archivo: Express.Multer.File,
+  ) {
+    return this.service.enviarAdjuntoSistema(id, user.sistemaNegocio ?? null, user.id, 'audio', archivo);
   }
 
   @Patch('sistema/conversaciones/:id/cerrar')

@@ -5195,6 +5195,10 @@ model SoporteMensaje {
   rol            RolSoporteMensaje
   autorNombre    String?
   contenido      String
+  // Foto o nota de voz del mensaje (S3). `contenido` lleva "[Imagen]" o
+  // "[Nota de voz]" para la lista de la bandeja y para el asistente, que lee texto.
+  imagenUrl      String?
+  audioUrl       String?
   creadoEn       DateTime            @default(now())
 
   @@index([conversacionId])
