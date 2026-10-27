@@ -10,7 +10,14 @@ import { NotificacionesService } from '../notificaciones/notificaciones.service'
 import { NOMBRE_DEL_BOT, SoporteBotService } from './soporte-bot.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { empresaKrezkaId } from '../leads/reporte-diario';
-import { debeAvisar, telefonosDeAviso, textoDeAviso } from './soporte-aviso';
+import {
+  AUTOR_AUTOMATICO,
+  debeAvisar,
+  enHorarioDeSoporte,
+  telefonosDeAviso,
+  textoDeAviso,
+  textoFueraDeHorario,
+} from './soporte-aviso';
 import { S3Service } from '../s3/s3.service';
 import { aOggOpus, tieneAudio } from '../leads/nota-de-voz';
 import sharp from 'sharp';
@@ -20,13 +27,35 @@ export interface ArchivoSoporte {
   buffer: Buffer;
   mimetype: string;
   size: number;
+  /** Nombre original (multer lo trae como `originalname`). */
+  originalname?: string;
 }
 
 /** Lo que acompaña al texto de un mensaje: una foto o una nota de voz. */
 interface Adjunto {
   imagenUrl?: string;
   audioUrl?: string;
+  archivoUrl?: string;
+  archivoNombre?: string;
 }
+
+export type TipoAdjunto = 'imagen' | 'audio' | 'archivo';
+
+/**
+ * Documentos que se aceptan: lo que un empresario manda cuando algo le sale
+ * mal (el PDF o el XML del comprobante, el Excel del reporte). Se valida por
+ * extensión porque el navegador manda tipos MIME distintos para el mismo archivo.
+ */
+const EXTENSIONES_ARCHIVO = /\.(pdf|xlsx?|xml|csv|docx?|txt|zip)$/i;
+const LIMITE_ARCHIVO = 10 * 1024 * 1024;
+
+/** Nombre seguro para la ruta en S3, conservando la extensión. */
+const nombreSeguro = (nombre: string) =>
+  nombre
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\w.-]+/g, '-')
+    .slice(-80);
 
 const LIMITE_IMAGEN = 10 * 1024 * 1024;
 const LIMITE_AUDIO = 16 * 1024 * 1024;
@@ -72,16 +101,34 @@ export class SoporteService {
    */
   private async subirAdjunto(
     empresaId: number,
-    tipo: 'imagen' | 'audio',
+    tipo: TipoAdjunto,
     archivo: ArchivoSoporte | undefined,
     pie?: string,
   ): Promise<{ adjunto: Adjunto; contenido: string }> {
     if (!this.s3) throw new BadRequestException('El almacenamiento no está disponible.');
     if (!archivo?.buffer?.length) {
-      throw new BadRequestException(tipo === 'imagen' ? 'Falta la imagen.' : 'Falta el audio.');
+      throw new BadRequestException(
+        tipo === 'imagen' ? 'Falta la imagen.' : tipo === 'audio' ? 'Falta el audio.' : 'Falta el archivo.',
+      );
     }
     const base = `soporte/empresa-${empresaId}/${Date.now()}`;
     const texto = (pie ?? '').trim().slice(0, 1000);
+    if (tipo === 'archivo') {
+      const nombre = (archivo.originalname || 'archivo').trim().slice(0, 150);
+      if (!EXTENSIONES_ARCHIVO.test(nombre)) {
+        throw new BadRequestException('Ese tipo de archivo no se puede enviar. Usa PDF, Excel, XML, CSV, Word, TXT o ZIP.');
+      }
+      if (archivo.size > LIMITE_ARCHIVO) throw new BadRequestException('El archivo pesa más de 10 MB.');
+      const url = await this.s3.uploadPDF(
+        archivo.buffer,
+        `${base}-${nombreSeguro(nombre)}`,
+        archivo.mimetype || 'application/octet-stream',
+      );
+      return {
+        adjunto: { archivoUrl: url, archivoNombre: nombre },
+        contenido: texto ? `[Archivo] ${nombre} · ${texto}` : `[Archivo] ${nombre}`,
+      };
+    }
     if (tipo === 'imagen') {
       if (!/^image\//.test(archivo.mimetype)) throw new BadRequestException('El archivo tiene que ser una imagen.');
       if (archivo.size > LIMITE_IMAGEN) throw new BadRequestException('La imagen pesa más de 10 MB.');
@@ -117,7 +164,7 @@ export class SoporteService {
   async enviarAdjuntoEmpresa(
     empresaId: number,
     usuarioId: number,
-    tipo: 'imagen' | 'audio',
+    tipo: TipoAdjunto,
     archivo: ArchivoSoporte | undefined,
     pie?: string,
   ) {
@@ -129,7 +176,7 @@ export class SoporteService {
     id: number,
     sistemaNegocio: string | null,
     autorId: number,
-    tipo: 'imagen' | 'audio',
+    tipo: TipoAdjunto,
     archivo: ArchivoSoporte | undefined,
     pie?: string,
   ) {
@@ -177,18 +224,105 @@ export class SoporteService {
 
   /** Historial del hilo de la empresa. Marca como leídos los mensajes de Krezka. */
   async listarMensajes(empresaId: number) {
-    const conversacion = await this.obtenerOCrearConversacion(empresaId);
-    if (conversacion.noLeidosEmpresa > 0) {
-      await this.prisma.soporteConversacion.update({
-        where: { id: conversacion.id },
-        data: { noLeidosEmpresa: 0 },
-      });
-    }
+    const conversacion = await this.marcarLeidoEmpresa(empresaId);
     const mensajes = await this.prisma.soporteMensaje.findMany({
       where: { conversacionId: conversacion.id },
       orderBy: { creadoEn: 'asc' },
     });
-    return { estado: conversacion.estado, mensajes };
+    return {
+      estado: conversacion.estado,
+      mensajes,
+      // Hasta cuándo leyó Krezka: los mensajes propios anteriores van con check azul.
+      leidoPorSistemaEn: conversacion.leidoPorSistemaEn,
+    };
+  }
+
+  /**
+   * El empresario vio el hilo (abrió el chat o le llegó un mensaje con el chat
+   * abierto). Se guarda cuándo y se le avisa en vivo a Krezka, para que sus
+   * mensajes pasen a doble check azul.
+   */
+  async marcarLeidoEmpresa(empresaId: number) {
+    const conversacion = await this.obtenerOCrearConversacion(empresaId);
+    const en = new Date();
+    await this.prisma.soporteConversacion.update({
+      where: { id: conversacion.id },
+      data: { noLeidosEmpresa: 0, leidoPorEmpresaEn: en },
+    });
+    await this.avisarLectura('EMPRESA', conversacion.id, empresaId, en).catch(() => undefined);
+    return { ...conversacion, noLeidosEmpresa: 0, leidoPorEmpresaEn: en };
+  }
+
+  /** Lo mismo del lado de Krezka. */
+  async marcarLeidoSistema(id: number, sistemaNegocio: string | null) {
+    const conversacion = await this.obtenerConversacionEscopeada(id, sistemaNegocio);
+    const en = new Date();
+    await this.prisma.soporteConversacion.update({
+      where: { id },
+      data: { noLeidosSistema: 0, leidoPorSistemaEn: en },
+    });
+    await this.avisarLectura('SISTEMA', id, conversacion.empresaId, en).catch(() => undefined);
+    return { ...conversacion, noLeidosSistema: 0, leidoPorSistemaEn: en };
+  }
+
+  /** Evento en vivo 'soporte-leido' para el OTRO lado de la conversación. */
+  private async avisarLectura(lado: 'EMPRESA' | 'SISTEMA', conversacionId: number, empresaId: number, en: Date) {
+    const destinos =
+      lado === 'EMPRESA'
+        ? await this.adminsDelSistemaDe(empresaId)
+        : (
+            await this.prisma.usuario.findMany({
+              where: { empresaId, rol: { in: ['ADMIN_EMPRESA', 'USUARIO_EMPRESA'] }, estado: 'ACTIVO' },
+              select: { id: true },
+            })
+          ).map((u) => u.id);
+    if (!destinos.length) return;
+    this.notificaciones.emitirEventoAUsuarios(destinos, 'soporte-leido', {
+      conversacionId,
+      lado,
+      en: en.toISOString(),
+    });
+  }
+
+  private async adminsDelSistemaDe(empresaId: number): Promise<number[]> {
+    const empresa = await this.prisma.empresa.findUnique({ where: { id: empresaId }, select: { brand: true } });
+    const admins = await this.prisma.usuario.findMany({
+      where: {
+        rol: 'ADMIN_SISTEMA',
+        OR: [{ sistemaNegocio: null }, { sistemaNegocio: empresa?.brand?.toUpperCase() }],
+      },
+      select: { id: true },
+    });
+    return admins.map((a) => a.id);
+  }
+
+  /**
+   * Fuera de horario, el empresario recibe en el chat cuándo le contestan.
+   * Una sola vez cada 12 horas: si manda cinco mensajes seguidos, no recibe
+   * cinco respuestas automáticas.
+   */
+  private async responderFueraDeHorario(conversacionId: number, empresaId: number) {
+    if (enHorarioDeSoporte()) return;
+    const reciente = await this.prisma.soporteMensaje.findFirst({
+      where: {
+        conversacionId,
+        autorNombre: AUTOR_AUTOMATICO,
+        creadoEn: { gte: new Date(Date.now() - 12 * 60 * 60 * 1000) },
+      },
+      select: { id: true },
+    });
+    if (reciente) return;
+    const contenido = textoFueraDeHorario();
+    const [mensaje] = await this.prisma.$transaction([
+      this.prisma.soporteMensaje.create({
+        data: { conversacionId, rol: 'SISTEMA', autorNombre: AUTOR_AUTOMATICO, contenido },
+      }),
+      this.prisma.soporteConversacion.update({
+        where: { id: conversacionId },
+        data: { noLeidosEmpresa: { increment: 1 } },
+      }),
+    ]);
+    await this.notificarEmpresa(empresaId, conversacionId, mensaje.id, AUTOR_AUTOMATICO, contenido);
   }
 
   async enviarMensajeEmpresa(
@@ -247,8 +381,12 @@ export class SoporteService {
     // El asistente contesta si le toca. Va al final y sin dejar subir el error
     // por el mismo motivo que el aviso: el mensaje del empresario ya está
     // guardado, y que la IA falle no puede hacerle ver un fallo y reintentar.
+    await this.responderFueraDeHorario(actualizada.id, empresaId).catch((error) =>
+      this.logger.warn(`[soporte] no se pudo mandar la respuesta fuera de horario a ${empresaId}: ${error?.message}`),
+    );
+
     // Una foto o una voz no las lee: que las vea una persona.
-    if (!adjunto.imagenUrl && !adjunto.audioUrl) {
+    if (!adjunto.imagenUrl && !adjunto.audioUrl && !adjunto.archivoUrl) {
       await this.responderConAsistente(actualizada.id, empresaId, texto).catch(
         (error) =>
           this.logger.warn(
@@ -427,23 +565,68 @@ export class SoporteService {
   }
 
   async obtenerConversacionSistema(id: number, sistemaNegocio: string | null) {
-    const conversacion = await this.obtenerConversacionEscopeada(id, sistemaNegocio);
-    if (conversacion.noLeidosSistema > 0) {
-      await this.prisma.soporteConversacion.update({
-        where: { id },
-        data: { noLeidosSistema: 0 },
-      });
-    }
-    const mensajes = await this.prisma.soporteMensaje.findMany({
-      where: { conversacionId: id },
-      orderBy: { creadoEn: 'asc' },
-    });
+    const conversacion = await this.marcarLeidoSistema(id, sistemaNegocio);
+    const [mensajes, ficha] = await Promise.all([
+      this.prisma.soporteMensaje.findMany({
+        where: { conversacionId: id },
+        orderBy: { creadoEn: 'asc' },
+      }),
+      this.fichaEmpresa(conversacion.empresaId, id),
+    ]);
     return {
       id: conversacion.id,
       empresaId: conversacion.empresaId,
       empresaNombre: conversacion.empresa.nombreComercial || conversacion.empresa.razonSocial,
       estado: conversacion.estado,
+      // Hasta cuándo leyó el empresario: los mensajes de Krezka anteriores van con check azul.
+      leidoPorEmpresaEn: conversacion.leidoPorEmpresaEn,
+      ficha,
       mensajes,
+    };
+  }
+
+  /**
+   * Lo que el equipo necesita ver para ayudar sin ir a buscarlo a otra
+   * pantalla: quién es la empresa, su plan, hasta cuándo lo tiene y a quién
+   * llamar.
+   */
+  private async fichaEmpresa(empresaId: number, conversacionId: number) {
+    const [empresa, admins, autores] = await Promise.all([
+      this.prisma.empresa.findUnique({
+        where: { id: empresaId },
+        select: {
+          ruc: true,
+          razonSocial: true,
+          nombreComercial: true,
+          estado: true,
+          fechaExpiracion: true,
+          plan: { select: { nombre: true } },
+          rubro: { select: { nombre: true } },
+        },
+      }),
+      this.prisma.usuario.findMany({
+        where: { empresaId, rol: 'ADMIN_EMPRESA', estado: 'ACTIVO' },
+        select: { nombre: true, email: true, celular: true },
+        take: 3,
+      }),
+      this.prisma.soporteMensaje.findMany({
+        where: { conversacionId, rol: 'EMPRESA', autorNombre: { not: null } },
+        select: { autorNombre: true },
+        distinct: ['autorNombre'],
+        take: 5,
+      }),
+    ]);
+    if (!empresa) return null;
+    return {
+      ruc: empresa.ruc,
+      razonSocial: empresa.razonSocial,
+      nombreComercial: empresa.nombreComercial,
+      estado: empresa.estado,
+      plan: empresa.plan?.nombre ?? null,
+      rubro: empresa.rubro?.nombre ?? null,
+      vence: empresa.fechaExpiracion,
+      administradores: admins,
+      escribieron: autores.map((a) => a.autorNombre!),
     };
   }
 

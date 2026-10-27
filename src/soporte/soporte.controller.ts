@@ -61,6 +61,22 @@ export class SoporteController {
     return this.service.enviarAdjuntoEmpresa(user.empresaId, user.id, 'imagen', archivo, body?.texto);
   }
 
+  /** Documento al soporte: PDF, Excel, XML… (multipart `archivo` + `texto` opcional). */
+  @Post('mensajes/archivo')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  @UseInterceptors(ADJUNTO)
+  enviarArchivo(@User() user: any, @UploadedFile() archivo: Express.Multer.File, @Body() body: { texto?: string }) {
+    return this.service.enviarAdjuntoEmpresa(user.empresaId, user.id, 'archivo', archivo, body?.texto);
+  }
+
+  /** El empresario tiene el chat a la vista: sus mensajes de Krezka quedan leídos. */
+  @Post('leido')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async marcarLeido(@User() user: any) {
+    const c = await this.service.marcarLeidoEmpresa(user.empresaId);
+    return { leidoPorEmpresaEn: c.leidoPorEmpresaEn };
+  }
+
   /** Nota de voz al soporte (multipart `archivo`). */
   @Post('mensajes/audio')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
@@ -126,6 +142,25 @@ export class SoporteController {
     @UploadedFile() archivo: Express.Multer.File,
   ) {
     return this.service.enviarAdjuntoSistema(id, user.sistemaNegocio ?? null, user.id, 'audio', archivo);
+  }
+
+  @Post('sistema/conversaciones/:id/archivo')
+  @Roles('ADMIN_SISTEMA')
+  @UseInterceptors(ADJUNTO)
+  enviarArchivoSistema(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() archivo: Express.Multer.File,
+    @Body() body: { texto?: string },
+  ) {
+    return this.service.enviarAdjuntoSistema(id, user.sistemaNegocio ?? null, user.id, 'archivo', archivo, body?.texto);
+  }
+
+  @Patch('sistema/conversaciones/:id/leido')
+  @Roles('ADMIN_SISTEMA')
+  async marcarLeidoSistema(@User() user: any, @Param('id', ParseIntPipe) id: number) {
+    const c = await this.service.marcarLeidoSistema(id, user.sistemaNegocio ?? null);
+    return { leidoPorSistemaEn: c.leidoPorSistemaEn };
   }
 
   @Patch('sistema/conversaciones/:id/cerrar')

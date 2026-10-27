@@ -5181,6 +5181,10 @@ model SoporteConversacion {
   asignadoANombre String?
   noLeidosEmpresa Int                       @default(0) // mensajes SISTEMA que la empresa no vio
   noLeidosSistema Int                       @default(0) // mensajes EMPRESA que Krezka no vio
+  // Hasta cuándo leyó cada lado: un mensaje del otro con fecha anterior ya
+  // se vio (el doble check azul). Uno por conversación alcanza para un hilo.
+  leidoPorEmpresaEn DateTime?
+  leidoPorSistemaEn DateTime?
   mensajes        SoporteMensaje[]
   creadoEn        DateTime                  @default(now())
   actualizadoEn   DateTime                  @updatedAt
@@ -5199,6 +5203,9 @@ model SoporteMensaje {
   // "[Nota de voz]" para la lista de la bandeja y para el asistente, que lee texto.
   imagenUrl      String?
   audioUrl       String?
+  // Documento (PDF, Excel, XML…) con su nombre original para mostrarlo.
+  archivoUrl     String?
+  archivoNombre  String?
   creadoEn       DateTime            @default(now())
 
   @@index([conversacionId])

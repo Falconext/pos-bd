@@ -34,7 +34,7 @@ function armar() {
   };
   const notificaciones: any = { emitirEventoAUsuarios: jest.fn((_u: any, _e: any, p: any) => eventos.push(p)) };
   const bot = { responder: jest.fn(async () => null) };
-  const s3 = { uploadPDF: jest.fn(async (_b: Buffer, key: string) => `https://s3/${key}`) };
+  const s3 = { uploadPDF: jest.fn(async (_b: Buffer, key: string, _tipo?: string) => `https://s3/${key}`) };
   const servicio = new SoporteService(prisma, notificaciones, bot as any, undefined, s3 as any);
   return { servicio, creados, eventos, bot, s3 };
 }
