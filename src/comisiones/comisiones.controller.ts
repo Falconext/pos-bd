@@ -110,6 +110,31 @@ export class ComisionesController {
   }
 
   /**
+   * PATCH /comisiones/revertir/:vendedorId?mes=6&anio=2026
+   * Deshace la liquidación del vendedor en el período (PAGADO → PENDIENTE).
+   */
+  @Patch('revertir/:vendedorId')
+  @Roles('ADMIN_EMPRESA', 'SUPERADMIN')
+  async revertirPagadas(
+    @Req() req: any,
+    @Param('vendedorId', ParseIntPipe) vendedorId: number,
+    @Query('mes') mes?: string,
+    @Query('anio') anio?: string,
+    @Query('fechaInicio') fechaInicio?: string,
+    @Query('fechaFin') fechaFin?: string,
+  ) {
+    const empresaId = req.user.empresaId;
+    return this.comisionesService.revertirComisionesPagadas(
+      empresaId,
+      vendedorId,
+      mes ? Number(mes) : undefined,
+      anio ? Number(anio) : undefined,
+      fechaInicio,
+      fechaFin,
+    );
+  }
+
+  /**
    * GET /comisiones/exportar?mes=6&anio=2026
    * Exportar lista plana para generar Excel en el frontend.
    */
