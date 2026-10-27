@@ -446,6 +446,37 @@ export class ComisionesService {
     };
   }
 
+  /**
+   * Deshace una liquidación: las comisiones PAGADAS del vendedor en el período
+   * que el dueño está viendo vuelven a PENDIENTE. Es el espejo exacto de
+   * `marcarComisionesPagadas` (mismo filtro), así que revierte un "Liquidar"
+   * apretado por error sin tocar otros vendedores ni otros períodos.
+   * Liquidar solo cambia el estado (no registra egresos), por eso basta con esto.
+   */
+  async revertirComisionesPagadas(
+    empresaId: number,
+    vendedorId: number,
+    mes?: number,
+    anio?: number,
+    fechaInicio?: string,
+    fechaFin?: string,
+  ) {
+    const result = await this.prisma.comisionVendedor.updateMany({
+      where: {
+        empresaId,
+        vendedorId,
+        ...this.wherePeriodo(mes, anio, fechaInicio, fechaFin),
+        estado: EstadoComision.PAGADO,
+      },
+      data: { estado: EstadoComision.PENDIENTE },
+    });
+
+    return {
+      actualizadas: result.count,
+      mensaje: `${result.count} comisiones regresaron a PENDIENTE`,
+    };
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // EXPORT: Datos para Excel (reporte por mes/año)
   // ─────────────────────────────────────────────────────────────────────────────
