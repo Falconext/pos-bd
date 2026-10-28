@@ -5,6 +5,7 @@ import { ComprasService } from './compras.service';
 import { ClienteService } from '../cliente/cliente.service';
 import { ProductoService } from '../producto/producto.service';
 import { CrearCompraDto } from './dto/crear-compra.dto';
+import { ESTADOS_QUE_LIBERAN_NUMERO } from './numero-ocupado';
 
 /**
  * Importación masiva de COMPRAS desde Excel.
@@ -528,10 +529,14 @@ export class ImportarComprasService {
     // Compras ya registradas (evitar duplicar serie-número).
     const comprasExistentes = await this.prisma.compra.findMany({
       where: { empresaId },
-      select: { serie: true, numero: true },
+      select: { serie: true, numero: true, estado: true },
     });
+    // Las anuladas siguen contando para numerar la serie IMP, pero no
+    // bloquean registrar de nuevo su serie-número.
     const clavesExistentes = new Set(
-      comprasExistentes.map((c) => `${c.serie}|${c.numero}`.toUpperCase()),
+      comprasExistentes
+        .filter((c) => !ESTADOS_QUE_LIBERAN_NUMERO.includes(c.estado))
+        .map((c) => `${c.serie}|${c.numero}`.toUpperCase()),
     );
     let siguienteImp =
       comprasExistentes
