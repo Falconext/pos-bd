@@ -78,7 +78,10 @@ function campoDestino(destino: string): { to: string } | { recipient: string } {
 @Injectable()
 export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
-  private readonly apiUrl = 'https://graph.facebook.com/v21.0';
+  // Sobrescribible para el QA local contra un Graph falso; en producción no se define.
+  private readonly apiUrl = (
+    process.env.WHATSAPP_GRAPH_URL || 'https://graph.facebook.com/v21.0'
+  ).replace(/\/$/, '');
 
   constructor(
     private readonly prisma: PrismaService,
@@ -1025,6 +1028,199 @@ export class WhatsAppService {
     return { creadas, existentes, errores };
   }
 
+  // ─── Plantillas propias de la empresa (envíos masivos) ──────────────────
+
+  /**
+   * WABA, token y número de la empresa, para operar sus plantillas.
+   * Mismo token que los envíos: el propio o el del usuario del sistema.
+   */
+  async credencialesWaba(empresaId: number): Promise<{
+    wabaId: string;
+    token: string;
+    phoneId: string | null;
+  }> {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: {
+        whatsappBusinessId: true,
+        whatsappApiToken: true,
+        whatsappPhoneNumberId: true,
+      },
+    });
+    if (!empresa?.whatsappBusinessId) {
+      throw new BadRequestException(
+        'Conecta tu WhatsApp (Configuración → Conectar mi WhatsApp) para crear plantillas.',
+      );
+    }
+    const token = empresa.whatsappApiToken || this.systemUserToken;
+    if (!token) {
+      throw new BadRequestException(
+        'No hay token para operar la cuenta de WhatsApp de esta empresa.',
+      );
+    }
+    return {
+      wabaId: empresa.whatsappBusinessId,
+      token,
+      phoneId: empresa.whatsappPhoneNumberId ?? null,
+    };
+  }
+
+  /** El motivo que da Meta, del campo que lo traiga. */
+  private motivoMeta(e: any): string {
+    const err = e?.response?.data?.error;
+    return (
+      err?.error_user_msg ||
+      err?.error_user_title ||
+      err?.message ||
+      e?.message ||
+      'Error de Meta'
+    );
+  }
+
+  /**
+   * Sube una imagen para la cabecera de una plantilla (Resumable Upload de
+   * Meta) y devuelve el "handle" que pide el alta de la plantilla como
+   * ejemplo. La URL pública no sirve para el alta: Meta exige el handle.
+   */
+  async subirEjemploDePlantilla(
+    empresaId: number,
+    archivo: Buffer,
+    mimeType: string,
+  ): Promise<string> {
+    const appId =
+      this.configService.get<string>('FB_APP_ID') ||
+      this.configService.get<string>('META_APP_ID') ||
+      '';
+    if (!appId) {
+      throw new BadRequestException(
+        'Falta FB_APP_ID para subir la imagen de la plantilla.',
+      );
+    }
+    const { token } = await this.credencialesWaba(empresaId);
+    try {
+      const sesion = await axios.post(`${this.apiUrl}/${appId}/uploads`, null, {
+        params: {
+          file_length: archivo.length,
+          file_type: mimeType,
+          access_token: token,
+        },
+        timeout: 20000,
+      });
+      const subida = await axios.post(
+        `${this.apiUrl}/${sesion.data.id}`,
+        archivo,
+        {
+          headers: {
+            Authorization: `OAuth ${token}`,
+            file_offset: '0',
+            'Content-Type': mimeType,
+          },
+          maxBodyLength: Infinity,
+          timeout: 60000,
+        },
+      );
+      const handle = subida.data?.h;
+      if (!handle) throw new Error('Meta no devolvió el handle de la imagen');
+      return handle;
+    } catch (e: any) {
+      throw new BadRequestException(
+        `No se pudo subir la imagen a Meta: ${this.motivoMeta(e)}`,
+      );
+    }
+  }
+
+  /** Da de alta una plantilla en la WABA de la empresa. */
+  async crearPlantillaPropia(
+    empresaId: number,
+    cuerpo: Record<string, unknown>,
+  ): Promise<{ id: string; status: string; category?: string }> {
+    const { wabaId, token } = await this.credencialesWaba(empresaId);
+    try {
+      const res = await axios.post(
+        `${this.apiUrl}/${wabaId}/message_templates`,
+        cuerpo,
+        { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 },
+      );
+      return res.data;
+    } catch (e: any) {
+      throw new BadRequestException(
+        `Meta rechazó la plantilla: ${this.motivoMeta(e)}`,
+      );
+    }
+  }
+
+  /** Estado de una plantilla en Meta (PENDING, APPROVED, REJECTED…), o null si no existe. */
+  async consultarPlantilla(
+    empresaId: number,
+    nombre: string,
+  ): Promise<{
+    id: string;
+    status: string;
+    category?: string;
+    rejected_reason?: string;
+  } | null> {
+    const { wabaId, token } = await this.credencialesWaba(empresaId);
+    try {
+      const res = await axios.get(`${this.apiUrl}/${wabaId}/message_templates`, {
+        params: { name: nombre, fields: 'id,name,status,category,rejected_reason' },
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 20000,
+      });
+      const fila = (res.data?.data ?? []).find((t: any) => t.name === nombre);
+      return fila ?? null;
+    } catch (e: any) {
+      throw new BadRequestException(
+        `No se pudo consultar la plantilla en Meta: ${this.motivoMeta(e)}`,
+      );
+    }
+  }
+
+  /** Borra una plantilla de la WABA. Si ya no existe en Meta, no es error. */
+  async borrarPlantillaPropia(empresaId: number, nombre: string) {
+    const { wabaId, token } = await this.credencialesWaba(empresaId);
+    try {
+      await axios.delete(`${this.apiUrl}/${wabaId}/message_templates`, {
+        params: { name: nombre },
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 20000,
+      });
+    } catch (e: any) {
+      const motivo = this.motivoMeta(e);
+      if (/does not exist|no existe|not found/i.test(motivo)) return;
+      throw new BadRequestException(
+        `No se pudo borrar la plantilla en Meta: ${motivo}`,
+      );
+    }
+  }
+
+  /**
+   * Cuántos clientes distintos por día deja escribir Meta a este número
+   * (nivel de mensajería: 250, 1K, 10K, 100K o ilimitado). null si no se sabe.
+   */
+  async nivelDeMensajeria(empresaId: number): Promise<number | null> {
+    try {
+      const { token, phoneId } = await this.credencialesWaba(empresaId);
+      if (!phoneId) return null;
+      const res = await axios.get(`${this.apiUrl}/${phoneId}`, {
+        params: { fields: 'messaging_limit_tier,quality_rating' },
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 15000,
+      });
+      const nivel = String(res.data?.messaging_limit_tier ?? '');
+      const tabla: Record<string, number> = {
+        TIER_50: 50,
+        TIER_250: 250,
+        TIER_1K: 1000,
+        TIER_10K: 10000,
+        TIER_100K: 100000,
+        TIER_UNLIMITED: 1_000_000,
+      };
+      return tabla[nivel] ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * Verifica si WhatsApp está habilitado
    */
@@ -1318,6 +1514,8 @@ export class WhatsAppService {
     idioma: string,
     parametros: string[],
     empresaId?: number,
+    /** Plantillas con imagen en la cabecera: la imagen va en cada envío. */
+    opciones: { imagenCabecera?: string } = {},
   ): Promise<{ success: boolean; mensajeId?: string; error?: string }> {
     const { token, phoneId } = empresaId
       ? await this.getCredentialsForEmpresa(empresaId)
@@ -1326,14 +1524,20 @@ export class WhatsAppService {
       return { success: false, error: 'WhatsApp no configurado' };
 
     const to = this.formatearNumero(numero);
-    const components = parametros.length
-      ? [
-          {
-            type: 'body',
-            parameters: parametros.map((texto) => ({ type: 'text', text: texto })),
-          },
-        ]
-      : undefined;
+    const lista: Record<string, unknown>[] = [];
+    if (opciones.imagenCabecera) {
+      lista.push({
+        type: 'header',
+        parameters: [{ type: 'image', image: { link: opciones.imagenCabecera } }],
+      });
+    }
+    if (parametros.length) {
+      lista.push({
+        type: 'body',
+        parameters: parametros.map((texto) => ({ type: 'text', text: texto })),
+      });
+    }
+    const components = lista.length ? lista : undefined;
 
     try {
       const res = await axios.post(

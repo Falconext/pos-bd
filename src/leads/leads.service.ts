@@ -269,6 +269,10 @@ export class LeadsService {
         // el vendedor sepa qué vio el cliente antes de escribir.
         conversacion: {
           select: {
+            etiquetas: {
+              orderBy: { creadoEn: 'asc' },
+              select: { etiqueta: { select: { id: true, nombre: true, color: true } } },
+            },
             anuncios: {
               orderBy: { creadoEn: 'desc' },
               take: 1,
@@ -301,6 +305,7 @@ export class LeadsService {
     return prospectos.map(({ conversacion, ...p }) => ({
       ...p,
       anuncio: conversacion?.anuncios[0] ?? null,
+      etiquetas: conversacion?.etiquetas.map((e) => e.etiqueta) ?? [],
       cotizacion:
         p.cotizacionId && codigoPorId.has(p.cotizacionId)
           ? { id: p.cotizacionId, codigo: codigoPorId.get(p.cotizacionId)! }
@@ -327,13 +332,31 @@ export class LeadsService {
   }
 
   /** Lista de conversaciones (chats) de la empresa. */
-  async listarConversaciones(empresaId: number) {
-    return this.prisma.leadConversacion.findMany({
-      where: { empresaId },
+  async listarConversaciones(
+    empresaId: number,
+    opts: { etiquetaId?: number } = {},
+  ) {
+    const convs = await this.prisma.leadConversacion.findMany({
+      where: {
+        empresaId,
+        ...(opts.etiquetaId
+          ? { etiquetas: { some: { etiquetaId: opts.etiquetaId } } }
+          : {}),
+      },
       orderBy: { actualizadoEn: 'desc' },
       take: 200,
-      include: { prospecto: { select: { puntaje: true, estado: true } } },
+      include: {
+        prospecto: { select: { puntaje: true, estado: true } },
+        etiquetas: {
+          orderBy: { creadoEn: 'asc' },
+          select: { etiqueta: { select: { id: true, nombre: true, color: true } } },
+        },
+      },
     });
+    return convs.map((c) => ({
+      ...c,
+      etiquetas: c.etiquetas.map((e) => e.etiqueta),
+    }));
   }
 
   /**

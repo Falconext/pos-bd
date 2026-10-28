@@ -100,6 +100,7 @@ export class MensajeriaService {
     idioma: string,
     parametros: string[],
     empresaId?: number,
+    opciones: { imagenCabecera?: string } = {},
   ): Promise<{ success: boolean; mensajeId?: string; error?: string }> {
     if (esDestinoInstagram(numero)) {
       return { success: false, error: 'Instagram no tiene plantillas: pasadas las 24 h solo se le puede escribir si el cliente vuelve a escribir.' };
@@ -107,7 +108,7 @@ export class MensajeriaService {
     if (esDestinoMessenger(numero)) {
       return { success: false, error: 'Messenger no tiene plantillas: pasadas las 24 h solo se le puede escribir si el cliente vuelve a escribir.' };
     }
-    return this.wa.enviarPlantilla(numero, plantilla, idioma, parametros, empresaId);
+    return this.wa.enviarPlantilla(numero, plantilla, idioma, parametros, empresaId, opciones);
   }
 
   /** Nombre y @usuario de un cliente de Instagram (vacío si no se puede). */

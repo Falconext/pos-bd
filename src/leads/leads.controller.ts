@@ -15,6 +15,12 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { LeadsService } from './leads.service';
+import { LeadsEtiquetasService } from './leads-etiquetas.service';
+import {
+  CrearEtiquetaDto,
+  EditarEtiquetaDto,
+  PonerEtiquetaDto,
+} from './dto/etiquetas.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { ModuleAccessGuard } from '../common/guards/module-access.guard';
 import { RequiresModule } from '../common/decorators/module.decorator';
@@ -25,7 +31,10 @@ import { EstadoLeadProspecto, TipoLeadDocumento } from '@prisma/client';
 @RequiresModule('leads')
 @Controller('leads')
 export class LeadsController {
-  constructor(private readonly service: LeadsService) {}
+  constructor(
+    private readonly service: LeadsService,
+    private readonly etiquetas: LeadsEtiquetasService,
+  ) {}
 
   @Get('config')
   obtenerConfig(@User() user: any) {
@@ -154,8 +163,58 @@ export class LeadsController {
   }
 
   @Get('conversaciones')
-  listarConversaciones(@User() user: any) {
-    return this.service.listarConversaciones(user.empresaId);
+  listarConversaciones(
+    @User() user: any,
+    @Query('etiquetaId') etiquetaId?: string,
+  ) {
+    return this.service.listarConversaciones(user.empresaId, {
+      etiquetaId: Number(etiquetaId) || undefined,
+    });
+  }
+
+  // ─── Etiquetas de contactos ───────────────────────────────────────────
+
+  @Get('etiquetas')
+  listarEtiquetas(@User() user: any) {
+    return this.etiquetas.listar(user.empresaId);
+  }
+
+  @Post('etiquetas')
+  crearEtiqueta(@User() user: any, @Body() dto: CrearEtiquetaDto) {
+    return this.etiquetas.crear(user.empresaId, dto);
+  }
+
+  @Patch('etiquetas/:id')
+  editarEtiqueta(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: EditarEtiquetaDto,
+  ) {
+    return this.etiquetas.editar(user.empresaId, id, dto);
+  }
+
+  @Delete('etiquetas/:id')
+  eliminarEtiqueta(@User() user: any, @Param('id', ParseIntPipe) id: number) {
+    return this.etiquetas.eliminar(user.empresaId, id);
+  }
+
+  /** Le pone una etiqueta al chat; devuelve las que quedó teniendo. */
+  @Post('conversaciones/:id/etiquetas')
+  ponerEtiqueta(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: PonerEtiquetaDto,
+  ) {
+    return this.etiquetas.poner(user.empresaId, id, dto, user.sub ?? user.id);
+  }
+
+  @Delete('conversaciones/:id/etiquetas/:etiquetaId')
+  quitarEtiqueta(
+    @User() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('etiquetaId', ParseIntPipe) etiquetaId: number,
+  ) {
+    return this.etiquetas.quitar(user.empresaId, id, etiquetaId);
   }
 
   /**

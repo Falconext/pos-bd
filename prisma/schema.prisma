@@ -607,6 +607,10 @@ model Empresa {
   leadConsultas           LeadConsulta[]
   leadDisparos            LeadDisparo[]
   leadDemos               LeadDemo[]
+  leadEtiquetas           LeadEtiqueta[]
+  leadSegmentos           LeadSegmento[]
+  leadPlantillas          LeadPlantilla[]
+  leadEnviosMasivos       LeadEnvioMasivo[]
   soporteConversacion     SoporteConversacion?
   reglasComision          ReglaComision[]
   cobros                  CobroEmpresa[]
@@ -4651,10 +4655,18 @@ model LeadDisparo {
   textoEnviado   String?
   enviadoEn      DateTime?
   intentos       Int               @default(0)
+  /// Envío masivo al que pertenece (solo tipo ENVIO_MASIVO).
+  envioMasivoId  Int?
+  /// Id del mensaje en WhatsApp (wamid): con él llegan entregado/leído.
+  wamid          String?           @unique
+  /// Lo que avisa Meta por webhook (statuses) después de aceptarlo.
+  entregadoEn    DateTime?
+  leidoEn        DateTime?
   creadoEn       DateTime          @default(now())
   actualizadoEn  DateTime          @updatedAt
 
   @@unique([empresaId, tipo, telefono, referencia])
+  @@index([envioMasivoId, estado])
   @@index([empresaId, estado, programadoPara])
   @@index([empresaId, telefono])
 }
@@ -4668,6 +4680,9 @@ enum TipoDisparoLead {
   REACTIVACION
   RECORDATORIO_ACORDADO
   SEGUIMIENTO_DEMO
+  /// Un destinatario de un envío masivo (LeadEnvioMasivo). Cuenta para el
+  /// tope de mensajes comerciales igual que la recompra o la reactivación.
+  ENVIO_MASIVO
 }
 
 enum EstadoDisparoLead {
@@ -4879,6 +4894,7 @@ model LeadConversacion {
   borrador            LeadPedidoBorrador?
   anuncios            LeadAnuncioOrigen[]
   visitaTienda        LeadVisitaTienda?
+  etiquetas           LeadConversacionEtiqueta[]
   creadoEn            DateTime               @default(now())
   actualizadoEn       DateTime               @updatedAt
 
@@ -4894,6 +4910,125 @@ model LeadConversacion {
 /// qué anuncio le traía ventas. Una fila por mensaje con etiqueta: el mismo
 /// cliente puede volver por otro anuncio otro día, y la venta se le cuenta al
 /// último anuncio por el que llegó antes de comprar.
+/// Etiqueta que el negocio le pone a sus contactos: "mayorista", "compró
+/// perfume", "pidió talla 38". Es la base de los envíos masivos: sin una forma
+/// de marcar a la gente, el único filtro posible es la temperatura del lead,
+/// que la IA reescribe sola y no dice nada de lo que el cliente compra.
+model LeadEtiqueta {
+  id             Int                        @id @default(autoincrement())
+  empresaId      Int
+  empresa        Empresa                    @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  nombre         String
+  /// Clave de la paleta del panel ("violeta", "verde"…), no un hex libre:
+  /// así los chips se leen igual en claro y en oscuro.
+  color          String                     @default("gris")
+  conversaciones LeadConversacionEtiqueta[]
+  creadoEn       DateTime                   @default(now())
+
+  @@unique([empresaId, nombre])
+  @@index([empresaId])
+}
+
+/// Qué etiqueta tiene cada chat. Va contra la conversación y no contra el
+/// prospecto porque hay una conversación por teléfono y siempre existe; el
+/// prospecto no (los números internos del negocio no lo generan).
+model LeadConversacionEtiqueta {
+  conversacionId Int
+  conversacion   LeadConversacion @relation(fields: [conversacionId], references: [id], onDelete: Cascade)
+  etiquetaId     Int
+  etiqueta       LeadEtiqueta     @relation(fields: [etiquetaId], references: [id], onDelete: Cascade)
+  /// Usuario que la puso, para saber de dónde salió una marca rara.
+  usuarioId      Int?
+  creadoEn       DateTime         @default(now())
+
+  @@id([conversacionId, etiquetaId])
+  @@index([etiquetaId])
+}
+
+/// Un segmento guardado: filtros con nombre ("Compraron perfume, 60 días").
+/// Se guardan los filtros y no la lista de teléfonos porque el segmento cambia
+/// solo: quien compra mañana entra mañana.
+model LeadSegmento {
+  id            Int      @id @default(autoincrement())
+  empresaId     Int
+  empresa       Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  nombre        String
+  filtrosJson   Json
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  @@index([empresaId])
+}
+
+/// Plantilla de WhatsApp escrita por la empresa para sus envíos masivos.
+/// Vive acá Y en la WABA del negocio: acá el texto con variables con nombre
+/// ({{nombre}}, {{dato1}}) y el estado de revisión; en Meta, la versión
+/// aprobada con {{1}}, {{2}}. Una plantilla aprobada no se edita: se duplica.
+model LeadPlantilla {
+  id                Int       @id @default(autoincrement())
+  empresaId         Int
+  empresa           Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  titulo            String
+  /// Nombre en la WABA (minúsculas y _), único por empresa.
+  nombreMeta        String
+  categoria         String    @default("MARKETING")
+  idioma            String    @default("es")
+  cabeceraTipo      String    @default("NINGUNA")
+  cabeceraTexto     String?
+  cabeceraImagenUrl String?
+  cuerpo            String
+  pie               String?
+  botonesJson       Json?
+  ejemplosJson      Json?
+  /// BORRADOR, PENDIENTE, APROBADA, RECHAZADA, PAUSADA o DESACTIVADA.
+  estado            String    @default("BORRADOR")
+  motivoRechazo     String?
+  metaId            String?
+  enviadaEn         DateTime?
+  revisadaEn        DateTime?
+  creadoEn          DateTime  @default(now())
+  actualizadoEn     DateTime  @updatedAt
+
+  @@unique([empresaId, nombreMeta])
+  @@index([empresaId, estado])
+}
+
+/// Un envío masivo: una plantilla a un segmento, en una fecha.
+///
+/// Cada destinatario es una fila de LeadDisparo (tipo ENVIO_MASIVO) y por eso
+/// hereda las reglas del motor de avisos: baja, tope de comerciales, horario
+/// y ventana de 24 h. Acá queda la foto de lo que se mandó (filtros y
+/// plantilla), para que el historial se entienda aunque después se edite el
+/// segmento o se borre la plantilla.
+model LeadEnvioMasivo {
+  id                 Int       @id @default(autoincrement())
+  empresaId          Int
+  empresa            Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  nombre             String
+  segmentoId         Int?
+  filtrosJson        Json
+  plantillaId        Int?
+  /// Copia de la plantilla al confirmar (título, nombre en Meta, textos).
+  plantillaJson      Json
+  /// Valores de {{dato1}} y {{dato2}} para este envío.
+  valoresJson        Json?
+  /// PROGRAMADO, ENVIANDO, TERMINADO o CANCELADO.
+  estado             String    @default("PROGRAMADO")
+  programadoPara     DateTime
+  /// Ritmo: cuántos mensajes por minuto, para cuidar la calidad del número.
+  porMinuto          Int       @default(30)
+  totalDestinatarios Int       @default(0)
+  nota               String?
+  creadoPorId        Int?
+  iniciadoEn         DateTime?
+  terminadoEn        DateTime?
+  creadoEn           DateTime  @default(now())
+  actualizadoEn      DateTime  @updatedAt
+
+  @@index([empresaId, creadoEn])
+  @@index([estado, programadoPara])
+}
+
 model LeadAnuncioOrigen {
   id             Int              @id @default(autoincrement())
   empresaId      Int

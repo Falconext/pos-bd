@@ -13,8 +13,13 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import * as crypto from 'crypto';
 import { JOB_INGRESAR_MENSAJE, LEADS_MESSAGES_QUEUE } from './leads.constants';
-import { mensajesDeInstagram, mensajesDeMessenger } from '../instagram/instagram-webhook';
+import {
+  mensajesDeInstagram,
+  mensajesDeMessenger,
+} from '../instagram/instagram-webhook';
 import { ecosDeCambio, JOB_ECO_VENDEDOR } from './eco-vendedor';
+import { LeadsPlantillasService } from './leads-plantillas.service';
+import { LeadsEnviosService } from './leads-envios.service';
 
 /**
  * Webhook público de WhatsApp Cloud API para el módulo de leads.
@@ -28,6 +33,8 @@ export class LeadsWebhookController {
 
   constructor(
     @InjectQueue(LEADS_MESSAGES_QUEUE) private readonly queue: Queue,
+    private readonly plantillas: LeadsPlantillasService,
+    private readonly envios: LeadsEnviosService,
   ) {}
 
   // Verificación del webhook (Meta hace GET con hub.challenge).
@@ -88,7 +95,8 @@ export class LeadsWebhookController {
     // Los mensajes de Instagram (login de Instagram) los firma Meta con la
     // clave de la app de Instagram, que es otra.
     const deInstagram = process.env.INSTAGRAM_APP_SECRET;
-    if (deInstagram && this.coincideFirma(rawBody, signature, deInstagram)) return true;
+    if (deInstagram && this.coincideFirma(rawBody, signature, deInstagram))
+      return true;
 
     const anterior = process.env.META_APP_SECRET_PREV;
     if (anterior && this.coincideFirma(rawBody, signature, anterior)) {
@@ -113,7 +121,10 @@ export class LeadsWebhookController {
     if (body.object === 'instagram' || body.object === 'page') {
       // Mismo trato que WhatsApp: se encola antes de contestar y, si la cola
       // falla, un 500 hace que Meta reentregue. `page` es Messenger.
-      const mensajes = body.object === 'instagram' ? mensajesDeInstagram(body) : mensajesDeMessenger(body);
+      const mensajes =
+        body.object === 'instagram'
+          ? mensajesDeInstagram(body)
+          : mensajesDeMessenger(body);
       try {
         for (const m of mensajes) {
           await this.queue.add(JOB_INGRESAR_MENSAJE, m, {
@@ -126,7 +137,9 @@ export class LeadsWebhookController {
           });
         }
       } catch (e: any) {
-        this.logger.error(`Webhook leads (${body.object}): error encolando: ${e?.message}`);
+        this.logger.error(
+          `Webhook leads (${body.object}): error encolando: ${e?.message}`,
+        );
         return res.status(500).send('retry');
       }
       return res.status(200).send('EVENT_RECEIVED');
@@ -154,6 +167,30 @@ export class LeadsWebhookController {
             });
           }
           const value = change.value ?? {};
+          // Meta aprobó o rechazó una plantilla. No se encola: es una
+          // actualización chica, y si falla la consulta periódica la recoge.
+          if (change.field === 'message_template_status_update') {
+            await this.plantillas
+              .aplicarWebhook(String(entry.id), value)
+              .catch((e) =>
+                this.logger.warn(
+                  `Webhook leads: estado de plantilla no aplicado: ${e?.message}`,
+                ),
+              );
+            continue;
+          }
+          // Entregado / leído / falló de los mensajes que mandó el negocio.
+          // Tampoco se encola: es un update por id y, si falla, se pierde
+          // solo una métrica, no un mensaje.
+          if (Array.isArray(value.statuses) && value.statuses.length) {
+            await this.envios
+              .registrarEstados(value.statuses)
+              .catch((e) =>
+                this.logger.warn(
+                  `Webhook leads: estados no aplicados: ${e?.message}`,
+                ),
+              );
+          }
           const phoneNumberId = value.metadata?.phone_number_id;
           const contactos: any[] = value.contacts ?? [];
           for (const msg of value.messages ?? []) {
@@ -236,12 +273,28 @@ export class LeadsWebhookController {
 function textoDeMensaje(msg: {
   type?: string;
   text?: { body?: string };
+  button?: { text?: string; payload?: string };
+  interactive?: {
+    button_reply?: { title?: string };
+    list_reply?: { title?: string };
+  };
   image?: { id?: string; caption?: string };
   document?: { id?: string; caption?: string; filename?: string };
 }): string | null {
   switch (msg.type) {
     case 'text':
       return msg.text?.body ?? '';
+    // El cliente tocó un botón de respuesta rápida de una plantilla
+    // ("Lo quiero", "Ver catálogo"). Antes se descartaba: justo la respuesta
+    // de quien más interés mostró en un envío masivo.
+    case 'button':
+      return msg.button?.text ?? msg.button?.payload ?? '';
+    case 'interactive':
+      return (
+        msg.interactive?.button_reply?.title ??
+        msg.interactive?.list_reply?.title ??
+        ''
+      );
     case 'audio':
       return '';
     case 'image':
