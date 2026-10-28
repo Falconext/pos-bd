@@ -1381,6 +1381,28 @@ export class ProductoController {
     return actualizado;
   }
 
+  /**
+   * PATCH /productos/:id/marca { marcaId: number | null }
+   * Cambio rápido de marca desde la tabla de inventario, igual que la
+   * categoría. null = "Sin marca".
+   */
+  @Patch(':id/marca')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async cambiarMarca(
+    @Param('id', ParseIntPipe) id: number,
+    @User() user: any,
+    @Body() body: { marcaId: number | null },
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const actualizado = await this.service.cambiarMarca(
+      id,
+      user.empresaId,
+      body?.marcaId == null || body.marcaId === 0 ? null : Number(body.marcaId),
+    );
+    res.locals.message = 'Marca actualizada correctamente';
+    return actualizado;
+  }
+
   @Patch(':id/estado')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async cambiarEstado(
