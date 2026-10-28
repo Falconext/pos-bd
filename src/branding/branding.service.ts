@@ -222,7 +222,9 @@ export class BrandingService {
         whatsappCobranza: '51986114148',
         logo: '/assets/krezka/krezka.png',
         logoWhite: '/assets/krezka/krezkawhite.png',
-        favicon: '/favicon.ico',
+        // El front no publica /favicon.ico (la ruta devuelve el index.html):
+        // el ícono del sidebar y de la pestaña salían rotos en producción.
+        favicon: '/assets/krezka/krezkalogo.png',
         primaryColor: '#00D0D4',
         secondaryColor: '#00A0A4',
         socials: { facebook: '#', instagram: '#' },
@@ -243,7 +245,7 @@ export class BrandingService {
       whatsappCobranza: '51932332556',
       logo: '/assets/fnlogo.png',
       logoWhite: '/assets/logofalconwhite.png',
-      favicon: '/favicon.ico',
+      favicon: '/assets/logofalconext.png',
       primaryColor: '#3E2BC7',
       secondaryColor: '#5A45D1',
       socials: {
