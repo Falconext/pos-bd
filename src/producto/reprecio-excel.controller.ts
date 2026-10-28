@@ -30,7 +30,10 @@ export class ReprecioExcelController {
   plantilla(@Query('tipo') tipo: string, @Res() res: Response) {
     const volumen = String(tipo).toUpperCase() === 'VOLUMEN';
     const buf = plantillaReprecio(volumen ? 'VOLUMEN' : 'PRECIO');
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
     res.setHeader(
       'Content-Disposition',
       `attachment; filename="${volumen ? 'Plantilla_Precios_Por_Volumen' : 'Plantilla_Precios'}.xlsx"`,

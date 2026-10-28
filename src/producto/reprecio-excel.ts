@@ -44,12 +44,15 @@ const normalizar = (v: unknown) =>
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '');
 
-const vacio = (v: unknown) => v === null || v === undefined || String(v).trim() === '';
+const vacio = (v: unknown) =>
+  v === null || v === undefined || String(v).trim() === '';
 
 /** "12,50" y "S/ 12.50" también valen: así lo escriben a mano. */
 export function aNumero(v: unknown): number | null {
   if (typeof v === 'number') return Number.isFinite(v) ? v : null;
-  const t = String(v ?? '').replace(/s\/|\s/gi, '').replace(',', '.');
+  const t = String(v ?? '')
+    .replace(/s\/|\s/gi, '')
+    .replace(',', '.');
   if (t === '' || !/^-?\d+(\.\d+)?$/.test(t)) return null;
   return Number(t);
 }
@@ -61,11 +64,15 @@ export function aNumero(v: unknown): number | null {
  * - "Hasta" puede quedar vacío solo en el último tramo ("en adelante").
  * - Los tramos van en orden y no se pisan.
  */
-export function validarTramos(tramos: { desde: unknown; hasta: unknown; precio: unknown }[]): {
+export function validarTramos(
+  tramos: { desde: unknown; hasta: unknown; precio: unknown }[],
+): {
   tramos: Tramo[];
   error?: string;
 } {
-  const llenos = tramos.filter((t) => !(vacio(t.desde) && vacio(t.hasta) && vacio(t.precio)));
+  const llenos = tramos.filter(
+    (t) => !(vacio(t.desde) && vacio(t.hasta) && vacio(t.precio)),
+  );
   const out: Tramo[] = [];
   for (let i = 0; i < llenos.length; i++) {
     const n = i + 1;
@@ -73,23 +80,41 @@ export function validarTramos(tramos: { desde: unknown; hasta: unknown; precio: 
     const hasta = vacio(llenos[i].hasta) ? null : aNumero(llenos[i].hasta);
     const precio = aNumero(llenos[i].precio);
     if (desde === null || !Number.isInteger(desde) || desde < 1) {
-      return { tramos: [], error: `Tramo ${n}: el rango inicial debe ser un número entero desde 1` };
+      return {
+        tramos: [],
+        error: `Tramo ${n}: el rango inicial debe ser un número entero desde 1`,
+      };
     }
-    if (!vacio(llenos[i].hasta) && (hasta === null || !Number.isInteger(hasta))) {
-      return { tramos: [], error: `Tramo ${n}: el rango final debe ser un número entero` };
+    if (
+      !vacio(llenos[i].hasta) &&
+      (hasta === null || !Number.isInteger(hasta))
+    ) {
+      return {
+        tramos: [],
+        error: `Tramo ${n}: el rango final debe ser un número entero`,
+      };
     }
     if (hasta !== null && hasta < desde) {
-      return { tramos: [], error: `Tramo ${n}: el rango final (${hasta}) es menor que el inicial (${desde})` };
+      return {
+        tramos: [],
+        error: `Tramo ${n}: el rango final (${hasta}) es menor que el inicial (${desde})`,
+      };
     }
     if (precio === null || precio <= 0) {
-      return { tramos: [], error: `Tramo ${n}: falta el precio o no es mayor que 0` };
+      return {
+        tramos: [],
+        error: `Tramo ${n}: falta el precio o no es mayor que 0`,
+      };
     }
     out.push({ desde, hasta, precio });
   }
   for (let i = 1; i < out.length; i++) {
     const prev = out[i - 1];
     if (prev.hasta === null) {
-      return { tramos: [], error: `Tramo ${i}: sin rango final solo puede ir el último tramo` };
+      return {
+        tramos: [],
+        error: `Tramo ${i}: sin rango final solo puede ir el último tramo`,
+      };
     }
     if (out[i].desde <= prev.hasta) {
       return {
@@ -124,15 +149,26 @@ export function leerExcelReprecio(buffer: Buffer): LecturaExcel {
   const wb = XLSX.read(buffer, { type: 'buffer' });
   const hoja = wb.Sheets[wb.SheetNames[0]];
   if (!hoja) throw new Error('El archivo no tiene hojas');
-  const filas = XLSX.utils.sheet_to_json<unknown[]>(hoja, { header: 1, defval: '', raw: true });
+  const filas = XLSX.utils.sheet_to_json<unknown[]>(hoja, {
+    header: 1,
+    defval: '',
+    raw: true,
+  });
   const cab = (filas[0] || []).map(normalizar);
-  const colCodigo = cab.findIndex((c) => c === 'codigo' || c === 'sku' || c === 'codigodebarras');
+  const colCodigo = cab.findIndex(
+    (c) => c === 'codigo' || c === 'sku' || c === 'codigodebarras',
+  );
   if (colCodigo < 0) {
     throw new Error('Falta la columna "Código" en la primera fila');
   }
 
   // Tramos: RangoInicialN / RangoFinalN / PrecioN.
-  const tramosCols: { n: number; desde: number; hasta: number; precio: number }[] = [];
+  const tramosCols: {
+    n: number;
+    desde: number;
+    hasta: number;
+    precio: number;
+  }[] = [];
   cab.forEach((c, i) => {
     const m = c.match(/^rangoinicial(\d+)$/);
     if (!m) return;
@@ -151,7 +187,10 @@ export function leerExcelReprecio(buffer: Buffer): LecturaExcel {
 
   if (tramosCols.length > 0) {
     const faltan = tramosCols.find((t) => t.precio < 0);
-    if (faltan) throw new Error(`Falta la columna "Precio${faltan.n}" para el tramo ${faltan.n}`);
+    if (faltan)
+      throw new Error(
+        `Falta la columna "Precio${faltan.n}" para el tramo ${faltan.n}`,
+      );
     return {
       tipo: 'VOLUMEN',
       filas: datos
@@ -175,9 +214,13 @@ export function leerExcelReprecio(buffer: Buffer): LecturaExcel {
     };
   }
 
-  const colPrecio = cab.findIndex((c) => c === 'precio' || c === 'precioventa' || c === 'precionuevo');
+  const colPrecio = cab.findIndex(
+    (c) => c === 'precio' || c === 'precioventa' || c === 'precionuevo',
+  );
   if (colPrecio < 0) {
-    throw new Error('Falta la columna "Precio" (o "RangoInicial1…" para precios por volumen)');
+    throw new Error(
+      'Falta la columna "Precio" (o "RangoInicial1…" para precios por volumen)',
+    );
   }
   return {
     tipo: 'PRECIO',
@@ -190,7 +233,9 @@ export function leerExcelReprecio(buffer: Buffer): LecturaExcel {
           fila,
           codigo: String(r[colCodigo] ?? '').trim(),
           precio,
-          ...(precio === null ? { precioInvalido: String(r[colPrecio] ?? '') } : {}),
+          ...(precio === null
+            ? { precioInvalido: String(r[colPrecio] ?? '') }
+            : {}),
         };
       }),
   };
@@ -201,7 +246,18 @@ export function plantillaReprecio(tipo: TipoReprecioExcel): Buffer {
   const filas =
     tipo === 'VOLUMEN'
       ? [
-          ['Código', 'RangoInicial1', 'RangoFinal1', 'Precio1', 'RangoInicial2', 'RangoFinal2', 'Precio2', 'RangoInicial3', 'RangoFinal3', 'Precio3'],
+          [
+            'Código',
+            'RangoInicial1',
+            'RangoFinal1',
+            'Precio1',
+            'RangoInicial2',
+            'RangoFinal2',
+            'Precio2',
+            'RangoInicial3',
+            'RangoFinal3',
+            'Precio3',
+          ],
           ['PROD-001', 1, 5, 10, 6, 11, 9, 12, '', 8],
           ['PROD-002', 1, 11, 25, 12, '', 22, '', '', ''],
         ]
@@ -210,12 +266,19 @@ export function plantillaReprecio(tipo: TipoReprecioExcel): Buffer {
           ['PROD-001', 12.5],
           ['PROD-002', 8.9],
         ];
-  return hojaABuffer(filas, tipo === 'VOLUMEN' ? 'Precios por volumen' : 'Precios');
+  return hojaABuffer(
+    filas,
+    tipo === 'VOLUMEN' ? 'Precios por volumen' : 'Precios',
+  );
 }
 
 export function hojaABuffer(filas: unknown[][], nombre: string): Buffer {
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(filas), nombre.slice(0, 31));
+  XLSX.utils.book_append_sheet(
+    wb,
+    XLSX.utils.aoa_to_sheet(filas),
+    nombre.slice(0, 31),
+  );
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
 }
 
@@ -225,16 +288,29 @@ export function hojaABuffer(filas: unknown[][], nombre: string): Buffer {
  */
 export function respaldoReprecio(
   tipo: TipoReprecioExcel,
-  productos: { codigo: string; precio: number; mayorista: { cantidadMinima: number; precio: number }[] }[],
+  productos: {
+    codigo: string;
+    precio: number;
+    mayorista: { cantidadMinima: number; precio: number }[];
+  }[],
 ): Buffer {
   if (tipo === 'PRECIO') {
-    return hojaABuffer([['Código', 'Precio'], ...productos.map((p) => [p.codigo, p.precio])], 'Respaldo precios');
+    return hojaABuffer(
+      [['Código', 'Precio'], ...productos.map((p) => [p.codigo, p.precio])],
+      'Respaldo precios',
+    );
   }
-  const maxTramos = Math.max(1, ...productos.map((p) => p.mayorista.length + 1));
+  const maxTramos = Math.max(
+    1,
+    ...productos.map((p) => p.mayorista.length + 1),
+  );
   const cab: string[] = ['Código'];
-  for (let n = 1; n <= maxTramos; n++) cab.push(`RangoInicial${n}`, `RangoFinal${n}`, `Precio${n}`);
+  for (let n = 1; n <= maxTramos; n++)
+    cab.push(`RangoInicial${n}`, `RangoFinal${n}`, `Precio${n}`);
   const filas = productos.map((p) => {
-    const escalones = [...p.mayorista].sort((a, b) => a.cantidadMinima - b.cantidadMinima);
+    const escalones = [...p.mayorista].sort(
+      (a, b) => a.cantidadMinima - b.cantidadMinima,
+    );
     const tramos: (string | number)[] = [];
     const desdes = [1, ...escalones.map((e) => e.cantidadMinima)];
     const precios = [p.precio, ...escalones.map((e) => e.precio)];

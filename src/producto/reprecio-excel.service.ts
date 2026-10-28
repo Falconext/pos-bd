@@ -32,15 +32,26 @@ const r2 = (n: number) => Math.round(n * 10000) / 10000;
 
 const mayoristaDe = (v: unknown): Mayorista =>
   (Array.isArray(v) ? v : [])
-    .map((x: any) => ({ cantidadMinima: num(x?.cantidadMinima), precio: num(x?.precio) }))
+    .map((x: any) => ({
+      cantidadMinima: num(x?.cantidadMinima),
+      precio: num(x?.precio),
+    }))
     .filter((x) => x.cantidadMinima > 0 && x.precio > 0)
     .sort((a, b) => a.cantidadMinima - b.cantidadMinima);
 
 const mismoMayorista = (a: Mayorista, b: Mayorista) =>
-  a.length === b.length && a.every((x, i) => x.cantidadMinima === b[i].cantidadMinima && r2(x.precio) === r2(b[i].precio));
+  a.length === b.length &&
+  a.every(
+    (x, i) =>
+      x.cantidadMinima === b[i].cantidadMinima &&
+      r2(x.precio) === r2(b[i].precio),
+  );
 
 /** Afectación IGV (Catálogo 07): 10-17 gravado. */
-const esGravado = (tipo: string | null | undefined) => String(tipo ?? '10').trim().startsWith('1');
+const esGravado = (tipo: string | null | undefined) =>
+  String(tipo ?? '10')
+    .trim()
+    .startsWith('1');
 
 /**
  * Reprecio del Kardex con Excel: previsualizar y aplicar comparten el mismo
@@ -79,12 +90,21 @@ export class ReprecioExcelService {
     const filas = await this.calcular(empresaId, lectura.tipo, lectura.filas);
     const cambian = filas.filter((f) => f.estado === 'CAMBIA' && f.productoId);
     if (cambian.length === 0) {
-      throw new BadRequestException('No hay precios para cambiar en el archivo');
+      throw new BadRequestException(
+        'No hay precios para cambiar en el archivo',
+      );
     }
 
     const productos = await this.prisma.producto.findMany({
       where: { empresaId, id: { in: cambian.map((f) => f.productoId!) } },
-      select: { id: true, codigo: true, precioUnitario: true, preciosMayorista: true, igvPorcentaje: true, tipoAfectacionIGV: true },
+      select: {
+        id: true,
+        codigo: true,
+        precioUnitario: true,
+        preciosMayorista: true,
+        igvPorcentaje: true,
+        tipoAfectacionIGV: true,
+      },
     });
     const porId = new Map(productos.map((p) => [p.id, p]));
 
@@ -93,7 +113,11 @@ export class ReprecioExcelService {
       lectura.tipo,
       cambian.map((f) => {
         const p = porId.get(f.productoId!)!;
-        return { codigo: p.codigo, precio: num(p.precioUnitario), mayorista: mayoristaDe(p.preciosMayorista) };
+        return {
+          codigo: p.codigo,
+          precio: num(p.precioUnitario),
+          mayorista: mayoristaDe(p.preciosMayorista),
+        };
       }),
     );
 
@@ -104,7 +128,9 @@ export class ReprecioExcelService {
         if (f.precioNuevo != null) {
           const igv = num(p.igvPorcentaje) || 18;
           data.precioUnitario = f.precioNuevo;
-          data.valorUnitario = esGravado(p.tipoAfectacionIGV) ? +(f.precioNuevo / (1 + igv / 100)).toFixed(6) : f.precioNuevo;
+          data.valorUnitario = esGravado(p.tipoAfectacionIGV)
+            ? +(f.precioNuevo / (1 + igv / 100)).toFixed(6)
+            : f.precioNuevo;
         }
         if (f.mayoristaNuevo != null) data.preciosMayorista = f.mayoristaNuevo;
         return this.prisma.producto.update({ where: { id: p.id }, data });
@@ -119,7 +145,11 @@ export class ReprecioExcelService {
     };
   }
 
-  private async calcular(empresaId: number, tipo: TipoReprecioExcel, filas: FilaExcel[]): Promise<FilaReprecioExcel[]> {
+  private async calcular(
+    empresaId: number,
+    tipo: TipoReprecioExcel,
+    filas: FilaExcel[],
+  ): Promise<FilaReprecioExcel[]> {
     const codigos = [...new Set(filas.map((f) => f.codigo).filter(Boolean))];
     const candidatos = codigos.length
       ? await this.prisma.producto.findMany({
@@ -138,12 +168,18 @@ export class ReprecioExcelService {
             descripcion: true,
             precioUnitario: true,
             preciosMayorista: true,
-            stocks: { where: { precioUnitarioOverride: { not: null } }, select: { sedeId: true } },
+            stocks: {
+              where: { precioUnitarioOverride: { not: null } },
+              select: { sedeId: true },
+            },
           },
         })
       : [];
     const porCodigo = new Map<string, typeof candidatos>();
-    const agregar = (k: string | null | undefined, p: (typeof candidatos)[number]) => {
+    const agregar = (
+      k: string | null | undefined,
+      p: (typeof candidatos)[number],
+    ) => {
       if (!k) return;
       const key = k.trim().toLowerCase();
       porCodigo.set(key, [...(porCodigo.get(key) || []), p]);
@@ -159,20 +195,36 @@ export class ReprecioExcelService {
 
     // Un código repetido en el archivo: manda la última fila.
     const ultimaFila = new Map<string, number>();
-    filas.forEach((f) => f.codigo && ultimaFila.set(f.codigo.toLowerCase(), f.fila));
+    filas.forEach(
+      (f) => f.codigo && ultimaFila.set(f.codigo.toLowerCase(), f.fila),
+    );
 
     return filas.map((f): FilaReprecioExcel => {
       const base = { fila: f.fila, codigo: f.codigo };
-      if (!f.codigo) return { ...base, estado: 'ERROR', mensaje: 'Falta el código' };
+      if (!f.codigo)
+        return { ...base, estado: 'ERROR', mensaje: 'Falta el código' };
       const key = f.codigo.toLowerCase();
       if (ultimaFila.get(key) !== f.fila) {
-        return { ...base, estado: 'ERROR', mensaje: `Código repetido: se usa la fila ${ultimaFila.get(key)}` };
+        return {
+          ...base,
+          estado: 'ERROR',
+          mensaje: `Código repetido: se usa la fila ${ultimaFila.get(key)}`,
+        };
       }
       const encontrados = porCodigo.get(key) ?? porBarras.get(key) ?? [];
       const unicos = [...new Map(encontrados.map((p) => [p.id, p])).values()];
-      if (unicos.length === 0) return { ...base, estado: 'ERROR', mensaje: 'No hay un producto con ese código' };
+      if (unicos.length === 0)
+        return {
+          ...base,
+          estado: 'ERROR',
+          mensaje: 'No hay un producto con ese código',
+        };
       if (unicos.length > 1) {
-        return { ...base, estado: 'ERROR', mensaje: `El código coincide con ${unicos.length} productos; usa el código propio de cada uno` };
+        return {
+          ...base,
+          estado: 'ERROR',
+          mensaje: `El código coincide con ${unicos.length} productos; usa el código propio de cada uno`,
+        };
       }
       const p = unicos[0];
       const precioActual = num(p.precioUnitario);
@@ -188,7 +240,13 @@ export class ReprecioExcelService {
 
       if (tipo === 'PRECIO') {
         if (f.precio == null || f.precio <= 0) {
-          return { ...comun, estado: 'ERROR', mensaje: f.precioInvalido ? `Precio no válido: "${f.precioInvalido}"` : 'Falta el precio o no es mayor que 0' };
+          return {
+            ...comun,
+            estado: 'ERROR',
+            mensaje: f.precioInvalido
+              ? `Precio no válido: "${f.precioInvalido}"`
+              : 'Falta el precio o no es mayor que 0',
+          };
         }
         const precioNuevo = r2(f.precio);
         return {
@@ -199,11 +257,18 @@ export class ReprecioExcelService {
         };
       }
 
-      if (f.errorTramos) return { ...comun, estado: 'ERROR', mensaje: f.errorTramos };
-      if (!f.tramos?.length) return { ...comun, estado: 'ERROR', mensaje: 'La fila no tiene rangos ni precios' };
+      if (f.errorTramos)
+        return { ...comun, estado: 'ERROR', mensaje: f.errorTramos };
+      if (!f.tramos?.length)
+        return {
+          ...comun,
+          estado: 'ERROR',
+          mensaje: 'La fila no tiene rangos ni precios',
+        };
       const { precioBase, mayorista } = tramosAPrecios(f.tramos);
       const precioNuevo = precioBase != null ? r2(precioBase) : null;
-      const cambiaBase = precioNuevo != null && precioNuevo !== r2(precioActual);
+      const cambiaBase =
+        precioNuevo != null && precioNuevo !== r2(precioActual);
       const cambiaMayorista = !mismoMayorista(mayorista, mayoristaActual);
       return {
         ...comun,
