@@ -35,6 +35,8 @@ const BORRADOR_RECOJO = {
 
 function armar(
   borradorInicial: Record<string, unknown> | null = BORRADOR_RECOJO,
+  // Lo último que escribió el cliente, del más nuevo al más viejo.
+  mensajesCliente: string[] = ['mañana paso a recogerlo'],
 ) {
   let borrador = borradorInicial ? { ...borradorInicial } : null;
   const avisos: any[] = [];
@@ -54,6 +56,11 @@ function armar(
         borrador = { ...(borrador ?? {}), ...data } as any;
         return Promise.resolve(borrador);
       }),
+    },
+    leadMensaje: {
+      findMany: jest
+        .fn()
+        .mockResolvedValue(mensajesCliente.map((contenido) => ({ contenido }))),
     },
     producto: {
       findMany: jest
@@ -85,8 +92,8 @@ function armar(
     .mockResolvedValue({ registrado: true, pedido: 'NV01-00000099', montoAPagar: 7 });
   return {
     registrar,
-    avisar: (cuando: string) =>
-      servicio.avisarVisitaTienda(EMPRESA, CONV, TELEFONO, cuando),
+    avisar: (cuando: string, nombre?: string) =>
+      servicio.avisarVisitaTienda(EMPRESA, CONV, TELEFONO, cuando, nombre),
     avisos,
     borradorActual: () => borrador,
   };
@@ -180,14 +187,27 @@ describe('visita a la tienda', () => {
     it('un pedido con envío no se avisa como visita', async () => {
       // Si el pedido es a domicilio o por agencia, lo que toca es
       // registrar_pedido: avisar una visita lo dejaría sin despachar.
-      const { avisar, avisos } = armar({
-        ...BORRADOR_RECOJO,
-        tipoZona: 'DOMICILIO',
-      });
+      const { avisar, avisos, borradorActual } = armar(
+        { ...BORRADOR_RECOJO, tipoZona: 'DOMICILIO', costoEnvio: 15 },
+        ['Av. Túpac Amaru 1234, mañana de 2 a 4'],
+      );
       const res = await avisar('mañana');
 
       expect(res.error).toMatch(/registrar_pedido/);
       expect(avisos).toHaveLength(0);
+      expect(borradorActual()?.tipoZona).toBe('DOMICILIO');
+    });
+
+    it('un pedido ya registrado con envío tampoco se pasa a recojo', async () => {
+      const { avisar, avisos, borradorActual } = armar(
+        { ...BORRADOR_RECOJO, tipoZona: 'DOMICILIO', costoEnvio: 15, comprobanteId: 501 },
+        ['el viernes voy'],
+      );
+      const res = await avisar('el viernes');
+
+      expect(res.error).toMatch(/registrar_pedido/);
+      expect(avisos).toHaveLength(0);
+      expect(borradorActual()?.tipoZona).toBe('DOMICILIO');
     });
 
     it('sin el nombre no se avisa: el negocio no sabría a quién espera', async () => {
@@ -205,5 +225,110 @@ describe('visita a la tienda', () => {
       expect(res.falta?.[0]).toMatch(/día y la hora/i);
       expect(avisos).toHaveLength(0);
     });
+  });
+});
+
+/**
+ * Hierba Sana, 28-10: Arturo cotizó con envío a Independencia (S/ 15) y
+ * después escribió "el viernes voy". El aviso fallaba ("esto es solo para
+ * recojo"), la visita quedaba sin pedido, nadie separó nada y la cotización
+ * seguía cobrando el envío.
+ */
+describe('cotizó con envío y después dice que va a la tienda', () => {
+  const COTIZADO_CON_ENVIO = {
+    ...BORRADOR_RECOJO,
+    tipoZona: 'DOMICILIO',
+    zona: 'Lima',
+    lugar: 'Independencia',
+    costoEnvio: 15,
+    comprobanteId: null,
+  };
+
+  it('el pedido pasa a recojo, sin el costo del envío', async () => {
+    const { avisar, borradorActual } = armar(COTIZADO_CON_ENVIO, ['2pm', 'El viernes voy']);
+    await avisar('el viernes a las 2 pm');
+
+    expect(borradorActual()).toMatchObject({
+      tipoZona: 'RECOJO',
+      zona: 'Recojo en tienda',
+      lugar: 'Recojo en tienda',
+    });
+    expect(Number(borradorActual()?.costoEnvio)).toBe(0);
+  });
+
+  it('avisa a la tienda y deja la nota del recojo', async () => {
+    const { avisar, avisos, registrar } = armar(COTIZADO_CON_ENVIO, ['El viernes voy']);
+    const res = await avisar('el viernes a las 2 pm');
+
+    expect(res.avisado).toBe(true);
+    expect(res.pedido).toBe('NV01-00000099');
+    expect(registrar).toHaveBeenCalled();
+    expect(avisos).toHaveLength(1);
+    expect(avisos[0].titulo).toMatch(/Pasa por la tienda/);
+  });
+
+  it('le dice al modelo que ya no se cobra el envío', async () => {
+    const { avisar } = armar(COTIZADO_CON_ENVIO, ['El viernes voy']);
+    const res = await avisar('el viernes a las 2 pm');
+
+    expect(res.cambio).toMatch(/S\/ 15\.00/);
+    expect(res.cambio).toMatch(/total sin envío/);
+  });
+
+  it('devuelve lo notificado para repetirlo por WhatsApp', async () => {
+    const { avisar } = armar(COTIZADO_CON_ENVIO, ['El viernes voy']);
+    const res = await avisar('el viernes a las 2 pm');
+
+    expect(res.notificacion?.titulo).toMatch(/Pasa por la tienda: Luis Gamarra/);
+    expect(res.notificacion?.mensaje).toMatch(/1x Mashua/);
+  });
+
+  it('sin el nombre, igual queda en recojo y pide el nombre', async () => {
+    const { avisar, avisos, borradorActual } = armar(
+      { ...COTIZADO_CON_ENVIO, nombre: null },
+      ['El viernes voy'],
+    );
+    const res = await avisar('el viernes a las 2 pm');
+
+    expect(res.falta).toEqual(['nombre completo']);
+    expect(res.cambio).toBeDefined();
+    expect(borradorActual()?.tipoZona).toBe('RECOJO');
+    expect(avisos).toHaveLength(0);
+  });
+});
+
+describe('el nombre llega en el mismo aviso', () => {
+  // QA 28-10: el cliente escribió su nombre y el modelo avisó la visita sin
+  // guardarlo antes: otra vez "falta nombre" y sin nota de venta.
+  it('si el cliente lo escribió, se guarda y se registra el pedido', async () => {
+    const { avisar, borradorActual, registrar } = armar(
+      { ...BORRADOR_RECOJO, nombre: null },
+      ['Arturo Franco Lozano', '2pm', 'El viernes voy'],
+    );
+    const res = await avisar('el viernes a las 2 pm', 'Arturo Franco Lozano');
+
+    expect(borradorActual()?.nombre).toBe('Arturo Franco Lozano');
+    expect(res.avisado).toBe(true);
+    expect(registrar).toHaveBeenCalled();
+  });
+
+  it('un nombre que el cliente nunca escribió no se guarda', async () => {
+    const { avisar, borradorActual } = armar(
+      { ...BORRADOR_RECOJO, nombre: null },
+      ['el viernes voy'],
+    );
+    const res = await avisar('el viernes', 'Juan Pérez');
+
+    expect(borradorActual()?.nombre).toBeNull();
+    expect(res.falta).toEqual(['nombre completo']);
+  });
+
+  it('solo el nombre de pila no alcanza', async () => {
+    const { avisar, borradorActual } = armar(
+      { ...BORRADOR_RECOJO, nombre: null },
+      ['Arturo', 'el viernes voy'],
+    );
+    await avisar('el viernes', 'Arturo');
+    expect(borradorActual()?.nombre).toBeNull();
   });
 });

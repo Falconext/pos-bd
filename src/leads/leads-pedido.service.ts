@@ -119,6 +119,29 @@ export interface ItemPedido {
  * aplica descuentos y no inventa tarifas. Le pasa los datos, recibe los
  * números ya calculados y los copia.
  */
+const normalizarNombre = (t: string) =>
+  t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+/** El cliente dice que él va: "el viernes voy", "paso a recogerlo", "¿dónde queda su local?". */
+const VA_A_LA_TIENDA =
+  /\b(voy|vamos|ir[eé]|iremos|paso|pasar[eé]|pasamos|me acerco|nos acercamos|recojo|recoger|recogerlo|recogerla|la tienda|el local|su local|tu local|en persona)\b/i;
+
+/** Lo que devuelve el aviso de visita a la tienda (avisar_visita_tienda). */
+export interface ResultadoAvisoVisita {
+  avisado?: boolean;
+  yaAvisado?: boolean;
+  pedido?: string;
+  montoAPagar?: number;
+  aviso?: string;
+  falta?: string[];
+  error?: string;
+  /**
+   * Lo que se le notificó al negocio, para repetirlo por WhatsApp. Solo si
+   * hubo aviso nuevo; no es para el modelo.
+   */
+  notificacion?: { titulo: string; mensaje: string };
+}
+
 @Injectable()
 export class LeadsPedidoService {
   private readonly logger = new Logger(LeadsPedidoService.name);
@@ -1786,27 +1809,85 @@ export class LeadsPedidoService {
     conversacionId: number,
     telefono: string,
     cuando: string,
-  ): Promise<{
-    avisado?: boolean;
-    yaAvisado?: boolean;
-    pedido?: string;
-    montoAPagar?: number;
-    aviso?: string;
-    falta?: string[];
-    error?: string;
-  }> {
+    nombre?: string,
+  ): Promise<ResultadoAvisoVisita & { cambio?: string }> {
     const borrador = await this.prisma.leadPedidoBorrador.findUnique({
       where: { conversacionId },
     });
     if (!borrador) {
       return { error: 'Todavía no hay nada cotizado. Cotiza primero.' };
     }
-    if (borrador.tipoZona !== ('RECOJO' satisfies TipoZona)) {
-      return {
-        error:
-          'Esto es solo para recojo en tienda. Si el pedido es con envío, usa registrar_pedido.',
-      };
+    // QA 28-10: el cliente escribió su nombre y el modelo volvió a avisar la
+    // visita sin guardarlo antes; quedaba otra vez "falta nombre" y sin nota.
+    // Se guarda acá, con la misma regla que guardar_datos_envio: nombre y
+    // apellido, y escrito por el cliente (no inventado por el modelo).
+    const nombreDado = nombre?.trim().replace(/\s+/g, ' ');
+    if (
+      !borrador.nombre &&
+      nombreDado &&
+      nombreDado.split(' ').filter((w) => w.length > 1).length >= 2 &&
+      (await this.mensajesDelCliente(conversacionId)).some((m) =>
+        normalizarNombre(m).includes(normalizarNombre(nombreDado)),
+      )
+    ) {
+      borrador.nombre = (
+        await this.prisma.leadPedidoBorrador.update({
+          where: { conversacionId },
+          data: { nombre: nombreDado },
+        })
+      ).nombre;
     }
+    // Cotizó con envío y después dijo "el viernes voy" (Hierba Sana, 28-10):
+    // el aviso fallaba, la visita quedaba sin pedido y la cotización seguía
+    // cobrando un envío que ya no existe. Mientras no haya nota registrada,
+    // el pedido pasa a recojo y se le dice al modelo el total nuevo.
+    let cambioARecojo: string | undefined;
+    if (borrador.tipoZona !== ('RECOJO' satisfies TipoZona)) {
+      // Solo si el cliente lo dijo: un "mañana a las 2" de una entrega a
+      // domicilio, mal leído como visita, no puede quedarse sin despacho.
+      const ultimos = (await this.mensajesDelCliente(conversacionId)).slice(0, 3);
+      const recojo =
+        borrador.comprobanteId || !ultimos.some((m) => VA_A_LA_TIENDA.test(m))
+          ? undefined
+          : (await this.configDe(empresaId)).envio?.zonas?.find(
+              (z) => z.tipo === ('RECOJO' satisfies TipoZona),
+            );
+      if (!recojo) {
+        return {
+          error:
+            'Esto es solo para recojo en tienda. Si el pedido es con envío, usa registrar_pedido.',
+        };
+      }
+      const envioAntes = Number(borrador.costoEnvio ?? 0);
+      Object.assign(
+        borrador,
+        await this.prisma.leadPedidoBorrador.update({
+          where: { conversacionId },
+          data: {
+            zona: recojo.nombre,
+            tipoZona: recojo.tipo,
+            lugar: recojo.nombre,
+            costoEnvio: new Prisma.Decimal(recojo.tarifa),
+          },
+        }),
+      );
+      cambioARecojo =
+        envioAntes !== recojo.tarifa
+          ? `El pedido pasó de envío a recojo en tienda: ya no se cobra el envío de S/ ${envioAntes.toFixed(2)}. Dile al cliente el total sin envío.`
+          : 'El pedido pasó de envío a recojo en tienda.';
+    }
+    const r = await this.avisarRecojo(empresaId, conversacionId, telefono, cuando, borrador);
+    return cambioARecojo ? { ...r, cambio: cambioARecojo } : r;
+  }
+
+  /** El aviso de un recojo ya en zona de tienda. Ver `avisarVisitaTienda`. */
+  private async avisarRecojo(
+    empresaId: number,
+    conversacionId: number,
+    telefono: string,
+    cuando: string,
+    borrador: { nombre: string | null; horario: string | null; itemsJson: Prisma.JsonValue },
+  ): Promise<ResultadoAvisoVisita> {
     const items = (borrador.itemsJson ?? []) as unknown as ItemPedido[];
     if (!Array.isArray(items) || items.length === 0) {
       return {
@@ -1856,21 +1937,24 @@ export class LeadsPedidoService {
       data: { horario: momento },
     });
 
+    const notificacion = {
+      titulo: `🏬 Pasa por la tienda: ${borrador.nombre}`,
+      mensaje: [
+        `${borrador.nombre} va a recoger en tienda ${momento}.`,
+        '',
+        lista,
+        '',
+        'SIN RESERVA: el stock NO está apartado. Si quieres asegurarlo, sepáralo tú.',
+        `WhatsApp: ${telefono}`,
+      ].join('\n'),
+    };
     await this.notificaciones
       .notificarAdminsEmpresa({
         empresaId,
         // WARNING y no INFO: pide una decisión —separar el producto o no— y
         // tiene fecha de caducidad. Un INFO se lee cuando se puede.
         tipo: 'WARNING',
-        titulo: `🏬 Pasa por la tienda: ${borrador.nombre}`,
-        mensaje: [
-          `${borrador.nombre} va a recoger en tienda ${momento}.`,
-          '',
-          lista,
-          '',
-          'SIN RESERVA: el stock NO está apartado. Si quieres asegurarlo, sepáralo tú.',
-          `WhatsApp: ${telefono}`,
-        ].join('\n'),
+        ...notificacion,
         metaData: { origen: 'ia-ventas-visita-tienda', telefono, conversacionId },
       })
       .catch(() => undefined);
@@ -1878,7 +1962,11 @@ export class LeadsPedidoService {
     this.logger.log(
       `Lead: visita a tienda avisada (empresa ${empresaId}, conv ${conversacionId}, ${momento}).`,
     );
-    return { avisado: true, ...(await this.notaDelRecojo(empresaId, conversacionId, telefono)) };
+    return {
+      avisado: true,
+      notificacion,
+      ...(await this.notaDelRecojo(empresaId, conversacionId, telefono)),
+    };
   }
 
   /**

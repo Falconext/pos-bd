@@ -47,6 +47,7 @@ import {
   afirmaDerivacion,
   sinAvisoInventado,
   sinConfirmacionFalsa,
+  sinProductosListosInventado,
   sinPagoInventado,
 } from './confirmacion-falsa';
 import { conRegistroDirecto, yaAceptoAntes } from './registro-directo';
@@ -1119,6 +1120,11 @@ export class LeadsMessageProcessor extends WorkerHost {
         .then(() => this.prisma.leadVisitaTienda.findUnique({ where: { conversacionId: conv.id }, select: { id: true } }))
         .then((v) => !!v)
         .catch(() => true),
+    );
+    // Nunca "tus productos ya están separados" sin nota de venta.
+    resultado.reply = sinProductosListosInventado(
+      resultado.reply,
+      !!borradorTrasTurno?.comprobanteId,
     );
     // Nunca "verifiqué tu pago" sin un voucher leído.
     resultado.reply = sinPagoInventado(
@@ -2723,12 +2729,16 @@ export class LeadsMessageProcessor extends WorkerHost {
         }
 
         case HERRAMIENTA_AVISAR_VISITA: {
-          const res = await this.pedido.avisarVisitaTienda(
+          const { notificacion, ...res } = await this.pedido.avisarVisitaTienda(
             empresaId,
             conversacionId,
             telefono,
             String(argumentos.cuando ?? ''),
+            typeof argumentos.nombre === 'string' ? argumentos.nombre : undefined,
           );
+          if (notificacion) {
+            await this.avisarVisitaPorWhatsapp(empresaId, conversacionId, telefono, notificacion);
+          }
           // Avisar la visita no es una venta cerrada, pero sí es el final del
           // camino de un recojo: el cliente ya decidió. Se marca la etapa
           // para que el embudo no lo deje como una cotización olvidada.
@@ -2764,8 +2774,9 @@ export class LeadsMessageProcessor extends WorkerHost {
           // QA 27-10: "voy mañana a comprar" sin cotización armada → el aviso
           // fallaba con "cotiza primero" y el cliente se quedaba sin el mapa
           // (y el modelo igual decía que se lo mandó). La visita se registra
-          // igual, sin pedido, para que le llegue cómo llegar.
-          if (res?.error && this.visitas) {
+          // igual, sin pedido, para que le llegue cómo llegar. Lo mismo si
+          // falta un dato (el nombre): el mapa no espera al nombre.
+          if ((res?.error || res?.falta?.length) && this.visitas) {
             const v = await this.visitas
               .registrar(empresaId, conversacionId, telefono, {
                 cuando: String(argumentos.cuando ?? ''),
@@ -2774,12 +2785,20 @@ export class LeadsMessageProcessor extends WorkerHost {
               })
               .catch(() => null);
             if (v?.registrada) {
+              const { notificacion: aviso, ...visita } = v;
+              if (aviso) {
+                await this.avisarVisitaPorWhatsapp(empresaId, conversacionId, telefono, aviso);
+              }
+              const sinPedido = res.error
+                ? `La visita quedó registrada, pero NO hay pedido: ${res.error}`
+                : `La visita quedó registrada, pero el pedido NO: para dejarle sus productos separados falta ${res.falta!.join(', ')}. Pídeselo y vuelve a llamar avisar_visita_tienda.`;
               return {
-                ...v,
+                ...visita,
+                ...(res.cambio ? { cambio: res.cambio } : {}),
                 pedido: undefined,
                 aviso: [
-                  `La visita quedó registrada, pero NO hay pedido: ${res.error} No le digas que su pedido quedó registrado.`,
-                  (v as { aviso?: string }).aviso,
+                  `${sinPedido} No le digas que su pedido quedó registrado ni que sus productos están separados o listos.`,
+                  visita.aviso,
                 ]
                   .filter(Boolean)
                   .join(' '),
@@ -2793,11 +2812,20 @@ export class LeadsMessageProcessor extends WorkerHost {
 
         case HERRAMIENTA_AGENDAR_VISITA: {
           if (!this.visitas) return { error: 'No disponible.' };
-          return this.visitas.registrar(empresaId, conversacionId, telefono, {
-            cuando: String(argumentos.cuando ?? ''),
-            fecha: argumentos.fecha,
-            conPedido: false,
-          });
+          const { notificacion, ...visita } = await this.visitas.registrar(
+            empresaId,
+            conversacionId,
+            telefono,
+            {
+              cuando: String(argumentos.cuando ?? ''),
+              fecha: argumentos.fecha,
+              conPedido: false,
+            },
+          );
+          if (notificacion) {
+            await this.avisarVisitaPorWhatsapp(empresaId, conversacionId, telefono, notificacion);
+          }
+          return visita;
         }
 
         case HERRAMIENTA_CANCELAR_PEDIDO:
@@ -2814,6 +2842,38 @@ export class LeadsMessageProcessor extends WorkerHost {
           return { error: `Herramienta desconocida: ${nombre}` };
       }
     };
+  }
+
+  /**
+   * La visita también llega por WhatsApp a quien atiende, no solo a la
+   * campana. Best-effort: un WhatsApp caído no frena la respuesta al cliente.
+   */
+  private async avisarVisitaPorWhatsapp(
+    empresaId: number,
+    conversacionId: number,
+    telefono: string,
+    notificacion: { titulo: string; mensaje: string },
+  ): Promise<void> {
+    try {
+      const [conv, cfg] = await Promise.all([
+        this.prisma.leadConversacion.findUnique({
+          where: { id: conversacionId },
+          select: { nombreProspecto: true },
+        }),
+        this.pedido.configDe(empresaId),
+      ]);
+      await this.alerta.avisarVisitaTienda({
+        empresaId,
+        telefonoProspecto: telefono,
+        nombreProspecto: conv?.nombreProspecto ?? null,
+        supervisorTelefono: cfg.supervisorTelefono ?? null,
+        ...notificacion,
+      });
+    } catch (e) {
+      this.logger.warn(
+        `Aviso de visita de la conv ${conversacionId} por WhatsApp falló: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
   }
 
   /**

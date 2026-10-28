@@ -81,8 +81,11 @@ export function fechaMencionada(texto: string, ahora = new Date()): string | nul
   }
 
   // "el 30", "el 15 de noviembre" (día del mes; si ya pasó, el mes que viene).
+  // También "a partir del 8 de noviembre" y "8 de noviembre" sin artículo:
+  // Hierba Sana (28-10), el cliente dijo "sería a partir del 8 de Noviembre"
+  // y no se agendó nada aunque el modelo prometió escribirle.
   const meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'setiembre', 'octubre', 'noviembre', 'diciembre'];
-  const conMes = /\bel (\d{1,2}) de (enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)\b/.exec(t);
+  const conMes = /\b(\d{1,2}) de (enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)\b/.exec(t);
   if (conMes) {
     const d = Number(conMes[1]);
     const m = meses.indexOf(conMes[2] === 'septiembre' ? 'setiembre' : conMes[2]) + 1;
@@ -91,7 +94,7 @@ export function fechaMencionada(texto: string, ahora = new Date()): string | nul
       return iso(y, m, d);
     }
   }
-  const soloDia = /\b(?:el|cuando cobre el|cobro el|hasta el)\s+(\d{1,2})\b(?!\s*(?:soles|unidades|frascos|%|am|pm|a\.m|p\.m|horas|hrs))/.exec(t);
+  const soloDia = /\b(?:el|del|cuando cobre el|cobro el|hasta el|desde el)\s+(\d{1,2})\b(?!\s*(?:soles|unidades|frascos|%|am|pm|a\.m|p\.m|horas|hrs))/.exec(t);
   if (soloDia) {
     const d = Number(soloDia[1]);
     if (d >= 1 && d <= 31) {

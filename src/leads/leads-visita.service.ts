@@ -48,6 +48,8 @@ export class LeadsVisitaService {
     indicacionesEnviadas: boolean;
     yaTeniaIndicaciones: boolean;
     aviso?: string;
+    /** Lo que se le notificó al negocio, para repetirlo por WhatsApp. */
+    notificacion?: { titulo: string; mensaje: string };
   }> {
     const cuando = datos.cuando.trim().slice(0, 200) || null;
     const fecha = cuando ? fechaDeVisita(cuando, datos.fecha) : null;
@@ -58,7 +60,7 @@ export class LeadsVisitaService {
       }),
       this.prisma.leadPedidoBorrador.findUnique({
         where: { conversacionId },
-        select: { nombre: true, comprobanteId: true },
+        select: { nombre: true, comprobanteId: true, itemsJson: true },
       }),
     ]);
     const nombre = borrador?.nombre ?? conv?.nombreProspecto ?? null;
@@ -66,7 +68,7 @@ export class LeadsVisitaService {
 
     const antes = await this.prisma.leadVisitaTienda.findUnique({
       where: { conversacionId },
-      select: { indicacionesEn: true, fecha: true, cuando: true },
+      select: { indicacionesEn: true, fecha: true, cuando: true, actualizadoEn: true },
     });
     const visita = await this.prisma.leadVisitaTienda.upsert({
       where: { conversacionId },
@@ -93,17 +95,29 @@ export class LeadsVisitaService {
 
     // La visita con pedido ya avisa a la tienda por su lado (avisarVisitaTienda).
     const cambioDeDia = antes && (antes.cuando ?? '') !== (cuando ?? '');
+    let notificacion: { titulo: string; mensaje: string } | undefined;
     if (!datos.conPedido && (!antes || cambioDeDia)) {
+      // Con productos cotizados viene a comprar, no a mirar (Hierba Sana,
+      // 28-10: el aviso decía "viene a ver" de alguien que pidió los 2).
+      const cotizado = await this.listaCotizada(empresaId, borrador?.itemsJson);
+      notificacion = {
+        titulo: `🏬 ${antes ? 'Cambió su visita' : 'Va a visitar la tienda'}: ${nombre ?? telefono}`,
+        mensaje: [
+          `${nombre ?? 'Un cliente'} dice que va a pasar por la tienda${cuando ? ` ${cuando}` : ''}.`,
+          ...(cotizado
+            ? [
+                'Le interesa (cotizado, SIN pedido registrado ni stock apartado):',
+                cotizado,
+              ]
+            : ['Todavía no hizo pedido: viene a ver o a consultar.']),
+          `WhatsApp: ${telefono}`,
+        ].join('\n'),
+      };
       await this.notificaciones
         .notificarAdminsEmpresa({
           empresaId,
           tipo: 'INFO',
-          titulo: `🏬 ${antes ? 'Cambió su visita' : 'Va a visitar la tienda'}: ${nombre ?? telefono}`,
-          mensaje: [
-            `${nombre ?? 'Un cliente'} dice que va a pasar por la tienda${cuando ? ` ${cuando}` : ''}.`,
-            'Todavía no hizo pedido: viene a ver o a consultar.',
-            `WhatsApp: ${telefono}`,
-          ].join('\n'),
+          ...notificacion,
           metaData: { origen: 'ia-ventas-visita-tienda', telefono, conversacionId },
         })
         .catch(() => undefined);
@@ -123,11 +137,19 @@ export class LeadsVisitaService {
       `Lead: visita a tienda (empresa ${empresaId}, conv ${conversacionId}, ${fecha ?? 'sin fecha'}, indicaciones ${indicacionesEnviadas ? 'enviadas' : 'no'}).`,
     );
     const yaTeniaIndicaciones = !!visita.indicacionesEn;
+    // Por WhatsApp no se repite cuando solo está completando la hora del
+    // mismo día ("el viernes voy" → "2pm"): en QA llegaban dos mensajes en
+    // un minuto. La campana sí se actualiza.
+    const soloCompletaLaHora =
+      !!antes &&
+      (antes.fecha?.toISOString().slice(0, 10) ?? null) === fecha &&
+      Date.now() - antes.actualizadoEn.getTime() < 30 * 60_000;
     return {
       registrada: true,
       fecha,
       indicacionesEnviadas,
       yaTeniaIndicaciones,
+      ...(notificacion && !soloCompletaLaHora ? { notificacion } : {}),
       // QA 26-10: sin esto el modelo decía "te acabo de mandar la ubicación"
       // aunque no hubiera salido nada.
       ...(!indicacionesEnviadas && !yaTeniaIndicaciones
@@ -207,6 +229,28 @@ export class LeadsVisitaService {
    * corto, el texto va de pie de foto; si no, las imágenes primero y el texto
    * al final, que es lo que el cliente lee. True si salió algo.
    */
+  /** "• 1x Producto" por línea de lo cotizado; null si no hay nada. */
+  private async listaCotizada(empresaId: number, itemsJson: unknown): Promise<string | null> {
+    const items = (Array.isArray(itemsJson) ? itemsJson : []) as {
+      productoId?: number;
+      cantidad?: number;
+    }[];
+    const validos = items.filter((i) => Number(i?.productoId) > 0);
+    if (validos.length === 0) return null;
+    const productos = await this.prisma.producto
+      .findMany({
+        where: { empresaId, id: { in: validos.map((i) => Number(i.productoId)) } },
+        select: { id: true, descripcion: true },
+      })
+      .catch(() => [] as { id: number; descripcion: string }[]);
+    return validos
+      .map((i) => {
+        const p = productos.find((x) => x.id === Number(i.productoId));
+        return `• ${i.cantidad ?? 1}x ${p?.descripcion ?? `producto ${i.productoId}`}`;
+      })
+      .join('\n');
+  }
+
   private async enviarComoLlegar(empresaId: number, telefono: string): Promise<boolean> {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
