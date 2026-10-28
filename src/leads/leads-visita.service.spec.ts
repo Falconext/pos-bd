@@ -69,3 +69,32 @@ describe('el recordatorio de la víspera', () => {
     expect(enviados).toHaveLength(0);
   });
 });
+
+describe('cómo llegar al agendar', () => {
+  function conImagenes(tienda: unknown) {
+    const { svc, enviados } = armar({ tienda });
+    const m = (svc as any).mensajeria;
+    m.enviarImagenUrl = jest.fn(async (a: string, url: string, pie?: string) => (
+      enviados.push({ tipo: `imagen:${url}${pie ? '+pie' : ''}`, a }), { success: true }
+    ));
+    return { svc, enviados };
+  }
+
+  it('croquis y foto: mapa, las dos imágenes y el texto al final', async () => {
+    const { svc, enviados } = conImagenes({ ...TIENDA, croquisUrl: 'c.jpg', fotoUrl: 'f.jpg' });
+    await expect((svc as any).enviarComoLlegar(89, '51935099488')).resolves.toBe(true);
+    expect(enviados.map((e) => e.tipo)).toEqual(['mapa', 'imagen:c.jpg', 'imagen:f.jpg', 'texto']);
+  });
+
+  it('una sola foto y texto corto: el texto va de pie de foto', async () => {
+    const { svc, enviados } = conImagenes({ ...TIENDA, fotoUrl: 'f.jpg' });
+    await (svc as any).enviarComoLlegar(89, '51935099488');
+    expect(enviados.map((e) => e.tipo)).toEqual(['mapa', 'imagen:f.jpg+pie']);
+  });
+
+  it('una foto con un texto que no cabe de pie: la foto sola y el texto aparte', async () => {
+    const { svc, enviados } = conImagenes({ ...TIENDA, indicaciones: 'x'.repeat(1200), fotoUrl: 'f.jpg' });
+    await (svc as any).enviarComoLlegar(89, '51935099488');
+    expect(enviados.map((e) => e.tipo)).toEqual(['mapa', 'imagen:f.jpg', 'texto']);
+  });
+});

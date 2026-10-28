@@ -1,4 +1,5 @@
 import { avisoOtroNumero, esOtroNumero, lineaCelular } from './celular-de-otro';
+import { type ConfigTienda, tiendaValida } from './visita-tienda';
 import type { ConfigDemos } from './demos';
 import { medioDePago } from './leads-embudo.service';
 import { Injectable, Logger } from '@nestjs/common';
@@ -72,6 +73,8 @@ export interface ConfigComercial {
   demos?: ConfigDemos;
   /** Quitar montos si el cliente nunca preguntó por precio (Krezka). Ver `precio-no-pedido.ts`. */
   precioSoloSiPregunta?: boolean;
+  /** La tienda física (dirección, mapa, fotos). Ver `visita-tienda.ts`. */
+  tienda?: ConfigTienda;
 }
 
 /** Campos que la IA puede ir guardando a medida que el cliente los dice. */
@@ -164,6 +167,7 @@ export class LeadsPedidoService {
         ? { demos: guardada.demos }
         : {}),
       ...(guardada.precioSoloSiPregunta === true ? { precioSoloSiPregunta: true } : {}),
+      ...(guardada.tienda ? { tienda: tiendaValida(guardada.tienda) } : {}),
     };
   }
 
@@ -875,7 +879,7 @@ export class LeadsPedidoService {
     if (!borrador?.tipoZona || borrador.costoEnvio == null) {
       return {
         falta:
-          'Todavía no sé a dónde va el pedido. Pregúntale al cliente para qué distrito o ciudad sería la entrega y guárdalo antes de cotizar.',
+          'Todavía no sé a dónde va el pedido. Si el cliente dijo que pasa por la tienda a comprar o a recoger, guarda el destino "recojo en tienda" con guardar_datos_envio y vuelve a cotizar. Si no, pregúntale para qué distrito o ciudad sería la entrega y guárdalo antes de cotizar.',
       };
     }
 

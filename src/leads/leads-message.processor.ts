@@ -42,7 +42,13 @@ import {
 import { conDescargoLegal } from './prompt-asesor';
 import { JOB_ECO_VENDEDOR, type EcoVendedor } from './eco-vendedor';
 import { origenDeAnuncio, type ReferralWhatsapp } from './anuncio-origen';
-import { afirmaCancelacion, afirmaDerivacion, sinConfirmacionFalsa, sinPagoInventado } from './confirmacion-falsa';
+import {
+  afirmaCancelacion,
+  afirmaDerivacion,
+  sinAvisoInventado,
+  sinConfirmacionFalsa,
+  sinPagoInventado,
+} from './confirmacion-falsa';
 import { conRegistroDirecto, yaAceptoAntes } from './registro-directo';
 import {
   BLOQUE_DATOS_DEMO,
@@ -80,6 +86,7 @@ const POSPONE =
   /\b(te escribo|te aviso|te confirmo|te hablo|cobro|cobre|me pagan|regreso|vuelvo|lo compro|lo pido|ahi compro|ahi te)\b/i;
 import { esNumeroInterno, numerosInternos } from './numeros-internos';
 import { bloqueComercial } from './tarifas-y-descuentos';
+import { bloqueTienda } from './visita-tienda';
 import {
   DatosDelCliente,
   ItemPedido,
@@ -877,6 +884,7 @@ export class LeadsMessageProcessor extends WorkerHost {
     // construcción, lo que el sistema va a cobrar.
     const config = await this.pedido.configDe(empresa.id);
     const comercial = bloqueComercial(config);
+    const tiendaFisica = bloqueTienda(config.tienda);
     // Productos REALES del ERP que coinciden con lo que pregunta el cliente
     // (precio + stock en vivo). Lo que diferencia a la IA de un bot "ciego".
     const relevantes = await this.buscarProductosRelevantes(
@@ -912,6 +920,7 @@ export class LeadsMessageProcessor extends WorkerHost {
       // libre, las dos versiones conviven en el prompt. Por eso el bloque
       // dice de sí mismo que es el que manda.
       comercial,
+      tiendaFisica,
     ]
       .filter((s) => s && s.trim())
       .join('\n\n');
@@ -1100,6 +1109,16 @@ export class LeadsMessageProcessor extends WorkerHost {
       resultado.reply,
       resultado.llamadas,
       !!borradorTrasTurno?.comprobanteId,
+    );
+    // Nunca "dejé avisada la tienda" sin el aviso.
+    resultado.reply = sinAvisoInventado(
+      resultado.reply,
+      resultado.llamadas,
+      // Si no se puede saber, no se toca la respuesta (como con el voucher).
+      await Promise.resolve()
+        .then(() => this.prisma.leadVisitaTienda.findUnique({ where: { conversacionId: conv.id }, select: { id: true } }))
+        .then((v) => !!v)
+        .catch(() => true),
     );
     // Nunca "verifiqué tu pago" sin un voucher leído.
     resultado.reply = sinPagoInventado(
@@ -2741,6 +2760,31 @@ export class LeadsMessageProcessor extends WorkerHost {
               })
               .catch(() => null);
             if (v?.indicacionesEnviadas) return { ...res, indicacionesEnviadas: true };
+          }
+          // QA 27-10: "voy mañana a comprar" sin cotización armada → el aviso
+          // fallaba con "cotiza primero" y el cliente se quedaba sin el mapa
+          // (y el modelo igual decía que se lo mandó). La visita se registra
+          // igual, sin pedido, para que le llegue cómo llegar.
+          if (res?.error && this.visitas) {
+            const v = await this.visitas
+              .registrar(empresaId, conversacionId, telefono, {
+                cuando: String(argumentos.cuando ?? ''),
+                fecha: argumentos.fecha,
+                conPedido: false,
+              })
+              .catch(() => null);
+            if (v?.registrada) {
+              return {
+                ...v,
+                pedido: undefined,
+                aviso: [
+                  `La visita quedó registrada, pero NO hay pedido: ${res.error} No le digas que su pedido quedó registrado.`,
+                  (v as { aviso?: string }).aviso,
+                ]
+                  .filter(Boolean)
+                  .join(' '),
+              };
+            }
           }
           // Un fallo acá NO deriva: el cliente igual va a ir a la tienda, y
           // apagar el bot lo dejaría sin a quién preguntarle.
