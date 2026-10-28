@@ -331,6 +331,9 @@ export class VentasService {
               transportista: true,
               nroOrden: true,
               claveOrden: true,
+              // Clave de recojo en agencia: el "Mensaje al cliente" la pone
+              // solo si ya pagó todo (Hierba Sana, 27-10).
+              claveEnvio: true,
               repartidorId: true,
               repartidor: { select: { nombre: true } },
             } as const;
@@ -599,6 +602,7 @@ export class VentasService {
         courier: c.envioDespacho?.transportista ?? '',
         nroOrden: c.envioDespacho?.nroOrden ?? '',
         claveOrden: c.envioDespacho?.claveOrden ?? '',
+        claveEnvio: c.envioDespacho?.claveEnvio ?? '',
         vendedor: c.vendedorCampoNombre ?? c.usuario?.nombre ?? '—',
         // Cobranza en campo: id del vendedor de campo para preseleccionarlo al registrar cobro.
         vendedorCampoId: c.vendedorCampoId ?? null,
