@@ -43,6 +43,17 @@ export class OrdenCompraController {
     return this.service.desdeVentas(req.user.empresaId, body.comprobanteIds, req.user.sedeId);
   }
 
+  // Antes de ':id'. ?marcaId=&dias=30 → productos de la marca con sugerido.
+  @Get('sugerido-por-marca')
+  async sugeridoPorMarca(@Request() req, @Query('marcaId') marcaId: string, @Query('dias') dias?: string) {
+    return this.service.sugeridoPorMarca(
+      req.user.empresaId,
+      Number(marcaId),
+      dias ? Number(dias) : 30,
+      req.user.sedeId,
+    );
+  }
+
   @Get()
   async listar(@Request() req, @Query() query) {
     return this.service.listar(req.user.empresaId, query);
