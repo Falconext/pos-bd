@@ -3,6 +3,7 @@ import {
   Logger,
   BadRequestException,
   ForbiddenException,
+  NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
@@ -112,8 +113,36 @@ export class WhatsAppService {
     return { token, phoneId };
   }
 
+  /**
+   * Con varios números por empresa, a un cliente se le escribe desde el número
+   * por el que conversa (LeadConversacion.numeroWhatsappId); si no tiene chat o
+   * ese número ya no es de la empresa, sale por el principal.
+   */
+  private async numeroDelChat(
+    empresaId: number,
+    destino: string,
+  ): Promise<{ phoneId: string; token: string | null } | null> {
+    const digitos = String(destino || '').replace(/\D/g, '');
+    if (!digitos) return null;
+    const conv = await this.prisma.leadConversacion.findFirst({
+      where: {
+        empresaId,
+        telefonoProspecto: { in: [destino, digitos, `+${digitos}`] },
+        numeroWhatsappId: { not: null },
+      },
+      select: { numeroWhatsappId: true },
+    });
+    if (!conv?.numeroWhatsappId) return null;
+    const numero = await this.prisma.numeroWhatsapp.findFirst({
+      where: { empresaId, phoneNumberId: conv.numeroWhatsappId },
+      select: { phoneNumberId: true, token: true },
+    });
+    return numero ? { phoneId: numero.phoneNumberId, token: numero.token } : null;
+  }
+
   private async getCredentialsForEmpresa(
     empresaId: number,
+    destino?: string,
   ): Promise<WhatsAppCredentials> {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
@@ -139,6 +168,15 @@ export class WhatsAppService {
         throw new BadRequestException(
           'WhatsApp propio no configurado. Conecta tu número desde Configuración → Conectar mi WhatsApp.',
         );
+      }
+
+      const delChat = destino ? await this.numeroDelChat(empresaId, destino) : null;
+      if (delChat && delChat.phoneId !== empresa.whatsappPhoneNumberId) {
+        return {
+          token: delChat.token || this.systemUserToken || token,
+          phoneId: delChat.phoneId,
+          source: 'EMPRESA',
+        };
       }
 
       return {
@@ -490,6 +528,158 @@ export class WhatsAppService {
     }
   }
 
+  /** El número no puede estar conectado a otra empresa. */
+  private async validarNumeroLibre(empresaId: number, phoneNumberId: string) {
+    const [enEmpresa, enNumeros] = await Promise.all([
+      this.prisma.empresa.findFirst({
+        where: { whatsappPhoneNumberId: phoneNumberId, id: { not: empresaId } },
+        select: { id: true },
+      }),
+      this.prisma.numeroWhatsapp.findFirst({
+        where: { phoneNumberId, empresaId: { not: empresaId } },
+        select: { id: true },
+      }),
+    ]);
+    if (enEmpresa || enNumeros)
+      throw new BadRequestException(
+        'Ese número de WhatsApp ya está conectado a otra cuenta.',
+      );
+  }
+
+  /**
+   * Guarda el número conectado. Devuelve true si quedó como principal.
+   *
+   * - `agregar` con un principal ya conectado: se suma como número adicional y
+   *   el principal (Empresa.whatsapp*) no se toca. Así conectar la línea de la
+   *   campaña no le quita el número al bot.
+   * - Si no (reconectar, o es el primero): pasa a ser el principal, como antes.
+   */
+  private async guardarNumero(
+    empresaId: number,
+    n: {
+      phoneNumberId: string;
+      wabaId: string;
+      token: string | null;
+      numeroVisible?: string;
+      coexistencia: boolean;
+      agregar: boolean;
+    },
+  ): Promise<boolean> {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { whatsappProvider: true, whatsappPhoneNumberId: true },
+    });
+    const tienePrincipal =
+      empresa?.whatsappProvider === ('EMPRESA' as any) &&
+      !!empresa?.whatsappPhoneNumberId &&
+      empresa?.whatsappPhoneNumberId !== n.phoneNumberId;
+    const comoPrincipal = !(n.agregar && tienePrincipal);
+    const datos = {
+      wabaId: n.wabaId,
+      token: n.token,
+      numeroVisible: n.numeroVisible ?? null,
+      coexistencia: n.coexistencia,
+    };
+
+    if (!comoPrincipal) {
+      await this.prisma.numeroWhatsapp.upsert({
+        where: { phoneNumberId: n.phoneNumberId },
+        update: { ...datos, empresaId },
+        create: { ...datos, empresaId, phoneNumberId: n.phoneNumberId, principal: false },
+      });
+      return false;
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.empresa.update({
+        where: { id: empresaId },
+        data: {
+          whatsappProvider: 'EMPRESA' as any,
+          whatsappApiToken: n.token,
+          whatsappPhoneNumberId: n.phoneNumberId,
+          whatsappBusinessId: n.wabaId,
+          whatsappActivo: true,
+        },
+      }),
+      // Reconectar reemplaza al principal anterior; los adicionales se quedan.
+      this.prisma.numeroWhatsapp.deleteMany({
+        where: { empresaId, principal: true, phoneNumberId: { not: n.phoneNumberId } },
+      }),
+      this.prisma.numeroWhatsapp.upsert({
+        where: { phoneNumberId: n.phoneNumberId },
+        update: { ...datos, empresaId, principal: true },
+        create: { ...datos, empresaId, phoneNumberId: n.phoneNumberId, principal: true },
+      }),
+    ]);
+    return true;
+  }
+
+  /** Números de la empresa, el principal primero. */
+  async listarNumeros(empresaId: number) {
+    const numeros = await this.prisma.numeroWhatsapp.findMany({
+      where: { empresaId },
+      orderBy: [{ principal: 'desc' }, { creadoEn: 'asc' }],
+      select: {
+        id: true,
+        phoneNumberId: true,
+        numeroVisible: true,
+        etiqueta: true,
+        coexistencia: true,
+        iaActiva: true,
+        principal: true,
+      },
+    });
+    return numeros;
+  }
+
+  async actualizarNumero(
+    empresaId: number,
+    id: number,
+    cambios: { etiqueta?: string | null; iaActiva?: boolean; principal?: boolean },
+  ) {
+    const numero = await this.prisma.numeroWhatsapp.findFirst({ where: { id, empresaId } });
+    if (!numero) throw new NotFoundException('Número no encontrado');
+    const data: any = {};
+    if (cambios.etiqueta !== undefined) {
+      const e = String(cambios.etiqueta ?? '').trim().slice(0, 40);
+      data.etiqueta = e || null;
+    }
+    if (typeof cambios.iaActiva === 'boolean') data.iaActiva = cambios.iaActiva;
+    if (cambios.principal === true && !numero.principal) {
+      // El principal es el que usan despacho, alertas y comprobantes.
+      await this.prisma.$transaction([
+        this.prisma.numeroWhatsapp.updateMany({ where: { empresaId }, data: { principal: false } }),
+        this.prisma.numeroWhatsapp.update({ where: { id }, data: { ...data, principal: true } }),
+        this.prisma.empresa.update({
+          where: { id: empresaId },
+          data: {
+            whatsappProvider: 'EMPRESA' as any,
+            whatsappApiToken: numero.token,
+            whatsappPhoneNumberId: numero.phoneNumberId,
+            whatsappBusinessId: numero.wabaId,
+            whatsappActivo: true,
+          },
+        }),
+      ]);
+      return this.listarNumeros(empresaId);
+    }
+    if (Object.keys(data).length) await this.prisma.numeroWhatsapp.update({ where: { id }, data });
+    return this.listarNumeros(empresaId);
+  }
+
+  /** Quita un número adicional. El principal se cambia o se reconecta, no se quita. */
+  async quitarNumero(empresaId: number, id: number) {
+    const numero = await this.prisma.numeroWhatsapp.findFirst({ where: { id, empresaId } });
+    if (!numero) throw new NotFoundException('Número no encontrado');
+    if (numero.principal) {
+      throw new BadRequestException(
+        'Es el número principal. Marca otro como principal antes de quitarlo.',
+      );
+    }
+    await this.prisma.numeroWhatsapp.delete({ where: { id } });
+    return this.listarNumeros(empresaId);
+  }
+
   async conectarEmbeddedSignup(
     empresaId: number,
     input: {
@@ -499,6 +689,8 @@ export class WhatsAppService {
       wabaId?: string;
       /** Número de la app WhatsApp Business que sigue funcionando en el celular. */
       coexistencia?: boolean;
+      /** Sumar este número a los que ya tiene la empresa (no reemplazar el principal). */
+      agregar?: boolean;
     },
   ): Promise<{
     phoneNumberId: string;
@@ -538,14 +730,7 @@ export class WhatsAppService {
     }
 
     // 3) Anti cross-tenant: el número no puede pertenecer a otra empresa.
-    const enUso = await this.prisma.empresa.findFirst({
-      where: { whatsappPhoneNumberId: phoneNumberId, id: { not: empresaId } },
-      select: { id: true },
-    });
-    if (enUso)
-      throw new BadRequestException(
-        'Ese número de WhatsApp ya está conectado a otra cuenta.',
-      );
+    await this.validarNumeroLibre(empresaId, phoneNumberId);
 
     // 4) Suscribir la app al webhook de la WABA.
     await this.subscribeApp(wabaId, token);
@@ -569,20 +754,21 @@ export class WhatsAppService {
       token,
     );
 
-    // 6) Persistir en Empresa (provider=EMPRESA).
-    await this.prisma.empresa.update({
-      where: { id: empresaId },
-      data: {
-        whatsappProvider: 'EMPRESA' as any,
-        whatsappApiToken: usaTokenPlataforma ? null : token,
-        whatsappPhoneNumberId: phoneNumberId,
-        whatsappBusinessId: wabaId,
-        whatsappActivo: true,
-      },
+    // 6) Persistir: como principal (reemplaza) o sumado a los que ya tiene.
+    const principal = await this.guardarNumero(empresaId, {
+      phoneNumberId,
+      wabaId,
+      token: usaTokenPlataforma ? null : token,
+      numeroVisible,
+      coexistencia: !!input.coexistencia,
+      agregar: !!input.agregar,
     });
 
-    // 7) Auto-crear plantillas de despacho en la WABA del empresario.
+    // 7) Auto-crear plantillas en la WABA del empresario. Un número adicional
+    //    también necesita las de la IA de Ventas: el seguimiento y los envíos a
+    //    sus clientes salen por él.
     const plantillas = await this.crearPlantillasDespacho(wabaId, token);
+    if (!principal) await this.crearPlantillasIaVentas(wabaId, token).catch(() => null);
 
     this.logger.log(
       `Empresa ${empresaId} conectó WhatsApp propio${input.coexistencia ? ' en coexistencia' : ''} (${numeroVisible ?? phoneNumberId}) — estado ${activacion.estado}, token ${usaTokenPlataforma ? 'de plataforma (permanente)' : 'del cliente (60 días)'}.`,
@@ -610,7 +796,7 @@ export class WhatsAppService {
    */
   async conectarManual(
     empresaId: number,
-    input: { phoneNumberId: string; wabaId: string; accessToken: string },
+    input: { phoneNumberId: string; wabaId: string; accessToken: string; agregar?: boolean },
   ): Promise<{
     numeroVisible?: string;
     plantillas: any;
@@ -633,26 +819,18 @@ export class WhatsAppService {
       );
     }
     // Anti cross-tenant.
-    const enUso = await this.prisma.empresa.findFirst({
-      where: { whatsappPhoneNumberId: phoneNumberId, id: { not: empresaId } },
-      select: { id: true },
-    });
-    if (enUso)
-      throw new BadRequestException(
-        'Ese número de WhatsApp ya está conectado a otra cuenta.',
-      );
+    await this.validarNumeroLibre(empresaId, phoneNumberId);
 
-    await this.prisma.empresa.update({
-      where: { id: empresaId },
-      data: {
-        whatsappProvider: 'EMPRESA' as any,
-        whatsappApiToken: accessToken,
-        whatsappPhoneNumberId: phoneNumberId,
-        whatsappBusinessId: wabaId,
-        whatsappActivo: true,
-      },
+    const principal = await this.guardarNumero(empresaId, {
+      phoneNumberId,
+      wabaId,
+      token: accessToken,
+      numeroVisible,
+      coexistencia: false,
+      agregar: !!input.agregar,
     });
     const plantillas = await this.crearPlantillasDespacho(wabaId, accessToken);
+    if (!principal) await this.crearPlantillasIaVentas(wabaId, accessToken).catch(() => null);
     // Mismo encendido que el Embedded Signup: un número pegado a mano también
     // puede venir sin registrar en Cloud API.
     const activacion = await this.activarNumero(empresaId, phoneNumberId, accessToken);
@@ -1260,7 +1438,7 @@ export class WhatsAppService {
     let phoneId: string;
     if (empresaId) {
       try {
-        ({ token, phoneId } = await this.getCredentialsForEmpresa(empresaId));
+        ({ token, phoneId } = await this.getCredentialsForEmpresa(empresaId, numero));
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'WhatsApp no configurado';
         return { success: false, error: msg };
@@ -1316,7 +1494,7 @@ export class WhatsAppService {
     let phoneId: string;
     if (empresaId) {
       try {
-        ({ token, phoneId } = await this.getCredentialsForEmpresa(empresaId));
+        ({ token, phoneId } = await this.getCredentialsForEmpresa(empresaId, numero));
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'WhatsApp no configurado';
         return { success: false, error: msg };
@@ -1372,7 +1550,7 @@ export class WhatsAppService {
     let phoneId: string;
     if (empresaId) {
       try {
-        ({ token, phoneId } = await this.getCredentialsForEmpresa(empresaId));
+        ({ token, phoneId } = await this.getCredentialsForEmpresa(empresaId, numero));
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'WhatsApp no configurado';
         return { success: false, error: msg };
@@ -1436,7 +1614,7 @@ export class WhatsAppService {
     let phoneId: string;
     if (empresaId) {
       try {
-        ({ token, phoneId } = await this.getCredentialsForEmpresa(empresaId));
+        ({ token, phoneId } = await this.getCredentialsForEmpresa(empresaId, numero));
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'WhatsApp no configurado';
         return { success: false, error: msg };
@@ -1518,7 +1696,7 @@ export class WhatsAppService {
     opciones: { imagenCabecera?: string } = {},
   ): Promise<{ success: boolean; mensajeId?: string; error?: string }> {
     const { token, phoneId } = empresaId
-      ? await this.getCredentialsForEmpresa(empresaId)
+      ? await this.getCredentialsForEmpresa(empresaId, numero)
       : this.getCredentials();
     if (!token || !phoneId)
       return { success: false, error: 'WhatsApp no configurado' };
@@ -1587,7 +1765,7 @@ export class WhatsAppService {
     let phoneId: string;
     if (empresaId) {
       try {
-        ({ token, phoneId } = await this.getCredentialsForEmpresa(empresaId));
+        ({ token, phoneId } = await this.getCredentialsForEmpresa(empresaId, numero));
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'WhatsApp no configurado';
         return { success: false, error: msg };
@@ -1634,7 +1812,7 @@ export class WhatsAppService {
     let phoneId: string;
     if (empresaId) {
       try {
-        ({ token, phoneId } = await this.getCredentialsForEmpresa(empresaId));
+        ({ token, phoneId } = await this.getCredentialsForEmpresa(empresaId, numero));
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'WhatsApp no configurado';
         return { success: false, error: msg };

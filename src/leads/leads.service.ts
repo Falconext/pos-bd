@@ -269,6 +269,8 @@ export class LeadsService {
         // el vendedor sepa qué vio el cliente antes de escribir.
         conversacion: {
           select: {
+            // Número de la empresa por el que conversa (varios números).
+            numeroWhatsappId: true,
             etiquetas: {
               orderBy: { creadoEn: 'asc' },
               select: { etiqueta: { select: { id: true, nombre: true, color: true } } },
@@ -305,6 +307,7 @@ export class LeadsService {
     return prospectos.map(({ conversacion, ...p }) => ({
       ...p,
       anuncio: conversacion?.anuncios[0] ?? null,
+      numeroWhatsappId: conversacion?.numeroWhatsappId ?? null,
       etiquetas: conversacion?.etiquetas.map((e) => e.etiqueta) ?? [],
       cotizacion:
         p.cotizacionId && codigoPorId.has(p.cotizacionId)

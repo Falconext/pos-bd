@@ -457,6 +457,7 @@ model Empresa {
   productos                     Producto[]
   usuarios                      Usuario[]
   whatsappEnvios                WhatsAppEnvio[]
+  numerosWhatsapp               NumeroWhatsapp[]
   combos                        Combo[]
   gruposModificadores           GrupoModificador[]
   guiasRemision                 GuiaRemision[]
@@ -5484,4 +5485,30 @@ model VentaApi {
 
   @@unique([empresaId, externalId])
   @@index([empresaId, creadoEn])
+}
+
+/// Números de WhatsApp de una empresa (varios por empresa). El principal sigue
+/// reflejado en Empresa.whatsapp* para todo lo que no es la IA de Ventas
+/// (despacho, alertas, comprobantes); los chats de leads responden por el número
+/// por el que entraron (LeadConversacion.numeroWhatsappId).
+model NumeroWhatsapp {
+  id            Int      @id @default(autoincrement())
+  empresaId     Int
+  empresa       Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  phoneNumberId String   @unique
+  wabaId        String?
+  /// Token propio; null = token del usuario del sistema (Embedded Signup).
+  token         String?
+  /// "+51 997 914 755" tal como lo devuelve Meta.
+  numeroVisible String?
+  /// Nombre corto para la bandeja: "Ventas", "Campaña TikTok"…
+  etiqueta      String?
+  /// Sigue en la app WhatsApp Business del celular.
+  coexistencia  Boolean  @default(false)
+  /// La IA de Ventas contesta en este número.
+  iaActiva      Boolean  @default(true)
+  principal     Boolean  @default(false)
+  creadoEn      DateTime @default(now())
+
+  @@index([empresaId])
 }

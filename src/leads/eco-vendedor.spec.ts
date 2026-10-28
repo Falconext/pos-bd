@@ -129,6 +129,7 @@ describe('procesar el eco', () => {
     const updates: any[] = [];
     const prisma = {
       empresa: { findFirst: jest.fn().mockResolvedValue(extra.sinEmpresa ? null : { id: 7 }) },
+      numeroWhatsapp: { findUnique: jest.fn().mockResolvedValue(null) },
       leadMensaje: {
         findUnique: jest.fn().mockResolvedValue(extra.yaGuardado ? { id: 1 } : null),
         findFirst: jest.fn().mockResolvedValue(extra.propio ? { id: 2 } : null),

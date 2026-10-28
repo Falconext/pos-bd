@@ -2,6 +2,8 @@ import {
   Controller,
   Post,
   Get,
+  Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -39,6 +41,7 @@ export class WhatsAppController {
       phoneNumberId?: string;
       wabaId?: string;
       coexistencia?: boolean;
+      agregar?: boolean;
     },
     @User() user: any,
   ) {
@@ -54,12 +57,36 @@ export class WhatsAppController {
   @Post('conectar-manual')
   @Roles('ADMIN_EMPRESA')
   async conectarManual(
-    @Body() body: { phoneNumberId: string; wabaId: string; accessToken: string },
+    @Body() body: { phoneNumberId: string; wabaId: string; accessToken: string; agregar?: boolean },
     @User() user: any,
   ) {
     if (!user?.empresaId)
       throw new BadRequestException('No hay empresa en la sesión.');
     return this.whatsappService.conectarManual(user.empresaId, body);
+  }
+
+  /** Números de WhatsApp de la empresa (varios por empresa). */
+  @Get('numeros')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async listarNumeros(@User() user: any) {
+    return this.whatsappService.listarNumeros(user.empresaId);
+  }
+
+  /** Etiqueta, si la IA contesta en ese número, o marcarlo como principal. */
+  @Patch('numeros/:id')
+  @Roles('ADMIN_EMPRESA')
+  async actualizarNumero(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { etiqueta?: string | null; iaActiva?: boolean; principal?: boolean },
+    @User() user: any,
+  ) {
+    return this.whatsappService.actualizarNumero(user.empresaId, id, body);
+  }
+
+  @Delete('numeros/:id')
+  @Roles('ADMIN_EMPRESA')
+  async quitarNumero(@Param('id', ParseIntPipe) id: number, @User() user: any) {
+    return this.whatsappService.quitarNumero(user.empresaId, id);
   }
 
   /**

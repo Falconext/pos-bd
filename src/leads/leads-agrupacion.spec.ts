@@ -44,6 +44,7 @@ function armar(
   let proximoId = 100;
 
   const prisma: any = {
+    numeroWhatsapp: { findUnique: jest.fn().mockResolvedValue(null) },
     empresa: {
       findFirst: jest.fn().mockResolvedValue({
         id: EMPRESA,
