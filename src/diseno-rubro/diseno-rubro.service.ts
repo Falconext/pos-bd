@@ -242,7 +242,9 @@ export class DisenoRubroService {
           typeof override.plantillaId === 'string'
             ? override.plantillaId.trim()
             : '';
-        if (plantillaElegida && permitidas.includes(plantillaElegida)) {
+        // Desde 2026-10-28 el empresario puede elegir cualquier plantilla del
+        // catálogo: las del rubro son solo las recomendadas. Lo que eligió manda.
+        if (plantillaElegida) {
           merged.plantillaId = plantillaElegida;
         } else {
           merged.plantillaId = permitidas[0] || 'moderna';
