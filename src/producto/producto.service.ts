@@ -3340,6 +3340,26 @@ export class ProductoService {
       data.porcentajeProvision = 0;
     }
 
+    // "Disponible en" se resuelve y valida ANTES de escribir nada. Antes se
+    // validaba al final: el stock y su kardex ya estaban grabados cuando saltaba
+    // "no puedes quitar el producto de X", así que el usuario veía un error pero
+    // al recargar el ingreso sí estaba (y el resto de cambios se perdía).
+    if (Array.isArray(data.sedesDisponibles)) {
+      const sedesDisponibles = data.sedesDisponibles.map((id) => Number(id));
+      // Darle stock en una sede es tenerlo ahí: esa sede queda disponible
+      // aunque el formulario la traiga sin marcar (DEMENVER: +4 en ZAPALLAL).
+      const stockNuevo =
+        !esServicio && data.stock !== undefined && data.sedeId
+          ? { sedeId: Number(data.sedeId), stock: num(data.stock) }
+          : undefined;
+      if (stockNuevo && stockNuevo.stock > 0 && !sedesDisponibles.includes(stockNuevo.sedeId)) {
+        sedesDisponibles.push(stockNuevo.sedeId);
+        if (data.visibleEnSede === false) data.visibleEnSede = true;
+      }
+      data.sedesDisponibles = sedesDisponibles;
+      await this.validarSedesDisponibles(data.id, data.empresaId, sedesDisponibles, stockNuevo);
+    }
+
     // Validar unicidad del Código de producto (SKU) si cambió: no puede repetirse
     // dentro de la empresa. Normaliza vacío → conserva el actual (no lo borra).
     if (data.codigo !== undefined) {
@@ -3876,19 +3896,21 @@ export class ProductoService {
   // ==================== ASIGNACIÓN DE PRODUCTOS A SEDES ====================
 
   /**
-   * Define en qué sedes está disponible un producto (visibleEnSede por sede).
-   * No se puede quitar de una sede con stock > 0: primero trasladar/ajustar.
+   * Reglas de "Disponible en": al menos una sede y no quitar una sede con
+   * stock. `stockNuevo` es el stock que la misma edición va a dejar en una sede
+   * (se valida contra ese, no contra el de antes). Devuelve las sedes activas.
    */
-  async aplicarSedesDisponibles(
+  async validarSedesDisponibles(
     productoId: number,
     empresaId: number,
     sedesDisponibles: number[],
+    stockNuevo?: { sedeId: number; stock: number },
   ) {
     const sedes = await this.prisma.sede.findMany({
       where: { empresaId, activo: true },
       select: { id: true, nombre: true },
     });
-    if (sedes.length === 0) return;
+    if (sedes.length === 0) return sedes;
     const marcadas = new Set(sedesDisponibles.map((id) => Number(id)));
     if (!sedes.some((s) => marcadas.has(s.id))) {
       throw new BadRequestException(
@@ -3900,6 +3922,7 @@ export class ProductoService {
       select: { sedeId: true, stock: true },
     });
     const stockPorSede = new Map(stocks.map((s) => [s.sedeId, num(s.stock)]));
+    if (stockNuevo) stockPorSede.set(stockNuevo.sedeId, stockNuevo.stock);
     for (const sede of sedes) {
       const stockSede = stockPorSede.get(sede.id) ?? 0;
       if (!marcadas.has(sede.id) && stockSede > 0) {
@@ -3908,6 +3931,25 @@ export class ProductoService {
         );
       }
     }
+    return sedes;
+  }
+
+  /**
+   * Define en qué sedes está disponible un producto (visibleEnSede por sede).
+   * No se puede quitar de una sede con stock > 0: primero trasladar/ajustar.
+   */
+  async aplicarSedesDisponibles(
+    productoId: number,
+    empresaId: number,
+    sedesDisponibles: number[],
+  ) {
+    const sedes = await this.validarSedesDisponibles(
+      productoId,
+      empresaId,
+      sedesDisponibles,
+    );
+    if (sedes.length === 0) return;
+    const marcadas = new Set(sedesDisponibles.map((id) => Number(id)));
     for (const sede of sedes) {
       const disponible = marcadas.has(sede.id);
       await this.prisma.productoStock.upsert({
