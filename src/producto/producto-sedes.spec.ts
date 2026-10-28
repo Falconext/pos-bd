@@ -120,6 +120,46 @@ describe('ProductoService — disponibilidad por sede', () => {
     });
   });
 
+  describe('validarSedesDisponibles con el stock que deja la edición', () => {
+    it('una sede sin marcar que va a quedar con stock no se puede quitar', async () => {
+      await expect(
+        service.validarSedesDisponibles(10, 1, [1], { sedeId: 2, stock: 4 }),
+      ).rejects.toThrow('Zapallal');
+    });
+    it('dejar en 0 una sede permite quitarla en la misma edición', async () => {
+      prisma.productoStock.findMany.mockResolvedValue([{ sedeId: 2, stock: 4 }]);
+      await expect(
+        service.validarSedesDisponibles(10, 1, [1], { sedeId: 2, stock: 0 }),
+      ).resolves.toHaveLength(2);
+    });
+  });
+
+  describe('actualizar: "Disponible en" antes de escribir', () => {
+    beforeEach(() => {
+      prisma.producto.findFirst.mockResolvedValue({ id: 10, empresaId: 1, stock: 0, costoPromedio: 0 });
+      prisma.productoStock.findUnique = jest.fn();
+      prisma.productoStock.upsert.mockRejectedValue(new Error('escribió'));
+      prisma.producto.update = jest.fn().mockRejectedValue(new Error('escribió'));
+    });
+
+    it('quitar una sede con stock falla sin grabar stock ni kardex', async () => {
+      prisma.productoStock.findMany.mockResolvedValue([{ sedeId: 2, stock: 3 }]);
+      await expect(
+        service.actualizar({ id: 10, empresaId: 1, sedeId: 1, stock: 4, sedesDisponibles: [1] } as any),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.productoStock.upsert).not.toHaveBeenCalled();
+      expect(kardex.registrarMovimiento).not.toHaveBeenCalled();
+    });
+
+    it('agregar stock en una sede sin marcar la vuelve disponible (no error)', async () => {
+      const data: any = { id: 10, empresaId: 1, sedeId: 2, stock: 4, sedesDisponibles: [1], visibleEnSede: false };
+      // Pasa la validación: el error que llega es el de la primera escritura.
+      await expect(service.actualizar(data)).rejects.toThrow('escribió');
+      expect(data.sedesDisponibles).toEqual([1, 2]);
+      expect(data.visibleEnSede).toBe(true);
+    });
+  });
+
   describe('aplicarSedesDisponibles', () => {
     it('no permite quitar de una sede con stock', async () => {
       prisma.productoStock.findMany.mockResolvedValue([
