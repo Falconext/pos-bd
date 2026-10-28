@@ -13,6 +13,10 @@ describe('la fecha que dijo el cliente', () => {
     ['el viernes te confirmo', '2026-10-23'],
     ['cuando cobre el 30', '2026-10-30'],
     ['el 15 de noviembre lo pido', '2026-11-15'],
+    // Hierba Sana 28-10: no se agendaba y el modelo prometió escribirle.
+    ['Por ahora no, sería a partir del 8 de Noviembre gracias', '2026-11-08'],
+    ['recién para el 8 de noviembre', '2026-11-08'],
+    ['desde el 25 lo compro', '2026-10-25'],
     ['me pagan la quincena', '2026-11-15'],
     ['pasado mañana te escribo', '2026-10-21'],
     ['mañana te aviso', '2026-10-20'],

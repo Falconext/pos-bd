@@ -137,6 +137,32 @@ export function sinAvisoInventado(
   return `${limpias}\n\n¿Te lo dejo separado para que pases a recogerlo? Confírmame y aviso a la tienda.`;
 }
 
+const AFIRMA_PRODUCTOS_LISTOS =
+  /\b(tener|tendremos|tenemos|tengamos|dejar|dejamos|dejo|dej[eé]|queda|quedan|qued[oó]|quedaron|estar[aá]n?|est[aá]n?)\s+(\S+\s+){0,3}(list[oa]s?|preparad[oa]s?|separad[oa]s?|reservad[oa]s?|apartad[oa]s?)\b/i;
+
+// "Tu cotización está lista" es verdad aunque no haya pedido.
+const esAfirmacionDeListos = (frase: string) =>
+  !frase.trim().endsWith('?') &&
+  !/cotizaci[oó]n/i.test(frase) &&
+  AFIRMA_PRODUCTOS_LISTOS.test(frase);
+
+/**
+ * "Ya quedó avisada la tienda para tener listas tus cápsulas" sin pedido
+ * registrado (Hierba Sana, 28-10): nadie separó nada y el cliente llega el
+ * viernes confiado. Sin nota de venta no hay productos separados, así que
+ * esa frase se saca y se le dice qué falta para separarlos.
+ */
+export function sinProductosListosInventado(
+  respuesta: string,
+  pedidoRegistrado: boolean,
+): string {
+  if (pedidoRegistrado) return respuesta;
+  const frases = respuesta.split(/(?<=[.!?¡¿\n])/);
+  if (!frases.some(esAfirmacionDeListos)) return respuesta;
+  const limpias = frases.filter((f) => !esAfirmacionDeListos(f)).join('').trim();
+  return `${limpias}\n\nOjo: todavía no tengo tus productos separados. Si quieres que te los deje listos para recoger, confírmame tu nombre completo y registro tu pedido.`;
+}
+
 function unir(partes: string[]): string {
   if (partes.length === 1) return partes[0];
   return `${partes.slice(0, -1).join(', ')} y ${partes.at(-1)}`;

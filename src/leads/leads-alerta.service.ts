@@ -115,6 +115,30 @@ export class LeadsAlertaService {
   }
 
   /**
+   * Un cliente avisó que va a pasar por la tienda. Va al mismo número que las
+   * derivaciones: la campana sola no alcanzaba, el dueño de Hierba Sana no
+   * se enteró de una visita del viernes porque no tenía el panel abierto
+   * (28-10).
+   */
+  async avisarVisitaTienda(
+    p: Omit<AvisoDerivacionParams, 'motivo'> & { titulo: string; mensaje: string },
+  ): Promise<void> {
+    const texto = [
+      `*${p.titulo}*`,
+      '',
+      p.mensaje,
+      '',
+      `Ver visitas: ${this.frontendUrl()}/administrador/leads/visitas`,
+    ].join('\n');
+    await this.avisarAlSupervisor(
+      { ...p, motivo: 'visita a la tienda' },
+      texto,
+      'visita a tienda',
+      p.titulo.replace(/^\S+\s+/, ''),
+    );
+  }
+
+  /**
    * Cliente de alto riesgo (medicación, enfermedad crónica, embarazo): llega
    * al mismo número que las derivaciones, pero la IA SIGUE respondiendo. Lo
    * que se pide es seguimiento, no tomar el chat.
