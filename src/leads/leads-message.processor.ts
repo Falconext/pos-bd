@@ -2734,6 +2734,7 @@ export class LeadsMessageProcessor extends WorkerHost {
             conversacionId,
             telefono,
             String(argumentos.cuando ?? ''),
+            typeof argumentos.nombre === 'string' ? argumentos.nombre : undefined,
           );
           if (notificacion) {
             await this.avisarVisitaPorWhatsapp(empresaId, conversacionId, telefono, notificacion);

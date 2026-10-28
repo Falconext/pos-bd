@@ -101,6 +101,29 @@ export function afirmaDerivacion(
 }
 
 /**
+ * Parte el texto en frases sin cortar en "2 p. m." ni en "Av. Emancipación".
+ * QA 28-10: al sacar una frase cortada en "p." quedaba "m., ¿podrías…".
+ * Unir las frases devuelve el texto tal cual.
+ */
+// El punto de adentro de "p. m." nunca corta; el del final corta solo si lo
+// sigue una mayúscula o "¿" ("…a las 2 p. m. ¿Me das tu nombre?").
+const ABREVIATURA =
+  /\b(?:[ap]\.\s?m(?:\.(?!\s+[¿¡A-ZÁÉÍÓÚÑ]))?|(?:Av|Jr|Sr|Sra|Srta|Dr|Dra|Mz|Lt|Nro|Urb|Prol|Psje)\.)/g;
+
+function frasesDe(texto: string): string[] {
+  const guardadas: string[] = [];
+  const protegido = texto.replace(ABREVIATURA, (m) => {
+    guardadas.push(m);
+    return `\u0000${guardadas.length - 1}\u0000`;
+  });
+  return protegido
+    // Se corta DESPUÉS de . ! ? y no en "¿": "Para dejarlo listo, ¿me das tu
+    // nombre?" es una sola frase, y es pregunta (QA 28-10 cortaba en el "¿").
+    .split(/(?<=[.!?\n])/)
+    .map((f) => f.replace(/\u0000(\d+)\u0000/g, (_, i) => guardadas[Number(i)]));
+}
+
+/**
  * QA 27-10 (Hierba Sana): "quiero 2, paso a recogerlo mañana a las 11" → el
  * modelo cotizó y escribió "Ya dejé avisada la tienda" sin llamar a
  * avisar_visita_tienda. La tienda no se entera, no hay visita en la lista y
@@ -113,7 +136,7 @@ const AFIRMA_AVISO_TIENDA =
 const esAfirmacionDeAviso = (frase: string) => !frase.trim().endsWith('?') && AFIRMA_AVISO_TIENDA.test(frase);
 
 export function afirmaAvisoATienda(texto: string): boolean {
-  return texto.split(/(?<=[.!?¡¿\n])/).some(esAfirmacionDeAviso);
+  return frasesDe(texto).some(esAfirmacionDeAviso);
 }
 
 /**
@@ -132,7 +155,7 @@ export function sinAvisoInventado(
       (ll.resultado as { avisado?: unknown } | undefined)?.avisado === true,
   );
   if (avisoEsteTurno) return respuesta;
-  const frases = respuesta.split(/(?<=[.!?¡¿\n])/);
+  const frases = frasesDe(respuesta);
   const limpias = frases.filter((f) => !esAfirmacionDeAviso(f)).join('').trim();
   return `${limpias}\n\n¿Te lo dejo separado para que pases a recogerlo? Confírmame y aviso a la tienda.`;
 }
@@ -157,7 +180,7 @@ export function sinProductosListosInventado(
   pedidoRegistrado: boolean,
 ): string {
   if (pedidoRegistrado) return respuesta;
-  const frases = respuesta.split(/(?<=[.!?¡¿\n])/);
+  const frases = frasesDe(respuesta);
   if (!frases.some(esAfirmacionDeListos)) return respuesta;
   const limpias = frases.filter((f) => !esAfirmacionDeListos(f)).join('').trim();
   return `${limpias}\n\nOjo: todavía no tengo tus productos separados. Si quieres que te los deje listos para recoger, confírmame tu nombre completo y registro tu pedido.`;

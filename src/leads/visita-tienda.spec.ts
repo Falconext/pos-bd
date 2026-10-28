@@ -92,8 +92,8 @@ function armar(
     .mockResolvedValue({ registrado: true, pedido: 'NV01-00000099', montoAPagar: 7 });
   return {
     registrar,
-    avisar: (cuando: string) =>
-      servicio.avisarVisitaTienda(EMPRESA, CONV, TELEFONO, cuando),
+    avisar: (cuando: string, nombre?: string) =>
+      servicio.avisarVisitaTienda(EMPRESA, CONV, TELEFONO, cuando, nombre),
     avisos,
     borradorActual: () => borrador,
   };
@@ -294,5 +294,41 @@ describe('cotizó con envío y después dice que va a la tienda', () => {
     expect(res.cambio).toBeDefined();
     expect(borradorActual()?.tipoZona).toBe('RECOJO');
     expect(avisos).toHaveLength(0);
+  });
+});
+
+describe('el nombre llega en el mismo aviso', () => {
+  // QA 28-10: el cliente escribió su nombre y el modelo avisó la visita sin
+  // guardarlo antes: otra vez "falta nombre" y sin nota de venta.
+  it('si el cliente lo escribió, se guarda y se registra el pedido', async () => {
+    const { avisar, borradorActual, registrar } = armar(
+      { ...BORRADOR_RECOJO, nombre: null },
+      ['Arturo Franco Lozano', '2pm', 'El viernes voy'],
+    );
+    const res = await avisar('el viernes a las 2 pm', 'Arturo Franco Lozano');
+
+    expect(borradorActual()?.nombre).toBe('Arturo Franco Lozano');
+    expect(res.avisado).toBe(true);
+    expect(registrar).toHaveBeenCalled();
+  });
+
+  it('un nombre que el cliente nunca escribió no se guarda', async () => {
+    const { avisar, borradorActual } = armar(
+      { ...BORRADOR_RECOJO, nombre: null },
+      ['el viernes voy'],
+    );
+    const res = await avisar('el viernes', 'Juan Pérez');
+
+    expect(borradorActual()?.nombre).toBeNull();
+    expect(res.falta).toEqual(['nombre completo']);
+  });
+
+  it('solo el nombre de pila no alcanza', async () => {
+    const { avisar, borradorActual } = armar(
+      { ...BORRADOR_RECOJO, nombre: null },
+      ['Arturo', 'el viernes voy'],
+    );
+    await avisar('el viernes', 'Arturo');
+    expect(borradorActual()?.nombre).toBeNull();
   });
 });

@@ -119,6 +119,9 @@ export interface ItemPedido {
  * aplica descuentos y no inventa tarifas. Le pasa los datos, recibe los
  * números ya calculados y los copia.
  */
+const normalizarNombre = (t: string) =>
+  t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+
 /** El cliente dice que él va: "el viernes voy", "paso a recogerlo", "¿dónde queda su local?". */
 const VA_A_LA_TIENDA =
   /\b(voy|vamos|ir[eé]|iremos|paso|pasar[eé]|pasamos|me acerco|nos acercamos|recojo|recoger|recogerlo|recogerla|la tienda|el local|su local|tu local|en persona)\b/i;
@@ -1806,12 +1809,33 @@ export class LeadsPedidoService {
     conversacionId: number,
     telefono: string,
     cuando: string,
+    nombre?: string,
   ): Promise<ResultadoAvisoVisita & { cambio?: string }> {
     const borrador = await this.prisma.leadPedidoBorrador.findUnique({
       where: { conversacionId },
     });
     if (!borrador) {
       return { error: 'Todavía no hay nada cotizado. Cotiza primero.' };
+    }
+    // QA 28-10: el cliente escribió su nombre y el modelo volvió a avisar la
+    // visita sin guardarlo antes; quedaba otra vez "falta nombre" y sin nota.
+    // Se guarda acá, con la misma regla que guardar_datos_envio: nombre y
+    // apellido, y escrito por el cliente (no inventado por el modelo).
+    const nombreDado = nombre?.trim().replace(/\s+/g, ' ');
+    if (
+      !borrador.nombre &&
+      nombreDado &&
+      nombreDado.split(' ').filter((w) => w.length > 1).length >= 2 &&
+      (await this.mensajesDelCliente(conversacionId)).some((m) =>
+        normalizarNombre(m).includes(normalizarNombre(nombreDado)),
+      )
+    ) {
+      borrador.nombre = (
+        await this.prisma.leadPedidoBorrador.update({
+          where: { conversacionId },
+          data: { nombre: nombreDado },
+        })
+      ).nombre;
     }
     // Cotizó con envío y después dijo "el viernes voy" (Hierba Sana, 28-10):
     // el aviso fallaba, la visita quedaba sin pedido y la cotización seguía

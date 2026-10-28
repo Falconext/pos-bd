@@ -27,6 +27,29 @@ describe('productos "listos" sin pedido', () => {
     expect(sinProductosListosInventado(frase, false)).toMatch(/todavía no tengo tus productos separados/);
   });
 
+  it('no corta la frase en "p. m." (QA 28-10 dejaba "m., ¿podrías…")', () => {
+    const r = sinProductosListosInventado(
+      'Tendremos todo listo para el viernes a las 2 p. m. ¿Podrías darme tu nombre completo?',
+      false,
+    );
+    expect(r.startsWith('¿Podrías darme tu nombre completo?')).toBe(true);
+    expect(r).not.toMatch(/^m\./);
+  });
+
+  it('una pregunta que empieza a mitad de frase sigue siendo pregunta', () => {
+    const t = '¡Perfecto! Para dejar tus productos listos, ¿me podrías regalar tu nombre completo, por favor?';
+    expect(sinProductosListosInventado(t, false)).toBe(t);
+  });
+
+  it('ni en "Av." de la dirección', () => {
+    const r = sinProductosListosInventado(
+      'Te esperamos en la Av. Emancipación 687. Ya están separados tus frascos.',
+      false,
+    );
+    expect(r).toMatch(/^Te esperamos en la Av\. Emancipación 687\./);
+    expect(r).not.toMatch(/separados tus frascos/);
+  });
+
   it('con la nota de venta registrada no se toca', () => {
     expect(sinProductosListosInventado(REAL, true)).toBe(REAL);
   });

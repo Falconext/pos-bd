@@ -68,7 +68,7 @@ export class LeadsVisitaService {
 
     const antes = await this.prisma.leadVisitaTienda.findUnique({
       where: { conversacionId },
-      select: { indicacionesEn: true, fecha: true, cuando: true },
+      select: { indicacionesEn: true, fecha: true, cuando: true, actualizadoEn: true },
     });
     const visita = await this.prisma.leadVisitaTienda.upsert({
       where: { conversacionId },
@@ -137,12 +137,19 @@ export class LeadsVisitaService {
       `Lead: visita a tienda (empresa ${empresaId}, conv ${conversacionId}, ${fecha ?? 'sin fecha'}, indicaciones ${indicacionesEnviadas ? 'enviadas' : 'no'}).`,
     );
     const yaTeniaIndicaciones = !!visita.indicacionesEn;
+    // Por WhatsApp no se repite cuando solo está completando la hora del
+    // mismo día ("el viernes voy" → "2pm"): en QA llegaban dos mensajes en
+    // un minuto. La campana sí se actualiza.
+    const soloCompletaLaHora =
+      !!antes &&
+      (antes.fecha?.toISOString().slice(0, 10) ?? null) === fecha &&
+      Date.now() - antes.actualizadoEn.getTime() < 30 * 60_000;
     return {
       registrada: true,
       fecha,
       indicacionesEnviadas,
       yaTeniaIndicaciones,
-      ...(notificacion ? { notificacion } : {}),
+      ...(notificacion && !soloCompletaLaHora ? { notificacion } : {}),
       // QA 26-10: sin esto el modelo decía "te acabo de mandar la ubicación"
       // aunque no hubiera salido nada.
       ...(!indicacionesEnviadas && !yaTeniaIndicaciones

@@ -235,6 +235,10 @@ const avisarVisitaTienda: FunctionDeclaration = {
         type: SchemaType.STRING,
         description: 'El día de la visita como AAAA-MM-DD, calculado con el día de HOY de la información de apoyo. Omítelo si no dijo el día.',
       },
+      nombre: {
+        type: SchemaType.STRING,
+        description: 'Nombre completo del cliente tal como lo escribió, si te lo dio. Pásalo siempre que lo tengas: sin nombre no se registra su pedido.',
+      },
     },
     required: ['cuando'],
   },
