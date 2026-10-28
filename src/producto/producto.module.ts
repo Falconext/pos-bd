@@ -5,6 +5,8 @@ import { ProductoController } from './producto.controller';
 import { ProductoPlantillaController } from './producto-plantilla.controller';
 import { ProductoPlantillaService } from './producto-plantilla.service';
 import { ProductoLoteService } from './producto-lote.service';
+import { ReprecioExcelController } from './reprecio-excel.controller';
+import { ReprecioExcelService } from './reprecio-excel.service';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { KardexModule } from '../kardex/kardex.module';
 import { S3Module } from '../s3/s3.module';
@@ -18,12 +20,13 @@ import { DigemidModule } from '../digemid/digemid.module';
     GeminiModule,
     DigemidModule,
   ],
-  controllers: [ProductoController, ProductoPlantillaController],
+  controllers: [ProductoController, ProductoPlantillaController, ReprecioExcelController],
   providers: [
     ProductoService,
     ProductoMaestroService,
     ProductoPlantillaService,
     ProductoLoteService,
+    ReprecioExcelService,
     RolesGuard,
   ],
   exports: [ProductoService, ProductoLoteService, ProductoMaestroService],
