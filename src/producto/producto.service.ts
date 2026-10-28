@@ -4663,6 +4663,30 @@ export class ProductoService {
     });
   }
 
+  async cambiarMarca(id: number, empresaId: number, marcaId: number | null) {
+    const producto = await this.prisma.producto.findFirst({
+      where: { id, empresaId },
+      select: { id: true },
+    });
+    if (!producto) throw new NotFoundException('Producto no encontrado');
+    if (marcaId != null) {
+      const marca = await this.prisma.marca.findFirst({
+        where: { id: marcaId, empresaId },
+        select: { id: true },
+      });
+      if (!marca) throw new NotFoundException('Marca no encontrada');
+    }
+    return this.prisma.producto.update({
+      where: { id },
+      data: { marcaId },
+      select: {
+        id: true,
+        marcaId: true,
+        marca: { select: { id: true, nombre: true } },
+      },
+    });
+  }
+
   async cambiarEstado(id: number, empresaId: number, estado: EstadoType) {
     const producto = await this.prisma.producto.findFirst({
       where: { id, empresaId },
