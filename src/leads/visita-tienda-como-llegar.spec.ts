@@ -1,4 +1,4 @@
-import { coordenadasDeMaps, fechaDeVisita, imagenesComoLlegar, textoComoLlegar, tieneComoLlegar, tiendaValida } from './visita-tienda';
+import { coordenadasDeMaps, fechaDeVisita, bloqueTienda, imagenesComoLlegar, textoComoLlegar, tieneComoLlegar, tiendaValida } from './visita-tienda';
 
 // Domingo 25 de octubre de 2026, 7 p. m. de Lima (el chat de Percy).
 const HOY = new Date('2026-10-26T00:00:00Z');
@@ -70,5 +70,19 @@ describe('el mensaje que escribió el negocio', () => {
     const t = tiendaValida({ fotoUrl: 'https://s3/foto.jpg', croquisUrl: 'https://s3/croquis.jpg' });
     expect(imagenesComoLlegar(t)).toEqual(['https://s3/croquis.jpg', 'https://s3/foto.jpg']);
     expect(tieneComoLlegar(tiendaValida({ croquisUrl: 'https://s3/c.jpg' }))).toBe(true);
+  });
+});
+
+describe('la dirección en el prompt', () => {
+  it('va la dirección configurada y la orden de no dar otra', () => {
+    const b = bloqueTienda(tiendaValida({ direccion: 'Av. Emancipación 687, Stand D 27-28', croquisUrl: 'c', fotoUrl: 'f' }));
+    expect(b).toContain('Av. Emancipación 687, Stand D 27-28');
+    expect(b).toContain('no des otra');
+    expect(b).toContain('el croquis y la foto del local');
+  });
+
+  it('sin dirección no se escribe nada', () => {
+    expect(bloqueTienda(undefined)).toBe('');
+    expect(bloqueTienda(tiendaValida({ mapsUrl: 'https://maps.app.goo.gl/x' }))).toBe('');
   });
 });

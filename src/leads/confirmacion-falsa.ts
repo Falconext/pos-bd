@@ -10,7 +10,11 @@
  * legal: el modelo la incumple justo en el mensaje que importa.
  */
 import type { LlamadaHerramienta } from '../gemini/gemini.service';
-import { HERRAMIENTA_AGENDAR_VISITA, HERRAMIENTA_REGISTRAR_PEDIDO } from './leads-herramientas';
+import {
+  HERRAMIENTA_AGENDAR_VISITA,
+  HERRAMIENTA_AVISAR_VISITA,
+  HERRAMIENTA_REGISTRAR_PEDIDO,
+} from './leads-herramientas';
 
 const AFIRMA_REGISTRO =
   /(qued[oó]|ha quedado|est[aá]|fue|hemos|he|se ha)\s+(\S+\s+){0,3}(registrad|agendad|confirmad)|pedido\s+(registrado|agendado|confirmado)|se ha agendado/i;
@@ -94,6 +98,43 @@ export function afirmaDerivacion(
     .split(/(?<=[.!?¡¿\n])\s*/)
     .filter((f) => !f.trim().endsWith('?'))
     .some((f) => AFIRMA_DERIVACION.test(f) && QUIEN_ATIENDE.test(f));
+}
+
+/**
+ * QA 27-10 (Hierba Sana): "quiero 2, paso a recogerlo mañana a las 11" → el
+ * modelo cotizó y escribió "Ya dejé avisada la tienda" sin llamar a
+ * avisar_visita_tienda. La tienda no se entera, no hay visita en la lista y
+ * al cliente no le llega cómo llegar.
+ */
+const AFIRMA_AVISO_TIENDA =
+  /\b(dej[eé]|he dejado|hemos dejado|qued[oó]|queda|ya est[aá])\s+(\S+\s+){0,2}avisad[ao]s?\b|\b(avisé|hemos avisado|he avisado)\s+(\S+\s+){0,2}(a\s+)?la tienda\b/i;
+
+/** Frase por frase: una pregunta ("¿quieres que avise a la tienda?") no cuenta. */
+const esAfirmacionDeAviso = (frase: string) => !frase.trim().endsWith('?') && AFIRMA_AVISO_TIENDA.test(frase);
+
+export function afirmaAvisoATienda(texto: string): boolean {
+  return texto.split(/(?<=[.!?¡¿\n])/).some(esAfirmacionDeAviso);
+}
+
+/**
+ * Si dice que avisó a la tienda sin haberlo hecho, se saca esa frase (la
+ * cotización que la acompaña se queda) y se pide la confirmación que falta.
+ */
+export function sinAvisoInventado(
+  respuesta: string,
+  llamadas: LlamadaHerramienta[],
+  tiendaYaAvisada: boolean,
+): string {
+  if (tiendaYaAvisada || !afirmaAvisoATienda(respuesta)) return respuesta;
+  const avisoEsteTurno = llamadas.some(
+    (ll) =>
+      ll.nombre === HERRAMIENTA_AVISAR_VISITA &&
+      (ll.resultado as { avisado?: unknown } | undefined)?.avisado === true,
+  );
+  if (avisoEsteTurno) return respuesta;
+  const frases = respuesta.split(/(?<=[.!?¡¿\n])/);
+  const limpias = frases.filter((f) => !esAfirmacionDeAviso(f)).join('').trim();
+  return `${limpias}\n\n¿Te lo dejo separado para que pases a recogerlo? Confírmame y aviso a la tienda.`;
 }
 
 function unir(partes: string[]): string {

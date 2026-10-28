@@ -117,6 +117,21 @@ export function textoComoLlegar(t: ConfigTienda, negocio: string): string {
     .join('\n');
 }
 
+/**
+ * La dirección de la tienda para el prompt fijo. QA 27-10: sin esto, a quien
+ * preguntaba "¿dónde están?" el modelo le inventó una dirección (otro jirón,
+ * otro número) si el texto del negocio no la traía.
+ */
+export function bloqueTienda(t: ConfigTienda | undefined): string {
+  if (!t?.direccion) return '';
+  const extras = [t.croquisUrl && 'el croquis', t.fotoUrl && 'la foto del local'].filter(Boolean).join(' y ');
+  return [
+    'TIENDA FÍSICA',
+    `Dirección: ${t.direccion}. Es la única dirección de la tienda: no des otra.`,
+    `Si el cliente va a ir, regístralo con agendar_visita_tienda (o avisar_visita_tienda si recoge un pedido): le mandan solos el mapa${extras ? `, ${extras}` : ''} y cómo llegar. No le digas que le mandaste la ubicación si la herramienta no lo confirmó.`,
+  ].join('\n');
+}
+
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'setiembre', 'octubre', 'noviembre', 'diciembre'];
