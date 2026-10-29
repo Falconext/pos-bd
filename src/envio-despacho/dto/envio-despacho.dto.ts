@@ -83,6 +83,8 @@ export class CreateEnvioDespachoDto {
    * la ficha del cliente para que la próxima venta ya salga completa.
    */
   @IsOptional() @IsBoolean() actualizarFichaCliente?: boolean;
+  /** false = cambiar el estado sin el aviso automático (el negocio lo manda editado). */
+  @IsOptional() @IsBoolean() notificar?: boolean;
   @IsOptional() @IsString() contenidoPaquete?: string;
   /** type_product de Shalom elegido en la coordinación de envío. */
   @IsOptional() @Type(() => Number) @IsInt() shalomTipoProducto?: number;
