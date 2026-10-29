@@ -51,6 +51,7 @@ import {
   sinPagoInventado,
 } from './confirmacion-falsa';
 import { conRegistroDirecto, yaAceptoAntes } from './registro-directo';
+import { bloqueDerivacion, conMotivosDelNegocio } from './derivar-en';
 import {
   HERRAMIENTA_MENU,
   type ConfigMenuInicial,
@@ -965,6 +966,7 @@ export class LeadsMessageProcessor extends WorkerHost {
       // dice de sí mismo que es el que manda.
       comercial,
       tiendaFisica,
+      bloqueDerivacion(config.derivarEn),
     ]
       .filter((s) => s && s.trim())
       .join('\n\n');
@@ -1010,7 +1012,9 @@ export class LeadsMessageProcessor extends WorkerHost {
         historial,
         businessContext,
         historial.length,
-        ejecutor,
+        // Lo que el modelo decide derivar respeta las casillas del negocio;
+        // las derivaciones del propio sistema usan `ejecutor` tal cual.
+        conMotivosDelNegocio(ejecutor, config.derivarEn),
         {
           nombre: empresa.nombreComercial || empresa.razonSocial,
           rubro: empresa.rubro?.nombre ?? null,

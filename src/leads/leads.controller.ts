@@ -41,6 +41,12 @@ export class LeadsController {
     return this.service.obtenerConfig(user.empresaId);
   }
 
+  /** Qué tan lista está la IA para vender y qué le falta (Mi vendedor). */
+  @Get('puntaje')
+  puntajeVendedor(@User() user: any) {
+    return this.service.puntajeVendedor(user.empresaId);
+  }
+
   /** Prospectos que pidieron demo: el banco para llamarlos después. */
   @Get('demos')
   listarDemos(@User() user: any) {
@@ -69,6 +75,7 @@ export class LeadsController {
       despedida?: unknown;
       tienda?: unknown;
       menu?: unknown;
+      derivarEn?: unknown;
     },
   ) {
     return this.service.actualizarConfig(user.empresaId, body);
