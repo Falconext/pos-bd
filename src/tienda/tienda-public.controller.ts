@@ -110,6 +110,12 @@ export class TiendaPublicController {
     return this.tiendaService.obtenerConfiguracionEnvioPublica(slug);
   }
 
+  /** Agencias de Shalom u Olva para elegir dónde recoger (solo las que la tienda ofrece). */
+  @Get(':slug/agencias/:courier')
+  async agencias(@Param('slug') slug: string, @Param('courier') courier: string) {
+    return this.tiendaService.agenciasParaTienda(slug, courier);
+  }
+
   @Get('track/:codigo')
   async rastrearPedido(@Param('codigo') codigo: string) {
     return this.tiendaService.obtenerPedidoPorCodigo(codigo);

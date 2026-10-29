@@ -338,6 +338,9 @@ model Empresa {
   yapeNumero                    String?
   yapeQrUrl                     String?
   aceptaEnvio                   Boolean                       @default(true)
+  /// Agencias por las que la tienda virtual ofrece enviar ("SHALOM", "OLVA").
+  /// Vacío = solo envío a domicilio. Ver tienda/envio-agencia.ts.
+  couriersTienda                String[]                      @default([])
   aceptaRecojo                  Boolean                       @default(true)
   esAgenteRetencion             Boolean                       @default(false)
   // ── Impresión de comprobantes ────────────────────────────────────────────
@@ -1670,6 +1673,12 @@ model PedidoTienda {
   vendedorNombre    String?
   numeroTracking    String?
   tipoEntrega       TipoEntrega             @default(RECOJO)
+  /// Envío por agencia elegido en la tienda (ver tienda/envio-agencia.ts).
+  envioCourier       String?
+  envioAgenciaId     String?
+  envioAgenciaNombre String?
+  /// DNI/CE/RUC del comprador: Shalom y Olva lo piden al entregar.
+  clienteDocumento   String?
   historialEstados  HistorialEstadoPedido[]
   items             ItemPedidoTienda[]
   reviews           ProductoReview[]

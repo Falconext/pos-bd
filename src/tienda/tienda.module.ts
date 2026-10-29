@@ -10,6 +10,8 @@ import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 import { MercadoPagoModule } from '../mercadopago/mercadopago.module';
 import { NiubizModule } from '../niubiz/niubiz.module';
+import { ShalomModule } from '../shalom/shalom.module';
+import { OlvaModule } from '../olva/olva.module';
 import { RolesGuard } from '../common/guards/roles.guard';
 
 @Module({
@@ -22,6 +24,9 @@ import { RolesGuard } from '../common/guards/roles.guard';
     NotificacionesModule,
     MercadoPagoModule,
     NiubizModule,
+    // Agencias de Shalom y Olva para el checkout (envio-agencia.ts).
+    ShalomModule,
+    OlvaModule,
   ],
   controllers: [TiendaController, TiendaPublicController],
   providers: [TiendaService, RolesGuard],
