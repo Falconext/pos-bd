@@ -23,6 +23,12 @@ function servicio() {
       findUnique: jest.fn().mockResolvedValue({ whatsappPin: null }),
       update: jest.fn().mockResolvedValue({}),
     },
+    numeroWhatsapp: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      upsert: jest.fn().mockResolvedValue({}),
+    },
+    $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
   };
   const s = new WhatsAppService(prisma as never, config);
   jest.spyOn(s as any, 'validarPlantillasWhatsApp').mockResolvedValue(undefined);

@@ -241,15 +241,29 @@ export class LeadsMessageProcessor extends WorkerHost {
   }
 
   /**
+   * Empresa dueña de un número de WhatsApp. Primero entre sus números
+   * (NumeroWhatsapp, varios por empresa) y, si no está ahí, el campo de siempre.
+   */
+  private async empresaDelNumero(phoneNumberId?: string) {
+    if (!phoneNumberId) return null;
+    const numero = await this.prisma.numeroWhatsapp.findUnique({
+      where: { phoneNumberId },
+      select: { iaActiva: true, empresa: { select: { id: true, iaVentasActiva: true } } },
+    });
+    if (numero) return { ...numero.empresa, iaActivaEnNumero: numero.iaActiva };
+    return this.prisma.empresa.findFirst({
+      where: { whatsappPhoneNumberId: phoneNumberId },
+      select: { id: true, iaVentasActiva: true },
+    });
+  }
+
+  /**
    * El dueño contestó desde la app WhatsApp Business de su celular
    * (coexistencia, ver eco-vendedor.ts): se guarda como respuesta del vendedor
    * y la IA se calla en ese chat, igual que cuando responde desde el panel.
    */
   private async registrarEcoVendedor(e: EcoVendedor): Promise<void> {
-    const empresa = await this.prisma.empresa.findFirst({
-      where: { whatsappPhoneNumberId: e.phoneNumberId },
-      select: { id: true },
-    });
+    const empresa = await this.empresaDelNumero(e.phoneNumberId);
     if (!empresa) return;
 
     const ya = await this.prisma.leadMensaje.findUnique({
@@ -509,10 +523,7 @@ export class LeadsMessageProcessor extends WorkerHost {
             where: { facebookPageId: d.facebookPageId, facebookActivo: true },
             select: { id: true, iaVentasActiva: true },
           })
-        : await this.prisma.empresa.findFirst({
-            where: { whatsappPhoneNumberId: d.phoneNumberId },
-            select: { id: true, iaVentasActiva: true },
-          });
+        : await this.empresaDelNumero(d.phoneNumberId);
     if (!empresa) {
       this.logger.warn(
         esInstagram
@@ -590,6 +601,8 @@ export class LeadsMessageProcessor extends WorkerHost {
       update: {
         seguimientos: 0,
         ...(d.nombre ? { nombreProspecto: d.nombre } : {}),
+        // Con varios números, se le contesta por el último al que escribió.
+        ...(d.phoneNumberId ? { numeroWhatsappId: d.phoneNumberId } : {}),
         // Un comentario nuevo abre una nueva respuesta privada; un DM cierra
         // el modo comentario: ya se le puede escribir normal.
         ...(d.comentarioId
@@ -741,6 +754,8 @@ export class LeadsMessageProcessor extends WorkerHost {
 
     // Toggle multi-tenant: si la empresa no activó la IA, sólo capturamos el CRM.
     if (!empresa.iaVentasActiva) return;
+    // Número donde la IA está apagada (p. ej. la línea que atiende una persona).
+    if ((empresa as any).iaActivaEnNumero === false) return;
     // Nota de voz que no se pudo transcribir: queda guardada, pero no hay con
     // qué responder.
     if (d.esAudio && !audioTranscrito) return;
@@ -808,9 +823,17 @@ export class LeadsMessageProcessor extends WorkerHost {
         botActivo: true,
         pausadoHasta: true,
         canal: true,
+        numeroWhatsappId: true,
       },
     });
     if (!conv) return false;
+    if (conv.numeroWhatsappId) {
+      const numero = await this.prisma.numeroWhatsapp.findUnique({
+        where: { phoneNumberId: conv.numeroWhatsappId },
+        select: { iaActiva: true },
+      });
+      if (numero && !numero.iaActiva) return false;
+    }
 
     // Bot pausado en esta conversación (un humano tomó el chat). La pausa por
     // intervención vence sola; la de una derivación, no — ahí hay una persona
