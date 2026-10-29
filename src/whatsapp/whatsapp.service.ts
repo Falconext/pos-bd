@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import axios from 'axios';
 import sharp from 'sharp';
 import FormData from 'form-data';
+import { enviarTakiy, CredencialesTakiy, ResultadoTakiy } from './takiy';
 import {
   planTieneFeature,
   SELECT_PLAN_FEATURES,
@@ -2151,5 +2152,119 @@ export class WhatsAppService {
         cantidadEnvios: e._count,
       })),
     };
+  }
+
+  // ─── Takiy: WhatsApp por QR del número del negocio ───────────────────────
+
+  /** Las llaves de Takiy de la empresa, solo si está activo y completo. */
+  async credencialesTakiy(empresaId: number): Promise<CredencialesTakiy | null> {
+    const e = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { takiyActivo: true, takiyAppKey: true, takiyAuthKey: true },
+    });
+    if (!e?.takiyActivo || !e.takiyAppKey || !e.takiyAuthKey) return null;
+    return { appKey: e.takiyAppKey, authKey: e.takiyAuthKey };
+  }
+
+  async enviarPorTakiy(
+    empresaId: number,
+    numero: string,
+    mensaje: string,
+    archivoUrl?: string,
+  ): Promise<ResultadoTakiy> {
+    const cred = await this.credencialesTakiy(empresaId);
+    if (!cred) return { success: false, error: 'Takiy no está activo para esta empresa.' };
+    const r = await enviarTakiy(cred, { numero, mensaje, archivoUrl });
+    if (!r.success) this.logger.warn(`Takiy empresa ${empresaId} a ${numero}: ${r.error}`);
+    return r;
+  }
+
+  /**
+   * Aviso al cliente que con Meta va como plantilla aprobada. Con Takiy activo
+   * sale como texto: el propio del negocio si lo escribió, o el mismo cuerpo
+   * de la plantilla con los valores puestos, para que el cliente lea lo mismo
+   * por cualquiera de las dos vías.
+   */
+  async enviarAvisoCliente(
+    empresaId: number,
+    numero: string,
+    plantilla: string,
+    valores: string[],
+    textoPropio?: string | null,
+  ): Promise<{ success: boolean; error?: string; via: 'TAKIY' | 'META'; texto?: string }> {
+    if (await this.credencialesTakiy(empresaId)) {
+      const cuerpo = this.cuerpoPlantillaDespacho(plantilla);
+      const texto =
+        textoPropio?.trim() ||
+        (cuerpo ? cuerpo.replace(/\{\{(\d+)\}\}/g, (_m, n: string) => valores[Number(n) - 1] ?? '') : null);
+      if (texto) {
+        const r = await this.enviarPorTakiy(empresaId, numero, texto);
+        return { ...r, via: 'TAKIY', texto };
+      }
+    }
+    const r = await this.enviarPlantilla(numero, plantilla, 'es', valores, empresaId);
+    return { ...r, via: 'META' };
+  }
+
+  /** Configuración de Takiy para el panel: las llaves nunca salen enteras. */
+  async getTakiyConfig(empresaId: number) {
+    const e = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { takiyActivo: true, takiyEnviarComprobante: true, takiyAppKey: true, takiyAuthKey: true },
+    });
+    const ultimos = (v?: string | null) => (v ? `••••${v.slice(-4)}` : null);
+    return {
+      activo: e?.takiyActivo ?? false,
+      enviarComprobante: e?.takiyEnviarComprobante ?? false,
+      appKey: ultimos(e?.takiyAppKey),
+      authKeyConfigurada: !!e?.takiyAuthKey,
+    };
+  }
+
+  async guardarTakiyConfig(
+    empresaId: number,
+    dto: { appKey?: string; authKey?: string; activo?: boolean; enviarComprobante?: boolean },
+  ) {
+    const data: Record<string, unknown> = {};
+    // Vacío = conservar la llave guardada (el panel no la conoce).
+    if (dto.appKey?.trim()) data.takiyAppKey = dto.appKey.trim();
+    if (dto.authKey?.trim()) data.takiyAuthKey = dto.authKey.trim();
+    if (dto.activo !== undefined) data.takiyActivo = !!dto.activo;
+    if (dto.enviarComprobante !== undefined) data.takiyEnviarComprobante = !!dto.enviarComprobante;
+
+    if (data.takiyActivo) {
+      const actual = await this.prisma.empresa.findUnique({
+        where: { id: empresaId },
+        select: { takiyAppKey: true, takiyAuthKey: true },
+      });
+      if (!(data.takiyAppKey ?? actual?.takiyAppKey) || !(data.takiyAuthKey ?? actual?.takiyAuthKey)) {
+        throw new BadRequestException('Para activar Takiy pega el App Key y el Auth Key de tu cuenta.');
+      }
+    }
+    await this.prisma.empresa.update({ where: { id: empresaId }, data });
+    return this.getTakiyConfig(empresaId);
+  }
+
+  /**
+   * Mensaje de prueba. Usa las llaves que vienen del panel (antes de
+   * guardarlas) o, si no vienen, las guardadas, aunque Takiy esté apagado.
+   */
+  async probarTakiy(
+    empresaId: number,
+    dto: { numero: string; appKey?: string; authKey?: string },
+  ): Promise<ResultadoTakiy> {
+    if (!dto.numero?.trim()) throw new BadRequestException('Escribe el número al que mandar la prueba.');
+    const e = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { takiyAppKey: true, takiyAuthKey: true, nombreComercial: true, razonSocial: true },
+    });
+    const appKey = dto.appKey?.trim() || e?.takiyAppKey;
+    const authKey = dto.authKey?.trim() || e?.takiyAuthKey;
+    if (!appKey || !authKey) throw new BadRequestException('Falta el App Key o el Auth Key.');
+    const negocio = e?.nombreComercial || e?.razonSocial || 'tu negocio';
+    return enviarTakiy(
+      { appKey, authKey },
+      { numero: dto.numero, mensaje: `✅ Prueba de ${negocio}: los avisos por WhatsApp ya salen desde este número.` },
+    );
   }
 }

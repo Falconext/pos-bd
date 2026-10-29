@@ -668,6 +668,7 @@ export class ComprobanteController {
         '[crearBoleta] SUNAT response:',
         this.summarizeSunatResponse(sunatResp),
       );
+      this.service.enviarComprobanteAutomatico(comp.id, user);
       return { ...sunatResp, comprobanteId: comp.id };
     } catch (error: any) {
       console.error('[crearBoleta] ERROR:', error.message);
@@ -744,6 +745,7 @@ export class ComprobanteController {
         '[crearFactura] SUNAT response:',
         this.summarizeSunatResponse(sunatResp),
       );
+      this.service.enviarComprobanteAutomatico(comp.id, user);
       return { ...sunatResp, comprobanteId: comp.id };
     } catch (error: any) {
       console.error('[crearFactura] ERROR:', error.message);
@@ -855,6 +857,7 @@ export class ComprobanteController {
       user.id,
       effectiveSedeId,
     );
+    if (comp?.id) this.service.enviarComprobanteAutomatico(comp.id, user);
     return comp;
   }
 

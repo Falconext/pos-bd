@@ -252,6 +252,12 @@ export class LeadsAlertaService {
     que: string,
   ): Promise<void> {
     try {
+      // Con Takiy el aviso sale desde el número del negocio sin ventana de 24 h
+      // ni plantilla: es la vía que siempre llega. Si falla, sigue por Meta.
+      if (await this.whatsapp.credencialesTakiy(empresaId)) {
+        const t = await this.whatsapp.enviarPorTakiy(empresaId, numero, texto);
+        if (t.success) return;
+      }
       const r = await this.whatsapp.enviarTexto(numero, texto, empresaId);
       if (r.success) return;
       const cliente = `${nombreCliente?.trim() || 'Sin nombre'} · ${

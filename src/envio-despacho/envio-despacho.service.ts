@@ -32,6 +32,7 @@ import {
   quienReparte,
   saldoParaRetirar,
   textoDePlantilla,
+  mensajePropio,
   tocaRecordatorioRecojo,
   ultimos9,
 } from './recojo-agencia';
@@ -47,6 +48,8 @@ const MENSAJES_DEFAULT: Record<string, string> = {
     'Hola {{nombre}}, tu pedido {{pedido}} ya está en camino 🚚. Repartidor: {{repartidor}}.',
   ENTREGADO:
     'Hola {{nombre}}, tu pedido {{pedido}} fue entregado exitosamente ✅. ¡Gracias por preferir {{empresa}}!',
+  EN_AGENCIA:
+    'Hola {{nombre}}, tu pedido {{pedido}} ya llegó a {{agencia}} 📦. Ya puedes acercarte a recogerlo.',
 };
 
 const DESPACHO_FIELDS = [
@@ -459,6 +462,7 @@ export class EnvioDespachoService {
       empresaId,
       mensajeEnCamino: MENSAJES_DEFAULT.EN_CAMINO,
       mensajeEntregado: MENSAJES_DEFAULT.ENTREGADO,
+      mensajeEnAgencia: MENSAJES_DEFAULT.EN_AGENCIA,
       notificarEnCamino: true,
       notificarEntregado: true,
       recordatorioRecojoDias: 0,
@@ -825,6 +829,7 @@ export class EnvioDespachoService {
           // campo que no se pedía y siempre salía la versión sin cobro.
           saldo: true,
           cliente: { select: { nombre: true, telefono: true } },
+          empresa: { select: { nombreComercial: true, razonSocial: true } },
         },
       }),
       this.prisma.despachoMensajeTemplate.findUnique({ where: { empresaId } }),
@@ -838,14 +843,36 @@ export class EnvioDespachoService {
     const pedidoRef = `${comprobante.serie}-${String(comprobante.correlativo).padStart(8, '0')}`;
 
     const nombre = comprobante.cliente?.nombre ?? 'Cliente';
+    // Los textos que escribe el negocio solo salen por Takiy (texto libre);
+    // con Meta manda la plantilla aprobada y estos se ignoran.
+    const variables = {
+      nombre,
+      pedido: pedidoRef,
+      repartidor: repartidorNombre ?? 'nuestro equipo de reparto',
+      empresa: comprobante.empresa?.nombreComercial || comprobante.empresa?.razonSocial || '',
+    };
 
     if (esEnAgencia) {
       const envio = await this.prisma.envioDespacho.findFirst({
         where: { comprobanteId },
-        select: { agenciaDestino: true, montoCOD: true },
+        select: { agenciaDestino: true, montoCOD: true, claveEnvio: true },
       });
       const agencia = envio?.agenciaDestino || 'la agencia';
       const saldo = saldoParaRetirar(comprobante.saldo, envio?.montoCOD);
+      const propio = mensajePropio(config?.mensajeEnAgencia, {
+        ...variables,
+        agencia,
+        saldo: saldo > 0 ? `S/ ${saldo.toFixed(2)}` : '',
+        clave: envio?.claveEnvio ?? '',
+      });
+      // Un saldo o una clave que el mensaje propio no menciona igual se le
+      // dicen al cliente: sin eso llega a la agencia sin la plata o sin la clave.
+      const menciona = (v: string) => new RegExp(`\\{\\{${v}\\}\\}`).test(config?.mensajeEnAgencia ?? '');
+      const extras = [
+        envio?.claveEnvio && !menciona('clave') ? `🔑 Clave de retiro: ${envio.claveEnvio}.` : null,
+        saldo > 0 && !menciona('saldo') ? `💵 Saldo a pagar al recoger: S/ ${saldo.toFixed(2)}.` : null,
+      ].filter(Boolean);
+      const propioConSaldo = propio && extras.length ? `${propio}\n\n${extras.join('\n')}` : propio;
       // Plantilla aprobada por Meta: se entrega fuera de la ventana de 24h, sin bloqueo.
       if (saldo > 0) {
         // pedido_en_destino_cobro → {{1}} nombre, {{2}} pedido, {{3}} agencia, {{4}} saldo
@@ -854,14 +881,14 @@ export class EnvioDespachoService {
           pedidoRef,
           agencia,
           saldo.toFixed(2),
-        ]);
+        ], propioConSaldo);
       } else {
         // pedido_en_destino → {{1}} nombre, {{2}} pedido, {{3}} agencia
         await this.avisarAlCliente(empresaId, telefono, comprobanteId, 'pedido_en_destino', [
           nombre,
           pedidoRef,
           agencia,
-        ]);
+        ], propioConSaldo);
       }
       return;
     }
@@ -883,6 +910,7 @@ export class EnvioDespachoService {
       });
       const saldo = saldoParaRetirar(comprobante.saldo, envio?.montoCOD);
       const formas = repartidorNombre ? formasDePagoParaElAviso(repartidor?.tipo, config) : null;
+      const propio = mensajePropio(config?.mensajeEnCamino, variables);
       if (saldo > 0 && formas) {
         const salio = await this.avisarAlCliente(empresaId, telefono, comprobanteId, 'pedido_en_camino_pago', [
           nombre,
@@ -890,7 +918,7 @@ export class EnvioDespachoService {
           repartidorNombre!,
           saldo.toFixed(2),
           formas,
-        ]);
+        ], propio ? `${propio}\n\n💵 A pagar: S/ ${saldo.toFixed(2)}. Puedes pagar con ${formas}.` : null);
         // Si Meta todavía no aprueba la plantilla, sale el aviso de siempre.
         if (salio) return;
       }
@@ -902,10 +930,17 @@ export class EnvioDespachoService {
         // texto de la plantilla es fijo, así que el hueco se llena con algo
         // que se pueda leer.
         repartidorNombre ?? 'nuestro equipo de reparto',
-      ]);
+      ], propio);
     } else {
       // pedido_entregado → {{1}} nombre, {{2}} pedido
-      await this.avisarAlCliente(empresaId, telefono, comprobanteId, 'pedido_entregado', [nombre, pedidoRef]);
+      await this.avisarAlCliente(
+        empresaId,
+        telefono,
+        comprobanteId,
+        'pedido_entregado',
+        [nombre, pedidoRef],
+        mensajePropio(config?.mensajeEntregado, variables),
+      );
     }
   }
 
@@ -925,15 +960,18 @@ export class EnvioDespachoService {
     comprobanteId: number,
     plantilla: string,
     valores: string[],
+    /** Texto del negocio; solo se usa si la empresa manda por Takiy. */
+    textoPropio?: string | null,
   ): Promise<boolean> {
-    const r = await this.whatsapp.enviarPlantilla(telefono, plantilla, 'es', valores, empresaId);
+    const r = await this.whatsapp.enviarAvisoCliente(empresaId, telefono, plantilla, valores, textoPropio);
     if (!r.success) {
-      this.logger.warn(`WA ${plantilla} no salió a ${telefono}: ${r.error}`);
+      this.logger.warn(`WA ${plantilla} (${r.via}) no salió a ${telefono}: ${r.error}`);
       return false;
     }
     const cuerpo = this.whatsapp.cuerpoPlantillaDespacho(plantilla);
     const nueve = ultimos9(telefono);
-    if (!cuerpo) return true;
+    const enviado = r.texto ?? (cuerpo ? textoDePlantilla(cuerpo, valores) : null);
+    if (!enviado) return true;
     try {
       // Primero la conversación donde el bot cerró ESTA venta: puede ser la de
       // un @usuario sin número (Erica, Hierba Sana 23-10), que por teléfono no
@@ -951,7 +989,7 @@ export class EnvioDespachoService {
           : null);
       if (conv) {
         await this.prisma.leadMensaje.create({
-          data: { conversacionId: conv.id, rol: 'SISTEMA', contenido: textoDePlantilla(cuerpo, valores) },
+          data: { conversacionId: conv.id, rol: 'SISTEMA', contenido: enviado },
         });
         await this.prisma.leadConversacion.update({
           where: { id: conv.id },
@@ -1291,13 +1329,7 @@ export class EnvioDespachoService {
       const nombre = comprobante.cliente?.nombre ?? 'Cliente';
       // pago_confirmado → {{1}} nombre, {{2}} pedido
       this.whatsapp
-        .enviarPlantilla(
-          telefono,
-          'pago_confirmado',
-          'es',
-          [nombre, pedidoRef],
-          empresaId,
-        )
+        .enviarAvisoCliente(empresaId, telefono, 'pago_confirmado', [nombre, pedidoRef])
         .catch((e) =>
           this.logger.warn(`WA pago completo fallido: ${e.message}`),
         );

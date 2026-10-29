@@ -3,6 +3,7 @@ import { IsBoolean, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'cla
 export class DespachoConfigDto {
   @IsOptional() @IsString() mensajeEnCamino?: string;
   @IsOptional() @IsString() mensajeEntregado?: string;
+  @IsOptional() @IsString() mensajeEnAgencia?: string;
   @IsOptional() @IsBoolean() notificarEnCamino?: boolean;
   @IsOptional() @IsBoolean() notificarEntregado?: boolean;
   /** Días máximos de recordatorio de recojo en agencia; 0 = apagado. */

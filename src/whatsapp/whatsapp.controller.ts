@@ -65,6 +65,37 @@ export class WhatsAppController {
     return this.whatsappService.conectarManual(user.empresaId, body);
   }
 
+  /** Takiy (WhatsApp por QR): estado de la conexión, sin las llaves. */
+  @Get('takiy')
+  @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
+  async getTakiy(@User() user: any) {
+    return this.whatsappService.getTakiyConfig(user.empresaId);
+  }
+
+  @Patch('takiy')
+  @Roles('ADMIN_EMPRESA')
+  async guardarTakiy(
+    @Body() body: { appKey?: string; authKey?: string; activo?: boolean; enviarComprobante?: boolean },
+    @User() user: any,
+  ) {
+    if (!user?.empresaId)
+      throw new BadRequestException('No hay empresa en la sesión.');
+    return this.whatsappService.guardarTakiyConfig(user.empresaId, body);
+  }
+
+  @Post('takiy/prueba')
+  @Roles('ADMIN_EMPRESA')
+  async probarTakiy(
+    @Body() body: { numero: string; appKey?: string; authKey?: string },
+    @User() user: any,
+  ) {
+    if (!user?.empresaId)
+      throw new BadRequestException('No hay empresa en la sesión.');
+    const r = await this.whatsappService.probarTakiy(user.empresaId, body);
+    if (!r.success) throw new BadRequestException(r.error || 'Takiy no envió el mensaje.');
+    return { enviado: true };
+  }
+
   /** Números de WhatsApp de la empresa (varios por empresa). */
   @Get('numeros')
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')

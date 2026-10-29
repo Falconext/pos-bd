@@ -216,6 +216,16 @@ model Empresa {
   // para re-registrar el mismo número, así que hay que conservarlo.
   whatsappPin               String?
   whatsappActivo            Boolean            @default(true)
+  // Takiy (takiy.space): WhatsApp vinculado por QR al número del propio
+  // negocio, sin Embedded Signup ni plantillas de Meta. Lo usan los negocios
+  // que no conectaron su número: avisos de despacho, comprobante en PDF y
+  // avisos al equipo salen por acá cuando está activo. Las llaves son de su
+  // cuenta en Takiy y nunca se devuelven al panel.
+  takiyAppKey               String?
+  takiyAuthKey              String?
+  takiyActivo               Boolean            @default(false)
+  /// Mandar el PDF del comprobante por WhatsApp apenas se emite.
+  takiyEnviarComprobante    Boolean            @default(false)
   // IA de Ventas por Instagram (DM). Se conecta con el login de Instagram
   // para empresas: `instagramAccountId` es el id de la cuenta profesional y es
   // por donde el webhook ubica a la empresa. El token es de larga duración
@@ -2899,6 +2909,9 @@ model DespachoMensajeTemplate {
 
   mensajeEnCamino    String?
   mensajeEntregado   String?
+  /// Llegó a la agencia (Shalom/Olva). Solo se usa cuando el aviso sale por
+  /// Takiy: con Meta la plantilla aprobada tiene el texto fijo.
+  mensajeEnAgencia   String?
   notificarEnCamino  Boolean @default(true)
   notificarEntregado Boolean @default(true)
   /// Recordatorio diario al cliente mientras el paquete espera en la agencia
