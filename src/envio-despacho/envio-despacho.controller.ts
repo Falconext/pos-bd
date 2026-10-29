@@ -245,6 +245,26 @@ export class EnvioDespachoController {
     );
   }
 
+  /** El aviso que saldría al pasar a `estado`, para revisarlo antes de mandarlo. */
+  @Get('comprobante/:comprobanteId/mensaje-estado')
+  mensajeParaEstado(
+    @Param('comprobanteId', ParseIntPipe) comprobanteId: number,
+    @Query('estado') estado: string,
+    @User() user: any,
+  ) {
+    return this.service.mensajeParaEstado(comprobanteId, user.empresaId, estado);
+  }
+
+  /** Manda al cliente el aviso que el negocio revisó o editó (por Takiy). */
+  @Post('comprobante/:comprobanteId/mensaje')
+  enviarMensajeCliente(
+    @Param('comprobanteId', ParseIntPipe) comprobanteId: number,
+    @Body() body: { telefono: string; texto: string },
+    @User() user: any,
+  ) {
+    return this.service.enviarMensajeCliente(comprobanteId, user.empresaId, body.telefono, body.texto);
+  }
+
   @Put('comprobante/:comprobanteId')
   update(
     @Param('comprobanteId', ParseIntPipe) comprobanteId: number,

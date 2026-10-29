@@ -37,6 +37,9 @@ import {
   ultimos9,
 } from './recojo-agencia';
 
+/** Mensaje que saldría al cliente, armado sin enviarlo (vista previa). */
+type MensajeArmado = { telefono: string; texto: string };
+
 const ESTADOS_NOTIFICABLES = new Set([
   EstadoDespacho.EN_CAMINO,
   EstadoDespacho.EN_AGENCIA,
@@ -397,6 +400,7 @@ export class EnvioDespachoService {
 
     if (
       estadoCambia &&
+      dto.notificar !== false &&
       ESTADOS_NOTIFICABLES.has(dto.estado as EstadoDespacho)
     ) {
       this.notificarCambioEstado(
@@ -846,6 +850,8 @@ export class EnvioDespachoService {
     empresaId: number,
     estado: EstadoDespacho,
     repartidor: { nombre?: string | null; celular?: string | null; tipo?: string | null } | null,
+    /** Si viene, no se envía nada: se deja acá el mensaje que saldría (vista previa). */
+    armado?: MensajeArmado[],
   ): Promise<void> {
     const repartidorNombre = quienReparte(repartidor);
     const [comprobante, config] = await Promise.all([
@@ -866,6 +872,13 @@ export class EnvioDespachoService {
 
     const telefono = comprobante?.cliente?.telefono;
     if (!comprobante || !telefono) return;
+    const avisar = async (plantilla: string, valores: string[], propio?: string | null): Promise<boolean> => {
+      if (!armado) return this.avisarAlCliente(empresaId, telefono, comprobanteId, plantilla, valores, propio);
+      const cuerpo = this.whatsapp.cuerpoPlantillaDespacho(plantilla);
+      const texto = propio?.trim() || (cuerpo ? textoDePlantilla(cuerpo, valores) : null);
+      if (texto) armado.push({ telefono, texto });
+      return !!texto;
+    };
 
     const esEnCamino = estado === EstadoDespacho.EN_CAMINO;
     const esEnAgencia = estado === EstadoDespacho.EN_AGENCIA;
@@ -905,7 +918,7 @@ export class EnvioDespachoService {
       // Plantilla aprobada por Meta: se entrega fuera de la ventana de 24h, sin bloqueo.
       if (saldo > 0) {
         // pedido_en_destino_cobro → {{1}} nombre, {{2}} pedido, {{3}} agencia, {{4}} saldo
-        await this.avisarAlCliente(empresaId, telefono, comprobanteId, 'pedido_en_destino_cobro', [
+        await avisar('pedido_en_destino_cobro', [
           nombre,
           pedidoRef,
           agencia,
@@ -913,7 +926,7 @@ export class EnvioDespachoService {
         ], propioConSaldo);
       } else {
         // pedido_en_destino → {{1}} nombre, {{2}} pedido, {{3}} agencia
-        await this.avisarAlCliente(empresaId, telefono, comprobanteId, 'pedido_en_destino', [
+        await avisar('pedido_en_destino', [
           nombre,
           pedidoRef,
           agencia,
@@ -941,7 +954,7 @@ export class EnvioDespachoService {
       const formas = repartidorNombre ? formasDePagoParaElAviso(repartidor?.tipo, config) : null;
       const propio = mensajePropio(config?.mensajeEnCamino, variables);
       if (saldo > 0 && formas) {
-        const salio = await this.avisarAlCliente(empresaId, telefono, comprobanteId, 'pedido_en_camino_pago', [
+        const salio = await avisar('pedido_en_camino_pago', [
           nombre,
           pedidoRef,
           repartidorNombre!,
@@ -952,7 +965,7 @@ export class EnvioDespachoService {
         if (salio) return;
       }
       // pedido_en_camino → {{1}} nombre, {{2}} pedido, {{3}} repartidor
-      await this.avisarAlCliente(empresaId, telefono, comprobanteId, 'pedido_en_camino', [
+      await avisar('pedido_en_camino', [
         nombre,
         pedidoRef,
         // "Repartidor asignado: Sin asignar" le llegaba así al cliente. El
@@ -962,10 +975,7 @@ export class EnvioDespachoService {
       ], propio);
     } else {
       // pedido_entregado → {{1}} nombre, {{2}} pedido
-      await this.avisarAlCliente(
-        empresaId,
-        telefono,
-        comprobanteId,
+      await avisar(
         'pedido_entregado',
         [nombre, pedidoRef],
         mensajePropio(config?.mensajeEntregado, variables),
@@ -998,9 +1008,22 @@ export class EnvioDespachoService {
       return false;
     }
     const cuerpo = this.whatsapp.cuerpoPlantillaDespacho(plantilla);
-    const nueve = ultimos9(telefono);
     const enviado = r.texto ?? (cuerpo ? textoDePlantilla(cuerpo, valores) : null);
-    if (!enviado) return true;
+    if (enviado) await this.dejarEnElChat(empresaId, comprobanteId, telefono, enviado);
+    return true;
+  }
+
+  /**
+   * Deja el aviso en el chat del bot (como SISTEMA) para que el bot y el
+   * vendedor vean lo mismo que vio el cliente. No falla: el aviso ya salió.
+   */
+  private async dejarEnElChat(
+    empresaId: number,
+    comprobanteId: number,
+    telefono: string,
+    enviado: string,
+  ): Promise<void> {
+    const nueve = ultimos9(telefono);
     try {
       // Primero la conversación donde el bot cerró ESTA venta: puede ser la de
       // un @usuario sin número (Erica, Hierba Sana 23-10), que por teléfono no
@@ -1027,9 +1050,66 @@ export class EnvioDespachoService {
       }
     } catch (e: any) {
       // El aviso ya le llegó al cliente; no dejarlo en el chat no es motivo de error.
-      this.logger.warn(`No se pudo dejar el aviso ${plantilla} en el chat: ${e?.message}`);
+      this.logger.warn(`No se pudo dejar el aviso en el chat: ${e?.message}`);
     }
-    return true;
+  }
+
+  /**
+   * El mensaje que saldría al pasar a `estado`, para que el negocio lo vea y
+   * lo edite antes de mandarlo (Panel de Ventas). `texto: null` = ese estado
+   * no avisa (apagado en la configuración, sin celular o no es notificable).
+   */
+  async mensajeParaEstado(comprobanteId: number, empresaId: number, estado: string) {
+    await this.validateComprobante(comprobanteId, empresaId);
+    // En el Panel de Ventas "En destino" es el "ya llegó, puede recoger": se
+    // propone el mismo texto que el de la agencia.
+    const base = estado === EstadoDespacho.EN_DESTINO ? EstadoDespacho.EN_AGENCIA : (estado as EstadoDespacho);
+    if (ESTADOS_NOTIFICABLES.has(base)) {
+      const envio = await this.prisma.envioDespacho.findUnique({
+        where: { comprobanteId },
+        select: { repartidor: { select: { nombre: true, celular: true, tipo: true } } },
+      });
+      const armado: MensajeArmado[] = [];
+      await this.notificarCambioEstado(comprobanteId, empresaId, base, envio?.repartidor ?? null, armado);
+      if (armado[0]) return armado[0];
+    }
+    // Los demás estados (o uno con el aviso apagado) no tienen mensaje propio:
+    // se propone uno simple que el negocio puede editar o no mandar.
+    const comp = await this.prisma.comprobante.findFirst({
+      where: { id: comprobanteId },
+      select: { serie: true, correlativo: true, cliente: { select: { nombre: true, telefono: true } } },
+    });
+    const telefono = comp?.cliente?.telefono;
+    if (!comp || !telefono) return { telefono: null, texto: null };
+    const pedido = `${comp.serie}-${String(comp.correlativo).padStart(8, '0')}`;
+    const etiqueta: Record<string, string> = {
+      PREPARANDO: 'en preparación 📦',
+      EN_CAMINO: 'en camino 🚚',
+      EN_AGENCIA: 'en la agencia 📦',
+      EN_DESTINO: 'en destino 📍',
+      ENTREGADO: 'entregado ✅',
+      DEVUELTO: 'devuelto',
+    };
+    return {
+      telefono,
+      texto: `Hola ${comp.cliente?.nombre ?? ''}, tu pedido ${pedido} está ${etiqueta[estado] ?? estado.toLowerCase()}.`.replace(/\s+,/, ','),
+    };
+  }
+
+  /** Manda el mensaje que el negocio revisó/editó. Solo por Takiy: es texto libre. */
+  async enviarMensajeCliente(comprobanteId: number, empresaId: number, telefono: string, texto: string) {
+    await this.validateComprobante(comprobanteId, empresaId);
+    if (!telefono?.trim() || !texto?.trim()) {
+      throw new BadRequestException('Falta el celular o el mensaje.');
+    }
+    const r = await this.whatsapp.enviarPorTakiy(empresaId, telefono, texto.trim());
+    if (!r.success) {
+      throw new BadRequestException(
+        `${r.error || 'No se pudo enviar.'} Revisa en Takiy que tu celular siga vinculado.`,
+      );
+    }
+    await this.dejarEnElChat(empresaId, comprobanteId, telefono, texto.trim());
+    return { enviado: true };
   }
 
   /**
