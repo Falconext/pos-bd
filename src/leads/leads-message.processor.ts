@@ -51,6 +51,20 @@ import {
   sinPagoInventado,
 } from './confirmacion-falsa';
 import { conRegistroDirecto, yaAceptoAntes } from './registro-directo';
+import { bloqueDerivacion, conMotivosDelNegocio } from './derivar-en';
+import {
+  HERRAMIENTA_MENU,
+  type ConfigMenuInicial,
+  bloqueRespuestasMenu,
+  detalleParaElAsesor,
+  estadoDelMenu,
+  mensajeDelPaso,
+  menuValido,
+  opcionElegida,
+  pasoDelMensaje,
+  respuestasDelMenu,
+  textoConOpciones,
+} from './menu-inicial';
 import {
   BLOQUE_DATOS_DEMO,
   conAccesosDemo,
@@ -89,6 +103,7 @@ import { esNumeroInterno, numerosInternos } from './numeros-internos';
 import { bloqueComercial } from './tarifas-y-descuentos';
 import { bloqueTienda } from './visita-tienda';
 import {
+  type ConfigComercial,
   DatosDelCliente,
   ItemPedido,
   LeadsPedidoService,
@@ -907,6 +922,12 @@ export class LeadsMessageProcessor extends WorkerHost {
     // en el texto del empresario. Así lo que la IA dice es, por
     // construcción, lo que el sistema va a cobrar.
     const config = await this.pedido.configDe(empresa.id);
+    // Menú de bienvenida: mientras el cliente va tocando opciones, contesta
+    // el menú y no la IA (ver menu-inicial.ts).
+    if (await this.atenderMenu(empresa.id, conv, mensajes, config)) return true;
+    const bloqueMenu = bloqueRespuestasMenu(
+      respuestasDelMenu(config.menu ?? menuValido(null), mensajes),
+    );
     const comercial = bloqueComercial(config);
     const tiendaFisica = bloqueTienda(config.tienda);
     // Productos REALES del ERP que coinciden con lo que pregunta el cliente
@@ -945,6 +966,7 @@ export class LeadsMessageProcessor extends WorkerHost {
       // dice de sí mismo que es el que manda.
       comercial,
       tiendaFisica,
+      bloqueDerivacion(config.derivarEn),
     ]
       .filter((s) => s && s.trim())
       .join('\n\n');
@@ -954,6 +976,7 @@ export class LeadsMessageProcessor extends WorkerHost {
       // La fecha va acá y no en el prompt fijo: cambia cada día y rompería el
       // caché. La necesita la IA para convertir "en una semana" en una fecha.
       `HOY: ${new Intl.DateTimeFormat('es-PE', { timeZone: 'America/Lima', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date())} (${new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(new Date())}).`,
+      bloqueMenu,
       this.productosYaMostrados(mensajes),
       // 20-10: el cliente quitó y agregó productos y la cotización no cambió;
       // el modelo no sabía que tenía que volver a cotizar.
@@ -989,7 +1012,9 @@ export class LeadsMessageProcessor extends WorkerHost {
         historial,
         businessContext,
         historial.length,
-        ejecutor,
+        // Lo que el modelo decide derivar respeta las casillas del negocio;
+        // las derivaciones del propio sistema usan `ejecutor` tal cual.
+        conMotivosDelNegocio(ejecutor, config.derivarEn),
         {
           nombre: empresa.nombreComercial || empresa.razonSocial,
           rubro: empresa.rubro?.nombre ?? null,
@@ -1563,15 +1588,132 @@ export class LeadsMessageProcessor extends WorkerHost {
    * llega del anuncio). "Primera" = es el único mensaje del asesor en el chat,
    * así que no se repite aunque el cliente vuelva a escribir.
    */
+  /**
+   * El turno, si le toca al menú de bienvenida. Devuelve true si ya se le
+   * contestó al cliente (un paso del menú o la derivación); false si sigue
+   * la IA: menú apagado, ya terminado, o el cliente escribió otra cosa.
+   */
+  private async atenderMenu(
+    empresaId: number,
+    conv: { id: number; telefonoProspecto: string },
+    mensajes: { rol: string; contenido: string; herramientasJson?: unknown }[],
+    config: ConfigComercial,
+  ): Promise<boolean> {
+    const menu = config.menu;
+    if (!menu?.activo) return false;
+    const estado = estadoDelMenu(mensajes);
+    if (estado.accion === 'empezar') {
+      await this.enviarPasoMenu(empresaId, conv, menu, 0);
+      return true;
+    }
+    if (estado.accion !== 'responder') return false;
+    const paso = menu.pasos[estado.paso];
+    // El dueño cambió el menú mientras el cliente estaba en él.
+    if (!paso) return false;
+
+    // Lo que el cliente mandó desde la pregunta, del último al primero: si
+    // tocó el botón y después escribió "ok", vale el botón.
+    const desdeLaPregunta = mensajes.slice(
+      mensajes.map((m) => m.rol).lastIndexOf('ASISTENTE') + 1,
+    );
+    let elegida: number | null = null;
+    for (const m of [...desdeLaPregunta].reverse()) {
+      elegida = opcionElegida(paso, m.contenido);
+      if (elegida !== null) break;
+    }
+    // Escribió otra cosa ("cuánto cuesta?"): la IA le contesta con lo que
+    // ya eligió, y el menú termina ahí.
+    if (elegida === null) return false;
+
+    if (paso.opciones[elegida].derivar) {
+      const respuestas = respuestasDelMenu(menu, mensajes);
+      const argumentos = {
+        motivo: 'pide_hablar_con_persona',
+        detalle: detalleParaElAsesor(respuestas),
+      };
+      const ejecutor = this.crearEjecutor(
+        empresaId,
+        conv.id,
+        conv.telefonoProspecto,
+        new Set<number>(),
+      );
+      const resultado = await ejecutor(HERRAMIENTA_DERIVAR, argumentos);
+      const texto =
+        config.vendedor?.mensajeDerivacion?.trim() ||
+        'Listo, te paso con una persona del equipo. Te escribe en un momento por aquí 🙌';
+      await this.prisma.leadMensaje.create({
+        data: {
+          conversacionId: conv.id,
+          rol: 'ASISTENTE',
+          contenido: texto,
+          herramientasJson: [
+            { nombre: HERRAMIENTA_DERIVAR, argumentos, resultado },
+          ] as unknown as Prisma.InputJsonValue,
+        },
+      });
+      await this.whatsapp.enviarTexto(conv.telefonoProspecto, texto, empresaId);
+      await this.prisma.leadConversacion.update({
+        where: { id: conv.id },
+        data: { cantidadMensajes: { increment: 1 } },
+      });
+      return true;
+    }
+
+    if (estado.paso + 1 < menu.pasos.length) {
+      await this.enviarPasoMenu(empresaId, conv, menu, estado.paso + 1);
+      return true;
+    }
+    // Respondió la última pregunta: ahora sí, la IA.
+    return false;
+  }
+
+  private async enviarPasoMenu(
+    empresaId: number,
+    conv: { id: number; telefonoProspecto: string },
+    menu: ConfigMenuInicial,
+    i: number,
+  ): Promise<void> {
+    const m = mensajeDelPaso(menu, i);
+    // En el historial va con las opciones escritas: es lo que la IA y el
+    // panel ven de este mensaje.
+    await this.prisma.leadMensaje.create({
+      data: {
+        conversacionId: conv.id,
+        rol: 'ASISTENTE',
+        contenido: textoConOpciones(m),
+        herramientasJson: [
+          { nombre: HERRAMIENTA_MENU, argumentos: { paso: i }, resultado: {} },
+        ] as unknown as Prisma.InputJsonValue,
+      },
+    });
+    const envio = await this.whatsapp.enviarMenu(conv.telefonoProspecto, m, empresaId);
+    if (!envio.success) {
+      // Si Meta rechaza los botones, que al menos le llegue la pregunta: se
+      // responde igual con el número de la opción.
+      this.logger.warn(
+        `Lead: menú (paso ${i + 1}) no salió con botones a ${conv.telefonoProspecto}: ${envio.error}. Va como texto.`,
+      );
+      await this.whatsapp.enviarTexto(conv.telefonoProspecto, textoConOpciones(m), empresaId);
+    }
+    await this.prisma.leadConversacion.update({
+      where: { id: conv.id },
+      data: { cantidadMensajes: { increment: 1 } },
+    });
+  }
+
   private async enviarVideoBienvenidaSiEsElPrimero(
     empresaId: number,
     conv: { id: number; telefonoProspecto: string },
     config: { videoBienvenidaUrl?: string },
   ): Promise<void> {
     if (!config.videoBienvenidaUrl) return;
-    const respuestas = await this.prisma.leadMensaje.count({
+    // Los pasos del menú de bienvenida no cuentan: el video va tras la
+    // primera respuesta de la IA, haya menú o no.
+    const nuestros = await this.prisma.leadMensaje.findMany({
       where: { conversacionId: conv.id, rol: 'ASISTENTE' },
+      select: { rol: true, contenido: true, herramientasJson: true },
     });
+    const respuestas = nuestros.filter((m) => pasoDelMensaje(m) === null).length;
     if (respuestas !== 1) return;
     const url = config.videoBienvenidaUrl;
     // Un MP4 se manda como video (se ve dentro del chat); cualquier otro

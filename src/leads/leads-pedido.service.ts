@@ -1,5 +1,8 @@
 import { avisoOtroNumero, esOtroNumero, lineaCelular } from './celular-de-otro';
 import { type ConfigTienda, tiendaValida } from './visita-tienda';
+import { type ConfigMenuInicial, menuValido } from './menu-inicial';
+import { derivarEnValido } from './derivar-en';
+import type { MotivoDerivacion } from './pausa-bot';
 import type { ConfigDemos } from './demos';
 import { medioDePago } from './leads-embudo.service';
 import { Injectable, Logger } from '@nestjs/common';
@@ -75,6 +78,10 @@ export interface ConfigComercial {
   precioSoloSiPregunta?: boolean;
   /** La tienda física (dirección, mapa, fotos). Ver `visita-tienda.ts`. */
   tienda?: ConfigTienda;
+  /** Saludo fijo + preguntas con botones antes de la IA. Ver `menu-inicial.ts`. */
+  menu?: ConfigMenuInicial;
+  /** Situaciones en que la IA deriva; sin configurar = todas. Ver `derivar-en.ts`. */
+  derivarEn?: MotivoDerivacion[];
 }
 
 /** Campos que la IA puede ir guardando a medida que el cliente los dice. */
@@ -191,6 +198,8 @@ export class LeadsPedidoService {
         : {}),
       ...(guardada.precioSoloSiPregunta === true ? { precioSoloSiPregunta: true } : {}),
       ...(guardada.tienda ? { tienda: tiendaValida(guardada.tienda) } : {}),
+      ...(guardada.menu ? { menu: menuValido(guardada.menu) } : {}),
+      ...(guardada.derivarEn ? { derivarEn: derivarEnValido(guardada.derivarEn) } : {}),
     };
   }
 

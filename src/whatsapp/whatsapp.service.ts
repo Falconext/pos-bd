@@ -1482,6 +1482,91 @@ export class WhatsAppService {
   }
 
   /**
+   * Envía un mensaje con BOTONES de respuesta (hasta 3) o una LISTA
+   * desplegable (hasta 10 opciones). El cliente toca y su respuesta vuelve al
+   * webhook como `interactive` con el título de lo que eligió. Solo dentro de
+   * la ventana de 24 h, igual que el texto libre. Ver `leads/menu-inicial.ts`.
+   */
+  async enviarInteractivo(
+    numero: string,
+    m: {
+      cuerpo: string;
+      tipo: 'botones' | 'lista';
+      boton: string;
+      opciones: { id: string; titulo: string; descripcion?: string }[];
+    },
+    empresaId?: number,
+  ): Promise<{ success: boolean; error?: string }> {
+    let token: string;
+    let phoneId: string;
+    if (empresaId) {
+      try {
+        ({ token, phoneId } = await this.getCredentialsForEmpresa(empresaId, numero));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'WhatsApp no configurado';
+        return { success: false, error: msg };
+      }
+    } else {
+      ({ token, phoneId } = this.getCredentials());
+    }
+    if (!token || !phoneId)
+      return { success: false, error: 'WhatsApp no configurado' };
+
+    const to = this.formatearNumero(numero);
+    const interactive =
+      m.tipo === 'botones'
+        ? {
+            type: 'button',
+            body: { text: m.cuerpo },
+            action: {
+              buttons: m.opciones.map((o) => ({
+                type: 'reply',
+                reply: { id: o.id, title: o.titulo },
+              })),
+            },
+          }
+        : {
+            type: 'list',
+            body: { text: m.cuerpo },
+            action: {
+              button: m.boton,
+              sections: [
+                {
+                  rows: m.opciones.map((o) => ({
+                    id: o.id,
+                    title: o.titulo,
+                    ...(o.descripcion ? { description: o.descripcion } : {}),
+                  })),
+                },
+              ],
+            },
+          };
+    try {
+      await axios.post(
+        `${this.apiUrl}/${phoneId}/messages`,
+        {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          ...campoDestino(to),
+          type: 'interactive',
+          interactive,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+      return { success: true };
+    } catch (error) {
+      const msg = error.response?.data?.error?.message || error.message;
+      this.logger.warn(`WhatsApp interactivo fallido a ${to}: ${msg}`);
+      return { success: false, error: msg };
+    }
+  }
+
+  /**
    * Envía una UBICACIÓN: WhatsApp la muestra como un mapa que se abre en
    * Google Maps o Waze con un toque. Es lo que pidió Hierba Sana para los
    * clientes que van a la tienda y se perdían buscándola.

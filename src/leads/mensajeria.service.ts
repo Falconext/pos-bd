@@ -4,6 +4,7 @@ import { InstagramService } from '../instagram/instagram.service';
 import { esDestinoInstagram } from '../instagram/instagram-texto';
 import { MessengerService } from '../messenger/messenger.service';
 import { esDestinoMessenger } from '../messenger/messenger-texto';
+import { MensajeMenu, textoConOpciones } from './menu-inicial';
 
 type Resultado = { success: boolean; error?: string };
 
@@ -82,6 +83,17 @@ export class MensajeriaService {
       return this.enviarTexto(numero, texto, empresaId);
     }
     return this.wa.enviarUbicacion(numero, ubicacion, empresaId);
+  }
+
+  /**
+   * Un paso del menú de bienvenida. Instagram y Messenger no tienen botones
+   * de respuesta como WhatsApp: va el texto con las opciones numeradas.
+   */
+  enviarMenu(numero: string, m: MensajeMenu, empresaId?: number): Promise<Resultado> {
+    if (esDestinoInstagram(numero) || esDestinoMessenger(numero)) {
+      return this.enviarTexto(numero, textoConOpciones(m), empresaId);
+    }
+    return this.wa.enviarInteractivo(numero, m, empresaId);
   }
 
   async enviarAudio(numero: string, ogg: Buffer, empresaId?: number): Promise<Resultado> {

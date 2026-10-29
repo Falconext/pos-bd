@@ -30,6 +30,9 @@ import sharp from 'sharp';
 import { IaVentasService } from './leads-ia.service';
 import { despedidaValida } from './despedida';
 import { tiendaValida } from './visita-tienda';
+import { menuValido } from './menu-inicial';
+import { derivarEnValido } from './derivar-en';
+import { calcularPuntaje } from './puntaje-vendedor';
 import { aOggOpus, tieneAudio } from './nota-de-voz';
 
 /**
@@ -538,6 +541,8 @@ export class LeadsService {
           supervisorTelefono?: string;
           despedida?: unknown;
           tienda?: unknown;
+          menu?: unknown;
+          derivarEn?: unknown;
         }
       | null;
     const demos = json?.demos;
@@ -568,7 +573,69 @@ export class LeadsService {
       supervisorTelefono: json?.supervisorTelefono ?? '',
       despedida: despedidaValida(json?.despedida),
       tienda: tiendaValida(json?.tienda),
+      menu: menuValido(json?.menu),
+      // Sin configurar llega null: el panel marca todas las casillas.
+      derivarEn: derivarEnValido(json?.derivarEn) ?? null,
     };
+  }
+
+  /**
+   * Qué tan lista está la IA de Ventas para vender, con lo que falta y dónde
+   * se arregla. Ver `puntaje-vendedor.ts`.
+   */
+  async puntajeVendedor(empresaId: number) {
+    const [empresa, numeros, productosConPrecio, productosConFoto, documentos] =
+      await Promise.all([
+        this.prisma.empresa.findUnique({
+          where: { id: empresaId },
+          select: {
+            iaVentasActiva: true,
+            iaVentasContexto: true,
+            iaVentasConfigJson: true,
+            whatsappPhoneNumberId: true,
+          },
+        }),
+        this.prisma.numeroWhatsapp.count({ where: { empresaId } }),
+        this.prisma.producto.count({
+          where: { empresaId, estado: 'ACTIVO', precioUnitario: { gt: 0 } },
+        }),
+        this.prisma.producto.count({
+          where: {
+            empresaId,
+            estado: 'ACTIVO',
+            precioUnitario: { gt: 0 },
+            imagenUrl: { not: null },
+            NOT: { imagenUrl: '' },
+          },
+        }),
+        this.prisma.leadDocumento.count({ where: { empresaId, estado: 'INDEXADO' } }),
+      ]);
+    const json = (empresa?.iaVentasConfigJson ?? {}) as {
+      asesor?: string;
+      vendedor?: unknown;
+      envio?: unknown;
+      mediosPagoLista?: unknown;
+      mediosPago?: string;
+      menu?: unknown;
+    };
+    const vendedor = perfilValido(json.vendedor);
+    return calcularPuntaje({
+      whatsappConectado: Boolean(empresa?.whatsappPhoneNumberId) || numeros > 0,
+      iaActiva: empresa?.iaVentasActiva ?? false,
+      productosConPrecio,
+      productosConFoto,
+      asesor: json.asesor ?? '',
+      audiencia: vendedor.audiencia ?? '',
+      estilo: [vendedor.estiloComunicacion, vendedor.estiloVentas].filter(Boolean).join(' '),
+      reglas: vendedor.reglas ?? '',
+      saludo: Boolean(vendedor.mensajeBienvenida) || menuValido(json.menu).activo,
+      temasConocimiento: vendedor.conocimiento?.length ?? 0,
+      largoContexto: (empresa?.iaVentasContexto ?? '').trim().length,
+      documentosIndexados: documentos,
+      zonasEnvio: envioValido(json.envio).zonas.length,
+      mediosPago: mediosPagoValidos(json.mediosPagoLista).length || (json.mediosPago ? 1 : 0),
+      mensajeDerivacion: vendedor.mensajeDerivacion ?? '',
+    });
   }
 
   /**
@@ -667,6 +734,10 @@ export class LeadsService {
       despedida?: unknown;
       /** Dirección, mapa, foto e indicaciones para quien va a la tienda. */
       tienda?: unknown;
+      /** Saludo fijo + preguntas con botones antes de la IA (ver menu-inicial.ts). */
+      menu?: unknown;
+      /** En qué situaciones la IA pasa el chat a una persona (ver derivar-en.ts). */
+      derivarEn?: unknown;
     },
   ) {
     // El nombre del asesor vive en iaVentasConfigJson junto a zonas, descuentos
@@ -683,7 +754,9 @@ export class LeadsService {
       data.mediosPagoLista !== undefined ||
       data.supervisorTelefono !== undefined ||
       data.despedida !== undefined ||
-      data.tienda !== undefined
+      data.tienda !== undefined ||
+      data.menu !== undefined ||
+      data.derivarEn !== undefined
     ) {
       const actual = await this.prisma.empresa.findUnique({
         where: { id: empresaId },
@@ -759,6 +832,18 @@ export class LeadsService {
           !t.direccion && !t.mapsUrl && t.lat == null && !t.indicaciones && !t.fotoUrl && !t.croquisUrl;
         if (vacia) delete json.tienda;
         else json.tienda = t;
+      }
+      if (data.menu !== undefined) {
+        // Como la despedida: apagado se guarda igual, para no reescribirlo.
+        const m = menuValido(data.menu);
+        if (m.bienvenida || m.pasos.length) json.menu = m;
+        else delete json.menu;
+      }
+      if (data.derivarEn !== undefined) {
+        // null = volver a derivar por todo, como antes de las casillas.
+        const motivos = derivarEnValido(data.derivarEn);
+        if (motivos) json.derivarEn = motivos;
+        else delete json.derivarEn;
       }
       await this.prisma.empresa.update({
         where: { id: empresaId },
