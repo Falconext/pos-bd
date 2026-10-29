@@ -34,13 +34,13 @@ function armar(extra: { pedido?: any; comprobante?: any } = {}) {
     },
     productoCodigoBarras: { findFirst: jest.fn().mockResolvedValue(null) },
     historialEstadoPedido: { create: jest.fn().mockResolvedValue({}) },
-    comprobante: { findFirst: jest.fn().mockResolvedValue('comprobante' in extra ? extra.comprobante : { id: 900, serie: 'NV01', correlativo: 12 }) },
+    comprobante: { findFirst: jest.fn().mockResolvedValue('comprobante' in extra ? extra.comprobante : { id: 900, serie: 'NV01', correlativo: 12, mtoImpVenta: 119.9, saldo: 0 }) },
     pedidoTienda: {
       create: jest.fn().mockImplementation(({ data }: any) => {
         Object.assign(creado, data);
         return Promise.resolve({ id: 1, ...data, items: [] });
       }),
-      findFirst: jest.fn().mockResolvedValue('pedido' in extra ? extra.pedido : { id: 1, estado: 'PENDIENTE', comprobanteId: null }),
+      findFirst: jest.fn().mockResolvedValue('pedido' in extra ? extra.pedido : { id: 1, estado: 'PENDIENTE', comprobanteId: null, total: 119.9, montoPagado: 0 }),
       update: jest.fn().mockImplementation(({ data }: any) => {
         Object.assign(actualizado, data);
         return Promise.resolve({ id: 1, ...data });
@@ -92,7 +92,18 @@ describe('vincularComprobante', () => {
     const { service, actualizado, prisma } = armar();
     await service.vincularComprobante(85, 1, 900, 3);
     expect(actualizado).toMatchObject({ comprobanteId: 900, estado: 'CONFIRMADO', usuarioConfirma: 3 });
+    // La nota se cobró al contado: el pedido queda pagado.
+    expect(actualizado).toMatchObject({ montoPagado: 119.9, saldoPendiente: 0 });
     expect(prisma.historialEstadoPedido.create.mock.calls[0][0].data.notas).toBe('Comprobante NV01-12');
+  });
+
+  it('nota con saldo: el pedido queda con lo que falta, sin bajar un adelanto', async () => {
+    const { service, actualizado } = armar({
+      pedido: { id: 1, estado: 'PENDIENTE', comprobanteId: null, total: 100, montoPagado: 30 },
+      comprobante: { id: 900, serie: 'NV01', correlativo: 12, mtoImpVenta: 100, saldo: 80 },
+    });
+    await service.vincularComprobante(85, 1, 900);
+    expect(actualizado).toMatchObject({ montoPagado: 30, saldoPendiente: 70 });
   });
 
   it('no pisa un pedido que ya tiene otro comprobante', async () => {

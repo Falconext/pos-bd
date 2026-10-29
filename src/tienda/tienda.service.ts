@@ -2445,11 +2445,11 @@ export class TiendaService {
     const [pedido, comprobante] = await Promise.all([
       this.prisma.pedidoTienda.findFirst({
         where: { id: pedidoId, empresaId },
-        select: { id: true, estado: true, comprobanteId: true },
+        select: { id: true, estado: true, comprobanteId: true, total: true, montoPagado: true },
       }),
       this.prisma.comprobante.findFirst({
         where: { id: comprobanteId, empresaId },
-        select: { id: true, serie: true, correlativo: true },
+        select: { id: true, serie: true, correlativo: true, mtoImpVenta: true, saldo: true },
       }),
     ]);
     if (!pedido) throw new NotFoundException('Pedido no encontrado');
@@ -2458,11 +2458,25 @@ export class TiendaService {
       throw new BadRequestException('Este pedido ya tiene un comprobante.');
     }
     const confirmar = pedido.estado === 'PENDIENTE';
+    // Lo cobrado en el comprobante cuenta como pagado en el pedido: si la nota
+    // se emitió al contado, el pedido no puede seguir "Por pagar". Nunca baja
+    // lo que ya figuraba pagado (un adelanto por la tienda, por ejemplo).
+    const total = Number(pedido.total);
+    const cobradoEnComprobante = Math.max(
+      Number(comprobante.mtoImpVenta ?? 0) - Number(comprobante.saldo ?? 0),
+      0,
+    );
+    const montoPagado = Math.min(
+      Math.max(Number(pedido.montoPagado ?? 0), cobradoEnComprobante),
+      total,
+    );
     const [actualizado] = await this.prisma.$transaction([
       this.prisma.pedidoTienda.update({
         where: { id: pedidoId },
         data: {
           comprobanteId,
+          montoPagado,
+          saldoPendiente: Math.max(total - montoPagado, 0),
           ...(confirmar
             ? { estado: 'CONFIRMADO', fechaConfirmacion: new Date(), usuarioConfirma: usuarioId ?? null }
             : {}),
