@@ -7,7 +7,7 @@ import { TiendaService } from './tienda.service';
 
 const PRODUCTO = { id: 7, descripcion: 'Polo', precioUnitario: 50, stock: 20, atributosTecnicos: {} };
 
-function armar(extra: { pedido?: any; comprobante?: any } = {}) {
+function armar(extra: { pedido?: any; comprobante?: any; otroPedido?: any } = {}) {
   const creado: any = {};
   const actualizado: any = {};
   const prisma: any = {
@@ -40,7 +40,13 @@ function armar(extra: { pedido?: any; comprobante?: any } = {}) {
         Object.assign(creado, data);
         return Promise.resolve({ id: 1, ...data, items: [] });
       }),
-      findFirst: jest.fn().mockResolvedValue('pedido' in extra ? extra.pedido : { id: 1, estado: 'PENDIENTE', comprobanteId: null, total: 119.9, montoPagado: 0 }),
+      findFirst: jest.fn().mockImplementation(({ where }: any) =>
+        Promise.resolve(
+          where?.NOT
+            ? ('otroPedido' in extra ? (extra as any).otroPedido : null)
+            : 'pedido' in extra ? extra.pedido : { id: 1, estado: 'PENDIENTE', comprobanteId: null, total: 119.9, montoPagado: 0 },
+        ),
+      ),
       update: jest.fn().mockImplementation(({ data }: any) => {
         Object.assign(actualizado, data);
         return Promise.resolve({ id: 1, ...data });
@@ -109,6 +115,11 @@ describe('vincularComprobante', () => {
   it('no pisa un pedido que ya tiene otro comprobante', async () => {
     const { service } = armar({ pedido: { id: 1, estado: 'CONFIRMADO', comprobanteId: 555 } });
     await expect(service.vincularComprobante(85, 1, 900)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('un comprobante que ya es de otro pedido no se vincula', async () => {
+    const { service } = armar({ otroPedido: { codigoSeguimiento: 'PT-OTRO' } });
+    await expect(service.vincularComprobante(85, 1, 900)).rejects.toThrow('PT-OTRO');
   });
 
   it('un comprobante de otra empresa no se encuentra', async () => {

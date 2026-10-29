@@ -2457,6 +2457,17 @@ export class TiendaService {
     if (pedido.comprobanteId && pedido.comprobanteId !== comprobanteId) {
       throw new BadRequestException('Este pedido ya tiene un comprobante.');
     }
+    // Un comprobante sale de un solo pedido: vincularlo a otro haría que dos
+    // pedidos figuren cobrados con la misma venta.
+    const otro = await this.prisma.pedidoTienda.findFirst({
+      where: { empresaId, comprobanteId, NOT: { id: pedidoId } },
+      select: { codigoSeguimiento: true },
+    });
+    if (otro) {
+      throw new BadRequestException(
+        `Ese comprobante ya es del pedido ${otro.codigoSeguimiento}.`,
+      );
+    }
     const confirmar = pedido.estado === 'PENDIENTE';
     // Lo cobrado en el comprobante cuenta como pagado en el pedido: si la nota
     // se emitió al contado, el pedido no puede seguir "Por pagar". Nunca baja
