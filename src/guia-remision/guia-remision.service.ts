@@ -20,6 +20,14 @@ import { PdfGeneratorService } from '../comprobante/pdf-generator.service';
 import { generarQrGreDataUrl } from './qr-guia.util';
 import * as XLSX from 'xlsx';
 import { conObservacionDelivery, separarDelivery } from '../comprobante/delivery-del-pedido';
+import { KardexService } from '../kardex/kardex.service';
+import {
+  esAnexoSunat,
+  esTrasladoEntreSedes,
+  firmaTraslado,
+  itemsDelTraslado,
+  type DetalleTrasladable,
+} from './traslado-entre-sedes';
 
 @Injectable()
 export class GuiaRemisionService {
@@ -31,9 +39,32 @@ export class GuiaRemisionService {
     private prisma: PrismaService,
     private sunatGuiaService: SunatGuiaService,
     private pdfGeneratorService: PdfGeneratorService,
+    private kardexService: KardexService,
   ) {}
 
   async create(
+    createDto: CreateGuiaRemisionDto,
+    empresaId: number,
+    usuarioId?: number,
+    sedeId?: number,
+  ) {
+    const guia = await this.crearGuia(createDto, empresaId, usuarioId, sedeId);
+    if (!esTrasladoEntreSedes(guia)) return guia;
+    // La guía y el traslado van juntos: si el stock no se puede mover (otro
+    // usuario vendió lo último mientras tanto), la guía no queda creada.
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await this.moverStockDeGuia(tx, guia, empresaId, usuarioId ?? guia.usuarioId ?? 0);
+        await tx.guiaRemision.update({ where: { id: guia.id }, data: { stockTrasladado: true } });
+      });
+    } catch (e) {
+      await this.prisma.guiaRemision.delete({ where: { id: guia.id } }).catch(() => undefined);
+      throw e;
+    }
+    return { ...guia, stockTrasladado: true };
+  }
+
+  private async crearGuia(
     createDto: CreateGuiaRemisionDto,
     empresaId: number,
     usuarioId?: number,
@@ -73,6 +104,16 @@ export class GuiaRemisionService {
         );
       }
       createDto.correlativo = Math.max(maxCorrelativo + 1, correlativoMinimo);
+    }
+
+    // Traslado entre sedes propias: completa partida/llegada con los datos de
+    // cada sede y valida todo ANTES de crear, para no dejar una guía sin stock.
+    if (esTrasladoEntreSedes(createDto)) {
+      await this.completarPuntosDesdeSedes(createDto, empresaId);
+      await this.validarTrasladoDeGuia(createDto, createDto.detalles, empresaId, usuarioId);
+    } else if (createDto.tipoTraslado !== '04') {
+      createDto.sedeOrigenId = undefined;
+      createDto.sedeDestinoId = undefined;
     }
 
     // Validaciones de negocio
@@ -188,6 +229,136 @@ export class GuiaRemisionService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Valida un traslado entre sedes antes de escribir nada: sedes de la empresa
+   * y distintas, destino permitido para el usuario, ítems del catálogo, sin
+   * productos padre (el stock vive en cada talla/color) y stock suficiente.
+   */
+  private async validarTrasladoDeGuia(
+    g: { sedeOrigenId?: number | null; sedeDestinoId?: number | null },
+    detalles: DetalleTrasladable[],
+    empresaId: number,
+    usuarioId?: number,
+  ) {
+    const sedeOrigenId = Number(g.sedeOrigenId);
+    const sedeDestinoId = Number(g.sedeDestinoId);
+    await this.kardexService.validarTraslado({ sedeOrigenId, sedeDestinoId }, empresaId, usuarioId ?? 0);
+    const items = itemsDelTraslado(detalles);
+    const productos = await this.prisma.producto.findMany({
+      where: { id: { in: items.map((i) => i.productoId) }, empresaId },
+      select: {
+        id: true,
+        descripcion: true,
+        _count: { select: { variantes: true } },
+        stocks: { where: { sedeId: sedeOrigenId }, select: { stock: true } },
+      },
+    });
+    const porId = new Map(productos.map((p) => [p.id, p]));
+    for (const item of items) {
+      const p = porId.get(item.productoId);
+      if (!p) throw new BadRequestException(`El producto ${item.productoId} no es de tu empresa.`);
+      if (p._count.variantes > 0) {
+        throw new BadRequestException(
+          `"${p.descripcion}" tiene variantes: elige la talla/color exacta que trasladas, el stock vive en cada una.`,
+        );
+      }
+      const disponible = Number(p.stocks[0]?.stock ?? 0);
+      if (disponible < item.cantidad) {
+        throw new BadRequestException(
+          `Stock insuficiente de "${p.descripcion}" en la sede de origen: hay ${disponible} y la guía traslada ${item.cantidad}.`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Mueve (o devuelve, con `revertir`) el stock de una guía de traslado entre
+   * sedes dentro de la transacción dada. Usa el mismo traslado de Kardex, así
+   * que el movimiento sale en el kardex de las dos sedes con el número de guía.
+   */
+  private async moverStockDeGuia(
+    tx: Prisma.TransactionClient,
+    guia: {
+      serie: string;
+      correlativo: number;
+      sedeOrigenId?: number | null;
+      sedeDestinoId?: number | null;
+      detalles: DetalleTrasladable[];
+    },
+    empresaId: number,
+    usuarioId: number,
+    opts?: { revertir?: boolean },
+  ) {
+    const revertir = !!opts?.revertir;
+    const sedeOrigenId = Number(revertir ? guia.sedeDestinoId : guia.sedeOrigenId);
+    const sedeDestinoId = Number(revertir ? guia.sedeOrigenId : guia.sedeDestinoId);
+    const numero = `${guia.serie}-${guia.correlativo}`;
+    const sedes = await this.kardexService.validarTraslado(
+      { sedeOrigenId, sedeDestinoId },
+      empresaId,
+      usuarioId,
+      { sinRestriccionDeDestino: revertir },
+    );
+    const items = itemsDelTraslado(guia.detalles);
+    try {
+      await this.kardexService.trasladarEnTx(
+        tx,
+        { sedeOrigenId, sedeDestinoId, items, observacion: `Guía de remisión ${numero}` },
+        empresaId,
+        usuarioId,
+        sedes,
+        revertir
+          ? {
+              salida: `Devolución a ${sedes.sedeDestino.nombre} · Guía ${numero} eliminada`,
+              ingreso: `Vuelve de ${sedes.sedeOrigen.nombre} · Guía ${numero} eliminada`,
+            }
+          : {
+              salida: `Traslado a ${sedes.sedeDestino.nombre} · Guía ${numero}`,
+              ingreso: `Traslado desde ${sedes.sedeOrigen.nombre} · Guía ${numero}`,
+            },
+      );
+    } catch (e: any) {
+      if (revertir && e instanceof BadRequestException) {
+        throw new BadRequestException(
+          `No se puede devolver el stock de la guía ${numero}: ${e.message}. Ajusta el stock de ${sedes.sedeOrigen.nombre} o haz un traslado manual.`,
+        );
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Partida y llegada desde los datos de cada sede: dirección, ubigeo y código
+   * de establecimiento SUNAT (`Sede.codigo`, el anexo de 4 dígitos). Solo completa lo que la sede tiene; lo que el
+   * usuario escribió a mano se respeta si la sede no tiene ese dato.
+   */
+  private async completarPuntosDesdeSedes(
+    dto: {
+      sedeOrigenId?: number | null;
+      sedeDestinoId?: number | null;
+      partidaDireccion?: string;
+      partidaUbigeo?: string;
+      partidaCodigoEstablecimiento?: string;
+      llegadaDireccion?: string;
+      llegadaUbigeo?: string;
+      llegadaCodigoEstablecimiento?: string;
+    },
+    empresaId: number,
+  ) {
+    const sedes = await this.prisma.sede.findMany({
+      where: { empresaId, id: { in: [Number(dto.sedeOrigenId), Number(dto.sedeDestinoId)] } },
+      select: { id: true, direccion: true, ubigeo: true, codigo: true },
+    });
+    const origen = sedes.find((x) => x.id === Number(dto.sedeOrigenId));
+    const destino = sedes.find((x) => x.id === Number(dto.sedeDestinoId));
+    if (origen?.direccion?.trim()) dto.partidaDireccion = origen.direccion.trim();
+    if (origen?.ubigeo?.trim()) dto.partidaUbigeo = origen.ubigeo.trim();
+    if (esAnexoSunat(origen?.codigo)) dto.partidaCodigoEstablecimiento = origen!.codigo!.trim();
+    if (destino?.direccion?.trim()) dto.llegadaDireccion = destino.direccion.trim();
+    if (destino?.ubigeo?.trim()) dto.llegadaUbigeo = destino.ubigeo.trim();
+    if (esAnexoSunat(destino?.codigo)) dto.llegadaCodigoEstablecimiento = destino!.codigo!.trim();
   }
 
   async findAll(
@@ -338,6 +509,7 @@ export class GuiaRemisionService {
     updateDto: UpdateGuiaRemisionDto,
     empresaId: number,
     sedeId?: number,
+    usuarioId?: number,
   ) {
     const guia = await this.findOne(id, empresaId, sedeId);
 
@@ -354,6 +526,22 @@ export class GuiaRemisionService {
     // transporte público → error 2560). Se valida el merge porque updateDto
     // es parcial.
     this.validateGuiaRemision({ ...guia, ...updateDto } as any);
+
+    // Traslado entre sedes: el resultado de la edición manda. Si cambian las
+    // sedes o los productos, se devuelve lo movido y se aplica lo nuevo.
+    const resultado = { ...guia, ...updateDto } as any;
+    if (resultado.tipoTraslado !== '04') {
+      (updateDto as any).sedeOrigenId = null;
+      (updateDto as any).sedeDestinoId = null;
+    }
+    const detallesFinales: DetalleTrasladable[] =
+      updateDto.detalles && updateDto.detalles.length > 0
+        ? updateDto.detalles
+        : ((guia as any).detalles ?? []);
+    if (esTrasladoEntreSedes({ ...resultado, ...updateDto } as any)) {
+      await this.completarPuntosDesdeSedes(updateDto as any, empresaId);
+      await this.validarTrasladoDeGuia({ ...resultado, ...updateDto } as any, detallesFinales, empresaId, usuarioId);
+    }
 
     // Si se actualizan detalles, eliminar los anteriores y crear los nuevos
     // El correlativo no se edita: lo asigna la creación (o el auto-avance de
@@ -408,10 +596,7 @@ export class GuiaRemisionService {
     }
 
     if (detalles && detalles.length > 0) {
-      // Eliminar detalles anteriores y crear los nuevos
-      await this.prisma.detalleGuiaRemision.deleteMany({
-        where: { guiaRemisionId: id },
-      });
+      // Los detalles anteriores se borran dentro de la transacción de abajo.
 
       dataToUpdate.detalles = {
         create: detalles.map((detalle, index) => ({
@@ -426,18 +611,40 @@ export class GuiaRemisionService {
       };
     }
 
-    const guiaActualizada = await this.prisma.guiaRemision.update({
-      where: { id },
-      data: dataToUpdate,
-      include: {
-        detalles: {
-          include: {
-            producto: true,
+    const firmaAntes = (guia as any).stockTrasladado
+      ? firmaTraslado(guia as any, (guia as any).detalles ?? [])
+      : null;
+    const guiaActualizada = await this.prisma.$transaction(async (tx) => {
+      if (detalles && detalles.length > 0) {
+        await tx.detalleGuiaRemision.deleteMany({ where: { guiaRemisionId: id } });
+      }
+      const actualizada = await tx.guiaRemision.update({
+        where: { id },
+        data: dataToUpdate,
+        include: {
+          detalles: {
+            include: {
+              producto: true,
+            },
           },
+          empresa: true,
+          cliente: true,
         },
-        empresa: true,
-        cliente: true,
-      },
+      });
+      const firmaDespues = firmaTraslado(actualizada as any, actualizada.detalles as any);
+      if (firmaAntes === firmaDespues) return actualizada;
+      const quien = usuarioId ?? (guia as any).usuarioId;
+      if (firmaAntes) {
+        await this.moverStockDeGuia(tx, guia as any, empresaId, quien, { revertir: true });
+      }
+      if (firmaDespues) {
+        await this.moverStockDeGuia(tx, actualizada as any, empresaId, quien);
+      }
+      return tx.guiaRemision.update({
+        where: { id },
+        data: { stockTrasladado: !!firmaDespues },
+        include: { detalles: { include: { producto: true } }, empresa: true, cliente: true },
+      });
     });
 
     return guiaActualizada;
@@ -480,7 +687,7 @@ export class GuiaRemisionService {
     });
   }
 
-  async remove(id: number, empresaId: number, sedeId?: number) {
+  async remove(id: number, empresaId: number, sedeId?: number, usuarioId?: number) {
     const guia = await this.findOne(id, empresaId, sedeId);
 
     // No permitir eliminar si ya fue enviada a SUNAT (mejor anular)
@@ -490,8 +697,15 @@ export class GuiaRemisionService {
       );
     }
 
-    await this.prisma.guiaRemision.delete({
-      where: { id },
+    // Si la guía movió stock entre sedes, eliminarla lo devuelve a la sede de
+    // origen. Si la sede destino ya no lo tiene (se vendió), no se elimina.
+    await this.prisma.$transaction(async (tx) => {
+      if ((guia as any).stockTrasladado) {
+        await this.moverStockDeGuia(tx, guia as any, empresaId, usuarioId ?? (guia as any).usuarioId, {
+          revertir: true,
+        });
+      }
+      await tx.guiaRemision.delete({ where: { id } });
     });
 
     return { message: 'Guía de remisión eliminada correctamente' };

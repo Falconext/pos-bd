@@ -2070,6 +2070,8 @@ model Sede {
   nombre             String
   direccion          String?
   codigo             String?
+  /// Ubigeo SUNAT (6 dígitos) del local: llena partida/llegada de la guía.
+  ubigeo             String?
   tipo               TipoSede @default(PUNTO_DE_VENTA)
   esPrincipal        Boolean  @default(false)
   // Permite emitir comprobantes aun cuando la sede es de tipo ALMACEN.
@@ -3047,6 +3049,12 @@ model GuiaRemision {
 
   sedeId Int?
   sede   Sede? @relation(fields: [sedeId], references: [id])
+
+  // Traslado entre sedes propias (motivo 04): al crear la guía el stock pasa
+  // de sedeOrigenId a sedeDestinoId; al eliminarla se devuelve.
+  sedeOrigenId    Int?
+  sedeDestinoId   Int?
+  stockTrasladado Boolean @default(false)
 
   @@unique([empresaId, serie, correlativo])
   @@index([empresaId, fechaEmision])

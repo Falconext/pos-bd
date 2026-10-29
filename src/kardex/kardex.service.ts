@@ -41,6 +41,13 @@ import {
   motivoDelConcepto,
 } from '../producto/motivo-ajuste-stock';
 
+
+/** Sedes ya validadas de un traslado (nombres para los conceptos del kardex). */
+export type SedesTraslado = {
+  sedeOrigen: { nombre: string };
+  sedeDestino: { nombre: string };
+};
+
 @Injectable()
 export class KardexService {
   constructor(
@@ -1621,7 +1628,26 @@ export class KardexService {
     empresaId: number,
     usuarioId: number,
   ) {
-    const { sedeOrigenId, sedeDestinoId, items, observacion } = dto;
+    const sedes = await this.validarTraslado(dto, empresaId, usuarioId);
+    return await this.prisma.$transaction((tx) =>
+      this.trasladarEnTx(tx, dto, empresaId, usuarioId, sedes),
+    );
+  }
+
+  /**
+   * Reglas de un traslado entre sedes, antes de mover nada: sedes distintas,
+   * de la empresa, y el destino permitido para el usuario. La usan Kardex →
+   * Traslados y la guía de remisión de traslado entre establecimientos.
+   */
+  async validarTraslado(
+    dto: Pick<TrasladoKardexDto, 'sedeOrigenId' | 'sedeDestinoId'>,
+    empresaId: number,
+    usuarioId: number,
+    // Devolver un traslado ya hecho (guía eliminada) no es elegir un destino
+    // nuevo: la restricción de sedes del usuario no aplica.
+    opts?: { sinRestriccionDeDestino?: boolean },
+  ): Promise<SedesTraslado> {
+    const { sedeOrigenId, sedeDestinoId } = dto;
 
     if (sedeOrigenId === sedeDestinoId) {
       throw new BadRequestException(
@@ -1636,7 +1662,7 @@ export class KardexService {
       where: { id: usuarioId },
       select: { restringirTransferenciasASuSede: true },
     });
-    if (usuario?.restringirTransferenciasASuSede) {
+    if (usuario?.restringirTransferenciasASuSede && !opts?.sinRestriccionDeDestino) {
       const asignada = await this.prisma.usuarioSede.findFirst({
         where: { usuarioId, sedeId: sedeDestinoId },
         select: { id: true },
@@ -1650,12 +1676,12 @@ export class KardexService {
 
     // Obtener nombres de las sedes para los conceptos
     const [sedeOrigen, sedeDestino] = await Promise.all([
-      this.prisma.sede.findUnique({
-        where: { id: sedeOrigenId },
+      this.prisma.sede.findFirst({
+        where: { id: sedeOrigenId, empresaId },
         select: { nombre: true },
       }),
-      this.prisma.sede.findUnique({
-        where: { id: sedeDestinoId },
+      this.prisma.sede.findFirst({
+        where: { id: sedeDestinoId, empresaId },
         select: { nombre: true },
       }),
     ]);
@@ -1663,203 +1689,218 @@ export class KardexService {
     if (!sedeOrigen || !sedeDestino) {
       throw new BadRequestException('Una o ambas sedes no existen');
     }
+    return { sedeOrigen, sedeDestino };
+  }
 
-    return await this.prisma.$transaction(async (tx) => {
-      const resultados: Array<{
-        productoId: number;
-        movSalida: MovimientoKardex;
-        movIngreso: MovimientoKardex;
-      }> = [];
+  /**
+   * Mueve el stock de un traslado dentro de una transacción ajena: SALIDA en
+   * origen e INGRESO en destino, al costo de la sede que envía. Validar antes
+   * con `validarTraslado`. `conceptos` permite nombrar el documento que lo
+   * origina (p. ej. la guía de remisión).
+   */
+  async trasladarEnTx(
+    tx: Prisma.TransactionClient,
+    dto: TrasladoKardexDto,
+    empresaId: number,
+    usuarioId: number,
+    { sedeOrigen, sedeDestino }: SedesTraslado,
+    conceptos?: { salida?: string; ingreso?: string },
+  ) {
+    const { sedeOrigenId, sedeDestinoId, items, observacion } = dto;
+    const resultados: Array<{
+      productoId: number;
+      movSalida: MovimientoKardex;
+      movIngreso: MovimientoKardex;
+    }> = [];
 
-      for (const item of items) {
-        // 1. Obtener stock en sede origen
-        let stockOrigen = await tx.productoStock.findUnique({
-          where: {
-            productoId_sedeId: {
+    for (const item of items) {
+      // 1. Obtener stock en sede origen
+      let stockOrigen = await tx.productoStock.findUnique({
+        where: {
+          productoId_sedeId: {
+            productoId: item.productoId,
+            sedeId: sedeOrigenId,
+          },
+        },
+        include: { producto: true },
+      });
+
+      // Si no existe ProductoStock para la sede origen (producto legado anterior a multi-sede),
+      // crear el registro con stock 0. Usar producto.stock global sería incorrecto porque ese
+      // campo puede estar inflado (suma de todas las sedes). El check de stock insuficiente
+      // fallará correctamente y le indicará al usuario que ajuste el stock de esa sede primero.
+      if (!stockOrigen) {
+        const producto = await tx.producto.findUnique({
+          where: { id: item.productoId },
+          include: { unidadMedida: true },
+        });
+        if (producto) {
+          stockOrigen = await tx.productoStock.create({
+            data: {
               productoId: item.productoId,
               sedeId: sedeOrigenId,
+              stock: 0,
+              stockMinimo: producto.stockMinimo || 0,
             },
-          },
-          include: { producto: true },
-        });
-
-        // Si no existe ProductoStock para la sede origen (producto legado anterior a multi-sede),
-        // crear el registro con stock 0. Usar producto.stock global sería incorrecto porque ese
-        // campo puede estar inflado (suma de todas las sedes). El check de stock insuficiente
-        // fallará correctamente y le indicará al usuario que ajuste el stock de esa sede primero.
-        if (!stockOrigen) {
-          const producto = await tx.producto.findUnique({
-            where: { id: item.productoId },
-            include: { unidadMedida: true },
+            include: { producto: true },
           });
-          if (producto) {
-            stockOrigen = await tx.productoStock.create({
-              data: {
-                productoId: item.productoId,
-                sedeId: sedeOrigenId,
-                stock: 0,
-                stockMinimo: producto.stockMinimo || 0,
-              },
-              include: { producto: true },
-            });
-          }
         }
+      }
 
-        if (!stockOrigen || num(stockOrigen.stock) < num(item.cantidad)) {
-          throw new BadRequestException(
-            `Stock insuficiente en ${sedeOrigen.nombre} para el producto ${stockOrigen?.producto?.descripcion || item.productoId}`,
-          );
-        }
+      if (!stockOrigen || num(stockOrigen.stock) < num(item.cantidad)) {
+        throw new BadRequestException(
+          `Stock insuficiente en ${sedeOrigen.nombre} para el producto ${stockOrigen?.producto?.descripcion || item.productoId}`,
+        );
+      }
 
-        // La mercadería sale valorizada al costo de LA SEDE QUE LA ENVÍA, que
-        // es lo que esa sede pagó por ella. Antes se usaba el costo global, así
-        // que un local podía despachar a un costo que nunca le correspondió.
-        // El costo de la sede origen no cambia por una salida: el promedio
-        // ponderado solo se mueve cuando entra mercadería.
-        const costoOrigen = costoDeSede(
-          stockOrigen.costoPromedio,
+      // La mercadería sale valorizada al costo de LA SEDE QUE LA ENVÍA, que
+      // es lo que esa sede pagó por ella. Antes se usaba el costo global, así
+      // que un local podía despachar a un costo que nunca le correspondió.
+      // El costo de la sede origen no cambia por una salida: el promedio
+      // ponderado solo se mueve cuando entra mercadería.
+      const costoOrigen = costoDeSede(
+        stockOrigen.costoPromedio,
+        stockOrigen.producto.costoPromedio,
+      );
+
+      // 2. Registrar SALIDA en sede origen
+      const movSalida = await tx.movimientoKardex.create({
+        data: {
+          productoId: item.productoId,
+          empresaId,
+          tipoMovimiento: 'SALIDA',
+          concepto: conceptos?.salida ?? `Traslado a ${sedeDestino.nombre}`,
+          cantidad: item.cantidad,
+          stockAnterior: num(stockOrigen.stock),
+          stockActual: round3(num(stockOrigen.stock) - num(item.cantidad)),
+          costoUnitario: costoOrigen,
+          valorTotal: costoOrigen * num(item.cantidad),
+          sedeId: sedeOrigenId,
+          usuarioId,
+          observacion,
+          lote: item.lote,
+        },
+      });
+
+      // 3. Obtener/Crear stock en sede destino (upsert garantiza que el registro exista)
+      //    Se usa upsert para evitar la condición de carrera entre findUnique + create separados.
+      await tx.productoStock.upsert({
+        where: {
+          productoId_sedeId: {
+            productoId: item.productoId,
+            sedeId: sedeDestinoId,
+          },
+        },
+        create: {
+          productoId: item.productoId,
+          sedeId: sedeDestinoId,
+          stock: 0,
+          stockMinimo: 0,
+        },
+        update: {}, // No sobreescribir si ya existe
+      });
+
+      // Re-leer el stock REAL de la sede destino después del upsert para evitar valores obsoletos
+      const stockDestinoActual = await tx.productoStock.findUnique({
+        where: {
+          productoId_sedeId: {
+            productoId: item.productoId,
+            sedeId: sedeDestinoId,
+          },
+        },
+      });
+
+      const stockAnteriorDestino = num(stockDestinoActual?.stock);
+
+      // 4. Registrar INGRESO en sede destino con el stock real leído
+      const movIngreso = await tx.movimientoKardex.create({
+        data: {
+          productoId: item.productoId,
+          empresaId,
+          tipoMovimiento: 'INGRESO',
+          concepto: conceptos?.ingreso ?? `Traslado desde ${sedeOrigen.nombre}`,
+          cantidad: item.cantidad,
+          stockAnterior: stockAnteriorDestino,
+          stockActual: round3(stockAnteriorDestino + num(item.cantidad)),
+          costoUnitario: costoOrigen,
+          valorTotal: costoOrigen * num(item.cantidad),
+          sedeId: sedeDestinoId,
+          usuarioId,
+          observacion,
+          lote: item.lote,
+        },
+      });
+
+      // 5. Actualizar stocks físicos usando increment para garantizar atomicidad
+      //    Evita condiciones de carrera al no depender del valor leído en memoria.
+      await tx.productoStock.update({
+        where: { id: stockOrigen.id },
+        data: { stock: { decrement: item.cantidad } },
+      });
+
+      // La sede que recibe promedia lo que ya tenía con lo que le llega, al
+      // costo de la sede que lo envió. Un traslado no crea ni destruye valor:
+      // por eso el costo global del producto no se toca, solo se reparte
+      // distinto entre los locales.
+      const costoDestino = promedioTrasIngreso(
+        stockAnteriorDestino + num(item.cantidad),
+        num(item.cantidad),
+        costoOrigen,
+        costoDeSede(
+          stockDestinoActual?.costoPromedio,
           stockOrigen.producto.costoPromedio,
-        );
+        ),
+      );
 
-        // 2. Registrar SALIDA en sede origen
-        const movSalida = await tx.movimientoKardex.create({
-          data: {
-            productoId: item.productoId,
-            empresaId,
-            tipoMovimiento: 'SALIDA',
-            concepto: `Traslado a ${sedeDestino.nombre}`,
-            cantidad: item.cantidad,
-            stockAnterior: num(stockOrigen.stock),
-            stockActual: round3(num(stockOrigen.stock) - num(item.cantidad)),
-            costoUnitario: costoOrigen,
-            valorTotal: costoOrigen * num(item.cantidad),
-            sedeId: sedeOrigenId,
-            usuarioId,
-            observacion,
-            lote: item.lote,
-          },
-        });
-
-        // 3. Obtener/Crear stock en sede destino (upsert garantiza que el registro exista)
-        //    Se usa upsert para evitar la condición de carrera entre findUnique + create separados.
-        await tx.productoStock.upsert({
-          where: {
-            productoId_sedeId: {
-              productoId: item.productoId,
-              sedeId: sedeDestinoId,
-            },
-          },
-          create: {
+      await tx.productoStock.update({
+        where: {
+          productoId_sedeId: {
             productoId: item.productoId,
             sedeId: sedeDestinoId,
-            stock: 0,
-            stockMinimo: 0,
           },
-          update: {}, // No sobreescribir si ya existe
-        });
+        },
+        // Recibir stock por traslado asigna el producto a la sede destino.
+        data: {
+          stock: { increment: item.cantidad },
+          visibleEnSede: true,
+          ...(costoDestino != null ? { costoPromedio: costoDestino } : {}),
+        },
+      });
 
-        // Re-leer el stock REAL de la sede destino después del upsert para evitar valores obsoletos
-        const stockDestinoActual = await tx.productoStock.findUnique({
-          where: {
-            productoId_sedeId: {
-              productoId: item.productoId,
-              sedeId: sedeDestinoId,
-            },
-          },
-        });
+      resultados.push({ productoId: item.productoId, movSalida, movIngreso });
+    }
 
-        const stockAnteriorDestino = num(stockDestinoActual?.stock);
+    // Sincronizar stock global del producto (suma de todas las sedes)
+    for (const item of items) {
+      const totalStock = await tx.productoStock.aggregate({
+        where: { productoId: item.productoId },
+        _sum: { stock: true },
+      });
+      await tx.producto.update({
+        where: { id: item.productoId },
+        data: { stock: totalStock._sum.stock ?? 0 },
+      });
 
-        // 4. Registrar INGRESO en sede destino con el stock real leído
-        const movIngreso = await tx.movimientoKardex.create({
-          data: {
-            productoId: item.productoId,
-            empresaId,
-            tipoMovimiento: 'INGRESO',
-            concepto: `Traslado desde ${sedeOrigen.nombre}`,
-            cantidad: item.cantidad,
-            stockAnterior: stockAnteriorDestino,
-            stockActual: round3(stockAnteriorDestino + num(item.cantidad)),
-            costoUnitario: costoOrigen,
-            valorTotal: costoOrigen * num(item.cantidad),
-            sedeId: sedeDestinoId,
-            usuarioId,
-            observacion,
-            lote: item.lote,
-          },
-        });
+      // El traslado no cambia cuánto vale el producto, pero sí le fija costo
+      // a la sede que recibe. Alinear el global mantiene la identidad con el
+      // valorizado por local.
+      const productoActual = await tx.producto.findUnique({
+        where: { id: item.productoId },
+        select: { costoPromedio: true },
+      });
+      await alinearCostoGlobal(
+        tx,
+        item.productoId,
+        productoActual?.costoPromedio,
+      );
 
-        // 5. Actualizar stocks físicos usando increment para garantizar atomicidad
-        //    Evita condiciones de carrera al no depender del valor leído en memoria.
-        await tx.productoStock.update({
-          where: { id: stockOrigen.id },
-          data: { stock: { decrement: item.cantidad } },
-        });
+      // Si el producto trasladado es una variante, recalcular el stock del
+      // padre (global y por sede) para que su distribución por sede quede
+      // coherente tras mover stock entre sedes.
+      await this.sincronizarStockPadre(item.productoId, tx);
+    }
 
-        // La sede que recibe promedia lo que ya tenía con lo que le llega, al
-        // costo de la sede que lo envió. Un traslado no crea ni destruye valor:
-        // por eso el costo global del producto no se toca, solo se reparte
-        // distinto entre los locales.
-        const costoDestino = promedioTrasIngreso(
-          stockAnteriorDestino + num(item.cantidad),
-          num(item.cantidad),
-          costoOrigen,
-          costoDeSede(
-            stockDestinoActual?.costoPromedio,
-            stockOrigen.producto.costoPromedio,
-          ),
-        );
-
-        await tx.productoStock.update({
-          where: {
-            productoId_sedeId: {
-              productoId: item.productoId,
-              sedeId: sedeDestinoId,
-            },
-          },
-          // Recibir stock por traslado asigna el producto a la sede destino.
-          data: {
-            stock: { increment: item.cantidad },
-            visibleEnSede: true,
-            ...(costoDestino != null ? { costoPromedio: costoDestino } : {}),
-          },
-        });
-
-        resultados.push({ productoId: item.productoId, movSalida, movIngreso });
-      }
-
-      // Sincronizar stock global del producto (suma de todas las sedes)
-      for (const item of items) {
-        const totalStock = await tx.productoStock.aggregate({
-          where: { productoId: item.productoId },
-          _sum: { stock: true },
-        });
-        await tx.producto.update({
-          where: { id: item.productoId },
-          data: { stock: totalStock._sum.stock ?? 0 },
-        });
-
-        // El traslado no cambia cuánto vale el producto, pero sí le fija costo
-        // a la sede que recibe. Alinear el global mantiene la identidad con el
-        // valorizado por local.
-        const productoActual = await tx.producto.findUnique({
-          where: { id: item.productoId },
-          select: { costoPromedio: true },
-        });
-        await alinearCostoGlobal(
-          tx,
-          item.productoId,
-          productoActual?.costoPromedio,
-        );
-
-        // Si el producto trasladado es una variante, recalcular el stock del
-        // padre (global y por sede) para que su distribución por sede quede
-        // coherente tras mover stock entre sedes.
-        await this.sincronizarStockPadre(item.productoId, tx);
-      }
-
-      return resultados;
-    });
+    return resultados;
   }
 
   /**

@@ -23,7 +23,7 @@ const prisma = new PrismaClient({ datasources: { db: { url: URL ?? '' } } });
 const stub = new Proxy({}, { get: () => async () => ({ id: 1 }) }) as any;
 
 const servicio = new ComprobanteService(prisma as any, stub, stub, stub, stub, stub, stub, stub);
-const guias = new GuiaRemisionService(prisma as any, stub, stub);
+const guias = new GuiaRemisionService(prisma as any, stub, stub, stub);
 
 const PRECIO = 31;
 const ENVIO = 15;
