@@ -716,6 +716,8 @@ model Usuario {
   // productos del inventario. No alcanza a editar los que ya existen ni a
   // vender: es solo el alta y la baja del catálogo.
   bloquearCrearEliminarProductos    Boolean                            @default(false)
+  /// Solo gestiona las fotos de los productos: no toca precio, stock ni datos.
+  soloImagenesProductos             Boolean                            @default(false)
   // Único permiso opt-in en el sentido contrario (default false = SIN el
   // permiso, igual que el comportamiento actual): anular/eliminar
   // comprobantes queda reservado a ADMIN_EMPRESA salvo que se active aquí.
@@ -2133,6 +2135,8 @@ model UsuarioSede {
   id        Int     @id @default(autoincrement())
   usuarioId Int
   sedeId    Int
+  /// false = entra a la sede (stock, cotizaciones, traslados) pero no emite ventas ahí.
+  puedeVender Boolean @default(true)
   usuario   Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
   sede      Sede    @relation(fields: [sedeId], references: [id], onDelete: Cascade)
 

@@ -27,6 +27,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { User } from '../common/decorators/user.decorator';
 import type { Response } from 'express';
 import { verificarPuedeCrearOEliminarProductos } from './puede-gestionar-productos.util';
+import { SoloImagenesGuard } from './solo-imagenes.guard';
 import { CreateProductoDto } from './dto/create-producto.dto';
 import { ListProductoDto } from './dto/list-producto.dto';
 import { ResumenProductoDto } from './dto/resumen-producto.dto';
@@ -52,7 +53,7 @@ import {
   type ColorVerdict,
 } from './color-match.util';
 
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, SoloImagenesGuard)
 @Controller('productos')
 export class ProductoController {
   private readonly imageSearchCache = new Map<

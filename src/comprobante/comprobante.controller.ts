@@ -39,6 +39,7 @@ import {
 } from '../common/utils/multer.config';
 import { numeroALetras } from './utils/numero-a-letras';
 import { verificarPuedeAnularComprobante } from './puede-anular-comprobante.util';
+import { verificarPuedeVenderEnSede } from '../usuarios/puede-vender-en-sede.util';
 import {
   puedeLeerVentasDeTodos,
   sedeIdParaListado,
@@ -641,6 +642,7 @@ export class ComprobanteController {
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async crearBoleta(@User() user: any, @Body() dto: CrearComprobanteDto) {
     let comp;
+    verificarPuedeVenderEnSede(user);
     try {
       console.log(
         '[crearBoleta] Starting - empresaId:',
@@ -718,6 +720,7 @@ export class ComprobanteController {
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA')
   async crearFactura(@User() user: any, @Body() dto: CrearComprobanteDto) {
     let comp;
+    verificarPuedeVenderEnSede(user);
     try {
       console.log(
         '[crearFactura] Starting - empresaId:',
@@ -850,6 +853,7 @@ export class ComprobanteController {
     @User() user: any,
     @Body() dto: CrearComprobanteDto,
   ) {
+    verificarPuedeVenderEnSede(user, dto?.tipoDoc);
     const effectiveSedeId = user.sedeId ?? dto?.sedeId ?? undefined;
     const comp = await this.service.crearInformal(
       dto,

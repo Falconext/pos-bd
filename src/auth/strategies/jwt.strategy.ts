@@ -50,7 +50,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         noPermitirVentaProductosGratuitos: true,
         restringirTransferenciasASuSede: true,
         bloquearCrearEliminarProductos: true,
+        soloImagenesProductos: true,
         puedeAnularComprobantes: true,
+        sedesAsignadas: { where: { puedeVender: false }, select: { sedeId: true } },
         empresa: {
           select: {
             estado: true,
@@ -111,7 +113,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       noPermitirVentaProductosGratuitos: user.noPermitirVentaProductosGratuitos,
       restringirTransferenciasASuSede: user.restringirTransferenciasASuSede,
       bloquearCrearEliminarProductos: user.bloquearCrearEliminarProductos,
+      soloImagenesProductos: user.soloImagenesProductos,
       puedeAnularComprobantes: user.puedeAnularComprobantes,
+      // Sedes asignadas donde no emite ventas (ver puede-vender-en-sede.util).
+      sedesSinVenta: user.sedesAsignadas.map((s) => s.sedeId),
       // Token temporal de selección de sede: el guard lo rechaza en todos los
       // endpoints salvo /auth/select-sede (marcado con @AllowPendingSede).
       pendingSedeSelection: payload.pendingSedeSelection === true,
