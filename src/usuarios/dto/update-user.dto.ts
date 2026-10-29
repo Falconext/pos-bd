@@ -90,6 +90,16 @@ export class UpdateUserDto {
 
   @IsBoolean()
   @IsOptional()
+  soloImagenesProductos?: boolean;
+
+  // Entre las sedeIds, las que el usuario puede ver pero donde NO emite ventas.
+  @IsArray()
+  @IsInt({ each: true })
+  @IsOptional()
+  sedesSinVenta?: number[];
+
+  @IsBoolean()
+  @IsOptional()
   puedeAnularComprobantes?: boolean;
 
   @IsOptional()

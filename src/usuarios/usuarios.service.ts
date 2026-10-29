@@ -312,6 +312,7 @@ export class UsersService {
         restringirTransferenciasASuSede:
           dto.restringirTransferenciasASuSede ?? false,
         bloquearCrearEliminarProductos: dto.bloquearCrearEliminarProductos ?? false,
+        soloImagenesProductos: dto.soloImagenesProductos ?? false,
         puedeAnularComprobantes: dto.puedeAnularComprobantes ?? false,
       },
       select: {
@@ -335,6 +336,7 @@ export class UsersService {
         noPermitirVentaProductosGratuitos: true,
         restringirTransferenciasASuSede: true,
         bloquearCrearEliminarProductos: true,
+        soloImagenesProductos: true,
         puedeAnularComprobantes: true,
       },
     });
@@ -351,7 +353,11 @@ export class UsersService {
         );
       }
       await this.prisma.usuarioSede.createMany({
-        data: sedeIds.map((sedeId) => ({ usuarioId: nuevo.id, sedeId })),
+        data: sedeIds.map((sedeId) => ({
+          usuarioId: nuevo.id,
+          sedeId,
+          puedeVender: !(dto.sedesSinVenta ?? []).includes(sedeId),
+        })),
         skipDuplicates: true,
       });
     }
@@ -424,9 +430,11 @@ export class UsersService {
           noPermitirVentaProductosGratuitos: true,
           restringirTransferenciasASuSede: true,
           bloquearCrearEliminarProductos: true,
+          soloImagenesProductos: true,
           puedeAnularComprobantes: true,
           sedesAsignadas: {
             select: {
+              puedeVender: true,
               sede: {
                 select: {
                   id: true,
@@ -456,7 +464,7 @@ export class UsersService {
     // Aplanar sedes y submódulos asignados
     const itemsConSedes = items.map((u) => ({
       ...u,
-      sedes: (u.sedesAsignadas || []).map((us: any) => us.sede),
+      sedes: (u.sedesAsignadas || []).map((us: any) => ({ ...us.sede, puedeVender: us.puedeVender })),
       sedesAsignadas: undefined,
       subModulos: (u.subModulosAsignados || []).map((us: any) => us.subModulo),
       subModulosAsignados: undefined,
@@ -558,6 +566,7 @@ export class UsersService {
           dto.noPermitirVentaProductosGratuitos,
         restringirTransferenciasASuSede: dto.restringirTransferenciasASuSede,
         bloquearCrearEliminarProductos: dto.bloquearCrearEliminarProductos,
+        soloImagenesProductos: dto.soloImagenesProductos,
         puedeAnularComprobantes: dto.puedeAnularComprobantes,
       },
       select: {
@@ -581,6 +590,7 @@ export class UsersService {
         noPermitirVentaProductosGratuitos: true,
         restringirTransferenciasASuSede: true,
         bloquearCrearEliminarProductos: true,
+        soloImagenesProductos: true,
         puedeAnularComprobantes: true,
       },
     });
@@ -598,10 +608,24 @@ export class UsersService {
           );
         }
       }
+      // Sin `sedesSinVenta` en el body (cliente viejo, app) se conserva lo
+      // que había: reasignar sedes no debe volver a habilitar la venta.
+      const sinVenta =
+        dto.sedesSinVenta ??
+        (
+          await this.prisma.usuarioSede.findMany({
+            where: { usuarioId: id, puedeVender: false },
+            select: { sedeId: true },
+          })
+        ).map((us) => us.sedeId);
       await this.prisma.usuarioSede.deleteMany({ where: { usuarioId: id } });
       if (sedeIds.length > 0) {
         await this.prisma.usuarioSede.createMany({
-          data: sedeIds.map((sedeId) => ({ usuarioId: id, sedeId })),
+          data: sedeIds.map((sedeId) => ({
+            usuarioId: id,
+            sedeId,
+            puedeVender: !sinVenta.includes(sedeId),
+          })),
           skipDuplicates: true,
         });
       }
@@ -618,6 +642,15 @@ export class UsersService {
           data: { sedeId: null },
         });
       }
+    } else if (dto.sedesSinVenta !== undefined) {
+      await this.prisma.usuarioSede.updateMany({
+        where: { usuarioId: id },
+        data: { puedeVender: true },
+      });
+      await this.prisma.usuarioSede.updateMany({
+        where: { usuarioId: id, sedeId: { in: dto.sedesSinVenta } },
+        data: { puedeVender: false },
+      });
     }
 
     // Sincronizar submódulos si vienen
@@ -659,9 +692,11 @@ export class UsersService {
         noPermitirVentaProductosGratuitos: true,
         restringirTransferenciasASuSede: true,
         bloquearCrearEliminarProductos: true,
+        soloImagenesProductos: true,
         puedeAnularComprobantes: true,
         sedesAsignadas: {
           select: {
+            puedeVender: true,
             sede: {
               select: {
                 id: true,
@@ -704,7 +739,7 @@ export class UsersService {
 
     return {
       ...updatedConRelaciones,
-      sedes: (updatedConRelaciones?.sedesAsignadas || []).map((us) => us.sede),
+      sedes: (updatedConRelaciones?.sedesAsignadas || []).map((us) => ({ ...us.sede, puedeVender: us.puedeVender })),
       sedesAsignadas: undefined,
       subModulos: (updatedConRelaciones?.subModulosAsignados || []).map(
         (us) => us.subModulo,
