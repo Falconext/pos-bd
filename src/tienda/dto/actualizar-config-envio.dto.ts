@@ -1,4 +1,6 @@
 import {
+  IsArray,
+  IsIn,
   IsBoolean,
   IsDecimal,
   IsInt,
@@ -50,4 +52,10 @@ export class ActualizarConfigEnvioDto {
   @IsDecimal()
   @Type(() => Number)
   minimoCompra?: number;
+
+  /** Agencias que ofrece la tienda: SHALOM y/o OLVA. Vacío = solo domicilio. */
+  @IsOptional()
+  @IsArray()
+  @IsIn(['SHALOM', 'OLVA'], { each: true })
+  couriersTienda?: string[];
 }

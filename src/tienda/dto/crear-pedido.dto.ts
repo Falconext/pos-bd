@@ -130,6 +130,25 @@ export class CrearPedidoDto {
   @IsOptional()
   agenciaEnvio?: string;
 
+  /** Envío por agencia elegido en la tienda: SHALOM u OLVA. Ver envio-agencia.ts. */
+  @IsString()
+  @IsOptional()
+  envioCourier?: string;
+
+  /** Id de la agencia destino (ter_id de Shalom, código de Olva). */
+  @IsString()
+  @IsOptional()
+  envioAgenciaId?: string;
+
+  @IsString()
+  @IsOptional()
+  envioAgenciaNombre?: string;
+
+  /** DNI/CE/RUC del comprador: la agencia lo pide al entregar. */
+  @IsString()
+  @IsOptional()
+  clienteDocumento?: string;
+
   @IsNumber()
   @Min(0)
   @IsOptional()

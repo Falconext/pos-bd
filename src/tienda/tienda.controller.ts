@@ -117,6 +117,28 @@ export class TiendaController {
     return this.tiendaService.obtenerPedido(empresaId, +id);
   }
 
+  /**
+   * El pedido se convirtió en un comprobante desde el punto de venta
+   * (nota de venta, boleta o factura): queda vinculado y confirmado.
+   */
+  @Patch('pedidos/:id/comprobante')
+  async vincularComprobante(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: { comprobanteId: number },
+  ) {
+    const comprobanteId = Number(body?.comprobanteId);
+    if (!Number.isInteger(comprobanteId) || comprobanteId <= 0) {
+      throw new BadRequestException('comprobanteId inválido');
+    }
+    return this.tiendaService.vincularComprobante(
+      req.user.empresaId,
+      +id,
+      comprobanteId,
+      req.user.id,
+    );
+  }
+
   @Patch('pedidos/:id/estado')
   async actualizarEstado(
     @Req() req: any,
