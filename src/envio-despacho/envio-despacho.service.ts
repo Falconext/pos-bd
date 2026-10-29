@@ -660,6 +660,8 @@ export class EnvioDespachoService {
         where: {
           empresaId,
           tipoEntrega: 'ENVIO',
+          // Ya pasado a comprobante: el despacho es el de ese documento.
+          comprobanteId: null,
           ...(fechaWhere ? { creadoEn: fechaWhere } : {}),
         },
         orderBy: { creadoEn: 'desc' },
