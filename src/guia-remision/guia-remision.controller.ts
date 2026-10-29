@@ -124,6 +124,7 @@ export class GuiaRemisionController {
       updateGuiaRemisionDto,
       empresaId,
       sedeId,
+      req.user.id,
     );
   }
 
@@ -131,7 +132,7 @@ export class GuiaRemisionController {
   remove(@Param('id', ParseIntPipe) id: number, @Request() req) {
     const empresaId = req.user.empresaId;
     const sedeId = req.user.sedeId;
-    return this.guiaRemisionService.remove(id, empresaId, sedeId);
+    return this.guiaRemisionService.remove(id, empresaId, sedeId, req.user.id);
   }
 
   @Post(':id/enviar-sunat')

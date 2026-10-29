@@ -1,5 +1,6 @@
 import { Transform, Type } from 'class-transformer';
 import {
+  IsInt,
   IsString,
   IsNotEmpty,
   IsNumber,
@@ -221,6 +222,18 @@ export class CreateGuiaRemisionDto {
   @IsString()
   @IsNotEmpty()
   tipoTraslado: string;
+
+  // Motivo 04 entre sedes propias: al crear la guía el stock pasa de una a la
+  // otra. Sin las dos sedes, la guía no toca el inventario (otro local, etc.).
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  sedeOrigenId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  sedeDestinoId?: number;
 
   @IsString()
   @IsNotEmpty()

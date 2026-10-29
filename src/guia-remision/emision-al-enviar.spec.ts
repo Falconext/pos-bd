@@ -76,6 +76,7 @@ describe('servicio de guías: envío y edición', () => {
       empresa: { findUnique: jest.fn(async () => ({ usuarioPse: 'u', contrasenaPse: 'p', usaDemo: false })) },
       detalleGuiaRemision: { deleteMany: jest.fn() },
     };
+    prisma.$transaction = jest.fn(async (fn: any) => fn(prisma));
     const enviadas: any[] = [];
     const sunat: any = {
       enviarGuia: jest.fn(async (g: any) => {
@@ -83,7 +84,7 @@ describe('servicio de guías: envío y edición', () => {
         return { success: true, numeracionRepetida: false, xml: '<x/>', documentoId: 'D1', message: 'ok' };
       }),
     };
-    const servicio = new GuiaRemisionService(prisma, sunat, {} as any);
+    const servicio = new GuiaRemisionService(prisma, sunat, {} as any, {} as any);
     return { servicio, updates, enviadas, prisma };
   };
 
