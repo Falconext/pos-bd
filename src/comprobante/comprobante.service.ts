@@ -9068,6 +9068,8 @@ export class ComprobanteService {
     id: number,
     celular: string,
     context?: { usuarioId?: number; empresaId?: number; rol?: string },
+    /** Texto que escribió el negocio para acompañar el PDF; vacío = el de siempre. */
+    mensaje?: string,
   ): Promise<void> {
     const comp = await this.cargarComprobanteCompleto(id);
     if (!comp) throw new NotFoundException('Comprobante no encontrado');
@@ -9107,7 +9109,9 @@ export class ComprobanteService {
     const numero = celular.replace(/\D/g, '').replace(/^0+/, '');
     const to = numero.startsWith('51') ? numero : `51${numero}`;
     const filename = `${tipoPretty.replace(/ /g, '_')}_${serie}-${correlativo}.pdf`;
-    const caption = `Hola ${clienteNombre}, aquí está tu ${tipoPretty} ${serie}-${correlativo} por ${monto}.\n\nGracias por tu preferencia — ${empresaNombre}.`;
+    const caption =
+      mensaje?.trim() ||
+      `Hola ${clienteNombre}, aquí está tu ${tipoPretty} ${serie}-${correlativo} por ${monto}.\n\nGracias por tu preferencia — ${empresaNombre}.`;
 
     // ── Takiy (QR del número del negocio): manda el link del PDF como adjunto.
     if (creds.source === 'TAKIY') {

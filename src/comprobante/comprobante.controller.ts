@@ -1151,16 +1151,17 @@ export class ComprobanteController {
   @Roles('ADMIN_EMPRESA', 'USUARIO_EMPRESA', 'ADMIN_SISTEMA')
   async enviarWhatsApp(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { celular: string },
+    @Body() body: { celular: string; mensaje?: string },
     @User() user: any,
   ) {
     if (!body?.celular)
       throw new BadRequestException('El campo celular es requerido');
-    await this.service.enviarWhatsAppComprobante(id, body.celular, {
-      usuarioId: user.id,
-      empresaId: user.empresaId,
-      rol: user.rol,
-    });
+    await this.service.enviarWhatsAppComprobante(
+      id,
+      body.celular,
+      { usuarioId: user.id, empresaId: user.empresaId, rol: user.rol },
+      typeof body.mensaje === 'string' ? body.mensaje.slice(0, 1000) : undefined,
+    );
     return { message: 'Mensaje de WhatsApp enviado correctamente' };
   }
 
