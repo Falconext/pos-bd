@@ -442,6 +442,20 @@ export class EnvioDespachoService {
     }
   }
 
+  /**
+   * Con Takiy los avisos salen desde el número del negocio y sin costo por
+   * mensaje: escribir sus propios textos no depende del plan. El resto de la
+   * automatización (recordatorios de recojo, formas de pago al repartidor,
+   * rastreo Shalom) sigue siendo del plan.
+   */
+  private soloMensajes(dto: DespachoConfigDto): DespachoConfigDto {
+    const { mensajeEnCamino, mensajeEntregado, mensajeEnAgencia, notificarEnCamino, notificarEntregado } = dto;
+    return Object.fromEntries(
+      Object.entries({ mensajeEnCamino, mensajeEntregado, mensajeEnAgencia, notificarEnCamino, notificarEntregado })
+        .filter(([, v]) => v !== undefined),
+    ) as DespachoConfigDto;
+  }
+
   async getConfig(empresaId: number) {
     const [config, empresa] = await Promise.all([
       this.prisma.despachoMensajeTemplate.findUnique({ where: { empresaId } }),
@@ -449,6 +463,7 @@ export class EnvioDespachoService {
         where: { id: empresaId },
         select: {
           shalomAutoTrackingActivo: true,
+          takiyActivo: true,
           plan: {
             select: {
               nombre: true,
@@ -475,11 +490,23 @@ export class EnvioDespachoService {
       shalomAutoTrackingActivo: empresa?.shalomAutoTrackingActivo ?? false,
       // El plan permite editar esta configuración (`tieneShalomGuias`).
       habilitadoPorPlan: planPermiteShalomPro(empresa?.plan),
+      // Los textos por estado se editan con el plan o con Takiy activo.
+      mensajesEditables: planPermiteShalomPro(empresa?.plan) || !!empresa?.takiyActivo,
     };
   }
 
   async upsertConfig(empresaId: number, dto: DespachoConfigDto) {
-    await this.validarPlanAutomatizacion(empresaId);
+    try {
+      await this.validarPlanAutomatizacion(empresaId);
+    } catch (e) {
+      if (!(e instanceof ForbiddenException)) throw e;
+      const takiy = await this.prisma.empresa.findUnique({
+        where: { id: empresaId },
+        select: { takiyActivo: true },
+      });
+      if (!takiy?.takiyActivo) throw e;
+      dto = this.soloMensajes(dto);
+    }
     const guardado = await this.prisma.despachoMensajeTemplate.upsert({
       where: { empresaId },
       create: { empresaId, ...dto },
