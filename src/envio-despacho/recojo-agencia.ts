@@ -77,6 +77,22 @@ export function textoDePlantilla(cuerpo: string, valores: string[]): string {
 }
 
 /**
+ * El aviso que escribió el negocio, con {{nombre}}, {{pedido}}, etc. puestos.
+ * Una variable sin valor se borra en vez de llegar como "{{clave}}" al
+ * cliente. Vacío o solo espacios → null: sale la plantilla de siempre.
+ */
+export function mensajePropio(
+  plantilla: string | null | undefined,
+  valores: Record<string, string>,
+): string | null {
+  if (!plantilla?.trim()) return null;
+  return plantilla
+    .replace(/\{\{(\w+)\}\}/g, (_m, clave: string) => valores[clave] ?? '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+/**
  * Cómo se nombra al repartidor en el aviso "en camino": con su celular, para
  * que el cliente sepa a quién esperar y a quién llamar (Hierba Sana 23-10:
  * Edwing lo escribía a mano en el chat). Sin repartidor asignado, null.

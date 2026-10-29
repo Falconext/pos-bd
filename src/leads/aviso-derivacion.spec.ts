@@ -26,6 +26,7 @@ function armar(opts: {
     },
   } as never;
   const whatsapp = {
+    credencialesTakiy: async () => null,
     enviarTexto: jest.fn(async (numero: string, texto: string, empresaId?: number) => {
       enviados.push({ numero, texto, empresaId });
       return { success: true };
@@ -103,6 +104,7 @@ describe('a quién se le avisa', () => {
       usuario: { findMany: async () => [{ celular: '955947892' }] },
     } as never;
     const whatsapp = {
+      credencialesTakiy: async () => null,
       enviarTexto: async () => {
         throw new Error('token vencido');
       },
@@ -198,6 +200,7 @@ describe('con la ventana de 24h cerrada, el aviso sale por plantilla', () => {
     const plantillas: any[] = [];
     const prisma = { usuario: { findMany: jest.fn().mockResolvedValue([{ celular: '955947892' }]) } } as never;
     const whatsapp = {
+      credencialesTakiy: async () => null,
       enviarTexto: jest.fn(async () => ({ success: false, error: '(#131047) Re-engagement message' })),
       enviarPlantilla: jest.fn(async (...a: any[]) => {
         plantillas.push(a);
@@ -225,5 +228,40 @@ describe('con la ventana de 24h cerrada, el aviso sale por plantilla', () => {
     w.enviarPlantilla = jest.fn();
     await servicio.avisarDerivacion({ ...BASE, supervisorTelefono: '955947892' });
     expect(w.enviarPlantilla).not.toHaveBeenCalled();
+  });
+});
+
+// Takiy (QR del número del negocio): el aviso al equipo sale por ahí primero,
+// sin ventana de 24 h ni plantilla, y solo si falla se intenta por Meta.
+describe('con Takiy activo', () => {
+  function armar(takiyOk: boolean) {
+    const prisma = { usuario: { findMany: jest.fn().mockResolvedValue([{ celular: '955947892' }]) } } as never;
+    const whatsapp = {
+      credencialesTakiy: async () => ({ appKey: 'a', authKey: 'b' }),
+      enviarPorTakiy: jest.fn(async () => ({ success: takiyOk, error: takiyOk ? undefined : 'desvinculado' })),
+      enviarTexto: jest.fn(async () => ({ success: true })),
+      enviarPlantilla: jest.fn(async () => ({ success: true })),
+    };
+    const servicio = new LeadsAlertaService(prisma, whatsapp as never, { get: () => 'https://app.krezka.com' } as never);
+    return { servicio, whatsapp };
+  }
+  const aviso = {
+    empresaId: 7,
+    nombreProspecto: 'Ana',
+    telefonoProspecto: '51999888777',
+    motivo: 'quiere_hablar_con_persona',
+  } as any;
+
+  it('manda por Takiy y no toca Meta', async () => {
+    const { servicio, whatsapp } = armar(true);
+    await servicio.avisarDerivacion(aviso);
+    expect(whatsapp.enviarPorTakiy).toHaveBeenCalledWith(7, '955947892', expect.stringContaining('Ana'));
+    expect(whatsapp.enviarTexto).not.toHaveBeenCalled();
+  });
+
+  it('si Takiy falla (celular desvinculado) sigue por Meta', async () => {
+    const { servicio, whatsapp } = armar(false);
+    await servicio.avisarDerivacion(aviso);
+    expect(whatsapp.enviarTexto).toHaveBeenCalled();
   });
 });

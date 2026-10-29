@@ -79,6 +79,7 @@ import {
 } from './ventas-por-producto';
 import { validarLimitesPrecioVenta } from '../common/utils/limites-precio-venta';
 import { lineasPagoMixto } from '../common/utils/pago-mixto';
+import { enviarTakiy } from '../whatsapp/takiy';
 import {
   cobroDeEdicion,
   fecharPagosEdicion,
@@ -8894,6 +8895,7 @@ export class ComprobanteService {
   private async getWhatsAppCredentials(empresaId: number): Promise<
     | { source: 'PLATFORM' | 'EMPRESA'; token: string; phoneNumberId: string }
     | { source: 'ZAVU'; apiKey: string; baseUrl: string; sender?: string }
+    | { source: 'TAKIY'; appKey: string; authKey: string }
   > {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
@@ -8902,8 +8904,16 @@ export class ComprobanteService {
         whatsappApiToken: true,
         whatsappPhoneNumberId: true,
         whatsappActivo: true,
+        takiyActivo: true,
+        takiyAppKey: true,
+        takiyAuthKey: true,
       },
     });
+
+    // Takiy va primero: es el número del propio negocio y no depende de Meta.
+    if (empresa?.takiyActivo && empresa.takiyAppKey && empresa.takiyAuthKey) {
+      return { source: 'TAKIY', appKey: empresa.takiyAppKey, authKey: empresa.takiyAuthKey };
+    }
 
     if (!empresa?.whatsappActivo || empresa?.whatsappProvider === 'DISABLED') {
       throw new BadRequestException(
@@ -9016,6 +9026,42 @@ export class ComprobanteService {
     return `${tags.length ? `[Meta ${tags.join(', ')}] ` : ''}${message}`;
   }
 
+  /**
+   * Manda el PDF al WhatsApp del cliente apenas se emite, si la empresa lo
+   * pidió (Takiy + "enviar al emitir"). En segundo plano: la venta ya está
+   * hecha y un celular desvinculado no debe trabarla ni mostrar error en caja.
+   */
+  enviarComprobanteAutomatico(
+    id: number,
+    user: { id?: number; empresaId?: number; rol?: string },
+  ): void {
+    void (async () => {
+      const comp = await this.prisma.comprobante.findUnique({
+        where: { id },
+        select: {
+          tipoDoc: true,
+          estadoEnvioSunat: true,
+          cliente: { select: { telefono: true } },
+          empresa: { select: { takiyActivo: true, takiyEnviarComprobante: true } },
+        },
+      });
+      if (!comp?.empresa?.takiyActivo || !comp.empresa.takiyEnviarComprobante) return;
+      // Cotizaciones y órdenes de trabajo se mandan a mano, cuando se cierran.
+      if (['COT', 'OT'].includes(comp.tipoDoc)) return;
+      if (['RECHAZADO', 'ANULADO'].includes(String(comp.estadoEnvioSunat))) return;
+      const telefono = String(comp.cliente?.telefono ?? '').replace(/\D/g, '');
+      // Sin celular de 9 dígitos (CLIENTES VARIOS, un fijo) no hay a quién.
+      if (!/^(51)?9\d{8}$/.test(telefono)) return;
+      await this.enviarWhatsAppComprobante(id, telefono, {
+        usuarioId: user.id,
+        empresaId: user.empresaId,
+        rol: user.rol,
+      });
+    })().catch((e) =>
+      this.logger.warn(`WhatsApp automático del comprobante ${id} no salió: ${e?.message ?? e}`),
+    );
+  }
+
   // ─── Enviar por WhatsApp (Meta Cloud API) ────────────────────────────────
 
   async enviarWhatsAppComprobante(
@@ -9062,6 +9108,32 @@ export class ComprobanteService {
     const to = numero.startsWith('51') ? numero : `51${numero}`;
     const filename = `${tipoPretty.replace(/ /g, '_')}_${serie}-${correlativo}.pdf`;
     const caption = `Hola ${clienteNombre}, aquí está tu ${tipoPretty} ${serie}-${correlativo} por ${monto}.\n\nGracias por tu preferencia — ${empresaNombre}.`;
+
+    // ── Takiy (QR del número del negocio): manda el link del PDF como adjunto.
+    if (creds.source === 'TAKIY') {
+      const r = await enviarTakiy(creds, { numero: to, mensaje: caption, archivoUrl: pdfUrl });
+      if (context?.usuarioId) {
+        await this.prisma.whatsAppEnvio.create({
+          data: {
+            comprobanteId: id,
+            empresaId: comp.empresaId,
+            usuarioId: context.usuarioId,
+            numeroDestino: to,
+            estado: r.success ? 'ENVIADO' : 'FALLIDO',
+            error: r.success ? null : r.error,
+            costoUSD: 0,
+            incluyeXML: false,
+          },
+        });
+      }
+      if (!r.success) {
+        throw new BadRequestException(
+          `${r.error || 'Takiy no envió el mensaje.'} Revisa en Takiy que tu celular siga vinculado.`,
+        );
+      }
+      this.logger.log(`✅ WhatsApp comprobante enviado (TAKIY) comprobanteId=${id} destino=${to}`);
+      return;
+    }
 
     // ── Proveedor Zavu ───────────────────────────────────────────────────────
     // Envía usando la URL pública del PDF (mediaUrl); no sube binario a Meta.
