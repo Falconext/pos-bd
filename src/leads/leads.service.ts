@@ -30,6 +30,7 @@ import sharp from 'sharp';
 import { IaVentasService } from './leads-ia.service';
 import { despedidaValida } from './despedida';
 import { tiendaValida } from './visita-tienda';
+import { menuValido } from './menu-inicial';
 import { aOggOpus, tieneAudio } from './nota-de-voz';
 
 /**
@@ -538,6 +539,7 @@ export class LeadsService {
           supervisorTelefono?: string;
           despedida?: unknown;
           tienda?: unknown;
+          menu?: unknown;
         }
       | null;
     const demos = json?.demos;
@@ -568,6 +570,7 @@ export class LeadsService {
       supervisorTelefono: json?.supervisorTelefono ?? '',
       despedida: despedidaValida(json?.despedida),
       tienda: tiendaValida(json?.tienda),
+      menu: menuValido(json?.menu),
     };
   }
 
@@ -667,6 +670,8 @@ export class LeadsService {
       despedida?: unknown;
       /** Dirección, mapa, foto e indicaciones para quien va a la tienda. */
       tienda?: unknown;
+      /** Saludo fijo + preguntas con botones antes de la IA (ver menu-inicial.ts). */
+      menu?: unknown;
     },
   ) {
     // El nombre del asesor vive en iaVentasConfigJson junto a zonas, descuentos
@@ -683,7 +688,8 @@ export class LeadsService {
       data.mediosPagoLista !== undefined ||
       data.supervisorTelefono !== undefined ||
       data.despedida !== undefined ||
-      data.tienda !== undefined
+      data.tienda !== undefined ||
+      data.menu !== undefined
     ) {
       const actual = await this.prisma.empresa.findUnique({
         where: { id: empresaId },
@@ -759,6 +765,12 @@ export class LeadsService {
           !t.direccion && !t.mapsUrl && t.lat == null && !t.indicaciones && !t.fotoUrl && !t.croquisUrl;
         if (vacia) delete json.tienda;
         else json.tienda = t;
+      }
+      if (data.menu !== undefined) {
+        // Como la despedida: apagado se guarda igual, para no reescribirlo.
+        const m = menuValido(data.menu);
+        if (m.bienvenida || m.pasos.length) json.menu = m;
+        else delete json.menu;
       }
       await this.prisma.empresa.update({
         where: { id: empresaId },

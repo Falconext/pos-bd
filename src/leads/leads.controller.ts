@@ -68,6 +68,7 @@ export class LeadsController {
       supervisorTelefono?: string;
       despedida?: unknown;
       tienda?: unknown;
+      menu?: unknown;
     },
   ) {
     return this.service.actualizarConfig(user.empresaId, body);

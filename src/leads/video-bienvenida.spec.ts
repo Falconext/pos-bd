@@ -5,8 +5,16 @@ jest.mock('@nestjs/bullmq', () => ({
 }));
 import { LeadsMessageProcessor } from './leads-message.processor';
 
-function armar(respuestas: number) {
-  const prisma = { leadMensaje: { count: jest.fn().mockResolvedValue(respuestas) } };
+function armar(respuestas: number, pasosDelMenu = 0) {
+  const nuestros = [
+    ...Array.from({ length: pasosDelMenu }, (_, paso) => ({
+      rol: 'ASISTENTE',
+      contenido: 'pregunta',
+      herramientasJson: [{ nombre: 'menu_inicial', argumentos: { paso } }],
+    })),
+    ...Array.from({ length: respuestas }, () => ({ rol: 'ASISTENTE', contenido: 'respuesta', herramientasJson: null })),
+  ];
+  const prisma = { leadMensaje: { findMany: jest.fn().mockResolvedValue(nuestros) } };
   const whatsapp = {
     enviarVideoUrl: jest.fn().mockResolvedValue({ success: true }),
     enviarTexto: jest.fn().mockResolvedValue({ success: true }),
@@ -39,5 +47,10 @@ describe('video de bienvenida (Krezka)', () => {
     const b = armar(1); await b.enviar(undefined);
     expect(a.whatsapp.enviarTexto).not.toHaveBeenCalled();
     expect(b.whatsapp.enviarTexto).not.toHaveBeenCalled();
+  });
+  it('los pasos del menú de bienvenida no cuentan: va tras la primera respuesta de la IA', async () => {
+    const { enviar, whatsapp } = armar(1, 3);
+    await enviar('https://youtu.be/x');
+    expect(whatsapp.enviarTexto).toHaveBeenCalled();
   });
 });
