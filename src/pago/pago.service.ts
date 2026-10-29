@@ -170,7 +170,32 @@ export class PagoService {
       },
     });
 
+    await this.sincronizarPedidoTienda(comprobanteActualizado);
+
     return { pago, comprobanteActualizado };
+  }
+
+  /**
+   * El pedido de la tienda que se convirtió en esta nota muestra lo mismo que
+   * ella: si la nota se terminó de cobrar, el pedido queda pagado; si no, lo
+   * cobrado hasta ahora. Antes el cobro quedaba solo en la nota y el pedido
+   * seguía "Pendiente" en Tienda → Pedidos.
+   */
+  private async sincronizarPedidoTienda(c: { id: number; mtoImpVenta: unknown; saldo: unknown }) {
+    const pedidos = await this.prisma.pedidoTienda.findMany({
+      where: { comprobanteId: c.id },
+      select: { id: true, total: true, montoPagado: true },
+    });
+    for (const p of pedidos) {
+      const total = Number(p.total);
+      const saldoNota = Number(c.saldo ?? 0);
+      const cobrado = saldoNota <= 0.009 ? total : Math.min(total, Number(c.mtoImpVenta ?? 0) - saldoNota);
+      const montoPagado = Math.max(Number(p.montoPagado), Math.round(cobrado * 100) / 100);
+      await this.prisma.pedidoTienda.update({
+        where: { id: p.id },
+        data: { montoPagado, saldoPendiente: Math.max(0, Math.round((total - montoPagado) * 100) / 100) },
+      });
+    }
   }
 
   async obtenerPagos(comprobanteId: number, empresaId?: number) {
