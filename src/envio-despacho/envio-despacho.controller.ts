@@ -32,6 +32,7 @@ import {
   CreateEnvioDespachoDto,
   UpdateEnvioDespachoDto,
   ExportarRepartoQueryDto,
+  OperacionesLogisticasDto,
 } from './dto/envio-despacho.dto';
 import { DespachoConfigDto } from './dto/despacho-config.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -190,6 +191,29 @@ export class EnvioDespachoController {
       'Content-Disposition',
       `attachment; filename=${nombreArchivo}`,
     );
+    res.status(200).send(buffer);
+  }
+
+  /** Picking y packing: los envíos elegidos con sus productos y destino. */
+  @Post('operaciones/detalle')
+  operacionesDetalle(@User() user: any, @Body() dto: OperacionesLogisticasDto) {
+    return this.service.operacionesDetalle(user.empresaId, dto.comprobanteIds);
+  }
+
+  /** Plantilla de carga masiva del courier (Shalom, Dinsides, Eva) o Excel general. */
+  @Post('operaciones/exportar')
+  async exportarOperaciones(
+    @User() user: any,
+    @Body() dto: OperacionesLogisticasDto,
+    @Res() res: Response,
+  ) {
+    const { buffer, nombreArchivo } = await this.service.exportarOperaciones(
+      user.empresaId,
+      dto.comprobanteIds,
+      dto.formato ?? 'GENERAL',
+    );
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=${nombreArchivo}`);
     res.status(200).send(buffer);
   }
 

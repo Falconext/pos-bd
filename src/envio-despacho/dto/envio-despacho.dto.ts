@@ -8,6 +8,8 @@ import {
   Min,
   IsIn,
   IsBoolean,
+  IsArray,
+  ArrayMaxSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -135,3 +137,17 @@ export class ExportarRepartoQueryDto {
   @IsIn(['PROPIOS', 'SHALOM', 'OLVA', 'TODOS'])
   courier?: 'PROPIOS' | 'SHALOM' | 'OLVA' | 'TODOS';
 }
+
+/** Envíos elegidos en el Panel de Ventas para picking, packing o una plantilla de courier. */
+export class OperacionesLogisticasDto {
+  @IsArray()
+  @ArrayMaxSize(500)
+  @Type(() => Number)
+  @IsInt({ each: true })
+  comprobanteIds!: number[];
+
+  @IsOptional()
+  @IsIn(['DINSIDES', 'EVA', 'SHALOM', 'GENERAL'])
+  formato?: 'DINSIDES' | 'EVA' | 'SHALOM' | 'GENERAL';
+}
+
