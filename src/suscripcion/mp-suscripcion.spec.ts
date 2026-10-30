@@ -41,7 +41,8 @@ const montar = (over: any = {}) => {
     registrarPago: jest.fn().mockResolvedValue({}),
     generarCobrosDelCiclo: jest.fn().mockResolvedValue({ emitidos: 1 }),
   };
-  return { service: new MpSuscripcionService(prisma as any, cobros as any), prisma, cobros };
+  const finDePrueba = { pasarAProduccion: jest.fn().mockResolvedValue({ paso: false }) };
+  return { service: new MpSuscripcionService(prisma as any, cobros as any, finDePrueba as any), prisma, cobros, finDePrueba };
 };
 
 beforeEach(() => {
@@ -213,5 +214,28 @@ describe('Webhook: MP cobró una cuota', () => {
       expect.objectContaining({ where: { id: 90 } }),
     );
     expect(cobros.registrarPago).toHaveBeenCalled();
+  });
+
+  it('el primer pago de una prueba la pasa a producción antes de buscar la mensualidad', async () => {
+    const { service, cobros, finDePrueba } = montar({
+      empresaPorPreapproval: { id: 90, mpPreapprovalId: 'pre-123' },
+      cobroPendiente: { id: 7 },
+    });
+    const orden: string[] = [];
+    finDePrueba.pasarAProduccion.mockImplementation(async () => { orden.push('produccion'); return { paso: true }; });
+    cobros.registrarPago.mockImplementation(async () => { orden.push('pago'); return {}; });
+    http.get.mockResolvedValue(cuota('processed') as any);
+
+    await service.procesarCuota('cuota-1');
+
+    expect(finDePrueba.pasarAProduccion).toHaveBeenCalledWith(90);
+    expect(orden).toEqual(['produccion', 'pago']);
+  });
+
+  it('una cuota rechazada no pasa a producción', async () => {
+    const { service, finDePrueba } = montar({ empresaPorPreapproval: { id: 90, mpPreapprovalId: 'pre-123' } });
+    http.get.mockResolvedValue(cuota('rejected') as any);
+    await service.procesarCuota('cuota-1');
+    expect(finDePrueba.pasarAProduccion).not.toHaveBeenCalled();
   });
 });

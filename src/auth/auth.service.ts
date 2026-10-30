@@ -885,6 +885,11 @@ export class AuthService {
             sunatClientSecret: true,
             whatsappProvider: true,
             whatsappApiToken: true,
+            usuarioPse: true,
+            billingProvider: true,
+            providerToken: true,
+            billingApiToken: true,
+            billingApiUser: true,
             shalomEmail: true,
             shalomPassword: true,
             whatsappPhoneNumberId: true,
@@ -1022,6 +1027,25 @@ export class AuthService {
         usuario.empresa.shalomPassword,
       );
       delete usuario.empresa.shalomPassword;
+
+      // Facturación: si ya puede emitir boletas y facturas (la bienvenida lo
+      // muestra). Solo el booleano; las credenciales nunca salen.
+      const proveedor = String(usuario.empresa.billingProvider ?? 'QPSE');
+      usuario.empresa.facturacionLista = Boolean(
+        proveedor === 'APISUNAT'
+          ? usuario.empresa.providerToken
+          : proveedor === 'JAMBLE'
+            ? usuario.empresa.billingApiToken || usuario.empresa.billingApiUser
+            : usuario.empresa.usuarioPse,
+      );
+      delete usuario.empresa.usuarioPse;
+      delete usuario.empresa.providerToken;
+      delete usuario.empresa.billingApiToken;
+      delete usuario.empresa.billingApiUser;
+
+      // El logo vive en el bucket privado: una URL firmada solo para mostrarlo.
+      // `logo` queda tal cual porque otras pantallas lo guardan de vuelta.
+      usuario.empresa.logoVista = await this.signIfS3(usuario.empresa.logo);
 
       // QR de pago (Yape/Plin): el bucket es privado, así que se entregan
       // firmados para que puedan mostrarse (p. ej. en el formato de cotización).

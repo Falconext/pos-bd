@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import axios from 'axios';
 import { PrismaService } from '../prisma/prisma.service';
+import { FinDePruebaService } from './fin-de-prueba.service';
 import { CobroEmpresaService } from './cobro-empresa.service';
 
 /**
@@ -46,6 +47,7 @@ export class MpSuscripcionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly cobros: CobroEmpresaService,
+    private readonly finDePrueba: FinDePruebaService,
   ) {}
 
   /**
@@ -282,6 +284,10 @@ export class MpSuscripcionService {
 
     const monto = Number(data?.transaction_amount ?? 0) || undefined;
     const referencia = String(data?.payment?.id ?? authorizedPaymentId);
+
+    // Primer pago de quien venía de la prueba gratis: deja el demo antes de
+    // buscar la mensualidad, porque el ciclo de cobros no incluye demos.
+    await this.finDePrueba.pasarAProduccion(empresa.id);
 
     let cobro = await this.prisma.cobroEmpresa.findFirst({
       where: { empresaId: empresa.id, estado: 'PENDIENTE' },
