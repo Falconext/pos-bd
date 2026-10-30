@@ -1158,6 +1158,38 @@ export class EmpresaService {
       );
     }
 
+    const rucUsado = await this.prisma.empresa.findUnique({
+      where: { ruc: dto.ruc },
+      select: { id: true },
+    });
+    if (rucUsado) {
+      throw new ForbiddenException(
+        'Ese RUC ya tiene una cuenta. Inicia sesión o escríbenos para ayudarte.',
+      );
+    }
+
+    // Los comprobantes salen con la razón social y la dirección de SUNAT, no con
+    // lo que se tipeó. Si la consulta no responde, el registro sigue igual: la
+    // facturación demo la activa el equipo desde el aviso.
+    let sunat: ReturnType<typeof datosDesdeSunat> | null = null;
+    try {
+      sunat = datosDesdeSunat(await this.consultarRuc(dto.ruc));
+    } catch {
+      // Servicio de consulta caído: se registra igual.
+    }
+    if (sunat) {
+      if (!sunat.razonSocial) {
+        throw new ForbiddenException(
+          'No encontramos ese RUC en SUNAT. Revisa el número.',
+        );
+      }
+      if (sunat.estado && sunat.estado !== 'ACTIVO') {
+        throw new ForbiddenException(
+          `SUNAT tiene ese RUC como "${sunat.estado}": no puede emitir comprobantes.`,
+        );
+      }
+    }
+
     const planPrueba = await this.prisma.plan.findUnique({
       where: {
         nombre_plataforma_producto: {
@@ -1181,21 +1213,21 @@ export class EmpresaService {
 
     const empresa = await this.crear({
       ruc: dto.ruc,
-      razonSocial: dto.nombreNegocio,
+      razonSocial: sunat?.razonSocial || dto.nombreNegocio,
       nombreComercial: dto.nombreNegocio,
-      direccion: '-',
-      departamento: '',
-      provincia: '',
-      distrito: '',
-      ubigeo: '',
+      direccion: sunat?.direccion ?? '-',
+      departamento: sunat?.departamento ?? '',
+      provincia: sunat?.provincia ?? '',
+      distrito: sunat?.distrito ?? '',
+      ubigeo: sunat?.ubigeo ?? '',
       planId: planPrueba.id,
       tipoEmpresa: 'FORMAL',
       producto: 'ventas',
       brand,
       fechaActivacion: ddmmyyyy(hoy),
       fechaExpiracion: ddmmyyyy(vence),
-      // Sin certificado ni credenciales PSE: los comprobantes de la prueba van
-      // al ambiente demo de SUNAT, nunca a producción.
+      // Demo: los comprobantes de la prueba van al ambiente demo de QPSE/SUNAT,
+      // nunca a producción. Las credenciales de firma se piden más abajo.
       usaDemo: true,
       usuario: {
         nombre: dto.nombre,
@@ -1207,6 +1239,14 @@ export class EmpresaService {
     } as CreateEmpresaDto);
 
     const planElegido = PLANES_VENTAS_POR_CLAVE[dto.plan];
+    // Sin el RUC confirmado en SUNAT no se toca QPSE: ahí lo termina el equipo.
+    const facturacion: { ok: boolean; mensaje?: string } = sunat
+      ? await this.vincularPse(empresa.id).catch((err: any) => ({
+          ok: false,
+          mensaje: String(err?.message ?? err),
+        }))
+      : { ok: false, mensaje: 'No se pudo consultar el RUC en SUNAT.' };
+
     const adminId = (empresa as any).usuarios?.[0]?.id;
     if (adminId) {
       await this.registrarLog(
@@ -1215,8 +1255,16 @@ export class EmpresaService {
         `Autoregistro web · eligió ${planElegido} · ${dto.celular}`,
         adminId,
       );
+      await this.registrarLog(
+        empresa.id,
+        facturacion.ok ? 'QPSE_DEMO_ACTIVADO' : 'QPSE_DEMO_PENDIENTE',
+        facturacion.ok
+          ? 'Facturación demo lista: RUC registrado en QPSE (demo)'
+          : `Facturación demo sin activar: ${facturacion.mensaje}`,
+        adminId,
+      );
     }
-    await this.avisarRegistroAlEquipo(brand, empresa.id, dto, planElegido);
+    await this.avisarRegistroAlEquipo(brand, empresa.id, dto, planElegido, facturacion);
 
     return { empresaId: empresa.id, email: dto.email };
   }
@@ -1483,6 +1531,7 @@ export class EmpresaService {
     empresaId: number,
     dto: RegistroPruebaDto,
     planElegido: string,
+    facturacion: { ok: boolean; mensaje?: string },
   ) {
     try {
       const equipo = await this.prisma.usuario.findMany({
@@ -1501,7 +1550,11 @@ export class EmpresaService {
           empresaId,
           tipo: 'INFO',
           titulo: 'Nueva prueba gratis de IA de Ventas',
-          mensaje: `${dto.nombreNegocio} (RUC ${dto.ruc}) se registró con interés en ${planElegido}. Contacto: ${dto.nombre} · ${dto.celular}.`,
+          mensaje:
+            `${dto.nombreNegocio} (RUC ${dto.ruc}) se registró con interés en ${planElegido}. Contacto: ${dto.nombre} · ${dto.celular}.` +
+            (facturacion.ok
+              ? ' Facturación demo activa.'
+              : ` Falta activar su facturación demo: ${facturacion.mensaje}`),
           leida: false,
         })),
       });
