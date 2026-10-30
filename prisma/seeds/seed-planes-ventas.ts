@@ -1,7 +1,7 @@
 /**
  * Crea/actualiza los planes del producto de IA de Ventas:
- *   - Ventas Start / Pro / Scale  → solo el módulo `leads` + tope mensual de leads.
- *   - Full (Facturación + Ventas)  → TODOS los módulos de facturación + leads.
+ *   - Ventas Start / Pro / Scale  → TODOS los módulos de facturación + leads + tope mensual de leads.
+ *   - Full (legacy)                → TODOS los módulos de facturación + leads.
  *
  * Idempotente (upsert por nombre+plataforma+producto). Ejecuta:
  *   npx ts-node -r tsconfig-paths/register prisma/seeds/seed-planes-ventas.ts [plataforma]
@@ -24,9 +24,10 @@ interface DefPlan {
 }
 
 const PLANES: DefPlan[] = [
-  { nombre: 'Ventas Start', producto: 'ventas', costo: 149, maxLeadsMes: 500, modulos: 'solo-leads', descripcion: 'IA de Ventas por WhatsApp — hasta 500 leads/mes' },
-  { nombre: 'Ventas Pro', producto: 'ventas', costo: 249, maxLeadsMes: 1500, modulos: 'solo-leads', descripcion: 'IA de Ventas por WhatsApp — hasta 1,500 leads/mes' },
-  { nombre: 'Ventas Scale', producto: 'ventas', costo: 399, maxLeadsMes: 5000, modulos: 'solo-leads', descripcion: 'IA de Ventas por WhatsApp — hasta 5,000 leads/mes' },
+  { nombre: 'Ventas Start', producto: 'ventas', costo: 199, maxLeadsMes: 500, modulos: 'todos', descripcion: 'Facturación SUNAT + IA de Ventas por WhatsApp — hasta 500 leads/mes' },
+  { nombre: 'Ventas Pro', producto: 'ventas', costo: 299, maxLeadsMes: 1500, modulos: 'todos', descripcion: 'Facturación SUNAT + IA de Ventas por WhatsApp — hasta 1,500 leads/mes' },
+  { nombre: 'Ventas Scale', producto: 'ventas', costo: 499, maxLeadsMes: 5000, modulos: 'todos', descripcion: 'Facturación SUNAT + IA de Ventas por WhatsApp — hasta 5,000 leads/mes' },
+  // Legacy: ya no se vende; se conserva para las empresas que lo tienen.
   { nombre: 'Full', producto: 'full', costo: 299, maxLeadsMes: 1500, modulos: 'todos', descripcion: 'Todo Falconext (facturación completa) + IA de Ventas (1,500 leads/mes)' },
 ];
 

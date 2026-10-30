@@ -5,8 +5,8 @@ import { PrismaService } from '../../prisma/prisma.service';
  * la app, así se crean en cada deploy SIN depender de migraciones de datos
  * (el deploy sincroniza el schema con `db push`, que NO ejecuta INSERTs).
  *
- * - Ventas Start/Pro/Scale  → producto 'ventas', solo el módulo `leads` + tope de leads.
- * - Full                    → producto 'full', todos los módulos de facturación + leads.
+ * - Ventas Start/Pro/Scale  → producto 'ventas', todos los módulos de facturación + leads + tope de leads.
+ * - Full (legacy)           → producto 'full', todos los módulos de facturación + leads.
  * Se crean para las plataformas 'falconext' y 'krezka'.
  */
 const PLATAFORMAS = ['falconext', 'krezka'];
@@ -21,9 +21,10 @@ interface DefPlan {
 }
 
 const PLANES: DefPlan[] = [
-  { nombre: 'Ventas Start', producto: 'ventas', costo: 149, maxLeadsMes: 500, modulos: 'solo-leads', descripcion: 'IA de Ventas por WhatsApp — 500 conversaciones/mes · todo incluido' },
-  { nombre: 'Ventas Pro', producto: 'ventas', costo: 249, maxLeadsMes: 1500, modulos: 'solo-leads', descripcion: 'IA de Ventas por WhatsApp — 1,500 conversaciones/mes · todo incluido' },
-  { nombre: 'Ventas Scale', producto: 'ventas', costo: 399, maxLeadsMes: 5000, modulos: 'solo-leads', descripcion: 'IA de Ventas por WhatsApp — 5,000 conversaciones/mes · todo incluido' },
+  { nombre: 'Ventas Start', producto: 'ventas', costo: 199, maxLeadsMes: 500, modulos: 'todos', descripcion: 'Facturación SUNAT + IA de Ventas por WhatsApp — 500 leads/mes' },
+  { nombre: 'Ventas Pro', producto: 'ventas', costo: 299, maxLeadsMes: 1500, modulos: 'todos', descripcion: 'Facturación SUNAT + IA de Ventas por WhatsApp — 1,500 leads/mes' },
+  { nombre: 'Ventas Scale', producto: 'ventas', costo: 499, maxLeadsMes: 5000, modulos: 'todos', descripcion: 'Facturación SUNAT + IA de Ventas por WhatsApp — 5,000 leads/mes' },
+  // Legacy: ya no se vende (lo reemplazan los planes Ventas con facturación); se conserva para las empresas que lo tienen.
   { nombre: 'Full', producto: 'full', costo: 299, maxLeadsMes: 1500, modulos: 'todos', descripcion: 'Todo el ERP (facturación completa) + IA de Ventas — 1,500 conversaciones/mes · todo incluido' },
 ];
 
