@@ -11,7 +11,7 @@ import type { ClaveForanea, PasoDeBorrado } from './borrado-cascada';
  */
 
 /** Días de prueba que se pueden dar. */
-export const DIAS_DEMO = [7, 15, 30] as const;
+export const DIAS_DEMO = [1, 7, 15, 30] as const;
 export const DIAS_DEMO_POR_DEFECTO = 15;
 
 // Sin 0/O, 1/l/I: se dicta por teléfono o WhatsApp.
