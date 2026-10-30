@@ -93,6 +93,18 @@ describe('Emitir la mensualidad', () => {
     expect(prisma.cobroEmpresa.create).not.toHaveBeenCalled();
   });
 
+  it('con una empresa puntual emite aunque falte más que la anticipación', async () => {
+    // El pago de Mercado Pago de quien sale de la prueba llega con 7 días por
+    // delante: sin mensualidad emitida, el pago no tenía dónde aplicarse.
+    const prisma = prismaBase();
+    await montar(prisma).generarCobrosDelCiclo(HOY, 90);
+    const where = prisma.empresa.findMany.mock.calls[0][0].where;
+    expect(where.id).toBe(90);
+    expect(where).not.toHaveProperty('fechaExpiracion');
+    // Los filtros de quién se cobra siguen valiendo.
+    expect(where.usaDemo).toBe(false);
+  });
+
   it('deja fuera a los clientes de reseller y a las demos', async () => {
     const prisma = prismaBase();
     await montar(prisma).generarCobrosDelCiclo(HOY);

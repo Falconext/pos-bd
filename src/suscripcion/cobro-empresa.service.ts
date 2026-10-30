@@ -81,14 +81,22 @@ export class CobroEmpresaService {
 
   // ── 1. Emitir ────────────────────────────────────────────────────────────
 
-  async generarCobrosDelCiclo(ahora: Date = new Date()) {
+  /**
+   * Con `soloEmpresaId` emite la de esa empresa aunque falte más que la
+   * anticipación: es el caso de un pago que llega antes de tiempo (quien sale
+   * de la prueba gratis paga con 7 días por delante) y necesita una
+   * mensualidad donde aplicarse.
+   */
+  async generarCobrosDelCiclo(ahora: Date = new Date(), soloEmpresaId?: number) {
     const limite = new Date(ahora);
     limite.setDate(limite.getDate() + this.diasAnticipacion());
 
     const empresas = await this.prisma.empresa.findMany({
       where: {
         ...this.filtroEmpresasDeCobro,
-        fechaExpiracion: { lte: limite },
+        ...(soloEmpresaId
+          ? { id: soloEmpresaId }
+          : { fechaExpiracion: { lte: limite } }),
       },
       select: {
         id: true,

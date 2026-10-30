@@ -74,9 +74,9 @@ export class SuscripcionService {
   }
 
   /**
-   * Pasa de la prueba gratis al plan pagado elegido. Solo cambia el plan: el
-   * tiempo lo compra el primer pago (Mercado Pago → registrarPago), así que
-   * elegir sin pagar no regala días.
+   * Pasa de la prueba gratis al plan pagado elegido. Cambia el plan y saca a
+   * la empresa del modo demo; el tiempo lo compra el primer pago (Mercado
+   * Pago → registrarPago), así que elegir sin pagar no regala días.
    */
   async elegirPlanVentas(empresaId: number, clave: string) {
     if (!(clave in PLANES_VENTAS_POR_CLAVE)) {
@@ -97,7 +97,14 @@ export class SuscripcionService {
 
     await this.prisma.empresa.update({
       where: { id: empresaId },
-      data: { planId: plan.id, costoActivacionReseller: plan.costo },
+      data: {
+        planId: plan.id,
+        costoActivacionReseller: plan.costo,
+        // Deja el modo demo de la prueba: el ciclo de cobros ignora a las
+        // empresas en demo, y sin eso el pago de Mercado Pago no encontraba
+        // mensualidad donde aplicarse (pagaba y se le bloqueaba igual).
+        usaDemo: false,
+      },
     });
     return { plan: { nombre: plan.nombre, costo: Number(plan.costo) } };
   }

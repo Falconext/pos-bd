@@ -42,6 +42,8 @@ describe('elegir plan al terminar la prueba de IA de Ventas', () => {
     );
     const data = prisma.empresa.update.mock.calls[0][0].data;
     expect(data.planId).toBe(42);
+    // Si siguiera en demo, el ciclo de cobros la ignora y el pago no se aplica.
+    expect(data.usaDemo).toBe(false);
     expect(data).not.toHaveProperty('fechaExpiracion');
   });
 

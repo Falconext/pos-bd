@@ -1216,7 +1216,12 @@ export class EmpresaService {
   ) {
     try {
       const equipo = await this.prisma.usuario.findMany({
-        where: { rol: 'ADMIN_SISTEMA', estado: 'ACTIVO', sistemaNegocio: brand },
+        where: {
+          rol: 'ADMIN_SISTEMA',
+          estado: 'ACTIVO',
+          // Sin marca asignada = ve todas las marcas.
+          OR: [{ sistemaNegocio: brand }, { sistemaNegocio: null }],
+        },
         select: { id: true },
       });
       if (!equipo.length) return;

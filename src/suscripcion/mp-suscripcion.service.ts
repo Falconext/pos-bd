@@ -290,7 +290,8 @@ export class MpSuscripcionService {
     });
 
     if (!cobro) {
-      await this.cobros.generarCobrosDelCiclo();
+      // Solo esta empresa y sin esperar la anticipación: el pago ya llegó.
+      await this.cobros.generarCobrosDelCiclo(new Date(), empresa.id);
       cobro = await this.prisma.cobroEmpresa.findFirst({
         where: { empresaId: empresa.id, estado: 'PENDIENTE' },
         orderBy: { fechaVencimiento: 'asc' },

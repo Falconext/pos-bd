@@ -81,6 +81,21 @@ describe('autoregistro de prueba de IA de Ventas', () => {
     expect(dias).toBe(7);
   });
 
+  it('avisa al equipo de la marca y a los admins sin marca asignada', async () => {
+    const { prisma, service } = armar();
+    prisma.usuario.findMany.mockResolvedValue([{ id: 1 }, { id: 2 }]);
+
+    await service.registrarPrueba(await validar(base));
+
+    expect(prisma.usuario.findMany.mock.calls[0][0].where.OR).toEqual([
+      { sistemaNegocio: 'krezka' },
+      { sistemaNegocio: null },
+    ]);
+    const avisos = prisma.notificacion.createMany.mock.calls[0][0].data;
+    expect(avisos).toHaveLength(2);
+    expect(avisos[0].mensaje).toContain('Ventas Scale');
+  });
+
   it('no deja registrar un correo que ya tiene cuenta', async () => {
     const { prisma, service, crear } = armar();
     prisma.usuario.findUnique.mockResolvedValue({ id: 1 });
