@@ -532,6 +532,7 @@ export class LeadsService {
       | {
           demos?: ConfigDemos;
           cobroConLink?: boolean;
+          chatTienda?: boolean;
           precioSoloSiPregunta?: boolean;
           asesor?: string;
           vendedor?: unknown;
@@ -559,6 +560,8 @@ export class LeadsService {
       tieneDemos: Boolean(demos?.cuentas?.length),
       // El link de pago solo cobra con el Mercado Pago del negocio conectado.
       cobroConLink: json?.cobroConLink === true,
+      // El vendedor también atiende el chat de la tienda online (canal WEB).
+      chatTienda: json?.chatTienda === true,
       precioSoloSiPregunta: json?.precioSoloSiPregunta === true,
       mpConectado: empresa?.mpConectado ?? false,
       // "Mi vendedor". Que estas claves vengan es lo que le dice al panel que
@@ -720,6 +723,8 @@ export class LeadsService {
       demos?: ConfigDemos | null;
       /** Ofrecer el link de Mercado Pago para pagar lo cotizado. */
       cobroConLink?: boolean;
+      /** Que el vendedor atienda también el chat de la tienda online. */
+      chatTienda?: boolean;
       /** Quitar montos de la respuesta si el cliente nunca preguntó por precio. */
       precioSoloSiPregunta?: boolean;
       /** "Mi vendedor": tono, reglas, saludo y temas. */
@@ -748,6 +753,7 @@ export class LeadsService {
       data.videoBienvenidaUrl !== undefined ||
       data.demos !== undefined ||
       data.cobroConLink !== undefined ||
+      data.chatTienda !== undefined ||
       data.precioSoloSiPregunta !== undefined ||
       data.vendedor !== undefined ||
       data.envio !== undefined ||
@@ -780,6 +786,10 @@ export class LeadsService {
       if (data.cobroConLink !== undefined) {
         if (data.cobroConLink === true) json.cobroConLink = true;
         else delete json.cobroConLink;
+      }
+      if (data.chatTienda !== undefined) {
+        if (data.chatTienda === true) json.chatTienda = true;
+        else delete json.chatTienda;
       }
       if (data.precioSoloSiPregunta !== undefined) {
         if (data.precioSoloSiPregunta === true) json.precioSoloSiPregunta = true;

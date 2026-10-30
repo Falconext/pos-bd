@@ -82,6 +82,10 @@ export function decidirDestinatario(s: SituacionDestinatario): Decision {
     return { enviar: false, motivo: 'Había alguien atendiendo este chat.' };
 
   if (s.canal === 'WHATSAPP') return { enviar: true, via: 'plantilla' };
+  // El chat de la tienda solo existe mientras el cliente tiene la página
+  // abierta: una promoción ahí no la lee nadie.
+  if (s.canal === 'WEB')
+    return { enviar: false, motivo: 'Chat de la tienda: no se le puede escribir después.' };
   // Instagram y Messenger no tienen plantillas: solo dentro de las 24 h.
   if (ventanaAbierta(s.ultimoMensajeDelCliente, s.ahora))
     return { enviar: true, via: 'texto' };

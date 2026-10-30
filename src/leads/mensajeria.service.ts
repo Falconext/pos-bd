@@ -1,10 +1,12 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { InstagramService } from '../instagram/instagram.service';
 import { esDestinoInstagram } from '../instagram/instagram-texto';
 import { MessengerService } from '../messenger/messenger.service';
 import { esDestinoMessenger } from '../messenger/messenger-texto';
 import { MensajeMenu, textoConOpciones } from './menu-inicial';
+import { ChatWebSalidaService } from './chat-web-salida.service';
+import { esDestinoWeb } from './chat-web';
 
 type Resultado = { success: boolean; error?: string };
 
@@ -24,6 +26,9 @@ type Resultado = { success: boolean; error?: string };
  *  - Documentos: va el enlace como texto.
  *  - Notas de voz desde el panel: se necesitaría la URL pública del audio; por
  *    ahora se avisa que no se puede, en vez de fallar en silencio.
+ *
+ * `web:<sesión>` es el chat de la tienda online: no sale a ninguna red, queda
+ * guardado (ChatWebSalidaService) y el chat de la tienda lo lee.
  */
 @Injectable()
 export class MensajeriaService {
@@ -31,33 +36,57 @@ export class MensajeriaService {
     private readonly wa: WhatsAppService,
     private readonly ig: InstagramService,
     private readonly fb: MessengerService,
+    @Optional() private readonly web?: ChatWebSalidaService,
   ) {}
 
-  enviarTexto(numero: string, mensaje: string, empresaId?: number): Promise<Resultado> {
+  private sinWeb(): Resultado {
+    return { success: false, error: 'El chat de la tienda no está disponible.' };
+  }
+
+  async enviarTexto(numero: string, mensaje: string, empresaId?: number): Promise<Resultado> {
+    if (esDestinoWeb(numero)) return this.web ? this.web.registrar(numero, empresaId, { tipo: 'TEXTO', texto: mensaje }) : this.sinWeb();
     if (esDestinoInstagram(numero)) return this.ig.enviarTexto(numero, mensaje, empresaId!);
     if (esDestinoMessenger(numero)) return this.fb.enviarTexto(numero, mensaje, empresaId!);
     return this.wa.enviarTexto(numero, mensaje, empresaId);
   }
 
-  enviarImagenUrl(numero: string, imagenUrl: string, caption: string | undefined, empresaId?: number): Promise<Resultado> {
+  /** `extra.productoId`: la foto es de un producto (en la tienda lleva "Agregar al carrito"). */
+  async enviarImagenUrl(
+    numero: string,
+    imagenUrl: string,
+    caption: string | undefined,
+    empresaId?: number,
+    extra: { productoId?: number } = {},
+  ): Promise<Resultado> {
+    if (esDestinoWeb(numero)) {
+      return this.web
+        ? this.web.registrar(numero, empresaId, { tipo: 'IMAGEN', url: imagenUrl, texto: caption, productoId: extra.productoId })
+        : this.sinWeb();
+    }
     if (esDestinoInstagram(numero)) return this.ig.enviarAdjunto(numero, 'image', imagenUrl, caption, empresaId!);
     if (esDestinoMessenger(numero)) return this.fb.enviarAdjunto(numero, 'image', imagenUrl, caption, empresaId!);
     return this.wa.enviarImagenUrl(numero, imagenUrl, caption, empresaId);
   }
 
-  enviarVideoUrl(numero: string, videoUrl: string, caption?: string, empresaId?: number): Promise<Resultado> {
+  async enviarVideoUrl(numero: string, videoUrl: string, caption?: string, empresaId?: number): Promise<Resultado> {
+    if (esDestinoWeb(numero)) return this.web ? this.web.registrar(numero, empresaId, { tipo: 'VIDEO', url: videoUrl, texto: caption }) : this.sinWeb();
     if (esDestinoInstagram(numero)) return this.ig.enviarAdjunto(numero, 'video', videoUrl, caption, empresaId!);
     if (esDestinoMessenger(numero)) return this.fb.enviarAdjunto(numero, 'video', videoUrl, caption, empresaId!);
     return this.wa.enviarVideoUrl(numero, videoUrl, caption, empresaId);
   }
 
-  enviarDocumentoUrl(
+  async enviarDocumentoUrl(
     numero: string,
     pdfUrl: string,
     filename: string,
     caption?: string,
     empresaId?: number,
   ): Promise<Resultado> {
+    if (esDestinoWeb(numero)) {
+      return this.web
+        ? this.web.registrar(numero, empresaId, { tipo: 'DOCUMENTO', url: pdfUrl, texto: caption?.trim() || filename })
+        : this.sinWeb();
+    }
     if (esDestinoInstagram(numero)) {
       const texto = [caption?.trim(), `${filename}: ${pdfUrl}`].filter(Boolean).join('\n\n');
       return this.ig.enviarTexto(numero, texto, empresaId!);
@@ -72,7 +101,7 @@ export class MensajeriaService {
     ubicacion: { lat: number; lng: number; nombre?: string; direccion?: string },
     empresaId?: number,
   ): Promise<Resultado> {
-    if (esDestinoInstagram(numero) || esDestinoMessenger(numero)) {
+    if (esDestinoInstagram(numero) || esDestinoMessenger(numero) || esDestinoWeb(numero)) {
       const texto = [
         ubicacion.nombre,
         ubicacion.direccion,
@@ -89,7 +118,11 @@ export class MensajeriaService {
    * Un paso del menú de bienvenida. Instagram y Messenger no tienen botones
    * de respuesta como WhatsApp: va el texto con las opciones numeradas.
    */
-  enviarMenu(numero: string, m: MensajeMenu, empresaId?: number): Promise<Resultado> {
+  async enviarMenu(numero: string, m: MensajeMenu, empresaId?: number): Promise<Resultado> {
+    // En la tienda sí hay botones: los pinta el chat.
+    if (esDestinoWeb(numero)) {
+      return this.web ? this.web.registrar(numero, empresaId, { tipo: 'MENU', texto: m.cuerpo, opciones: m.opciones }) : this.sinWeb();
+    }
     if (esDestinoInstagram(numero) || esDestinoMessenger(numero)) {
       return this.enviarTexto(numero, textoConOpciones(m), empresaId);
     }
@@ -97,6 +130,9 @@ export class MensajeriaService {
   }
 
   async enviarAudio(numero: string, ogg: Buffer, empresaId?: number): Promise<Resultado> {
+    if (esDestinoWeb(numero)) {
+      return { success: false, error: 'Al chat de la tienda todavía no se pueden mandar notas de voz: escríbele un mensaje.' };
+    }
     if (esDestinoInstagram(numero)) {
       return { success: false, error: 'Por Instagram todavía no se pueden mandar notas de voz desde el panel: escríbele un mensaje.' };
     }
@@ -114,6 +150,9 @@ export class MensajeriaService {
     empresaId?: number,
     opciones: { imagenCabecera?: string } = {},
   ): Promise<{ success: boolean; mensajeId?: string; error?: string }> {
+    if (esDestinoWeb(numero)) {
+      return { success: false, error: 'El chat de la tienda no tiene plantillas: solo se le escribe mientras conversa.' };
+    }
     if (esDestinoInstagram(numero)) {
       return { success: false, error: 'Instagram no tiene plantillas: pasadas las 24 h solo se le puede escribir si el cliente vuelve a escribir.' };
     }
