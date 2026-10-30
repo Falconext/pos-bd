@@ -45,6 +45,40 @@ const PLANES: DefPlan[] = [
   { nombre: PLAN_PRUEBA_VENTAS, producto: 'ventas', costo: 0, maxLeadsMes: 50, modulos: 'todos', descripcion: `Prueba gratis de ${DIAS_PRUEBA_VENTAS} días — facturación en modo demo + IA de Ventas (50 leads)`, duracionDias: DIAS_PRUEBA_VENTAS, esPrueba: true },
 ];
 
+/**
+ * Límites y features de los planes con facturación incluida (todos menos los
+ * de 'solo-leads'). Calcados de "FULL 1000", el plan con el que ya opera un
+ * cliente real: sin esto los planes nacían con los valores por defecto del
+ * esquema (1 sede, sin tienda, 1 imagen) y "facturación incluida" no era cierto.
+ * En límites, 0 = ilimitado.
+ */
+const LIMITES_CON_FACTURACION = {
+  limiteUsuarios: 0,
+  maxSedes: 0,
+  maxComprobantes: 0,
+  maxImagenesProducto: 3,
+  maxBanners: 3,
+  tieneTienda: true,
+  tieneGestionLotes: true,
+  tieneGestionProvisiones: true,
+};
+
+const FEATURES_CON_FACTURACION = [
+  'tieneAnalisisFinancieroAvanzado',
+  'tieneAutoGenerarImagen',
+  'tieneGestionLotes',
+  'tieneGestionProvisiones',
+  'tieneLocalizacion',
+  'tieneMultiplesSedes',
+  'tieneOlva',
+  'tieneOlvaGuias',
+  'tienePlantillasWhatsApp',
+  'tieneShalom',
+  'tieneShalomGuias',
+  'tieneSire',
+  'tieneTienda',
+];
+
 export async function ensurePlanesVentas(prisma: PrismaService): Promise<void> {
   // 1) Asegurar el módulo 'leads'
   const moduloLeads =
@@ -64,6 +98,8 @@ export async function ensurePlanesVentas(prisma: PrismaService): Promise<void> {
 
   for (const plataforma of PLATAFORMAS) {
     for (const def of PLANES) {
+      const conFacturacion = def.modulos === 'todos';
+      const limites = conFacturacion ? LIMITES_CON_FACTURACION : {};
       const plan = await prisma.plan.upsert({
         where: { nombre_plataforma_producto: { nombre: def.nombre, plataforma, producto: def.producto } },
         update: {
@@ -72,6 +108,7 @@ export async function ensurePlanesVentas(prisma: PrismaService): Promise<void> {
           descripcion: def.descripcion,
           duracionDias: def.duracionDias ?? 30,
           esPrueba: def.esPrueba ?? false,
+          ...limites,
         },
         create: {
           nombre: def.nombre,
@@ -82,8 +119,19 @@ export async function ensurePlanesVentas(prisma: PrismaService): Promise<void> {
           descripcion: def.descripcion,
           duracionDias: def.duracionDias ?? 30,
           esPrueba: def.esPrueba ?? false,
+          ...limites,
         },
       });
+
+      if (conFacturacion) {
+        for (const featureKey of FEATURES_CON_FACTURACION) {
+          await prisma.planFeature.upsert({
+            where: { planId_featureKey: { planId: plan.id, featureKey } },
+            update: { enabled: true },
+            create: { planId: plan.id, featureKey, enabled: true },
+          });
+        }
+      }
 
       const modulosDelPlan = def.modulos === 'todos' ? modulosFacturacion : [moduloLeads];
       for (const m of modulosDelPlan) {
