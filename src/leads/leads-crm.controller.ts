@@ -6,6 +6,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Put,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -15,6 +16,7 @@ import { LeadsEmbudoService } from './leads-embudo.service';
 import { LeadsBiService } from './leads-bi.service';
 import { LeadsDisparadoresService } from './leads-disparadores.service';
 import { LeadsVisitaService, type FiltroVisitas } from './leads-visita.service';
+import { LeadsGuiaService } from './leads-guia.service';
 import { EtapaCrm } from './leads-embudo';
 import { MoverEtapaDto, RechazarPagoDto, RangoBiDto } from './dto/crm.dto';
 
@@ -33,6 +35,7 @@ export class LeadsCrmController {
     private readonly analitica: LeadsBiService,
     private readonly disparadores: LeadsDisparadoresService,
     private readonly visitas: LeadsVisitaService,
+    private readonly guias: LeadsGuiaService,
   ) {}
 
   /**
@@ -132,6 +135,22 @@ export class LeadsCrmController {
   @Get('cliente/:telefono')
   cliente(@User() user: any, @Param('telefono') telefono: string) {
     return this.analitica.historial360(user.empresaId, telefono);
+  }
+
+  /** Guía de consumo del cliente: la guardada y un borrador con su última compra. */
+  @Get('guia/:conversacionId')
+  guia(@User() user: any, @Param('conversacionId', ParseIntPipe) conversacionId: number) {
+    return this.guias.obtener(user.empresaId, conversacionId);
+  }
+
+  /** Guarda la guía revisada por el negocio y, si `enviar`, se la manda por WhatsApp. */
+  @Put('guia/:conversacionId')
+  guardarGuia(
+    @User() user: any,
+    @Param('conversacionId', ParseIntPipe) conversacionId: number,
+    @Body() body: { texto?: string; enviar?: boolean },
+  ) {
+    return this.guias.guardar(user.empresaId, conversacionId, String(body?.texto ?? ''), body?.enviar === true);
   }
 
   // ── F — disparadores y re-engagement ──────────────────────────────────

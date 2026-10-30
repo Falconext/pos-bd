@@ -17,6 +17,7 @@ import { LeadsPedidoService } from './leads-pedido.service';
 import { LeadsEmbudoService } from './leads-embudo.service';
 import { LeadsConsultasService } from './leads-consultas.service';
 import { LeadsBiService } from './leads-bi.service';
+import { LeadsGuiaService } from './leads-guia.service';
 import { LeadsDisparadoresService } from './leads-disparadores.service';
 import { LeadsCrmController } from './leads-crm.controller';
 import { S3Module } from '../s3/s3.module';
@@ -90,6 +91,7 @@ import { ChatWebController } from './chat-web.controller';
     LeadsEmbudoService,
     LeadsConsultasService,
     LeadsBiService,
+    LeadsGuiaService,
     LeadsDisparadoresService,
     LeadsPagoLinkService,
     ReporteDiarioService,

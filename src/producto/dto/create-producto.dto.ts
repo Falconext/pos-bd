@@ -148,6 +148,12 @@ export class CreateProductoDto {
   @Type(() => Number)
   diasRecompra?: number | null;
 
+  /** Cómo se usa o se toma: con esto la IA contesta y arma la guía de consumo. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  modoDeUso?: string | null;
+
   @IsOptional()
   @IsInt()
   @Type(() => Number)
