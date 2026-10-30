@@ -16,6 +16,7 @@ import {
 import { EmpresaService } from './empresa.service';
 import { CreateEmpresaDto } from './dto/create-empresa.dto';
 import { ListEmpresaDto } from './dto/list-empresa.dto';
+import { RegistroPruebaDto } from './dto/registro-prueba.dto';
 import { UpdateEmpresaDto, OnboardingEmpresaDto } from './dto/update-empresa.dto';
 import {
   CreateCuentaBancariaDto,
@@ -62,13 +63,19 @@ export class EmpresaController {
     return nueva;
   }
 
+  /**
+   * Público: prueba gratis de IA de Ventas desde la web. Solo acepta datos de
+   * contacto (ver RegistroPruebaDto); el límite de intentos por IP vive en
+   * rate-limit.middleware.
+   */
   @Post('registro')
   async registro(
-    @Body() dto: CreateEmpresaDto,
+    @Body() dto: RegistroPruebaDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const nueva = await this.empresaService.crear(dto);
-    res.locals.message = 'Empresa registrada exitosamente';
+    if (dto.sitio) throw new BadRequestException('No se pudo completar el registro');
+    const nueva = await this.empresaService.registrarPrueba(dto);
+    res.locals.message = 'Cuenta de prueba creada';
     return nueva;
   }
 

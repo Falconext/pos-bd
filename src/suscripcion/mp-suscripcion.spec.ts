@@ -195,7 +195,7 @@ describe('Webhook: MP cobró una cuota', () => {
 
     await service.procesarCuota('cuota-1');
 
-    expect(cobros.generarCobrosDelCiclo).toHaveBeenCalled();
+    expect(cobros.generarCobrosDelCiclo).toHaveBeenCalledWith(expect.any(Date), expect.any(Number));
     expect(cobros.registrarPago).toHaveBeenCalledWith(12, expect.anything());
   });
 

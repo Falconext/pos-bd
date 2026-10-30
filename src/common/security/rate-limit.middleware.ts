@@ -20,6 +20,8 @@ const SENSITIVE_PATHS = [
   '/api/auth/login',
   '/api/auth/forgot-password',
   '/api/auth/reset-password',
+  // Autoregistro público: cada intento crea una empresa, así que se acota aunque responda 200.
+  '/api/empresa/registro',
 ];
 
 // Regla por ruta.
@@ -31,6 +33,7 @@ const SENSITIVE_PATHS = [
 function ruleFor(path: string): { limit: number; onlyFailed: boolean } {
   if (path.startsWith('/api/auth/login')) return { limit: 15, onlyFailed: true };
   if (path.startsWith('/api/auth/reset-password')) return { limit: 15, onlyFailed: true };
+  if (path.startsWith('/api/empresa/registro')) return { limit: 5, onlyFailed: false };
   // forgot-password
   return { limit: 15, onlyFailed: false };
 }

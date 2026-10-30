@@ -81,14 +81,22 @@ export class CobroEmpresaService {
 
   // ── 1. Emitir ────────────────────────────────────────────────────────────
 
-  async generarCobrosDelCiclo(ahora: Date = new Date()) {
+  /**
+   * Con `soloEmpresaId` emite la de esa empresa aunque falte más que la
+   * anticipación: es el caso de un pago que llega antes de tiempo (quien sale
+   * de la prueba gratis paga con 7 días por delante) y necesita una
+   * mensualidad donde aplicarse.
+   */
+  async generarCobrosDelCiclo(ahora: Date = new Date(), soloEmpresaId?: number) {
     const limite = new Date(ahora);
     limite.setDate(limite.getDate() + this.diasAnticipacion());
 
     const empresas = await this.prisma.empresa.findMany({
       where: {
         ...this.filtroEmpresasDeCobro,
-        fechaExpiracion: { lte: limite },
+        ...(soloEmpresaId
+          ? { id: soloEmpresaId }
+          : { fechaExpiracion: { lte: limite } }),
       },
       select: {
         id: true,
@@ -555,7 +563,8 @@ export class CobroEmpresaService {
         // Desde cuándo es cliente: con el historial recién arrancando, es lo
         // único cierto que se le puede mostrar de su pasado.
         fechaActivacion: true,
-        plan: { select: { nombre: true, costo: true } },
+        // esPrueba: la prueba gratis de IA de Ventas se cierra eligiendo plan, no pagando por WhatsApp.
+        plan: { select: { nombre: true, costo: true, esPrueba: true } },
       },
     });
     if (!empresa) throw new NotFoundException('Empresa no encontrada');
