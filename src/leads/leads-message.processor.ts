@@ -39,6 +39,7 @@ import {
   motivoDerivacionValido,
   venceEn,
 } from './pausa-bot';
+import { WEB_CUENTA_COMO_LEAD } from './chat-web';
 import { conDescargoLegal } from './prompt-asesor';
 import { JOB_ECO_VENDEDOR, type EcoVendedor } from './eco-vendedor';
 import { origenDeAnuncio, type ReferralWhatsapp } from './anuncio-origen';
@@ -902,6 +903,8 @@ export class LeadsMessageProcessor extends WorkerHost {
         empresa.id,
         empresa.plan?.maxLeadsMes ?? null,
         conv.creadoEn,
+        conv.id,
+        conv.canal,
       )
     ) {
       return false;
@@ -1823,12 +1826,27 @@ export class LeadsMessageProcessor extends WorkerHost {
     empresaId: number,
     tope: number | null,
     convCreadoEn: Date,
+    conversacionId?: number,
+    canal?: string | null,
   ): Promise<boolean> {
     if (!tope || tope <= 0) return false;
+    // Un visitante de la tienda que solo saluda no gasta el cupo del plan:
+    // cuenta recién cuando muestra interés (ver chat-web.ts). Mientras tanto
+    // se le responde siempre.
+    if (canal === 'WEB' && conversacionId) {
+      const interesado = await this.prisma.leadConversacion.count({
+        where: { id: conversacionId, ...WEB_CUENTA_COMO_LEAD },
+      });
+      if (!interesado) return false;
+    }
     const ahora = new Date();
     const inicioMes = new Date(ahora.getFullYear(), ahora.getMonth(), 1);
     const rank = await this.prisma.leadConversacion.count({
-      where: { empresaId, creadoEn: { gte: inicioMes, lte: convCreadoEn } },
+      where: {
+        empresaId,
+        creadoEn: { gte: inicioMes, lte: convCreadoEn },
+        OR: [{ canal: { not: 'WEB' } }, WEB_CUENTA_COMO_LEAD],
+      },
     });
     if (rank <= tope) return false;
 

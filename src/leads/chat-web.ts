@@ -142,3 +142,18 @@ export function estaEscribiendo(
   if (ultimaRespuesta && ultimaRespuesta.getTime() >= ultimoDelCliente.getTime()) return false;
   return ahora - ultimoDelCliente.getTime() < 90_000;
 }
+
+/**
+ * Cuándo un chat de la tienda cuenta como lead para el tope del plan.
+ *
+ * Un visitante que escribe "hola" no es un prospecto todavía, y la tienda es
+ * pública: si cada saludo contara, la curiosidad le comería el cupo al
+ * negocio. Cuenta cuando dejó su celular, llegó a cotizar o la IA lo
+ * calificó al menos como tibio (puntaje > 40).
+ */
+export const WEB_CUENTA_COMO_LEAD = {
+  OR: [
+    { borrador: { is: { celular: { not: null } } } },
+    { prospecto: { is: { OR: [{ puntaje: { gt: 40 } }, { cotizacionId: { not: null } }] } } },
+  ],
+};
