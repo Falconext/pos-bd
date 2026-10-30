@@ -35,6 +35,12 @@ import { LOGO_KREZKA_DATA_URI } from './logo-krezka';
 import { pagoEnMonedaCuenta } from '../common/utils/moneda-compra';
 import { diaCalendarioLima } from '../common/utils/fecha';
 import { evaluarGracia } from '../common/utils/gracia-suscripcion';
+import {
+  DIAS_PRUEBA_VENTAS,
+  PLAN_PRUEBA_VENTAS,
+  PLANES_VENTAS_POR_CLAVE,
+} from '../common/utils/ensure-planes-ventas';
+import { RegistroPruebaDto } from './dto/registro-prueba.dto';
 
 function parseDDMMYYYY(input: string): Date {
   if (!input || input.trim() === '') {
@@ -1117,6 +1123,116 @@ export class EmpresaService {
     }
 
     return empresa;
+  }
+
+  /**
+   * Autoregistro desde la web: crea la empresa en la prueba gratis de IA de
+   * Ventas. El servidor fija todo lo sensible —plan de prueba, vencimiento,
+   * facturación en demo— y del cuerpo solo toma datos de contacto. El plan que
+   * eligió en la web queda anotado para preseleccionarlo al terminar la prueba.
+   */
+  async registrarPrueba(dto: RegistroPruebaDto) {
+    const brand = dto.brand === 'falconext' ? 'falconext' : 'krezka';
+
+    const correoUsado = await this.prisma.usuario.findUnique({
+      where: { email: dto.email },
+      select: { id: true },
+    });
+    if (correoUsado) {
+      throw new ForbiddenException(
+        'Ese correo ya tiene una cuenta. Inicia sesión o recupera tu contraseña.',
+      );
+    }
+
+    const planPrueba = await this.prisma.plan.findUnique({
+      where: {
+        nombre_plataforma_producto: {
+          nombre: PLAN_PRUEBA_VENTAS,
+          plataforma: brand,
+          producto: 'ventas',
+        },
+      },
+      select: { id: true },
+    });
+    if (!planPrueba) {
+      throw new ForbiddenException(
+        'La prueba gratis no está disponible en este momento',
+      );
+    }
+
+    const hoy = new Date();
+    const vence = new Date(hoy.getTime() + DIAS_PRUEBA_VENTAS * 86_400_000);
+    const ddmmyyyy = (d: Date) =>
+      `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+
+    const empresa = await this.crear({
+      ruc: dto.ruc,
+      razonSocial: dto.nombreNegocio,
+      nombreComercial: dto.nombreNegocio,
+      direccion: '-',
+      departamento: '',
+      provincia: '',
+      distrito: '',
+      ubigeo: '',
+      planId: planPrueba.id,
+      tipoEmpresa: 'FORMAL',
+      producto: 'ventas',
+      brand,
+      fechaActivacion: ddmmyyyy(hoy),
+      fechaExpiracion: ddmmyyyy(vence),
+      // Sin certificado ni credenciales PSE: los comprobantes de la prueba van
+      // al ambiente demo de SUNAT, nunca a producción.
+      usaDemo: true,
+      usuario: {
+        nombre: dto.nombre,
+        email: dto.email,
+        password: dto.password,
+        dni: '',
+        celular: dto.celular,
+      },
+    } as CreateEmpresaDto);
+
+    const planElegido = PLANES_VENTAS_POR_CLAVE[dto.plan];
+    const adminId = (empresa as any).usuarios?.[0]?.id;
+    if (adminId) {
+      await this.registrarLog(
+        empresa.id,
+        'REGISTRO_PRUEBA',
+        `Autoregistro web · eligió ${planElegido} · ${dto.celular}`,
+        adminId,
+      );
+    }
+    await this.avisarRegistroAlEquipo(brand, empresa.id, dto, planElegido);
+
+    return { empresaId: empresa.id, email: dto.email };
+  }
+
+  /** Aviso en la campana del equipo comercial: un registro nuevo es un lead caliente. */
+  private async avisarRegistroAlEquipo(
+    brand: string,
+    empresaId: number,
+    dto: RegistroPruebaDto,
+    planElegido: string,
+  ) {
+    try {
+      const equipo = await this.prisma.usuario.findMany({
+        where: { rol: 'ADMIN_SISTEMA', estado: 'ACTIVO', sistemaNegocio: brand },
+        select: { id: true },
+      });
+      if (!equipo.length) return;
+      await this.prisma.notificacion.createMany({
+        data: equipo.map((u) => ({
+          usuarioId: u.id,
+          empresaId,
+          tipo: 'INFO',
+          titulo: 'Nueva prueba gratis de IA de Ventas',
+          mensaje: `${dto.nombreNegocio} (RUC ${dto.ruc}) se registró con interés en ${planElegido}. Contacto: ${dto.nombre} · ${dto.celular}.`,
+          leida: false,
+        })),
+      });
+    } catch {
+      // Best-effort: el registro ya está hecho; no se cae por un aviso.
+    }
   }
 
   async listar(

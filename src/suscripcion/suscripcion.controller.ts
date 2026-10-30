@@ -17,6 +17,21 @@ export class SuscripcionController {
     return { code: 1, data };
   }
 
+  /** Prueba gratis de IA de Ventas: planes para elegir y el sugerido. */
+  @Get('planes-ventas')
+  @Roles('ADMIN_EMPRESA')
+  async planesVentas(@User() user: any) {
+    const data = await this.service.planesVentasParaElegir(user.empresaId);
+    return { code: 1, data };
+  }
+
+  @Post('elegir-plan-ventas')
+  @Roles('ADMIN_EMPRESA')
+  async elegirPlanVentas(@User() user: any, @Body() body: { plan?: string }) {
+    const data = await this.service.elegirPlanVentas(user.empresaId, String(body?.plan ?? ''));
+    return { code: 1, data };
+  }
+
   @Get('uso-plan')
   @Roles('ADMIN_EMPRESA')
   async verUsoPlan() {
