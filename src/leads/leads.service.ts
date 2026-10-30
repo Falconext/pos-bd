@@ -534,6 +534,7 @@ export class LeadsService {
           cobroConLink?: boolean;
           chatTienda?: boolean;
           precioSoloSiPregunta?: boolean;
+          sinAvisosMedicos?: boolean;
           asesor?: string;
           vendedor?: unknown;
           envio?: unknown;
@@ -563,6 +564,7 @@ export class LeadsService {
       // El vendedor también atiende el chat de la tienda online (canal WEB).
       chatTienda: json?.chatTienda === true,
       precioSoloSiPregunta: json?.precioSoloSiPregunta === true,
+      sinAvisosMedicos: json?.sinAvisosMedicos === true,
       mpConectado: empresa?.mpConectado ?? false,
       // "Mi vendedor". Que estas claves vengan es lo que le dice al panel que
       // el servidor ya entiende la pantalla nueva.
@@ -727,6 +729,8 @@ export class LeadsService {
       chatTienda?: boolean;
       /** Quitar montos de la respuesta si el cliente nunca preguntó por precio. */
       precioSoloSiPregunta?: boolean;
+      /** Ningún aviso médico en el chat (ni descargo ni "consulta a tu médico"). */
+      sinAvisosMedicos?: boolean;
       /** "Mi vendedor": tono, reglas, saludo y temas. */
       vendedor?: unknown;
       /** Zonas de envío y tarifas, como las edita el panel. */
@@ -755,6 +759,7 @@ export class LeadsService {
       data.cobroConLink !== undefined ||
       data.chatTienda !== undefined ||
       data.precioSoloSiPregunta !== undefined ||
+      data.sinAvisosMedicos !== undefined ||
       data.vendedor !== undefined ||
       data.envio !== undefined ||
       data.mediosPagoLista !== undefined ||
@@ -794,6 +799,10 @@ export class LeadsService {
       if (data.precioSoloSiPregunta !== undefined) {
         if (data.precioSoloSiPregunta === true) json.precioSoloSiPregunta = true;
         else delete json.precioSoloSiPregunta;
+      }
+      if (data.sinAvisosMedicos !== undefined) {
+        if (data.sinAvisosMedicos === true) json.sinAvisosMedicos = true;
+        else delete json.sinAvisosMedicos;
       }
       if (data.vendedor !== undefined) {
         const perfil = perfilValido(data.vendedor);

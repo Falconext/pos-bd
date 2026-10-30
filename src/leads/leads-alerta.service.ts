@@ -290,7 +290,7 @@ export class LeadsAlertaService {
       `🩺 ${p.motivo}`,
       p.detalle?.trim() ? `💊 Se le recomendó: ${p.detalle.trim()}` : null,
       '',
-      'La IA sigue atendiendo y ya le dijo que consulte con su médico y no deje su tratamiento. Escríbele para acompañarlo:',
+      'La IA sigue atendiendo. Escríbele para acompañarlo:',
       wa,
       `Ver en el panel: ${this.frontendUrl()}/administrador/leads`,
     ]
