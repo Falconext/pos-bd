@@ -292,7 +292,7 @@ const cancelarPedido: FunctionDeclaration = {
 const derivar: FunctionDeclaration = {
   name: HERRAMIENTA_DERIVAR,
   description:
-    'Pasa la conversación a una persona del equipo y deja de responder. Úsala SOLO cuando: el cliente es mayorista, revendedor o distribuidor (o compra 6 docenas o más); hay un reclamo, producto dañado, vencido o equivocado, pedido incompleto, cambio, devolución o cancelación con adelanto; pregunta por el seguimiento de un pedido ya hecho; pide un descuento fuera de la regla; quiere un producto que no tenemos y pide que lo busquemos con proveedores; o pide hablar con una persona. ' +
+    'Pasa la conversación a una persona del equipo y deja de responder. Úsala SOLO cuando: el cliente es mayorista, revendedor o distribuidor (o compra 6 docenas o más); hay un reclamo, producto dañado, vencido o equivocado, pedido incompleto, cambio, devolución o cancelación con adelanto; pregunta por un pedido ya hecho que NO aparece en sus PEDIDOS EN CURSO, o el pedido tiene un problema; pide un descuento fuera de la regla; quiere un producto que no tenemos y pide que lo busquemos con proveedores; o pide hablar con una persona. ' +
     'Un comprobante de pago NO se deriva: lo recibes leído, se lo confirmas al cliente y sigues tú con los datos de envío. Derivar ahí deja el pedido pagado y sin dirección. ' +
     'Esa lista es CERRADA. Lo que no está en ella se responde, no se deriva: una pregunta difícil o incómoda —certificaciones, registros, permisos, composición, garantía, si el producto es original, desconfianza— se contesta con el contexto del negocio y la conversación sigue. Que no tengas el dato exacto a la mano tampoco es motivo: di lo que sí puedes confirmar y ofrece conseguir el resto. ' +
     'ANTES de llamarla, pregúntale lo que el asesor va a necesitar (qué producto, qué pasó, qué cantidades) — después de derivar ya no podrás preguntar nada. ' +
@@ -469,5 +469,5 @@ CÓMO SE CIERRA UNA VENTA
 - Si dice que va a ir a la tienda a conocer o a ver antes de comprar, regístralo con ${HERRAMIENTA_AGENDAR_VISITA}.
 - Si el cliente cancela un pedido ya registrado, usa ${HERRAMIENTA_CANCELAR_PEDIDO}.
 - Si el prospecto te manda sus datos para la demo, usa ${HERRAMIENTA_DAR_DEMO}.
-- Lo que no te toca resolver se deriva con ${HERRAMIENTA_DERIVAR}: mayoristas, reclamos, comprobantes de pago, seguimiento de pedidos ya hechos y quien pida hablar con una persona. Esos casos y nada más: una duda que puedas contestar con el contexto se contesta. Nunca digas que ya informaste a un asesor si en ese mismo turno no la llamaste.
+- Lo que no te toca resolver se deriva con ${HERRAMIENTA_DERIVAR}: mayoristas, reclamos, comprobantes de pago, pedidos ya hechos que no aparecen en sus PEDIDOS EN CURSO (los que sí aparecen, contéstalos tú con eso) y quien pida hablar con una persona. Esos casos y nada más: una duda que puedas contestar con el contexto se contesta. Nunca digas que ya informaste a un asesor si en ese mismo turno no la llamaste.
 `.trim();

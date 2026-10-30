@@ -19,6 +19,12 @@ export interface PedidoDelCliente {
     transportista?: string | null;
     agenciaDestino?: string | null;
     codigoGuia?: string | null;
+    /** N° de orden de Shalom/Olva: con eso el cliente rastrea o retira. */
+    nroOrden?: string | null;
+    /** Etapa del rastreo del courier (shalomEstado / olvaEstado), que se actualiza sola. */
+    etapaCourier?: string | null;
+    /** Clave de recojo. Solo cuando el envío va a ESTE número: con ella se retira el paquete. */
+    claveRecojo?: string | null;
     /** "Tony Cayo (cel. 955 947 892)". */
     repartidor?: string | null;
     /** Cómo pagarle al recibir, según si es del equipo o contratado. */
@@ -31,6 +37,16 @@ const ESTADO_LEGIBLE: Record<string, string> = {
   EN_CAMINO: 'en camino',
   EN_AGENCIA: 'esperando en la agencia para que lo recoja',
   EN_DESTINO: 'en la ciudad de destino',
+};
+
+// El rastreo del courier va por delante del estado que se marca a mano: el
+// paquete llega a la agencia y nadie cambia el despacho hasta el día siguiente.
+const ETAPA_COURIER: Record<string, string> = {
+  registrado: 'registrado en el courier (todavía no sale)',
+  origen: 'en la agencia de origen, por salir',
+  transito: 'en camino',
+  reparto: 'en reparto, lo están llevando a la dirección',
+  destino: 'esperando en la agencia para que lo recoja',
 };
 
 const TRANSPORTISTA: Record<string, string> = {
@@ -51,10 +67,13 @@ export function contextoPedidosDelCliente(pedidos: PedidoDelCliente[]): string {
     partes.push(p.saldo > 0.009 ? `falta pagar ${soles(p.saldo)}` : 'pagado');
     if (p.despacho) {
       const via = TRANSPORTISTA[p.despacho.transportista ?? ''] ?? p.despacho.transportista ?? '';
-      const estado = ESTADO_LEGIBLE[p.despacho.estado] ?? p.despacho.estado.toLowerCase();
+      const estado =
+        ETAPA_COURIER[p.despacho.etapaCourier ?? ''] ?? ESTADO_LEGIBLE[p.despacho.estado] ?? p.despacho.estado.toLowerCase();
       partes.push(
         `envío${via ? ` por ${via}` : ''}: ${estado}${p.despacho.agenciaDestino ? ` (agencia ${p.despacho.agenciaDestino})` : ''}${
           p.despacho.codigoGuia ? `, guía ${p.despacho.codigoGuia}` : ''
+        }${p.despacho.nroOrden ? `, N° de orden ${p.despacho.nroOrden}` : ''}${
+          p.despacho.claveRecojo ? `, clave de recojo ${p.despacho.claveRecojo}` : ''
         }${p.despacho.repartidor ? `, lo lleva ${p.despacho.repartidor}` : ''}`,
       );
       if (p.despacho.formasDePago && p.saldo > 0.009) partes.push(`formas de pago al recibir: ${p.despacho.formasDePago}`);

@@ -3318,6 +3318,11 @@ export class LeadsMessageProcessor extends WorkerHost {
               transportista: true,
               agenciaDestino: true,
               codigoGuia: true,
+              nroOrden: true,
+              claveEnvio: true,
+              celularDest: true,
+              shalomEstado: true,
+              olvaEstado: true,
               montoCOD: true,
               repartidor: { select: { nombre: true, celular: true, tipo: true } },
             },
@@ -3349,6 +3354,12 @@ export class LeadsMessageProcessor extends WorkerHost {
                 transportista: f.envioDespacho.transportista,
                 agenciaDestino: f.envioDespacho.agenciaDestino,
                 codigoGuia: f.envioDespacho.codigoGuia,
+                nroOrden: f.envioDespacho.nroOrden,
+                etapaCourier: f.envioDespacho.shalomEstado || f.envioDespacho.olvaEstado,
+                // Si el envío es para otro celular (un regalo), la clave es de quien recoge.
+                claveRecojo: f.envioDespacho.celularDest?.replace(/\D/g, '').endsWith(nueve)
+                  ? f.envioDespacho.claveEnvio
+                  : null,
                 repartidor: quienReparte(f.envioDespacho.repartidor),
                 formasDePago: formasDePagoParaElAviso(f.envioDespacho.repartidor?.tipo, configDespacho),
               }
