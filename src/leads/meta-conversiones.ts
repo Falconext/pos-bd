@@ -106,3 +106,41 @@ export function errorDeMeta(e: any): string {
   }
   return String(msg).slice(0, 500);
 }
+
+/** Lo que contestó Meta al último envío, para mostrarlo en el panel. */
+export interface RespuestaMeta {
+  en: string;
+  enviados: number;
+  /** `events_received`: cuántos registró Meta. null si no lo dijo. */
+  recibidos: number | null;
+  /** Avisos que Meta devuelve aunque responda 200 (`messages`). */
+  avisos: string[];
+  /** Código de seguimiento de Meta, para pedirle soporte. */
+  fbtraceId: string | null;
+  prueba: boolean;
+}
+
+/**
+ * Meta puede responder 200 y aun así no registrar el evento: lo dice en
+ * `events_received` y en `messages`. Antes solo se miraba el código HTTP, así
+ * que el panel decía "Avisado" sin saber si Meta lo había contado (30-10: la
+ * compra de prueba no apareció en el Administrador de eventos y no había cómo
+ * saber por qué).
+ */
+export function respuestaDeMeta(data: any, enviados: number, prueba: boolean, ahora = new Date()): RespuestaMeta {
+  const n = Number(data?.events_received);
+  const avisos = Array.isArray(data?.messages)
+    ? data.messages.map((m: unknown) => (typeof m === 'string' ? m : JSON.stringify(m))).slice(0, 5)
+    : [];
+  return {
+    en: ahora.toISOString(),
+    enviados,
+    recibidos: Number.isFinite(n) ? n : null,
+    avisos,
+    fbtraceId: typeof data?.fbtrace_id === 'string' ? data.fbtrace_id : null,
+    prueba,
+  };
+}
+
+/** Meta dijo cuántos recibió y fueron menos de los que se mandaron. */
+export const metaNoLosRegistro = (r: RespuestaMeta): boolean => r.recibidos !== null && r.recibidos < r.enviados;

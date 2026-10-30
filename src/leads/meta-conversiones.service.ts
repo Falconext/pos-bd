@@ -14,7 +14,10 @@ import {
   claveDeVenta,
   clicAtribuible,
   errorDeMeta,
+  metaNoLosRegistro,
+  respuestaDeMeta,
   type Clic,
+  type RespuestaMeta,
   type EventoMeta,
 } from './meta-conversiones';
 
@@ -24,6 +27,8 @@ interface ConfigConversiones {
   datasets?: Record<string, string>;
   /** Último problema al hablar con Meta, para mostrarlo en el panel. */
   ultimoError?: string | null;
+  /** Lo que contestó Meta al último envío (ver respuestaDeMeta). */
+  ultimaRespuesta?: RespuestaMeta;
 }
 
 interface ChatConClic {
@@ -150,6 +155,7 @@ export class MetaConversionesService {
       conectado: !!cuenta,
       datasetId: cuenta ? (config.datasets?.[cuenta.wabaId] ?? null) : null,
       ultimoError: config.ultimoError ?? null,
+      ultimaRespuesta: config.ultimaRespuesta ?? null,
       ultimos30Dias: {
         comprasAvisadas: compras.reduce((a, f) => a + f._count._all, 0),
         montoAvisado: compras.reduce((a, f) => a + Number(f._sum.valor ?? 0), 0),
@@ -207,7 +213,8 @@ export class MetaConversionesService {
   async probar(empresaId: number, testEventCode?: string) {
     const cuenta = await this.whatsapp.cuentaMetaDelChat(empresaId);
     if (!cuenta) throw new BadRequestException('Tu WhatsApp no está conectado.');
-    const codigo = testEventCode?.trim();
+    // Meta lo muestra como "test_event_code: TEST123": se acepta pegado así.
+    const codigo = testEventCode?.replace(/^\s*test_event_code\s*:\s*/i, '').trim();
     try {
       const dataset = await this.datasetDe(empresaId, cuenta.wabaId, cuenta.token, true);
       if (codigo) {
@@ -221,7 +228,7 @@ export class MetaConversionesService {
             'Todavía no te escribió nadie desde un anuncio: la prueba necesita un clic real de anuncio.',
           );
         }
-        await axios.post(
+        const resp = await axios.post(
           `${this.graph}/${dataset}/events`,
           {
             data: [
@@ -240,6 +247,13 @@ export class MetaConversionesService {
           },
           { headers: { Authorization: `Bearer ${cuenta.token}` }, timeout: 20000 },
         );
+        const respuesta = respuestaDeMeta(resp.data, 1, true);
+        await this.guardarConfig(empresaId, { ultimaRespuesta: respuesta });
+        if (metaNoLosRegistro(respuesta)) {
+          throw new BadRequestException(
+            `Meta respondió pero no registró la compra de prueba${respuesta.avisos.length ? `: ${respuesta.avisos.join(' · ')}` : '.'}`,
+          );
+        }
       }
       await this.guardarConfig(empresaId, { ultimoError: null });
     } catch (e) {
@@ -536,7 +550,7 @@ export class MetaConversionesService {
         const cuenta = await this.whatsapp.cuentaMetaDelChat(empresaId, chat?.numeroWhatsappId);
         if (!cuenta || cuenta.wabaId !== wabaId) throw new Error('Esa cuenta de WhatsApp ya no está conectada.');
         const dataset = await this.datasetDe(empresaId, wabaId, cuenta.token);
-        await axios.post(
+        const resp = await axios.post(
           `${this.graph}/${dataset}/events`,
           {
             data: grupo.map((g) =>
@@ -554,6 +568,14 @@ export class MetaConversionesService {
           },
           { headers: { Authorization: `Bearer ${cuenta.token}` }, timeout: 20000 },
         );
+        const respuesta = respuestaDeMeta(resp.data, grupo.length, false);
+        await this.guardarConfig(empresaId, { ultimaRespuesta: respuesta });
+        // 200 no alcanza: si Meta dice que registró menos, no se marcan como avisados.
+        if (metaNoLosRegistro(respuesta)) {
+          throw new Error(
+            `Meta respondió pero registró ${respuesta.recibidos} de ${respuesta.enviados}${respuesta.avisos.length ? `: ${respuesta.avisos.join(' · ')}` : ''}`,
+          );
+        }
         await this.prisma.metaEventoConversion.updateMany({
           where: { id: { in: ids } },
           data: { estado: 'ENVIADO', enviadoEn: new Date(), error: null, intentos: { increment: 1 } },

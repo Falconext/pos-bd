@@ -4,6 +4,8 @@ import {
   claveDeVenta,
   clicAtribuible,
   errorDeMeta,
+  metaNoLosRegistro,
+  respuestaDeMeta,
   VENTANA_MS,
 } from './meta-conversiones';
 
@@ -90,5 +92,27 @@ describe('errorDeMeta', () => {
   it('traduce la falta de permiso', () => {
     const e = { response: { data: { error: { code: 200, message: 'Permissions error' } } } };
     expect(errorDeMeta(e)).toMatch(/whatsapp_business_manage_events/);
+  });
+});
+
+describe('respuesta de Meta', () => {
+  const ahora = new Date('2026-10-30T18:00:00Z');
+
+  it('registró todo: se guarda lo que dijo y no es un problema', () => {
+    const r = respuestaDeMeta({ events_received: 1, messages: [], fbtrace_id: 'AbC123' }, 1, false, ahora);
+    expect(r).toEqual({ en: ahora.toISOString(), enviados: 1, recibidos: 1, avisos: [], fbtraceId: 'AbC123', prueba: false });
+    expect(metaNoLosRegistro(r)).toBe(false);
+  });
+
+  it('200 pero registró menos: es un problema y se ven los avisos', () => {
+    const r = respuestaDeMeta({ events_received: 0, messages: ['ctwa_clid inválido', { code: 1 }] }, 1, true, ahora);
+    expect(metaNoLosRegistro(r)).toBe(true);
+    expect(r.avisos).toEqual(['ctwa_clid inválido', '{"code":1}']);
+  });
+
+  it('si Meta no dice cuántos, no se asume que falló', () => {
+    const r = respuestaDeMeta({}, 2, false, ahora);
+    expect(r.recibidos).toBeNull();
+    expect(metaNoLosRegistro(r)).toBe(false);
   });
 });
