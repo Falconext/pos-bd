@@ -881,6 +881,11 @@ model Producto {
   /// (aviso de recompra de la IA de Ventas). null = lo de la empresa (25 días
   /// por defecto); 0 = no se recompra (un equipo, un mueble).
   diasRecompra        Int?
+  /// Cómo se usa o se toma ("1 cucharada en ayunas; mayores de 60, media").
+  /// Lo escribe el negocio UNA vez; con eso la IA de Ventas contesta "¿cómo lo
+  /// tomo?" y se arma la guía de consumo de cada cliente. La IA no inventa
+  /// dosis: si está vacío, no dice ninguna.
+  modoDeUso           String?
   detalleCompras      DetalleCompra[]
   detallesOrdenCompra DetalleOrdenCompra[]
   detalleComprobantes DetalleComprobante[]
@@ -5251,6 +5256,11 @@ model LeadProspecto {
   /// se adivinan por el nombre, que es como se arma un dato falso.
   sexo              String?
   edad              Int?
+  /// Guía de consumo que el negocio le envió (revisada a mano, nunca sale
+  /// sola). Queda para que la IA la repita cuando el cliente pregunte cómo
+  /// tomaba lo que compró.
+  guiaConsumo       String?
+  guiaConsumoEn     DateTime?
   notificadoEn      DateTime? // idempotencia de alerta lead caliente
   cotizacionId      Int? // COT (comprobante) que la IA generó desde el chat, si aplica
   clienteId         Int? // Cliente de MYPE creado al convertir el prospecto (Fase 3)

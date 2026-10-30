@@ -86,3 +86,47 @@ export function contextoPedidosDelCliente(pedidos: PedidoDelCliente[]): string {
     'Si pregunta por su pedido, su envío, la agencia o cuánto debe, respóndele con esto. No le vuelvas a cotizar ni registres un pedido nuevo por esos productos. Si quiere pagar el saldo, dale los medios de pago del contexto del negocio.',
   ].join('\n');
 }
+
+/** Una venta ya terminada (entregada o sin envío, y pagada). */
+export interface CompraAnterior {
+  fechaEmision: Date;
+  productos: string[];
+}
+
+// La línea del flete ("ENVÍO DELIVERY", "ENVÍO AGENCIA SHALOM - …") no es algo que compró.
+export const esLineaDeEnvio = (descripcion: string) => /^\s*(env[ií]o|delivery|flete)\b/i.test(descripcion);
+
+/**
+ * Lo que el cliente ya compró y la guía de consumo que se le envió (30-10).
+ *
+ * El bloque de pedidos en curso deja de ver una venta apenas se entrega y se
+ * paga; desde ahí el bot lo atendía como a un desconocido: le volvía a
+ * preguntar qué buscaba y no entendía "lo mismo de la otra vez". La recompra
+ * es la venta más barata que tiene el negocio.
+ */
+export function contextoHistorialCliente(
+  compras: CompraAnterior[],
+  guia: { texto: string; en: Date | null } | null,
+): string {
+  const partes: string[] = [];
+  if (compras.length) {
+    const fmt = new Intl.DateTimeFormat('es-PE', { timeZone: 'America/Lima', day: 'numeric', month: 'short', year: 'numeric' });
+    partes.push(
+      'COMPRAS ANTERIORES DE ESTE CLIENTE (ya entregadas y pagadas):',
+      ...compras.slice(0, 5).map((c) => `- ${fmt.format(c.fechaEmision)}: ${c.productos.slice(0, 5).join(', ') || 'productos'}.`),
+      'Atiéndelo como cliente que vuelve: si pide "lo mismo" o "lo de siempre", ya sabes qué es; puedes preguntarle cómo le fue y ofrecerle reponer. No le recites la lista ni le digas que la tienes; los precios y el stock búscalos de nuevo.',
+    );
+  }
+  const texto = guia?.texto?.trim();
+  if (texto) {
+    const cuando = guia?.en
+      ? ` (enviada el ${new Intl.DateTimeFormat('es-PE', { timeZone: 'America/Lima', day: 'numeric', month: 'short' }).format(guia.en)})`
+      : '';
+    partes.push(
+      `GUÍA DE CONSUMO QUE EL NEGOCIO LE ENVIÓ${cuando}:`,
+      texto.slice(0, 1500),
+      'Si pregunta cómo tomar o usar lo que compró, contéstale con esta guía tal cual: no cambies dosis, horarios ni cantidades.',
+    );
+  }
+  return partes.join('\n');
+}

@@ -72,6 +72,13 @@ import {
  * Se valida acá porque el PUT de productos recibe el body sin pasar por el
  * DTO, y un 400 o un -1 se guardaban tal cual. undefined = no tocar.
  */
+/** "Cómo se toma": texto libre recortado; vacío = sin modo de uso. undefined = no tocar. */
+export function modoDeUsoValido(v: unknown): string | null | undefined {
+  if (v === undefined) return undefined;
+  const t = String(v ?? '').trim().slice(0, 2000);
+  return t || null;
+}
+
 export function diasRecompraValido(v: unknown): number | null | undefined {
   if (v === undefined) return undefined;
   if (v === null || v === '') return null;
@@ -433,6 +440,8 @@ export class ProductoService {
       prioridadVenta?: number;
       /** Días hasta el aviso de recompra. null = lo de la empresa; 0 = no se recompra. */
       diasRecompra?: number | null;
+      /** Cómo se usa o se toma (guía de consumo). */
+      modoDeUso?: string | null;
     },
     empresaId: number,
     sedeId?: number,
@@ -492,6 +501,7 @@ export class ProductoService {
       disponibilidad,
       prioridadVenta,
       diasRecompra,
+      modoDeUso,
     } = data;
 
     const porcentajes = this.normalizarPorcentajes(
@@ -607,6 +617,7 @@ export class ProductoService {
           disponibilidad: disponibilidad ?? undefined,
           prioridadVenta: prioridadVenta ?? undefined,
           diasRecompra: diasRecompraValido(diasRecompra) ?? undefined,
+          modoDeUso: modoDeUsoValido(modoDeUso) ?? undefined,
           categoriaId:
             categoriaId && Number(categoriaId) > 0
               ? Number(categoriaId)
@@ -718,6 +729,7 @@ export class ProductoService {
           disponibilidad: disponibilidad ?? undefined,
           prioridadVenta: prioridadVenta ?? undefined,
           diasRecompra: diasRecompraValido(diasRecompra) ?? undefined,
+          modoDeUso: modoDeUsoValido(modoDeUso) ?? undefined,
           categoriaId:
             categoriaId && Number(categoriaId) > 0
               ? Number(categoriaId)
@@ -3298,6 +3310,8 @@ export class ProductoService {
       prioridadVenta?: number | null;
       /** Días hasta el aviso de recompra. null = lo de la empresa; 0 = no se recompra. */
       diasRecompra?: number | null;
+      /** Cómo se usa o se toma (guía de consumo). */
+      modoDeUso?: string | null;
 
       sedeId?: number; // Nueva propiedad opcional para identificar dónde se ajusta el stock
       /** Sede cuyo costo se corrige (la que muestra el Kardex); 0 = todas. */
@@ -3720,6 +3734,7 @@ export class ProductoService {
         prioridadVenta:
           data.prioridadVenta !== undefined ? data.prioridadVenta : undefined,
         diasRecompra: diasRecompraValido(data.diasRecompra),
+        modoDeUso: modoDeUsoValido(data.modoDeUso),
         moneda: data.moneda !== undefined ? data.moneda : undefined,
         valorUnitario:
           data.valorUnitario !== undefined

@@ -81,6 +81,18 @@ export class LeadsService {
       if (cliente) return { cliente, yaExistia: true };
     }
 
+    // Si ya hay un cliente con ese celular (la venta se hizo a mano con su
+    // DNI), se usa ese. Antes se creaba otro con 00000000 y quedaban dos
+    // fichas de la misma persona (Greee / Grecia, Krezka 30-10).
+    const existente = await this.clienteConElMismoCelular(empresaId, prospecto.telefonoProspecto);
+    if (existente) {
+      await this.prisma.leadProspecto.update({
+        where: { id: prospecto.id },
+        data: { clienteId: existente.id, estado: 'CONVERTIDO' },
+      });
+      return { cliente: existente, yaExistia: true, unidoPorCelular: true };
+    }
+
     const cliente = await this.clientes.crear({
       nombre:
         prospecto.nombreProspecto?.trim() ||
@@ -101,6 +113,27 @@ export class LeadsService {
     });
 
     return { cliente, yaExistia: false };
+  }
+
+  /**
+   * El cliente de la empresa cuyo celular termina en los mismos 9 dígitos
+   * ("948 050 978", "+51948050978"…). Si hay varios, el que tiene documento
+   * real y, entre esos, el más reciente. Un @usuario de WhatsApp sin número no
+   * se cruza con nada.
+   */
+  private async clienteConElMismoCelular(empresaId: number, telefono: string) {
+    const digitos = String(telefono ?? '').replace(/\D/g, '');
+    if (!/^\+?\d{9,15}$/.test(String(telefono ?? '').trim()) || digitos.length < 9) return null;
+    const nueve = digitos.slice(-9);
+    const filas = await this.prisma.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "Cliente"
+      WHERE "empresaId" = ${empresaId}
+        AND estado::text = 'ACTIVO'
+        AND right(regexp_replace(coalesce(telefono, ''), '[^0-9]', '', 'g'), 9) = ${nueve}
+      ORDER BY ("nroDoc" IS NULL OR "nroDoc" IN ('', '00000000')) ASC, id DESC
+      LIMIT 1`;
+    if (!filas.length) return null;
+    return this.prisma.cliente.findUnique({ where: { id: filas[0].id } });
   }
 
   // ─── Entrenamiento de la IA (RAG) ──────────────────────────────────────────

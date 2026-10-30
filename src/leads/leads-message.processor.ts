@@ -92,7 +92,7 @@ import { enFormatoWhatsapp } from './formato-whatsapp';
 import { fechaMencionada } from './fecha-mencionada';
 import { ajustarPuntaje, rangoTemperatura, type HechosLead } from './temperatura-por-hechos';
 import { pistaDireccion } from './pregunta-direccion';
-import { contextoPedidosDelCliente } from './pedidos-del-cliente';
+import { contextoHistorialCliente, contextoPedidosDelCliente, esLineaDeEnvio } from './pedidos-del-cliente';
 import { conversacionDelMismoCliente, esTelefono } from './unir-usuario-whatsapp';
 import { quienReparte, saldoParaRetirar } from '../envio-despacho/recojo-agencia';
 import { formasDePagoParaElAviso } from '../envio-despacho/pago-repartidor';
@@ -990,6 +990,7 @@ export class LeadsMessageProcessor extends WorkerHost {
       .join('\n\n');
     const pedidoEnCurso = await this.estadoDelPedido(conv.id);
     const pedidosDelCliente = await this.pedidosDelCliente(empresa.id, conv.telefonoProspecto);
+    const historialCliente = await this.historialDelCliente(empresa.id, conv.id, conv.telefonoProspecto);
     const contextoDelTurno = [
       // La fecha va acá y no en el prompt fijo: cambia cada día y rompería el
       // caché. La necesita la IA para convertir "en una semana" en una fecha.
@@ -1008,6 +1009,7 @@ export class LeadsMessageProcessor extends WorkerHost {
         [...mensajes].reverse().find((m) => m.rol === 'ASISTENTE')?.contenido,
       ),
       pedidosDelCliente,
+      historialCliente,
       relevantes.contexto,
       contextoRag,
     ]
@@ -2507,6 +2509,16 @@ export class LeadsMessageProcessor extends WorkerHost {
             EtapaCrm.DIAGNOSTICADO,
             `Consultó "${consulta}"`,
           );
+          // Cómo se toma, si el negocio lo escribió. Una consulta aparte y no
+          // en las tres búsquedas: solo hace falta de lo que se va a mostrar.
+          const modos = new Map(
+            (
+              await this.prisma.producto.findMany({
+                where: { id: { in: productos.map((p) => p.id) }, modoDeUso: { not: null } },
+                select: { id: true, modoDeUso: true },
+              })
+            ).map((p) => [p.id, p.modoDeUso as string]),
+          );
           return {
             // Las fichas aciertan por significado, no por nombre: si el
             // cliente pidió algo que no existe, esto trae lo parecido. El
@@ -2530,7 +2542,16 @@ export class LeadsMessageProcessor extends WorkerHost {
                 ? { recomendacion: nivelDeRecomendacion(p.prioridadVenta) }
                 : {}),
               tieneFoto: !!p.imagenUrl,
+              ...(modos.get(p.id) ? { modoDeUso: modos.get(p.id) } : {}),
             })),
+            // Sin esto el modelo "completa" con una dosis de memoria (QA 30-10:
+            // "1 cucharada tres veces al día" para un jarabe sin modo de uso).
+            ...(productos.some((p) => !modos.get(p.id))
+              ? {
+                  indicacionUso:
+                    'Los productos sin modoDeUso NO tienen dosis registrada por el negocio. Si el cliente pregunta cómo se toman o se usan, no des dosis, cantidad, frecuencia ni horario, ni "generales" ni "habituales": dile que el equipo se lo indica con su pedido.',
+                }
+              : {}),
           };
         }
 
@@ -3376,6 +3397,73 @@ export class LeadsMessageProcessor extends WorkerHost {
     } catch (e) {
       // Sin esto el bot responde igual que antes; no es motivo para no responder.
       this.logger.warn(`Lead: no se pudieron leer los pedidos del cliente: ${(e as Error).message}`);
+      return '';
+    }
+  }
+
+  /**
+   * Compras ya terminadas del cliente (último año) y la guía de consumo que se
+   * le envió. Ver contextoHistorialCliente. Por celular y por los pedidos que
+   * cerró el bot en este chat (un @usuario sin número solo tiene esos).
+   */
+  private async historialDelCliente(
+    empresaId: number,
+    conversacionId: number,
+    telefono: string,
+  ): Promise<string> {
+    try {
+      const nueve = /^\+?\d{9,15}$/.test(telefono) ? telefono.replace(/\D/g, '').slice(-9) : null;
+      const [delBot, prospecto] = await Promise.all([
+        this.prisma.leadPedidoBorrador.findMany({
+          where: { empresaId, conversacionId, comprobanteId: { not: null } },
+          select: { comprobanteId: true },
+        }),
+        this.prisma.leadProspecto.findUnique({
+          where: { conversacionId },
+          select: { guiaConsumo: true, guiaConsumoEn: true },
+        }),
+      ]);
+      const quien: Prisma.ComprobanteWhereInput[] = [];
+      const ids = delBot.map((b) => b.comprobanteId as number);
+      if (ids.length) quien.push({ id: { in: ids } });
+      if (nueve) {
+        quien.push({ cliente: { telefono: { endsWith: nueve } } });
+        quien.push({ envioDespacho: { celularDest: { endsWith: nueve } } });
+      }
+      const filas = quien.length
+        ? await this.prisma.comprobante.findMany({
+            where: {
+              empresaId,
+              tipoDoc: { in: ['NV', '01', '03', 'TICKET', 'NP'] },
+              fechaEmision: { gte: new Date(Date.now() - 365 * 86_400_000) },
+              NOT: [{ estadoPago: 'ANULADO' }, { estadoEnvioSunat: 'ANULADO' }],
+              AND: [
+                { OR: quien },
+                // Lo que sigue en camino o debe saldo ya va en PEDIDOS EN CURSO.
+                { OR: [{ envioDespacho: { is: null } }, { envioDespacho: { estado: 'ENTREGADO' } }] },
+                { OR: [{ saldo: null }, { saldo: { lte: 0.009 } }, { estadoPago: 'COMPLETADO' }] },
+              ],
+            },
+            select: {
+              fechaEmision: true,
+              detalles: { select: { descripcion: true, cantidad: true }, take: 8 },
+            },
+            orderBy: { fechaEmision: 'desc' },
+            take: 5,
+          })
+        : [];
+      return contextoHistorialCliente(
+        filas.map((f) => ({
+          fechaEmision: f.fechaEmision,
+          productos: f.detalles
+            .filter((d) => !esLineaDeEnvio(d.descripcion))
+            .map((d) => `${d.descripcion} x ${Number(d.cantidad)}`),
+        })),
+        prospecto?.guiaConsumo ? { texto: prospecto.guiaConsumo, en: prospecto.guiaConsumoEn } : null,
+      );
+    } catch (e) {
+      // Sin esto el bot responde igual que antes; no es motivo para no responder.
+      this.logger.warn(`Lead: no se pudo leer el historial del cliente: ${(e as Error).message}`);
       return '';
     }
   }
