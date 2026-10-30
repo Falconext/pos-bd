@@ -29,7 +29,7 @@ function armar() {
     plan: { findUnique: jest.fn().mockResolvedValue({ id: 900 }) },
     notificacion: { createMany: jest.fn() },
   };
-  const service = new EmpresaService(prisma as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+  const service = new EmpresaService(prisma as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
   const crear = jest
     .spyOn(service, 'crear')
     .mockResolvedValue({ id: 5, usuarios: [{ id: 11 }] } as any);
