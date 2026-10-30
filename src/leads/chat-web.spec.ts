@@ -52,13 +52,15 @@ describe('chat de la tienda: reglas', () => {
     expect(h[2].opciones).toEqual([{ id: 'a', titulo: 'Polos' }]);
   });
 
-  it('"escribiendo" solo si lo último es del cliente, reciente y la IA va a responder', () => {
+  it('"escribiendo" mientras la IA no guardó su respuesta (aunque ya llegó una foto)', () => {
     const ahora = Date.now();
-    const cliente = [{ id: 'u1', de: 'cliente', creadoEn: new Date(ahora - 5000) }] as any;
-    expect(estaEscribiendo(cliente, true, ahora)).toBe(true);
-    expect(estaEscribiendo(cliente, false, ahora)).toBe(false);
-    expect(estaEscribiendo([{ ...cliente[0], creadoEn: new Date(ahora - 200_000) }], true, ahora)).toBe(false);
-    expect(estaEscribiendo([...cliente, { id: 's1', de: 'tienda', creadoEn: new Date(ahora) }] as any, true, ahora)).toBe(false);
+    const cliente = new Date(ahora - 5000);
+    expect(estaEscribiendo(cliente, null, true, ahora)).toBe(true);
+    expect(estaEscribiendo(cliente, new Date(ahora - 60_000), true, ahora)).toBe(true);
+    expect(estaEscribiendo(cliente, new Date(ahora - 1000), true, ahora)).toBe(false);
+    expect(estaEscribiendo(cliente, null, false, ahora)).toBe(false);
+    expect(estaEscribiendo(new Date(ahora - 200_000), null, true, ahora)).toBe(false);
+    expect(estaEscribiendo(null, null, true, ahora)).toBe(false);
   });
 
   it('limitador: corta pasado el tope y se recupera al pasar la ventana', () => {

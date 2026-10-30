@@ -116,7 +116,7 @@ export class ChatWebService {
     });
     if (!conv) return { mensajes: [], escribiendo: false, atiendePersona: false };
 
-    const [usuario, salidas] = await Promise.all([
+    const [usuario, salidas, ultimaRespuesta] = await Promise.all([
       this.prisma.leadMensaje.findMany({
         where: { conversacionId: conv.id, rol: 'USUARIO' as never },
         orderBy: { id: 'asc' },
@@ -129,12 +129,21 @@ export class ChatWebService {
         take: 200,
         select: { id: true, tipo: true, texto: true, url: true, productoId: true, opcionesJson: true, creadoEn: true },
       }),
+      this.prisma.leadMensaje.findFirst({
+        where: { conversacionId: conv.id, rol: { not: 'USUARIO' as never } },
+        orderBy: { id: 'desc' },
+        select: { creadoEn: true },
+      }),
     ]);
     const historial = armarHistorial(usuario, salidas);
     const atiendePersona = estaPausado(conv);
     return {
       mensajes: historial,
-      escribiendo: estaEscribiendo(historial, !atiendePersona),
+      escribiendo: estaEscribiendo(
+        usuario.length ? usuario[usuario.length - 1].creadoEn : null,
+        ultimaRespuesta?.creadoEn ?? null,
+        !atiendePersona,
+      ),
       atiendePersona,
     };
   }

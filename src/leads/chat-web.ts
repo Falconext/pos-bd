@@ -127,16 +127,18 @@ export function armarHistorial(
 }
 
 /**
- * ¿Mostrar "escribiendo…"? Si lo último es del cliente, hace poco, y la IA va
- * a contestar (no hay una persona atendiendo). La respuesta tarda unos
- * segundos a propósito (agrupa mensajes seguidos).
+ * ¿Mostrar "escribiendo…"? Si el cliente escribió después de la última
+ * respuesta guardada (de la IA o de una persona), hace poco, y la IA va a
+ * contestar. Se mira la respuesta guardada y no lo que llegó al chat: la IA
+ * puede mandar primero una foto y el texto unos segundos después.
  */
 export function estaEscribiendo(
-  historial: ItemChat[],
+  ultimoDelCliente: Date | null,
+  ultimaRespuesta: Date | null,
   iaVaAResponder: boolean,
   ahora = Date.now(),
 ): boolean {
-  const ultimo = historial[historial.length - 1];
-  if (!iaVaAResponder || !ultimo || ultimo.de !== 'cliente') return false;
-  return ahora - ultimo.creadoEn.getTime() < 90_000;
+  if (!iaVaAResponder || !ultimoDelCliente) return false;
+  if (ultimaRespuesta && ultimaRespuesta.getTime() >= ultimoDelCliente.getTime()) return false;
+  return ahora - ultimoDelCliente.getTime() < 90_000;
 }
