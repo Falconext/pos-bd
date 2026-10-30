@@ -60,6 +60,15 @@ export class MetaConversionesService {
     private readonly whatsapp: WhatsAppService,
   ) {}
 
+  /**
+   * Nombre de socio que Meta asigna al proveedor de tecnología. La guía pide
+   * mandarlo en cada envío; mientras no haya uno asignado, va sin él.
+   */
+  private get partnerAgent(): Record<string, string> {
+    const p = process.env.META_PARTNER_AGENT?.trim();
+    return p ? { partner_agent: p } : {};
+  }
+
   private get graph(): string {
     return (process.env.WHATSAPP_GRAPH_URL || 'https://graph.facebook.com/v21.0').replace(/\/$/, '');
   }
@@ -227,6 +236,7 @@ export class MetaConversionesService {
               }),
             ],
             test_event_code: codigo,
+            ...this.partnerAgent,
           },
           { headers: { Authorization: `Bearer ${cuenta.token}` }, timeout: 20000 },
         );
@@ -540,6 +550,7 @@ export class MetaConversionesService {
                 moneda: g.moneda ?? undefined,
               }),
             ),
+            ...this.partnerAgent,
           },
           { headers: { Authorization: `Bearer ${cuenta.token}` }, timeout: 20000 },
         );
