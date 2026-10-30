@@ -60,8 +60,25 @@ export class EmpresaController {
       user.id,
       user.sistemaProducto,
     );
+    // Sin credenciales escritas a mano, se traen del PSE. Si falla, la empresa
+    // queda creada igual y se reintenta desde la pestaña Integración SUNAT.
+    // Va en `data`: el interceptor lee res.locals.message antes del handler.
+    let pse: { ok: boolean; mensaje?: string } | undefined;
+    if (!dto.usuarioPse?.trim() && nueva.tipoEmpresa !== 'INFORMAL') {
+      const r = await this.empresaService
+        .vincularPse(nueva.id)
+        .catch((err: any) => ({ ok: false, mensaje: String(err?.message ?? err) }));
+      pse = { ok: r.ok, mensaje: r.mensaje };
+    }
     res.locals.message = 'Empresa creada exitosamente';
-    return nueva;
+    return { ...nueva, pse };
+  }
+
+  @Post(':id/pse')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  vincularPse(@Param('id', ParseIntPipe) id: number) {
+    return this.empresaService.vincularPse(id);
   }
 
   /**

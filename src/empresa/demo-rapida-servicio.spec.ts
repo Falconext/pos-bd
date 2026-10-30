@@ -10,7 +10,10 @@ function armar(opciones: { qpseFalla?: boolean; empresa?: any } = {}) {
   };
   const prisma: any = {
     empresa: {
-      findUnique: jest.fn().mockResolvedValue(opciones.empresa ?? null),
+      // Por RUC: no existe todavía. Por id: la empresa recién creada (o la del caso).
+      findUnique: jest.fn(async ({ where }: any) =>
+        where.ruc ? null : (opciones.empresa ?? { id: 7, ruc: '20123456789', usaDemo: true, tipoEmpresa: 'FORMAL', billingProvider: 'QPSE' }),
+      ),
       update: jest.fn(),
     },
     usuario: { findUnique: jest.fn().mockResolvedValue(null) },
@@ -106,5 +109,43 @@ describe('pasar a producción', () => {
     const { service, qpse } = armar({ empresa: { ...demo, usaDemo: false } });
     await expect(service.pasarAProduccion(7, { planId: 3, confirmar: true } as any)).rejects.toThrow(/ya está en producción/);
     expect(qpse.cuentaEmpresas).not.toHaveBeenCalled();
+  });
+});
+
+describe('traer credenciales del PSE', () => {
+  const empresa = (extra: any = {}) => ({ id: 7, ruc: '20123456789', usaDemo: true, tipoEmpresa: 'FORMAL', billingProvider: 'QPSE', ...extra });
+
+  it('registra el RUC si falta y guarda las claves del ambiente de la empresa', async () => {
+    const { service, qpse, prisma } = armar({ empresa: empresa() });
+    qpse.cuentaEmpresas.mockResolvedValueOnce([]).mockResolvedValueOnce([QPSE_DEMO]);
+    const r = await service.vincularPse(7);
+    expect(qpse.cuentaCrearEmpresa).toHaveBeenCalledWith('20123456789');
+    expect(prisma.empresa.update).toHaveBeenCalledWith({ where: { id: 7 }, data: { usuarioPse: 'DEMOUSR', contrasenaPse: 'DEMOPWD' } });
+    expect(r).toMatchObject({ ok: true, ambiente: 'demo', usuarioPse: 'DEMOUSR' });
+  });
+
+  it('empresa en producción con el RUC en prueba en QPSE: no guarda claves de prueba ni pasa nada a producción', async () => {
+    const { service, qpse, prisma } = armar({ empresa: empresa({ usaDemo: false }) });
+    const r = await service.vincularPse(7);
+    expect(r.ok).toBe(false);
+    expect(r.mensaje).toMatch(/Pasar a producción/);
+    expect(prisma.empresa.update).not.toHaveBeenCalled();
+    expect(qpse.cuentaPasarAProduccion).not.toHaveBeenCalled();
+  });
+
+  it('demo con el RUC ya en producción en QPSE: avisa y no toca', async () => {
+    const { service, qpse, prisma } = armar({ empresa: empresa() });
+    qpse.cuentaEmpresas.mockResolvedValue([{ ...QPSE_DEMO, environment: 'production' }]);
+    const r = await service.vincularPse(7);
+    expect(r).toMatchObject({ ok: false, ambiente: 'production' });
+    expect(prisma.empresa.update).not.toHaveBeenCalled();
+  });
+
+  it('empresas informales o de otro proveedor no van al PSE', async () => {
+    const informal = armar({ empresa: empresa({ tipoEmpresa: 'INFORMAL' }) });
+    await expect(informal.service.vincularPse(7)).rejects.toThrow(/formales/);
+    const jamble = armar({ empresa: empresa({ billingProvider: 'JAMBLE' }) });
+    await expect(jamble.service.vincularPse(7)).rejects.toThrow(/QPSE/);
+    expect(jamble.qpse.cuentaEmpresas).not.toHaveBeenCalled();
   });
 });

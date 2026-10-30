@@ -1295,21 +1295,10 @@ export class EmpresaService {
       adminSistemaProducto,
     );
 
-    let pse: { ok: boolean; mensaje?: string };
-    try {
-      const fila = await registrarEnQpse(this.qpse, ruc);
-      if (fila.username?.trim() && fila.password?.trim()) {
-        await this.prisma.empresa.update({
-          where: { id: empresa.id },
-          data: { usuarioPse: fila.username.trim(), contrasenaPse: fila.password.trim() },
-        });
-        pse = { ok: true };
-      } else {
-        pse = { ok: false, mensaje: 'El PSE registró el RUC pero todavía no entregó las credenciales de prueba.' };
-      }
-    } catch (err: any) {
-      pse = { ok: false, mensaje: err?.message ?? String(err) };
-    }
+    const pse = await this.vincularPse(empresa.id).catch((err: any) => ({
+      ok: false,
+      mensaje: String(err?.message ?? err),
+    }));
 
     if (adminUserId) {
       await this.registrarLog(
@@ -1329,6 +1318,53 @@ export class EmpresaService {
       sunatEstado: sunat.estado,
       pse,
     };
+  }
+
+  /**
+   * Trae del PSE el usuario y la clave de la empresa, para no copiarlos a mano.
+   *
+   * Registra el RUC en la cuenta de Krezka en QPSE si falta (queda en prueba)
+   * y guarda las credenciales solo si el ambiente de QPSE es el mismo que usa
+   * la empresa: con claves de prueba en una empresa en producción, o al revés,
+   * todo lo que emita sale rechazado. Nunca pasa nada a producción: eso es
+   * irreversible y tiene su propio botón.
+   */
+  async vincularPse(id: number): Promise<{
+    ok: boolean;
+    mensaje?: string;
+    ambiente?: string;
+    usuarioPse?: string;
+    contrasenaPse?: string;
+  }> {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id },
+      select: { id: true, ruc: true, usaDemo: true, tipoEmpresa: true, billingProvider: true },
+    });
+    if (!empresa) throw new NotFoundException('Empresa no encontrada');
+    const ruc = String(empresa.ruc ?? '').trim();
+    if (empresa.tipoEmpresa === 'INFORMAL' || !/^\d{11}$/.test(ruc)) {
+      throw new BadRequestException('Solo las empresas formales con RUC emiten a SUNAT');
+    }
+    if (resolveBillingProvider(empresa as any) !== 'QPSE') {
+      throw new BadRequestException('Esta empresa no factura con QPSE');
+    }
+
+    const fila = await registrarEnQpse(this.qpse, ruc);
+    const ambiente = fila.environment === 'production' ? 'production' : 'demo';
+    if (empresa.usaDemo && ambiente === 'production') {
+      return { ok: false, ambiente, mensaje: 'En el PSE ya está en producción, pero aquí sigue en prueba. Usa "Pasar a producción".' };
+    }
+    if (!empresa.usaDemo && ambiente === 'demo') {
+      return { ok: false, ambiente, mensaje: 'En el PSE sigue en prueba. Activa "Modo Demo", guarda y usa "Pasar a producción" desde el menú.' };
+    }
+    if (!fila.username?.trim() || !fila.password?.trim()) {
+      return { ok: false, ambiente, mensaje: 'El PSE registró el RUC pero todavía no entregó las credenciales. Intenta en unos minutos.' };
+    }
+    await this.prisma.empresa.update({
+      where: { id },
+      data: { usuarioPse: fila.username.trim(), contrasenaPse: fila.password.trim() },
+    });
+    return { ok: true, ambiente, usuarioPse: fila.username.trim(), contrasenaPse: fila.password.trim() };
   }
 
   /** Lo que se perdería al pasar a producción con "borrar ventas de prueba". */
