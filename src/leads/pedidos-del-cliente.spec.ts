@@ -40,4 +40,14 @@ describe('pedidos en curso del cliente en el contexto del bot', () => {
     expect(t).toContain('envío por reparto propio: en camino, lo lleva Stiven León (cel. 920 450 428)');
     expect(t).toContain('formas de pago al recibir: Yape 955 947 892 o ZIPAGO; no en efectivo');
   });
+
+  it('el rastreo del courier manda sobre el estado manual, con N° de orden y clave', () => {
+    const t = contextoPedidosDelCliente([
+      {
+        serie: 'NV01', correlativo: 9, fechaEmision: new Date('2026-10-28T17:00:00Z'), total: 80, saldo: 0, productos: ['Miel x 1'],
+        despacho: { estado: 'EN_CAMINO', transportista: 'SHALOM_PRO', agenciaDestino: 'Cusco', etapaCourier: 'destino', nroOrden: '45821903', claveRecojo: '7310' },
+      },
+    ]);
+    expect(t).toContain('envío por Shalom: esperando en la agencia para que lo recoja (agencia Cusco), N° de orden 45821903, clave de recojo 7310');
+  });
 });

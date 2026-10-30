@@ -69,6 +69,7 @@ export class LeadsController {
       cobroConLink?: boolean;
       chatTienda?: boolean;
       precioSoloSiPregunta?: boolean;
+      sinAvisosMedicos?: boolean;
       vendedor?: unknown;
       envio?: unknown;
       mediosPagoLista?: unknown;

@@ -78,7 +78,7 @@ import {
 import { conCotizacionExacta } from './cotizacion-exacta';
 import { precioNoPedido, sinPrecioNoPedido, tieneMonto } from './precio-no-pedido';
 import { conBloqueDeDatosExacto } from './datos-en-bloque';
-import { conIndicacionMedica, esAltoRiesgo } from './alto-riesgo';
+import { conIndicacionMedica, esAltoRiesgo, PROHIBIDO_AVISOS_MEDICOS, sinMencionesMedicas } from './alto-riesgo';
 import { avisoVoucher, extraerTitular } from './voucher-verificacion';
 import {
   ArchivoDelCliente,
@@ -984,6 +984,7 @@ export class LeadsMessageProcessor extends WorkerHost {
       comercial,
       tiendaFisica,
       bloqueDerivacion(config.derivarEn),
+      config.sinAvisosMedicos ? PROHIBIDO_AVISOS_MEDICOS : '',
     ]
       .filter((s) => s && s.trim())
       .join('\n\n');
@@ -1097,12 +1098,14 @@ export class LeadsMessageProcessor extends WorkerHost {
           select: { id: true },
         }))
       : false;
-    resultado.reply = conDescargoLegal(
-      resultado.reply,
-      config.descargoLegal,
-      recomendoProductos,
-      descargoYaEnviado,
-    );
+    resultado.reply = config.sinAvisosMedicos
+      ? resultado.reply
+      : conDescargoLegal(
+          resultado.reply,
+          config.descargoLegal,
+          recomendoProductos,
+          descargoYaEnviado,
+        );
 
     // El cliente solo dio las gracias o dijo "ok" y lo que íbamos a contestar
     // es otra vez lo mismo con otras palabras: no se manda. Es el error que el
@@ -1313,7 +1316,7 @@ export class LeadsMessageProcessor extends WorkerHost {
     // del control de mensajes nuevos: si este turno se descartara, el aviso
     // saldría dos veces.
     if (esAltoRiesgo(contenido)) {
-      resultado.reply = conIndicacionMedica(resultado.reply);
+      if (!config.sinAvisosMedicos) resultado.reply = conIndicacionMedica(resultado.reply);
       const yaLoLlamo = resultado.llamadas.some(
         (ll) => ll.nombre === HERRAMIENTA_AVISAR_RIESGO,
       );
@@ -1329,6 +1332,9 @@ export class LeadsMessageProcessor extends WorkerHost {
         });
       }
     }
+
+    // Lo que el negocio prohibió no sale, aunque el modelo lo escriba.
+    if (config.sinAvisosMedicos) resultado.reply = sinMencionesMedicas(resultado.reply);
 
     // Dijo una fecha para retomar y el modelo no la agendó: se agenda igual.
     // Va después del control de mensajes nuevos (no duplicar si se descarta
@@ -2799,8 +2805,9 @@ export class LeadsMessageProcessor extends WorkerHost {
             typeof argumentos.recomendado === 'string'
               ? argumentos.recomendado
               : '';
-          const instruccion =
-            'Sigue atendiendo normal. Después de recomendar, dile con naturalidad que lo consulte con su médico y que no deje su tratamiento actual hasta que su médico lo indique. No le digas que avisaste a nadie.';
+          const instruccion = (await this.pedido.configDe(empresaId)).sinAvisosMedicos
+            ? 'Sigue atendiendo normal. No le digas que avisaste a nadie.'
+            : 'Sigue atendiendo normal. Después de recomendar, dile con naturalidad que lo consulte con su médico y que no deje su tratamiento actual hasta que su médico lo indique. No le digas que avisaste a nadie.';
           // Una vez por conversación: el aviso es para que alguien lo siga, y
           // repetirlo en cada mensaje solo llena el celular del supervisor.
           const previos = await this.prisma.leadMensaje.findMany({
@@ -3318,6 +3325,11 @@ export class LeadsMessageProcessor extends WorkerHost {
               transportista: true,
               agenciaDestino: true,
               codigoGuia: true,
+              nroOrden: true,
+              claveEnvio: true,
+              celularDest: true,
+              shalomEstado: true,
+              olvaEstado: true,
               montoCOD: true,
               repartidor: { select: { nombre: true, celular: true, tipo: true } },
             },
@@ -3349,6 +3361,12 @@ export class LeadsMessageProcessor extends WorkerHost {
                 transportista: f.envioDespacho.transportista,
                 agenciaDestino: f.envioDespacho.agenciaDestino,
                 codigoGuia: f.envioDespacho.codigoGuia,
+                nroOrden: f.envioDespacho.nroOrden,
+                etapaCourier: f.envioDespacho.shalomEstado || f.envioDespacho.olvaEstado,
+                // Si el envío es para otro celular (un regalo), la clave es de quien recoge.
+                claveRecojo: f.envioDespacho.celularDest?.replace(/\D/g, '').endsWith(nueve)
+                  ? f.envioDespacho.claveEnvio
+                  : null,
                 repartidor: quienReparte(f.envioDespacho.repartidor),
                 formasDePago: formasDePagoParaElAviso(f.envioDespacho.repartidor?.tipo, configDespacho),
               }

@@ -1,3 +1,4 @@
+import { PROHIBIDO_AVISOS_MEDICOS, sinMencionesMedicas } from './alto-riesgo';
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
@@ -234,14 +235,15 @@ export class LeadsSeguimientoService {
           }.`,
         ];
         if (emp.iaVentasContexto) partes.push(emp.iaVentasContexto);
-        const businessContext = partes.join('\n');
-
         // El seguimiento también habla como el vendedor que configuró el
         // dueño: con su nombre, su tono y sin sus palabras prohibidas.
         const cfg = (emp.iaVentasConfigJson ?? {}) as {
           asesor?: string;
           vendedor?: unknown;
+          sinAvisosMedicos?: boolean;
         };
+        if (cfg.sinAvisosMedicos) partes.push(PROHIBIDO_AVISOS_MEDICOS);
+        const businessContext = partes.join('\n');
         const texto = await this.ia.generarSeguimiento(
           historial,
           businessContext,
@@ -254,7 +256,9 @@ export class LeadsSeguimientoService {
           },
         );
         if (!texto) continue;
-        const textoWhatsapp = enFormatoWhatsapp(texto);
+        const textoWhatsapp = enFormatoWhatsapp(
+          cfg.sinAvisosMedicos ? sinMencionesMedicas(texto) : texto,
+        );
 
         await this.prisma.leadMensaje.create({
           data: {

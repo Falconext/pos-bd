@@ -56,6 +56,11 @@ export interface ConfigComercial {
    */
   descargoLegal?: string;
   /**
+   * Ningún aviso médico en el chat: ni el descargo, ni "consulta a tu médico"
+   * a los de alto riesgo, ni los que redacte el modelo (ver alto-riesgo.ts).
+   */
+  sinAvisosMedicos?: boolean;
+  /**
    * Cómo cobra el negocio cuando hay adelanto, tal como se le dice al
    * cliente ("Yape: 955 947 892 · BCP: …"). Es dato de cada empresa, no del
    * sistema: los de una no pueden salir en el chat de otra.
@@ -187,6 +192,7 @@ export class LeadsPedidoService {
       ...(guardada.descargoLegal
         ? { descargoLegal: guardada.descargoLegal }
         : {}),
+      ...(guardada.sinAvisosMedicos === true ? { sinAvisosMedicos: true } : {}),
       ...(guardada.supervisorTelefono
         ? { supervisorTelefono: guardada.supervisorTelefono }
         : {}),

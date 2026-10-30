@@ -40,3 +40,34 @@ export function conIndicacionMedica(respuesta: string): string {
   }
   return `${respuesta.trimEnd()}\n\n${INDICACION_MEDICA}`;
 }
+
+/**
+ * Negocios que no quieren NINGÚN aviso médico en el chat (Hierba Sana, 30-10:
+ * "por nada del mundo"): ni el descargo, ni "consulta a tu médico", ni "no
+ * reemplaza un tratamiento". El prompt se lo prohíbe al modelo, pero lo que
+ * no puede salir lo quita el código: se borra cada oración que lo diga.
+ */
+export const PROHIBIDO_AVISOS_MEDICOS =
+  'PROHIBIDO POR EL NEGOCIO: nunca le sugieras al cliente consultar a un médico, doctor, especialista o profesional de la salud, ni digas que los productos son un complemento, que no reemplazan un tratamiento o que no deje su tratamiento. Ni con otras palabras. Recomienda y atiende normal.';
+
+const ORACION_MEDICA: RegExp[] = [
+  /\b(m[eé]dic[oa]s?|doctor(a|es)?|especialista|profesional(es)? de (la )?salud)\b/i,
+  /\b(reemplaza\w*|sustitu\w*)\b.{0,60}\b(tratamiento|medicamento|medicina)/i,
+  /\bcomplemento\b.{0,80}\b(tratamiento|m[eé]dic)/i,
+  /\bno (dej|abandon|suspend)\w*.{0,40}\btratamiento/i,
+];
+
+export function sinMencionesMedicas(texto: string): string {
+  const parrafos = texto.split(/\n\s*\n/).map((p) =>
+    // Oraciones: hasta el punto, signo o salto de línea que la cierra.
+    (p.match(/[^.!?\n]+[.!?]*\s*|\n/g) ?? [p])
+      // La oración se va, pero el salto de línea que la cerraba se queda.
+      .map((o) => (ORACION_MEDICA.some((r) => r.test(o)) ? o.replace(/[^\n]/g, '') : o))
+      .join('')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{2,}/g, '\n')
+      .trim(),
+  );
+  const limpio = parrafos.filter(Boolean).join('\n\n');
+  return limpio || texto;
+}
