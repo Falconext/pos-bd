@@ -145,9 +145,11 @@ export class LeadsGuiaService {
     if (enviar) {
       const envio = await this.whatsapp.enviarTexto(conv.telefonoProspecto, contenido, empresaId);
       if (!envio.success) {
+        // WhatsApp solo deja escribir libre dentro de las 24 h desde el último
+        // mensaje del cliente; afuera hace falta plantilla. La guía ya quedó
+        // escrita: se puede copiar y mandar a mano.
         throw new BadRequestException(
-          envio.error ||
-            'No se pudo enviar por WhatsApp. Si el cliente no escribió en las últimas 24 horas, copia la guía y mándasela desde tu WhatsApp.',
+          `No se pudo enviar por WhatsApp${envio.error && envio.error !== 'Error' ? ` (${envio.error})` : ''}. Si el cliente no escribió en las últimas 24 horas, guárdala y mándasela desde tu WhatsApp.`,
         );
       }
       await this.prisma.leadMensaje.create({
