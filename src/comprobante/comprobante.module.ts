@@ -17,6 +17,9 @@ import { ComisionesModule } from '../comisiones/comisiones.module';
 import { ClienteModule } from '../cliente/cliente.module';
 import { ImportarNotaVentaService } from './importar-nota-venta.service';
 
+import { RegularizarAfectacionController } from './regularizar-afectacion.controller';
+import { RegularizarAfectacionService } from './regularizar-afectacion.service';
+
 @Module({
   imports: [
     forwardRef(() => EmpresaModule),
@@ -27,9 +30,10 @@ import { ImportarNotaVentaService } from './importar-nota-venta.service';
     ComisionesModule,
     ClienteModule,
   ],
-  controllers: [ComprobanteController, ComprobantePublicoController],
+  controllers: [ComprobanteController, ComprobantePublicoController, RegularizarAfectacionController],
   providers: [
     ComprobanteService,
+    RegularizarAfectacionService,
     ImportarNotaVentaService,
     RolesGuard,
     EnviarSunatService,

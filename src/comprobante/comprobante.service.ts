@@ -1475,16 +1475,21 @@ export class ComprobanteService {
   private async formalQueContieneNota(
     notaId: number,
   ): Promise<{ serie: string; correlativo: number } | null> {
+    // Un formal anulado (nota de crédito por anulación) ya no contiene la
+    // venta: la nota se puede volver a convertir. Sin esto no había cómo
+    // corregir una boleta emitida con un dato errado (FRUTA PURA, 30-10).
     const directo = await this.prisma.comprobante.findFirst({
-      where: { comprobanteOrigenId: notaId },
+      where: { comprobanteOrigenId: notaId, estadoEnvioSunat: { not: EstadoSunat.ANULADO } },
       select: { serie: true, correlativo: true },
     });
     if (directo) return directo;
     const extra = await this.prisma.comprobanteOrigenExtra.findUnique({
       where: { origenId: notaId },
-      select: { formal: { select: { serie: true, correlativo: true } } },
+      select: { formal: { select: { serie: true, correlativo: true, estadoEnvioSunat: true } } },
     });
-    return extra?.formal ?? null;
+    return extra?.formal && extra.formal.estadoEnvioSunat !== EstadoSunat.ANULADO
+      ? { serie: extra.formal.serie, correlativo: extra.formal.correlativo }
+      : null;
   }
 
   /**
@@ -1512,7 +1517,7 @@ export class ComprobanteService {
         orderBy: { id: 'asc' },
       }),
       this.prisma.comprobante.findMany({
-        where: { comprobanteOrigenId: notaId },
+        where: { comprobanteOrigenId: notaId, estadoEnvioSunat: { not: EstadoSunat.ANULADO } },
         orderBy: { id: 'asc' },
         select: {
           serie: true,
@@ -3640,13 +3645,17 @@ export class ComprobanteService {
       // Solo aplica en modo importado (default true). Ver ImportarComprobanteDto.
       afectarStock?: boolean;
       afectarCaja?: boolean;
+      // Anulación y reemisión de un comprobante ya vendido (ver
+      // regularizar-afectacion.service): no es una venta nueva, así que no
+      // pide caja abierta ni vuelve a validar límites de precio.
+      regularizacion?: boolean;
     },
   ) {
     // Piso/techo de venta: se valida ACÁ, no solo en el POS. El cajero puede
     // mandar cualquier precio por la API, y "se vendió bajo costo" se descubre
     // recién al cerrar el mes. Los importados (histórico) se saltan: son
     // hechos del pasado y bloquearlos impediría registrar lo ya vendido.
-    if (!opts?.importado) {
+    if (!opts?.importado && !opts?.regularizacion) {
       await validarLimitesPrecioVenta(this.prisma, empresaId, input?.detalles || []);
     }
 
@@ -3660,7 +3669,7 @@ export class ComprobanteService {
     }
     // Caja obligatoria (si la empresa lo configuró). Las importaciones de
     // comprobantes ya emitidos no son una venta en curso: quedan exentas.
-    if (!importado) {
+    if (!importado && !opts?.regularizacion) {
       await this.exigirCajaAbiertaSiConfigurado(empresaId, usuarioId, sedeId);
     }
     const afectarStockImport = opts?.afectarStock !== false; // default true
