@@ -5087,6 +5087,37 @@ model LeadAnuncioOrigen {
   @@index([conversacionId])
 }
 
+/// Lo que se le avisó a Meta por la API de Conversiones (meta-conversiones.ts):
+/// "este clic de anuncio terminó en compra" o "en un lead caliente". Una fila
+/// por venta o por lead, así nunca se avisa dos veces y el panel muestra qué
+/// se mandó y qué falló.
+model MetaEventoConversion {
+  id             Int       @id @default(autoincrement())
+  empresaId      Int
+  /// venta-<id de la venta raíz> | lead-<id de conversación>
+  clave          String
+  /// Purchase | LeadSubmitted
+  evento         String
+  conversacionId Int
+  comprobanteId  Int?
+  wabaId         String
+  ctwaClid       String
+  valor          Decimal?  @db.Decimal(12, 2)
+  moneda         String?
+  /// Cuándo pasó (la venta o el lead caliente): es el event_time.
+  ocurridoEn     DateTime
+  /// PENDIENTE | ENVIADO | ERROR | OMITIDO (la venta se anuló antes de avisar)
+  estado         String    @default("PENDIENTE")
+  intentos       Int       @default(0)
+  error          String?
+  enviadoEn      DateTime?
+  creadoEn       DateTime  @default(now())
+
+  @@unique([empresaId, clave])
+  @@index([empresaId, creadoEn])
+  @@index([estado])
+}
+
 /// Clientes que dijeron que van a ir a la tienda física.
 ///
 /// Hierba Sana (26-10): "nos están sorprendiendo clientes en la tienda" y
