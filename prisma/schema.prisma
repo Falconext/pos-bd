@@ -5106,7 +5106,7 @@ model MetaEventoConversion {
   moneda         String?
   /// Cuándo pasó (la venta o el lead caliente): es el event_time.
   ocurridoEn     DateTime
-  /// PENDIENTE | ENVIADO | ERROR
+  /// PENDIENTE | ENVIADO | ERROR | OMITIDO (la venta se anuló antes de avisar)
   estado         String    @default("PENDIENTE")
   intentos       Int       @default(0)
   error          String?
