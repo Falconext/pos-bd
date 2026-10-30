@@ -100,10 +100,9 @@ export class SuscripcionService {
       data: {
         planId: plan.id,
         costoActivacionReseller: plan.costo,
-        // Deja el modo demo de la prueba: el ciclo de cobros ignora a las
-        // empresas en demo, y sin eso el pago de Mercado Pago no encontraba
-        // mensualidad donde aplicarse (pagaba y se le bloqueaba igual).
-        usaDemo: false,
+        // Sigue en demo hasta que pague: con usaDemo=false sin credenciales de
+        // producción sus boletas fallaban desde aquí. El pago la pasa a
+        // producción (FinDePruebaService).
       },
     });
     return { plan: { nombre: plan.nombre, costo: Number(plan.costo) } };
