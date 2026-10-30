@@ -555,7 +555,8 @@ export class CobroEmpresaService {
         // Desde cuándo es cliente: con el historial recién arrancando, es lo
         // único cierto que se le puede mostrar de su pasado.
         fechaActivacion: true,
-        plan: { select: { nombre: true, costo: true } },
+        // esPrueba: la prueba gratis de IA de Ventas se cierra eligiendo plan, no pagando por WhatsApp.
+        plan: { select: { nombre: true, costo: true, esPrueba: true } },
       },
     });
     if (!empresa) throw new NotFoundException('Empresa no encontrada');
