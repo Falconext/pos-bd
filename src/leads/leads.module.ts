@@ -49,6 +49,9 @@ import { ReporteDiarioService } from './reporte-diario.service';
 import { ReporteDiarioController } from './reporte-diario.controller';
 import { MetaConversionesService } from './meta-conversiones.service';
 import { MetaConversionesController } from './meta-conversiones.controller';
+import { ChatWebService } from './chat-web.service';
+import { ChatWebSalidaService } from './chat-web-salida.service';
+import { ChatWebController } from './chat-web.controller';
 
 @Module({
   imports: [
@@ -73,6 +76,7 @@ import { MetaConversionesController } from './meta-conversiones.controller';
     LeadsCrmController,
     ReporteDiarioController,
     MetaConversionesController,
+    ChatWebController,
     LeadsEnviosController,
   ],
   providers: [
@@ -90,6 +94,8 @@ import { MetaConversionesController } from './meta-conversiones.controller';
     LeadsPagoLinkService,
     ReporteDiarioService,
     MetaConversionesService,
+    ChatWebService,
+    ChatWebSalidaService,
     MensajeriaService,
     LeadsVisitaService,
     LeadsEtiquetasService,

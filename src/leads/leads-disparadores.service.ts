@@ -6,6 +6,7 @@ import { esNumeroInterno, numerosInternos } from './numeros-internos';
 import { MensajeriaService } from './mensajeria.service';
 import { esDestinoInstagram } from '../instagram/instagram-texto';
 import { esDestinoMessenger } from '../messenger/messenger-texto';
+import { esDestinoWeb } from './chat-web';
 import { EtapaCrm, etapaDesdeDespacho } from './leads-embudo';
 import { LeadsEmbudoService } from './leads-embudo.service';
 import {
@@ -398,6 +399,14 @@ export class LeadsDisparadoresService {
 
     // Instagram y Messenger no tienen plantillas: con la ventana cerrada no
     // hay cómo escribirle. No es un error del envío, es que el canal no lo permite.
+    // El chat de la tienda no tiene a dónde avisar fuera de la conversación.
+    if (esDestinoWeb(d.telefono)) {
+      await this.prisma.leadDisparo.update({
+        where: { id: d.id },
+        data: { estado: 'OMITIDO', motivo: 'Chat de la tienda: el cliente ya no está en la página.' },
+      });
+      return { enviado: false, motivo: 'chat_tienda' };
+    }
     if (veredicto.via === 'plantilla' && (esDestinoInstagram(d.telefono) || esDestinoMessenger(d.telefono))) {
       await this.prisma.leadDisparo.update({
         where: { id: d.id },

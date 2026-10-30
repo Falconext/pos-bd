@@ -976,6 +976,7 @@ export class TiendaService {
           // sitios no dicen el mismo número, el cliente deja de creerle a uno
           // de los dos.
           iaVentasConfigJson: true,
+          iaVentasActiva: true,
           // Campos de envío/recojo visibles en tienda pública
           costoEnvioFijo: true,
           aceptaRecojo: true,
@@ -1061,13 +1062,19 @@ export class TiendaService {
 
       // La configuración de la IA lleva dentro cosas internas (el nombre del
       // asesor, el descargo legal, las zonas de reparto). De todo eso, la
-      // tienda pública solo necesita los tramos de descuento: el resto no sale.
-      const { iaVentasConfigJson, ...publico } = empresa as typeof empresa & {
-        iaVentasConfigJson?: { descuento?: unknown } | null;
+      // tienda pública solo necesita los tramos de descuento y si el vendedor
+      // atiende el chat de la tienda: el resto no sale.
+      const { iaVentasConfigJson, iaVentasActiva, ...publico } = empresa as typeof empresa & {
+        iaVentasConfigJson?: { descuento?: unknown; chatTienda?: boolean; asesor?: string } | null;
+        iaVentasActiva?: boolean;
       };
       return {
         ...publico,
         reglasDescuento: iaVentasConfigJson?.descuento ?? SIN_DESCUENTO,
+        chatIa:
+          iaVentasActiva === true && iaVentasConfigJson?.chatTienda === true
+            ? { activo: true, asesor: iaVentasConfigJson?.asesor || null }
+            : { activo: false, asesor: null },
         diseno: this.stripPrivateDesignFields(diseno),
       };
     } catch (e) {

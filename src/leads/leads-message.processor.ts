@@ -172,7 +172,11 @@ interface TareaRespuesta {
 
 interface MensajeEntrante {
   /** Por qué red llegó. Sin valor es WhatsApp (los jobs de antes no lo traen). */
-  canal?: 'WHATSAPP' | 'INSTAGRAM' | 'MESSENGER';
+  canal?: 'WHATSAPP' | 'INSTAGRAM' | 'MESSENGER' | 'WEB';
+  /** Chat de la tienda online: la empresa ya viene resuelta por el slug. */
+  empresaId?: number;
+  /** Chat de la tienda: qué estaba mirando el cliente al escribir. */
+  contexto?: string;
   /** WhatsApp: el número de la empresa que recibió el mensaje. */
   phoneNumberId?: string;
   /** Instagram: la cuenta profesional que recibió el mensaje. */
@@ -526,9 +530,15 @@ export class LeadsMessageProcessor extends WorkerHost {
   private async ingresar(d: MensajeEntrante): Promise<void> {
     const esInstagram = d.canal === 'INSTAGRAM';
     const esMessenger = d.canal === 'MESSENGER';
-    const canal = esInstagram ? 'INSTAGRAM' : esMessenger ? 'MESSENGER' : 'WHATSAPP';
+    const esWeb = d.canal === 'WEB';
+    const canal = esInstagram ? 'INSTAGRAM' : esMessenger ? 'MESSENGER' : esWeb ? 'WEB' : 'WHATSAPP';
     // 1) ¿Qué empresa tiene conectado este número (o esta cuenta/página)?
-    const empresa = esInstagram
+    const empresa = esWeb
+      ? await this.prisma.empresa.findUnique({
+          where: { id: d.empresaId ?? 0 },
+          select: { id: true, iaVentasActiva: true },
+        })
+      : esInstagram
       ? await this.prisma.empresa.findFirst({
           where: { instagramAccountId: d.instagramAccountId, instagramActivo: true },
           select: { id: true, iaVentasActiva: true, instagramComentarios: true, instagramComentariosClave: true },
@@ -587,7 +597,7 @@ export class LeadsMessageProcessor extends WorkerHost {
           }
         }
       }
-    } else {
+    } else if (!esWeb) {
       // 2) Si el cliente escribía con su @usuario y ahora llega con número, es
       // la misma conversación (ver unir-usuario-whatsapp.ts).
       await this.unirConversacionSinNumero(empresa.id, d).catch((e) =>
@@ -668,7 +678,9 @@ export class LeadsMessageProcessor extends WorkerHost {
     }
 
     // 3) Si es nota de voz, transcribir con Gemini (para responder y para el CRM).
-    let contenido = d.text;
+    // En la tienda, lo que estaba mirando va pegado al mensaje: la IA sabe de
+    // qué producto habla ("¿tienen en rojo?") y el equipo lo ve en la bandeja.
+    let contenido = d.contexto ? `${d.text}\n\n[${d.contexto}]` : d.text;
     let audioTranscrito = false;
     if (d.esAudio) {
       contenido = '[nota de voz]';
@@ -960,7 +972,9 @@ export class LeadsMessageProcessor extends WorkerHost {
         ? 'CANAL: esta conversación es por mensaje directo de INSTAGRAM, no por WhatsApp. Lo que dicen las reglas sobre WhatsApp vale igual, salvo: no uses asteriscos ni ningún formato (Instagram muestra el texto tal cual) y no tienes el celular del cliente, así que pídeselo cuando haga falta para el pedido o la entrega.'
         : conv.canal === 'MESSENGER'
           ? 'CANAL: esta conversación es por MESSENGER (página de Facebook), no por WhatsApp. Lo que dicen las reglas sobre WhatsApp vale igual, salvo: no uses asteriscos ni ningún formato (Messenger muestra el texto tal cual) y no tienes el celular del cliente, así que pídeselo cuando haga falta para el pedido o la entrega.'
-          : '',
+          : conv.canal === 'WEB'
+            ? 'CANAL: esta conversación es por el CHAT DE LA TIENDA ONLINE del negocio, no por WhatsApp. El cliente está navegando la tienda ahora mismo; a veces el mensaje trae entre corchetes el producto que está mirando. Lo que dicen las reglas sobre WhatsApp vale igual, salvo: no tienes su celular. Cuando quiera comprar, coordinar el envío o que lo atienda una persona, pídele su celular con WhatsApp para continuar por ahí. Las fotos que envíes le aparecen con un botón para agregar el producto a su carrito: si quiere comprarlo él mismo en la tienda, mándale la foto del producto.'
+            : '',
       // Mientras un cliente siga teniendo los números copiados en su texto
       // libre, las dos versiones conviven en el prompt. Por eso el bloque
       // dice de sí mismo que es el que manda.
@@ -2540,7 +2554,7 @@ export class LeadsMessageProcessor extends WorkerHost {
             producto.precioUnitario,
           ).toFixed(2)}`;
           const envio = await this.whatsapp
-            .enviarImagenUrl(telefono, producto.imagenUrl, caption, empresaId)
+            .enviarImagenUrl(telefono, producto.imagenUrl, caption, empresaId, { productoId })
             .catch((e: unknown) => ({
               success: false,
               error: e instanceof Error ? e.message : String(e),

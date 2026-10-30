@@ -4929,6 +4929,7 @@ model LeadConversacion {
   borrador            LeadPedidoBorrador?
   anuncios            LeadAnuncioOrigen[]
   visitaTienda        LeadVisitaTienda?
+  salidasWeb          LeadWebSalida[]
   etiquetas           LeadConversacionEtiqueta[]
   creadoEn            DateTime               @default(now())
   actualizadoEn       DateTime               @updatedAt
@@ -5154,6 +5155,28 @@ enum EstadoVisitaTienda {
   VINO
   NO_VINO
   CANCELADA
+}
+
+/// Lo que la IA (o el equipo) le "envía" a un cliente del chat de la tienda
+/// online. Por WhatsApp eso sale por la API de Meta; en la tienda no hay a
+/// dónde mandarlo, así que queda aquí y el chat de la tienda lo lee. Así el
+/// cliente ve exactamente lo que vería por WhatsApp: textos, fotos, menús.
+model LeadWebSalida {
+  id             Int              @id @default(autoincrement())
+  empresaId      Int
+  conversacionId Int
+  conversacion   LeadConversacion @relation(fields: [conversacionId], references: [id], onDelete: Cascade)
+  /// TEXTO | IMAGEN | VIDEO | DOCUMENTO | MENU
+  tipo           String
+  texto          String?
+  url            String?
+  /// Foto de un producto: el chat le pone el botón "Agregar al carrito".
+  productoId     Int?
+  /// Menú: las opciones que el cliente toca.
+  opcionesJson   Json?
+  creadoEn       DateTime         @default(now())
+
+  @@index([conversacionId, id])
 }
 
 model LeadMensaje {
