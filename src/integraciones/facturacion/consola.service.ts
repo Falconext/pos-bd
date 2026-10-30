@@ -4,7 +4,6 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
-  ServiceUnavailableException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { randomInt } from 'crypto';
@@ -15,7 +14,8 @@ import { EmisoresService } from '../emisores/emisores.service';
 import { WebhooksService } from '../../logistica/integraciones/webhooks/webhooks.service';
 import { MedidorApiService } from './medidor.service';
 import { rucValido, MENSAJE_RUC_INVALIDO } from '../erp/ruc';
-import { QpseClient, QpseEmpresaCuenta } from '../../common/utils/qpse.client';
+import { QpseClient } from '../../common/utils/qpse.client';
+import { pasarRucAProduccion } from '../../common/utils/qpse-cuenta';
 import { FacturacionApiService } from './facturacion.service';
 import { ClienteService } from '../../cliente/cliente.service';
 import { CobrosApiService } from './cobros-api.service';
@@ -264,48 +264,13 @@ export class ConsolaFacturacionService {
     if (body?.confirm !== true) {
       throw new BadRequestException('Confirma el pase a producción: no se puede deshacer.');
     }
-    const ruc = String(e.ruc ?? '');
-
-    let fila = await this.filaQpse(ruc);
-    if (!fila) {
-      try {
-        await this.qpse.cuentaCrearEmpresa(ruc);
-      } catch (err) {
-        const msg = ConsolaFacturacionService.mensajeQpse(err);
-        // Doble clic o reintento: ya la registramos nosotros. Se sigue.
-        if (!/registrada en su cuenta/i.test(msg)) {
-          if (/otra cuenta/i.test(msg)) {
-            throw new ConflictException(
-              'Ese RUC ya está afiliado con otro proveedor que usa el mismo PSE (QPSE). Para facturar con Krezka, la empresa tiene que darse de baja allí primero. Si necesitas ayuda, escríbenos.',
-            );
-          }
-          throw new BadRequestException(`No pudimos registrar la empresa en el PSE: ${msg}`);
-        }
-      }
-      fila = await this.filaQpse(ruc);
-      if (!fila) throw new ServiceUnavailableException('El PSE no confirmó el registro. Intenta de nuevo en unos minutos.');
-    }
-
-    if (fila.environment !== 'production') {
-      try {
-        await this.qpse.cuentaPasarAProduccion(fila.external_id);
-      } catch (err) {
-        const msg = ConsolaFacturacionService.mensajeQpse(err);
-        if (!/ya se encuentra en producci/i.test(msg)) {
-          throw new ServiceUnavailableException(`El PSE no pudo pasar la empresa a producción: ${msg}`);
-        }
-      }
-      fila = (await this.filaQpse(ruc)) ?? fila;
-    }
-    if (!fila.username?.trim() || !fila.password?.trim()) {
-      throw new ServiceUnavailableException('El PSE todavía no entregó las credenciales de firma. Intenta de nuevo en unos minutos.');
-    }
+    const fila = await pasarRucAProduccion(this.qpse, String(e.ruc ?? ''));
 
     await this.prisma.empresa.update({
       where: { id: e.id },
       data: {
-        usuarioPse: fila.username.trim(),
-        contrasenaPse: fila.password.trim(),
+        usuarioPse: fila.username,
+        contrasenaPse: fila.password,
         usaDemo: false,
         apiEmisorEstado: 'pendiente',
         apiEmisorDesde: new Date(),
@@ -313,14 +278,6 @@ export class ConsolaFacturacionService {
       },
     });
     return this.verEmpresa(empresaId, issuerId);
-  }
-
-  private async filaQpse(ruc: string): Promise<QpseEmpresaCuenta | undefined> {
-    return (await this.qpse.cuentaEmpresas()).find((f) => String(f.ruc).trim() === ruc);
-  }
-
-  private static mensajeQpse(err: unknown): string {
-    return String((err as any)?.message ?? err ?? '').replace(/^QPSE:\s*/, '');
   }
 
   // ── Probar ───────────────────────────────────────────────────────────

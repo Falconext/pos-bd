@@ -17,6 +17,7 @@ import { EmpresaService } from './empresa.service';
 import { CreateEmpresaDto } from './dto/create-empresa.dto';
 import { ListEmpresaDto } from './dto/list-empresa.dto';
 import { RegistroPruebaDto } from './dto/registro-prueba.dto';
+import { CrearDemoRapidaDto, PasarProduccionDto } from './dto/demo-rapida.dto';
 import { UpdateEmpresaDto, OnboardingEmpresaDto } from './dto/update-empresa.dto';
 import {
   CreateCuentaBancariaDto,
@@ -59,8 +60,25 @@ export class EmpresaController {
       user.id,
       user.sistemaProducto,
     );
+    // Sin credenciales escritas a mano, se traen del PSE. Si falla, la empresa
+    // queda creada igual y se reintenta desde la pestaña Integración SUNAT.
+    // Va en `data`: el interceptor lee res.locals.message antes del handler.
+    let pse: { ok: boolean; mensaje?: string } | undefined;
+    if (!dto.usuarioPse?.trim() && nueva.tipoEmpresa !== 'INFORMAL') {
+      const r = await this.empresaService
+        .vincularPse(nueva.id)
+        .catch((err: any) => ({ ok: false, mensaje: String(err?.message ?? err) }));
+      pse = { ok: r.ok, mensaje: r.mensaje };
+    }
     res.locals.message = 'Empresa creada exitosamente';
-    return nueva;
+    return { ...nueva, pse };
+  }
+
+  @Post(':id/pse')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  vincularPse(@Param('id', ParseIntPipe) id: number) {
+    return this.empresaService.vincularPse(id);
   }
 
   /**
@@ -68,6 +86,45 @@ export class EmpresaController {
    * contacto (ver RegistroPruebaDto); el límite de intentos por IP vive en
    * rate-limit.middleware.
    */
+  @Post('demo-rapida')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  async crearDemoRapida(
+    @Body() dto: CrearDemoRapidaDto,
+    @User() user: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const demo = await this.empresaService.crearDemoRapida(
+      dto,
+      user.sistemaNegocio,
+      user.id,
+      user.sistemaProducto,
+    );
+    res.locals.message = 'Demo creada';
+    return demo;
+  }
+
+  @Get(':id/pase-produccion')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  previsualizarPaseProduccion(@Param('id', ParseIntPipe) id: number) {
+    return this.empresaService.previsualizarPaseProduccion(id);
+  }
+
+  @Post(':id/pase-produccion')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN_SISTEMA')
+  async pasarAProduccion(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: PasarProduccionDto,
+    @User() user: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const r = await this.empresaService.pasarAProduccion(id, dto, user.id);
+    res.locals.message = 'Empresa en producción';
+    return r;
+  }
+
   @Post('registro')
   async registro(
     @Body() dto: RegistroPruebaDto,

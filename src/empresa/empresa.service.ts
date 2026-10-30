@@ -41,6 +41,18 @@ import {
   PLANES_VENTAS_POR_CLAVE,
 } from '../common/utils/ensure-planes-ventas';
 import { RegistroPruebaDto } from './dto/registro-prueba.dto';
+import { CrearDemoRapidaDto, PasarProduccionDto } from './dto/demo-rapida.dto';
+import {
+  ClaveConRegla,
+  contrasenaInicial,
+  datosDesdeSunat,
+  DIAS_DEMO,
+  DIAS_DEMO_POR_DEFECTO,
+  planDeLimpiezaDemo,
+} from './demo-rapida';
+import { QpseClient } from '../common/utils/qpse.client';
+import { pasarRucAProduccion, registrarEnQpse } from '../common/utils/qpse-cuenta';
+import { resolveBillingProvider } from '../common/utils/billing-provider';
 
 function parseDDMMYYYY(input: string): Date {
   if (!input || input.trim() === '') {
@@ -272,6 +284,8 @@ export class EmpresaService {
     private readonly pdfGenerator: PdfGeneratorService,
     private readonly s3Service: S3Service,
     private readonly salesfilter: SalesfilterBridgeService,
+    @Inject(forwardRef(() => QpseClient))
+    private readonly qpse: QpseClient,
   ) {}
 
   /**
@@ -1205,6 +1219,262 @@ export class EmpresaService {
     await this.avisarRegistroAlEquipo(brand, empresa.id, dto, planElegido);
 
     return { empresaId: empresa.id, email: dto.email };
+  }
+
+  /**
+   * Demo rápida desde /administrador/empresas: con el RUC basta.
+   *
+   * SUNAT da la razón social y la dirección; el PSE, las credenciales del
+   * ambiente de prueba; la contraseña del dueño se genera y se devuelve UNA
+   * vez para pasársela al cliente. La empresa nace en demo (`usaDemo`), así
+   * que nada de lo que emita llega a SUNAT producción.
+   *
+   * Si el PSE no responde, la demo se crea igual y se avisa: las credenciales
+   * se pueden pedir de nuevo al pasar a producción.
+   */
+  async crearDemoRapida(
+    dto: CrearDemoRapidaDto,
+    adminSistemaNegocio?: string | null,
+    adminUserId?: number,
+    adminSistemaProducto?: string | null,
+  ) {
+    const ruc = String(dto.ruc ?? '').replace(/\D/g, '');
+    if (ruc.length !== 11) throw new BadRequestException('El RUC debe tener 11 dígitos');
+    const email = String(dto.email ?? '').trim().toLowerCase();
+
+    const [rucUsado, correoUsado] = await Promise.all([
+      this.prisma.empresa.findUnique({ where: { ruc }, select: { id: true } }),
+      this.prisma.usuario.findUnique({ where: { email }, select: { id: true } }),
+    ]);
+    if (rucUsado) throw new ForbiddenException('Ese RUC ya está registrado');
+    if (correoUsado) throw new ForbiddenException('Ese correo ya tiene una cuenta');
+
+    const sunat = datosDesdeSunat(await this.consultarRuc(ruc));
+    if (!sunat.razonSocial) {
+      throw new BadRequestException('SUNAT no devolvió datos para ese RUC. Usa el formulario completo.');
+    }
+
+    const dias = (DIAS_DEMO as readonly number[]).includes(Number(dto.dias))
+      ? Number(dto.dias)
+      : DIAS_DEMO_POR_DEFECTO;
+    const hoy = new Date();
+    const vence = new Date(hoy.getTime() + dias * 86_400_000);
+    const ddmmyyyy = (d: Date) =>
+      `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+    const password = contrasenaInicial();
+
+    const empresa = await this.crear(
+      {
+        ruc,
+        razonSocial: sunat.razonSocial,
+        nombreComercial: dto.nombreComercial?.trim() || sunat.nombreComercial,
+        direccion: sunat.direccion,
+        departamento: sunat.departamento,
+        provincia: sunat.provincia,
+        distrito: sunat.distrito,
+        ubigeo: sunat.ubigeo,
+        rubroId: dto.rubroId,
+        planId: dto.planId,
+        tipoEmpresa: 'FORMAL',
+        esPrueba: true,
+        usaDemo: true,
+        billingProvider: 'QPSE',
+        fechaActivacion: ddmmyyyy(hoy),
+        fechaExpiracion: ddmmyyyy(vence),
+        usuario: {
+          nombre: dto.nombre?.trim() || sunat.razonSocial,
+          email,
+          password,
+          // Persona natural con negocio (RUC 10): el DNI va dentro del RUC.
+          dni: ruc.startsWith('10') ? ruc.slice(2, 10) : '',
+          celular: String(dto.celular ?? '').trim(),
+        },
+      } as CreateEmpresaDto,
+      adminSistemaNegocio,
+      adminUserId,
+      adminSistemaProducto,
+    );
+
+    const pse = await this.vincularPse(empresa.id).catch((err: any) => ({
+      ok: false,
+      mensaje: String(err?.message ?? err),
+    }));
+
+    if (adminUserId) {
+      await this.registrarLog(
+        empresa.id,
+        'DEMO_RAPIDA',
+        `Demo de ${dias} días · ${email}${pse.ok ? '' : ` · PSE pendiente: ${pse.mensaje}`}`,
+        adminUserId,
+      );
+    }
+
+    return {
+      empresaId: empresa.id,
+      razonSocial: sunat.razonSocial,
+      email,
+      password,
+      vence: vence.toISOString(),
+      sunatEstado: sunat.estado,
+      pse,
+    };
+  }
+
+  /**
+   * Trae del PSE el usuario y la clave de la empresa, para no copiarlos a mano.
+   *
+   * Registra el RUC en la cuenta de Krezka en QPSE si falta (queda en prueba)
+   * y guarda las credenciales solo si el ambiente de QPSE es el mismo que usa
+   * la empresa: con claves de prueba en una empresa en producción, o al revés,
+   * todo lo que emita sale rechazado. Nunca pasa nada a producción: eso es
+   * irreversible y tiene su propio botón.
+   */
+  async vincularPse(id: number): Promise<{
+    ok: boolean;
+    mensaje?: string;
+    ambiente?: string;
+    usuarioPse?: string;
+    contrasenaPse?: string;
+  }> {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id },
+      select: { id: true, ruc: true, usaDemo: true, tipoEmpresa: true, billingProvider: true },
+    });
+    if (!empresa) throw new NotFoundException('Empresa no encontrada');
+    const ruc = String(empresa.ruc ?? '').trim();
+    if (empresa.tipoEmpresa === 'INFORMAL' || !/^\d{11}$/.test(ruc)) {
+      throw new BadRequestException('Solo las empresas formales con RUC emiten a SUNAT');
+    }
+    if (resolveBillingProvider(empresa as any) !== 'QPSE') {
+      throw new BadRequestException('Esta empresa no factura con QPSE');
+    }
+
+    const fila = await registrarEnQpse(this.qpse, ruc);
+    const ambiente = fila.environment === 'production' ? 'production' : 'demo';
+    if (empresa.usaDemo && ambiente === 'production') {
+      return { ok: false, ambiente, mensaje: 'En el PSE ya está en producción, pero aquí sigue en prueba. Usa "Pasar a producción".' };
+    }
+    if (!empresa.usaDemo && ambiente === 'demo') {
+      return { ok: false, ambiente, mensaje: 'En el PSE sigue en prueba. Activa "Modo Demo", guarda y usa "Pasar a producción" desde el menú.' };
+    }
+    if (!fila.username?.trim() || !fila.password?.trim()) {
+      return { ok: false, ambiente, mensaje: 'El PSE registró el RUC pero todavía no entregó las credenciales. Intenta en unos minutos.' };
+    }
+    await this.prisma.empresa.update({
+      where: { id },
+      data: { usuarioPse: fila.username.trim(), contrasenaPse: fila.password.trim() },
+    });
+    return { ok: true, ambiente, usuarioPse: fila.username.trim(), contrasenaPse: fila.password.trim() };
+  }
+
+  /** Lo que se perdería al pasar a producción con "borrar ventas de prueba". */
+  async previsualizarPaseProduccion(id: number) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id },
+      select: { id: true, razonSocial: true, ruc: true, usaDemo: true, planId: true },
+    });
+    if (!empresa) throw new NotFoundException('Empresa no encontrada');
+    const [comprobantes, guias] = await Promise.all([
+      this.prisma.comprobante.count({ where: { empresaId: id } }),
+      this.prisma.guiaRemision.count({ where: { empresaId: id } }),
+    ]);
+    return { empresa, comprobantes, guias };
+  }
+
+  /**
+   * "Pasar a producción": la demo pasa a ser cliente.
+   *
+   * 1. En QPSE el RUC pasa a producción (IRREVERSIBLE allá) y entrega el
+   *    usuario y la clave de firma de producción.
+   * 2. En una transacción: opcionalmente se borran los comprobantes y guías de
+   *    prueba (la primera factura real sale con el N° 1), se asigna el plan
+   *    elegido y las fechas corren desde hoy.
+   *
+   * Se puede repetir: si se corta después del paso 1, el segundo intento lo
+   * encuentra hecho en QPSE y sigue.
+   */
+  async pasarAProduccion(id: number, dto: PasarProduccionDto, adminUserId?: number) {
+    if (dto.confirmar !== true) {
+      throw new BadRequestException('Confirma el pase a producción: no se puede deshacer.');
+    }
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id },
+      select: { id: true, ruc: true, usaDemo: true, producto: true, billingProvider: true },
+    });
+    if (!empresa) throw new NotFoundException('Empresa no encontrada');
+    if (!empresa.usaDemo) throw new BadRequestException('La empresa ya está en producción');
+    if (resolveBillingProvider(empresa as any) !== 'QPSE') {
+      throw new BadRequestException('El pase a producción automático solo funciona con QPSE');
+    }
+
+    const plan = await this.prisma.plan.findUnique({ where: { id: dto.planId } });
+    if (!plan) throw new NotFoundException('Plan no encontrado');
+    if (normalizeProducto(plan.producto) !== normalizeProducto(empresa.producto)) {
+      throw new BadRequestException('El plan elegido no pertenece al producto de la empresa');
+    }
+
+    const fila = await pasarRucAProduccion(this.qpse, String(empresa.ruc ?? ''));
+
+    const limpieza = dto.borrarPruebas ? planDeLimpiezaDemo(await this.leerClavesConRegla()) : [];
+    const ahora = new Date();
+    const borradas: { tabla: string; filas: number }[] = [];
+    await this.prisma.$transaction(
+      async (tx) => {
+        for (const paso of limpieza) {
+          const n = await tx.$executeRawUnsafe(sqlDeBorrado(paso), id);
+          if (n > 0) borradas.push({ tabla: paso.tabla, filas: n });
+        }
+        if (dto.borrarPruebas) {
+          await tx.empresaSerie.updateMany({ where: { empresaId: id }, data: { correlativo: 1 } });
+        }
+        await tx.empresa.update({
+          where: { id },
+          data: {
+            usaDemo: false,
+            usuarioPse: fila.username,
+            contrasenaPse: fila.password,
+            planId: plan.id,
+            fechaActivacion: ahora,
+            fechaExpiracion: new Date(ahora.getTime() + (plan.duracionDias || 30) * 86_400_000),
+            estado: 'ACTIVO',
+          },
+        });
+      },
+      { timeout: 120_000, maxWait: 20_000 },
+    );
+
+    if (adminUserId) {
+      const pruebas = borradas.find((b) => b.tabla === 'Comprobante')?.filas ?? 0;
+      await this.registrarLog(
+        id,
+        'PASO_A_PRODUCCION',
+        `Plan ${plan.nombre}${dto.borrarPruebas ? ` · ${pruebas} comprobantes de prueba borrados` : ''}`,
+        adminUserId,
+      );
+    }
+
+    return { id, plan: plan.nombre, borradas };
+  }
+
+  private async leerClavesConRegla(): Promise<ClaveConRegla[]> {
+    return this.prisma.$queryRawUnsafe<ClaveConRegla[]>(`
+      SELECT tc.table_name AS hija,
+             kcu.column_name AS columna,
+             ccu.table_name AS padre,
+             ccu.column_name AS "padreColumna",
+             rc.delete_rule AS regla
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.key_column_usage kcu
+        ON tc.constraint_name = kcu.constraint_name
+       AND tc.table_schema = kcu.table_schema
+      JOIN information_schema.constraint_column_usage ccu
+        ON ccu.constraint_name = tc.constraint_name
+       AND ccu.table_schema = tc.table_schema
+      JOIN information_schema.referential_constraints rc
+        ON rc.constraint_name = tc.constraint_name
+       AND rc.constraint_schema = tc.table_schema
+      WHERE tc.constraint_type = 'FOREIGN KEY'
+        AND tc.table_schema = 'public'`);
   }
 
   /** Aviso en la campana del equipo comercial: un registro nuevo es un lead caliente. */
