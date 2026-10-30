@@ -198,6 +198,41 @@ export class WhatsAppService {
   }
 
   /**
+   * WABA y token del número por el que entró un chat, para llamadas a Meta
+   * que no son mensajes (API de Conversiones). Sin número del chat, o si ya no
+   * es de la empresa, el principal. Null si la empresa no conectó su WhatsApp.
+   */
+  async cuentaMetaDelChat(
+    empresaId: number,
+    phoneNumberId?: string | null,
+  ): Promise<{ wabaId: string; token: string } | null> {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: {
+        whatsappProvider: true,
+        whatsappApiToken: true,
+        whatsappBusinessId: true,
+        whatsappPhoneNumberId: true,
+      },
+    });
+    if (empresa?.whatsappProvider !== 'EMPRESA') return null;
+    const numero =
+      phoneNumberId && phoneNumberId !== empresa.whatsappPhoneNumberId
+        ? await this.prisma.numeroWhatsapp.findFirst({
+            where: { empresaId, phoneNumberId },
+            select: { wabaId: true, token: true },
+          })
+        : null;
+    const wabaId = numero?.wabaId || empresa.whatsappBusinessId;
+    // Igual que al enviar: un número sin token propio usa el del usuario del
+    // sistema (Embedded Signup); el principal, el token de la empresa.
+    const token = numero
+      ? numero.token || this.systemUserToken || empresa.whatsappApiToken
+      : empresa.whatsappApiToken || this.systemUserToken;
+    return wabaId && token ? { wabaId, token } : null;
+  }
+
+  /**
    * Descarga un archivo (media) de WhatsApp Cloud API por su `mediaId`, usando
    * el token de la empresa. Flujo Meta: GET /{mediaId} → { url, mime_type };
    * luego GET esa url (autenticada) → binario.

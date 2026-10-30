@@ -47,6 +47,8 @@ import { LEADS_MESSAGES_QUEUE, redisConnection } from './leads.constants';
 import { DashboardModule } from '../dashboard/dashboard.module';
 import { ReporteDiarioService } from './reporte-diario.service';
 import { ReporteDiarioController } from './reporte-diario.controller';
+import { MetaConversionesService } from './meta-conversiones.service';
+import { MetaConversionesController } from './meta-conversiones.controller';
 
 @Module({
   imports: [
@@ -70,6 +72,7 @@ import { ReporteDiarioController } from './reporte-diario.controller';
     LeadsWebhookController,
     LeadsCrmController,
     ReporteDiarioController,
+    MetaConversionesController,
     LeadsEnviosController,
   ],
   providers: [
@@ -86,6 +89,7 @@ import { ReporteDiarioController } from './reporte-diario.controller';
     LeadsDisparadoresService,
     LeadsPagoLinkService,
     ReporteDiarioService,
+    MetaConversionesService,
     MensajeriaService,
     LeadsVisitaService,
     LeadsEtiquetasService,
