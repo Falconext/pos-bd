@@ -58,6 +58,9 @@ describe('el servicio', () => {
     comprobanteId?: number | null;
     disparosEsperando?: number;
   } = {}) {
+    // Estado compartido de la fila, como en la base: updateMany solo cuenta
+    // si `seguimientos` sigue en el valor esperado.
+    const fila = { seguimientos: 0 };
     const conv = {
       id: 7,
       telefonoProspecto: '51987654321',
@@ -67,6 +70,11 @@ describe('el servicio', () => {
       leadConversacion: {
         findMany: jest.fn().mockResolvedValue([conv]),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn(async ({ where, data }: any) => {
+          if (fila.seguimientos !== where.seguimientos) return { count: 0 };
+          fila.seguimientos = data.seguimientos;
+          return { count: 1 };
+        }),
       },
       leadMensaje: {
         findMany: jest.fn().mockResolvedValue([
@@ -87,7 +95,7 @@ describe('el servicio', () => {
       generarSeguimiento: jest.fn().mockResolvedValue('¿Te ayudo a separar tu moringa?'),
     };
     const whatsapp: any = { enviarTexto: jest.fn().mockResolvedValue({ success: true }) };
-    return { servicio: new LeadsSeguimientoService(prisma, ia, whatsapp), prisma, whatsapp };
+    return { servicio: new LeadsSeguimientoService(prisma, ia, whatsapp), prisma, ia, whatsapp };
   }
 
   beforeEach(() => jest.useFakeTimers().setSystemTime(AHORA));
@@ -107,9 +115,9 @@ describe('el servicio', () => {
     const { servicio, prisma, whatsapp } = armar({ comprobanteId: 500 });
     await servicio.ejecutar();
     expect(whatsapp.enviarTexto).not.toHaveBeenCalled();
-    expect(prisma.leadConversacion.update).toHaveBeenCalledWith({
-      where: { id: 7 },
-      data: { seguimientos: { increment: 1 } },
+    expect(prisma.leadConversacion.updateMany).toHaveBeenCalledWith({
+      where: { id: 7, seguimientos: 0 },
+      data: { seguimientos: 1 },
     });
   });
 
@@ -126,5 +134,24 @@ describe('el servicio', () => {
     const where = prisma.leadDisparo.count.mock.calls[0][0].where;
     expect(where).toMatchObject({ empresaId: 89, telefono: '51987654321', estado: 'PROGRAMADO' });
     expect(where.tipo.in).toEqual(['CARRITO_EN_ESPERA', 'RECORDATORIO_ACORDADO']);
+  });
+
+  it('dos procesos con el mismo cron mandan UN solo reenganche', async () => {
+    const { servicio, prisma, ia, whatsapp } = armar();
+    const otro = new LeadsSeguimientoService(prisma, ia, whatsapp);
+    await Promise.all([servicio.ejecutar(), otro.ejecutar()]);
+    expect(whatsapp.enviarTexto).toHaveBeenCalledTimes(1);
+    expect(prisma.leadMensaje.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('si la IA no devuelve texto, suelta la conversación para reintentar', async () => {
+    const { servicio, prisma, ia, whatsapp } = armar();
+    ia.generarSeguimiento.mockResolvedValue('');
+    await servicio.ejecutar();
+    expect(whatsapp.enviarTexto).not.toHaveBeenCalled();
+    expect(prisma.leadConversacion.updateMany).toHaveBeenLastCalledWith({
+      where: { id: 7, seguimientos: 1 },
+      data: { seguimientos: 0 },
+    });
   });
 });

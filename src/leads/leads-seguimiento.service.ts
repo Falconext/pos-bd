@@ -205,20 +205,27 @@ export class LeadsSeguimientoService {
         // despedida del negocio, si la tiene encendida.
         const despedida = textoDespedida(conv.empresa.iaVentasConfigJson);
         if (despedida && despedirsePorMotivo(motivo)) {
-          await this.despedirse(conv.id, conv.telefonoProspecto, conv.empresa.id, despedida);
-          this.logger.log(`Seguimiento: conv ${conv.id} despedida (${motivo}).`);
+          if (await this.despedirse(conv.id, conv.telefonoProspecto, conv.empresa.id, despedida, 0)) {
+            this.logger.log(`Seguimiento: conv ${conv.id} despedida (${motivo}).`);
+          }
           continue;
         }
         if (motivo) {
           // Se marca como atendido para no volver a evaluarlo cada 10 min. Si
           // el cliente escribe, el contador vuelve a 0 y todo arranca de nuevo.
-          await this.prisma.leadConversacion.update({
-            where: { id: conv.id },
-            data: { seguimientos: { increment: 1 } },
+          await this.prisma.leadConversacion.updateMany({
+            where: { id: conv.id, seguimientos: 0 },
+            data: { seguimientos: 1 },
           });
           this.logger.log(`Seguimiento: conv ${conv.id} sin reenganche (${motivo}).`);
           continue;
         }
+
+        // Se toma la conversación ANTES de generar y enviar: si otro proceso
+        // corre el mismo cron sobre la misma base (otra réplica, un backend
+        // local apuntando a prod), solo uno gana y el cliente recibe un único
+        // reenganche. Antes se marcaba al final y salían dos (Krezka, 31-10).
+        if (!(await this.tomar(conv.id, 0, 1))) continue;
 
         const historial: MensajeConversacion[] = mensajes
           .slice()
@@ -255,7 +262,11 @@ export class LeadsSeguimientoService {
             contexto: businessContext,
           },
         );
-        if (!texto) continue;
+        if (!texto) {
+          // Sin texto no se mandó nada: se suelta para reintentar en 10 min.
+          await this.tomar(conv.id, 1, 0);
+          continue;
+        }
         const textoWhatsapp = enFormatoWhatsapp(
           cfg.sinAvisosMedicos ? sinMencionesMedicas(texto) : texto,
         );
@@ -279,10 +290,7 @@ export class LeadsSeguimientoService {
         }
         await this.prisma.leadConversacion.update({
           where: { id: conv.id },
-          data: {
-            seguimientos: { increment: 1 },
-            ultimoSeguimientoEn: new Date(),
-          },
+          data: { ultimoSeguimientoEn: new Date() },
         });
         enviados++;
       } catch (e: any) {
@@ -350,21 +358,44 @@ export class LeadsSeguimientoService {
           ahora - ultimoCliente.creadoEn.getTime() <
             LeadsSeguimientoService.VENTANA_HORAS * 3600_000;
         if (!esElReenganche || !dentroDeVentana) continue;
-        await this.despedirse(conv.id, conv.telefonoProspecto, conv.empresa.id, texto);
-        this.logger.log(`Seguimiento: conv ${conv.id} despedida (reenganche sin respuesta).`);
+        if (await this.despedirse(conv.id, conv.telefonoProspecto, conv.empresa.id, texto, 1)) {
+          this.logger.log(`Seguimiento: conv ${conv.id} despedida (reenganche sin respuesta).`);
+        }
       } catch (e: any) {
         this.logger.warn(`Despedida: error en conversación ${conv.id}: ${e?.message}`);
       }
     }
   }
 
-  /** Manda la despedida tal cual la escribió el negocio y la deja registrada. */
+  /**
+   * Pasa `seguimientos` de `desde` a `hacia` solo si sigue en `desde`. Es la
+   * única escritura que decide quién envía: con dos procesos, uno solo cuenta
+   * 1 fila y el otro 0. Al tomarla también fecha el seguimiento, para que la
+   * despedida tras reenganche no mire la fecha del silencio anterior.
+   */
+  private async tomar(conversacionId: number, desde: number, hacia: number): Promise<boolean> {
+    const r = await this.prisma.leadConversacion.updateMany({
+      where: { id: conversacionId, seguimientos: desde },
+      data: {
+        seguimientos: hacia,
+        ...(hacia === 1 ? { ultimoSeguimientoEn: new Date() } : {}),
+      },
+    });
+    return r.count === 1;
+  }
+
+  /**
+   * Manda la despedida tal cual la escribió el negocio y la deja registrada.
+   * Devuelve false si otro proceso ya la había tomado.
+   */
   private async despedirse(
     conversacionId: number,
     telefono: string,
     empresaId: number,
     texto: string,
-  ): Promise<void> {
+    desde: number,
+  ): Promise<boolean> {
+    if (!(await this.tomar(conversacionId, desde, YA_SE_DESPIDIO))) return false;
     await this.prisma.leadMensaje.create({
       data: { conversacionId, rol: 'ASISTENTE', contenido: texto },
     });
@@ -372,9 +403,6 @@ export class LeadsSeguimientoService {
     if (!envio.success) {
       this.logger.warn(`Despedida: envío falló a ${telefono}: ${envio.error}`);
     }
-    await this.prisma.leadConversacion.update({
-      where: { id: conversacionId },
-      data: { seguimientos: YA_SE_DESPIDIO },
-    });
+    return true;
   }
 }

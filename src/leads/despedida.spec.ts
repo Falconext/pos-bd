@@ -64,6 +64,7 @@ describe('la despedida tras el reenganche en el cron', () => {
             },
           ]),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       leadMensaje: {
         findFirst: jest
@@ -78,6 +79,9 @@ describe('la despedida tras el reenganche en el cron', () => {
     await svc.ejecutar();
     jest.useRealTimers();
     expect(enviarTexto).toHaveBeenCalledWith('51900000107', TEXTO_HIERBA_SANA, 89);
-    expect(prisma.leadConversacion.update).toHaveBeenCalledWith({ where: { id: 7 }, data: { seguimientos: 2 } });
+    expect(prisma.leadConversacion.updateMany).toHaveBeenCalledWith({
+      where: { id: 7, seguimientos: 1 },
+      data: { seguimientos: 2 },
+    });
   });
 });
