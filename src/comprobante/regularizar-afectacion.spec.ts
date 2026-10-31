@@ -16,8 +16,8 @@ describe('líneas emitidas con la afectación equivocada', () => {
       nota,
     );
     expect(r).toEqual([
-      { descripcion: 'IK. JALAPEÑO 30gr X6und', cantidad: 2, precio: 25, afectacionEmitida: 10, afectacionNota: 20 },
-      { descripcion: 'DELIVERY', cantidad: 1, precio: 10, afectacionEmitida: 10, afectacionNota: 30 },
+      { descripcion: 'IK. JALAPEÑO 30gr X6und', cantidad: 2, precio: 25, afectacionEmitida: 10, afectacionNota: 20, segun: 'nota' },
+      { descripcion: 'DELIVERY', cantidad: 1, precio: 10, afectacionEmitida: 10, afectacionNota: 30, segun: 'nota' },
     ]);
   });
 
@@ -31,5 +31,30 @@ describe('líneas emitidas con la afectación equivocada', () => {
         nota,
       ),
     ).toEqual([]);
+  });
+
+  // FRUTA PURA 31-10: editar la nota antes de pos-web #98 la dejó gravada; la
+  // boleta coincidía con la nota y no aparecía. Con Ley de Amazonía vale el producto.
+  const notaEditada = [
+    { productoId: 29754, descripcion: 'TK. TAKIS FUEGO 56gr X6und', tipAfeIgv: 10 },
+    { productoId: 31977, descripcion: 'SD. PAQ. ROSQUITAS AJONJOLI. 100gr X6und', tipAfeIgv: 20 },
+  ];
+  const boletaB001_12077 = [
+    { productoId: 29754, descripcion: 'TK. TAKIS FUEGO 56gr X6und', cantidad: 1, mtoPrecioUnitario: 45, tipAfeIgv: 10 },
+    { productoId: 31977, descripcion: 'SD. PAQ. ROSQUITAS AJONJOLI. 100gr X6und', cantidad: 1, mtoPrecioUnitario: 10, tipAfeIgv: 20 },
+  ];
+
+  it('nota y boleta gravadas, producto exonerado con Ley de Amazonía → se regulariza según el producto', () => {
+    expect(lineasConAfectacionErrada(boletaB001_12077, notaEditada, new Map([[29754, 20], [31977, 20]]))).toEqual([
+      { descripcion: 'TK. TAKIS FUEGO 56gr X6und', cantidad: 1, precio: 45, afectacionEmitida: 10, afectacionNota: 20, segun: 'producto' },
+    ]);
+  });
+
+  it('sin Ley de Amazonía (sin mapa de productos) no se toca: la nota manda', () => {
+    expect(lineasConAfectacionErrada(boletaB001_12077, notaEditada)).toEqual([]);
+  });
+
+  it('producto gravado de verdad sigue gravado aunque la empresa tenga Ley de Amazonía', () => {
+    expect(lineasConAfectacionErrada(boletaB001_12077, notaEditada, new Map([[29754, 10]]))).toEqual([]);
   });
 });

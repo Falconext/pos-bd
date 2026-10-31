@@ -12,6 +12,13 @@ import { EnviarSunatService } from './enviar-sunat.service';
  * emitidos no se editan: se anulan con nota de crédito (motivo 01) y se
  * vuelven a emitir con la afectación de la nota de venta.
  *
+ * Segunda tanda (31-10): tres boletas seguían con IGV (B001-11949, -12013,
+ * -12077) porque su nota de venta TAMBIÉN quedó gravada: editar una nota
+ * antes de pos-web #98 reescribía como gravadas las líneas que ya tenía. La
+ * boleta coincidía con la nota y la herramienta no las veía. Con la Ley de
+ * Amazonía, si la nota dice gravado pero el producto hoy es exonerado, vale
+ * el producto: la empresa no vende nada gravado.
+ *
  * La reemisión es una conversión de la MISMA nota: así el sistema no vuelve
  * a descontar stock (lo descontó la nota) ni a cobrar (la plata entró con la
  * nota). Si el cobro estaba en el comprobante anulado, la nota de crédito lo
@@ -30,7 +37,10 @@ export interface LineaARegularizar {
   cantidad: number;
   precio: number;
   afectacionEmitida: number;
+  /** La afectación con la que se reemite. */
   afectacionNota: number;
+  /** De dónde sale esa afectación: la nota de venta, o el producto (Ley de Amazonía). */
+  segun: 'nota' | 'producto';
 }
 
 export interface ComprobanteARegularizar {
@@ -48,28 +58,51 @@ export interface ComprobanteARegularizar {
   conNotasExtra: boolean;
 }
 
+type LineaNota = { productoId: number | null; descripcion: string; tipAfeIgv: number };
+
+/** La línea de la nota que corresponde a una emitida: por producto o, en ítems libres, por descripción. */
+function lineaDeLaNota(l: { productoId: number | null; descripcion: string }, deLaNota: LineaNota[]) {
+  return deLaNota.find((n) =>
+    l.productoId != null ? n.productoId === l.productoId : n.productoId == null && n.descripcion === l.descripcion,
+  );
+}
+
 /**
- * Las líneas cuya afectación en el comprobante no es la de la nota de venta
- * de origen. Puro, para probarlo: empareja por producto y, en ítems libres,
- * por descripción.
+ * Sin IGV según la nota; si la nota dice gravado, sin IGV según el producto
+ * (`afectacionProducto` solo viene con Ley de Amazonía). `null` = es gravado.
+ */
+function afectacionSinIgv(
+  l: { productoId: number | null },
+  origen: LineaNota | undefined,
+  afectacionProducto?: Map<number, number>,
+): { afectacion: number; segun: 'nota' | 'producto' } | null {
+  if (origen && SIN_IGV.includes(Number(origen.tipAfeIgv))) return { afectacion: Number(origen.tipAfeIgv), segun: 'nota' };
+  const delProducto = l.productoId != null ? afectacionProducto?.get(l.productoId) : undefined;
+  if (delProducto != null && SIN_IGV.includes(delProducto)) return { afectacion: delProducto, segun: 'producto' };
+  return null;
+}
+
+/**
+ * Las líneas emitidas con IGV que no debían llevarlo. Puro, para probarlo.
  */
 export function lineasConAfectacionErrada(
   emitidas: { productoId: number | null; descripcion: string; cantidad: number; mtoPrecioUnitario: number; tipAfeIgv: number }[],
-  deLaNota: { productoId: number | null; descripcion: string; tipAfeIgv: number }[],
+  deLaNota: LineaNota[],
+  afectacionProducto?: Map<number, number>,
 ): LineaARegularizar[] {
   const errores: LineaARegularizar[] = [];
   for (const l of emitidas) {
-    const origen = deLaNota.find((n) =>
-      l.productoId != null ? n.productoId === l.productoId : n.productoId == null && n.descripcion === l.descripcion,
-    );
+    const origen = lineaDeLaNota(l, deLaNota);
     if (!origen) continue;
-    if (Number(l.tipAfeIgv) === 10 && SIN_IGV.includes(Number(origen.tipAfeIgv))) {
+    const correcta = Number(l.tipAfeIgv) === 10 ? afectacionSinIgv(l, origen, afectacionProducto) : null;
+    if (correcta) {
       errores.push({
         descripcion: l.descripcion,
         cantidad: Number(l.cantidad),
         precio: Number(l.mtoPrecioUnitario),
         afectacionEmitida: Number(l.tipAfeIgv),
-        afectacionNota: Number(origen.tipAfeIgv),
+        afectacionNota: correcta.afectacion,
+        segun: correcta.segun,
       });
     }
   }
@@ -86,8 +119,20 @@ export class RegularizarAfectacionService {
     private readonly enviarSunat: EnviarSunatService,
   ) {}
 
+  /**
+   * Con Ley de Amazonía, la afectación actual de cada producto de la
+   * empresa; sin ella, nada (vale solo la nota).
+   */
+  private async afectacionProductos(empresaId: number): Promise<Map<number, number> | undefined> {
+    const empresa = await this.prisma.empresa.findUnique({ where: { id: empresaId }, select: { leyAmazonia: true } });
+    if (!empresa?.leyAmazonia) return undefined;
+    const productos = await this.prisma.producto.findMany({ where: { empresaId }, select: { id: true, tipoAfectacionIGV: true } });
+    return new Map(productos.map((p) => [p.id, Number(p.tipoAfectacionIGV)]));
+  }
+
   /** Lo que hay que regularizar en la empresa. No emite nada. */
   async planear(empresaId: number): Promise<ComprobanteARegularizar[]> {
+    const afectacionProducto = await this.afectacionProductos(empresaId);
     const formales = await this.prisma.comprobante.findMany({
       where: {
         empresaId,
@@ -118,7 +163,7 @@ export class RegularizarAfectacionService {
     const plan: ComprobanteARegularizar[] = [];
     for (const f of formales) {
       if (!f.comprobanteOrigen) continue;
-      const lineas = lineasConAfectacionErrada(f.detalles as any, f.comprobanteOrigen.detalles as any);
+      const lineas = lineasConAfectacionErrada(f.detalles as any, f.comprobanteOrigen.detalles as any, afectacionProducto);
       if (!lineas.length) continue;
       plan.push({
         id: f.id,
@@ -179,6 +224,7 @@ export class RegularizarAfectacionService {
     });
     if (!f || !f.comprobanteOrigen) throw new NotFoundException('Comprobante no encontrado');
     const documento = `${f.serie}-${f.correlativo}`;
+    const afectacionProducto = await this.afectacionProductos(empresaId);
     const pagos = await this.prisma.pago.findMany({ where: { comprobanteId: f.id } });
     const usuarioId = f.usuarioId ?? undefined;
     const sedeId = f.sedeId ?? undefined;
@@ -211,7 +257,8 @@ export class RegularizarAfectacionService {
     );
     await this.exigirAceptado(nc.id, `Nota de crédito de ${documento}`);
 
-    // 2) Reemisión: conversión de la misma nota, con la afectación de la nota.
+    // 2) Reemisión: conversión de la misma nota, con la afectación sin IGV que
+    //    corresponde (de la nota o, con Ley de Amazonía, del producto).
     const nuevo: any = await this.comprobantes.crearFormal(
       {
         ...comun,
@@ -221,9 +268,8 @@ export class RegularizarAfectacionService {
           .filter((s) => s && String(s).trim())
           .join('\n'),
         detalles: f.detalles.map((d) => {
-          const origen = f.comprobanteOrigen!.detalles.find((n) =>
-            d.productoId != null ? n.productoId === d.productoId : n.productoId == null && n.descripcion === d.descripcion,
-          );
+          const origen = lineaDeLaNota(d, f.comprobanteOrigen!.detalles as any);
+          const correcta = afectacionSinIgv(d, origen, afectacionProducto);
           return {
             productoId: d.productoId,
             descripcion: d.descripcion,
@@ -231,7 +277,7 @@ export class RegularizarAfectacionService {
             unidad: d.unidad,
             ...(d.productoId == null ? { unidadVenta: d.unidad } : {}),
             nuevoValorUnitario: Number(d.mtoPrecioUnitario),
-            tipoAfectacionIGV: String(origen?.tipAfeIgv ?? d.tipAfeIgv),
+            tipoAfectacionIGV: String(correcta?.afectacion ?? origen?.tipAfeIgv ?? d.tipAfeIgv),
           };
         }),
       },
