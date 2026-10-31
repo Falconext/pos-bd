@@ -51,7 +51,7 @@ export class LibroReclamacionesAvisosService {
       process.env.APP_URL ||
       process.env.FRONTEND_URL ||
       'https://app.falconext.pe';
-    return `${base.replace(/\/$/, '')}/administrador/libro-reclamaciones`;
+    return `${base.replace(/\/$/, '')}/administrador/tienda/libro-reclamaciones`;
   }
 
   private async enviarCorreo(c: Correo): Promise<void> {
