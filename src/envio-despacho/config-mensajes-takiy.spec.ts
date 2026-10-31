@@ -22,6 +22,7 @@ function armar({ planOk, takiyActivo }: { planOk: boolean; takiyActivo: boolean 
 
 const dto = {
   mensajeEnAgencia: 'Hola {{nombre}}, ya puede recoger',
+  mensajeEnCaminoAgencia: 'Va a tu agencia {{agencia}}',
   notificarEnCamino: false,
   recordatorioRecojoDias: 3,
   pagoRepartidorPropio: 'Yape',
@@ -39,6 +40,7 @@ describe('editar mensajes de despacho', () => {
     await servicio.upsertConfig(1, dto);
     expect(upsert.mock.calls[0][0].update).toEqual({
       mensajeEnAgencia: 'Hola {{nombre}}, ya puede recoger',
+      mensajeEnCaminoAgencia: 'Va a tu agencia {{agencia}}',
       notificarEnCamino: false,
     });
     // Recordatorios y formas de pago son del plan: no se guardan ni crean plantillas.
