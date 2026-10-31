@@ -65,6 +65,15 @@ export function celular9(v: string | null | undefined): string | null {
   return d.length >= 9 ? d.slice(-9) : null;
 }
 
+/**
+ * DNI que sirve para reconocer a una persona: 8 dígitos y no uno genérico
+ * ("00000000" de Clientes varios o de "Convertir a cliente").
+ */
+export function dniUtil(v: string | null | undefined): string | null {
+  const d = String(v ?? '').replace(/\D/g, '');
+  return d.length === 8 && !/^(\d)\1{7}$/.test(d) ? d : null;
+}
+
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
 /** El cuerpo que espera `POST /{dataset_id}/events`. */
