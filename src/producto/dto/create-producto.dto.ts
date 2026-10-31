@@ -1,4 +1,5 @@
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsIn,
@@ -106,6 +107,14 @@ export class CreateProductoDto {
   @IsInt()
   @Type(() => Number)
   categoriaId?: number;
+
+  /** Otras categorías donde también aparece (la principal es categoriaId). [] = quitar todas. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsInt({ each: true })
+  @Type(() => Number)
+  categoriasExtraIds?: number[];
 
   @IsOptional()
   @IsInt()

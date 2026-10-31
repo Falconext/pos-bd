@@ -736,6 +736,7 @@ model Categoria {
   empresaId      Int?
   empresa        Empresa?                @relation(fields: [empresaId], references: [id])
   productos      Producto[]
+  productosExtra ProductoCategoriaExtra[]
   fichasTecnicas FichaTecnicaPlantilla[]
 }
 
@@ -897,6 +898,8 @@ model Producto {
   valoresAtributos    Json?
 
   categoria                Categoria?                    @relation(fields: [categoriaId], references: [id])
+  /// Otras categorías donde también aparece (la principal sigue en categoriaId).
+  categoriasExtra          ProductoCategoriaExtra[]
   productoPadre            Producto?                     @relation("ProductoVariantes", fields: [productoPadreId], references: [id])
   variantes                Producto[]                    @relation("ProductoVariantes")
   empresa                  Empresa?                      @relation(fields: [empresaId], references: [id])
@@ -928,6 +931,18 @@ model Producto {
   @@index([empresaId, publicarEnTienda])
   @@index([marcaId])
   @@index([empresaId, codigoBarras])
+  @@index([categoriaId])
+}
+
+/// Categorías adicionales de un producto (la principal es Producto.categoriaId y no se repite aquí).
+model ProductoCategoriaExtra {
+  productoId  Int
+  producto    Producto  @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  categoriaId Int
+  categoria   Categoria @relation(fields: [categoriaId], references: [id], onDelete: Cascade)
+
+  @@id([productoId, categoriaId])
+  @@index([categoriaId])
 }
 
 enum EstadoProductoReview {

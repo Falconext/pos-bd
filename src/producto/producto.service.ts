@@ -55,6 +55,17 @@ import {
 import * as XLSX from 'xlsx';
 import axios from 'axios';
 import { estadosAListar } from './vendibilidad';
+import {
+  SELECT_CATEGORIAS_EXTRA,
+  agregarFiltroCategoria,
+  aplanarCategoriasExtra,
+  guardarCategoriasExtra,
+  quitarPrincipalDeExtras,
+  sanitizarCategoriasExtraIds,
+  separarNombresCategorias,
+  unirNombresCategorias,
+  validarCategoriasExtra,
+} from './categorias-extra.util';
 import { etiquetaDeMotivo } from './motivo-ajuste-stock';
 import { alinearCostoGlobal, costoDeSede } from '../kardex/costo-sede';
 import {
@@ -371,6 +382,8 @@ export class ProductoService {
       igvPorcentaje?: number;
       stock: number;
       categoriaId?: number;
+      /** Otras categorías donde también aparece. Ver categorias-extra.util. */
+      categoriasExtraIds?: number[] | null;
       marcaId?: number;
       stockMinimo?: number;
       stockMaximo?: number;
@@ -569,6 +582,13 @@ export class ProductoService {
         ),
       );
     }
+
+    // Antes de crear: una categoría ajena no debe dejar un producto a medias.
+    await validarCategoriasExtra(
+      this.prisma,
+      empresaId,
+      sanitizarCategoriasExtraIds(data.categoriasExtraIds, categoriaId),
+    );
 
     if (!unidadMedidaId) {
       const niuUnidad = await this.prisma.unidadMedida.findFirst({
@@ -838,6 +858,19 @@ export class ProductoService {
       nuevo.codigoBarras,
       nuevo.codigo,
     );
+
+    // Un PLACEHOLDER restaurado arranca sin las adicionales de su vida pasada,
+    // igual que con el stock: es un alta nueva.
+    const categoriasExtraIds =
+      sanitizarCategoriasExtraIds(data.categoriasExtraIds, nuevo.categoriaId) ??
+      (existe ? [] : undefined);
+    if (categoriasExtraIds !== undefined) {
+      await guardarCategoriasExtra(this.prisma, {
+        productoId: nuevo.id,
+        empresaId,
+        ids: categoriasExtraIds,
+      });
+    }
 
     return this.obtenerPorId(nuevo.id, empresaId);
   }
@@ -1181,7 +1214,6 @@ export class ProductoService {
       // Excluir productos del sistema (PENALIDAD, INTERES POR MORA, DESCUENTO GLOBAL)
       codigo: { notIn: productosDelSistema },
       marcaId: marcaId ? Number(marcaId) : undefined,
-      categoriaId: categoriaId ? Number(categoriaId) : undefined,
     };
 
     // Pedido por ids: es una consulta puntual, no una navegación del catálogo.
@@ -1202,6 +1234,9 @@ export class ProductoService {
       ? await this.busquedaPorPalabrasConAtributos(searchTerm, empresaId)
       : this.busquedaPorPalabras(searchTerm);
     if (searchAnd) where.AND = searchAnd;
+    // La categoría vale como principal o adicional; va al AND junto a la
+    // búsqueda, que ya usa OR por palabra.
+    if (categoriaId) where.AND = agregarFiltroCategoria(where, categoriaId).AND;
 
     if (!conVariantes && !porIds) {
       where.productoPadreId = null;
@@ -1429,6 +1464,7 @@ export class ProductoService {
               nombre: true,
             },
           },
+          categoriasExtra: SELECT_CATEGORIAS_EXTRA,
           marca: {
             select: {
               id: true,
@@ -1634,6 +1670,7 @@ export class ProductoService {
 
         return {
           ...p,
+          categoriasExtra: aplanarCategoriasExtra(p.categoriasExtra),
           variantes,
           precioUnitario: precioUnitarioEfectivo,
           precioOferta: precioOfertaEfectivo,
@@ -1751,12 +1788,13 @@ export class ProductoService {
       codigo: { notIn: productosDelSistema },
       productoPadreId: null,
       marcaId: marcaId ? Number(marcaId) : undefined,
-      categoriaId: categoriaId ? Number(categoriaId) : undefined,
     };
 
     // Búsqueda flexible por palabras (misma lógica que `listar`).
     const searchAnd = this.busquedaPorPalabras(searchTerm);
     if (searchAnd) where.AND = searchAnd;
+    // Principal o adicional, igual que el listado (los totales deben cuadrar).
+    if (categoriaId) where.AND = agregarFiltroCategoria(where, categoriaId).AND;
     // Misma regla de disponibilidad por sede que `listar`.
     if (params.sedeId) {
       where.NOT = {
@@ -1850,7 +1888,6 @@ export class ProductoService {
     const where: any = {
       empresaId,
       estado: EstadoType.ACTIVO,
-      ...(categoriaId ? { categoriaId: Number(categoriaId) } : {}),
       stocks: {
         some: {
           sedeId,
@@ -1863,6 +1900,8 @@ export class ProductoService {
     // Búsqueda flexible por palabras (misma lógica que `listar`).
     const searchAnd = this.busquedaPorPalabras(searchTerm);
     if (searchAnd) where.AND = searchAnd;
+    // Principal o adicional, igual que el listado.
+    if (categoriaId) where.AND = agregarFiltroCategoria(where, categoriaId).AND;
 
     const [productosRaw, total] = await Promise.all([
       this.prisma.producto.findMany({
@@ -2118,6 +2157,7 @@ export class ProductoService {
       include: {
         unidadMedida: true,
         categoria: true,
+        categoriasExtra: SELECT_CATEGORIAS_EXTRA,
         marca: true,
         variantes: {
           select: {
@@ -2196,6 +2236,7 @@ export class ProductoService {
 
     return {
       ...producto,
+      categoriasExtra: aplanarCategoriasExtra(producto.categoriasExtra),
       variantes,
       imagenUrl,
       imagenUrlDisplay: await signIfS3(imagenUrl),
@@ -3237,6 +3278,8 @@ export class ProductoService {
       codigo?: string;
       descripcion?: string;
       categoriaId?: number | null;
+      /** undefined = no tocar; [] o null = quitar todas. Ver categorias-extra.util. */
+      categoriasExtraIds?: number[] | null;
       marcaId?: number | null;
       unidadMedidaId?: number;
       tipoAfectacionIGV?: string;
@@ -3373,6 +3416,20 @@ export class ProductoService {
       data.sedesDisponibles = sedesDisponibles;
       await this.validarSedesDisponibles(data.id, data.empresaId, sedesDisponibles, stockNuevo);
     }
+
+    // Categorías adicionales: el PUT no pasa por el ValidationPipe (el body es
+    // un Omit<>), así que se limpian y validan aquí, antes de escribir nada.
+    const categoriaPrincipalNueva =
+      data.categoriaId === null
+        ? null
+        : data.categoriaId !== undefined && Number(data.categoriaId) > 0
+          ? Number(data.categoriaId)
+          : producto.categoriaId;
+    const categoriasExtraIds = sanitizarCategoriasExtraIds(
+      data.categoriasExtraIds,
+      categoriaPrincipalNueva,
+    );
+    await validarCategoriasExtra(this.prisma, data.empresaId, categoriasExtraIds);
 
     // Validar unicidad del Código de producto (SKU) si cambió: no puede repetirse
     // dentro de la empresa. Normaliza vacío → conserva el actual (no lo borra).
@@ -3904,6 +3961,20 @@ export class ProductoService {
       actualizado.codigoBarras,
       actualizado.codigo,
     );
+
+    if (categoriasExtraIds !== undefined) {
+      await guardarCategoriasExtra(this.prisma, {
+        productoId: actualizado.id,
+        empresaId: data.empresaId,
+        ids: categoriasExtraIds,
+      });
+    } else if (actualizado.categoriaId !== producto.categoriaId) {
+      await quitarPrincipalDeExtras(
+        this.prisma,
+        actualizado.id,
+        actualizado.categoriaId,
+      );
+    }
 
     return this.obtenerPorId(actualizado.id, data.empresaId);
   }
@@ -4709,15 +4780,22 @@ export class ProductoService {
       });
       if (!categoria) throw new NotFoundException('Categoría no encontrada');
     }
-    return this.prisma.producto.update({
+    // Si la nueva principal era una adicional, deja de serlo (no se repite).
+    await quitarPrincipalDeExtras(this.prisma, id, categoriaId);
+    const actualizado = await this.prisma.producto.update({
       where: { id },
       data: { categoriaId },
       select: {
         id: true,
         categoriaId: true,
         categoria: { select: { id: true, nombre: true } },
+        categoriasExtra: SELECT_CATEGORIAS_EXTRA,
       },
     });
+    return {
+      ...actualizado,
+      categoriasExtra: aplanarCategoriasExtra(actualizado.categoriasExtra),
+    };
   }
 
   async cambiarMarca(id: number, empresaId: number, marcaId: number | null) {
@@ -5068,6 +5146,7 @@ export class ProductoService {
       include: {
         unidadMedida: true,
         categoria: true,
+        categoriasExtra: SELECT_CATEGORIAS_EXTRA,
         marca: true,
         // Cuando se pide una sede concreta, traer solo su stock; si no
         // ("Todas las sedes"), traer el stock de todas para sumarlo y
@@ -5157,6 +5236,10 @@ export class ProductoService {
         DISPONIBILIDAD: producto.disponibilidad ?? '',
         PRIORIDAD: escribirPrioridadVenta(producto.prioridadVenta ?? null),
         CATEGORIA: producto.categoria?.nombre || '',
+        // Adicionales separadas por " | "; la importación las lee igual.
+        CATEGORIAS_EXTRA: unirNombresCategorias(
+          aplanarCategoriasExtra(producto.categoriasExtra),
+        ),
         MARCA: p?.marca?.nombre || '',
         LOCALIZACION: localizacion || '',
         ESTADO: producto.estado === EstadoType.INACTIVO ? 'DESACTIVADO' : 'ACTIVO',
@@ -5192,6 +5275,7 @@ export class ProductoService {
       DISPONIBILIDAD: '',
       PRIORIDAD: '',
       CATEGORIA: '',
+      CATEGORIAS_EXTRA: '',
       MARCA: '',
       LOCALIZACION: '',
       ESTADO: '',
@@ -5218,6 +5302,7 @@ export class ProductoService {
       { wch: 15 }, // DISPONIBILIDAD
       { wch: 10 }, // PRIORIDAD
       { wch: 20 }, // CATEGORIA
+      { wch: 30 }, // CATEGORIAS_EXTRA
       { wch: 20 }, // MARCA
       { wch: 30 }, // LOCALIZACION
     ];
@@ -5242,6 +5327,7 @@ export class ProductoService {
         DISPONIBILIDAD: 'INMEDIATA',
         PRIORIDAD: 'ALTA',
         CATEGORIA: 'General',
+        CATEGORIAS_EXTRA: '',
         MARCA: '',
       },
       {
@@ -5258,6 +5344,7 @@ export class ProductoService {
         DISPONIBILIDAD: 'BAJO PEDIDO',
         PRIORIDAD: '',
         CATEGORIA: 'Abarrotes',
+        CATEGORIAS_EXTRA: 'Ofertas | Más vendidos',
         MARCA: 'Ejemplo',
       },
     ];
@@ -5278,6 +5365,7 @@ export class ProductoService {
       { wch: 15 }, // DISPONIBILIDAD
       { wch: 10 }, // PRIORIDAD
       { wch: 20 }, // CATEGORIA
+      { wch: 30 }, // CATEGORIAS_EXTRA
       { wch: 20 }, // MARCA
     ];
 
@@ -5299,6 +5387,12 @@ export class ProductoService {
         Significado: 'Inafecto (no paga IGV por ley)',
       },
       { Columna: 'AFECT', Código: '40', Significado: 'Exportación' },
+      {
+        Columna: 'CATEGORIAS_EXTRA',
+        Código: 'Ofertas | Regalos',
+        Significado:
+          'Opcional. Otras categorías donde también aparece, separadas por | (la principal va en CATEGORIA). Vacía = no cambia las que ya tiene.',
+      },
     ];
     const hojaInstrucciones = XLSX.utils.json_to_sheet(instrucciones);
     hojaInstrucciones['!cols'] = [
@@ -5707,6 +5801,13 @@ export class ProductoService {
         const categoriaRaw =
           row['CATEGORIA'] ?? row['Categoría'] ?? row['categoria'] ?? null;
         const marcaRaw = row['MARCA'] ?? row['Marca'] ?? row['marca'] ?? null;
+        const categoriasExtraNombres = separarNombresCategorias(
+          valorDeColumna(row, [
+            'CATEGORIAS_EXTRA',
+            'CATEGORIAS EXTRA',
+            'OTRAS CATEGORIAS',
+          ]),
+        );
         // Columnas del catálogo de Hierba Sana: qué se le puede prometer al
         // cliente y cuánto empujar el producto. Si vienen vacías o ilegibles se
         // ignoran, y la disponibilidad se sigue deduciendo del stock.
@@ -5814,6 +5915,25 @@ export class ProductoService {
             categoriaMap.set(categoriaKey, id);
           }
           categoriaId = id;
+        }
+
+        // Adicionales: mismo alta automática que la principal. Celda vacía =
+        // no se tocan (un Excel viejo sin la columna no debe borrarlas).
+        let categoriasExtraIds: number[] | undefined;
+        if (categoriasExtraNombres.length > 0) {
+          categoriasExtraIds = [];
+          for (const nombre of categoriasExtraNombres) {
+            const clave = this.normClave(nombre);
+            let id = categoriaMap.get(clave);
+            if (!id) {
+              const nueva = await this.prisma.categoria.create({
+                data: { nombre, empresaId },
+              });
+              id = nueva.id;
+              categoriaMap.set(clave, id);
+            }
+            categoriasExtraIds.push(id);
+          }
         }
 
         // Auto-upsert marca: crear si no existe (por empresa)
@@ -5953,6 +6073,20 @@ export class ProductoService {
             },
           });
 
+          if (categoriasExtraIds) {
+            await guardarCategoriasExtra(this.prisma, {
+              productoId: existe.id,
+              empresaId,
+              ids:
+                sanitizarCategoriasExtraIds(
+                  categoriasExtraIds,
+                  producto.categoriaId,
+                ) ?? [],
+            });
+          } else if (categoriaId != null) {
+            await quitarPrincipalDeExtras(this.prisma, existe.id, categoriaId);
+          }
+
           // El Excel de una sede asigna el producto a esa sede (catálogo por
           // sede): si ya existía en otra, ahora también está disponible aquí.
           await this.marcarDisponibleEnSede(existe.id, sedeDestinoId);
@@ -6006,6 +6140,7 @@ export class ProductoService {
                   ? stockMinimoImport
                   : undefined,
               categoriaId,
+              categoriasExtraIds,
               marcaId,
               codigoBarras,
               disponibilidad: disponibilidadImport ?? undefined,

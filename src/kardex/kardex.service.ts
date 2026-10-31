@@ -40,6 +40,7 @@ import {
   esPerdida,
   motivoDelConcepto,
 } from '../producto/motivo-ajuste-stock';
+import { filtroPorCategoria } from '../producto/categorias-extra.util';
 
 
 /** Sedes ya validadas de un traslado (nombres para los conceptos del kardex). */
@@ -605,10 +606,9 @@ export class KardexService {
     }
 
     // Si hay filtro por categoría, incluir en la consulta del producto
+    // (vale como principal o adicional).
     if (filtros?.categoriaId) {
-      whereMovimientos.producto = {
-        categoriaId: filtros.categoriaId,
-      };
+      whereMovimientos.producto = filtroPorCategoria(Number(filtros.categoriaId));
     }
 
     const page = filtros?.page || 1;
