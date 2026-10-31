@@ -1,3 +1,4 @@
+import { IdempotenciaService } from '../integraciones/idempotencia/idempotencia.service';
 import { Module, forwardRef } from '@nestjs/common';
 import { ComprobanteService } from './comprobante.service';
 import { ComprobanteController } from './comprobante.controller';
@@ -41,6 +42,8 @@ import { RegularizarAfectacionService } from './regularizar-afectacion.service';
     QpseClient,
     ApisPeruClient,
     JambleClient,
+    // Para el IdempotenciaPanelInterceptor de las ventas del panel.
+    IdempotenciaService,
   ],
   exports: [
     ComprobanteService,
