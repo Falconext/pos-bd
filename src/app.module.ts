@@ -69,6 +69,7 @@ import { ContratoVehicularModule } from './contrato-vehicular/contrato-vehicular
 import { TipoCambioModule } from './tipo-cambio/tipo-cambio.module';
 import { LeadsModule } from './leads/leads.module';
 import { MercadoPagoModule } from './mercadopago/mercadopago.module';
+import { LibroReclamacionesModule } from './libro-reclamaciones/libro-reclamaciones.module';
 
 @Module({
   imports: [
@@ -104,6 +105,7 @@ import { MercadoPagoModule } from './mercadopago/mercadopago.module';
     SyncModule,
     SyncMovilModule,
     MercadoPagoModule,
+    LibroReclamacionesModule,
     TiendaModule,
     SeoModule,
     MarcaModule,

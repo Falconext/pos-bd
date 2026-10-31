@@ -519,13 +519,17 @@ export class PdfGeneratorService {
     );
   }
 
-  async generarPdfDesdeHtml(html: string): Promise<Buffer> {
+  /**
+   * `margen` se aplica a TODAS las páginas (útil si el contenido puede pasar
+   * a una segunda hoja). Por defecto sin margen, como siempre.
+   */
+  async generarPdfDesdeHtml(html: string, margen = '0'): Promise<Buffer> {
     return this.renderPdfBuffer(
       html,
       {
         format: 'A4',
         printBackground: true,
-        margin: { top: '0', right: '0', bottom: '0', left: '0' },
+        margin: { top: margen, right: margen, bottom: margen, left: margen },
       },
       '✅ PDF generado desde HTML',
     );

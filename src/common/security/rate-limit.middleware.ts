@@ -24,6 +24,11 @@ const SENSITIVE_PATHS = [
   '/api/empresa/registro',
 ];
 
+// Libro de Reclamaciones público: cada hoja registra datos y dispara correos.
+// Se cuentan todos los envíos (no solo los fallidos): 5 hojas por IP cada 15 min.
+const LIBRO_RECLAMACIONES_RE = /^\/api\/public\/store\/[^/]+\/libro-reclamaciones\/?$/;
+const LIBRO_RECLAMACIONES_REGLA = { limit: 5, onlyFailed: false };
+
 // Regla por ruta.
 //  - onlyFailed=true  → SOLO cuentan los intentos FALLIDOS (status >= 400).
 //    Un inicio de sesión correcto jamás incrementa el contador, así que un
@@ -83,7 +88,8 @@ export function authRateLimit() {
     if (req.method === 'OPTIONS') return next();
 
     const path = req.path || req.originalUrl || '';
-    const isSensitive = SENSITIVE_PATHS.some((item) => path.startsWith(item));
+    const esLibro = req.method === 'POST' && LIBRO_RECLAMACIONES_RE.test(path);
+    const isSensitive = esLibro || SENSITIVE_PATHS.some((item) => path.startsWith(item));
     if (!isSensitive) return next();
 
     const ip = clientIp(req);
@@ -92,8 +98,10 @@ export function authRateLimit() {
     const now = Date.now();
     cleanup(now);
 
-    const key = `${ip}:${path}`;
-    const { limit, onlyFailed } = ruleFor(path);
+    // El libro se cuenta por IP para todas las tiendas juntas: cambiar de slug
+    // no abre una cuota nueva.
+    const key = esLibro ? `${ip}:libro-reclamaciones` : `${ip}:${path}`;
+    const { limit, onlyFailed } = esLibro ? LIBRO_RECLAMACIONES_REGLA : ruleFor(path);
 
     const current = buckets.get(key);
     const count = current && current.resetAt > now ? current.count : 0;
@@ -105,7 +113,9 @@ export function authRateLimit() {
       res.setHeader('Retry-After', Math.ceil((resetAt - now) / 1000));
       return res.status(429).json({
         code: 0,
-        message: 'Demasiados intentos fallidos. Intenta nuevamente en unos minutos.',
+        message: esLibro
+          ? 'Registraste varias hojas seguidas. Intenta nuevamente en unos minutos.'
+          : 'Demasiados intentos fallidos. Intenta nuevamente en unos minutos.',
         error: 'TooManyRequests',
       });
     }
