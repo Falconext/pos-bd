@@ -2919,7 +2919,13 @@ model DespachoMensajeTemplate {
   empresa   Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
 
   mensajeEnCamino    String?
+  /// Variante opcional de "en camino" para envíos a provincia (agencia
+  /// Shalom/Olva). Null o vacío = sale `mensajeEnCamino`.
+  mensajeEnCaminoAgencia  String?
   mensajeEntregado   String?
+  /// Variante opcional de "entregado" para provincia (recogió en agencia).
+  /// Null o vacío = sale `mensajeEntregado`.
+  mensajeEntregadoAgencia String?
   /// Llegó a la agencia (Shalom/Olva). Solo se usa cuando el aviso sale por
   /// Takiy: con Meta la plantilla aprobada tiene el texto fijo.
   mensajeEnAgencia   String?

@@ -44,6 +44,7 @@ import {
   tocaRecordatorioRecojo,
   ultimos9,
 } from './recojo-agencia';
+import { destinoDelEnvio, textoSegunDestino } from './destino-envio';
 
 /** Mensaje que saldría al cliente, armado sin enviarlo (vista previa). */
 type MensajeArmado = { telefono: string; texto: string };
@@ -461,10 +462,25 @@ export class EnvioDespachoService {
    * rastreo Shalom) sigue siendo del plan.
    */
   private soloMensajes(dto: DespachoConfigDto): DespachoConfigDto {
-    const { mensajeEnCamino, mensajeEntregado, mensajeEnAgencia, notificarEnCamino, notificarEntregado } = dto;
+    const {
+      mensajeEnCamino,
+      mensajeEnCaminoAgencia,
+      mensajeEntregado,
+      mensajeEntregadoAgencia,
+      mensajeEnAgencia,
+      notificarEnCamino,
+      notificarEntregado,
+    } = dto;
     return Object.fromEntries(
-      Object.entries({ mensajeEnCamino, mensajeEntregado, mensajeEnAgencia, notificarEnCamino, notificarEntregado })
-        .filter(([, v]) => v !== undefined),
+      Object.entries({
+        mensajeEnCamino,
+        mensajeEnCaminoAgencia,
+        mensajeEntregado,
+        mensajeEntregadoAgencia,
+        mensajeEnAgencia,
+        notificarEnCamino,
+        notificarEntregado,
+      }).filter(([, v]) => v !== undefined),
     ) as DespachoConfigDto;
   }
 
@@ -490,6 +506,9 @@ export class EnvioDespachoService {
       mensajeEnCamino: MENSAJES_DEFAULT.EN_CAMINO,
       mensajeEntregado: MENSAJES_DEFAULT.ENTREGADO,
       mensajeEnAgencia: MENSAJES_DEFAULT.EN_AGENCIA,
+      // Opcionales: sin texto, provincia recibe el mismo aviso que Lima.
+      mensajeEnCaminoAgencia: null,
+      mensajeEntregadoAgencia: null,
       notificarEnCamino: true,
       notificarEntregado: true,
       recordatorioRecojoDias: 0,
@@ -949,18 +968,29 @@ export class EnvioDespachoService {
     if (!habilitado) return;
 
     // Plantilla aprobada por Meta (entrega garantizada fuera de 24h, sin bloqueo).
-    // El texto libre personalizable por empresa (config.mensaje*) ya no aplica aquí:
-    // Meta exige plantillas de contenido fijo aprobado.
+    // El texto libre personalizable por empresa (config.mensaje*) solo sale por
+    // Takiy: Meta exige plantillas de contenido fijo aprobado.
+    const envio = await this.prisma.envioDespacho.findFirst({
+      where: { comprobanteId },
+      select: { montoCOD: true, tipoEnvio: true, transportista: true, agenciaDestino: true, claveEnvio: true },
+    });
+    // Lima (motorizado) y provincia (agencia) pueden tener textos distintos;
+    // si el de provincia no está escrito, sale el general.
+    const destino = destinoDelEnvio(envio);
+    const variablesDestino = {
+      ...variables,
+      agencia: envio?.agenciaDestino || 'la agencia',
+      clave: envio?.claveEnvio ?? '',
+    };
     if (esEnCamino) {
       // Con saldo por cobrar y formas de pago configuradas para ese tipo de
       // repartidor, el aviso dice cuánto y cómo pagar (pago-repartidor.ts).
-      const envio = await this.prisma.envioDespacho.findFirst({
-        where: { comprobanteId },
-        select: { montoCOD: true },
-      });
       const saldo = saldoParaRetirar(comprobante.saldo, envio?.montoCOD);
       const formas = repartidorNombre ? formasDePagoParaElAviso(repartidor?.tipo, config) : null;
-      const propio = mensajePropio(config?.mensajeEnCamino, variables);
+      const propio = mensajePropio(
+        textoSegunDestino(destino, config?.mensajeEnCamino, config?.mensajeEnCaminoAgencia),
+        variablesDestino,
+      );
       if (saldo > 0 && formas) {
         const salio = await avisar('pedido_en_camino_pago', [
           nombre,
@@ -986,7 +1016,10 @@ export class EnvioDespachoService {
       await avisar(
         'pedido_entregado',
         [nombre, pedidoRef],
-        mensajePropio(config?.mensajeEntregado, variables),
+        mensajePropio(
+          textoSegunDestino(destino, config?.mensajeEntregado, config?.mensajeEntregadoAgencia),
+          variablesDestino,
+        ),
       );
     }
   }
