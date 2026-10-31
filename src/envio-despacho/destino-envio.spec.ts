@@ -16,8 +16,13 @@ describe('destino del envío (Lima vs provincia)', () => {
     expect(destinoDelEnvio({ tipoEnvio: ' agencia ' })).toBe('AGENCIA');
   });
 
+  it('Olva o Shalom a domicilio → domicilio: no dice "recógelo en la agencia"', () => {
+    expect(destinoDelEnvio({ tipoEnvio: 'DOMICILIO', transportista: 'OLVA' })).toBe('LOCAL');
+    expect(destinoDelEnvio({ tipoEnvio: 'domicilio', transportista: 'SHALOM_PRO' })).toBe('LOCAL');
+  });
+
   it.each(['SHALOM_PRO', 'SHALOM_COD', 'OLVA', 'URBANO', 'CRUZ_SUR', 'MARVISUR', 'olva'])(
-    'courier de agencia %s → agencia',
+    'envío antiguo sin tipo, courier de agencia %s → agencia',
     (transportista) => {
       expect(destinoDelEnvio({ transportista })).toBe('AGENCIA');
     },

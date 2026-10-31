@@ -20,10 +20,19 @@ export const COURIERS_AGENCIA: ReadonlySet<string> = new Set([
 
 export type DestinoEnvio = 'LOCAL' | 'AGENCIA';
 
+/**
+ * Manda el tipo de envío que se eligió al registrarlo (es obligatorio en POS y
+ * en el despacho): "Para agencia" → el cliente recoge con su clave; "A
+ * domicilio" → se lo llevan a su puerta, sea el motorizado en Lima o Olva en
+ * provincia (así un Olva a domicilio no recibe "ya puedes recogerlo en la
+ * agencia"). Solo los envíos antiguos sin tipo se deciden por el courier.
+ */
 export function destinoDelEnvio(
   envio: { tipoEnvio?: string | null; transportista?: string | null } | null | undefined,
 ): DestinoEnvio {
-  if (envio?.tipoEnvio?.trim().toUpperCase() === 'AGENCIA') return 'AGENCIA';
+  const tipo = envio?.tipoEnvio?.trim().toUpperCase();
+  if (tipo === 'AGENCIA') return 'AGENCIA';
+  if (tipo === 'DOMICILIO') return 'LOCAL';
   const courier = envio?.transportista?.trim().toUpperCase() ?? '';
   return COURIERS_AGENCIA.has(courier) ? 'AGENCIA' : 'LOCAL';
 }
