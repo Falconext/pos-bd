@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { afectacionPorDefecto } from '../producto/afectacion-igv';
 import * as XLSX from 'xlsx';
 import { PrismaService } from '../prisma/prisma.service';
 import { ComprasService } from './compras.service';
@@ -1304,7 +1305,9 @@ export class ImportarComprasService {
       {
         codigo: l.codigo || undefined,
         descripcion: l.descripcion,
-        tipoAfectacionIGV: '10',
+        tipoAfectacionIGV: afectacionPorDefecto(
+          await this.prisma.empresa.findUnique({ where: { id: empresaId }, select: { leyAmazonia: true } }),
+        ),
         precioUnitario: precioVenta,
         stock: 0,
         costoUnitario: this.r2(costoNeto),
