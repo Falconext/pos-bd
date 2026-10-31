@@ -49,3 +49,35 @@ export const afectacionDeCelda = (
   if (AFECTACIONES_VALIDAS.includes(String(n))) return String(n);
   return afectacionPorDefecto(empresa);
 };
+
+/** Exonerado e inafecto onerosos: las afectaciones sin IGV de una venta normal. */
+const SIN_IGV = ['20', '30'];
+
+/**
+ * La afectación con la que sale una línea de venta.
+ *
+ * Manda lo que pide la línea (el POS la marca gratuita, exportación, etc.); si
+ * no pide nada, el producto; si no hay producto (ítem libre, kit, envío), el
+ * default de la empresa.
+ *
+ * Con Ley de Amazonía hay un candado: una línea "gravado" de un producto que
+ * el catálogo tiene exonerado o inafecto sale como el producto. FRUTA PURA
+ * (31-10): el gravado llegaba de caminos que no miraban el producto —la nota
+ * de venta editada antes de pos-web #98, el selector "Onerosa" del regalo, la
+ * guía sin el producto en la página del catálogo— y cada uno costó una
+ * nota de crédito. El candado está en el motor para que el próximo camino
+ * nuevo no tenga que acordarse.
+ */
+export const afectacionDeLinea = (
+  pedida: unknown,
+  delProducto: unknown,
+  empresa?: EmpresaConAfectacion | null,
+  esItemLibre = false,
+): string => {
+  const p = pedida == null || String(pedida).trim() === '' ? null : String(pedida).trim();
+  const prod = delProducto == null || String(delProducto).trim() === '' ? null : String(delProducto).trim();
+  if (esItemLibre) return p ?? afectacionPorDefecto(empresa);
+  const elegida = p ?? prod ?? AFECTACION_GRAVADO;
+  if (empresa?.leyAmazonia && elegida === AFECTACION_GRAVADO && prod && SIN_IGV.includes(prod)) return prod;
+  return elegida;
+};

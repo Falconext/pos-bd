@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { afectacionPorDefecto } from '../producto/afectacion-igv';
 import {
   SyncBackupDto,
   ProductoSyncDto,
@@ -191,7 +192,10 @@ export class SyncService {
         descripcion: productoSync.nombre,
         empresaId,
         unidadMedidaId: unidadMedida.id,
-        tipoAfectacionIGV: '10', // Gravado - Operación Onerosa
+        // El default de la empresa: exonerado con Ley de Amazonía.
+        tipoAfectacionIGV: afectacionPorDefecto(
+          await this.prisma.empresa.findUnique({ where: { id: empresaId }, select: { leyAmazonia: true } }),
+        ),
         precioUnitario,
         valorUnitario,
         igvPorcentaje: new Decimal(18),
@@ -327,6 +331,7 @@ export class SyncService {
     });
 
     // Crear detalles del comprobante
+    const totalesLinea = { gravadas: 0, exoneradas: 0, inafectas: 0, igv: 0 };
     for (const detalleSync of ventaSync.detalles) {
       const productoId = productosMapping[detalleSync.productoLocalId];
       if (!productoId) {
@@ -346,9 +351,17 @@ export class SyncService {
 
       const cantidad = detalleSync.cantidad;
       const mtoPrecioUnitario = detalleSync.precioUnitario;
-      const mtoValorUnitario = mtoPrecioUnitario / 1.18;
+      // La afectación del producto: con 10 fijo, una venta exonerada (Ley de
+      // Amazonía) llegaba del respaldo con IGV inventado.
+      const tipAfeIgv = Number(producto.tipoAfectacionIGV ?? 10);
+      const gravada = tipAfeIgv === 10;
+      const mtoValorUnitario = gravada ? mtoPrecioUnitario / 1.18 : mtoPrecioUnitario;
       const mtoValorVenta = mtoValorUnitario * cantidad;
-      const igv = mtoValorVenta * 0.18;
+      const igv = gravada ? mtoValorVenta * 0.18 : 0;
+      if (gravada) totalesLinea.gravadas += mtoValorVenta;
+      else if (tipAfeIgv === 20) totalesLinea.exoneradas += mtoValorVenta;
+      else if (tipAfeIgv === 30) totalesLinea.inafectas += mtoValorVenta;
+      totalesLinea.igv += igv;
 
       await this.prisma.detalleComprobante.create({
         data: {
@@ -360,11 +373,29 @@ export class SyncService {
           mtoValorUnitario,
           mtoValorVenta,
           mtoBaseIgv: mtoValorVenta,
-          porcentajeIgv: 18,
+          porcentajeIgv: gravada ? 18 : 0,
           igv,
-          tipAfeIgv: 10,
+          tipAfeIgv,
           totalImpuestos: igv,
           mtoPrecioUnitario,
+        },
+      });
+    }
+
+    // La cabecera se armó suponiendo todo gravado: se corrige con las líneas.
+    if (totalesLinea.exoneradas > 0 || totalesLinea.inafectas > 0) {
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      const base = totalesLinea.gravadas + totalesLinea.exoneradas + totalesLinea.inafectas;
+      await this.prisma.comprobante.update({
+        where: { id: comprobante.id },
+        data: {
+          mtoOperGravadas: r2(totalesLinea.gravadas),
+          mtoOperExoneradas: r2(totalesLinea.exoneradas),
+          mtoOperInafectas: r2(totalesLinea.inafectas),
+          mtoIGV: r2(totalesLinea.igv),
+          totalImpuestos: r2(totalesLinea.igv),
+          valorVenta: r2(base),
+          subTotal: r2(base),
         },
       });
     }

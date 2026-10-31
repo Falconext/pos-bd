@@ -1,4 +1,5 @@
 import { num, round3 } from '../common/utils/stock';
+import { afectacionPorDefecto } from '../producto/afectacion-igv';
 import {
   BadRequestException,
   ForbiddenException,
@@ -2414,6 +2415,10 @@ export class ProduccionService {
     };
 
     const tiposAfectacion = new Set(['10', '20', '30', '40']);
+    // Celda vacía o inválida: el default de la empresa (exonerado con Ley de Amazonía).
+    const afectacionEmpresa = afectacionPorDefecto(
+      await this.prisma.empresa.findUnique({ where: { id: empresaId }, select: { leyAmazonia: true } }),
+    );
 
     for (let index = 0; index < productosRows.length; index++) {
       const row = productosRows[index];
@@ -2476,7 +2481,7 @@ export class ProduccionService {
         );
         const tipoAfectacion = tiposAfectacion.has(tipoAfectacionRaw)
           ? tipoAfectacionRaw
-          : '10';
+          : afectacionEmpresa;
         const codigoBarras = this.textoPlano(
           this.valorFila(row, ['CODIGO_BARRAS', 'CODIGOBARRAS', 'BARRAS']),
         );

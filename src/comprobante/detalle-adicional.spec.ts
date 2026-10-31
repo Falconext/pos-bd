@@ -99,6 +99,7 @@ describe('detalle adicional de la línea (cotización de servicios)', () => {
 
   it('cargarProductosYDetalles lo persiste en ítem libre y en producto, sin tocar la descripción', async () => {
     const prisma = {
+      empresa: { findUnique: jest.fn().mockResolvedValue({ leyAmazonia: false }) },
       producto: {
         findMany: jest.fn().mockResolvedValue([
           {
