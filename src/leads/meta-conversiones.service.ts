@@ -10,6 +10,7 @@ import {
   VENTANA_MS,
   armarEvento,
   celular9,
+  dniUtil,
   claveDeLead,
   claveDeVenta,
   clicAtribuible,
@@ -38,6 +39,8 @@ interface ChatConClic {
   canal: string;
   clienteId: number | null;
   comprobanteId: number | null;
+  /** DNI que el cliente dio en el chat (el suyo, no el de quien recibe). */
+  dni: string | null;
   notificadoEn: Date | null;
   clics: Clic[];
 }
@@ -322,7 +325,7 @@ export class MetaConversionesService {
             telefonoProspecto: true,
             canal: true,
             prospecto: { select: { clienteId: true, notificadoEn: true } },
-            borrador: { select: { comprobanteId: true } },
+            borrador: { select: { comprobanteId: true, dni: true } },
           },
         },
       },
@@ -339,6 +342,7 @@ export class MetaConversionesService {
           canal: c.canal,
           clienteId: c.prospecto?.clienteId ?? null,
           comprobanteId: c.borrador?.comprobanteId ?? null,
+          dni: dniUtil(c.borrador?.dni),
           notificadoEn: c.prospecto?.notificadoEn ?? null,
           clics: [],
         } as ChatConClic);
@@ -355,16 +359,19 @@ export class MetaConversionesService {
 
     // Cómo se reconoce que una venta es de ese chat, de lo más seguro a lo
     // menos: la nota que salió del pedido del chat, el cliente en que se
-    // convirtió el prospecto, o su celular en la ficha del cliente.
+    // convirtió el prospecto, su celular en la ficha del cliente, o el DNI
+    // que dio en el chat (la nota hecha a mano con ese DNI y sin celular).
     const porComprobante = new Map<number, ChatConClic[]>();
     const porCliente = new Map<number, ChatConClic[]>();
     const porCelular = new Map<string, ChatConClic[]>();
+    const porDni = new Map<string, ChatConClic[]>();
     const agregar = <K>(m: Map<K, ChatConClic[]>, k: K, c: ChatConClic) => m.set(k, [...(m.get(k) ?? []), c]);
     for (const c of chats) {
       if (c.comprobanteId) agregar(porComprobante, c.comprobanteId, c);
       if (c.clienteId) agregar(porCliente, c.clienteId, c);
       const cel = c.canal === 'WHATSAPP' ? celular9(c.telefonoProspecto) : null;
       if (cel) agregar(porCelular, cel, c);
+      if (c.dni) agregar(porDni, c.dni, c);
     }
     // Se compara por dígitos: en la ficha el celular suele estar como
     // "987 654 321" o "+51 987654321", y un `endsWith` no lo encontraba.
@@ -379,7 +386,14 @@ export class MetaConversionesService {
       const cel = celular9(cl.telefono);
       if (cel && porCelular.has(cel)) celularDeCliente.set(cl.id, cel);
     }
-    const clienteIds = [...new Set([...porCliente.keys(), ...celularDeCliente.keys()])];
+    const clientesPorDni = porDni.size
+      ? await this.prisma.cliente.findMany({
+          where: { empresaId, nroDoc: { in: [...porDni.keys()] } },
+          select: { id: true, nroDoc: true },
+        })
+      : [];
+    const dniDeCliente = new Map<number, string>(clientesPorDni.map((cl) => [cl.id, cl.nroDoc]));
+    const clienteIds = [...new Set([...porCliente.keys(), ...celularDeCliente.keys(), ...dniDeCliente.keys()])];
 
     const ventas = await this.prisma.comprobante.findMany({
       where: {
@@ -431,10 +445,12 @@ export class MetaConversionesService {
     for (const v of ventas) {
       if (anulado(v)) continue;
       const cel = celularDeCliente.get(v.clienteId);
+      const dni = dniDeCliente.get(v.clienteId);
       const candidatos = [
         ...(porComprobante.get(v.id) ?? []),
         ...(porCliente.get(v.clienteId) ?? []),
         ...(cel ? (porCelular.get(cel) ?? []) : []),
+        ...(dni ? (porDni.get(dni) ?? []) : []),
       ];
       const elegido = elegir(candidatos, v.creadoEn);
       if (!elegido) continue;
