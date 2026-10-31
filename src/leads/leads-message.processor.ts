@@ -1487,8 +1487,13 @@ export class LeadsMessageProcessor extends WorkerHost {
     const consulta = (texto || '').trim().slice(0, 120);
     if (consulta.length < 3) return [];
     try {
+      // La categoría vale como principal o como adicional del producto.
       const filtroCategoria = categoria
-        ? Prisma.sql`AND c."nombre" ILIKE ${`%${categoria}%`}`
+        ? Prisma.sql`AND (c."nombre" ILIKE ${`%${categoria}%`} OR EXISTS (
+            SELECT 1 FROM "ProductoCategoriaExtra" pce
+            JOIN "Categoria" ce ON ce."id" = pce."categoriaId"
+            WHERE pce."productoId" = p."id"
+              AND ce."nombre" ILIKE ${`%${categoria}%`}))`
         : Prisma.empty;
       return await this.prisma.$queryRaw<ProductoParaIa[]>`
         SELECT p."id", p."descripcion", p."precioUnitario", p."stock",
@@ -3620,26 +3625,56 @@ export class LeadsMessageProcessor extends WorkerHost {
       where: {
         empresaId,
         estado: 'ACTIVO' as any,
-        ...(categoria
-          ? {
-              categoria: {
-                nombre: { contains: categoria, mode: 'insensitive' as any },
+        AND: [
+          // Categoría pedida: principal o adicional.
+          ...(categoria
+            ? [
+                {
+                  OR: [
+                    {
+                      categoria: {
+                        nombre: { contains: categoria, mode: 'insensitive' as any },
+                      },
+                    },
+                    {
+                      categoriasExtra: {
+                        some: {
+                          categoria: {
+                            nombre: {
+                              contains: categoria,
+                              mode: 'insensitive' as any,
+                            },
+                          },
+                        },
+                      },
+                    },
+                  ],
+                },
+              ]
+            : []),
+          ...tokens.map((tk) => ({
+            OR: [
+              { descripcion: { contains: tk, mode: 'insensitive' as any } },
+              { codigo: { contains: tk, mode: 'insensitive' as any } },
+              { codigoBarras: { contains: tk, mode: 'insensitive' as any } },
+              {
+                categoria: {
+                  nombre: { contains: tk, mode: 'insensitive' as any },
+                },
               },
-            }
-          : {}),
-        AND: tokens.map((tk) => ({
-          OR: [
-            { descripcion: { contains: tk, mode: 'insensitive' as any } },
-            { codigo: { contains: tk, mode: 'insensitive' as any } },
-            { codigoBarras: { contains: tk, mode: 'insensitive' as any } },
-            {
-              categoria: {
-                nombre: { contains: tk, mode: 'insensitive' as any },
+              {
+                categoriasExtra: {
+                  some: {
+                    categoria: {
+                      nombre: { contains: tk, mode: 'insensitive' as any },
+                    },
+                  },
+                },
               },
-            },
-            { marca: { nombre: { contains: tk, mode: 'insensitive' as any } } },
-          ],
-        })),
+              { marca: { nombre: { contains: tk, mode: 'insensitive' as any } } },
+            ],
+          })),
+        ],
       },
       select: {
         id: true,

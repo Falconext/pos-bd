@@ -29,21 +29,25 @@ export class CategoriaService {
   }
 
   async listar(empresaId: number) {
-    return this.prisma.categoria.findMany({
+    const visibles = { in: [EstadoType.ACTIVO, EstadoType.INACTIVO] };
+    const categorias = await this.prisma.categoria.findMany({
       where: { empresaId },
       orderBy: { id: 'desc' },
       include: {
         _count: {
           select: {
-            productos: {
-              where: {
-                estado: { in: [EstadoType.ACTIVO, EstadoType.INACTIVO] },
-              },
-            },
+            productos: { where: { estado: visibles } },
+            productosExtra: { where: { producto: { estado: visibles } } },
           },
         },
       },
     });
+    // El conteo suma los que la tienen como principal y como adicional. Una
+    // adicional nunca repite la principal, así que nadie se cuenta dos veces.
+    return categorias.map(({ _count, ...categoria }) => ({
+      ...categoria,
+      _count: { productos: _count.productos + _count.productosExtra },
+    }));
   }
 
   async obtenerPorId(id: number, empresaId: number) {
