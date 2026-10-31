@@ -409,6 +409,10 @@ model Empresa {
   offlineHabilitado             Boolean                       @default(false)
   operacionesSync               OperacionSync[]
   dispositivosMoviles           DispositivoMovil[]
+  /// Libro de Reclamaciones virtual (Ley 29571). Sin cascada: las hojas se
+  /// conservan al menos 2 años y no se borran con la empresa.
+  librosReclamaciones           LibroReclamacion[]
+  libroReclamacionContadores    LibroReclamacionContador[]
   // Cobranza con vendedores de campo: cuando es true, "Registrar Pago" pide el vendedor de
   // campo que envió el comprobante, a quién se dirigió el pago y permite adjuntar el comprobante.
   // Default false = flujo de cobro estándar (la mayoría de negocios).
@@ -678,6 +682,7 @@ model Usuario {
   pagosCompra                       PagoCompra[]
   preferenciasTabla                 PreferenciaTabla[]
   refreshTokens                     RefreshToken[]
+  reclamacionesRespondidas          LibroReclamacion[]                 @relation("LibroReclamacionRespondidoPor")
   empresa                           Empresa?                           @relation(fields: [empresaId], references: [id])
   whatsappEnvios                    WhatsAppEnvio[]
   guiasRemision                     GuiaRemision[]
@@ -5630,4 +5635,89 @@ model NumeroWhatsapp {
   creadoEn      DateTime @default(now())
 
   @@index([empresaId])
+}
+
+// ==================== LIBRO DE RECLAMACIONES ====================
+
+/// RECLAMO: disconformidad con el producto o servicio. QUEJA: con la atención.
+enum TipoLibroReclamacion {
+  RECLAMO
+  QUEJA
+}
+
+/// VENCIDO no se guarda: es un PENDIENTE con `fechaLimite` ya pasada.
+enum EstadoLibroReclamacion {
+  PENDIENTE
+  RESPONDIDO
+}
+
+/// Hoja del Libro de Reclamaciones virtual (Ley 29571, D.S. 011-2011-PCM).
+/// Inmutable: no se edita ni se borra. Solo se registra la respuesta una vez.
+model LibroReclamacion {
+  id          Int                    @id @default(autoincrement())
+  empresaId   Int
+  empresa     Empresa                @relation(fields: [empresaId], references: [id], onDelete: Restrict)
+  /// Año (hora de Lima) y número dentro del año: el código es `AAAA-NNNNNN`.
+  anio        Int
+  correlativo Int
+  codigo      String
+  tipo        TipoLibroReclamacion
+  estado      EstadoLibroReclamacion @default(PENDIENTE)
+
+  /// Datos del proveedor tal como estaban al registrar la hoja.
+  proveedorRazonSocial     String
+  proveedorRuc             String
+  proveedorDireccion       String
+  proveedorNombreComercial String?
+
+  nombres            String
+  /// DNI | CE | PASAPORTE | RUC
+  tipoDocumento      String
+  numeroDocumento    String
+  domicilio          String
+  telefono           String
+  email              String
+  menorDeEdad        Boolean @default(false)
+  apoderadoNombre    String?
+  apoderadoDocumento String?
+
+  /// PRODUCTO | SERVICIO
+  bienTipo        String
+  bienDescripcion String
+  montoReclamado  Decimal? @db.Decimal(12, 2)
+  pedidoCodigo    String?
+
+  detalle           String
+  pedidoConsumidor  String
+  aceptaDeclaracion Boolean
+
+  /// SHA-256 del token que abre la constancia pública (el token no se guarda).
+  tokenHash String
+  ip        String?
+  userAgent String?
+
+  fecha           DateTime  @default(now())
+  /// Fin (23:59:59 Lima) del día hábil 15 contado desde el registro.
+  fechaLimite     DateTime
+  respuesta       String?
+  fechaRespuesta  DateTime?
+  respondidoPorId Int?
+  respondidoPor   Usuario?  @relation("LibroReclamacionRespondidoPor", fields: [respondidoPorId], references: [id], onDelete: Restrict)
+
+  @@unique([empresaId, codigo])
+  @@unique([empresaId, anio, correlativo])
+  @@index([empresaId, estado, fechaLimite])
+  @@index([empresaId, fecha])
+  @@index([estado, fechaLimite])
+}
+
+/// Último correlativo usado por empresa y año. Se incrementa dentro de la misma
+/// transacción que crea la hoja: si la creación falla, el número no se gasta.
+model LibroReclamacionContador {
+  empresaId Int
+  empresa   Empresa @relation(fields: [empresaId], references: [id], onDelete: Restrict)
+  anio      Int
+  ultimo    Int     @default(0)
+
+  @@id([empresaId, anio])
 }
