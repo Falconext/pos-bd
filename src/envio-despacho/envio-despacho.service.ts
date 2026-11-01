@@ -45,6 +45,7 @@ import {
   ultimos9,
 } from './recojo-agencia';
 import { destinoDelEnvio, textoSegunDestino } from './destino-envio';
+import { consejoNumeroNegocio } from '../whatsapp/numero-negocio.service';
 
 /** Mensaje que saldría al cliente, armado sin enviarlo (vista previa). */
 type MensajeArmado = { telefono: string; texto: string };
@@ -456,10 +457,10 @@ export class EnvioDespachoService {
   }
 
   /**
-   * Con Takiy los avisos salen desde el número del negocio y sin costo por
-   * mensaje: escribir sus propios textos no depende del plan. El resto de la
-   * automatización (recordatorios de recojo, formas de pago al repartidor,
-   * rastreo Shalom) sigue siendo del plan.
+   * Con el número del negocio por QR (Evolution conectado o Takiy activo) los
+   * avisos salen sin costo por mensaje: escribir sus propios textos no depende
+   * del plan. El resto de la automatización (recordatorios de recojo, formas
+   * de pago al repartidor, rastreo Shalom) sigue siendo del plan.
    */
   private soloMensajes(dto: DespachoConfigDto): DespachoConfigDto {
     const {
@@ -515,14 +516,15 @@ export class EnvioDespachoService {
       pagoRepartidorPropio: null,
       pagoRepartidorContratado: null,
     };
+    const porQr = !!empresa?.takiyActivo || !!(await this.whatsapp.numeroNegocioActivo(empresaId));
     return {
       ...base,
       // Opt-in del rastreo automático Shalom (cron 30 min). Default false.
       shalomAutoTrackingActivo: empresa?.shalomAutoTrackingActivo ?? false,
       // El plan permite editar esta configuración (`tieneShalomGuias`).
       habilitadoPorPlan: planPermiteShalomPro(empresa?.plan),
-      // Los textos por estado se editan con el plan o con Takiy activo.
-      mensajesEditables: planPermiteShalomPro(empresa?.plan) || !!empresa?.takiyActivo,
+      // Los textos por estado se editan con el plan o con el número por QR.
+      mensajesEditables: planPermiteShalomPro(empresa?.plan) || porQr,
     };
   }
 
@@ -535,7 +537,9 @@ export class EnvioDespachoService {
         where: { id: empresaId },
         select: { takiyActivo: true },
       });
-      if (!takiy?.takiyActivo) throw e;
+      // Evolution conectado cuenta igual que Takiy activo.
+      const porQr = !!takiy?.takiyActivo || !!(await this.whatsapp.numeroNegocioActivo(empresaId));
+      if (!porQr) throw e;
       dto = this.soloMensajes(dto);
     }
     const guardado = await this.prisma.despachoMensajeTemplate.upsert({
@@ -1137,16 +1141,16 @@ export class EnvioDespachoService {
     };
   }
 
-  /** Manda el mensaje que el negocio revisó/editó. Solo por Takiy: es texto libre. */
+  /** Manda el mensaje que el negocio revisó/editó. Solo por su número por QR (Evolution/Takiy): es texto libre. */
   async enviarMensajeCliente(comprobanteId: number, empresaId: number, telefono: string, texto: string) {
     await this.validateComprobante(comprobanteId, empresaId);
     if (!telefono?.trim() || !texto?.trim()) {
       throw new BadRequestException('Falta el celular o el mensaje.');
     }
-    const r = await this.whatsapp.enviarPorTakiy(empresaId, telefono, texto.trim());
+    const r = await this.whatsapp.enviarDesdeNumeroNegocio(empresaId, telefono, texto.trim());
     if (!r.success) {
       throw new BadRequestException(
-        `${r.error || 'No se pudo enviar.'} Revisa en Takiy que tu celular siga vinculado.`,
+        `${r.error || 'No se pudo enviar.'} ${consejoNumeroNegocio(r.via)}`,
       );
     }
     await this.dejarEnElChat(empresaId, comprobanteId, telefono, texto.trim());

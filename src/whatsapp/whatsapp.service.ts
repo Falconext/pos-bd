@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ForbiddenException,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
@@ -11,6 +12,7 @@ import axios from 'axios';
 import sharp from 'sharp';
 import FormData from 'form-data';
 import { enviarTakiy, CredencialesTakiy, ResultadoTakiy } from './takiy';
+import { NumeroNegocioService, ResultadoNumeroNegocio, ViaNumeroNegocio } from './numero-negocio.service';
 import {
   planTieneFeature,
   SELECT_PLAN_FEATURES,
@@ -88,6 +90,7 @@ export class WhatsAppService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
+    @Optional() private readonly numeroNegocio?: NumeroNegocioService,
   ) {
     const { token, phoneId } = this.getCredentials();
 
@@ -2299,11 +2302,34 @@ export class WhatsAppService {
     return r;
   }
 
+  // ─── Número del negocio por QR (Evolution → Takiy) ──────────────────────
+
+  /** Evolution conectado o Takiy activo; null si el negocio no tiene ninguno. */
+  async numeroNegocioActivo(empresaId: number): Promise<ViaNumeroNegocio | null> {
+    return this.numeroNegocio ? this.numeroNegocio.proveedorActivo(empresaId) : null;
+  }
+
   /**
-   * Aviso al cliente que con Meta va como plantilla aprobada. Con Takiy activo
-   * sale como texto: el propio del negocio si lo escribió, o el mismo cuerpo
-   * de la plantilla con los valores puestos, para que el cliente lea lo mismo
-   * por cualquiera de las dos vías.
+   * Manda desde el número del negocio (Evolution conectado → Takiy activo).
+   * `via: null` = no tiene ninguno: el llamador sigue con Meta o no manda.
+   */
+  async enviarDesdeNumeroNegocio(
+    empresaId: number,
+    numero: string,
+    mensaje: string,
+    archivoUrl?: string,
+  ): Promise<ResultadoNumeroNegocio> {
+    if (!this.numeroNegocio) {
+      return { success: false, via: null, error: 'El negocio no tiene su WhatsApp conectado por QR.' };
+    }
+    return this.numeroNegocio.enviar(empresaId, { numero, mensaje, archivoUrl });
+  }
+
+  /**
+   * Aviso al cliente que con Meta va como plantilla aprobada. Con el número
+   * del negocio por QR (Evolution o Takiy) sale como texto: el propio del
+   * negocio si lo escribió, o el mismo cuerpo de la plantilla con los valores
+   * puestos, para que el cliente lea lo mismo por cualquiera de las vías.
    */
   async enviarAvisoCliente(
     empresaId: number,
@@ -2311,15 +2337,15 @@ export class WhatsAppService {
     plantilla: string,
     valores: string[],
     textoPropio?: string | null,
-  ): Promise<{ success: boolean; error?: string; via: 'TAKIY' | 'META'; texto?: string }> {
-    if (await this.credencialesTakiy(empresaId)) {
+  ): Promise<{ success: boolean; error?: string; via: ViaNumeroNegocio | 'META'; texto?: string }> {
+    if (await this.numeroNegocioActivo(empresaId)) {
       const cuerpo = this.cuerpoPlantillaDespacho(plantilla);
       const texto =
         textoPropio?.trim() ||
         (cuerpo ? cuerpo.replace(/\{\{(\d+)\}\}/g, (_m, n: string) => valores[Number(n) - 1] ?? '') : null);
       if (texto) {
-        const r = await this.enviarPorTakiy(empresaId, numero, texto);
-        return { ...r, via: 'TAKIY', texto };
+        const r = await this.enviarDesdeNumeroNegocio(empresaId, numero, texto);
+        return { success: r.success, error: r.error, via: r.via ?? 'TAKIY', texto };
       }
     }
     const r = await this.enviarPlantilla(numero, plantilla, 'es', valores, empresaId);

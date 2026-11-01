@@ -3,7 +3,15 @@ import { EnvioDespachoService } from './envio-despacho.service';
 
 // Con Takiy los avisos salen del número del negocio sin costo por mensaje:
 // sus textos se editan sin el plan Corporativo. Lo demás sigue siendo del plan.
-function armar({ planOk, takiyActivo }: { planOk: boolean; takiyActivo: boolean }) {
+function armar({
+  planOk,
+  takiyActivo,
+  evolution = false,
+}: {
+  planOk: boolean;
+  takiyActivo: boolean;
+  evolution?: boolean;
+}) {
   const upsert = jest.fn(async (args: any) => ({ empresaId: 1, ...args.update }));
   const prisma = {
     empresa: {
@@ -15,7 +23,10 @@ function armar({ planOk, takiyActivo }: { planOk: boolean; takiyActivo: boolean 
     },
     despachoMensajeTemplate: { upsert },
   };
-  const whatsapp = { crearPlantillasDespachoEmpresa: jest.fn(async () => ({ creadas: [], existentes: [], errores: [] })) };
+  const whatsapp = {
+    crearPlantillasDespachoEmpresa: jest.fn(async () => ({ creadas: [], existentes: [], errores: [] })),
+    numeroNegocioActivo: jest.fn(async () => (evolution ? 'EVOLUTION' : null)),
+  };
   const servicio = new EnvioDespachoService(prisma as never, {} as never, whatsapp as never, {} as never, {} as never);
   return { servicio, upsert, whatsapp };
 }
@@ -44,6 +55,17 @@ describe('editar mensajes de despacho', () => {
       notificarEnCamino: false,
     });
     // Recordatorios y formas de pago son del plan: no se guardan ni crean plantillas.
+    expect(whatsapp.crearPlantillasDespachoEmpresa).not.toHaveBeenCalled();
+  });
+
+  it('sin plan pero con Evolution conectado: igual que con Takiy', async () => {
+    const { servicio, upsert, whatsapp } = armar({ planOk: false, takiyActivo: false, evolution: true });
+    await servicio.upsertConfig(1, dto);
+    expect(upsert.mock.calls[0][0].update).toEqual({
+      mensajeEnAgencia: 'Hola {{nombre}}, ya puede recoger',
+      mensajeEnCaminoAgencia: 'Va a tu agencia {{agencia}}',
+      notificarEnCamino: false,
+    });
     expect(whatsapp.crearPlantillasDespachoEmpresa).not.toHaveBeenCalled();
   });
 

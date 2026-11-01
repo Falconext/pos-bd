@@ -106,16 +106,14 @@ export class LibroReclamacionesAvisosService {
     const destinos = numerosInternos(celulares);
     await Promise.allSettled(
       destinos.map(async (numero) => {
-        // Con Takiy sale desde el número del negocio sin ventana de 24 h; si no,
-        // texto libre por Meta (solo llega si la ventana está abierta).
-        if (await this.whatsapp.credencialesTakiy(empresaId)) {
-          const t = await this.whatsapp.enviarPorTakiy(
-            empresaId,
-            numero,
-            texto,
-          );
-          if (t.success) return;
-        }
+        // Con el número del negocio por QR (Evolution o Takiy) sale sin ventana
+        // de 24 h; si no, texto libre por Meta (solo si la ventana está abierta).
+        const n = await this.whatsapp.enviarDesdeNumeroNegocio(
+          empresaId,
+          numero,
+          texto,
+        );
+        if (n.success) return;
         const r = await this.whatsapp.enviarTexto(numero, texto, empresaId);
         if (!r.success) {
           this.logger.warn(

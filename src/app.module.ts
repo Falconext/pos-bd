@@ -31,6 +31,7 @@ import { NotificacionesModule } from './notificaciones/notificaciones.module';
 // asistente sigue apagado salvo SOPORTE_IA=true).
 import { SoporteModule } from './soporte/soporte.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
+import { WhatsappConexionModule } from './whatsapp/conexion/whatsapp-conexion.module';
 import { S3Module } from './s3/s3.module';
 import { SyncModule } from './sync/sync.module';
 import { SyncMovilModule } from './sync-movil/sync-movil.module';
@@ -102,6 +103,7 @@ import { LibroReclamacionesModule } from './libro-reclamaciones/libro-reclamacio
     NotificacionesModule,
     SoporteModule,
     WhatsAppModule,
+    WhatsappConexionModule,
     S3Module,
     SyncModule,
     SyncMovilModule,
