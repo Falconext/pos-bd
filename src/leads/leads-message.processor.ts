@@ -42,7 +42,7 @@ import {
 import { WEB_CUENTA_COMO_LEAD } from './chat-web';
 import { conDescargoLegal } from './prompt-asesor';
 import { JOB_ECO_VENDEDOR, type EcoVendedor } from './eco-vendedor';
-import { origenDeAnuncio, type ReferralWhatsapp } from './anuncio-origen';
+import { origenDeAnuncio, origenTiktok, type ReferralWhatsapp } from './anuncio-origen';
 import {
   afirmaCancelacion,
   afirmaDerivacion,
@@ -2156,7 +2156,8 @@ export class LeadsMessageProcessor extends WorkerHost {
     conversacionId: number,
     d: MensajeEntrante,
   ): Promise<void> {
-    const origen = origenDeAnuncio(d.referral);
+    // El de Meta trae etiqueta; el de TikTok se reconoce por el texto.
+    const origen = origenDeAnuncio(d.referral) ?? origenTiktok(d.text);
     if (!origen) return;
     await this.prisma.leadAnuncioOrigen.createMany({
       data: [{ empresaId, conversacionId, whatsappMsgId: d.messageId, ...origen }],

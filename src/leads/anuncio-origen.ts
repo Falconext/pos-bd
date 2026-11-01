@@ -57,6 +57,33 @@ export function origenDeAnuncio(r: ReferralWhatsapp | null | undefined): OrigenA
   };
 }
 
+/** Lo que se guarda como "anuncio" cuando el cliente llegó desde TikTok. */
+export const ORIGEN_TIKTOK = 'tiktok';
+
+/**
+ * El cliente dice que viene de TikTok. TikTok no pega una etiqueta como la de
+ * Meta: ni su anuncio de mensajes a WhatsApp ni el enlace del perfil. Lo que sí
+ * llega es el texto que viene escrito ("Hola, vengo de TikTok"), así que se
+ * reconoce por el texto. Solo frases de llegada: "¿tienen TikTok?" no cuenta.
+ * Los bordes de palabra van a mano: `\b` no ve el final de "enteré".
+ */
+const LLEGADA_TIKTOK =
+  /(?<![\wáéíóúñ])(vengo|vine|llegu[eé]|desde|vi|vimos|visto|enter[eé]|encontr[eé]|anuncio|video|v[ií]deo|publicaci[oó]n|live|perfil)(?![\wáéíóúñ])[^.?!\n]{0,25}\btik\s?tok\b/i;
+
+export function origenTiktok(texto: string | null | undefined): OrigenAnuncio | null {
+  const t = String(texto ?? '');
+  if (!LLEGADA_TIKTOK.test(t)) return null;
+  return {
+    anuncioId: ORIGEN_TIKTOK,
+    tipo: ORIGEN_TIKTOK,
+    titulo: 'TikTok',
+    texto: t.trim().slice(0, 300) || null,
+    url: null,
+    imagenUrl: null,
+    ctwaClid: null,
+  };
+}
+
 export interface LlegadaPorAnuncio {
   conversacionId: number;
   anuncioId: string;
