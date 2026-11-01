@@ -412,4 +412,17 @@ export class CrearComprobanteDto {
   @ArrayMaxSize(50)
   @IsInt({ each: true })
   comprobanteOrigenIds?: number[];
+
+  /**
+   * Pedido de la tienda virtual que documenta esta venta (el punto de venta
+   * lo manda al abrir un pedido). Si el pedido tiene sede, la venta debe salir
+   * de esa sede (409); si la tienda lo aceptó con "vender sin stock", no se
+   * bloquea por stock. El vínculo se hace después con
+   * PATCH /tienda/pedidos/:id/comprobante.
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  pedidoTiendaId?: number;
 }

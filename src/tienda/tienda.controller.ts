@@ -17,7 +17,6 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { imageUploadOptions } from '../common/utils/multer.config';
 import { TiendaService } from './tienda.service';
 import { PedidoNotaVentaService } from './pedido-nota-venta.service';
-import { verificarPuedeVenderEnSede } from '../usuarios/puede-vender-en-sede.util';
 import { ConfigurarTiendaDto } from './dto/configurar-tienda.dto';
 import { ActualizarEstadoPedidoDto } from './dto/actualizar-pedido.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -106,6 +105,7 @@ export class TiendaController {
     @Query('estado') estado?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('sedeId') sedeId?: string,
   ) {
     const empresaId = req.user.empresaId;
     return this.tiendaService.listarPedidos(
@@ -113,6 +113,7 @@ export class TiendaController {
       estado,
       page ? parseInt(page, 10) : 1,
       limit ? parseInt(limit, 10) : 50,
+      sedeId,
     );
   }
 
@@ -152,15 +153,24 @@ export class TiendaController {
   async generarNotaVenta(
     @Req() req: any,
     @Param('id') id: string,
-    @Body() body: { adelanto?: number; medioPago?: string },
+    @Body() body: { adelanto?: number; medioPago?: string; sedeId?: number },
   ) {
-    verificarPuedeVenderEnSede(req.user, 'NV');
+    // La sede de la que sale la nota la resuelve el servicio (la del pedido,
+    // la elegida o la única); ahí se verifica que el usuario venda en ella.
     return this.pedidoNotaVenta.generar(
       req.user.empresaId,
       +id,
-      { adelanto: Number(body?.adelanto ?? 0), medioPago: body?.medioPago },
+      {
+        adelanto: Number(body?.adelanto ?? 0),
+        medioPago: body?.medioPago,
+        sedeId: body?.sedeId,
+      },
       req.user.id,
-      req.user.sedeId ?? undefined,
+      {
+        rol: req.user.rol,
+        sedeId: req.user.sedeId ?? null,
+        sedesSinVenta: req.user.sedesSinVenta ?? [],
+      },
     );
   }
 

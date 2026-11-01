@@ -4,6 +4,7 @@
  */
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { TiendaService } from './tienda.service';
+import { prismaStockUnaSede, productosPorIds } from './stock-tienda.mock';
 
 const PRODUCTO = { id: 7, descripcion: 'Polo', precioUnitario: 50, stock: 20, atributosTecnicos: {} };
 
@@ -31,7 +32,9 @@ function armar(extra: { pedido?: any; comprobante?: any; otroPedido?: any } = {}
       findFirst: jest.fn().mockImplementation(({ where }: any) =>
         Promise.resolve(where.productoPadreId !== undefined ? null : PRODUCTO),
       ),
+      findMany: productosPorIds([PRODUCTO]),
     },
+    ...prismaStockUnaSede(),
     productoCodigoBarras: { findFirst: jest.fn().mockResolvedValue(null) },
     historialEstadoPedido: { create: jest.fn().mockResolvedValue({}) },
     comprobante: { findFirst: jest.fn().mockResolvedValue('comprobante' in extra ? extra.comprobante : { id: 900, serie: 'NV01', correlativo: 12, mtoImpVenta: 119.9, saldo: 0 }) },

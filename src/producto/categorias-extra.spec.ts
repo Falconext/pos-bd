@@ -234,8 +234,14 @@ describe('Categorías adicionales del producto', () => {
   describe('menú de categorías de la tienda', () => {
     it('incluye una categoría que solo aparece como adicional, sin repetir', async () => {
       const prisma = {
-        empresa: { findUnique: jest.fn().mockResolvedValue({ id: 45 }) },
+        empresa: {
+          findUnique: jest
+            .fn()
+            .mockResolvedValue({ id: 45, plan: { tieneTienda: true } }),
+        },
+        sede: { findMany: jest.fn().mockResolvedValue([]) },
         producto: {
+          count: jest.fn().mockResolvedValue(3),
           findMany: jest.fn().mockResolvedValue([
             {
               categoria: { id: 1, nombre: 'Polos', imagenUrl: null },
@@ -255,8 +261,9 @@ describe('Categorías adicionales del producto', () => {
       const r = await service.obtenerCategoriasTienda('demo');
       expect(r.map((c: any) => c.nombre)).toEqual(['Navidad', 'Ofertas', 'Polos']);
       const where = prisma.producto.findMany.mock.calls[0][0].where;
-      // Misma elegibilidad de siempre: activos de la empresa con stock público.
-      expect(where).toMatchObject({ empresaId: 45, estado: 'ACTIVO' });
+      // Misma elegibilidad que el listado: activos de la empresa, publicados,
+      // con el filtro de stock de la tienda.
+      expect(where).toMatchObject({ empresaId: 45, estado: 'ACTIVO', publicarEnTienda: true });
     });
   });
 });
