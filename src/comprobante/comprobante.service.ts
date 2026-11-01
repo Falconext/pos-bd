@@ -84,7 +84,7 @@ import {
 } from './ventas-por-producto';
 import { validarLimitesPrecioVenta } from '../common/utils/limites-precio-venta';
 import { lineasPagoMixto } from '../common/utils/pago-mixto';
-import { enviarTakiy } from '../whatsapp/takiy';
+import { NumeroNegocioService, consejoNumeroNegocio } from '../whatsapp/numero-negocio.service';
 import { afectacionDeLinea } from '../producto/afectacion-igv';
 import {
   cobroDeEdicion,
@@ -173,6 +173,8 @@ export class ComprobanteService {
     @Inject(forwardRef(() => EnviarSunatService))
     private readonly enviarSunatService: EnviarSunatService,
     @Optional() private readonly comisionesService: ComisionesService,
+    // Número del negocio por QR (Evolution → Takiy). Opcional: sin él solo Meta/Zavu.
+    @Optional() private readonly numeroNegocio?: NumeroNegocioService,
   ) {}
 
   private normalizarMedioPago(value?: string) {
@@ -9030,7 +9032,7 @@ export class ComprobanteService {
   private async getWhatsAppCredentials(empresaId: number): Promise<
     | { source: 'PLATFORM' | 'EMPRESA'; token: string; phoneNumberId: string }
     | { source: 'ZAVU'; apiKey: string; baseUrl: string; sender?: string }
-    | { source: 'TAKIY'; appKey: string; authKey: string }
+    | { source: 'NUMERO_NEGOCIO' }
   > {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
@@ -9039,15 +9041,13 @@ export class ComprobanteService {
         whatsappApiToken: true,
         whatsappPhoneNumberId: true,
         whatsappActivo: true,
-        takiyActivo: true,
-        takiyAppKey: true,
-        takiyAuthKey: true,
       },
     });
 
-    // Takiy va primero: es el número del propio negocio y no depende de Meta.
-    if (empresa?.takiyActivo && empresa.takiyAppKey && empresa.takiyAuthKey) {
-      return { source: 'TAKIY', appKey: empresa.takiyAppKey, authKey: empresa.takiyAuthKey };
+    // El número del propio negocio por QR va primero (Evolution conectado →
+    // Takiy activo): no depende de Meta ni cobra por mensaje.
+    if (this.numeroNegocio && (await this.numeroNegocio.disponible(empresaId))) {
+      return { source: 'NUMERO_NEGOCIO' };
     }
 
     if (!empresa?.whatsappActivo || empresa?.whatsappProvider === 'DISABLED') {
@@ -9163,7 +9163,7 @@ export class ComprobanteService {
 
   /**
    * Manda el PDF al WhatsApp del cliente apenas se emite, si la empresa lo
-   * pidió (Takiy + "enviar al emitir"). En segundo plano: la venta ya está
+   * pidió (número por QR + "enviar al emitir"). En segundo plano: la venta ya está
    * hecha y un celular desvinculado no debe trabarla ni mostrar error en caja.
    */
   enviarComprobanteAutomatico(
@@ -9177,10 +9177,14 @@ export class ComprobanteService {
           tipoDoc: true,
           estadoEnvioSunat: true,
           cliente: { select: { telefono: true } },
-          empresa: { select: { takiyActivo: true, takiyEnviarComprobante: true } },
+          empresaId: true,
+          empresa: { select: { takiyEnviarComprobante: true } },
         },
       });
-      if (!comp?.empresa?.takiyActivo || !comp.empresa.takiyEnviarComprobante) return;
+      // `takiyEnviarComprobante` es el "enviar al emitir" del número por QR,
+      // sea Takiy o Evolution (se edita desde cualquiera de los dos paneles).
+      if (!comp?.empresa?.takiyEnviarComprobante) return;
+      if (!this.numeroNegocio || !(await this.numeroNegocio.disponible(comp.empresaId))) return;
       // Cotizaciones y órdenes de trabajo se mandan a mano, cuando se cierran.
       if (['COT', 'OT'].includes(comp.tipoDoc)) return;
       if (['RECHAZADO', 'ANULADO'].includes(String(comp.estadoEnvioSunat))) return;
@@ -9248,9 +9252,14 @@ export class ComprobanteService {
       mensaje?.trim() ||
       `Hola ${clienteNombre}, aquí está tu ${tipoPretty} ${serie}-${correlativo} por ${monto}.\n\nGracias por tu preferencia — ${empresaNombre}.`;
 
-    // ── Takiy (QR del número del negocio): manda el link del PDF como adjunto.
-    if (creds.source === 'TAKIY') {
-      const r = await enviarTakiy(creds, { numero: to, mensaje: caption, archivoUrl: pdfUrl });
+    // ── Número del negocio por QR (Evolution → Takiy): el PDF va como adjunto.
+    if (creds.source === 'NUMERO_NEGOCIO') {
+      const r = await this.numeroNegocio!.enviar(comp.empresaId, {
+        numero: to,
+        mensaje: caption,
+        archivoUrl: pdfUrl,
+        nombreArchivo: filename,
+      });
       if (context?.usuarioId) {
         await this.prisma.whatsAppEnvio.create({
           data: {
@@ -9267,10 +9276,10 @@ export class ComprobanteService {
       }
       if (!r.success) {
         throw new BadRequestException(
-          `${r.error || 'Takiy no envió el mensaje.'} Revisa en Takiy que tu celular siga vinculado.`,
+          `${r.error || 'No se envió el mensaje.'} ${consejoNumeroNegocio(r.via)}`,
         );
       }
-      this.logger.log(`✅ WhatsApp comprobante enviado (TAKIY) comprobanteId=${id} destino=${to}`);
+      this.logger.log(`✅ WhatsApp comprobante enviado (${r.via}) comprobanteId=${id} destino=${to}`);
       return;
     }
 

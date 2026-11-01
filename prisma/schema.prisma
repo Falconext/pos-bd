@@ -226,6 +226,8 @@ model Empresa {
   takiyActivo               Boolean            @default(false)
   /// Mandar el PDF del comprobante por WhatsApp apenas se emite.
   takiyEnviarComprobante    Boolean            @default(false)
+  /// WhatsApp del negocio vinculado por QR a nuestro Evolution API (Baileys).
+  whatsappConexion          WhatsappConexion?
   // IA de Ventas por Instagram (DM). Se conecta con el login de Instagram
   // para empresas: `instagramAccountId` es el id de la cuenta profesional y es
   // por donde el webhook ubica a la empresa. El token es de larga duración
@@ -5779,4 +5781,39 @@ model TiktokComentario {
 
   @@unique([empresaId, comentarioId])
   @@index([empresaId, creadoEn])
+}
+
+/// Estado de la sesión del WhatsApp del negocio en Evolution API.
+enum EstadoWhatsappConexion {
+  NO_CONECTADO
+  CONECTANDO
+  CONECTADO
+  DESCONECTADO
+}
+
+/// WhatsApp del negocio vinculado por QR a nuestro Evolution API (una
+/// instancia Baileys por empresa). Reemplaza a Takiy para quien no quiere
+/// abrir otra cuenta: mismos avisos, desde el número del negocio, sin costo
+/// por mensaje. El token de la instancia se guarda cifrado (secreto.util).
+model WhatsappConexion {
+  id                 Int                    @id @default(autoincrement())
+  empresaId          Int                    @unique
+  empresa            Empresa                @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  /// krezka-<empresaId>-<aleatorio>: no se puede adivinar desde afuera.
+  instancia          String                 @unique
+  /// Token propio de la instancia (cifrarSecreto). Nunca sale al panel.
+  tokenCifrado       String?
+  estado             EstadoWhatsappConexion @default(NO_CONECTADO)
+  /// 51XXXXXXXXX del celular vinculado (lo informa Evolution al conectar).
+  numero             String?
+  nombrePerfil       String?
+  conectadoEn        DateTime?
+  desconectadoEn     DateTime?
+  /// Cuándo se avisó al dueño de la última desconexión: una sola vez por caída.
+  avisoDesconexionEn DateTime?
+  /// Tope diario anti-bloqueo: mensajes del día `enviadosDia` (YYYY-MM-DD Lima).
+  enviadosHoy        Int                    @default(0)
+  enviadosDia        String?
+  creadoEn           DateTime               @default(now())
+  actualizadoEn      DateTime               @updatedAt
 }

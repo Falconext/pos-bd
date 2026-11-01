@@ -16,6 +16,7 @@ import { ApisPeruClient } from '../common/utils/apis-peru.client';
 import { JambleClient } from '../common/utils/jamble.client';
 import { ComisionesModule } from '../comisiones/comisiones.module';
 import { ClienteModule } from '../cliente/cliente.module';
+import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 import { ImportarNotaVentaService } from './importar-nota-venta.service';
 
 import { RegularizarAfectacionController } from './regularizar-afectacion.controller';
@@ -30,6 +31,7 @@ import { RegularizarAfectacionService } from './regularizar-afectacion.service';
     forwardRef(() => ProductoModule),
     ComisionesModule,
     ClienteModule,
+    WhatsAppModule,
   ],
   controllers: [ComprobanteController, ComprobantePublicoController, RegularizarAfectacionController],
   providers: [

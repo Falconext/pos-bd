@@ -279,7 +279,7 @@ export class EnvioDespachoController {
     return this.service.mensajeParaEstado(comprobanteId, user.empresaId, estado);
   }
 
-  /** Manda al cliente el aviso que el negocio revisó o editó (por Takiy). */
+  /** Manda al cliente el aviso que el negocio revisó o editó (por su número por QR: Evolution o Takiy). */
   @Post('comprobante/:comprobanteId/mensaje')
   enviarMensajeCliente(
     @Param('comprobanteId', ParseIntPipe) comprobanteId: number,
