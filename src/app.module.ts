@@ -68,6 +68,7 @@ import { VehiculoModule } from './vehiculo/vehiculo.module';
 import { ContratoVehicularModule } from './contrato-vehicular/contrato-vehicular.module';
 import { TipoCambioModule } from './tipo-cambio/tipo-cambio.module';
 import { LeadsModule } from './leads/leads.module';
+import { TiktokModule } from './tiktok/tiktok.module';
 import { MercadoPagoModule } from './mercadopago/mercadopago.module';
 import { LibroReclamacionesModule } from './libro-reclamaciones/libro-reclamaciones.module';
 
@@ -140,6 +141,7 @@ import { LibroReclamacionesModule } from './libro-reclamaciones/libro-reclamacio
     ContratoVehicularModule,
     TipoCambioModule,
     LeadsModule,
+    TiktokModule,
   ],
   controllers: [AppController],
   providers: [AppService],
