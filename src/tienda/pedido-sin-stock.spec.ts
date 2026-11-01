@@ -13,6 +13,7 @@
  */
 import { BadRequestException } from '@nestjs/common';
 import { TiendaService } from './tienda.service';
+import { prismaStockUnaSede, productosPorIds } from './stock-tienda.mock';
 
 const SLUG = 'mi-tienda';
 
@@ -49,7 +50,10 @@ function armar(opts: { sinStock?: boolean; producto?: any; presentacion?: any } 
       findFirst: jest.fn().mockImplementation(({ where }: any) =>
         Promise.resolve(where.productoPadreId !== undefined ? null : productoMock),
       ),
+      count: jest.fn().mockResolvedValue(1),
+      findMany: productosPorIds([productoMock]),
     },
+    ...prismaStockUnaSede(),
     productoCodigoBarras: { findFirst: jest.fn().mockResolvedValue(opts.presentacion ?? null) },
     historialEstadoPedido: { create: jest.fn().mockResolvedValue({}) },
     pedidoTienda: {

@@ -1,10 +1,25 @@
-import { Controller, Get, Post, Body, Param, Query, Ip } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  Ip,
+  HttpCode,
+} from '@nestjs/common';
 import { TiendaService } from './tienda.service';
 import { CrearPedidoDto } from './dto/crear-pedido.dto';
+import { DisponibilidadCarritoDto } from './dto/disponibilidad-carrito.dto';
 import { ModificadoresService } from '../modificadores/modificadores.service';
 import { MercadoPagoService } from '../mercadopago/mercadopago.service';
 import { NiubizService } from '../niubiz/niubiz.service';
 
+/**
+ * `?sede=<id>`: sede elegida por el comprador. Solo cuenta si la tienda está en
+ * modo CLIENTE; en SEDE y TODAS se ignora (ver stock-tienda.ts). Una sede que
+ * no está habilitada cae a la de por defecto en las lecturas.
+ */
 @Controller('public/store')
 export class TiendaPublicController {
   constructor(
@@ -31,6 +46,7 @@ export class TiendaPublicController {
     @Query('brand') brand = '',
     @Query('wholesale') wholesale = '',
     @Query('atributos') atributos = '',
+    @Query('sede') sede?: string,
   ) {
     const min =
       minPrice && !isNaN(Number(minPrice)) ? Number(minPrice) : undefined;
@@ -49,30 +65,38 @@ export class TiendaPublicController {
       brand,
       isWholesale,
       atributos,
+      sede,
     );
   }
 
   @Get(':slug/categories')
-  async obtenerCategorias(@Param('slug') slug: string) {
-    return this.tiendaService.obtenerCategoriasTienda(slug);
+  async obtenerCategorias(
+    @Param('slug') slug: string,
+    @Query('sede') sede?: string,
+  ) {
+    return this.tiendaService.obtenerCategoriasTienda(slug, sede);
   }
 
   @Get(':slug/brands')
-  async obtenerMarcas(@Param('slug') slug: string) {
-    return this.tiendaService.obtenerMarcasTienda(slug);
+  async obtenerMarcas(@Param('slug') slug: string, @Query('sede') sede?: string) {
+    return this.tiendaService.obtenerMarcasTienda(slug, sede);
   }
 
   @Get(':slug/price-range')
-  async obtenerRangoPrecios(@Param('slug') slug: string) {
-    return this.tiendaService.obtenerRangoPreciosTienda(slug);
+  async obtenerRangoPrecios(
+    @Param('slug') slug: string,
+    @Query('sede') sede?: string,
+  ) {
+    return this.tiendaService.obtenerRangoPreciosTienda(slug, sede);
   }
 
   @Get(':slug/products/:id')
   async obtenerProductoDetalle(
     @Param('slug') slug: string,
     @Param('id') id: string,
+    @Query('sede') sede?: string,
   ) {
-    return this.tiendaService.obtenerProductoDetalle(slug, +id);
+    return this.tiendaService.obtenerProductoDetalle(slug, +id, sede);
   }
 
   @Get(':slug/products/:id/reviews')
@@ -96,8 +120,9 @@ export class TiendaPublicController {
   async obtenerProductosRelacionados(
     @Param('slug') slug: string,
     @Param('id') id: string,
+    @Query('sede') sede?: string,
   ) {
-    return this.tiendaService.obtenerProductosRelacionados(slug, +id);
+    return this.tiendaService.obtenerProductosRelacionados(slug, +id, 10, sede);
   }
 
   @Get(':slug/payment-config')
@@ -138,24 +163,36 @@ export class TiendaPublicController {
   // ==================== COMBOS ====================
 
   @Get(':slug/combos')
-  async obtenerCombos(@Param('slug') slug: string) {
-    return this.tiendaService.obtenerCombosTienda(slug);
+  async obtenerCombos(@Param('slug') slug: string, @Query('sede') sede?: string) {
+    return this.tiendaService.obtenerCombosTienda(slug, sede);
   }
 
   @Get(':slug/combos/:id')
   async obtenerComboDetalle(
     @Param('slug') slug: string,
     @Param('id') id: string,
+    @Query('sede') sede?: string,
   ) {
-    return this.tiendaService.obtenerComboDetalle(slug, +id);
+    return this.tiendaService.obtenerComboDetalle(slug, +id, sede);
   }
 
   @Get(':slug/combos/:id/stock')
   async verificarStockCombo(
     @Param('slug') slug: string,
     @Param('id') id: string,
+    @Query('sede') sede?: string,
   ) {
-    return this.tiendaService.verificarStockCombo(slug, +id);
+    return this.tiendaService.verificarStockCombo(slug, +id, sede);
+  }
+
+  /** Revalida el carrito con el stock de la sede (o del modo de la tienda). */
+  @Post(':slug/carrito/disponibilidad')
+  @HttpCode(200)
+  async disponibilidadCarrito(
+    @Param('slug') slug: string,
+    @Body() dto: DisponibilidadCarritoDto,
+  ) {
+    return this.tiendaService.disponibilidadCarrito(slug, dto);
   }
 
   // ==================== MODIFICADORES ====================

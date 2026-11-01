@@ -3,6 +3,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ComprobanteService } from '../comprobante/comprobante.service';
 import { EnvioDespachoService } from '../envio-despacho/envio-despacho.service';
 import { TiendaService } from './tienda.service';
+import { MENSAJES_STOCK_TIENDA } from './stock-tienda';
+import { verificarPuedeVenderEnSede } from '../usuarios/puede-vender-en-sede.util';
 import {
   cobroDeNotaVenta,
   hoyLima,
@@ -31,12 +33,18 @@ export class PedidoNotaVentaService {
     private readonly tienda: TiendaService,
   ) {}
 
+  /**
+   * @param opts.sedeId sede de la que sale la nota cuando el pedido no tiene
+   *   (modo TODAS). Si el pedido ya tiene sede, manda la del pedido.
+   * @param usuario quien la genera: se verifica que venda en la sede de la
+   *   nota, y su caja es la que exige "caja abierta para emitir".
+   */
   async generar(
     empresaId: number,
     pedidoId: number,
-    opts: { adelanto?: number; medioPago?: string },
+    opts: { adelanto?: number; medioPago?: string; sedeId?: unknown },
     usuarioId?: number,
-    sedeId?: number,
+    usuario?: { rol?: string; sedeId?: number | null; sedesSinVenta?: number[] },
   ) {
     const pedido = await this.prisma.pedidoTienda.findFirst({
       where: { id: pedidoId, empresaId },
@@ -50,6 +58,14 @@ export class PedidoNotaVentaService {
       throw new BadRequestException('El pedido está cancelado.');
     }
     if (!pedido.items.length) throw new BadRequestException('El pedido no tiene productos.');
+
+    const sedeId = await this.sedeDeLaNota(
+      empresaId,
+      pedido.sedeId,
+      opts.sedeId,
+      usuario?.sedeId ?? null,
+    );
+    if (usuario) verificarPuedeVenderEnSede({ ...usuario, sedeId: sedeId ?? null }, 'NV');
 
     const medio = String(opts.medioPago ?? 'EFECTIVO').toUpperCase() as MedioPagoNv;
     if (!MEDIOS_PAGO_NV.includes(medio)) {
@@ -90,10 +106,14 @@ export class PedidoNotaVentaService {
           .filter(Boolean)
           .join('\n'),
         detalles: lineasDeNotaVenta(pedido as any),
+        // Sede del pedido y "vender sin stock" de la tienda (ComprobanteService
+        // → reglasVentaDesdePedidoTienda).
+        pedidoTiendaId: pedido.id,
       },
       empresaId,
       usuarioId,
       sedeId,
+      { sedeCajaId: usuario?.sedeId ?? undefined },
     )) as { id: number; serie: string; correlativo: number; mtoImpVenta?: unknown; saldo?: unknown };
     if (!nv?.id) throw new BadRequestException('No se pudo generar la nota de venta.');
 
@@ -152,6 +172,44 @@ export class PedidoNotaVentaService {
       select: { id: true, serie: true, correlativo: true, mtoImpVenta: true, saldo: true, estadoPago: true, s3PdfUrl: true },
     });
     return { comprobante, despacho, avisoDespacho };
+  }
+
+  /**
+   * De qué sede sale la nota:
+   *   1. la del pedido (con el pedido en una sede, la nota que saliera de otra
+   *      descontaría el stock equivocado);
+   *   2. la elegida en el panel (`body.sedeId`, pedido sin sede = modo TODAS);
+   *   3. la del usuario que la genera, como antes: la app 2.8.0 no manda
+   *      `sedeId` y "Generar ya" no puede romperse para las empresas multi-sede;
+   *   4. la única sede activa, o la principal.
+   * Sin sedes (empresas antiguas) sigue como antes: `undefined`.
+   */
+  private async sedeDeLaNota(
+    empresaId: number,
+    sedePedido: number | null,
+    sedeElegida: unknown,
+    sedeUsuario: number | null,
+  ): Promise<number | undefined> {
+    if (sedePedido) return sedePedido;
+    if (sedeElegida != null && sedeElegida !== '') {
+      const id = Number(sedeElegida);
+      const sede =
+        Number.isInteger(id) && id > 0
+          ? await this.prisma.sede.findFirst({
+              where: { id, empresaId, activo: true },
+              select: { id: true },
+            })
+          : null;
+      if (!sede) throw new BadRequestException(MENSAJES_STOCK_TIENDA.sedeInvalida);
+      return sede.id;
+    }
+    const activas = await this.prisma.sede.findMany({
+      where: { empresaId, activo: true },
+      select: { id: true, esPrincipal: true },
+    });
+    if (sedeUsuario && activas.some((s) => s.id === sedeUsuario)) return sedeUsuario;
+    if (activas.length === 1) return activas[0].id;
+    return activas.find((s) => s.esPrincipal)?.id;
   }
 
   /**

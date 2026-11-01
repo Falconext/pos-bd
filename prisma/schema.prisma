@@ -403,6 +403,18 @@ model Empresa {
   // la sobreventa en el mostrador, o al revés. Default false = la tienda sigue
   // rechazando lo que no hay en stock.
   tiendaVentaSinStock           Boolean                       @default(false)
+  /// De qué stock vende la tienda virtual (ver tienda/stock-tienda.ts):
+  /// SEDE = una sola sede (`tiendaSedeId`, null = la principal); CLIENTE = el
+  /// comprador elige entre `tiendaSedesIds`; TODAS = suma de esas sedes y la
+  /// sede se elige al generar la nota. Vacío en `tiendaSedesIds` = todas las
+  /// sedes activas.
+  tiendaStockModo               ModoStockTienda               @default(SEDE)
+  tiendaSedeId                  Int?
+  tiendaSede                    Sede?                         @relation("TiendaSede", fields: [tiendaSedeId], references: [id], onDelete: SetNull)
+  tiendaSedesIds                Int[]                         @default([])
+  /// Cuándo el dueño eligió el modo a mano. Null = lo puso la migración: el
+  /// panel invita a las empresas con varias sedes a revisarlo.
+  tiendaStockModoElegidoEn      DateTime?
   // Modo offline-first de la app móvil (Fase 1): la app puede vender/cajear sin
   // red y sincronizar después vía /sync/operaciones. OFF por defecto (rollout
   // gradual por empresa desde el panel de sistema).
@@ -2128,6 +2140,7 @@ model Sede {
   ingresosManuales           IngresoManual[]
   campanasMarketing          CampanaMarketing[]
   ordenesCompra              OrdenCompra[]
+  empresasTienda             Empresa[]          @relation("TiendaSede")
 
   @@index([empresaId])
 }
@@ -2577,6 +2590,13 @@ enum TipoEmpresa {
 enum TipoSede {
   PUNTO_DE_VENTA
   ALMACEN
+}
+
+/// De qué sedes sale el stock que muestra y vende la tienda virtual.
+enum ModoStockTienda {
+  SEDE
+  CLIENTE
+  TODAS
 }
 
 enum TipoMovimiento {

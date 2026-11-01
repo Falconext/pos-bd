@@ -11,6 +11,7 @@ import {
   IsNotEmpty,
   ArrayMinSize,
   Matches,
+  IsInt,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 
@@ -159,4 +160,15 @@ export class CrearPedidoDto {
   @Min(0)
   @IsOptional()
   adelanto?: number;
+
+  /**
+   * Sede donde compra (tienda en modo CLIENTE: obligatoria si la tienda ofrece
+   * varias sedes y debe ser una de ellas). En SEDE y TODAS se ignora: la sede
+   * la decide la configuración (ver tienda/stock-tienda.ts).
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  sedeId?: number;
 }

@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   InternalServerErrorException,
   Logger,
@@ -44,6 +45,15 @@ import {
   aplanarCategoriasExtra,
   condicionesCategoriaPorNombre,
 } from '../producto/categorias-extra.util';
+import {
+  MODOS_STOCK_TIENDA,
+  StockTienda,
+  mensajeSedeDistinta,
+  stockDeCombo,
+  stockTiendaDe,
+  type ContextoStockTienda,
+} from './stock-tienda';
+import type { DisponibilidadCarritoDto } from './dto/disponibilidad-carrito.dto';
 
 const ESTADOS_ENVIO_NOTIFICABLES = new Set([
   'EN_CAMINO',
@@ -217,6 +227,66 @@ export class TiendaService {
     @Optional() private readonly shalom?: ShalomService,
     @Optional() private readonly olva?: OlvaService,
   ) {}
+
+  // ==================== STOCK DE LA TIENDA POR SEDE ====================
+  // Ver stock-tienda.ts. Perezoso: los tests que arman el servicio con
+  // Object.create no pasan por el constructor.
+  private stockTiendaInstancia?: StockTienda;
+  private get stockTienda(): StockTienda {
+    if (!this.stockTiendaInstancia) {
+      this.stockTiendaInstancia = new StockTienda(this.prisma);
+    }
+    return this.stockTiendaInstancia;
+  }
+
+  /**
+   * Empresa de la tienda pública + contexto de stock de la consulta. Sin
+   * tienda en el plan, la tienda no existe (404 neutro).
+   */
+  private async contextoPublico(
+    slug: string,
+    sedePedida?: unknown,
+    opciones: { estricto?: boolean } = {},
+  ): Promise<{ empresaId: number; ctx: ContextoStockTienda }> {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { slugTienda: slug },
+      select: {
+        id: true,
+        tiendaStockModo: true,
+        tiendaSedeId: true,
+        tiendaSedesIds: true,
+        plan: { select: { tieneTienda: true } },
+      },
+    });
+    if (!empresa || !empresa.plan?.tieneTienda) {
+      throw new NotFoundException('Tienda no encontrada');
+    }
+    const ctx = await this.stockTienda.contexto(empresa, sedePedida, opciones);
+    return { empresaId: empresa.id, ctx };
+  }
+
+  /**
+   * Productos que la tienda muestra: activos, sin variantes hijas, con el
+   * filtro de stock de la sede (stock-tienda.ts → filtroCatalogo) y, si el
+   * negocio publicó alguno, solo los publicados. Listado, categorías, marcas,
+   * rango de precios y relacionados parten de aquí: un filtro nunca ofrece
+   * algo que el listado no muestra.
+   */
+  private async whereCatalogoPublico(
+    ctx: ContextoStockTienda,
+  ): Promise<Prisma.ProductoWhereInput & { AND: Prisma.ProductoWhereInput[] }> {
+    const filtroStock = await this.stockTienda.filtroCatalogo(ctx);
+    const base = {
+      empresaId: ctx.empresaId,
+      estado: 'ACTIVO' as const,
+      productoPadreId: null,
+      AND: [filtroStock],
+    };
+    const publicados = await this.prisma.producto.count({
+      where: { ...base, publicarEnTienda: true },
+    });
+    return publicados > 0 ? { ...base, publicarEnTienda: true } : base;
+  }
 
   private parseImagenesExtra(value: unknown): string[] {
     if (Array.isArray(value))
@@ -442,10 +512,18 @@ export class TiendaService {
     for (const campo of ['seoTitulo', 'seoDescripcion'] as const) {
       if (data[campo] !== undefined) data[campo] = (String(data[campo] ?? '').trim() || null) as any;
     }
+    await this.validarConfigStockTienda(empresaId, data);
+    const datos: Prisma.EmpresaUncheckedUpdateInput = {
+      ...data,
+      // El dueño eligió el modo: el panel deja de mostrar el aviso de revisarlo.
+      ...(data.tiendaStockModo !== undefined
+        ? { tiendaStockModoElegidoEn: new Date() }
+        : {}),
+    };
 
     return this.prisma.empresa.update({
       where: { id: empresaId },
-      data,
+      data: datos,
       select: {
         id: true,
         slugTienda: true,
@@ -476,6 +554,10 @@ export class TiendaService {
         direccionRecojo: true,
         tiempoPreparacionMin: true,
         couriersTienda: true,
+        tiendaStockModo: true,
+        tiendaSedeId: true,
+        tiendaSedesIds: true,
+        tiendaStockModoElegidoEn: true,
         // Información Bancaria
         bancoNombre: true,
         numeroCuenta: true,
@@ -483,6 +565,41 @@ export class TiendaService {
         monedaCuenta: true,
       },
     });
+  }
+
+  /**
+   * "Stock de la tienda virtual": las sedes deben ser de la empresa y estar
+   * activas. `tiendaSedeId: null` = la principal; `tiendaSedesIds: []` = todas.
+   * Normaliza la lista (sin repetidos).
+   */
+  private async validarConfigStockTienda(
+    empresaId: number,
+    data: ConfigurarTiendaDto,
+  ) {
+    if (
+      data.tiendaStockModo !== undefined &&
+      !MODOS_STOCK_TIENDA.includes(data.tiendaStockModo)
+    ) {
+      throw new BadRequestException('tiendaStockModo debe ser SEDE, CLIENTE o TODAS');
+    }
+    if (data.tiendaSedesIds !== undefined) {
+      data.tiendaSedesIds = [...new Set((data.tiendaSedesIds ?? []).map(Number))];
+    }
+    const ids = [
+      ...(data.tiendaSedeId != null ? [Number(data.tiendaSedeId)] : []),
+      ...(data.tiendaSedesIds ?? []),
+    ];
+    if (!ids.length) return;
+    const unicos = [...new Set(ids)];
+    const validas = await this.prisma.sede.findMany({
+      where: { empresaId, activo: true, id: { in: unicos } },
+      select: { id: true },
+    });
+    if (validas.length !== unicos.length) {
+      throw new BadRequestException(
+        'Las sedes de la tienda deben ser de tu empresa y estar activas.',
+      );
+    }
   }
 
   async obtenerConfiguracionTienda(empresaId: number) {
@@ -520,6 +637,10 @@ export class TiendaService {
         direccionRecojo: true,
         tiempoPreparacionMin: true,
         couriersTienda: true,
+        tiendaStockModo: true,
+        tiendaSedeId: true,
+        tiendaSedesIds: true,
+        tiendaStockModoElegidoEn: true,
         // Información Bancaria
         bancoNombre: true,
         numeroCuenta: true,
@@ -562,9 +683,20 @@ export class TiendaService {
     };
 
     const diseno = await this.disenoService.obtenerDisenoPorEmpresa(empresaId);
+    // Para el bloque "Stock de la tienda virtual": sedes que se pueden elegir y
+    // si toca invitar a revisarlo (varias sedes y el modo lo puso la migración).
+    const sedesTienda = await this.stockTienda.sedesActivas(empresaId);
 
     return {
       ...empresa,
+      sedesTienda: sedesTienda.map(({ id, nombre, direccion, esPrincipal }) => ({
+        id,
+        nombre,
+        direccion,
+        esPrincipal,
+      })),
+      avisoStockTienda:
+        sedesTienda.length > 1 && !empresa.tiendaStockModoElegidoEn,
       diseno: diseno || {},
       yapeQrSignedUrl: await signIfS3(empresa.yapeQrUrl as any),
       plinQrSignedUrl: await signIfS3(empresa.plinQrUrl as any),
@@ -997,6 +1129,10 @@ export class TiendaService {
           distrito: true,
           provincia: true,
           departamento: true,
+          // De qué sede(s) vende la tienda: sale como `stockTienda`.
+          tiendaStockModo: true,
+          tiendaSedeId: true,
+          tiendaSedesIds: true,
           rubro: {
             select: {
               nombre: true,
@@ -1069,12 +1205,32 @@ export class TiendaService {
       // asesor, el descargo legal, las zonas de reparto). De todo eso, la
       // tienda pública solo necesita los tramos de descuento y si el vendedor
       // atiende el chat de la tienda: el resto no sale.
-      const { iaVentasConfigJson, iaVentasActiva, ...publico } = empresa as typeof empresa & {
+      const {
+        iaVentasConfigJson,
+        iaVentasActiva,
+        tiendaStockModo,
+        tiendaSedeId,
+        tiendaSedesIds,
+        ...publico
+      } = empresa as typeof empresa & {
         iaVentasConfigJson?: { descuento?: unknown; chatTienda?: boolean; asesor?: string } | null;
         iaVentasActiva?: boolean;
       };
+      // Selector "Comprando en" (CLIENTE), dirección de recojo y "Disponible
+      // en …": solo las sedes que la tienda usa.
+      const ctxStock = await this.stockTienda.contexto({
+        id: empresa.id,
+        tiendaStockModo,
+        tiendaSedeId,
+        tiendaSedesIds,
+      });
       return {
         ...publico,
+        stockTienda: {
+          modo: ctxStock.modo,
+          sedeDefaultId: ctxStock.sedeDefaultId,
+          sedes: await this.stockTienda.sedesPublicas(ctxStock),
+        },
         reglasDescuento: iaVentasConfigJson?.descuento ?? SIN_DESCUENTO,
         chatIa:
           iaVentasActiva === true && iaVentasConfigJson?.chatTienda === true
@@ -1088,23 +1244,12 @@ export class TiendaService {
     }
   }
 
-  async obtenerCategoriasTienda(slug: string) {
-    const empresa = await this.prisma.empresa.findUnique({
-      where: { slugTienda: slug },
-      select: { id: true },
-    });
+  async obtenerCategoriasTienda(slug: string, sede?: unknown) {
+    const { ctx } = await this.contextoPublico(slug, sede);
 
-    if (!empresa) {
-      throw new NotFoundException('Tienda no encontrada');
-    }
-
-    // Get all unique categories from active products with stock
+    // Las categorías de los productos que el listado muestra (mismo filtro).
     const productos = await this.prisma.producto.findMany({
-      where: {
-        empresaId: empresa.id,
-        estado: 'ACTIVO',
-        AND: [this.whereStockPublico()],
-      },
+      where: await this.whereCatalogoPublico(ctx),
       select: {
         categoria: {
           select: {
@@ -1163,24 +1308,14 @@ export class TiendaService {
     return result;
   }
 
-  async obtenerMarcasTienda(slug: string) {
-    const empresa = await this.prisma.empresa.findUnique({
-      where: { slugTienda: slug },
-      select: { id: true },
-    });
+  async obtenerMarcasTienda(slug: string, sede?: unknown) {
+    const { ctx } = await this.contextoPublico(slug, sede);
 
-    if (!empresa) {
-      throw new NotFoundException('Tienda no encontrada');
-    }
-
-    // Get all unique brands from active products with stock
+    // Las marcas de los productos que el listado muestra (mismo filtro: antes
+    // pedía stock > 0 y el listado ≥ 0, y una marca de agotados no salía).
+    const base = await this.whereCatalogoPublico(ctx);
     const productos = await this.prisma.producto.findMany({
-      where: {
-        empresaId: empresa.id,
-        estado: 'ACTIVO',
-        stock: { gt: 0 },
-        marcaId: { not: null },
-      },
+      where: { ...base, marcaId: { not: null } },
       select: {
         marca: {
           select: {
@@ -1228,23 +1363,12 @@ export class TiendaService {
     return result;
   }
 
-  async obtenerRangoPreciosTienda(slug: string) {
-    const empresa = await this.prisma.empresa.findUnique({
-      where: { slugTienda: slug },
-      select: { id: true },
-    });
+  async obtenerRangoPreciosTienda(slug: string, sede?: unknown) {
+    const { ctx } = await this.contextoPublico(slug, sede);
 
-    if (!empresa) {
-      throw new NotFoundException('Tienda no encontrada');
-    }
-
-    // Get min and max prices from active products with stock
+    // Rango de los productos que el listado muestra (mismo filtro).
     const result = await this.prisma.producto.aggregate({
-      where: {
-        empresaId: empresa.id,
-        estado: 'ACTIVO',
-        stock: { gt: 0 },
-      },
+      where: await this.whereCatalogoPublico(ctx),
       _min: { precioUnitario: true },
       _max: { precioUnitario: true },
     });
@@ -1266,18 +1390,13 @@ export class TiendaService {
     brand = '',
     wholesale = false,
     atributos = '',
+    sede?: unknown,
   ) {
-    const empresa = await this.prisma.empresa.findUnique({
-      where: { slugTienda: slug },
-      select: { id: true, plan: { select: { tieneTienda: true } } },
-    });
-
     try {
       // Gating: si el plan no incluye tienda, la tienda pública no está disponible
       // (NotFound neutro: no se expone al cliente el detalle del plan).
-      if (!empresa || !empresa.plan?.tieneTienda) {
-        throw new NotFoundException('Tienda no encontrada');
-      }
+      const { empresaId, ctx } = await this.contextoPublico(slug, sede);
+      const empresa = { id: empresaId };
       console.log('obtenerProductosTienda', {
         slug,
         page,
@@ -1405,19 +1524,17 @@ export class TiendaService {
         { descripcion: 'asc' as const },
       ];
 
-      const wherePublicados: any = {
-        empresaId: empresa.id,
-        publicarEnTienda: true,
-        estado: 'ACTIVO' as const,
-        productoPadreId: null,
-        AND: [this.whereStockPublico()],
-      };
+      // Productos de la tienda (publicados, o todos si no publicó ninguno) con
+      // el filtro de stock de la sede; encima, los filtros del comprador.
+      const where: any = await this.whereCatalogoPublico(ctx);
       const term = (search || '').trim();
       if (term) {
-        wherePublicados.OR = [
-          { descripcion: { contains: term, mode: 'insensitive' } },
-          { codigo: { contains: term, mode: 'insensitive' } },
-        ];
+        where.AND.push({
+          OR: [
+            { descripcion: { contains: term, mode: 'insensitive' } },
+            { codigo: { contains: term, mode: 'insensitive' } },
+          ],
+        });
       }
 
       // Filtro por rango de precios
@@ -1425,12 +1542,12 @@ export class TiendaService {
         const priceFilter: any = {};
         if (minPrice !== undefined) priceFilter.gte = minPrice;
         if (maxPrice !== undefined) priceFilter.lte = maxPrice;
-        wherePublicados.precioUnitario = priceFilter;
+        where.precioUnitario = priceFilter;
       }
 
       // Filtro por mayorista
       if (wholesale) {
-        wherePublicados.gruposModificadores = {
+        where.gruposModificadores = {
           some: {
             grupo: {
               nombre: { contains: 'Precios', mode: 'insensitive' },
@@ -1440,53 +1557,28 @@ export class TiendaService {
       }
 
       // Filtro por marcas
-      if (brand && brand.trim()) {
-        const brands = brand
-          .split(',')
-          .map((b) => b.trim())
-          .filter(Boolean);
-        if (brands.length > 0) {
-          const brandConditions = brands.map((brandName) => ({
+      const brands = (brand || '')
+        .split(',')
+        .map((b) => b.trim())
+        .filter(Boolean);
+      if (brands.length > 0) {
+        where.AND.push({
+          OR: brands.map((brandName) => ({
             marca: {
               nombre: { equals: brandName, mode: 'insensitive' as const },
             },
-          }));
-
-          if (wherePublicados.OR) {
-            const existingOR = wherePublicados.OR;
-            delete wherePublicados.OR;
-            if (!wherePublicados.AND) wherePublicados.AND = [];
-            wherePublicados.AND.push({ OR: existingOR });
-            wherePublicados.AND.push({ OR: brandConditions });
-          } else {
-            if (!wherePublicados.AND) wherePublicados.AND = [];
-            wherePublicados.AND.push({ OR: brandConditions });
-          }
-        }
+          })),
+        });
       }
 
-      // Filtro por categorías - use OR conditions for case-insensitive matching
-      if (category && category.trim()) {
-        const cats = category
-          .split(',')
-          .map((c) => c.trim())
-          .filter(Boolean);
-        if (cats.length > 0) {
-          // Principal o adicional, por nombre y sin distinguir mayúsculas.
-          const categoryConditions = condicionesCategoriaPorNombre(cats);
-
-          // If there's already an OR condition (from search), we need to AND them
-          if (wherePublicados.OR) {
-            const existingOR = wherePublicados.OR;
-            delete wherePublicados.OR;
-            if (!wherePublicados.AND) wherePublicados.AND = [];
-            wherePublicados.AND.push({ OR: existingOR });
-            wherePublicados.AND.push({ OR: categoryConditions });
-          } else {
-            if (!wherePublicados.AND) wherePublicados.AND = [];
-            wherePublicados.AND.push({ OR: categoryConditions });
-          }
-        }
+      // Filtro por categorías: principal o adicional, por nombre y sin
+      // distinguir mayúsculas.
+      const cats = (category || '')
+        .split(',')
+        .map((c) => c.trim())
+        .filter(Boolean);
+      if (cats.length > 0) {
+        where.AND.push({ OR: condicionesCategoriaPorNombre(cats) });
       }
 
       // Filtro por atributos técnicos (facetas dinámicas: procesador, memoriaRam, etc.)
@@ -1507,157 +1599,33 @@ export class TiendaService {
             .map((t) => t.trim())
             .filter(Boolean);
           if (!key || tokens.length === 0) continue;
-          const orConds = tokens.map((tok) => ({
-            atributosTecnicos: {
-              path: [key],
-              string_contains: tok,
-            },
-          }));
-          if (!wherePublicados.AND) wherePublicados.AND = [];
-          wherePublicados.AND.push({ OR: orConds });
+          where.AND.push({
+            OR: tokens.map((tok) => ({
+              atributosTecnicos: {
+                path: [key],
+                string_contains: tok,
+              },
+            })),
+          });
         }
       }
 
-      const countPublicados = await this.prisma.producto.count({
-        where: wherePublicados,
-      });
-      const hasCatalogFilters =
-        !!term ||
-        !!category?.trim() ||
-        !!brand?.trim() ||
-        !!atributos?.trim() ||
-        minPrice !== undefined ||
-        maxPrice !== undefined ||
-        wholesale;
       const pageNumber = Number(page) || 1;
+      const total = await this.prisma.producto.count({ where });
+      const itemsRaw: any[] =
+        total > 0
+          ? await this.prisma.producto.findMany({
+              where,
+              select,
+              orderBy: baseOrder,
+              skip,
+              take,
+            })
+          : [];
 
-      let shouldFallbackToActivos = false;
-      if (countPublicados === 0) {
-        if (hasCatalogFilters) {
-          const countTotalPublicados = await this.prisma.producto.count({
-            where: {
-              empresaId: empresa.id,
-              publicarEnTienda: true,
-              estado: 'ACTIVO',
-              productoPadreId: null,
-              AND: [this.whereStockPublico()],
-            },
-          });
-          shouldFallbackToActivos = countTotalPublicados === 0;
-        } else {
-          shouldFallbackToActivos = true;
-        }
-      }
-
-      if (!shouldFallbackToActivos) {
-        let itemsRaw: any[] = [];
-        if (countPublicados > 0) {
-          itemsRaw = await this.prisma.producto.findMany({
-            where: wherePublicados,
-            select,
-            orderBy: baseOrder,
-            skip,
-            take,
-          });
-        }
-        const items = await hydratePublicProducts(itemsRaw);
-        return {
-          data: items,
-          total: countPublicados,
-          page: pageNumber,
-          limit: take,
-        };
-      }
-
-      // Fallback: activos con stock>0
-      // - Cuando no hay publicados
-      // - O cuando en Home hay muy pocos publicados (evita secciones vacías en producción)
-      const whereActivos: any = {
-        empresaId: empresa.id,
-        estado: 'ACTIVO' as const,
-        productoPadreId: null,
-        AND: [this.whereStockPublico()],
-      };
-      if (term) {
-        whereActivos.OR = [
-          { descripcion: { contains: term, mode: 'insensitive' } },
-          { codigo: { contains: term, mode: 'insensitive' } },
-        ];
-      }
-
-      if (minPrice !== undefined || maxPrice !== undefined) {
-        const priceFilter: any = {};
-        if (minPrice !== undefined) priceFilter.gte = minPrice;
-        if (maxPrice !== undefined) priceFilter.lte = maxPrice;
-        whereActivos.precioUnitario = priceFilter;
-      }
-
-      if (wholesale) {
-        whereActivos.gruposModificadores = {
-          some: {
-            grupo: {
-              nombre: { contains: 'Precios', mode: 'insensitive' },
-            },
-          },
-        };
-      }
-
-      // Fallback filtering for brand
-      if (brand && brand.trim()) {
-        const brands = brand
-          .split(',')
-          .map((b) => b.trim())
-          .filter(Boolean);
-        if (brands.length > 0) {
-          const brandConditions = brands.map((brandName) => ({
-            marca: {
-              nombre: { equals: brandName, mode: 'insensitive' as const },
-            },
-          }));
-          if (whereActivos.OR) {
-            const existingOR = whereActivos.OR;
-            delete whereActivos.OR;
-            if (!whereActivos.AND) whereActivos.AND = [];
-            whereActivos.AND.push({ OR: existingOR });
-            whereActivos.AND.push({ OR: brandConditions });
-          } else {
-            if (!whereActivos.AND) whereActivos.AND = [];
-            whereActivos.AND.push({ OR: brandConditions });
-          }
-        }
-      }
-
-      // Fallback filtering for category
-      if (category && category.trim()) {
-        const cats = category
-          .split(',')
-          .map((c) => c.trim())
-          .filter(Boolean);
-        if (cats.length > 0) {
-          const categoryConditions = condicionesCategoriaPorNombre(cats);
-          if (whereActivos.OR) {
-            const existingOR = whereActivos.OR;
-            delete whereActivos.OR;
-            if (!whereActivos.AND) whereActivos.AND = [];
-            whereActivos.AND.push({ OR: existingOR });
-            whereActivos.AND.push({ OR: categoryConditions });
-          } else {
-            if (!whereActivos.AND) whereActivos.AND = [];
-            whereActivos.AND.push({ OR: categoryConditions });
-          }
-        }
-      }
-
-      const total = await this.prisma.producto.count({ where: whereActivos });
-      const itemsRaw = await this.prisma.producto.findMany({
-        where: whereActivos,
-        select,
-        orderBy: baseOrder,
-        skip,
-        take,
-      });
-
-      const items = await hydratePublicProducts(itemsRaw);
+      // `stock` y `variantes[].stock` pasan a ser los de la tienda (sede/modo).
+      const conStock = await this.stockTienda.aplicar(ctx, itemsRaw);
+      const items = await hydratePublicProducts(conStock);
 
       return { data: items, total, page: pageNumber, limit: take };
     } catch (e: any) {
@@ -1667,27 +1635,31 @@ export class TiendaService {
     }
   }
 
-  async obtenerProductosRelacionados(slug: string, id: number, limit = 10) {
-    const tienda = await this.obtenerTiendaPorSlug(slug);
-    const producto = await this.prisma.producto.findUnique({
-      where: { id },
+  async obtenerProductosRelacionados(
+    slug: string,
+    id: number,
+    limit = 10,
+    sede?: unknown,
+  ) {
+    const { empresaId, ctx } = await this.contextoPublico(slug, sede);
+    const producto = await this.prisma.producto.findFirst({
+      where: { id, empresaId },
       select: { categoriaId: true },
     });
 
     if (!producto) throw new NotFoundException('Producto no encontrado');
 
+    // Mismo conjunto que el listado (sin variantes hijas, stock de la sede).
+    const base = await this.whereCatalogoPublico(ctx);
     let related: any[] = [];
 
     // 1. Try fetching by same category, excluding current
     if (producto.categoriaId) {
       related = await this.prisma.producto.findMany({
         where: {
-          empresaId: tienda.id,
+          ...base,
           categoriaId: producto.categoriaId,
           id: { not: id },
-          estado: 'ACTIVO',
-          productoPadreId: null, // excluir variantes hijas (color/talla)
-          AND: [this.whereStockPublico()],
         },
         take: 20, // Fetch more to shuffle
         select: {
@@ -1708,11 +1680,8 @@ export class TiendaService {
     if (related.length < limit) {
       const more = await this.prisma.producto.findMany({
         where: {
-          empresaId: tienda.id,
+          ...base,
           id: { not: id }, // and not in related? (simplified for now)
-          estado: 'ACTIVO',
-          productoPadreId: null, // excluir variantes hijas (color/talla)
-          AND: [this.whereStockPublico()],
         },
         take: 20,
         select: {
@@ -1740,6 +1709,7 @@ export class TiendaService {
 
     // Shuffle array
     related = related.sort(() => 0.5 - Math.random()).slice(0, limit);
+    related = await this.stockTienda.aplicar(ctx, related);
 
     // Sign images
     const signIfS3 = async (url?: string | null) => {
@@ -1763,15 +1733,27 @@ export class TiendaService {
     );
   }
 
-  async obtenerProductoDetalle(slug: string, productoId: number) {
+  async obtenerProductoDetalle(
+    slug: string,
+    productoId: number,
+    sede?: unknown,
+  ) {
     const empresa = await this.prisma.empresa.findUnique({
       where: { slugTienda: slug },
-      select: { id: true, rubroId: true, rubro: { select: { nombre: true } } },
+      select: {
+        id: true,
+        rubroId: true,
+        rubro: { select: { nombre: true } },
+        tiendaStockModo: true,
+        tiendaSedeId: true,
+        tiendaSedesIds: true,
+      },
     });
 
     if (!empresa) {
       throw new NotFoundException('Tienda no encontrada');
     }
+    const ctx = await this.stockTienda.contexto(empresa, sede);
 
     const select = {
       id: true,
@@ -1855,13 +1837,14 @@ export class TiendaService {
     // Fallback: ACTIVO con stock>0 aunque no esté marcado para publicar
     // SOLO si la tienda NO tiene ningún producto marcado como publicarEnTienda=true.
     if (!producto) {
+      const filtroStock = await this.stockTienda.filtroCatalogo(ctx);
       const countTotalPublicados = await this.prisma.producto.count({
         where: {
           empresaId: empresa.id,
           publicarEnTienda: true,
           estado: 'ACTIVO',
           productoPadreId: null,
-          AND: [this.whereStockPublico()],
+          AND: [filtroStock],
         },
       });
       if (countTotalPublicados === 0) {
@@ -1870,7 +1853,7 @@ export class TiendaService {
             id: productoId,
             empresaId: empresa.id,
             estado: 'ACTIVO',
-            AND: [this.whereStockPublico()],
+            AND: [filtroStock],
           },
           select,
         });
@@ -1880,6 +1863,29 @@ export class TiendaService {
     if (!producto) {
       throw new NotFoundException('Producto no encontrado');
     }
+
+    // Stock de la tienda (sede/modo). En CLIENTE la ficha también se abre si
+    // el producto está oculto en la sede elegida pero existe en otra
+    // habilitada: sale sin stock y con `disponibleEn` (un enlace compartido
+    // desde otra sede no debe dar 404).
+    const mapaStock = await this.stockTienda.cargar(
+      ctx,
+      StockTienda.idsConVariantes([producto as any]),
+      { todasHabilitadas: ctx.modo === 'CLIENTE' },
+    );
+    const visibleEnTienda = stockTiendaDe(
+      ctx,
+      mapaStock.get(producto.id),
+      ctx.modo === 'CLIENTE'
+        ? ctx.sedesHabilitadas.map((s) => s.id)
+        : ctx.sedeIds,
+    ).visible;
+    if (!visibleEnTienda) {
+      throw new NotFoundException('Producto no encontrado');
+    }
+    producto = StockTienda.aplicarConMapa(ctx, [producto as any], mapaStock, {
+      conDisponibleEn: true,
+    })[0] as typeof producto;
 
     // Firmar imágenes si son S3
     const signIfS3 = async (url?: string | null) => {
@@ -1984,10 +1990,6 @@ export class TiendaService {
 
   private esRubroComputo(nombre?: string | null) {
     return esRubroComputo(nombre);
-  }
-
-  private whereStockPublico() {
-    return { stock: { gte: 0 } };
   }
 
   private formatearValorFichaTecnica(value: any, campo: any) {
@@ -2464,17 +2466,44 @@ export class TiendaService {
     const [pedido, comprobante] = await Promise.all([
       this.prisma.pedidoTienda.findFirst({
         where: { id: pedidoId, empresaId },
-        select: { id: true, estado: true, comprobanteId: true, total: true, montoPagado: true },
+        select: {
+          id: true,
+          estado: true,
+          comprobanteId: true,
+          total: true,
+          montoPagado: true,
+          sedeId: true,
+          sede: { select: { nombre: true } },
+        },
       }),
       this.prisma.comprobante.findFirst({
         where: { id: comprobanteId, empresaId },
-        select: { id: true, serie: true, correlativo: true, mtoImpVenta: true, saldo: true },
+        select: {
+          id: true,
+          serie: true,
+          correlativo: true,
+          mtoImpVenta: true,
+          saldo: true,
+          sedeId: true,
+          sede: { select: { nombre: true } },
+        },
       }),
     ]);
     if (!pedido) throw new NotFoundException('Pedido no encontrado');
     if (!comprobante) throw new NotFoundException('Comprobante no encontrado');
     if (pedido.comprobanteId && pedido.comprobanteId !== comprobanteId) {
       throw new BadRequestException('Este pedido ya tiene un comprobante.');
+    }
+    // El pedido con sede se vendió con el stock de esa sede: un comprobante de
+    // otra habría descontado donde el cliente no compró.
+    if (
+      pedido.sedeId &&
+      comprobante.sedeId &&
+      pedido.sedeId !== comprobante.sedeId
+    ) {
+      throw new ConflictException(
+        mensajeSedeDistinta(pedido.sede?.nombre, comprobante.sede?.nombre),
+      );
     }
     // Un comprobante sale de un solo pedido: vincularlo a otro haría que dos
     // pedidos figuren cobrados con la misma venta.
@@ -2507,6 +2536,10 @@ export class TiendaService {
           comprobanteId,
           montoPagado,
           saldoPendiente: Math.max(total - montoPagado, 0),
+          // Pedido sin sede (modo TODAS): queda en la sede de la que salió.
+          ...(!pedido.sedeId && comprobante.sedeId
+            ? { sedeId: comprobante.sedeId }
+            : {}),
           ...(confirmar
             ? { estado: 'CONFIRMADO', fechaConfirmacion: new Date(), usuarioConfirma: usuarioId ?? null }
             : {}),
@@ -2542,6 +2575,9 @@ export class TiendaService {
         razonSocial: true,
         mpConectado: true,
         couriersTienda: true,
+        tiendaStockModo: true,
+        tiendaSedeId: true,
+        tiendaSedesIds: true,
         plan: { select: { tieneTienda: true } },
       },
     });
@@ -2550,6 +2586,14 @@ export class TiendaService {
     if (!empresa || !empresa.plan?.tieneTienda) {
       throw new NotFoundException('Tienda no encontrada');
     }
+
+    // Sede del pedido (stock-tienda.ts): SEDE → la configurada; CLIENTE → la
+    // elegida (obligatoria si hay varias, y habilitada); TODAS → sin sede hasta
+    // generar la nota. El stock se valida con la misma sede.
+    const ctxStock = await this.stockTienda.contexto(empresa, dto.sedeId, {
+      estricto: true,
+    });
+    const filtroStock = await this.stockTienda.filtroCatalogo(ctxStock);
 
     // Mercado Pago requiere que la empresa tenga su cuenta conectada.
     if (
@@ -2595,6 +2639,12 @@ export class TiendaService {
       subtotal: number;
       observacion?: string;
     }[] = [];
+    // Lo pedido por producto real (variante incluida), en unidades base: dos
+    // líneas del mismo producto se validan juntas contra el stock.
+    const pedidoPorProducto = new Map<
+      number,
+      { descripcion: string; cantidad: number }
+    >();
 
     for (const item of dto.items) {
       let producto = await this.prisma.producto.findFirst({
@@ -2613,7 +2663,7 @@ export class TiendaService {
             id: item.productoId,
             empresaId: empresa.id,
             estado: 'ACTIVO',
-            AND: [this.whereStockPublico()],
+            AND: [filtroStock],
           },
         });
       }
@@ -2676,22 +2726,11 @@ export class TiendaService {
         observacion = observacion ? `${etiqueta} — ${observacion}` : etiqueta;
       }
 
-      const esServicio =
-        String(
-          (producto.atributosTecnicos as any)?.tipoProducto || '',
-        ).toUpperCase() === 'SERVICIO';
-      // Con "aceptar pedidos sin stock" el negocio asume que lo trae por encargo:
-      // el pedido entra igual y el stock puede quedar en negativo, que es la
-      // señal de lo que debe reponer.
-      if (
-        !esServicio &&
-        !empresa.tiendaVentaSinStock &&
-        Number(producto.stock) < cantidadBase
-      ) {
-        throw new BadRequestException(
-          `Stock insuficiente para ${producto.descripcion}. Disponible: ${producto.stock}`,
-        );
-      }
+      const acumulado = pedidoPorProducto.get(producto.id);
+      pedidoPorProducto.set(producto.id, {
+        descripcion: producto.descripcion,
+        cantidad: (acumulado?.cantidad ?? 0) + cantidadBase,
+      });
 
       const itemSubtotal = precioUnit * cantidadBase;
       subtotal += itemSubtotal;
@@ -2704,6 +2743,13 @@ export class TiendaService {
         observacion,
       });
     }
+
+    await this.validarStockDelPedido(
+      ctxStock,
+      pedidoPorProducto,
+      empresa.tiendaVentaSinStock === true,
+    );
+
     // Envío gratis si el subtotal alcanza el umbral configurado (envioGratisDesdeSoles).
     let costoEnvio = 0;
     if (tipoEntrega === 'ENVIO') {
@@ -2843,6 +2889,7 @@ export class TiendaService {
             }
           : {}),
         vendedorNombre: 'Tienda online',
+        sedeId: ctxStock.modo === 'TODAS' ? null : (ctxStock.sede?.id ?? null),
         observaciones: dto.observaciones,
         referenciaTransf: referenciaTarjeta || dto.referenciaTransf,
         items: {
@@ -2899,6 +2946,43 @@ export class TiendaService {
     );
 
     return { ...pedido, mpInitPoint };
+  }
+
+  /**
+   * Stock del pedido con la regla de la tienda (stock-tienda.ts) y la misma
+   * sede en que queda el pedido:
+   *   - oculto o no vendible en la sede → no se puede pedir, ni con "vender
+   *     sin stock" (el dueño lo sacó de esa sede a propósito);
+   *   - con "aceptar pedidos sin stock" el negocio asume que lo trae por
+   *     encargo: el pedido entra igual y el stock puede quedar en negativo,
+   *     que es la señal de lo que debe reponer;
+   *   - los servicios no llevan stock.
+   */
+  private async validarStockDelPedido(
+    ctx: ContextoStockTienda,
+    pedidoPorProducto: Map<number, { descripcion: string; cantidad: number }>,
+    ventaSinStock: boolean,
+  ) {
+    if (!pedidoPorProducto.size) return;
+    const mapa = await this.stockTienda.cargar(ctx, [...pedidoPorProducto.keys()]);
+    // Con una sola sede nombrarla no aporta nada.
+    const donde =
+      ctx.sede && ctx.sedesActivas.length > 1 ? ` en ${ctx.sede.nombre}` : '';
+    for (const [productoId, linea] of pedidoPorProducto) {
+      const enStock = mapa.get(productoId);
+      const st = stockTiendaDe(ctx, enStock);
+      if (!st.visible || !st.vendible) {
+        throw new BadRequestException(
+          `${linea.descripcion} no está disponible${donde}.`,
+        );
+      }
+      if (enStock?.esServicio || ventaSinStock) continue;
+      if (st.stock < linea.cantidad) {
+        throw new BadRequestException(
+          `Stock insuficiente para ${linea.descripcion}${donde}. Disponible: ${st.stock}`,
+        );
+      }
+    }
   }
 
   /**
@@ -3185,11 +3269,25 @@ export class TiendaService {
     estado?: string,
     page = 1,
     limit = 50,
+    sedeId?: string,
   ) {
     const where: any = { empresaId };
 
     if (estado) {
       where.estado = estado;
+    }
+    // `sedeId=<id>` solo esa sede; `sedeId=sin-sede` los que aún no tienen
+    // (modo TODAS, antes de generar la nota). Otro valor: 400.
+    if (sedeId != null && sedeId !== '') {
+      if (sedeId === 'sin-sede') {
+        where.sedeId = null;
+      } else {
+        const id = Number(sedeId);
+        if (!Number.isInteger(id) || id <= 0) {
+          throw new BadRequestException('sedeId inválido');
+        }
+        where.sedeId = id;
+      }
     }
 
     // Pagination
@@ -3203,6 +3301,7 @@ export class TiendaService {
       const data = await this.prisma.pedidoTienda.findMany({
         where,
         include: {
+          sede: { select: { id: true, nombre: true } },
           items: {
             include: {
               producto: {
@@ -3240,6 +3339,7 @@ export class TiendaService {
         empresaId,
       },
       include: {
+        sede: { select: { id: true, nombre: true } },
         items: {
           include: {
             producto: {
@@ -3350,6 +3450,7 @@ export class TiendaService {
         where: { id: pedidoId },
         data: dataToUpdate,
         include: {
+          sede: { select: { id: true, nombre: true } },
           items: {
             include: {
               producto: {
@@ -3565,9 +3666,18 @@ export class TiendaService {
   }
 
   async actualizarConfiguracionEnvio(empresaId: number, dto: any) {
+    // La config de stock por sede solo entra por PATCH /tienda/config, que la
+    // valida (sedes de la empresa y activas).
+    const {
+      tiendaStockModo: _modo,
+      tiendaSedeId: _sede,
+      tiendaSedesIds: _sedes,
+      tiendaStockModoElegidoEn: _elegido,
+      ...datos
+    } = dto ?? {};
     return this.prisma.empresa.update({
       where: { id: empresaId },
-      data: dto,
+      data: datos,
       select: {
         costoEnvioFijo: true,
         envioGratisDesdeSoles: true,
@@ -3584,12 +3694,12 @@ export class TiendaService {
 
   // ==================== COMBOS ====================
 
-  async obtenerCombosTienda(slug: string) {
-    const tienda = await this.obtenerTiendaPorSlug(slug);
+  async obtenerCombosTienda(slug: string, sede?: unknown) {
+    const { empresaId, ctx } = await this.contextoPublico(slug, sede);
 
     const combos = await this.prisma.combo.findMany({
       where: {
-        empresaId: tienda.id,
+        empresaId,
         activo: true,
         OR: [{ fechaInicio: null }, { fechaInicio: { lte: new Date() } }],
         AND: [
@@ -3622,16 +3732,46 @@ export class TiendaService {
       orderBy: { creadoEn: 'desc' },
     });
 
-    return { code: 1, data: combos };
+    return { code: 1, data: await this.combosConStockTienda(ctx, combos) };
   }
 
-  async obtenerComboDetalle(slug: string, comboId: number) {
-    const tienda = await this.obtenerTiendaPorSlug(slug);
+  /**
+   * Combos con el stock de la tienda: `items[].producto.stock` pasa a ser el
+   * de la sede/modo y cada combo trae `stockDisponible` y `vendible`.
+   */
+  private async combosConStockTienda<
+    C extends { items: Array<{ productoId: number; cantidad: number; producto: any }> },
+  >(ctx: ContextoStockTienda, combos: C[]) {
+    const mapa = await this.stockTienda.cargar(
+      ctx,
+      combos.flatMap((c) => c.items.map((i) => i.productoId)),
+    );
+    return combos.map((c) => {
+      const st = stockDeCombo(ctx, c.items, mapa);
+      return {
+        ...c,
+        stockDisponible: st.stock,
+        vendible: st.vendible,
+        items: c.items.map((i) => {
+          const sp = stockTiendaDe(ctx, mapa.get(i.productoId));
+          return {
+            ...i,
+            producto: i.producto
+              ? { ...i.producto, stock: sp.stock, vendible: sp.vendible }
+              : i.producto,
+          };
+        }),
+      };
+    });
+  }
+
+  async obtenerComboDetalle(slug: string, comboId: number, sede?: unknown) {
+    const { empresaId, ctx } = await this.contextoPublico(slug, sede);
 
     const combo = await this.prisma.combo.findFirst({
       where: {
         id: comboId,
-        empresaId: tienda.id,
+        empresaId,
       },
       include: {
         items: {
@@ -3660,42 +3800,182 @@ export class TiendaService {
       throw new NotFoundException('Combo no encontrado');
     }
 
-    return { code: 1, data: combo };
+    const [conStock] = await this.combosConStockTienda(ctx, [combo]);
+    return { code: 1, data: conStock };
   }
 
-  async verificarStockCombo(slug: string, comboId: number) {
-    const tienda = await this.obtenerTiendaPorSlug(slug);
+  async verificarStockCombo(slug: string, comboId: number, sede?: unknown) {
+    const { empresaId, ctx } = await this.contextoPublico(slug, sede);
 
     const combo = await this.prisma.combo.findFirst({
       where: {
         id: comboId,
-        empresaId: tienda.id,
+        empresaId,
       },
-      include: {
-        items: {
-          include: { producto: true },
-        },
-      },
+      select: { items: { select: { productoId: true, cantidad: true } } },
     });
 
     if (!combo) {
       throw new NotFoundException('Combo no encontrado');
     }
 
-    // Calcular stock disponible
-    const stockDisponible = combo.items.reduce((min, item) => {
-      const stockProducto = Math.floor(
-        Number(item.producto.stock) / item.cantidad,
-      );
-      return Math.min(min, stockProducto);
-    }, Infinity);
+    // Stock de la tienda (sede/modo) de cada componente.
+    const mapa = await this.stockTienda.cargar(
+      ctx,
+      combo.items.map((i) => i.productoId),
+    );
+    const st = stockDeCombo(ctx, combo.items, mapa);
 
     return {
       code: 1,
       data: {
         comboId,
-        stockDisponible: stockDisponible === Infinity ? 0 : stockDisponible,
+        stockDisponible: st.stock,
+        vendible: st.vendible,
       },
+    };
+  }
+
+  /**
+   * Revalida el carrito contra el stock de la tienda (al cambiar de sede en
+   * modo CLIENTE, o antes de pagar). Misma regla que el pedido: lo pedido de
+   * un mismo producto se suma entre líneas (y combos), en unidades base.
+   * `disponible` ya considera "aceptar pedidos sin stock"; `motivo` dice por
+   * qué no: NO_EXISTE, NO_VENDIBLE (oculto o no vendible en la sede) o
+   * SIN_STOCK.
+   */
+  async disponibilidadCarrito(slug: string, dto: DisponibilidadCarritoDto) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { slugTienda: slug },
+      select: {
+        id: true,
+        tiendaVentaSinStock: true,
+        tiendaStockModo: true,
+        tiendaSedeId: true,
+        tiendaSedesIds: true,
+        plan: { select: { tieneTienda: true } },
+      },
+    });
+    if (!empresa || !empresa.plan?.tieneTienda) {
+      throw new NotFoundException('Tienda no encontrada');
+    }
+    // Una sede mandada y no habilitada es un 400 (el carrito quedaría
+    // validado contra otra sede sin que el comprador lo sepa); sin sede, la
+    // de por defecto.
+    const ctx = await this.stockTienda.contexto(empresa, dto.sedeId, {
+      estricto: dto.sedeId != null,
+    });
+    const ventaSinStock = empresa.tiendaVentaSinStock === true;
+    const items = dto.items ?? [];
+
+    // Producto real de cada línea (variante si la hay) y combos.
+    const idsLinea = items.flatMap((i) =>
+      i.comboId ? [] : [i.productoId, i.varianteId].filter((v): v is number => !!v),
+    );
+    const comboIds = items.map((i) => i.comboId).filter((v): v is number => !!v);
+    const codigosPresentacion = items
+      .map((i) => i.presentacionCodigo)
+      .filter((c): c is string => !!c);
+    const [productos, combos, presentaciones] = await Promise.all([
+      idsLinea.length
+        ? this.prisma.producto.findMany({
+            where: { id: { in: idsLinea }, empresaId: empresa.id, estado: 'ACTIVO' },
+            select: { id: true, productoPadreId: true },
+          })
+        : ([] as Array<{ id: number; productoPadreId: number | null }>),
+      comboIds.length
+        ? this.prisma.combo.findMany({
+            where: { id: { in: comboIds }, empresaId: empresa.id, activo: true },
+            select: { id: true, items: { select: { productoId: true, cantidad: true } } },
+          })
+        : ([] as Array<{ id: number; items: Array<{ productoId: number; cantidad: number }> }>),
+      codigosPresentacion.length
+        ? this.prisma.productoCodigoBarras.findMany({
+            where: { empresaId: empresa.id, codigo: { in: codigosPresentacion } },
+            select: { codigo: true, productoId: true, unidadesPorPaquete: true },
+          })
+        : ([] as Array<{ codigo: string; productoId: number; unidadesPorPaquete: number | null }>),
+    ]);
+    const productoPorId = new Map(productos.map((p) => [p.id, p]));
+    const comboPorId = new Map(combos.map((c) => [c.id, c]));
+
+    type Linea =
+      | { tipo: 'producto'; productoId: number; cantidad: number }
+      | { tipo: 'combo'; componentes: Array<{ productoId: number; cantidad: number }>; cantidad: number }
+      | { tipo: 'no-existe' };
+    const lineas: Linea[] = items.map((i) => {
+      if (i.comboId) {
+        const combo = comboPorId.get(i.comboId);
+        return combo && combo.items.length
+          ? { tipo: 'combo', componentes: combo.items, cantidad: i.cantidad }
+          : { tipo: 'no-existe' };
+      }
+      const base = i.productoId ? productoPorId.get(i.productoId) : undefined;
+      if (!base) return { tipo: 'no-existe' };
+      let productoId = base.id;
+      if (i.varianteId && i.varianteId !== base.id) {
+        const variante = productoPorId.get(i.varianteId);
+        if (!variante || variante.productoPadreId !== base.id) return { tipo: 'no-existe' };
+        productoId = variante.id;
+      }
+      let unidades = 1;
+      if (i.presentacionCodigo) {
+        const pres = presentaciones.find(
+          (p) => p.codigo === i.presentacionCodigo && p.productoId === productoId,
+        );
+        if (!pres) return { tipo: 'no-existe' };
+        unidades = Math.max(1, Number(pres.unidadesPorPaquete ?? 1));
+      }
+      return { tipo: 'producto', productoId, cantidad: i.cantidad * unidades };
+    });
+
+    const demanda = new Map<number, number>();
+    const sumar = (id: number, n: number) => demanda.set(id, (demanda.get(id) ?? 0) + n);
+    for (const l of lineas) {
+      if (l.tipo === 'producto') sumar(l.productoId, l.cantidad);
+      if (l.tipo === 'combo') {
+        for (const c of l.componentes) sumar(c.productoId, l.cantidad * Number(c.cantidad || 1));
+      }
+    }
+    const mapa = await this.stockTienda.cargar(ctx, [...demanda.keys()]);
+    const alcanza = (id: number) =>
+      ventaSinStock ||
+      mapa.get(id)?.esServicio === true ||
+      (demanda.get(id) ?? 0) <= stockTiendaDe(ctx, mapa.get(id)).stock;
+
+    return {
+      modo: ctx.modo,
+      sedeId: ctx.sede?.id ?? null,
+      ventaSinStock,
+      items: items.map((i, idx) => {
+        const l = lineas[idx];
+        const eco = {
+          productoId: i.productoId ?? null,
+          varianteId: i.varianteId ?? null,
+          comboId: i.comboId ?? null,
+          cantidad: i.cantidad,
+        };
+        if (l.tipo === 'no-existe') {
+          return { ...eco, stock: 0, disponible: false, motivo: 'NO_EXISTE' as const };
+        }
+        const st =
+          l.tipo === 'combo'
+            ? stockDeCombo(ctx, l.componentes, mapa)
+            : stockTiendaDe(ctx, mapa.get(l.productoId));
+        if (!st.visible || !st.vendible) {
+          return { ...eco, stock: st.stock, disponible: false, motivo: 'NO_VENDIBLE' as const };
+        }
+        const ok =
+          l.tipo === 'combo'
+            ? l.componentes.every((c) => alcanza(c.productoId))
+            : alcanza(l.productoId);
+        return {
+          ...eco,
+          stock: st.stock,
+          disponible: ok,
+          motivo: ok ? null : ('SIN_STOCK' as const),
+        };
+      }),
     };
   }
 
@@ -3723,6 +4003,8 @@ export class TiendaService {
             direccionRecojo: true,
           },
         },
+        // Dónde recoger (pedido con sede).
+        sede: { select: { nombre: true, direccion: true } },
         historialEstados: {
           orderBy: { creadoEn: 'asc' },
           select: {

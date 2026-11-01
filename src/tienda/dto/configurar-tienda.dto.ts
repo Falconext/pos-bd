@@ -10,8 +10,10 @@ import {
   MaxLength,
   IsArray,
   IsIn,
+  ArrayMaxSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import type { ModoStockTienda } from '@prisma/client';
 
 export class ConfigurarTiendaDto {
   @IsString()
@@ -156,6 +158,30 @@ export class ConfigurarTiendaDto {
   @IsOptional()
   @IsBoolean()
   tiendaVentaSinStock?: boolean;
+
+  // === Stock de la tienda virtual por sede (ver tienda/stock-tienda.ts) ===
+  /** SEDE (una sede) | CLIENTE (el comprador elige) | TODAS (suma de sedes). */
+  @IsOptional()
+  @IsIn(['SEDE', 'CLIENTE', 'TODAS'], {
+    message: 'tiendaStockModo debe ser SEDE, CLIENTE o TODAS',
+  })
+  tiendaStockModo?: ModoStockTienda;
+
+  /** SEDE: la sede de la tienda. CLIENTE: la que abre por defecto. null = la principal. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  tiendaSedeId?: number | null;
+
+  /** CLIENTE/TODAS: sedes que usa la tienda. [] = todas las activas. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(200)
+  @Type(() => Number)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  tiendaSedesIds?: number[];
 
 
   @IsOptional()

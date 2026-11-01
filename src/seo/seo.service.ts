@@ -48,7 +48,10 @@ const NO_INDEXAR = 'noindex, nofollow';
 const TTL_MS = 5 * 60_000;
 const MAX_CACHE = 2000;
 
-/** Igual que TiendaService.whereStockPublico: la tienda no muestra stock negativo. */
+/**
+ * La tienda no muestra stock negativo. Aproximación global: la tienda lo mide
+ * por sede (tienda/stock-tienda.ts → filtroCatalogo).
+ */
 const STOCK_PUBLICO = { stock: { gte: 0 } };
 
 const SELECT_EMPRESA = {
