@@ -128,4 +128,32 @@ describe('TiktokService · comentarios', () => {
     expect(await servicio.revisarEmpresa(5)).toBe(0);
     expect(filas[0]).toMatchObject({ estado: 'ERROR', error: 'comment closed' });
   });
+
+  describe('el WhatsApp que da la IA', () => {
+    const conEmpresa = (e: any) => {
+      const prisma: any = { empresa: { findUnique: jest.fn(async () => e) } };
+      return new TiktokService(prisma, { isEnabled: () => true, chatConHistorial: jest.fn(async () => 'ok') } as any);
+    };
+
+    it('primero el de la tarjeta de TikTok, después el de la tienda, después el conectado', async () => {
+      expect(await conEmpresa({ tiktokWhatsapp: '999 111 222', whatsappTienda: '988', numerosWhatsapp: [] }).whatsappParaInvitar(1)).toBe('999111222');
+      expect(await conEmpresa({ tiktokWhatsapp: null, whatsappTienda: '988 777 666', numerosWhatsapp: [] }).whatsappParaInvitar(1)).toBe('988777666');
+      expect(await conEmpresa({ tiktokWhatsapp: null, whatsappTienda: null, numerosWhatsapp: [{ numeroVisible: '+51 991 065 217' }] }).whatsappParaInvitar(1)).toBe('51991065217');
+      expect(await conEmpresa({ tiktokWhatsapp: null, whatsappTienda: null, numerosWhatsapp: [] }).whatsappParaInvitar(1)).toBeNull();
+    });
+
+    it('sin número no invita a mensaje directo: manda al enlace del perfil', async () => {
+      const s = conEmpresa({ razonSocial: 'K', iaVentasConfigJson: {}, tiktokWhatsapp: null, whatsappTienda: null, numerosWhatsapp: [] });
+      await s.generarRespuesta(1, 'precio?');
+      const prompt = ((s as any).gemini.chatConHistorial as jest.Mock).mock.calls[0][0];
+      expect(prompt).toContain('enlace del perfil');
+      expect(prompt).toContain('No invites a escribir por mensaje directo');
+    });
+
+    it('con número, lo da como se lee en Perú', async () => {
+      const s = conEmpresa({ razonSocial: 'K', iaVentasConfigJson: {}, tiktokWhatsapp: '51991065217', numerosWhatsapp: [] });
+      await s.generarRespuesta(1, 'precio?');
+      expect(((s as any).gemini.chatConHistorial as jest.Mock).mock.calls[0][0]).toContain('WhatsApp 991 065 217');
+    });
+  });
 });
