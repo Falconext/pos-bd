@@ -49,6 +49,29 @@ export const descuentaIgv = (
   return TIPOS_DOC_ELECTRONICOS.has(String(tipoDoc));
 };
 
+/**
+ * El costo unitario en la MISMA base que su venta.
+ *
+ * El costo se guarda sin IGV. Si a este documento no se le descuenta el IGV
+ * (nota de venta con ELECTRONICOS, o cualquiera con NINGUNO), la venta se mira
+ * con IGV y el costo tiene que ir con IGV también: lo que de verdad se le pagó
+ * al proveedor. OWENSOFT (01-11): cargador a S/ 45 con costo S/ 15, nota de
+ * venta → el sistema daba S/ 45 − S/ 12.71 = S/ 32.29; su caja dice S/ 30.
+ *
+ * Solo los productos gravados (afectación 10 o sin dato) pagaron IGV al
+ * comprarse; un exonerado o inafecto no, y su costo queda igual.
+ */
+export const costoSegunCriterio = (
+  costoSinIgv: number,
+  tipoDoc: string,
+  criterio: CriterioIgvVentas,
+  afectacionProducto?: string | null,
+): number => {
+  if (descuentaIgv(tipoDoc, criterio)) return costoSinIgv;
+  const afe = String(afectacionProducto ?? '10').trim() || '10';
+  return afe === '10' ? costoSinIgv * 1.18 : costoSinIgv;
+};
+
 type DecimalLike = { toNumber?: () => number };
 
 /** Los montos vienen como Decimal de Prisma o como número. */

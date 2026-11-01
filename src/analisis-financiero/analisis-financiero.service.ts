@@ -10,6 +10,7 @@ import {
   CRITERIO_IGV_LABEL,
   filtroExcluirConvertidos,
   descuentaIgv as descuentaIgvCompartido,
+  costoSegunCriterio,
   ingresoLineaSinIgv as ingresoLineaSinIgvCompartido,
   normalizarCriterio,
   type CriterioIgvVentas,
@@ -159,6 +160,8 @@ interface DecimalLike {
 interface ProductoCostoPnl {
   costoPromedio: DecimalLike | number | null;
   costoFijo: DecimalLike | number | null;
+  /** Para saber si el costo se compró con IGV (ver `costoSegunCriterio`). */
+  tipoAfectacionIGV?: string | null;
   descripcion?: string | null;
 }
 
@@ -912,6 +915,7 @@ export class AnalisisFinancieroService {
 
   private calcularCostoProducto(
     comprobante: ComprobantePnl,
+    criterio: CriterioIgvVentas,
     sinCosto?: Map<number, ProductoSinCosto>,
   ) {
     const signo = this.signoDocumento(comprobante.tipoDoc);
@@ -936,7 +940,11 @@ export class AnalisisFinancieroService {
       const producto = detalle.producto;
       const costoPromedio = this.toNumber(producto.costoPromedio);
       const costoFijo = this.toNumber(producto.costoFijo);
-      costoBaseProductos += cantidad * costoPromedio;
+      // En la misma base que la venta: con IGV si a este documento no se le
+      // descuenta el IGV (nota de venta con ELECTRONICOS, todo con NINGUNO).
+      costoBaseProductos +=
+        cantidad *
+        costoSegunCriterio(costoPromedio, comprobante.tipoDoc, criterio, producto.tipoAfectacionIGV);
       costosFijosProducto += cantidad * costoFijo;
       unidadesVendidas += cantidad;
       lineasProducto += 1;
@@ -1005,6 +1013,7 @@ export class AnalisisFinancieroService {
       (acc, comprobante) => {
         const costo = this.calcularCostoProducto(
           comprobante,
+          criterio,
           productosSinCostoMap,
         );
         acc.costoBaseProductos += costo.costoBaseProductos;
@@ -1030,7 +1039,7 @@ export class AnalisisFinancieroService {
       const fecha = this.fechaLimaKey(comprobante.fechaEmision);
       if (!fecha) continue;
       const signo = this.signoDocumento(comprobante.tipoDoc);
-      const costo = this.calcularCostoProducto(comprobante);
+      const costo = this.calcularCostoProducto(comprobante, criterio);
       const current = resumenDiarioMap.get(fecha) ?? {
         fecha,
         ventasNetas: 0,
@@ -1228,6 +1237,7 @@ export class AnalisisFinancieroService {
                     descripcion: true,
                     costoPromedio: true,
                     costoFijo: true,
+                    tipoAfectacionIGV: true,
                   },
                 },
               },
@@ -1528,6 +1538,7 @@ export class AnalisisFinancieroService {
                 select: {
                   costoPromedio: true,
                   costoFijo: true,
+                  tipoAfectacionIGV: true,
                 },
               },
             },
@@ -1842,6 +1853,7 @@ export class AnalisisFinancieroService {
                 descripcion: true,
                 costoPromedio: true,
                 costoFijo: true,
+                tipoAfectacionIGV: true,
                 categoria: { select: { nombre: true } },
               },
             },
@@ -1892,8 +1904,12 @@ export class AnalisisFinancieroService {
           this.ingresoLineaSinIgv(comp.tipoDoc, det, criterio) * signo;
         const ventaLinea = this.ventaLineaConIgv(det) * signo;
         const costoUnit =
-          this.toNumber(det.producto?.costoPromedio) +
-          this.toNumber(det.producto?.costoFijo);
+          costoSegunCriterio(
+            this.toNumber(det.producto?.costoPromedio),
+            comp.tipoDoc,
+            criterio,
+            det.producto?.tipoAfectacionIGV,
+          ) + this.toNumber(det.producto?.costoFijo);
 
         if (!catMap.has(catNombre)) catMap.set(catNombre, new Map());
         const prodMap = catMap.get(catNombre)!;
@@ -2895,6 +2911,7 @@ export class AnalisisFinancieroService {
                 descripcion: true,
                 costoPromedio: true,
                 costoFijo: true,
+                tipoAfectacionIGV: true,
                 categoria: { select: { nombre: true } },
               },
             },
@@ -2959,8 +2976,12 @@ export class AnalisisFinancieroService {
         const cantidadFacturada = (det.cantidad ?? 0) * signo;
         const qty = cantidadFacturada * uPaquete;
         const costoUnit =
-          this.toNumber(det.producto?.costoPromedio) +
-          this.toNumber(det.producto?.costoFijo);
+          costoSegunCriterio(
+            this.toNumber(det.producto?.costoPromedio),
+            comp.tipoDoc,
+            criterio,
+            det.producto?.tipoAfectacionIGV,
+          ) + this.toNumber(det.producto?.costoFijo);
         // Ingreso sin el IGV declarado, igual que las ventas netas del P&L.
         const ingreso =
           montoEnPen(

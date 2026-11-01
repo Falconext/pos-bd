@@ -11,6 +11,7 @@ import { montoCompraEnSoles, pagoCompraEnSoles } from '../common/utils/moneda-co
 import {
   filtroExcluirConvertidos,
   ingresoLineaSinIgv,
+  costoSegunCriterio,
   normalizarCriterio,
 } from './igv-ventas';
 
@@ -372,6 +373,7 @@ export class FinanzasService {
             descripcion: true,
             costoPromedio: true,
             costoFijo: true,
+            tipoAfectacionIGV: true,
           },
         },
         // Del comprobante: el tipo decide si se descuenta IGV, la moneda si hay
@@ -498,8 +500,14 @@ export class FinanzasService {
         comp?.tipoMoneda,
         comp?.tipoCambio,
       );
+      // En la misma base que el ingreso (ver costoSegunCriterio).
       const costo = d.producto
-        ? Number(d.producto.costoPromedio ?? 0) * cant
+        ? costoSegunCriterio(
+            Number(d.producto.costoPromedio ?? 0),
+            String(comp?.tipoDoc ?? ''),
+            criterioIgv,
+            (d.producto as any).tipoAfectacionIGV,
+          ) * cant
         : 0;
       const cf = d.producto
         ? Number((d.producto as any).costoFijo ?? 0) * cant

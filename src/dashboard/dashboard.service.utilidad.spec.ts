@@ -189,3 +189,23 @@ describe('DashboardService.utilidadBrutaPen', () => {
     });
   });
 });
+
+describe('DashboardService.utilidadBrutaPen · costo en la base de la venta', () => {
+  it('nota de venta de OWENSOFT: utilidad S/ 30, no S/ 32.29', async () => {
+    const s = Object.create(DashboardService.prototype) as any;
+    s.prisma = {
+      detalleComprobante: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            cantidad: 1, mtoPrecioUnitario: 45, mtoValorVenta: 38.14, tipAfeIgv: 10, productoId: 7,
+            producto: { costoPromedio: 15 / 1.18, tipoAfectacionIGV: '10' },
+            comprobante: { tipoDoc: 'NV', tipoMoneda: 'PEN', tipoCambio: 1, sedeId: null },
+          },
+        ]),
+      },
+      productoStock: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    expect(await s.utilidadBrutaPen({}, 'ELECTRONICOS')).toEqual({ venta: 45, costo: 15, utilidad: 30 });
+    expect(await s.utilidadBrutaPen({}, 'TODOS')).toEqual({ venta: 38.14, costo: 12.71, utilidad: 25.43 });
+  });
+});
