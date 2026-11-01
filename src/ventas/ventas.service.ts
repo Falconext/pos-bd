@@ -1,5 +1,5 @@
 import { resolverDespachoAgrupado, selectDespachoAgrupado } from '../envio-despacho/despacho-agrupado';
-import { formalDeNota } from '../comprobante/convertidos';
+import { formalDeNota, NOTA_SIN_CONVERTIR } from '../comprobante/convertidos';
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EstadoSunat } from '@prisma/client';
@@ -514,10 +514,15 @@ export class VentasService {
         where: {
           empresaId,
           clienteId: { in: clienteIds },
-          tipoDoc: { not: 'COT' },
+          // Las notas de crédito/débito no son compras.
+          tipoDoc: { notIn: ['COT', '07', '08'] },
           estadoEnvioSunat: {
             notIn: ['ANULADO', 'RECHAZADO', 'FALLIDO_ENVIO'] as any,
           },
+          // Una nota de venta convertida a boleta o factura es la MISMA
+          // compra: cuenta su formal y ella no. Antes una NV → boleta salía
+          // como "2ª compra" de un cliente nuevo.
+          ...NOTA_SIN_CONVERTIR,
         },
         _count: { _all: true },
       });
