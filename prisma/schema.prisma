@@ -267,6 +267,9 @@ model Empresa {
   // Solo se responden los comentarios hechos después de esto (se fija al
   // activar): conectar la cuenta no debe contestar los comentarios viejos.
   tiktokComentariosDesde    DateTime?
+  // WhatsApp que la IA da en la respuesta ("escríbenos al 9…"). Sin esto se
+  // usa el de la tienda o el del número conectado.
+  tiktokWhatsapp            String?
   tiktokComentariosRespondidos TiktokComentario[]
   facebookPageId            String?            @unique
   facebookPageNombre        String?

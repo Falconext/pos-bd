@@ -51,3 +51,15 @@ export function limpiarClaves(clave?: string | null): string | null {
     .join(', ');
   return limpia || null;
 }
+
+/** Un teléfono como dígitos ("+51 991 065 217" → "51991065217"); null si no hay. */
+export function soloDigitos(v?: string | null): string | null {
+  const d = String(v ?? '').replace(/\D/g, '');
+  return d.length >= 7 ? d : null;
+}
+
+/** Como lo lee un peruano en un comentario: "51991065217" → "991 065 217". */
+export function numeroParaMostrar(digitos: string): string {
+  const local = digitos.length === 11 && digitos.startsWith('51') ? digitos.slice(2) : digitos;
+  return local.length === 9 ? `${local.slice(0, 3)} ${local.slice(3, 6)} ${local.slice(6)}` : local;
+}

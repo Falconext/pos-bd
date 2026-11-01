@@ -1,4 +1,4 @@
-import { comentarioTiktokCalza, limpiarClaves, MAX_RESPUESTA_TIKTOK, respuestaParaTiktok } from './tiktok-texto';
+import { comentarioTiktokCalza, limpiarClaves, MAX_RESPUESTA_TIKTOK, numeroParaMostrar, respuestaParaTiktok, soloDigitos } from './tiktok-texto';
 
 describe('respuestaParaTiktok', () => {
   it('deja una sola línea sin formato de WhatsApp ni comillas', () => {
@@ -33,5 +33,14 @@ describe('comentarioTiktokCalza', () => {
   it('limpia las palabras para guardar', () => {
     expect(limpiarClaves(' precio,, info ,')).toBe('precio, info');
     expect(limpiarClaves('  ')).toBeNull();
+  });
+});
+
+describe('número de WhatsApp', () => {
+  it('se guarda en dígitos y se muestra como en Perú', () => {
+    expect(soloDigitos('+51 991 065 217')).toBe('51991065217');
+    expect(soloDigitos('  ')).toBeNull();
+    expect(numeroParaMostrar('51991065217')).toBe('991 065 217');
+    expect(numeroParaMostrar('991065217')).toBe('991 065 217');
   });
 });

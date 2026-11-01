@@ -48,8 +48,8 @@ export class TiktokController {
   /** Responder con la IA los comentarios de los videos. */
   @Put('comentarios')
   @Roles('ADMIN_EMPRESA')
-  comentarios(@User() user: any, @Body() body: { activo?: boolean; clave?: string | null }) {
-    return this.tiktok.configurarComentarios(user.empresaId, Boolean(body?.activo), body?.clave ?? null);
+  comentarios(@User() user: any, @Body() body: { activo?: boolean; clave?: string | null; whatsapp?: string | null }) {
+    return this.tiktok.configurarComentarios(user.empresaId, Boolean(body?.activo), body?.clave ?? null, body?.whatsapp);
   }
 
   @Delete()

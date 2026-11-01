@@ -7,7 +7,7 @@ import { GeminiService } from '../gemini/gemini.service';
 import { promptDelAsesor } from '../leads/prompt-asesor';
 import { perfilValido } from '../leads/perfil-vendedor';
 import { PROHIBIDO_AVISOS_MEDICOS, sinMencionesMedicas } from '../leads/alto-riesgo';
-import { comentarioTiktokCalza, limpiarClaves, respuestaParaTiktok } from './tiktok-texto';
+import { comentarioTiktokCalza, limpiarClaves, numeroParaMostrar, respuestaParaTiktok, soloDigitos } from './tiktok-texto';
 
 /** Permisos que pide el login. Son los que la app tiene aprobados. */
 const SCOPES = 'user.info.basic,user.info.username,video.list,comment.list,comment.list.manage';
@@ -195,6 +195,7 @@ export class TiktokService {
         tiktokComentariosClave: true,
       },
     });
+    const whatsapp = await this.whatsappParaInvitar(empresaId);
     const ultimas = await this.prisma.tiktokComentario.findMany({
       where: { empresaId },
       orderBy: { id: 'desc' },
@@ -209,6 +210,7 @@ export class TiktokService {
       motivoReconectar: e?.tiktokErrorToken ?? null,
       comentarios: Boolean(e?.tiktokComentarios),
       comentariosClave: e?.tiktokComentariosClave ?? '',
+      whatsapp,
       ultimas,
     };
   }
@@ -217,7 +219,7 @@ export class TiktokService {
    * Prender o apagar las respuestas. Al prender se fija desde cuándo: solo se
    * responden los comentarios nuevos, nunca los que ya estaban.
    */
-  async configurarComentarios(empresaId: number, activo: boolean, clave?: string | null) {
+  async configurarComentarios(empresaId: number, activo: boolean, clave?: string | null, whatsapp?: string | null) {
     const antes = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
       select: { tiktokComentarios: true },
@@ -227,6 +229,7 @@ export class TiktokService {
       data: {
         tiktokComentarios: Boolean(activo),
         tiktokComentariosClave: limpiarClaves(clave),
+        ...(whatsapp !== undefined ? { tiktokWhatsapp: soloDigitos(whatsapp) } : {}),
         ...(activo && !antes?.tiktokComentarios ? { tiktokComentariosDesde: new Date() } : {}),
       },
     });
@@ -438,6 +441,29 @@ export class TiktokService {
   }
 
   /**
+   * El WhatsApp que la IA comparte: el que se puso en la tarjeta de TikTok, si
+   * no el de la tienda, si no el del número conectado. Krezka no tenía ninguno
+   * (01-11) y la IA terminó invitando a "escribir por mensaje directo", que en
+   * TikTok nadie atiende.
+   */
+  async whatsappParaInvitar(empresaId: number): Promise<string | null> {
+    const e = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: {
+        tiktokWhatsapp: true,
+        whatsappTienda: true,
+        numerosWhatsapp: { where: { principal: true }, select: { numeroVisible: true }, take: 1 },
+      },
+    });
+    return (
+      soloDigitos(e?.tiktokWhatsapp) ??
+      soloDigitos(e?.whatsappTienda) ??
+      soloDigitos(e?.numerosWhatsapp?.[0]?.numeroVisible) ??
+      null
+    );
+  }
+
+  /**
    * La respuesta pública: corta, sin precios (es público y el precio cambia) y
    * con la invitación a WhatsApp, que es donde la IA puede atender de verdad.
    */
@@ -449,7 +475,6 @@ export class TiktokService {
         nombreComercial: true,
         iaVentasContexto: true,
         iaVentasConfigJson: true,
-        whatsappTienda: true,
         rubro: { select: { nombre: true } },
       },
     });
@@ -457,10 +482,11 @@ export class TiktokService {
     const cfg = (emp.iaVentasConfigJson ?? {}) as { asesor?: string; vendedor?: unknown; sinAvisosMedicos?: boolean };
     const nombre = emp.nombreComercial || emp.razonSocial;
     const contexto = [emp.iaVentasContexto, cfg.sinAvisosMedicos ? PROHIBIDO_AVISOS_MEDICOS : null].filter(Boolean).join('\n');
-    const whatsapp = String(emp.whatsappTienda ?? '').replace(/\D/g, '');
+    const whatsapp = await this.whatsappParaInvitar(empresaId);
+    // Nunca "mensaje directo" ni "privado": en TikTok esos no los atiende nadie.
     const invitacion = whatsapp
-      ? `Invita a escribir al WhatsApp ${whatsapp} para precios y pedidos.`
-      : 'Invita a escribir por mensaje para precios y pedidos.';
+      ? `Invita a escribir al WhatsApp ${numeroParaMostrar(whatsapp)} para precios y pedidos. No invites a escribir por mensaje directo ni privado.`
+      : 'Invita a escribir al WhatsApp que está en el enlace del perfil para precios y pedidos. No invites a escribir por mensaje directo ni privado.';
     const system =
       promptDelAsesor({
         nombre,
