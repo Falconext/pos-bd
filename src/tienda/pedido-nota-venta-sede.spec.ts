@@ -1,7 +1,8 @@
 /**
  * "Generar nota" de un pedido de la tienda: de qué sede sale y qué se le pasa
  * al comprobante. Precedencia: sede del pedido → sede elegida en el panel →
- * la única sede activa → 400.
+ * la sede del usuario → la única sede activa o la principal (sin 400:
+ * la app 2.8.0 no manda sedeId).
  */
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PedidoNotaVentaService } from './pedido-nota-venta.service';
@@ -50,7 +51,12 @@ function armar(
         ),
       findMany: jest
         .fn()
-        .mockResolvedValue((opts.sedesActivas ?? [1, 2]).map((id) => ({ id }))),
+        .mockResolvedValue(
+          (opts.sedesActivas ?? [1, 2]).map((id, i) => ({
+            id,
+            esPrincipal: i === 0,
+          })),
+        ),
     },
     comprobante: { findUnique: jest.fn().mockResolvedValue({ id: 900 }) },
   };
@@ -102,16 +108,29 @@ describe('Generar nota de un pedido · sede', () => {
       sedePedido: null,
       sedesActivas: [4],
     });
-    await service.generar(9, 41, {}, 5, usuario());
+    await service.generar(9, 41, {}, 5, usuario({ sedeId: null }));
     expect(sedeUsada()).toBe(4);
   });
 
-  it('pedido sin sede, varias sedes y sin elegir → 400 sin emitir', async () => {
-    const { service, comprobantes } = armar({ sedePedido: null });
-    await expect(service.generar(9, 41, {}, 5, usuario())).rejects.toThrow(
-      MENSAJES_STOCK_TIENDA.elegirSedeNota,
-    );
-    expect(comprobantes.crearInformal).not.toHaveBeenCalled();
+  it('compatibilidad (app 2.8.0 no manda sedeId): pedido sin sede usa la sede del usuario, sin 400', async () => {
+    const { service, sedeUsada } = armar({ sedePedido: null });
+    await service.generar(9, 41, {}, 5, usuario({ sedeId: 2 }));
+    expect(sedeUsada()).toBe(2);
+  });
+
+  it('usuario sin sede (o con una sede inactiva): la principal', async () => {
+    const sinSede = armar({ sedePedido: null });
+    await sinSede.service.generar(9, 41, {}, 5, usuario({ sedeId: null }));
+    expect(sinSede.sedeUsada()).toBe(1);
+    const inactiva = armar({ sedePedido: null });
+    await inactiva.service.generar(9, 41, {}, 5, usuario({ sedeId: 99 }));
+    expect(inactiva.sedeUsada()).toBe(1);
+  });
+
+  it('el body manda sobre la sede del usuario', async () => {
+    const { service, sedeUsada } = armar({ sedePedido: null });
+    await service.generar(9, 41, { sedeId: 1 }, 5, usuario({ sedeId: 2 }));
+    expect(sedeUsada()).toBe(1);
   });
 
   it('sede elegida inexistente, inactiva o de otra empresa → 400', async () => {

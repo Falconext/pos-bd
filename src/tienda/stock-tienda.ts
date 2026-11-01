@@ -30,7 +30,6 @@ export const MODOS_STOCK_TIENDA: readonly ModoStockTienda[] = [
 export const MENSAJES_STOCK_TIENDA = {
   elegirSede: 'Elige la sede donde quieres comprar.',
   sedeNoHabilitada: 'La sede elegida no está disponible en esta tienda.',
-  elegirSedeNota: 'Elige la sede de la que sale el pedido.',
   sedeInvalida: 'La sede elegida no existe o está inactiva.',
 } as const;
 

@@ -59,7 +59,12 @@ export class PedidoNotaVentaService {
     }
     if (!pedido.items.length) throw new BadRequestException('El pedido no tiene productos.');
 
-    const sedeId = await this.sedeDeLaNota(empresaId, pedido.sedeId, opts.sedeId);
+    const sedeId = await this.sedeDeLaNota(
+      empresaId,
+      pedido.sedeId,
+      opts.sedeId,
+      usuario?.sedeId ?? null,
+    );
     if (usuario) verificarPuedeVenderEnSede({ ...usuario, sedeId: sedeId ?? null }, 'NV');
 
     const medio = String(opts.medioPago ?? 'EFECTIVO').toUpperCase() as MedioPagoNv;
@@ -170,16 +175,20 @@ export class PedidoNotaVentaService {
   }
 
   /**
-   * De qué sede sale la nota: la del pedido; si no tiene (modo TODAS), la que
-   * eligió quien la genera; si la empresa tiene una sola sede activa, esa. Ya
-   * no depende de la sede en que está parado el usuario: con el pedido en
-   * una sede, la nota que saliera de otra descontaría el stock equivocado.
+   * De qué sede sale la nota:
+   *   1. la del pedido (con el pedido en una sede, la nota que saliera de otra
+   *      descontaría el stock equivocado);
+   *   2. la elegida en el panel (`body.sedeId`, pedido sin sede = modo TODAS);
+   *   3. la del usuario que la genera, como antes: la app 2.8.0 no manda
+   *      `sedeId` y "Generar ya" no puede romperse para las empresas multi-sede;
+   *   4. la única sede activa, o la principal.
    * Sin sedes (empresas antiguas) sigue como antes: `undefined`.
    */
   private async sedeDeLaNota(
     empresaId: number,
     sedePedido: number | null,
     sedeElegida: unknown,
+    sedeUsuario: number | null,
   ): Promise<number | undefined> {
     if (sedePedido) return sedePedido;
     if (sedeElegida != null && sedeElegida !== '') {
@@ -196,12 +205,11 @@ export class PedidoNotaVentaService {
     }
     const activas = await this.prisma.sede.findMany({
       where: { empresaId, activo: true },
-      select: { id: true },
-      take: 2,
+      select: { id: true, esPrincipal: true },
     });
-    if (activas.length === 0) return undefined;
+    if (sedeUsuario && activas.some((s) => s.id === sedeUsuario)) return sedeUsuario;
     if (activas.length === 1) return activas[0].id;
-    throw new BadRequestException(MENSAJES_STOCK_TIENDA.elegirSedeNota);
+    return activas.find((s) => s.esPrincipal)?.id;
   }
 
   /**
