@@ -163,30 +163,34 @@ describe('cuánto vendió cada anuncio', () => {
 });
 
 describe('"El negocio" del reporte', () => {
-  it('una venta anulada no suma al vendido ni a los pedidos (antes daba S/ 1149 con S/ 999 anulados)', async () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('suma lo que vendieron los chats de clientes (las anuladas ya vienen fuera)', async () => {
+    const ventas = jest.spyOn(require('./ventas-de-chats'), 'ventasDeChats').mockResolvedValue([
+      { conversacionId: 1, comprobanteId: 10, monto: 150, fecha: new Date('2026-10-02') },
+    ]);
     const prisma: any = {
-      leadConversacion: { count: jest.fn().mockResolvedValue(6) },
-      leadPedidoBorrador: {
-        findMany: jest.fn().mockResolvedValue([
-          { comprobanteId: 10, descuentoAplicado: 5 },
-          { comprobanteId: 11, descuentoAplicado: 50 },
-        ]),
+      leadConversacion: {
+        count: jest.fn().mockResolvedValue(6),
+        findMany: jest.fn().mockResolvedValue([{ id: 1 }, { id: 2 }]),
       },
+      leadPedidoBorrador: { findMany: jest.fn().mockResolvedValue([{ descuentoAplicado: 5 }]) },
       leadProspecto: { groupBy: jest.fn().mockResolvedValue([]) },
-      comprobante: {
-        findMany: jest.fn().mockResolvedValue([
-          { id: 10, mtoImpVenta: 150, estadoPago: 'COMPLETADO', estadoEnvioSunat: 'EMITIDO' },
-          { id: 11, mtoImpVenta: 999, estadoPago: 'ANULADO', estadoEnvioSunat: 'EMITIDO' },
-        ]),
-      },
     };
     const r = await new LeadsBiService(prisma, {} as any).conversionYTicket(34);
+    expect(prisma.leadConversacion.findMany.mock.calls[0][0].where).toMatchObject({ prospecto: { isNot: null } });
+    expect(ventas).toHaveBeenCalledWith(prisma, 34, [1, 2]);
     expect(r).toMatchObject({ pedidos: 1, vendido: 150, ticketPromedio: 150, descuentosOtorgados: 5, tasaConversion: 16.7 });
   });
 });
 
 describe('el reporte', () => {
-  it('no cuenta ventas anuladas ni las pruebas del negocio, y dice cuántos escribieron sin anuncio', async () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('reparte las ventas de los chats por anuncio, sin las pruebas del negocio, y dice cuántos escribieron sin anuncio', async () => {
+    const ventas = jest.spyOn(require('./ventas-de-chats'), 'ventasDeChats').mockResolvedValue([
+      { conversacionId: 1, comprobanteId: 10, monto: 120, fecha: new Date('2026-10-02') },
+    ]);
     const prisma: any = {
       leadAnuncioOrigen: {
         findMany: jest.fn().mockResolvedValue([
@@ -194,25 +198,14 @@ describe('el reporte', () => {
           { conversacionId: 2, anuncioId: 'rojas', tipo: 'ad', titulo: 'Rojas', url: null, imagenUrl: null, creadoEn: new Date('2026-10-01') },
         ]),
       },
-      leadPedidoBorrador: {
-        findMany: jest.fn().mockResolvedValue([
-          { conversacionId: 1, comprobanteId: 10, registradoEn: new Date('2026-10-02') },
-          { conversacionId: 2, comprobanteId: 11, registradoEn: new Date('2026-10-02') },
-        ]),
-      },
       leadConversacion: { count: jest.fn().mockResolvedValue(7) },
-      comprobante: {
-        findMany: jest.fn().mockResolvedValue([
-          { id: 10, mtoImpVenta: 120, fechaEmision: new Date('2026-10-02'), estadoPago: 'COMPLETADO', estadoEnvioSunat: 'EMITIDO' },
-          { id: 11, mtoImpVenta: 999, fechaEmision: new Date('2026-10-02'), estadoPago: 'ANULADO', estadoEnvioSunat: 'EMITIDO' },
-        ]),
-      },
     };
     const r = await new LeadsBiService(prisma, {} as any).anuncios(14);
 
     expect(prisma.leadAnuncioOrigen.findMany.mock.calls[0][0].where.conversacion).toEqual({
       prospecto: { isNot: null },
     });
+    expect(ventas).toHaveBeenCalledWith(prisma, 14, [1, 2]);
     expect(prisma.leadConversacion.count.mock.calls[0][0].where).toMatchObject({
       prospecto: { isNot: null },
       anuncios: { none: {} },

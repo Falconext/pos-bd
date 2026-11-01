@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { LeadsConsultasService } from './leads-consultas.service';
 import { EtapaCrm } from './leads-embudo';
 import { ventasPorAnuncio } from './anuncio-origen';
+import { ventasDeChats } from './ventas-de-chats';
 
 /**
  * E2 — BI y analítica operativa (punto 27 del anexo).
@@ -16,9 +17,6 @@ import { ventasPorAnuncio } from './anuncio-origen';
  * Cada número de acá sale de filas, no de releer los chats con IA: así el
  * reporte da lo mismo cada vez que se abre y no cuesta tokens.
  */
-
-const esAnulado = (c: { estadoPago?: unknown; estadoEnvioSunat?: unknown }) =>
-  String(c.estadoPago) === 'ANULADO' || String(c.estadoEnvioSunat) === 'ANULADO';
 
 export interface RangoBi {
   desde?: string;
@@ -80,13 +78,10 @@ export class LeadsBiService {
     });
     const convIds = [...new Set(llegadas.map((l) => l.conversacionId))];
 
-    const [pedidos, sinAnuncio] = await Promise.all([
-      convIds.length
-        ? this.prisma.leadPedidoBorrador.findMany({
-            where: { empresaId, conversacionId: { in: convIds }, comprobanteId: { not: null } },
-            select: { conversacionId: true, comprobanteId: true, registradoEn: true },
-          })
-        : Promise.resolve([]),
+    // Las ventas se reconocen igual que en la API de Conversiones: pedido del
+    // chat, cliente del prospecto, su celular o su DNI (ventas-de-chats.ts).
+    const [ventas, sinAnuncio] = await Promise.all([
+      ventasDeChats(this.prisma, empresaId, convIds),
       this.prisma.leadConversacion.count({
         where: {
           empresaId,
@@ -96,34 +91,6 @@ export class LeadsBiService {
         },
       }),
     ]);
-    const ids = pedidos
-      .map((p) => p.comprobanteId)
-      .filter((x): x is number => x != null);
-    const comprobantes = ids.length
-      ? await this.prisma.comprobante.findMany({
-          where: { id: { in: ids }, empresaId },
-          select: {
-            id: true,
-            mtoImpVenta: true,
-            fechaEmision: true,
-            estadoPago: true,
-            estadoEnvioSunat: true,
-          },
-        })
-      : [];
-    const porId = new Map(comprobantes.map((c) => [c.id, c]));
-    const ventas = pedidos.flatMap((p) => {
-      const c = porId.get(p.comprobanteId as number);
-      if (!c) return [];
-      if (esAnulado(c)) return [];
-      return [
-        {
-          conversacionId: p.conversacionId,
-          monto: Number(c.mtoImpVenta ?? 0),
-          fecha: p.registradoEn ?? c.fechaEmision,
-        },
-      ];
-    });
 
     return {
       filas: ventasPorAnuncio(llegadas, ventas),
@@ -190,17 +157,14 @@ export class LeadsBiService {
    * negocio quiere saber es de cada 10 personas que escriben, cuántas compran.
    */
   async conversionYTicket(empresaId: number, creadoEn?: object) {
-    const [conversaciones, pedidos, porEtapa] = await Promise.all([
+    const [conversaciones, conChat, porEtapa] = await Promise.all([
       this.prisma.leadConversacion.count({
         where: { empresaId, ...(creadoEn && { creadoEn }) },
       }),
-      this.prisma.leadPedidoBorrador.findMany({
-        where: {
-          empresaId,
-          comprobanteId: { not: null },
-          ...(creadoEn && { registradoEn: creadoEn }),
-        },
-        select: { comprobanteId: true, descuentoAplicado: true },
+      // Los chats de clientes (con prospecto): los de prueba del negocio no venden.
+      this.prisma.leadConversacion.findMany({
+        where: { empresaId, ...(creadoEn && { creadoEn }), prospecto: { isNot: null } },
+        select: { id: true },
       }),
       this.prisma.leadProspecto.groupBy({
         by: ['etapa'],
@@ -209,34 +173,27 @@ export class LeadsBiService {
       }),
     ]);
 
-    const ids = pedidos
-      .map((p) => p.comprobanteId)
-      .filter((x): x is number => x != null);
-
-    const comprobantes = ids.length
-      ? await this.prisma.comprobante.findMany({
-          where: { id: { in: ids }, empresaId },
-          select: { id: true, mtoImpVenta: true, estadoPago: true, estadoEnvioSunat: true },
+    // Antes solo contaba lo registrado con el pedido del chat: la venta hecha
+    // a mano al prospecto ya convertido en cliente no aparecía (Krezka, 01-11).
+    // Las anuladas ya vienen fuera.
+    const ventas = await ventasDeChats(this.prisma, empresaId, conChat.map((c) => c.id));
+    const convsConVenta = new Set(ventas.map((v) => v.conversacionId));
+    const borradores = convsConVenta.size
+      ? await this.prisma.leadPedidoBorrador.findMany({
+          where: { empresaId, conversacionId: { in: [...convsConVenta] }, comprobanteId: { not: null } },
+          select: { descuentoAplicado: true },
         })
       : [];
 
-    // Una venta anulada no es venta: antes sumaba al "Vendido" y al número
-    // de pedidos, y con ella subían la conversión y el ticket promedio.
-    const vigentes = comprobantes.filter((c) => !esAnulado(c));
-    const idsVigentes = new Set(vigentes.map((c) => c.id));
-    const pedidosVigentes = pedidos.filter((p) => idsVigentes.has(p.comprobanteId as number));
-
-    const montos = vigentes.map((c) => Number(c.mtoImpVenta ?? 0));
+    const montos = ventas.map((v) => v.monto);
     const vendido = montos.reduce((a, m) => a + m, 0);
-    const descuentos = pedidosVigentes.reduce(
-      (a, p) => a + Number(p.descuentoAplicado ?? 0),
-      0,
-    );
+    const descuentos = borradores.reduce((a, p) => a + Number(p.descuentoAplicado ?? 0), 0);
+    const pedidosVigentes = ventas;
 
     return {
       conversaciones,
       pedidos: pedidosVigentes.length,
-      tasaConversion: this.porcentaje(pedidosVigentes.length, conversaciones),
+      tasaConversion: this.porcentaje(convsConVenta.size, conversaciones),
       vendido: this.dos(vendido),
       // Promedio sobre los pedidos que EXISTEN: dividir por las
       // conversaciones daría un "ticket promedio" que ningún cliente pagó.
