@@ -250,6 +250,24 @@ model Empresa {
   // IA de Ventas por Messenger (página de Facebook). El token de página sale
   // de un token de usuario de larga duración, así que no vence solo; deja de
   // servir si el empresario cambia la clave o quita el acceso (error 190).
+  // TikTok: la IA responde en público los comentarios de los videos (la API
+  // aprobada no trae mensajes directos). `tiktokOpenId` es el `business_id`
+  // de la API. El token dura 24 h y se renueva con el refresh (1 año).
+  tiktokOpenId              String?            @unique
+  tiktokUsername            String?
+  tiktokToken               String?
+  tiktokTokenExpira         DateTime?
+  tiktokRefreshToken        String?
+  tiktokRefreshExpira       DateTime?
+  tiktokActivo              Boolean            @default(false)
+  // TikTok rechazó el token o el refresh: el panel pide reconectar.
+  tiktokErrorToken          String?
+  tiktokComentarios         Boolean            @default(false)
+  tiktokComentariosClave    String?
+  // Solo se responden los comentarios hechos después de esto (se fija al
+  // activar): conectar la cuenta no debe contestar los comentarios viejos.
+  tiktokComentariosDesde    DateTime?
+  tiktokComentariosRespondidos TiktokComentario[]
   facebookPageId            String?            @unique
   facebookPageNombre        String?
   facebookPageToken         String?
@@ -5720,4 +5738,25 @@ model LibroReclamacionContador {
   ultimo    Int     @default(0)
 
   @@id([empresaId, anio])
+}
+
+/// Comentario de TikTok que la IA respondió (o intentó). La fila se crea ANTES
+/// de responder y es única por empresa + comentario: aunque dos procesos
+/// revisen a la vez, solo uno responde.
+model TiktokComentario {
+  id           Int      @id @default(autoincrement())
+  empresaId    Int
+  empresa      Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  comentarioId String
+  videoId      String
+  autor        String?
+  texto        String
+  respuesta    String?
+  /// PENDIENTE (tomado) · RESPONDIDO · ERROR
+  estado       String   @default("PENDIENTE")
+  error        String?
+  creadoEn     DateTime @default(now())
+
+  @@unique([empresaId, comentarioId])
+  @@index([empresaId, creadoEn])
 }
