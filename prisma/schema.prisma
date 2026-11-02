@@ -421,6 +421,15 @@ model Empresa {
   /// descuento. Apagado = comportamiento histórico. Lo enciende el negocio que
   /// lleva inventario; el que factura siempre contra stock 0 lo deja apagado.
   permitirStockNegativo         Boolean                       @default(false)
+  /// Precio por mayor mezclando productos: en el POS, las unidades de los
+  /// productos del alcance se suman y cada uno toma su escala de precio por
+  /// mayor según ese total (6 perfumes distintos = precio de 6 en cada uno).
+  /// Apagado = cada línea cuenta solo su propia cantidad (comportamiento de
+  /// siempre). Ver frontend facturacion/mayoristaMezcla.ts.
+  mayoristaMezclaActivo         Boolean                       @default(false)
+  /// Categorías cuyos productos se suman entre sí (principal o adicional).
+  /// Vacío = todos los productos.
+  mayoristaMezclaCategoriaIds   Int[]                         @default([])
   // Lo mismo, pero para la TIENDA ONLINE y por separado: el negocio puede querer
   // aceptar pedidos de lo agotado en la web (lo trae por encargo) sin habilitar
   // la sobreventa en el mostrador, o al revés. Default false = la tienda sigue
