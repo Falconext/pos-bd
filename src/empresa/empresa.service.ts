@@ -2033,6 +2033,32 @@ export class EmpresaService {
         updateData.cajaPrellenarMontosCierre = dto.cajaPrellenarMontosCierre;
       if (dto.permitirStockNegativo !== undefined)
         updateData.permitirStockNegativo = dto.permitirStockNegativo;
+      if (dto.mayoristaMezclaActivo !== undefined)
+        updateData.mayoristaMezclaActivo = Boolean(dto.mayoristaMezclaActivo);
+      if (dto.mayoristaMezclaCategoriaIds !== undefined) {
+        // Solo categorías de esta empresa: un id ajeno no debe colarse ni
+        // dejar el alcance apuntando a algo que el negocio no ve.
+        // `PUT empresa/mia` llega como Partial<> y no pasa por class-validator.
+        if (!Array.isArray(dto.mayoristaMezclaCategoriaIds)) {
+          throw new BadRequestException('Las categorías del precio por mayor deben ser una lista');
+        }
+        const pedidas = [...new Set(dto.mayoristaMezclaCategoriaIds.map(Number))].filter(
+          (n) => Number.isInteger(n) && n > 0,
+        );
+        if (pedidas.length > 200) {
+          throw new BadRequestException('Elige como máximo 200 categorías');
+        }
+        const propias = pedidas.length
+          ? await this.prisma.categoria.findMany({
+              where: { id: { in: pedidas }, empresaId: dto.id },
+              select: { id: true },
+            })
+          : [];
+        if (propias.length !== pedidas.length) {
+          throw new BadRequestException('Alguna de las categorías elegidas no existe en tu empresa');
+        }
+        updateData.mayoristaMezclaCategoriaIds = pedidas;
+      }
       if (dto.directorTecnico !== undefined)
         updateData.directorTecnico = dto.directorTecnico;
       if (dto.logo !== undefined) updateData.logo = dto.logo;

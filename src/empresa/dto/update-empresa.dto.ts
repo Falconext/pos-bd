@@ -1,4 +1,6 @@
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsDateString,
   IsIn,
@@ -281,6 +283,18 @@ export class UpdateEmpresaDto {
   @IsBoolean()
   @IsOptional()
   permitirStockNegativo?: boolean;
+
+  /** Precio por mayor sumando las unidades de productos distintos. */
+  @IsBoolean()
+  @IsOptional()
+  mayoristaMezclaActivo?: boolean;
+
+  /** Categorías que se mezclan; vacío = todos los productos. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(200)
+  @IsInt({ each: true })
+  mayoristaMezclaCategoriaIds?: number[];
 
   @IsOptional()
   @IsString()
